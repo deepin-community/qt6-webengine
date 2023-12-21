@@ -7,8 +7,10 @@
 
 #include "src/gpu/ganesh/d3d/GrD3DGpu.h"
 
+#include "include/core/SkColorSpace.h"
 #include "include/gpu/GrBackendSurface.h"
 #include "include/gpu/d3d/GrD3DBackendContext.h"
+#include "src/core/SkCompressedDataUtils.h"
 #include "src/core/SkConvertPixels.h"
 #include "src/core/SkMipmap.h"
 #include "src/gpu/ganesh/GrBackendUtils.h"
@@ -29,6 +31,8 @@
 #if GR_TEST_UTILS
 #include <DXProgrammableCapture.h>
 #endif
+
+using namespace skia_private;
 
 GrThreadSafePipelineBuilder* GrD3DGpu::pipelineBuilder() {
     return nullptr;
@@ -148,10 +152,10 @@ bool GrD3DGpu::submitDirectCommandList(SyncQueue sync) {
     SkASSERT(fCurrentDirectCommandList);
 
     fResourceProvider.prepForSubmit();
-    for (int i = 0; i < fMipmapCPUDescriptors.count(); ++i) {
+    for (int i = 0; i < fMipmapCPUDescriptors.size(); ++i) {
         fResourceProvider.recycleShaderView(fMipmapCPUDescriptors[i]);
     }
-    fMipmapCPUDescriptors.reset();
+    fMipmapCPUDescriptors.clear();
 
     GrD3DDirectCommandList::SubmitResult result = fCurrentDirectCommandList->submit(fQueue.get());
     if (result == GrD3DDirectCommandList::SubmitResult::kFailure) {
@@ -255,10 +259,11 @@ sk_sp<GrD3DTexture> GrD3DGpu::createD3DTexture(SkISize dimensions,
                                                DXGI_FORMAT dxgiFormat,
                                                GrRenderable renderable,
                                                int renderTargetSampleCnt,
-                                               SkBudgeted budgeted,
+                                               skgpu::Budgeted budgeted,
                                                GrProtected isProtected,
                                                int mipLevelCount,
-                                               GrMipmapStatus mipmapStatus) {
+                                               GrMipmapStatus mipmapStatus,
+                                               std::string_view label) {
     D3D12_RESOURCE_FLAGS usageFlags = D3D12_RESOURCE_FLAG_NONE;
     if (renderable == GrRenderable::kYes) {
         usageFlags |= D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
@@ -286,10 +291,10 @@ sk_sp<GrD3DTexture> GrD3DGpu::createD3DTexture(SkISize dimensions,
     if (renderable == GrRenderable::kYes) {
         return GrD3DTextureRenderTarget::MakeNewTextureRenderTarget(
                 this, budgeted, dimensions, renderTargetSampleCnt, resourceDesc, isProtected,
-                mipmapStatus);
+                mipmapStatus, label);
     } else {
         return GrD3DTexture::MakeNewTexture(this, budgeted, dimensions, resourceDesc, isProtected,
-                                            mipmapStatus);
+                                            mipmapStatus, label);
     }
 }
 
@@ -297,10 +302,11 @@ sk_sp<GrTexture> GrD3DGpu::onCreateTexture(SkISize dimensions,
                                            const GrBackendFormat& format,
                                            GrRenderable renderable,
                                            int renderTargetSampleCnt,
-                                           SkBudgeted budgeted,
+                                           skgpu::Budgeted budgeted,
                                            GrProtected isProtected,
                                            int mipLevelCount,
-                                           uint32_t levelClearMask) {
+                                           uint32_t levelClearMask,
+                                           std::string_view label) {
     DXGI_FORMAT dxgiFormat;
     SkAssertResult(format.asDxgiFormat(&dxgiFormat));
     SkASSERT(!GrDxgiFormatIsCompressed(dxgiFormat));
@@ -310,7 +316,7 @@ sk_sp<GrTexture> GrD3DGpu::onCreateTexture(SkISize dimensions,
 
     sk_sp<GrD3DTexture> tex = this->createD3DTexture(dimensions, dxgiFormat, renderable,
                                                      renderTargetSampleCnt, budgeted, isProtected,
-                                                     mipLevelCount, mipmapStatus);
+                                                     mipLevelCount, mipmapStatus, label);
     if (!tex) {
         return nullptr;
     }
@@ -343,28 +349,36 @@ static void copy_compressed_data(char* mapPtr, DXGI_FORMAT dxgiFormat,
 
 sk_sp<GrTexture> GrD3DGpu::onCreateCompressedTexture(SkISize dimensions,
                                                      const GrBackendFormat& format,
-                                                     SkBudgeted budgeted,
-                                                     GrMipmapped mipMapped,
+                                                     skgpu::Budgeted budgeted,
+                                                     GrMipmapped mipmapped,
                                                      GrProtected isProtected,
-                                                     const void* data, size_t dataSize) {
+                                                     const void* data,
+                                                     size_t dataSize) {
     DXGI_FORMAT dxgiFormat;
     SkAssertResult(format.asDxgiFormat(&dxgiFormat));
     SkASSERT(GrDxgiFormatIsCompressed(dxgiFormat));
 
     SkDEBUGCODE(SkImage::CompressionType compression = GrBackendFormatToCompressionType(format));
     SkASSERT(dataSize == SkCompressedFormatDataSize(compression, dimensions,
-                                                    mipMapped == GrMipmapped::kYes));
+                                                    mipmapped == GrMipmapped::kYes));
 
     int mipLevelCount = 1;
-    if (mipMapped == GrMipmapped::kYes) {
+    if (mipmapped == GrMipmapped::kYes) {
         mipLevelCount = SkMipmap::ComputeLevelCount(dimensions.width(), dimensions.height()) + 1;
     }
     GrMipmapStatus mipmapStatus = mipLevelCount > 1 ? GrMipmapStatus::kValid
                                                     : GrMipmapStatus::kNotAllocated;
 
-    sk_sp<GrD3DTexture> d3dTex = this->createD3DTexture(dimensions, dxgiFormat, GrRenderable::kNo,
-                                                     1, budgeted, isProtected,
-                                                     mipLevelCount, mipmapStatus);
+    sk_sp<GrD3DTexture> d3dTex = this->createD3DTexture(
+        dimensions,
+        dxgiFormat,
+        GrRenderable::kNo,
+        1,
+        budgeted,
+        isProtected,
+        mipLevelCount,
+        mipmapStatus,
+        /*label=*/"D3DGpu_CreateCompressedTexture");
     if (!d3dTex) {
         return nullptr;
     }
@@ -375,9 +389,9 @@ sk_sp<GrTexture> GrD3DGpu::onCreateCompressedTexture(SkISize dimensions,
     // Either upload only the first miplevel or all miplevels
     SkASSERT(1 == mipLevelCount || mipLevelCount == (int)desc.MipLevels);
 
-    SkAutoTMalloc<D3D12_PLACED_SUBRESOURCE_FOOTPRINT> placedFootprints(mipLevelCount);
-    SkAutoTMalloc<UINT> numRows(mipLevelCount);
-    SkAutoTMalloc<UINT64> rowSizeInBytes(mipLevelCount);
+    AutoTMalloc<D3D12_PLACED_SUBRESOURCE_FOOTPRINT> placedFootprints(mipLevelCount);
+    AutoTMalloc<UINT> numRows(mipLevelCount);
+    AutoTMalloc<UINT64> rowSizeInBytes(mipLevelCount);
     UINT64 combinedBufferSize;
     // We reset the width and height in the description to match our subrectangle size
     // so we don't end up allocating more space than we need.
@@ -417,9 +431,12 @@ static int get_surface_sample_cnt(GrSurface* surf) {
     return 0;
 }
 
-bool GrD3DGpu::onCopySurface(GrSurface* dst, GrSurface* src, const SkIRect& srcRect,
-                   const SkIPoint& dstPoint) {
-
+bool GrD3DGpu::onCopySurface(GrSurface* dst, const SkIRect& dstRect,
+                             GrSurface* src, const SkIRect& srcRect,
+                             GrSamplerState::Filter) {
+    if (srcRect.size() != dstRect.size()) {
+        return false;
+    }
     if (src->isProtected() && !dst->isProtected()) {
         SkDebugf("Can't copy from protected memory to non-protected");
         return false;
@@ -450,6 +467,7 @@ bool GrD3DGpu::onCopySurface(GrSurface* dst, GrSurface* src, const SkIRect& srcR
     DXGI_FORMAT dstFormat = dstTexResource->dxgiFormat();
     DXGI_FORMAT srcFormat = srcTexResource->dxgiFormat();
 
+    const SkIPoint dstPoint = dstRect.topLeft();
     if (this->d3dCaps().canCopyAsResolve(dstFormat, dstSampleCnt, srcFormat, srcSampleCnt)) {
         this->copySurfaceAsResolve(dst, src, srcRect, dstPoint);
         return true;
@@ -720,7 +738,7 @@ bool GrD3DGpu::uploadToTexture(GrD3DTexture* tex,
         }
     }
 
-    SkAutoTMalloc<D3D12_PLACED_SUBRESOURCE_FOOTPRINT> placedFootprints(mipLevelCount);
+    AutoTMalloc<D3D12_PLACED_SUBRESOURCE_FOOTPRINT> placedFootprints(mipLevelCount);
     UINT64 combinedBufferSize;
     // We reset the width and height in the description to match our subrectangle size
     // so we don't end up allocating more space than we need.
@@ -774,6 +792,30 @@ bool GrD3DGpu::uploadToTexture(GrD3DTexture* tex,
     if (mipLevelCount < (int)desc.MipLevels) {
         tex->markMipmapsDirty();
     }
+
+    return true;
+}
+
+bool GrD3DGpu::onTransferFromBufferToBuffer(sk_sp<GrGpuBuffer> src,
+                                            size_t srcOffset,
+                                            sk_sp<GrGpuBuffer> dst,
+                                            size_t dstOffset,
+                                            size_t size) {
+    if (!this->currentCommandList()) {
+        return false;
+    }
+
+    sk_sp<GrD3DBuffer> d3dSrc(static_cast<GrD3DBuffer*>(src.release()));
+    sk_sp<GrD3DBuffer> d3dDst(static_cast<GrD3DBuffer*>(dst.release()));
+
+    fCurrentDirectCommandList->copyBufferToBuffer(std::move(d3dDst),
+                                                  dstOffset,
+                                                  d3dSrc->d3dResource(),
+                                                  srcOffset,
+                                                  size);
+
+    // copyBufferToBuffer refs the dst but not the src
+    this->currentCommandList()->addGrBuffer(std::move(src));
 
     return true;
 }
@@ -1088,8 +1130,13 @@ bool GrD3DGpu::onRegenerateMipMapLevels(GrTexture * tex) {
         }
         // TODO: make this a scratch texture
         GrProtected grProtected = tex->isProtected() ? GrProtected::kYes : GrProtected::kNo;
-        uavTexture = GrD3DTexture::MakeNewTexture(this, SkBudgeted::kNo, tex->dimensions(),
-                                                  uavDesc, grProtected, GrMipmapStatus::kDirty);
+        uavTexture = GrD3DTexture::MakeNewTexture(this,
+                                                  skgpu::Budgeted::kNo,
+                                                  tex->dimensions(),
+                                                  uavDesc,
+                                                  grProtected,
+                                                  GrMipmapStatus::kDirty,
+                                                  /*label=*/"RegenerateMipMapLevels");
         if (!uavTexture) {
             return false;
         }
@@ -1249,14 +1296,10 @@ bool GrD3DGpu::onRegenerateMipMapLevels(GrTexture * tex) {
     return true;
 }
 
-sk_sp<GrGpuBuffer> GrD3DGpu::onCreateBuffer(size_t sizeInBytes, GrGpuBufferType type,
-                                             GrAccessPattern accessPattern, const void* data) {
-    sk_sp<GrD3DBuffer> buffer = GrD3DBuffer::Make(this, sizeInBytes, type, accessPattern);
-    if (data && buffer) {
-        buffer->updateData(data, sizeInBytes);
-    }
-
-    return std::move(buffer);
+sk_sp<GrGpuBuffer> GrD3DGpu::onCreateBuffer(size_t sizeInBytes,
+                                            GrGpuBufferType type,
+                                            GrAccessPattern accessPattern) {
+    return GrD3DBuffer::Make(this, sizeInBytes, type, accessPattern);
 }
 
 sk_sp<GrAttachment> GrD3DGpu::makeStencilAttachment(const GrBackendFormat& /*colorFormat*/,
@@ -1271,7 +1314,7 @@ bool GrD3DGpu::createTextureResourceForBackendSurface(DXGI_FORMAT dxgiFormat,
                                                       SkISize dimensions,
                                                       GrTexturable texturable,
                                                       GrRenderable renderable,
-                                                      GrMipmapped mipMapped,
+                                                      GrMipmapped mipmapped,
                                                       int sampleCnt,
                                                       GrD3DTextureResourceInfo* info,
                                                       GrProtected isProtected) {
@@ -1290,7 +1333,7 @@ bool GrD3DGpu::createTextureResourceForBackendSurface(DXGI_FORMAT dxgiFormat,
     }
 
     int numMipLevels = 1;
-    if (mipMapped == GrMipmapped::kYes) {
+    if (mipmapped == GrMipmapped::kYes) {
         numMipLevels = SkMipmap::ComputeLevelCount(dimensions.width(), dimensions.height()) + 1;
     }
 
@@ -1340,8 +1383,9 @@ bool GrD3DGpu::createTextureResourceForBackendSurface(DXGI_FORMAT dxgiFormat,
 GrBackendTexture GrD3DGpu::onCreateBackendTexture(SkISize dimensions,
                                                   const GrBackendFormat& format,
                                                   GrRenderable renderable,
-                                                  GrMipmapped mipMapped,
-                                                  GrProtected isProtected) {
+                                                  GrMipmapped mipmapped,
+                                                  GrProtected isProtected,
+                                                  std::string_view label) {
     const GrD3DCaps& caps = this->d3dCaps();
 
     if (this->protectedContext() != (isProtected == GrProtected::kYes)) {
@@ -1360,7 +1404,7 @@ GrBackendTexture GrD3DGpu::onCreateBackendTexture(SkISize dimensions,
 
     GrD3DTextureResourceInfo info;
     if (!this->createTextureResourceForBackendSurface(dxgiFormat, dimensions, GrTexturable::kYes,
-                                                      renderable, mipMapped, 1, &info,
+                                                      renderable, mipmapped, 1, &info,
                                                       isProtected)) {
         return {};
     }
@@ -1418,7 +1462,7 @@ bool GrD3DGpu::onClearBackendTexture(const GrBackendTexture& backendTexture,
         mipLevelCount = SkMipmap::ComputeLevelCount(backendTexture.dimensions()) + 1;
     }
     SkASSERT(mipLevelCount == info.fLevelCount);
-    SkAutoSTMalloc<15, D3D12_PLACED_SUBRESOURCE_FOOTPRINT> placedFootprints(mipLevelCount);
+    AutoSTMalloc<15, D3D12_PLACED_SUBRESOURCE_FOOTPRINT> placedFootprints(mipLevelCount);
     UINT numRows;
     UINT64 rowSizeInBytes;
     UINT64 combinedBufferSize;
@@ -1481,10 +1525,14 @@ bool GrD3DGpu::onClearBackendTexture(const GrBackendTexture& backendTexture,
 }
 
 GrBackendTexture GrD3DGpu::onCreateCompressedBackendTexture(
-    SkISize dimensions, const GrBackendFormat& format, GrMipmapped mipMapped,
+    SkISize dimensions, const GrBackendFormat& format, GrMipmapped mipmapped,
     GrProtected isProtected) {
-    return this->onCreateBackendTexture(dimensions, format, GrRenderable::kNo, mipMapped,
-                                        isProtected);
+    return this->onCreateBackendTexture(dimensions,
+                                        format,
+                                        GrRenderable::kNo,
+                                        mipmapped,
+                                        isProtected,
+                                        /*label=*/"D3DGpu_CreateCompressedBackendTexture");
 }
 
 bool GrD3DGpu::onUpdateCompressedBackendTexture(const GrBackendTexture& backendTexture,
@@ -1522,10 +1570,10 @@ bool GrD3DGpu::onUpdateCompressedBackendTexture(const GrBackendTexture& backendT
                                                     backendTexture.dimensions().height()) + 1;
     }
     SkASSERT(mipLevelCount == info.fLevelCount);
-    SkAutoTMalloc<D3D12_PLACED_SUBRESOURCE_FOOTPRINT> placedFootprints(mipLevelCount);
+    AutoTMalloc<D3D12_PLACED_SUBRESOURCE_FOOTPRINT> placedFootprints(mipLevelCount);
     UINT64 combinedBufferSize;
-    SkAutoTMalloc<UINT> numRows(mipLevelCount);
-    SkAutoTMalloc<UINT64> rowSizeInBytes(mipLevelCount);
+    AutoTMalloc<UINT> numRows(mipLevelCount);
+    AutoTMalloc<UINT64> rowSizeInBytes(mipLevelCount);
     fDevice->GetCopyableFootprints(&desc,
                                    0,
                                    mipLevelCount,
@@ -1635,7 +1683,7 @@ void GrD3DGpu::testingOnly_startCapture() {
     }
 }
 
-void GrD3DGpu::testingOnly_endCapture() {
+void GrD3DGpu::testingOnly_stopCapture() {
     if (fGraphicsAnalysis) {
         fGraphicsAnalysis->EndCapture();
     }
@@ -1667,7 +1715,7 @@ void GrD3DGpu::addBufferResourceBarriers(GrD3DBuffer* buffer,
 void GrD3DGpu::prepareSurfacesForBackendAccessAndStateUpdates(
         SkSpan<GrSurfaceProxy*> proxies,
         SkSurface::BackendSurfaceAccess access,
-        const GrBackendSurfaceMutableState* newState) {
+        const skgpu::MutableTextureState* newState) {
     // prepare proxies by transitioning to PRESENT renderState
     if (!proxies.empty() && access == SkSurface::BackendSurfaceAccess::kPresent) {
         GrD3DTextureResource* resource;

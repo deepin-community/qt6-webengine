@@ -1,4 +1,4 @@
-<!-- Copyright 2021-2022 LunarG, Inc. -->
+<!-- Copyright 2021-2023 LunarG, Inc. -->
 [![Khronos Vulkan][1]][2]
 
 [1]: https://vulkan.lunarg.com/img/Vulkan_100px_Dec16.png "https://www.khronos.org/vulkan/"
@@ -6,7 +6,7 @@
 
 # Introduction
 
-Fine grained locking is an experimental performance improvement for multithreaded workloads. It allows Vulkan calls from different threads to be validated in parallel, instead of being serialized by a global lock. Waiting on this lock causes performance problems for multi-threaded applications, and most Vulkan games are heavily multi-threaded.  This feature has been tested with 15+ released games and improves performance in almost all of them, and many improve by about 150%.
+Fine grained locking is a performance improvement for multithreaded workloads. It allows Vulkan calls from different threads to be validated in parallel, instead of being serialized by a global lock. Waiting on this lock causes performance problems for multi-threaded applications, and most Vulkan games are heavily multi-threaded.  This feature has been tested with 15+ released games and improves performance in almost all of them, and many improve by about 150%.
 
 This document describes the design of the optimization and is mainly targeted at ValidationLayer developers.  Information on how to enable and disable the optimization can be found [here](fine_grained_locking_usage.md).
 
@@ -143,7 +143,7 @@ This part of validation checks that all Vulkan objects used by a command buffer 
     // Because weak_ptrs cannot safely be used as hash keys, the parents are stored
     // in a map keyed by VulkanTypedHandle. This also allows looking for specific
     // parent types without locking every weak_ptr.
-    using NodeMap = layer_data::unordered_map<VulkanTypedHandle, std::weak_ptr<BASE_NODE>>;
+    using NodeMap = vvl::unordered_map<VulkanTypedHandle, std::weak_ptr<BASE_NODE>>;
   private:
     ReadLockGuard ReadLockTree() const { return ReadLockGuard(tree_lock_); }
     WriteLockGuard WriteLockTree() { return WriteLockGuard(tree_lock_); }
@@ -152,7 +152,7 @@ This part of validation checks that all Vulkan objects used by a command buffer 
     // parent nodes should form a tree with the root being a command buffer.
     NodeMap parent_nodes_;
     // Lock guarding parent_nodes_, this lock MUST NOT be used for other purposes.
-    mutable ReadWriteLock tree_lock_;
+    mutable std::shared_mutex tree_lock_;
 ```
 
 
@@ -356,7 +356,7 @@ Vulkan semaphores are extremely complicated, and timeline semaphores behave very
 For timeline semaphores, the `operations_` multiset stores all pending waits or signals, sorted by the `SemOp::payload` field, which is the user specified value. There can be multiple operations associated with each `payload` value and they can be added in almost any order.  Additionally, one signal operation could cause many wait operations to be completed.  All of these operations could be on different `VkQueues`. Because of this, the code for updating the state of the semaphore is more complex than for `FENCE_STATE`:
 
     // Remove completed operations and return highest sequence numbers for all affected queues
-    using RetireResult = layer_data::unordered_map<QUEUE_STATE *, uint64_t>;
+    using RetireResult = vvl::unordered_map<QUEUE_STATE *, uint64_t>;
     RetireResult Retire(QUEUE_STATE *queue, uint64_t payload);
 
 `RetireResult` makes it possible to handle state changes for several queues.  When called from `QUEUE_STATE::Retire()`, the `RetireResult`(s) for all `CB_SUBMISSIONS` is saved until the end of the current queue's processing, so that Retire() can be called on other queues without any locks held. `SEMAPHORE_STATE::Retire()` can also be called from `vkWaitSemaphores()` or `vkGetSemaphoreCounterValueKHR()`, but these cases are much simpler.
@@ -398,7 +398,7 @@ The only dynamic data in `COMMAND_POOL_STATE` is a set of all the command buffer
 
 
 ```
-    layer_data::unordered_set<VkCommandBuffer> commandBuffers;
+    vvl::unordered_set<VkCommandBuffer> commandBuffers;
 ```
 
 
@@ -617,7 +617,7 @@ For ‘normal’ images it is set during creation, but for android AHB external 
     WriteLockGuard WriteLock() { return WriteLockGuard(lock_); }
 
   private:
-    mutable ReadWriteLock lock_;
+    mutable std::shared_mutex lock_;
   };
 
   std::shared_ptr<GlobalImageLayoutRangeMap> layout_range_map;
@@ -633,10 +633,10 @@ For images created with `VK_IMAGE_CREATE_ALIAS_BIT` or bound to the same swapcha
 Each `CMD_BUFFER_STATE` maintains its own copy of the image layout state, in a different data structure:
 
 ```
-   typedef layer_data::unordered_map<const IMAGE_STATE *,
+   typedef vvl::unordered_map<const IMAGE_STATE *,
                                     std::shared_ptr<ImageSubresourceLayoutMap>>  CommandBufferImageLayoutMap;
    CommandBufferImageLayoutMap image_layout_map;
-   typedef layer_data::unordered_map<const GlobalImageLayoutRangeMap *,
+   typedef vvl::unordered_map<const GlobalImageLayoutRangeMap *,
                                      std::shared_ptr<ImageSubresourceLayoutMap>>
                                                                                CommandBufferAliasedLayoutMap;
    CommandBufferAliasedLayoutMap aliased_image_layout_map;  // storage for potentially aliased images
@@ -728,11 +728,11 @@ TODO: Accesses to most of these fields will need to be atomic or lock guarded.
         VkPhysicalDevice gpu;
         uint32_t queue_family_index;
     };
-    layer_data::unordered_map<GpuQueue, bool> gpu_queue_support;
-    layer_data::unordered_map<GpuQueue, bool> gpu_queue_support_;
-    layer_data::unordered_map<VkPhysicalDevice, std::vector<VkPresentModeKHR>> present_modes_;
-    layer_data::unordered_map<VkPhysicalDevice, std::vector<VkSurfaceFormatKHR>> formats_;
-    layer_data::unordered_map<VkPhysicalDevice, VkSurfaceCapabilitiesKHR> capabilities_;
+    vvl::unordered_map<GpuQueue, bool> gpu_queue_support;
+    vvl::unordered_map<GpuQueue, bool> gpu_queue_support_;
+    vvl::unordered_map<VkPhysicalDevice, std::vector<VkPresentModeKHR>> present_modes_;
+    vvl::unordered_map<VkPhysicalDevice, std::vector<VkSurfaceFormatKHR>> formats_;
+    vvl::unordered_map<VkPhysicalDevice, VkSurfaceCapabilitiesKHR> capabilities_;
 ```
 
 
@@ -761,7 +761,7 @@ All of the dynamic data in `DESCRIPTOR_POOL_STATE` is associated with tracking t
 
 ```
    // Collection of all sets in this pool`
-    layer_data::unordered_set<cvdescriptorset::DescriptorSet *> sets;
+    vvl::unordered_set<cvdescriptorset::DescriptorSet *> sets;
     // Available descriptor sets in this pool
     uint32_t availableSets;
     // Available # of descriptors of each type in this pool
@@ -792,13 +792,6 @@ TODO: The following variables need to be made const:
     uint32_t variable_count_;
     // For a given dynamic offset index in the set, map to associated index of the descriptors in the set
     std::vector<size_t> dynamic_offset_idx_to_descriptor_list_;
-
-TODO: needs to be made atomic
-
-
-```
-    uint64_t change_count_;
-```
 
 TODO: only used by push descriptors and effectively guarded by CMD_BUFFER_STATE locking
 

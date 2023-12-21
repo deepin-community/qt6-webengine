@@ -1,15 +1,15 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "net/base/network_isolation_key.h"
 
-#include "base/test/scoped_feature_list.h"
 #include "base/unguessable_token.h"
 #include "base/values.h"
 #include "net/base/features.h"
 #include "net/base/schemeful_site.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/gurl.h"
 #include "url/url_util.h"
 
@@ -18,73 +18,41 @@ namespace net {
 namespace {
 const char kDataUrl[] = "data:text/html,<body>Hello World</body>";
 
-class NetworkIsolationKeyTest : public testing::Test,
-                                public testing::WithParamInterface<bool> {
- public:
-  void SetUp() override {
-    if (ForceIsolationInfoFrameOriginToTopLevelFrameEnabled()) {
-      scoped_feature_list_.InitAndEnableFeature(
-          net::features::kForceIsolationInfoFrameOriginToTopLevelFrame);
-    } else {
-      scoped_feature_list_.InitAndDisableFeature(
-          net::features::kForceIsolationInfoFrameOriginToTopLevelFrame);
-    }
-  }
-  static bool ForceIsolationInfoFrameOriginToTopLevelFrameEnabled() {
-    return GetParam();
-  }
+TEST(NetworkIsolationKeyTest, IsFrameSiteEnabled) {
+  EXPECT_TRUE(NetworkIsolationKey::IsFrameSiteEnabled());
+}
 
- private:
-  base::test::ScopedFeatureList scoped_feature_list_;
-};
-
-INSTANTIATE_TEST_SUITE_P(
-    All,
-    NetworkIsolationKeyTest,
-    /*force_isolation_info_frame_origin_to_top_level_frame*/ testing::Bool());
-
-TEST_P(NetworkIsolationKeyTest, EmptyKey) {
+TEST(NetworkIsolationKeyTest, EmptyKey) {
   NetworkIsolationKey key;
   EXPECT_FALSE(key.IsFullyPopulated());
-  EXPECT_EQ(std::string(), key.ToString());
+  EXPECT_EQ(absl::nullopt, key.ToCacheKeyString());
   EXPECT_TRUE(key.IsTransient());
   EXPECT_EQ("null null", key.ToDebugString());
 }
 
-TEST_P(NetworkIsolationKeyTest, NonEmptyKey) {
+TEST(NetworkIsolationKeyTest, NonEmptyKey) {
   SchemefulSite site1 = SchemefulSite(GURL("http://a.test/"));
   SchemefulSite site2 = SchemefulSite(GURL("http://b.test/"));
   NetworkIsolationKey key(site1, site2);
   EXPECT_TRUE(key.IsFullyPopulated());
-  if (ForceIsolationInfoFrameOriginToTopLevelFrameEnabled()) {
-    EXPECT_EQ(site1.Serialize() + " " + site1.Serialize(), key.ToString());
-    EXPECT_EQ(site1.GetDebugString() + " " + site1.GetDebugString(),
-              key.ToDebugString());
-  } else {
-    EXPECT_EQ(site1.Serialize() + " " + site2.Serialize(), key.ToString());
-    EXPECT_EQ(site1.GetDebugString() + " " + site2.GetDebugString(),
-              key.ToDebugString());
-  }
+  EXPECT_EQ(site1.Serialize() + " " + site2.Serialize(),
+            key.ToCacheKeyString());
+  EXPECT_EQ(site1.GetDebugString() + " " + site2.GetDebugString(),
+            key.ToDebugString());
   EXPECT_FALSE(key.IsTransient());
 }
 
-TEST_P(NetworkIsolationKeyTest, KeyWithNonce) {
+TEST(NetworkIsolationKeyTest, KeyWithNonce) {
   SchemefulSite site1 = SchemefulSite(GURL("http://a.test/"));
   SchemefulSite site2 = SchemefulSite(GURL("http://b.test/"));
   base::UnguessableToken nonce = base::UnguessableToken::Create();
   NetworkIsolationKey key(site1, site2, &nonce);
   EXPECT_TRUE(key.IsFullyPopulated());
-  EXPECT_EQ("", key.ToString());
+  EXPECT_EQ(absl::nullopt, key.ToCacheKeyString());
   EXPECT_TRUE(key.IsTransient());
-  if (ForceIsolationInfoFrameOriginToTopLevelFrameEnabled()) {
-    EXPECT_EQ(site1.GetDebugString() + " " + site1.GetDebugString() +
-                  " (with nonce " + nonce.ToString() + ")",
-              key.ToDebugString());
-  } else {
-    EXPECT_EQ(site1.GetDebugString() + " " + site2.GetDebugString() +
-                  " (with nonce " + nonce.ToString() + ")",
-              key.ToDebugString());
-  }
+  EXPECT_EQ(site1.GetDebugString() + " " + site2.GetDebugString() +
+                " (with nonce " + nonce.ToString() + ")",
+            key.ToDebugString());
 
   // Create another NetworkIsolationKey with the same input parameters, and
   // check that it is equal.
@@ -99,11 +67,11 @@ TEST_P(NetworkIsolationKeyTest, KeyWithNonce) {
   EXPECT_NE(key.ToDebugString(), key2.ToDebugString());
 }
 
-TEST_P(NetworkIsolationKeyTest, OpaqueOriginKey) {
+TEST(NetworkIsolationKeyTest, OpaqueOriginKey) {
   SchemefulSite site_data = SchemefulSite(GURL(kDataUrl));
   NetworkIsolationKey key(site_data, site_data);
   EXPECT_TRUE(key.IsFullyPopulated());
-  EXPECT_EQ(std::string(), key.ToString());
+  EXPECT_EQ(absl::nullopt, key.ToCacheKeyString());
   EXPECT_TRUE(key.IsTransient());
 
   // Create another site with an opaque origin, and make sure it's different and
@@ -114,7 +82,7 @@ TEST_P(NetworkIsolationKeyTest, OpaqueOriginKey) {
   EXPECT_NE(key.ToDebugString(), other_key.ToDebugString());
 }
 
-TEST_P(NetworkIsolationKeyTest, Operators) {
+TEST(NetworkIsolationKeyTest, Operators) {
   base::UnguessableToken nonce1 = base::UnguessableToken::Create();
   base::UnguessableToken nonce2 = base::UnguessableToken::Create();
   if (nonce2 < nonce1)
@@ -166,7 +134,7 @@ TEST_P(NetworkIsolationKeyTest, Operators) {
   }
 }
 
-TEST_P(NetworkIsolationKeyTest, UniqueOriginOperators) {
+TEST(NetworkIsolationKeyTest, UniqueOriginOperators) {
   const auto kSite1 = SchemefulSite(GURL(kDataUrl));
   const auto kSite2 = SchemefulSite(GURL(kDataUrl));
   NetworkIsolationKey key1(kSite1, kSite1);
@@ -187,40 +155,26 @@ TEST_P(NetworkIsolationKeyTest, UniqueOriginOperators) {
   EXPECT_TRUE(!(key1 < key2) || !(key2 < key1));
 }
 
-TEST_P(NetworkIsolationKeyTest, KeyWithOneOpaqueOrigin) {
+TEST(NetworkIsolationKeyTest, KeyWithOneOpaqueOrigin) {
   SchemefulSite site = SchemefulSite(GURL("http://a.test"));
   SchemefulSite opaque_site = SchemefulSite(GURL(kDataUrl));
 
   NetworkIsolationKey key1(site, opaque_site);
   EXPECT_TRUE(key1.IsFullyPopulated());
-  if (ForceIsolationInfoFrameOriginToTopLevelFrameEnabled()) {
-    EXPECT_FALSE(key1.IsTransient());
-    EXPECT_EQ(site.GetDebugString() + " " + site.GetDebugString(),
-              key1.ToString());
-
-    EXPECT_EQ(site.GetDebugString() + " " + site.GetDebugString(),
-              key1.ToDebugString());
-  } else {
-    EXPECT_TRUE(key1.IsTransient());
-    EXPECT_EQ("", key1.ToString());
-    EXPECT_EQ(site.GetDebugString() + " " + opaque_site.GetDebugString(),
-              key1.ToDebugString());
-  }
+  EXPECT_TRUE(key1.IsTransient());
+  EXPECT_EQ(absl::nullopt, key1.ToCacheKeyString());
+  EXPECT_EQ(site.GetDebugString() + " " + opaque_site.GetDebugString(),
+            key1.ToDebugString());
 
   NetworkIsolationKey key2(opaque_site, site);
   EXPECT_TRUE(key2.IsFullyPopulated());
   EXPECT_TRUE(key2.IsTransient());
-  EXPECT_EQ("", key2.ToString());
-  if (ForceIsolationInfoFrameOriginToTopLevelFrameEnabled()) {
-    EXPECT_EQ(opaque_site.GetDebugString() + " " + opaque_site.GetDebugString(),
-              key2.ToDebugString());
-  } else {
-    EXPECT_EQ(opaque_site.GetDebugString() + " " + site.GetDebugString(),
-              key2.ToDebugString());
-  }
+  EXPECT_EQ(absl::nullopt, key2.ToCacheKeyString());
+  EXPECT_EQ(opaque_site.GetDebugString() + " " + site.GetDebugString(),
+            key2.ToDebugString());
 }
 
-TEST_P(NetworkIsolationKeyTest, ValueRoundTripEmpty) {
+TEST(NetworkIsolationKeyTest, ValueRoundTripEmpty) {
   const SchemefulSite kJunkSite = SchemefulSite(GURL("data:text/html,junk"));
 
   // Convert empty key to value and back, expecting the same value.
@@ -234,7 +188,7 @@ TEST_P(NetworkIsolationKeyTest, ValueRoundTripEmpty) {
   EXPECT_EQ(no_frame_site_key, out_key);
 }
 
-TEST_P(NetworkIsolationKeyTest, ValueRoundTripNonEmpty) {
+TEST(NetworkIsolationKeyTest, ValueRoundTripNonEmpty) {
   const SchemefulSite kJunkSite = SchemefulSite(GURL("data:text/html,junk"));
 
   NetworkIsolationKey key1(SchemefulSite(GURL("https://foo.test/")),
@@ -248,7 +202,7 @@ TEST_P(NetworkIsolationKeyTest, ValueRoundTripNonEmpty) {
   EXPECT_EQ(key1, key2);
 }
 
-TEST_P(NetworkIsolationKeyTest, ToValueTransientSite) {
+TEST(NetworkIsolationKeyTest, ToValueTransientSite) {
   const SchemefulSite kSiteWithTransientOrigin =
       SchemefulSite(GURL("data:text/html,transient"));
   NetworkIsolationKey key(kSiteWithTransientOrigin, kSiteWithTransientOrigin);
@@ -257,23 +211,21 @@ TEST_P(NetworkIsolationKeyTest, ToValueTransientSite) {
   EXPECT_FALSE(key.ToValue(&value));
 }
 
-TEST_P(NetworkIsolationKeyTest, FromValueBadData) {
-  // Can't create these inline, since vector initialization lists require a
-  // copy, and base::Value has no copy operator, only move.
-  base::Value::ListStorage not_a_url_list;
-  not_a_url_list.emplace_back(base::Value("not-a-url"));
+TEST(NetworkIsolationKeyTest, FromValueBadData) {
+  base::Value::List not_a_url_list;
+  not_a_url_list.Append("not-a-url");
 
-  base::Value::ListStorage transient_origin_list;
-  transient_origin_list.emplace_back(base::Value("data:text/html,transient"));
+  base::Value::List transient_origin_list;
+  transient_origin_list.Append("data:text/html,transient");
 
-  base::Value::ListStorage too_many_origins_list;
-  too_many_origins_list.emplace_back(base::Value("https://too/"));
-  too_many_origins_list.emplace_back(base::Value("https://many/"));
-  too_many_origins_list.emplace_back(base::Value("https://origins/"));
+  base::Value::List too_many_origins_list;
+  too_many_origins_list.Append("https://too/");
+  too_many_origins_list.Append("https://many/");
+  too_many_origins_list.Append("https://origins/");
 
   const base::Value kTestCases[] = {
-      base::Value(base::Value::Type::STRING),
-      base::Value(base::Value::Type::DICTIONARY),
+      base::Value(std::string()),
+      base::Value(base::Value::Dict()),
       base::Value(std::move(not_a_url_list)),
       base::Value(std::move(transient_origin_list)),
       base::Value(std::move(too_many_origins_list)),
@@ -284,63 +236,54 @@ TEST_P(NetworkIsolationKeyTest, FromValueBadData) {
     // Write the value on failure.
     EXPECT_FALSE(NetworkIsolationKey::FromValue(test_case, &key)) << test_case;
   }
+
+  base::Value::List triple_key_list;
+  triple_key_list.Append("http://www.triple.com");
+  triple_key_list.Append("http://www.key.com");
+  NetworkIsolationKey key;
+  base::Value triple_key_case(std::move(triple_key_list));
+
+  EXPECT_FALSE(NetworkIsolationKey::FromValue(triple_key_case, &key))
+      << triple_key_case;
 }
 
-TEST_P(NetworkIsolationKeyTest, WithFrameSite) {
+TEST(NetworkIsolationKeyTest, WithFrameSite) {
   NetworkIsolationKey key(SchemefulSite(GURL("http://b.test")),
                           SchemefulSite(GURL("http://a.test/")));
   EXPECT_TRUE(key.IsFullyPopulated());
   EXPECT_FALSE(key.IsTransient());
-  if (ForceIsolationInfoFrameOriginToTopLevelFrameEnabled()) {
-    EXPECT_EQ("http://b.test http://b.test", key.ToString());
-    EXPECT_EQ("http://b.test http://b.test", key.ToDebugString());
-  } else {
-    EXPECT_EQ("http://b.test http://a.test", key.ToString());
-    EXPECT_EQ("http://b.test http://a.test", key.ToDebugString());
-  }
+  EXPECT_EQ("http://b.test http://a.test", key.ToCacheKeyString());
+  EXPECT_EQ("http://b.test http://a.test", key.ToDebugString());
   EXPECT_TRUE(key == key);
   EXPECT_FALSE(key != key);
   EXPECT_FALSE(key < key);
 }
 
-TEST_P(NetworkIsolationKeyTest, OpaqueSiteKey) {
+TEST(NetworkIsolationKeyTest, OpaqueSiteKey) {
   SchemefulSite site_data = SchemefulSite(GURL(kDataUrl));
   SchemefulSite site_data2 = SchemefulSite(GURL(kDataUrl));
   SchemefulSite site_a = SchemefulSite(GURL("http://a.test"));
 
   NetworkIsolationKey key1(site_a, site_data);
   EXPECT_TRUE(key1.IsFullyPopulated());
-  if (ForceIsolationInfoFrameOriginToTopLevelFrameEnabled()) {
-    EXPECT_FALSE(key1.IsTransient());
+  EXPECT_TRUE(key1.IsTransient());
 
-    EXPECT_EQ(NetworkIsolationKey(site_a, site_data2), key1);
-    EXPECT_EQ("http://a.test http://a.test", key1.ToString());
-    EXPECT_EQ("http://a.test http://a.test", key1.ToDebugString());
-  } else {
-    EXPECT_TRUE(key1.IsTransient());
-
-    EXPECT_EQ("", key1.ToString());
-    EXPECT_EQ("http://a.test " + site_data.GetDebugString(),
-              key1.ToDebugString());
-    EXPECT_NE(NetworkIsolationKey(site_a, site_data2), key1);
-  }
+  EXPECT_EQ(absl::nullopt, key1.ToCacheKeyString());
+  EXPECT_EQ("http://a.test " + site_data.GetDebugString(),
+            key1.ToDebugString());
+  EXPECT_NE(NetworkIsolationKey(site_a, site_data2), key1);
 
   NetworkIsolationKey key2(site_data, site_a);
   EXPECT_TRUE(key2.IsFullyPopulated());
   EXPECT_TRUE(key2.IsTransient());
-  EXPECT_EQ("", key2.ToString());
-  if (ForceIsolationInfoFrameOriginToTopLevelFrameEnabled()) {
-    EXPECT_EQ(site_data.GetDebugString() + " " + site_data.GetDebugString(),
-              key2.ToDebugString());
-  } else {
-    EXPECT_EQ(site_data.GetDebugString() + " http://a.test",
-              key2.ToDebugString());
-  }
+  EXPECT_EQ(absl::nullopt, key2.ToCacheKeyString());
+  EXPECT_EQ(site_data.GetDebugString() + " http://a.test",
+            key2.ToDebugString());
 
   EXPECT_NE(NetworkIsolationKey(site_data2, site_a), key2);
 }
 
-TEST_P(NetworkIsolationKeyTest, OpaqueSiteKeyBoth) {
+TEST(NetworkIsolationKeyTest, OpaqueSiteKeyBoth) {
   SchemefulSite site_data_1 = SchemefulSite(GURL(kDataUrl));
   SchemefulSite site_data_2 = SchemefulSite(GURL(kDataUrl));
   SchemefulSite site_data_3 = SchemefulSite(GURL(kDataUrl));
@@ -359,27 +302,21 @@ TEST_P(NetworkIsolationKeyTest, OpaqueSiteKeyBoth) {
 
   // Test the equality/comparisons of the various keys
   EXPECT_TRUE(key1 == key2);
-  if (ForceIsolationInfoFrameOriginToTopLevelFrameEnabled()) {
-    EXPECT_TRUE(key1 == key3);
-    EXPECT_FALSE(key1 < key3 || key3 < key1);
-    EXPECT_EQ(key1.ToDebugString(), key3.ToDebugString());
-  } else {
-    EXPECT_FALSE(key1 == key3);
-    EXPECT_TRUE(key1 < key3 || key3 < key1);
-    EXPECT_NE(key1.ToDebugString(), key3.ToDebugString());
-  }
+  EXPECT_FALSE(key1 == key3);
+  EXPECT_TRUE(key1 < key3 || key3 < key1);
+  EXPECT_NE(key1.ToDebugString(), key3.ToDebugString());
   EXPECT_FALSE(key1 < key2 || key2 < key1);
 
   // Test the ToString and ToDebugString
   EXPECT_EQ(key1.ToDebugString(), key2.ToDebugString());
-  EXPECT_EQ("", key1.ToString());
-  EXPECT_EQ("", key2.ToString());
-  EXPECT_EQ("", key3.ToString());
+  EXPECT_EQ(absl::nullopt, key1.ToCacheKeyString());
+  EXPECT_EQ(absl::nullopt, key2.ToCacheKeyString());
+  EXPECT_EQ(absl::nullopt, key3.ToCacheKeyString());
 }
 
 // Make sure that the logic to extract the registerable domain from an origin
 // does not affect the host when using a non-standard scheme.
-TEST_P(NetworkIsolationKeyTest, NonStandardScheme) {
+TEST(NetworkIsolationKeyTest, NonStandardScheme) {
   // Have to register the scheme, or SchemefulSite() will return an opaque
   // origin.
   url::ScopedSchemeRegistryForTests scoped_registry;
@@ -388,25 +325,21 @@ TEST_P(NetworkIsolationKeyTest, NonStandardScheme) {
   SchemefulSite site = SchemefulSite(GURL("foo://a.foo.com"));
   net::NetworkIsolationKey key(site, site);
   EXPECT_FALSE(key.GetTopFrameSite()->opaque());
-  EXPECT_EQ("foo://a.foo.com foo://a.foo.com", key.ToString());
+  EXPECT_EQ("foo://a.foo.com foo://a.foo.com", key.ToCacheKeyString());
 }
 
-TEST_P(NetworkIsolationKeyTest, CreateWithNewFrameSite) {
+TEST(NetworkIsolationKeyTest, CreateWithNewFrameSite) {
   SchemefulSite site_a = SchemefulSite(GURL("http://a.com"));
   SchemefulSite site_b = SchemefulSite(GURL("http://b.com"));
   SchemefulSite site_c = SchemefulSite(GURL("http://c.com"));
 
   net::NetworkIsolationKey key(site_a, site_b);
   NetworkIsolationKey key_c = key.CreateWithNewFrameSite(site_c);
-  if (ForceIsolationInfoFrameOriginToTopLevelFrameEnabled()) {
-    EXPECT_EQ(site_a, key_c.GetFrameSite());
-  } else {
-    EXPECT_EQ(site_c, key_c.GetFrameSite());
-  }
+  EXPECT_EQ(site_c, key_c.GetFrameSite());
   EXPECT_EQ(site_a, key_c.GetTopFrameSite());
 }
 
-TEST_P(NetworkIsolationKeyTest, CreateTransient) {
+TEST(NetworkIsolationKeyTest, CreateTransient) {
   NetworkIsolationKey transient_key = NetworkIsolationKey::CreateTransient();
   EXPECT_TRUE(transient_key.IsFullyPopulated());
   EXPECT_TRUE(transient_key.IsTransient());
@@ -421,6 +354,29 @@ TEST_P(NetworkIsolationKeyTest, CreateTransient) {
   for (int i = 0; i < 1000; ++i) {
     EXPECT_NE(transient_key, NetworkIsolationKey::CreateTransient());
   }
+}
+
+TEST(NetworkIsolationKeyFeatureShiftTest, ValueRoundTrip) {
+  const SchemefulSite kJunkSite = SchemefulSite(GURL("data:text/html,junk"));
+
+  // Create a triple key.
+  NetworkIsolationKey created_triple_key(
+      SchemefulSite(GURL("https://foo.test/")),
+      SchemefulSite(GURL("https://bar.test/")));
+
+  // Assert round trip of triple key succeeds and key is a correctly formed
+  // triple key.
+  base::Value created_triple_key_value;
+  ASSERT_TRUE(created_triple_key.ToValue(&created_triple_key_value));
+  // Fill initial value with junk data, to make sure it's overwritten.
+  NetworkIsolationKey created_triple_key2(kJunkSite, kJunkSite);
+  EXPECT_TRUE(NetworkIsolationKey::FromValue(created_triple_key_value,
+                                             &created_triple_key2));
+  EXPECT_EQ(created_triple_key, created_triple_key2);
+
+  // Serialize a triple key value with frame site enabled.
+  base::Value created_triple_key_value2;
+  ASSERT_TRUE(created_triple_key.ToValue(&created_triple_key_value2));
 }
 
 }  // namespace

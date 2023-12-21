@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,14 +10,15 @@
 #include <string>
 #include <vector>
 
-#include "base/bind.h"
-#include "base/callback.h"
 #include "base/check.h"
 #include "base/check_op.h"
 #include "base/containers/span.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/hash/sha1.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
@@ -26,16 +27,17 @@
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/bind.h"
+#include "base/test/test_future.h"
 #include "base/values.h"
-#include "chrome/browser/ash/certificate_provider/certificate_provider.h"
-#include "chrome/browser/ash/certificate_provider/certificate_provider_service.h"
-#include "chrome/browser/ash/certificate_provider/certificate_provider_service_factory.h"
-#include "chrome/browser/ash/certificate_provider/test_certificate_provider_extension.h"
-#include "chrome/browser/ash/notifications/request_pin_view.h"
+#include "chrome/browser/certificate_provider/certificate_provider.h"
+#include "chrome/browser/certificate_provider/certificate_provider_service.h"
+#include "chrome/browser/certificate_provider/certificate_provider_service_factory.h"
+#include "chrome/browser/certificate_provider/test_certificate_provider_extension.h"
 #include "chrome/browser/extensions/api/certificate_provider/certificate_provider_api.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/browser/ui/views/notifications/request_pin_view_chromeos.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/policy/core/browser/browser_policy_connector.h"
@@ -83,18 +85,14 @@
 #include "ui/views/widget/widget.h"
 #include "ui/views/widget/widget_observer.h"
 
+#if BUILDFLAG(IS_CHROMEOS_LACROS)
+#include "chrome/browser/lacros/cert/cert_db_initializer_factory.h"
+#endif
+
 using testing::Return;
 using testing::_;
 
 namespace {
-
-void StoreDigest(std::vector<uint8_t>* digest,
-                 base::OnceClosure callback,
-                 base::Value value) {
-  ASSERT_TRUE(value.is_blob()) << "Unexpected value in StoreDigest";
-  digest->assign(value.GetBlob().begin(), value.GetBlob().end());
-  std::move(callback).Run();
-}
 
 bool RsaSignRawData(uint16_t openssl_signature_algorithm,
                     const std::vector<uint8_t>& input,
@@ -162,7 +160,7 @@ std::string JsUint8Array(const std::vector<uint8_t>& bytes) {
 std::string GetPageTextContent(content::WebContents* web_contents) {
   std::string text_content;
   EXPECT_TRUE(content::ExecuteScriptAndExtractString(
-      web_contents->GetMainFrame(),
+      web_contents->GetPrimaryMainFrame(),
       "domAutomationController.send(document.body.textContent);",
       &text_content));
   return text_content;
@@ -220,13 +218,13 @@ class CertificateProviderApiTest : public extensions::ExtensionApiTest {
     // certificate selection dialog.
     const std::string autoselect_pattern = R"({"pattern": "*", "filter": {}})";
 
-    base::Value autoselect_policy(base::Value::Type::LIST);
+    base::Value::List autoselect_policy;
     autoselect_policy.Append(autoselect_pattern);
 
     policy_map_.Set(policy::key::kAutoSelectCertificateForUrls,
                     policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
-                    policy::POLICY_SOURCE_CLOUD, std::move(autoselect_policy),
-                    nullptr);
+                    policy::POLICY_SOURCE_CLOUD,
+                    base::Value(std::move(autoselect_policy)), nullptr);
     provider_.UpdateChromePolicy(policy_map_);
 
     content::RunAllPendingInMessageLoop();
@@ -273,17 +271,17 @@ class CertificateProviderApiTest : public extensions::ExtensionApiTest {
 
   std::vector<scoped_refptr<net::X509Certificate>>
   GetAllProvidedCertificates() {
-    base::RunLoop run_loop;
     std::unique_ptr<chromeos::CertificateProvider> cert_provider =
         cert_provider_service_->CreateCertificateProvider();
+
+    base::test::TestFuture<net::ClientCertIdentityList> get_certificates_future;
+    cert_provider->GetCertificates(get_certificates_future.GetCallback());
+
     std::vector<scoped_refptr<net::X509Certificate>> all_provided_certificates;
-    auto callback = base::BindLambdaForTesting(
-        [&](net::ClientCertIdentityList cert_identity_list) {
-          for (const auto& cert_identity : cert_identity_list)
-            all_provided_certificates.push_back(cert_identity->certificate());
-        });
-    cert_provider->GetCertificates(callback.Then(run_loop.QuitClosure()));
-    run_loop.Run();
+    for (const auto& cert_identity : get_certificates_future.Get()) {
+      all_provided_certificates.push_back(cert_identity->certificate());
+    }
+
     return all_provided_certificates;
   }
 
@@ -293,7 +291,8 @@ class CertificateProviderApiTest : public extensions::ExtensionApiTest {
 
  protected:
   testing::NiceMock<policy::MockConfigurationPolicyProvider> provider_;
-  chromeos::CertificateProviderService* cert_provider_service_ = nullptr;
+  raw_ptr<chromeos::CertificateProviderService, DanglingUntriaged>
+      cert_provider_service_ = nullptr;
   policy::PolicyMap policy_map_;
 
  private:
@@ -323,6 +322,15 @@ class CertificateProviderApiTest : public extensions::ExtensionApiTest {
 class CertificateProviderApiMockedExtensionTest
     : public CertificateProviderApiTest {
  public:
+  void SetUpInProcessBrowserTestFixture() override {
+#if BUILDFLAG(IS_CHROMEOS_LACROS)  // Needed for ClientCertStoreLacros
+    CertDbInitializerFactory::GetInstance()
+        ->SetCreateWithBrowserContextForTesting(
+            /*should_create=*/true);
+#endif
+    CertificateProviderApiTest::SetUpInProcessBrowserTestFixture();
+  }
+
   void SetUpOnMainThread() override {
     CertificateProviderApiTest::SetUpOnMainThread();
 
@@ -340,7 +348,7 @@ class CertificateProviderApiMockedExtensionTest
   }
 
   content::RenderFrameHost* GetExtensionMainFrame() const {
-    return extension_contents_->GetMainFrame();
+    return extension_contents_->GetPrimaryMainFrame();
   }
 
   void ExecuteJavascript(const std::string& function) const {
@@ -388,7 +396,7 @@ class CertificateProviderApiMockedExtensionTest
         nullptr /* no WebContents */);
     navigation_observer.StartWatchingNewWebContents();
     ExtensionTestMessageListener sign_digest_listener(
-        "signature request received", /*will_reply=*/false);
+        "signature request received");
 
     // Navigate to a page which triggers a sign request. Navigation is blocked
     // by completion of this request, so we don't wait for navigation to finish.
@@ -416,14 +424,11 @@ class CertificateProviderApiMockedExtensionTest
                                  "signatureRequestAlgorithm;")
             .GetString();
     EXPECT_EQ(expected_request_signature_algorithm, request_algorithm);
-    std::vector<uint8_t> request_data;
-    {
-      base::RunLoop run_loop;
-      GetExtensionMainFrame()->ExecuteJavaScriptForTests(
-          u"signatureRequestData;",
-          base::BindOnce(&StoreDigest, &request_data, run_loop.QuitClosure()));
-      run_loop.Run();
-    }
+
+    base::test::TestFuture<base::Value> exec_js_future;
+    GetExtensionMainFrame()->ExecuteJavaScriptForTests(
+        u"signatureRequestData;", exec_js_future.GetCallback());
+    std::vector<uint8_t> request_data(exec_js_future.Get().GetBlob());
 
     // Load the private key.
     std::string key_pk8 = GetKeyPk8();
@@ -492,8 +497,9 @@ class CertificateProviderApiMockedExtensionTest
     return certificate_data;
   }
 
-  content::WebContents* extension_contents_ = nullptr;
-  const extensions::Extension* extension_ = nullptr;
+  raw_ptr<content::WebContents, DanglingUntriaged> extension_contents_ =
+      nullptr;
+  raw_ptr<const extensions::Extension, DanglingUntriaged> extension_ = nullptr;
   base::FilePath extension_path_;
 };
 
@@ -507,7 +513,7 @@ class CertificateProviderRequestPinTest : public CertificateProviderApiTest {
   void SetUpOnMainThread() override {
     CertificateProviderApiTest::SetUpOnMainThread();
     command_request_listener_ = std::make_unique<ExtensionTestMessageListener>(
-        "GetCommand", /*will_reply=*/true);
+        "GetCommand", ReplyBehavior::kWillReply);
     LoadRequestPinExtension();
   }
 
@@ -532,7 +538,7 @@ class CertificateProviderRequestPinTest : public CertificateProviderApiTest {
         browser(), extension_->GetResourceURL(test_page_file_name)));
   }
 
-  ash::RequestPinView* GetActivePinDialogView() {
+  RequestPinView* GetActivePinDialogView() {
     return cert_provider_service_->pin_dialog_manager()
         ->default_dialog_host_for_testing()
         ->active_view_for_testing();
@@ -557,7 +563,7 @@ class CertificateProviderRequestPinTest : public CertificateProviderApiTest {
   // is expected to send "Success" message after the validation and request to
   // stopPinRequest is done.
   void EnterCorrectPinAndWaitForMessage() {
-    ExtensionTestMessageListener listener("Success", false);
+    ExtensionTestMessageListener listener("Success");
     EnterCode(kCorrectPin);
     ASSERT_TRUE(listener.WaitUntilSatisfied());
   }
@@ -567,14 +573,13 @@ class CertificateProviderRequestPinTest : public CertificateProviderApiTest {
   // extension code is expected to send "Invalid PIN" message after the
   // validation and the new requestPin (with the error) is done.
   void EnterWrongPinAndWaitForMessage() {
-    ExtensionTestMessageListener listener("Invalid PIN", false);
+    ExtensionTestMessageListener listener("Invalid PIN");
     EnterCode(kWrongPin);
     ASSERT_TRUE(listener.WaitUntilSatisfied());
 
     // Check that we have an error message displayed.
-    EXPECT_EQ(
-        gfx::kGoogleRed600,
-        GetActivePinDialogView()->error_label_for_testing()->GetEnabledColor());
+    EXPECT_TRUE(
+        GetActivePinDialogView()->IsTextStyleOfErrorLabelCorrectForTesting());
   }
 
   bool SendCommand(const std::string& command) {
@@ -587,8 +592,7 @@ class CertificateProviderRequestPinTest : public CertificateProviderApiTest {
 
   bool SendCommandAndWaitForMessage(const std::string& command,
                                     const std::string& expected_message) {
-    ExtensionTestMessageListener listener(expected_message,
-                                          /*will_reply=*/false);
+    ExtensionTestMessageListener listener(expected_message);
     if (!SendCommand(command))
       return false;
     return listener.WaitUntilSatisfied();
@@ -601,7 +605,7 @@ class CertificateProviderRequestPinTest : public CertificateProviderApiTest {
     extension_ = LoadExtension(extension_path);
   }
 
-  const extensions::Extension* extension_ = nullptr;
+  raw_ptr<const extensions::Extension, DanglingUntriaged> extension_ = nullptr;
   std::unique_ptr<ExtensionTestMessageListener> command_request_listener_;
 };
 
@@ -968,18 +972,18 @@ IN_PROC_BROWSER_TEST_F(CertificateProviderRequestPinTest, ShowPinDialogClose) {
   for (int i = 0;
        i < extensions::api::certificate_provider::kMaxClosedDialogsPerMinute;
        i++) {
-    ExtensionTestMessageListener listener("User closed the dialog", false);
+    ExtensionTestMessageListener listener("User closed the dialog");
     GetActivePinDialogWindow()->Close();
     ASSERT_TRUE(listener.WaitUntilSatisfied());
   }
 
-  ExtensionTestMessageListener close_listener("User closed the dialog", true);
+  ExtensionTestMessageListener close_listener("User closed the dialog",
+                                              ReplyBehavior::kWillReply);
   GetActivePinDialogWindow()->Close();
   ASSERT_TRUE(close_listener.WaitUntilSatisfied());
   close_listener.Reply("GetLastError");
   ExtensionTestMessageListener last_error_listener(
-      "This request exceeds the MAX_PIN_DIALOGS_CLOSED_PER_MINUTE quota.",
-      false);
+      "This request exceeds the MAX_PIN_DIALOGS_CLOSED_PER_MINUTE quota.");
   ASSERT_TRUE(last_error_listener.WaitUntilSatisfied());
   EXPECT_FALSE(GetActivePinDialogView());
 }
@@ -1014,7 +1018,7 @@ IN_PROC_BROWSER_TEST_F(CertificateProviderRequestPinTest,
   EXPECT_FALSE(GetActivePinDialogView()->textfield_for_testing()->GetEnabled());
 
   // Close the dialog.
-  ExtensionTestMessageListener listener("No attempt left", false);
+  ExtensionTestMessageListener listener("No attempt left");
   GetActivePinDialogWindow()->Close();
   ASSERT_TRUE(listener.WaitUntilSatisfied());
   EXPECT_FALSE(GetActivePinDialogView());
@@ -1028,7 +1032,7 @@ IN_PROC_BROWSER_TEST_F(CertificateProviderRequestPinTest,
 
   EXPECT_TRUE(SendCommandAndWaitForMessage("Request", "request1:begun"));
   ExtensionTestMessageListener listener(
-      base::StringPrintf("request1:success:%s", kWrongPin), false);
+      base::StringPrintf("request1:success:%s", kWrongPin));
   EnterCode(kWrongPin);
   EXPECT_TRUE(listener.WaitUntilSatisfied());
 
@@ -1143,7 +1147,7 @@ IN_PROC_BROWSER_TEST_F(CertificateProviderRequestPinTest, ZeroAttemptsAtStart) {
   // The textfield has to be disabled, as there are no attempts left.
   EXPECT_FALSE(GetActivePinDialogView()->textfield_for_testing()->GetEnabled());
 
-  ExtensionTestMessageListener listener("request1:empty", false);
+  ExtensionTestMessageListener listener("request1:empty");
   GetActivePinDialogWindow()->Close();
   EXPECT_TRUE(listener.WaitUntilSatisfied());
 }
@@ -1209,7 +1213,7 @@ IN_PROC_BROWSER_TEST_F(CertificateProviderRequestPinTest, StartAfterStop) {
 
   EXPECT_TRUE(SendCommandAndWaitForMessage("Request", "request2:begun"));
   ExtensionTestMessageListener listener(
-      base::StringPrintf("request2:success:%s", kCorrectPin), false);
+      base::StringPrintf("request2:success:%s", kCorrectPin));
   EnterCode(kCorrectPin);
   EXPECT_TRUE(listener.WaitUntilSatisfied());
   EXPECT_FALSE(GetActivePinDialogView()->textfield_for_testing()->GetEnabled());
@@ -1229,7 +1233,7 @@ IN_PROC_BROWSER_TEST_F(CertificateProviderRequestPinTest,
         "Request", base::StringPrintf("request%d:begun", i + 1)));
 
     ExtensionTestMessageListener listener(
-        base::StringPrintf("request%d:empty", i + 1), false);
+        base::StringPrintf("request%d:empty", i + 1));
     ASSERT_TRUE(GetActivePinDialogView());
     GetActivePinDialogView()->GetWidget()->CloseWithReason(
         views::Widget::ClosedReason::kCloseButtonClicked);

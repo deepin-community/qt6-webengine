@@ -1,4 +1,4 @@
-# Copyright 2015 The Chromium Authors. All rights reserved.
+# Copyright 2015 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -8,11 +8,11 @@ import("//build/config/features.gni")
 import("//media/media_options.gni")
 
 declare_args() {
-  # Enables Widevine key system support. Enabled by default in Google Chrome,
-  # on Android and Fuchsia platforms.
+  # Enables Widevine key system support. Enabled by default in Google Chrome and
+  # on Android. For Fuchsia, see crbug.com/1354347.
   # Can be optionally enabled in Chromium on non-Android platforms. Please see
   # //src/third_party/widevine/LICENSE file for details.
-  enable_widevine = is_chrome_branded || is_android || is_fuchsia
+  enable_widevine = (is_chrome_branded && !is_fuchsia) || is_android
 }
 
 # Disable Widevine when running linux-chromeos.
@@ -28,7 +28,8 @@ library_widevine_cdm_available =
      (target_cpu == "x64" || target_cpu == "arm" || target_cpu == "arm64")) ||
     (target_os == "linux" && target_cpu == "x64") ||
     (target_os == "mac" && (target_cpu == "x64" || target_cpu == "arm64")) ||
-    (target_os == "win" && (target_cpu == "x86" || target_cpu == "x64"))
+    (target_os == "win" &&
+     (target_cpu == "x86" || target_cpu == "x64" || target_cpu == "arm64"))
 
 # Widevine CDM is available as a library CDM and it's supported by Chromium.
 # This does not define how the CDM will be deployed. It can be bundled or
@@ -42,7 +43,7 @@ enable_library_widevine_cdm =
 # Note: Not enabled on ChromeOS. See https://crbug.com/971433
 enable_widevine_cdm_component =
     enable_library_widevine_cdm &&
-    (is_win || is_mac || is_linux || is_chromeos_lacros) && !use_qt
+    (is_win || is_mac || is_linux || is_chromeos_lacros) && !is_qtwebengine
 
 # Enable (Windows) Media Foundation Widevine CDM component.
 declare_args() {

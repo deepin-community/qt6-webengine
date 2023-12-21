@@ -1,9 +1,11 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef EXTENSIONS_COMMON_CONSTANTS_H_
 #define EXTENSIONS_COMMON_CONSTANTS_H_
+
+#include <cstdint>
 
 #include "base/files/file_path.h"
 #include "base/strings/string_piece_forward.h"
@@ -55,6 +57,10 @@ EXTENSIONS_EXPORT extern const base::FilePath::CharType
 // The name of the directory inside the profile where extensions are
 // installed to.
 EXTENSIONS_EXPORT extern const char kInstallDirectoryName[];
+
+// The name of the directory inside the profile where unpacked (e.g. from .zip
+// file) extensions are installed to.
+EXTENSIONS_EXPORT extern const char kUnpackedInstallDirectoryName[];
 
 // The name of a temporary directory to install an extension into for
 // validation before finalizing install.
@@ -188,10 +194,11 @@ enum class AppLaunchSource {
   kSourceRunOnOsLogin = 24,     // App launched during OS login.
   kSourceProtocolHandler = 25,  // App launch via protocol handler.
   kSourceReparenting = 26,      // APP launch via reparenting.
+  kSourceAppHomePage = 27,      // App launch from chrome://apps (App Home).
 
   // Add any new values above this one, and update kMaxValue to the highest
   // enumerator value.
-  kMaxValue = kSourceReparenting,
+  kMaxValue = kSourceAppHomePage,
 };
 
 // This enum is used for the launch type the user wants to use for an
@@ -226,22 +233,18 @@ EXTENSIONS_EXPORT extern const int kUnknownWindowId;
 // Matches chrome.windows.WINDOW_ID_CURRENT.
 EXTENSIONS_EXPORT extern const int kCurrentWindowId;
 
-enum ExtensionIcons {
-  EXTENSION_ICON_GIGANTOR = 512,
-  EXTENSION_ICON_EXTRA_LARGE = 256,
-  EXTENSION_ICON_LARGE = 128,
-  EXTENSION_ICON_MEDIUM = 48,
-  EXTENSION_ICON_SMALL = 32,
-  EXTENSION_ICON_SMALLISH = 24,
-  EXTENSION_ICON_BITTY = 16,
-  EXTENSION_ICON_INVALID = 0,
-};
+using ExtensionIcons = int;
+constexpr ExtensionIcons EXTENSION_ICON_GIGANTOR = 512;
+constexpr ExtensionIcons EXTENSION_ICON_EXTRA_LARGE = 256;
+constexpr ExtensionIcons EXTENSION_ICON_LARGE = 128;
+constexpr ExtensionIcons EXTENSION_ICON_MEDIUM = 48;
+constexpr ExtensionIcons EXTENSION_ICON_SMALL = 32;
+constexpr ExtensionIcons EXTENSION_ICON_SMALLISH = 24;
+constexpr ExtensionIcons EXTENSION_ICON_BITTY = 16;
+constexpr ExtensionIcons EXTENSION_ICON_INVALID = 0;
 
 // The extension id of the ChromeVox extension.
 EXTENSIONS_EXPORT extern const char kChromeVoxExtensionId[];
-
-// The extension id of the feedback component extension.
-EXTENSIONS_EXPORT extern const char kFeedbackExtensionId[];
 
 // The extension id of the PDF extension.
 EXTENSIONS_EXPORT extern const char kPdfExtensionId[];
@@ -294,6 +297,9 @@ EXTENSIONS_EXPORT extern const char kGoogleSlidesDemoAppId[];
 // The extension id of the Google Keep application.
 EXTENSIONS_EXPORT extern const char kGoogleKeepAppId[];
 
+// The extension id of the office PWA.
+EXTENSIONS_EXPORT extern const char kOfficePwaAppId[];
+
 // The extension id of the Youtube application.
 EXTENSIONS_EXPORT extern const char kYoutubeAppId[];
 
@@ -331,22 +337,6 @@ EXTENSIONS_EXPORT extern const char kGoogleSheetsAppId[];
 EXTENSIONS_EXPORT extern const char kGoogleSlidesAppId[];
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
-// The extension id of the default Demo Mode Highlights app.
-EXTENSIONS_EXPORT extern const char kHighlightsAppId[];
-
-// The extension id of the atlas Demo Mode Highlights app.
-EXTENSIONS_EXPORT extern const char kHighlightsAtlasAppId[];
-
-// The extension id of the default Demo Mode screensaver app.
-EXTENSIONS_EXPORT extern const char kScreensaverAppId[];
-
-// The extension id of the atlas Demo Mode screensaver app.
-EXTENSIONS_EXPORT extern const char kScreensaverAtlasAppId[];
-
-// The extension id of the krane Demo Mode screensaver app. That app is only
-// run on KRANE-ZDKS devices.
-EXTENSIONS_EXPORT extern const char kScreensaverKraneZdksAppId[];
-
 // The id of the testing extension allowed in the signin profile.
 EXTENSIONS_EXPORT extern const char kSigninProfileTestExtensionId[];
 
@@ -357,7 +347,25 @@ EXTENSIONS_EXPORT extern const char kGuestModeTestExtensionId[];
 // that that on other operating systems would be considered part of the OS,
 // for example the file manager.
 EXTENSIONS_EXPORT bool IsSystemUIApp(base::StringPiece extension_id);
-#endif
+#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+
+#if BUILDFLAG(IS_CHROMEOS)
+// The extension id of the default Demo Mode Highlights app.
+EXTENSIONS_EXPORT extern const char kHighlightsAppId[];
+
+// The extension id of the default Demo Mode screensaver app.
+EXTENSIONS_EXPORT extern const char kScreensaverAppId[];
+
+// The extension id of 2022 Demo Mode Highlights app.
+EXTENSIONS_EXPORT extern const char kNewAttractLoopAppId[];
+
+// The extension id of 2022 Demo Mode screensaver app.
+EXTENSIONS_EXPORT extern const char kNewHighlightsAppId[];
+
+// Returns true if this app is one of Demo Mode Chrome Apps, including
+// attract loop and highlights apps.
+EXTENSIONS_EXPORT bool IsDemoModeChromeApp(base::StringPiece extension_id);
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 // True if the id matches any of the QuickOffice extension ids.
 EXTENSIONS_EXPORT bool IsQuickOfficeExtension(const std::string& id);
@@ -379,18 +387,18 @@ EXTENSIONS_EXPORT extern const char* const kHangoutsExtensionIds[6];
 // Error message when enterprise policy blocks scripting of webpage.
 EXTENSIONS_EXPORT extern const char kPolicyBlockedScripting[];
 
+// Error message when access to incognito preferences is denied.
+EXTENSIONS_EXPORT extern const char kIncognitoErrorMessage[];
+
+// Error message when setting a pref with "incognito_session_only"
+// scope is denied.
+EXTENSIONS_EXPORT extern const char kIncognitoSessionOnlyErrorMessage[];
+
+// Error message when an invalid color is provided to an API method.
+EXTENSIONS_EXPORT extern const char kInvalidColorError[];
+
 // The default block size for hashing used in content verification.
 EXTENSIONS_EXPORT extern const int kContentVerificationDefaultBlockSize;
-
-// The origin of the CryptoToken component extension, which implements the
-// deprecated U2F Security Key API.
-// TODO(1224886): Delete together with CryptoToken code.
-EXTENSIONS_EXPORT extern const char kCryptotokenExtensionId[];
-
-// The name of the CryptoToken component extension deprecation trial, which
-// allows making requests to the extension after it has been default disabled.
-// TODO(1224886): Delete together with CryptoToken code.
-EXTENSIONS_EXPORT extern const char kCryptotokenDeprecationTrialName[];
 
 }  // namespace extension_misc
 

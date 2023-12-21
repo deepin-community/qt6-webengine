@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -23,7 +23,6 @@
 namespace blink {
 
 enum class NGBreakStatus;
-class DeferredShapingMinimumTopScope;
 class NGConstraintSpace;
 class NGFragment;
 
@@ -46,6 +45,7 @@ struct NGInflowChildData {
   NGBoxStrut margins;
   bool margins_fully_resolved;
   bool allow_discard_start_margin;
+  bool is_pushed_by_floats = false;
 };
 
 // A class for general block layout (e.g. a <div> with no special style).
@@ -66,11 +66,11 @@ class CORE_EXPORT NGBlockLayoutAlgorithm
   const NGLayoutResult* Layout() override;
 
  private:
+  NOINLINE const NGLayoutResult* HandleNonsuccessfulLayoutResult(
+      const NGLayoutResult*);
+
   NOINLINE const NGLayoutResult* LayoutWithInlineChildLayoutContext(
       const NGLayoutInputNode& first_child);
-  NOINLINE const NGLayoutResult* LayoutWithItemsBuilder(
-      const NGInlineNode& first_child,
-      NGInlineChildLayoutContext* context);
 
   NOINLINE const NGLayoutResult* RelayoutIgnoringLineClamp();
 
@@ -105,16 +105,13 @@ class CORE_EXPORT NGBlockLayoutAlgorithm
   // Creates a new constraint space for the current child.
   NGConstraintSpace CreateConstraintSpaceForChild(
       const NGLayoutInputNode child,
+      const NGBreakToken* child_break_token,
       const NGInflowChildData& child_data,
       const LogicalSize child_available_size,
       bool is_new_fc,
       const absl::optional<LayoutUnit> bfc_block_offset = absl::nullopt,
       bool has_clearance_past_adjoining_floats = false,
       LayoutUnit block_start_annotation_space = LayoutUnit());
-
-  [[nodiscard]] DeferredShapingMinimumTopScope CreateMinimumTopScopeForChild(
-      const NGLayoutInputNode child,
-      const NGInflowChildData& child_data) const;
 
   // @return Estimated BFC block offset for the "to be layout" child.
   NGInflowChildData ComputeChildData(const NGPreviousInflowPosition&,
@@ -178,14 +175,14 @@ class CORE_EXPORT NGBlockLayoutAlgorithm
   // block offset has now been resolved.
   NGLayoutResult::EStatus HandleNewFormattingContext(
       NGLayoutInputNode child,
-      const NGBreakToken* child_break_token,
+      const NGBlockBreakToken* child_break_token,
       NGPreviousInflowPosition*);
 
   // Performs the actual layout of a new formatting context. This may be called
   // multiple times from HandleNewFormattingContext.
   const NGLayoutResult* LayoutNewFormattingContext(
       NGLayoutInputNode child,
-      const NGBreakToken* child_break_token,
+      const NGBlockBreakToken* child_break_token,
       const NGInflowChildData&,
       NGBfcOffset origin_offset,
       bool abort_if_cleared,
@@ -211,13 +208,6 @@ class CORE_EXPORT NGBlockLayoutAlgorithm
       NGPreviousInflowPosition*,
       NGInlineChildLayoutContext*,
       const NGInlineBreakToken** previous_inline_break_token);
-
-  // Performs any final adjustments for table-cells.
-  void FinalizeForTableCell(LayoutUnit unconstrained_intrinsic_block_size);
-
-  // Return the amount of block space available in the current fragmentainer
-  // for the node being laid out by this algorithm.
-  LayoutUnit FragmentainerSpaceAvailable() const;
 
   // Consume all remaining fragmentainer space. This happens when we decide to
   // break before a child.
@@ -248,9 +238,10 @@ class CORE_EXPORT NGBlockLayoutAlgorithm
   void UpdateEarlyBreakBetweenLines();
 
   // Propagates the baseline from the given |child| if needed.
-  void PropagateBaselineFromChild(const NGPhysicalFragment& child,
-                                  LayoutUnit block_offset);
+  void PropagateBaselineFromLineBox(const NGPhysicalFragment& child,
+                                    LayoutUnit block_offset);
   void PropagateBaselineFromBlockChild(const NGPhysicalFragment& child,
+                                       const NGBoxStrut& margins,
                                        LayoutUnit block_offset);
 
   // If still unresolved, resolve the fragment's BFC block offset.

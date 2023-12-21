@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -21,8 +21,7 @@
 
 namespace cc {
 
-class PaintOpBuffer;
-using PaintRecord = PaintOpBuffer;
+class PaintRecord;
 
 class CC_PAINT_EXPORT PaintWorkletInput
     : public base::RefCountedThreadSafe<PaintWorkletInput> {
@@ -70,13 +69,13 @@ class CC_PAINT_EXPORT PaintWorkletInput
   struct CC_PAINT_EXPORT PropertyValue {
     PropertyValue();
     explicit PropertyValue(float value);
-    explicit PropertyValue(SkColor value);
+    explicit PropertyValue(SkColor4f value);
     PropertyValue(const PropertyValue&);
     ~PropertyValue();
     bool has_value() const;
     void reset();
     absl::optional<float> float_value;
-    absl::optional<SkColor> color_value;
+    absl::optional<SkColor4f> color_value;
   };
 
   virtual gfx::SizeF GetSize() const = 0;
@@ -105,7 +104,7 @@ class CC_PAINT_EXPORT PaintWorkletInput
 // the PaintWorklet to enable efficient invalidation of dirty PaintWorklets.
 using PaintWorkletRecordMap =
     base::flat_map<scoped_refptr<const PaintWorkletInput>,
-                   std::pair<PaintImage::Id, sk_sp<PaintRecord>>>;
+                   std::pair<PaintImage::Id, absl::optional<PaintRecord>>>;
 
 }  // namespace cc
 

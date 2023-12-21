@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,16 +6,19 @@
 
 #include <string>
 
-#include "base/bind.h"
 #include "base/debug/dump_without_crashing.h"
+#include "base/functional/bind.h"
+#include "base/ranges/algorithm.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/types/optional_util.h"
 #include "build/build_config.h"
 #include "components/domain_reliability/monitor.h"
 #include "net/base/features.h"
 #include "net/base/isolation_info.h"
 #include "net/base/load_flags.h"
 #include "net/base/net_errors.h"
-#include "net/cookies/same_party_context.h"
+#include "net/cookies/cookie_setting_override.h"
+#include "net/first_party_sets/same_party_context.h"
 #include "net/url_request/referrer_policy.h"
 #include "net/url_request/url_request.h"
 #include "services/network/cookie_manager.h"
@@ -185,22 +188,15 @@ void NetworkServiceNetworkDelegate::OnPACScriptError(
 
 bool NetworkServiceNetworkDelegate::OnAnnotateAndMoveUserBlockedCookies(
     const net::URLRequest& request,
+    const net::FirstPartySetMetadata& first_party_set_metadata,
     net::CookieAccessResultList& maybe_included_cookies,
-    net::CookieAccessResultList& excluded_cookies,
-    bool allowed_from_caller) {
-  if (!allowed_from_caller) {
-    ExcludeAllCookies(net::CookieInclusionStatus::EXCLUDE_USER_PREFERENCES,
-                      maybe_included_cookies, excluded_cookies);
-    return false;
-  }
-
+    net::CookieAccessResultList& excluded_cookies) {
   if (!network_context_->cookie_manager()
            ->cookie_settings()
            .AnnotateAndMoveUserBlockedCookies(
                request.url(), request.site_for_cookies(),
-               request.isolation_info().top_frame_origin().has_value()
-                   ? &request.isolation_info().top_frame_origin().value()
-                   : nullptr,
+               base::OptionalToPtr(request.isolation_info().top_frame_origin()),
+               first_party_set_metadata, request.cookie_setting_overrides(),
                maybe_included_cookies, excluded_cookies)) {
     // CookieSettings has already moved and annotated the cookies.
     return false;
@@ -229,15 +225,16 @@ bool NetworkServiceNetworkDelegate::OnAnnotateAndMoveUserBlockedCookies(
 bool NetworkServiceNetworkDelegate::OnCanSetCookie(
     const net::URLRequest& request,
     const net::CanonicalCookie& cookie,
-    net::CookieOptions* options,
-    bool allowed_from_caller) {
+    net::CookieOptions* options) {
   bool allowed =
-      allowed_from_caller &&
       network_context_->cookie_manager()->cookie_settings().IsCookieAccessible(
           cookie, request.url(), request.site_for_cookies(),
-          request.isolation_info().top_frame_origin());
+          request.isolation_info().top_frame_origin(),
+          request.cookie_setting_overrides());
   if (!allowed)
     return false;
+  // The remaining checks do not consider setting overrides since they enforce
+  // explicit disablement via Android Webview APIs.
   URLLoader* url_loader = URLLoader::ForRequest(request);
   if (url_loader)
     return url_loader->AllowCookies(request.url(), request.site_for_cookies());
@@ -251,14 +248,12 @@ bool NetworkServiceNetworkDelegate::OnCanSetCookie(
 
 net::NetworkDelegate::PrivacySetting
 NetworkServiceNetworkDelegate::OnForcePrivacyMode(
-    const GURL& url,
-    const net::SiteForCookies& site_for_cookies,
-    const absl::optional<url::Origin>& top_frame_origin,
-    net::SamePartyContext::Type same_party_context_type) const {
+    const net::URLRequest& request) const {
   return network_context_->cookie_manager()
       ->cookie_settings()
-      .IsPrivacyModeEnabled(url, site_for_cookies, top_frame_origin,
-                            same_party_context_type);
+      .IsPrivacyModeEnabled(request.url(), request.site_for_cookies(),
+                            request.isolation_info().top_frame_origin(),
+                            request.cookie_setting_overrides());
 }
 
 bool NetworkServiceNetworkDelegate::
@@ -289,7 +284,9 @@ bool NetworkServiceNetworkDelegate::OnCanQueueReportingReport(
     const url::Origin& origin) const {
   return network_context_->cookie_manager()
       ->cookie_settings()
-      .IsFullCookieAccessAllowed(origin.GetURL(), origin.GetURL());
+      .IsFullCookieAccessAllowed(origin.GetURL(),
+                                 net::SiteForCookies::FromOrigin(origin),
+                                 origin, net::CookieSettingOverrides());
 }
 
 void NetworkServiceNetworkDelegate::OnCanSendReportingReports(
@@ -308,7 +305,7 @@ void NetworkServiceNetworkDelegate::OnCanSendReportingReports(
   }
 
   std::vector<url::Origin> origin_vector;
-  std::copy(origins.begin(), origins.end(), std::back_inserter(origin_vector));
+  base::ranges::copy(origins, std::back_inserter(origin_vector));
   client->OnCanSendReportingReports(
       origin_vector,
       base::BindOnce(
@@ -321,7 +318,9 @@ bool NetworkServiceNetworkDelegate::OnCanSetReportingClient(
     const GURL& endpoint) const {
   return network_context_->cookie_manager()
       ->cookie_settings()
-      .IsFullCookieAccessAllowed(origin.GetURL(), origin.GetURL());
+      .IsFullCookieAccessAllowed(origin.GetURL(),
+                                 net::SiteForCookies::FromOrigin(origin),
+                                 origin, net::CookieSettingOverrides());
 }
 
 bool NetworkServiceNetworkDelegate::OnCanUseReportingClient(
@@ -329,7 +328,19 @@ bool NetworkServiceNetworkDelegate::OnCanUseReportingClient(
     const GURL& endpoint) const {
   return network_context_->cookie_manager()
       ->cookie_settings()
-      .IsFullCookieAccessAllowed(origin.GetURL(), origin.GetURL());
+      .IsFullCookieAccessAllowed(origin.GetURL(),
+                                 net::SiteForCookies::FromOrigin(origin),
+                                 origin, net::CookieSettingOverrides());
+}
+
+absl::optional<net::FirstPartySetsCacheFilter::MatchInfo>
+NetworkServiceNetworkDelegate::
+    OnGetFirstPartySetsCacheFilterMatchInfoMaybeAsync(
+        const net::SchemefulSite& request_site,
+        base::OnceCallback<void(net::FirstPartySetsCacheFilter::MatchInfo)>
+            callback) const {
+  return network_context_->first_party_sets_access_delegate()
+      .GetCacheFilterMatchInfo(request_site, std::move(callback));
 }
 
 int NetworkServiceNetworkDelegate::HandleClearSiteDataHeader(

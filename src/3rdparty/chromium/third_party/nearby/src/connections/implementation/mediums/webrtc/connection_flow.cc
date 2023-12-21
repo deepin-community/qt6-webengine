@@ -28,7 +28,6 @@
 #include "webrtc/api/data_channel_interface.h"
 #include "webrtc/api/jsep.h"
 
-namespace location {
 namespace nearby {
 namespace connections {
 namespace mediums {
@@ -167,15 +166,20 @@ void ConnectionFlow::CreateOfferOnSignalingThread(
   webrtc::DataChannelInit data_channel_init;
   data_channel_init.reliable = true;
   auto pc = GetPeerConnection();
-  CreateSocketFromDataChannel(
-      pc->CreateDataChannel(kDataChannelName, &data_channel_init));
+  auto result =
+      pc->CreateDataChannelOrError(kDataChannelName, &data_channel_init);
+  if (!result.ok()) {
+    success_future.SetException({Exception::kFailed});
+    return;
+  }
+  CreateSocketFromDataChannel(result.MoveValue());
 
   webrtc::PeerConnectionInterface::RTCOfferAnswerOptions options;
   rtc::scoped_refptr<CreateSessionDescriptionObserverImpl> observer(
       new rtc::RefCountedObject<CreateSessionDescriptionObserverImpl>(
           this, success_future, State::kCreatingOffer,
           State::kWaitingForAnswer));
-  pc->CreateOffer(observer, options);
+  pc->CreateOffer(observer.get(), options);
 }
 
 SessionDescriptionWrapper ConnectionFlow::CreateAnswer() {
@@ -207,7 +211,7 @@ void ConnectionFlow::CreateAnswerOnSignalingThread(
           this, success_future, State::kCreatingAnswer,
           State::kWaitingToConnect));
   auto pc = GetPeerConnection();
-  pc->CreateAnswer(observer, options);
+  pc->CreateAnswer(observer.get(), options);
 }
 
 bool ConnectionFlow::SetLocalSessionDescription(SessionDescriptionWrapper sdp) {
@@ -416,9 +420,10 @@ void ConnectionFlow::CreateSocketFromDataChannel(
         // Pass socket wrapper by copy on purpose
         data_channel_listener_.data_channel_open_cb(socket_wrapper_);
       }},
-      .socket_closed_cb = [callback =
-                               data_channel_listener_.data_channel_closed_cb](
-                              WebRtcSocket*) { callback(); },
+      .socket_closed_cb =
+          [this](WebRtcSocket*) {
+            data_channel_listener_.data_channel_closed_cb();
+          },
   });
   socket_wrapper_ = WebRtcSocketWrapper(std::move(socket));
 }
@@ -516,7 +521,7 @@ bool ConnectionFlow::RunOnSignalingThread(Runnable&& runnable) {
   // but we can access the signaling thread handle.
   pc->signaling_thread()->PostTask(
       [can_run_tasks = std::weak_ptr<void>(can_run_tasks_),
-       task = std::move(runnable)] {
+       task = std::move(runnable)]() mutable {
         // don't run the task if the weak_ptr is no longer valid.
         // shared_ptr |can_run_tasks_| is destroyed on the same thread
         // (signaling thread). This guarantees that if the weak_ptr is valid
@@ -553,4 +558,3 @@ ConnectionFlow::GetAndResetPeerConnection() {
 }  // namespace mediums
 }  // namespace connections
 }  // namespace nearby
-}  // namespace location

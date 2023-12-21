@@ -237,12 +237,13 @@ class StructureType(Record, Type):
                 m for m in json_data['members'] if is_enabled(m)
             ]
         Type.__init__(self, name, dict(json_data, **json_data_override))
-        self.chained = json_data.get("chained", None)
-        self.extensible = json_data.get("extensible", None)
+        self.chained = json_data.get('chained', None)
+        self.extensible = json_data.get('extensible', None)
         if self.chained:
-            assert (self.chained == "in" or self.chained == "out")
+            assert self.chained == 'in' or self.chained == 'out'
+            assert 'chain roots' in json_data
         if self.extensible:
-            assert (self.extensible == "in" or self.extensible == "out")
+            assert self.extensible == 'in' or self.extensible == 'out'
         # Chained structs inherit from wgpu::ChainedStruct, which has
         # nextInChain, so setting both extensible and chained would result in
         # two nextInChain members.
@@ -348,6 +349,8 @@ def link_object(obj, types):
 
 def link_structure(struct, types):
     struct.members = linked_record_members(struct.json_data['members'], types)
+    struct.chain_roots = [types[root] for root in struct.json_data.get('chain roots', [])]
+    assert all((root.category == 'structure' for root in struct.chain_roots))
 
 
 def link_function_pointer(function_pointer, types):
@@ -774,7 +777,7 @@ class MultiGeneratorFromDawnJSON(Generator):
     def add_commandline_arguments(self, parser):
         allowed_targets = [
             'dawn_headers', 'cpp_headers', 'cpp', 'proc', 'mock_api', 'wire',
-            'native_utils'
+            'native_utils', 'dawn_lpmfuzz_cpp', 'dawn_lpmfuzz_proto'
         ]
 
         parser.add_argument('--dawn-json',
@@ -785,6 +788,10 @@ class MultiGeneratorFromDawnJSON(Generator):
                             default=None,
                             type=str,
                             help='The DAWN WIRE JSON definition to use.')
+        parser.add_argument("--lpm-json",
+                            default=None,
+                            type=str,
+                            help='The DAWN LPM FUZZER definitions to use.')
         parser.add_argument(
             '--targets',
             required=True,
@@ -792,6 +799,7 @@ class MultiGeneratorFromDawnJSON(Generator):
             help=
             'Comma-separated subset of targets to output. Available targets: '
             + ', '.join(allowed_targets))
+
     def get_file_renders(self, args):
         with open(args.dawn_json) as f:
             loaded_json = json.loads(f.read())
@@ -802,6 +810,11 @@ class MultiGeneratorFromDawnJSON(Generator):
         if args.wire_json:
             with open(args.wire_json) as f:
                 wire_json = json.loads(f.read())
+
+        lpm_json = None
+        if args.lpm_json:
+            with open(args.lpm_json) as f:
+                lpm_json = json.loads(f.read())
 
         renders = []
 
@@ -948,16 +961,16 @@ class MultiGeneratorFromDawnJSON(Generator):
                            'src/' + native_dir + '/' + api + '_absl_format_autogen.cpp',
                            frontend_params))
             renders.append(
+                FileRender(
+                    'dawn/native/api_StreamImpl.cpp', 'src/' + native_dir +
+                    '/' + api + '_StreamImpl_autogen.cpp', frontend_params))
+            renders.append(
                 FileRender('dawn/native/ObjectType.h',
                            'src/' + native_dir + '/ObjectType_autogen.h',
                            frontend_params))
             renders.append(
                 FileRender('dawn/native/ObjectType.cpp',
                            'src/' + native_dir + '/ObjectType_autogen.cpp',
-                           frontend_params))
-            renders.append(
-                FileRender('dawn/native/CacheKey.cpp',
-                           'src/' + native_dir + '/CacheKey_autogen.cpp',
                            frontend_params))
 
         if 'wire' in targets:
@@ -1022,12 +1035,53 @@ class MultiGeneratorFromDawnJSON(Generator):
                     'src/dawn/wire/server/ServerPrototypes_autogen.inc',
                     wire_params))
 
+        if 'dawn_lpmfuzz_proto' in targets:
+            params_dawn_wire = parse_json(loaded_json,
+                                          enabled_tags=['dawn', 'deprecated'],
+                                          disabled_tags=['native'])
+            additional_params = compute_wire_params(params_dawn_wire,
+                                                    wire_json)
+
+            lpm_params = [
+                RENDER_PARAMS_BASE, params_dawn_wire, {}, additional_params
+            ]
+
+            renders.append(
+                FileRender('dawn/fuzzers/lpmfuzz/dawn_lpm.proto',
+                           'src/dawn/fuzzers/lpmfuzz/dawn_lpm_autogen.proto',
+                           lpm_params))
+
+        if 'dawn_lpmfuzz_cpp' in targets:
+            params_dawn_wire = parse_json(loaded_json,
+                                          enabled_tags=['dawn', 'deprecated'],
+                                          disabled_tags=['native'])
+            additional_params = compute_wire_params(params_dawn_wire,
+                                                    wire_json)
+
+            lpm_params = [
+                RENDER_PARAMS_BASE, params_dawn_wire, {}, additional_params
+            ]
+
+            renders.append(
+                FileRender(
+                    'dawn/fuzzers/lpmfuzz/DawnLPMSerializer.cpp',
+                    'src/dawn/fuzzers/lpmfuzz/DawnLPMSerializer_autogen.cpp',
+                    lpm_params))
+
+            renders.append(
+                FileRender(
+                    'dawn/fuzzers/lpmfuzz/DawnLPMSerializer.h',
+                    'src/dawn/fuzzers/lpmfuzz/DawnLPMSerializer_autogen.h',
+                    lpm_params))
+
         return renders
 
     def get_dependencies(self, args):
         deps = [os.path.abspath(args.dawn_json)]
         if args.wire_json != None:
             deps += [os.path.abspath(args.wire_json)]
+        if args.lpm_json != None:
+            deps += [os.path.abspath(args.lpm_json)]
         return deps
 
 

@@ -1,12 +1,12 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include <memory>
 
-#include "base/bind.h"
 #include "base/files/file_util.h"
-#include "base/json/json_reader.h"
+#include "base/functional/bind.h"
+#include "base/test/values_test_util.h"
 #include "services/data_decoder/xml_parser.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -53,11 +53,8 @@ void TestParseXml(const std::string& xml,
   EXPECT_FALSE(error) << "Unexpected error: " << *error;
   EXPECT_TRUE(actual_value);
 
-  std::unique_ptr<base::Value> expected_value =
-      base::JSONReader::ReadDeprecated(json);
-  DCHECK(expected_value) << "Bad test, incorrect JSON: " << json;
-
-  EXPECT_EQ(*expected_value, *actual_value);
+  base::Value expected_value = base::test::ParseJson(json);
+  EXPECT_EQ(expected_value, *actual_value);
 }
 
 }  // namespace

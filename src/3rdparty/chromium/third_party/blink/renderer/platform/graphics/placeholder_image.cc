@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -244,20 +244,19 @@ PaintImage PlaceholderImage::PaintImageForCurrentFrame() {
   const gfx::Rect dest_rect(size_);
   if (paint_record_for_current_frame_) {
     return builder
-        .set_paint_record(paint_record_for_current_frame_, dest_rect,
+        .set_paint_record(*paint_record_for_current_frame_, dest_rect,
                           paint_record_content_id_)
         .TakePaintImage();
   }
 
   PaintRecorder paint_recorder;
-  Draw(paint_recorder.beginRecording(gfx::RectToSkRect(dest_rect)),
-       cc::PaintFlags(), gfx::RectF(dest_rect), gfx::RectF(dest_rect),
-       ImageDrawOptions());
+  Draw(paint_recorder.beginRecording(), cc::PaintFlags(), gfx::RectF(dest_rect),
+       gfx::RectF(dest_rect), ImageDrawOptions());
 
   paint_record_for_current_frame_ = paint_recorder.finishRecordingAsPicture();
   paint_record_content_id_ = PaintImage::GetNextContentId();
   return builder
-      .set_paint_record(paint_record_for_current_frame_, dest_rect,
+      .set_paint_record(*paint_record_for_current_frame_, dest_rect,
                         paint_record_content_id_)
       .TakePaintImage();
 }
@@ -268,7 +267,7 @@ void PlaceholderImage::SetIconAndTextScaleFactor(
     return;
   icon_and_text_scale_factor_ = icon_and_text_scale_factor;
   cached_text_width_.reset();
-  paint_record_for_current_frame_.reset();
+  paint_record_for_current_frame_ = absl::nullopt;
 }
 
 void PlaceholderImage::Draw(cc::PaintCanvas* canvas,
@@ -294,7 +293,7 @@ void PlaceholderImage::Draw(cc::PaintCanvas* canvas,
     return;
   }
 
-  if (text_.IsEmpty()) {
+  if (text_.empty()) {
     DrawCenteredIcon(canvas, base_flags, dest_rect,
                      draw_options.sampling_options,
                      icon_and_text_scale_factor_);
@@ -351,7 +350,7 @@ void PlaceholderImage::Draw(cc::PaintCanvas* canvas,
       canvas, TextRunPaintInfo(TextRun(text_)),
       gfx::PointF(text_x, feature_y + icon_and_text_scale_factor_ *
                                           (kTextPaddingY + kFontSize)),
-      Font::kUseFallbackIfFontNotReady, 1.0f, flags);
+      Font::kUseFallbackIfFontNotReady, flags);
 }
 
 void PlaceholderImage::DrawPattern(GraphicsContext& context,

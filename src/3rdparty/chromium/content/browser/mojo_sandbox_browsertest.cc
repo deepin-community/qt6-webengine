@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,9 +6,9 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/containers/span.h"
+#include "base/functional/bind.h"
 #include "base/memory/read_only_shared_memory_region.h"
 #include "base/memory/shared_memory_mapping.h"
 #include "base/memory/unsafe_shared_memory_region.h"
@@ -54,7 +54,7 @@ class MojoSandboxTest : public ContentBrowserTest {
 
   mojo::Remote<mojom::TestService> BindTestService() {
     mojo::Remote<mojom::TestService> test_service;
-    host_->GetChildProcess()->BindReceiver(
+    host_->GetChildProcess()->BindServiceInterface(
         test_service.BindNewPipeAndPassReceiver());
     return test_service;
   }
@@ -184,18 +184,12 @@ IN_PROC_BROWSER_TEST_F(MojoSandboxTest, MAYBE_NotIsProcessSandboxed) {
       }));
   run_loop.Run();
   ASSERT_TRUE(maybe_is_sandboxed.has_value());
-#if BUILDFLAG(IS_ANDROID)
-  // Android does not support unsandboxed utility processes. See
-  // org.chromium.content.browser.ChildProcessLauncherHelperImpl#createAndStart
-  EXPECT_TRUE(maybe_is_sandboxed.value());
-#else
   // If the content_browsertests is launched with --no-sandbox, that will
   // get passed down to the browser and all child processes. In that case,
   // IsProcessSandboxed() will report true, per the API.
   bool no_sandbox = base::CommandLine::ForCurrentProcess()->HasSwitch(
       sandbox::policy::switches::kNoSandbox);
   EXPECT_EQ(no_sandbox, maybe_is_sandboxed.value());
-#endif
 }
 
 }  //  namespace

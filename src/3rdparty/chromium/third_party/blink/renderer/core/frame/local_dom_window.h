@@ -29,10 +29,15 @@
 
 #include <memory>
 
+#include "base/task/single_thread_task_runner.h"
 #include "services/metrics/public/cpp/ukm_recorder.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
+#include "services/network/public/mojom/content_security_policy.mojom-blink.h"
+#include "third_party/blink/public/common/frame/fullscreen_request_token.h"
+#include "third_party/blink/public/common/frame/history_user_activation_state.h"
 #include "third_party/blink/public/common/frame/payment_request_token.h"
 #include "third_party/blink/public/common/metrics/post_message_counter.h"
+#include "third_party/blink/public/common/scheduler/task_attribution_id.h"
 #include "third_party/blink/public/common/tokens/tokens.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_value.h"
 #include "third_party/blink/renderer/core/core_export.h"
@@ -76,6 +81,7 @@ class LocalFrame;
 class MediaQueryList;
 class MessageEvent;
 class Modulator;
+class NavigationApi;
 class Navigator;
 class Screen;
 class ScriptController;
@@ -116,7 +122,7 @@ class CORE_EXPORT LocalDOMWindow final : public DOMWindow,
 
   static LocalDOMWindow* From(const ScriptState*);
 
-  LocalDOMWindow(LocalFrame&, WindowAgent*, bool anonymous);
+  LocalDOMWindow(LocalFrame&, WindowAgent*);
   ~LocalDOMWindow() override;
 
   // Returns the token identifying the frame that this ExecutionContext was
@@ -157,6 +163,7 @@ class CORE_EXPORT LocalDOMWindow final : public DOMWindow,
   const KURL& BaseURL() const final;
   KURL CompleteURL(const String&) const final;
   void DisableEval(const String& error_message) final;
+  void SetWasmEvalErrorMessage(const String& error_message) final;
   String UserAgent() const final;
   UserAgentMetadata GetUserAgentMetadata() const final;
   HttpsState GetHttpsState() const final;
@@ -187,8 +194,12 @@ class CORE_EXPORT LocalDOMWindow final : public DOMWindow,
       // current JS file would be used as source_file instead.
       const String& source_file = g_empty_string) const final;
   void SetIsInBackForwardCache(bool) final;
+  bool HasStorageAccess() const final;
 
   void AddConsoleMessageImpl(ConsoleMessage*, bool discard_duplicates) final;
+
+  scoped_refptr<base::SingleThreadTaskRunner>
+  GetAgentGroupSchedulerCompositorTaskRunner() final;
 
   // UseCounter orverrides:
   void CountUse(mojom::WebFeature feature) final;
@@ -196,6 +207,10 @@ class CORE_EXPORT LocalDOMWindow final : public DOMWindow,
   // Count |feature| only when this window is associated with a cross-origin
   // iframe.
   void CountUseOnlyInCrossOriginIframe(mojom::blink::WebFeature feature);
+
+  // Count |feature| only when this window is associated with a same-origin
+  // iframe with the outermost main frame.
+  void CountUseOnlyInSameOriginIframe(mojom::blink::WebFeature feature);
 
   // Count |feature| only when this window is associated with a cross-site
   // iframe. A "site" is a scheme and registrable domain.
@@ -205,6 +220,16 @@ class CORE_EXPORT LocalDOMWindow final : public DOMWindow,
   void CountPermissionsPolicyUsage(
       mojom::blink::PermissionsPolicyFeature feature,
       UseCounterImpl::PermissionsPolicyUsageType type);
+
+  // Checks if navigation to Javascript URL is allowed. This check should run
+  // before any action is taken (e.g. creating new window) for all
+  // same-origin navigations.
+  String CheckAndGetJavascriptUrl(
+      const DOMWrapperWorld* world,
+      const KURL& url,
+      Element* element,
+      network::mojom::CSPDisposition csp_disposition =
+          network::mojom::CSPDisposition::CHECK);
 
   Document* InstallNewDocument(const DocumentInit&);
 
@@ -318,10 +343,6 @@ class CORE_EXPORT LocalDOMWindow final : public DOMWindow,
   // https://html.spec.whatwg.org/C/#windoworworkerglobalscope-mixin
   void queueMicrotask(V8VoidFunction*);
 
-  // https://wicg.github.io/origin-policy/#monkeypatch-html-windoworworkerglobalscope
-  const Vector<String>& originPolicyIds() const;
-  void SetOriginPolicyIds(const Vector<String>&);
-
   // https://html.spec.whatwg.org/C/#dom-originagentcluster
   bool originAgentCluster() const;
 
@@ -397,10 +418,11 @@ class CORE_EXPORT LocalDOMWindow final : public DOMWindow,
   void EnqueueDocumentEvent(Event&, TaskType);
   void EnqueueNonPersistedPageshowEvent();
   void EnqueueHashchangeEvent(const String& old_url, const String& new_url);
-  void EnqueuePopstateEvent(scoped_refptr<SerializedScriptValue>);
+  void DispatchPopstateEvent(scoped_refptr<SerializedScriptValue>,
+                             absl::optional<scheduler::TaskAttributionId>
+                                 soft_navigation_heuristics_task_id);
   void DispatchWindowLoadEvent();
   void DocumentWasClosed();
-  void StatePopped(scoped_refptr<SerializedScriptValue>);
 
   void AcceptLanguagesChanged();
 
@@ -413,11 +435,11 @@ class CORE_EXPORT LocalDOMWindow final : public DOMWindow,
   TrustedTypePolicyFactory* GetTrustedTypesForWorld(
       const DOMWrapperWorld&) const;
 
-  // Returns true if this window is cross-site to the main frame. Defaults to
-  // false in a detached window.
-  // Note: This uses an outdated definition of "site" which only includes the
-  // registrable domain and not the scheme. IsCrossSiteSubframeIncludingScheme()
-  // uses HTML's definition of "site" as a registrable domain and scheme.
+  // Returns true if this window is cross-site to the outermost main frame.
+  // Defaults to false in a detached window. Note: This uses an outdated
+  // definition of "site" which only includes the registrable domain and not the
+  // scheme. IsCrossSiteSubframeIncludingScheme() uses HTML's definition of
+  // "site" as a registrable domain and scheme.
   bool IsCrossSiteSubframe() const;
 
   bool IsCrossSiteSubframeIncludingScheme() const;
@@ -437,7 +459,7 @@ class CORE_EXPORT LocalDOMWindow final : public DOMWindow,
   void ClearIsolatedWorldCSPForTesting(int32_t world_id);
 
   bool CrossOriginIsolatedCapability() const override;
-  bool DirectSocketCapability() const override;
+  bool IsIsolatedContext() const override;
 
   // These delegate to the document_.
   ukm::UkmRecorder* UkmRecorder() override;
@@ -446,26 +468,59 @@ class CORE_EXPORT LocalDOMWindow final : public DOMWindow,
   const BlinkStorageKey& GetStorageKey() const { return storage_key_; }
   void SetStorageKey(const BlinkStorageKey& storage_key);
 
+  // This storage key must only be used when binding session storage.
+  //
+  // TODO(crbug.com/1407150): Remove this when deprecation trial is complete.
+  const BlinkStorageKey& GetSessionStorageKey() const {
+    return session_storage_key_;
+  }
+  void SetSessionStorageKey(const BlinkStorageKey& session_storage_key);
+
   void DidReceiveUserActivation();
 
   // Returns the state of the |PaymentRequestToken| in this document.
   bool IsPaymentRequestTokenActive() const;
 
-  // Consumes the |PaymentRequestToken| if it was active in this document .
+  // Consumes the |PaymentRequestToken| if it was active in this document.
   bool ConsumePaymentRequestToken();
+
+  // Returns the state of the |FullscreenRequestToken| in this document.
+  bool IsFullscreenRequestTokenActive() const;
+
+  // Consumes the |FullscreenRequestToken| if it was active in this document.
+  bool ConsumeFullscreenRequestToken();
 
   // Called when a network request buffered an additional `num_bytes` while this
   // frame is in back-forward cache.
   void DidBufferLoadWhileInBackForwardCache(size_t num_bytes);
 
-  // Whether the window is anonymous or not.
-  bool anonymous() const { return anonymous_; }
+  // Whether the window is credentialless or not.
+  bool credentialless() const;
+
+  bool IsInFencedFrame() const override;
 
   Fence* fence();
 
   CloseWatcher::WatcherStack* closewatcher_stack() {
     return closewatcher_stack_;
   }
+
+  void IncrementNavigationId() { navigation_id_++; }
+  uint32_t GetNavigationId() const { return navigation_id_; }
+
+  NavigationApi* navigation();
+
+  // Is this a Document Picture in Picture window?
+  bool IsPictureInPictureWindow() const;
+
+  void set_is_picture_in_picture_window_for_testing(
+      bool is_picture_in_picture) {
+    is_picture_in_picture_window_ = is_picture_in_picture;
+  }
+
+  // Sets the HasStorageAccess member. Note that it can only be granted for a
+  // given window, it cannot be taken away.
+  void SetHasStorageAccess();
 
  protected:
   // EventTarget overrides.
@@ -491,6 +546,8 @@ class CORE_EXPORT LocalDOMWindow final : public DOMWindow,
 
   void DispatchLoadEvent();
 
+  void SetIsPictureInPictureWindow();
+
   // Return the viewport size including scrollbars.
   gfx::Size GetViewportSize() const;
 
@@ -512,25 +569,19 @@ class CORE_EXPORT LocalDOMWindow final : public DOMWindow,
   mutable Member<Navigator> navigator_;
   mutable Member<StyleMedia> media_;
   mutable Member<CustomElementRegistry> custom_elements_;
-  // We store reference to Modulator here to have it TraceWrapper-ed.
-  // This is wrong, as Modulator is per-context, where as LocalDOMWindow is
-  // shared among context. However, this *works* as Modulator is currently only
-  // enabled in the main world,
-  Member<Modulator> modulator_;
   Member<External> external_;
+
+  Member<NavigationApi> navigation_;
 
   String status_;
   String default_status_;
 
-  Vector<String> origin_policy_ids_;
-
-  scoped_refptr<SerializedScriptValue> pending_state_object_;
-
   HeapHashSet<WeakMember<EventListenerObserver>> event_listener_observers_;
 
-  // Tracker for delegated PaymentRequest.  This is related to
-  // |Frame::user_activation_state_|.
+  // Trackers for delegated payment and fullscreen requests.  These are related
+  // to |Frame::user_activation_state_|.
   PaymentRequestToken payment_request_token_;
+  FullscreenRequestToken fullscreen_request_token_;
 
   // https://dom.spec.whatwg.org/#window-current-event
   // We represent the "undefined" value as nullptr.
@@ -581,6 +632,13 @@ class CORE_EXPORT LocalDOMWindow final : public DOMWindow,
   // The storage key for this LocalDomWindow.
   BlinkStorageKey storage_key_;
 
+  // The storage key here is the one to use when binding session storage. This
+  // may differ from `storage_key_` as a deprecation trial can prevent the
+  // partitioning of session storage.
+  //
+  // TODO(crbug.com/1407150): Remove this when deprecation trial is complete.
+  BlinkStorageKey session_storage_key_;
+
   // Fire "online" and "offline" events.
   Member<NetworkStateObserver> network_state_observer_;
 
@@ -589,15 +647,24 @@ class CORE_EXPORT LocalDOMWindow final : public DOMWindow,
   // of the back-forward cache.
   size_t total_bytes_buffered_while_in_back_forward_cache_ = 0;
 
-  // Anonymous Iframe:
-  // https://github.com/camillelamy/explainers/blob/main/anonymous_iframes.md
-  const bool anonymous_;
-
   // Collection of fenced frame APIs.
   // https://github.com/shivanigithub/fenced-frame/issues/14
   Member<Fence> fence_;
 
   Member<CloseWatcher::WatcherStack> closewatcher_stack_;
+
+  // If set, this window is a Document Picture in Picture window.
+  // https://wicg.github.io/document-picture-in-picture/
+  bool is_picture_in_picture_window_ = false;
+
+  // The navigation id of a document is to identify navigation of special types
+  // like bfcache navigation or soft navigation. It increments when navigations
+  // of these types occur.
+  uint32_t navigation_id_ = 1;
+
+  // Records whether this window has obtained storage access. It cannot be
+  // revoked once set to true.
+  bool has_storage_access_ = false;
 };
 
 template <>
@@ -615,6 +682,7 @@ inline String LocalDOMWindow::status() const {
 }
 
 inline String LocalDOMWindow::defaultStatus() const {
+  DCHECK(RuntimeEnabledFeatures::WindowDefaultStatusEnabled());
   return default_status_;
 }
 

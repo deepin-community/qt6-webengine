@@ -71,7 +71,17 @@ helper_cairo_use_hb_draw (const font_options_t *font_opts)
 {
   const char *env = getenv ("HB_DRAW");
   if (!env)
+#if 1
+    /* Following branch disabled because we prefer our
+     * OpenType extensions working, ie going through hb-draw,
+     * over avoiding the obscure cairo bug. */
+    return true;
+#else
+    /* Older cairo had a bug in rendering COLRv0 fonts in
+     * right-to-left direction. */
     return cairo_version () >= CAIRO_VERSION_ENCODE (1, 17, 5);
+#endif
+
   return atoi (env);
 }
 
@@ -406,6 +416,12 @@ helper_cairo_create_context (double w, double h,
       /* https://gitlab.com/gnachman/iterm2/-/issues/7154 */
       if ((name = getenv ("LC_TERMINAL")) != nullptr &&
 	  0 == g_ascii_strcasecmp (name, "iTerm2"))
+      {
+	extension = "png";
+	protocol = image_protocol_t::ITERM2;
+      }
+      else if ((name = getenv ("TERM_PROGRAM")) != nullptr &&
+	  0 == g_ascii_strcasecmp (name, "WezTerm"))
       {
 	extension = "png";
 	protocol = image_protocol_t::ITERM2;

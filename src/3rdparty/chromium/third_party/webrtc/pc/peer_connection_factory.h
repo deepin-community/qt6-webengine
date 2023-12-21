@@ -40,7 +40,6 @@
 #include "call/call.h"
 #include "call/rtp_transport_controller_send_factory_interface.h"
 #include "p2p/base/port_allocator.h"
-#include "pc/channel_manager.h"
 #include "pc/connection_context.h"
 #include "rtc_base/checks.h"
 #include "rtc_base/rtc_certificate_generator.h"
@@ -100,8 +99,6 @@ class PeerConnectionFactory : public PeerConnectionFactoryInterface {
     return context_->sctp_transport_factory();
   }
 
-  virtual cricket::ChannelManager* channel_manager();
-
   rtc::Thread* signaling_thread() const {
     // This method can be called on a different thread when the factory is
     // created in CreatePeerConnectionFactory().
@@ -115,7 +112,11 @@ class PeerConnectionFactory : public PeerConnectionFactoryInterface {
     return options_;
   }
 
-  const FieldTrialsView& trials() const { return context_->trials(); }
+  const FieldTrialsView& field_trials() const {
+    return context_->field_trials();
+  }
+
+  cricket::MediaEngineInterface* media_engine() const;
 
  protected:
   // Constructor used by the static Create() method. Modifies the dependencies.
@@ -133,12 +134,12 @@ class PeerConnectionFactory : public PeerConnectionFactoryInterface {
   rtc::Thread* network_thread() const { return context_->network_thread(); }
 
   bool IsTrialEnabled(absl::string_view key) const;
-  const cricket::ChannelManager* channel_manager() const {
-    return context_->channel_manager();
-  }
 
   std::unique_ptr<RtcEventLog> CreateRtcEventLog_w();
-  std::unique_ptr<Call> CreateCall_w(RtcEventLog* event_log);
+  std::unique_ptr<Call> CreateCall_w(
+      RtcEventLog* event_log,
+      const FieldTrialsView& field_trials,
+      const PeerConnectionInterface::RTCConfiguration& configuration);
 
   rtc::scoped_refptr<ConnectionContext> context_;
   PeerConnectionFactoryInterface::Options options_
@@ -153,7 +154,7 @@ class PeerConnectionFactory : public PeerConnectionFactoryInterface {
   std::unique_ptr<NetEqFactory> neteq_factory_;
   const std::unique_ptr<RtpTransportControllerSendFactoryInterface>
       transport_controller_send_factory_;
-  std::unique_ptr<Metronome> metronome_;
+  std::unique_ptr<Metronome> metronome_ RTC_GUARDED_BY(worker_thread());
 };
 
 }  // namespace webrtc

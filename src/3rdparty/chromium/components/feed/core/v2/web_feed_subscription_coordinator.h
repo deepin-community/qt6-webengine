@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,13 +8,15 @@
 #include <map>
 #include <string>
 
-#include "base/callback_forward.h"
+#include "base/functional/callback_forward.h"
 #include "base/memory/raw_ptr.h"
 #include "components/feed/core/proto/v2/store.pb.h"
+#include "components/feed/core/proto/v2/wire/web_feeds.pb.h"
 #include "components/feed/core/v2/operation_token.h"
 #include "components/feed/core/v2/public/web_feed_subscriptions.h"
 #include "components/feed/core/v2/web_feed_subscriptions/fetch_recommended_web_feeds_task.h"
 #include "components/feed/core/v2/web_feed_subscriptions/fetch_subscribed_web_feeds_task.h"
+#include "components/feed/core/v2/web_feed_subscriptions/query_web_feed_task.h"
 #include "components/feed/core/v2/web_feed_subscriptions/subscribe_to_web_feed_task.h"
 #include "components/feed/core/v2/web_feed_subscriptions/subscription_datastore_provider.h"
 #include "components/feed/core/v2/web_feed_subscriptions/unsubscribe_from_web_feed_task.h"
@@ -52,14 +54,17 @@ class WebFeedSubscriptionCoordinator : public WebFeedSubscriptions {
 
   void FollowWebFeed(
       const WebFeedPageInformation& page_info,
+      feedwire::webfeed::WebFeedChangeReason change_reason,
       base::OnceCallback<void(FollowWebFeedResult)> callback) override;
   void FollowWebFeed(
       const std::string& web_feed_id,
       bool is_durable_request,
+      feedwire::webfeed::WebFeedChangeReason change_reason,
       base::OnceCallback<void(FollowWebFeedResult)> callback) override;
   void UnfollowWebFeed(
       const std::string& web_feed_id,
       bool is_durable_request,
+      feedwire::webfeed::WebFeedChangeReason change_reason,
       base::OnceCallback<void(UnfollowWebFeedResult)> callback) override;
   void FindWebFeedInfoForPage(
       const WebFeedPageInformation& page_info,
@@ -76,6 +81,12 @@ class WebFeedSubscriptionCoordinator : public WebFeedSubscriptions {
   void DumpStateForDebugging(std::ostream& ss) override;
   void RefreshRecommendedFeeds(
       base::OnceCallback<void(RefreshResult)> callback) override;
+  void QueryWebFeed(
+      const GURL& url,
+      base::OnceCallback<void(QueryWebFeedResult)> callback) override;
+  void QueryWebFeedId(
+      const std::string& web_feed_id,
+      base::OnceCallback<void(QueryWebFeedResult)> callback) override;
 
   // Types / functions exposed for task implementations.
 
@@ -123,13 +134,16 @@ class WebFeedSubscriptionCoordinator : public WebFeedSubscriptions {
   void FollowWebFeedInternal(
       const std::string& web_feed_id,
       WebFeedInFlightChangeStrategy strategy,
+      feedwire::webfeed::WebFeedChangeReason change_reason,
       base::OnceCallback<void(FollowWebFeedResult)> callback);
   void FollowWebFeedFromUrlStart(
       const WebFeedPageInformation& page_info,
+      feedwire::webfeed::WebFeedChangeReason change_reason,
       base::OnceCallback<void(FollowWebFeedResult)> callback);
   void FollowWebFeedFromIdStart(
       const std::string& web_feed_id,
       WebFeedInFlightChangeStrategy strategy,
+      feedwire::webfeed::WebFeedChangeReason change_reason,
       base::OnceCallback<void(FollowWebFeedResult)> callback);
 
   void LookupWebFeedDataAndRespond(
@@ -163,18 +177,25 @@ class WebFeedSubscriptionCoordinator : public WebFeedSubscriptions {
   void UnfollowWebFeedInternal(
       const std::string& web_feed_id,
       WebFeedInFlightChangeStrategy strategy,
+      feedwire::webfeed::WebFeedChangeReason change_reason,
       base::OnceCallback<void(UnfollowWebFeedResult)> callback);
   void UnfollowWebFeedStart(
       const std::string& web_feed_id,
       WebFeedInFlightChangeStrategy strategy,
+      feedwire::webfeed::WebFeedChangeReason change_reason,
       base::OnceCallback<void(UnfollowWebFeedResult)> callback);
   void UnfollowWebFeedComplete(
       base::OnceCallback<void(UnfollowWebFeedResult)> callback,
       UnsubscribeFromWebFeedTask::Result result);
 
+  void QueryWebFeedComplete(
+      base::OnceCallback<void(QueryWebFeedResult)> callback,
+      QueryWebFeedResult result);
+
   void EnqueueInFlightChange(
       bool subscribing,
       WebFeedInFlightChangeStrategy strategy,
+      feedwire::webfeed::WebFeedChangeReason change_reason,
       absl::optional<WebFeedPageInformation> page_information,
       absl::optional<feedstore::WebFeedInfo> info);
   const WebFeedInFlightChange* FindInflightChange(
@@ -199,7 +220,8 @@ class WebFeedSubscriptionCoordinator : public WebFeedSubscriptions {
   void UpdatePendingOperationBeforeAttempt(
       const std::string& web_feed_id,
       WebFeedInFlightChangeStrategy strategy,
-      feedstore::PendingWebFeedOperation::Kind kind);
+      feedstore::PendingWebFeedOperation::Kind kind,
+      feedwire::webfeed::WebFeedChangeReason change_reason);
 
   std::vector<std::pair<std::string, WebFeedSubscriptionStatus>>
   GetAllWebFeedSubscriptionStatus() const;
@@ -244,7 +266,7 @@ class WebFeedSubscriptionCoordinator : public WebFeedSubscriptions {
   bool fetching_subscribed_web_feeds_ = false;
   bool fetching_subscribed_web_feeds_because_stale_ = false;
 
-  HooksForTesting* hooks_for_testing_ = nullptr;
+  raw_ptr<HooksForTesting> hooks_for_testing_ = nullptr;
 
   base::WeakPtrFactory<WebFeedSubscriptionCoordinator> weak_ptr_factory_{this};
 };

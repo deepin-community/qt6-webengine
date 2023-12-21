@@ -36,27 +36,26 @@
 #include <tuple>
 #include <vector>
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/threading/platform_thread.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
+#include "cc/tiles/raster_dark_mode_filter.h"
+#include "cc/trees/raster_context_provider_wrapper.h"
+#include "components/attribution_reporting/os_support.mojom-shared.h"
 #include "components/viz/common/surfaces/frame_sink_id.h"
 #include "media/base/audio_capturer_source.h"
 #include "media/base/audio_latency.h"
 #include "media/base/audio_renderer_sink.h"
-#include "media/base/media_log.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/common/security/protocol_handler_security_level.h"
 #include "third_party/blink/public/common/user_agent/user_agent_metadata.h"
-#include "third_party/blink/public/mojom/loader/code_cache.mojom-forward.h"
-#include "third_party/blink/public/mojom/timing/worker_timing_container.mojom-forward.h"
 #include "third_party/blink/public/platform/audio/web_audio_device_source_type.h"
-#include "third_party/blink/public/platform/blame_context.h"
 #include "third_party/blink/public/platform/cross_variant_mojo_util.h"
 #include "third_party/blink/public/platform/url_loader_throttle_provider.h"
 #include "third_party/blink/public/platform/web_audio_device.h"
-#include "third_party/blink/public/platform/web_code_cache_loader.h"
 #include "third_party/blink/public/platform/web_common.h"
 #include "third_party/blink/public/platform/web_data.h"
 #include "third_party/blink/public/platform/web_string.h"
@@ -70,11 +69,11 @@ class SkBitmap;
 
 namespace base {
 class SingleThreadTaskRunner;
-}
+}  // namespace base
 
 namespace cc {
-class TaskGraphRunner;
-}  // namespace cc
+class RasterDarkModeFilter;
+}
 
 namespace gfx {
 class ColorSpace;
@@ -94,17 +93,11 @@ class MediaPermission;
 class GpuVideoAcceleratorFactories;
 }  // namespace media
 
-namespace mojo_base {
-class BigBuffer;
-}
-
 namespace network {
 namespace mojom {
 class URLLoaderFactory;
-class URLLoaderFactoryInterfaceBase;
 }
 class PendingSharedURLLoaderFactory;
-class SharedURLLoaderFactory;
 }
 
 namespace url {
@@ -125,25 +118,23 @@ namespace blink {
 
 class BrowserInterfaceBrokerProxy;
 class MediaInspectorContext;
+class MainThread;
 class ThreadSafeBrowserInterfaceBrokerProxy;
 class Thread;
-struct ThreadCreationParams;
 class URLLoaderThrottle;
 class UserMetricsAction;
 class WebAudioBus;
 class WebAudioLatencyHint;
+class WebAudioSinkDescriptor;
 class WebCrypto;
 class WebDedicatedWorker;
 class WebDedicatedWorkerHostFactoryClient;
 class WebGraphicsContext3DProvider;
 class WebLocalFrame;
-class WebMediaCapabilitiesClient;
-class WebPublicSuffixList;
 class WebResourceRequestSenderDelegate;
 class WebSandboxSupport;
 class WebSecurityOrigin;
 class WebThemeEngine;
-class WebURLLoaderFactory;
 class WebVideoCaptureImplManager;
 struct WebContentSecurityPolicyHeader;
 
@@ -207,7 +198,7 @@ class BLINK_PLATFORM_EXPORT Platform {
   virtual WebSandboxSupport* GetSandboxSupport() { return nullptr; }
 
   // Returns a theme engine. Should be non-null.
-  virtual WebThemeEngine* ThemeEngine();
+  WebThemeEngine* ThemeEngine();
 
   // Audio --------------------------------------------------------------
 
@@ -216,38 +207,13 @@ class BLINK_PLATFORM_EXPORT Platform {
   virtual unsigned AudioHardwareOutputChannels() { return 0; }
   virtual base::TimeDelta GetHungRendererDelay() { return base::TimeDelta(); }
 
-  // SavableResource ----------------------------------------------------
-
-  virtual bool IsURLSavableForSavableResource(const WebURL& url) {
-    return false;
-  }
-
-  // Creates a device for audio I/O.
-  // Pass in (number_of_input_channels > 0) if live/local audio input is
-  // desired.
+  // Creates an audio output device platform interface for Web Audio API.
   virtual std::unique_ptr<WebAudioDevice> CreateAudioDevice(
-      unsigned number_of_input_channels,
-      unsigned number_of_channels,
+      const WebAudioSinkDescriptor& sink_descriptor,
+      unsigned number_of_output_channels,
       const WebAudioLatencyHint& latency_hint,
-      WebAudioDevice::RenderCallback*,
-      const WebString& device_id) {
+      media::AudioRendererSink::RenderCallback*) {
     return nullptr;
-  }
-
-  // Database (WebSQL) ---------------------------------------------------
-
-  // Return a filename-friendly identifier for an origin.
-  virtual WebString DatabaseCreateOriginIdentifier(
-      const WebSecurityOrigin& origin) {
-    return WebString();
-  }
-
-  // FileSystem ----------------------------------------------------------
-
-  // Return a filename-friendly identifier for an origin.
-  virtual WebString FileSystemCreateOriginIdentifier(
-      const WebSecurityOrigin& origin) {
-    return WebString();
   }
 
   // IDN conversion ------------------------------------------------------
@@ -290,18 +256,6 @@ class BLINK_PLATFORM_EXPORT Platform {
 
   // Network -------------------------------------------------------------
 
-  // Returns a new WebURLLoaderFactory that wraps the given
-  // network::mojom::URLLoaderFactory.
-  virtual std::unique_ptr<WebURLLoaderFactory> WrapURLLoaderFactory(
-      CrossVariantMojoRemote<network::mojom::URLLoaderFactoryInterfaceBase>
-          url_loader_factory);
-
-  // Returns a new WebURLLoaderFactory that wraps the given
-  // network::SharedURLLoaderFactory.
-  virtual std::unique_ptr<blink::WebURLLoaderFactory>
-  WrapSharedURLLoaderFactory(
-      scoped_refptr<network::SharedURLLoaderFactory> factory);
-
   // Returns the default User-Agent string, it can either full User-Agent string
   // or reduced User-Agent string based on policy setting.
   virtual WebString UserAgent() { return WebString(); }
@@ -315,39 +269,6 @@ class BLINK_PLATFORM_EXPORT Platform {
   virtual blink::UserAgentMetadata UserAgentMetadata() {
     return blink::UserAgentMetadata();
   }
-
-  // A request to cache code generated by the Renderer for the resource fetched
-  // from the given URL at the given response time. The cached code can be
-  // fetched on subsequent loads of the resource to speed up processing. The
-  // Browser may silently ignore this request if |size| is too large or storage
-  // isn't available.
-  virtual void CacheMetadata(blink::mojom::CodeCacheType cache_type,
-                             const WebURL&,
-                             base::Time response_time,
-                             const uint8_t* data,
-                             size_t data_size) {}
-
-  // A request to fetch contents associated with this URL from metadata cache.
-  using FetchCachedCodeCallback =
-      base::OnceCallback<void(base::Time, mojo_base::BigBuffer)>;
-  // A request to fetch previously cached code for the resource fetched from the
-  // given URL. The code fetch should be made at the same time as the resource
-  // fetch so the Renderer can bypass code generation for the resource.
-  virtual void FetchCachedCode(blink::mojom::CodeCacheType cache_type,
-                               const WebURL&,
-                               FetchCachedCodeCallback) {}
-  virtual void ClearCodeCacheEntry(blink::mojom::CodeCacheType cache_type,
-                                   const GURL&) {}
-
-  // A suggestion to cache this metadata in association with this URL which
-  // resource is in CacheStorage.
-  virtual void CacheMetadataInCacheStorage(
-      const WebURL&,
-      base::Time response_time,
-      const uint8_t* data,
-      size_t data_size,
-      const blink::WebSecurityOrigin& cache_storage_origin,
-      const WebString& cache_storage_cache_name) {}
 
   // Determines whether it is safe to redirect from |from_url| to |to_url|.
   virtual bool IsRedirectSafe(const GURL& from_url, const GURL& to_url) {
@@ -364,11 +285,6 @@ class BLINK_PLATFORM_EXPORT Platform {
   virtual void AppendVariationsThrottles(
       const url::Origin& top_origin,
       std::vector<std::unique_ptr<blink::URLLoaderThrottle>>* throttles) {}
-
-  // Public Suffix List --------------------------------------------------
-
-  // May return null on some platforms.
-  virtual WebPublicSuffixList* PublicSuffixList() { return nullptr; }
 
   // Allows the embedder to return a (possibly null)
   // blink::URLLoaderThrottleProvider for a worker.
@@ -401,14 +317,13 @@ class BLINK_PLATFORM_EXPORT Platform {
     return WebString();
   }
 
+  // SavableResource ----------------------------------------------------
+
+  virtual bool IsURLSavableForSavableResource(const WebURL& url) {
+    return false;
+  }
+
   // Threads -------------------------------------------------------
-
-  // Most of threading functionality has moved to blink::Thread. The functions
-  // in Platform are deprecated; use the counterpart in blink::Thread as noted
-  // below.
-
-  // DEPRECATED: Use Thread::CreateThread() instead.
-  std::unique_ptr<Thread> CreateThread(const ThreadCreationParams&);
 
   // The two compositor-related functions below are called by the embedder.
   // TODO(yutak): Perhaps we should move these to somewhere else?
@@ -421,24 +336,26 @@ class BLINK_PLATFORM_EXPORT Platform {
   // once CreateAndSetCompositorThread() is called.
   scoped_refptr<base::SingleThreadTaskRunner> CompositorThreadTaskRunner();
 
+  // Returns the video frame compositor thread task runner. This may
+  // conditionally be the same as the compositor thread task runner.
+  virtual scoped_refptr<base::SingleThreadTaskRunner>
+  VideoFrameCompositorTaskRunner() {
+    return CompositorThreadTaskRunner();
+  }
+
   // Returns the task runner of the media thread.
   // This method should only be called on the main thread, or it crashes.
-  virtual scoped_refptr<base::SingleThreadTaskRunner> MediaThreadTaskRunner() {
+  virtual scoped_refptr<base::SequencedTaskRunner> MediaThreadTaskRunner() {
     return nullptr;
   }
 
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
-  // This is called after the compositor thread is created, so the embedder
-  // can initiate an IPC to change its thread priority (on Linux we can't
+  // This is called after the thread is created, so the embedder
+  // can initiate an IPC to change its thread type (on Linux we can't
   // increase the nice value, so we need to ask the browser process). This
-  // function is only called from the main thread (where InitializeCompositor-
-  // Thread() is called).
-  virtual void SetDisplayThreadPriority(base::PlatformThreadId) {}
+  // function is only called from the main thread.
+  virtual void SetThreadType(base::PlatformThreadId, base::ThreadType) {}
 #endif
-
-  // Returns a blame context for attributing top-level work which does not
-  // belong to a particular frame scope.
-  virtual BlameContext* GetTopLevelBlameContext() { return nullptr; }
 
   // Resources -----------------------------------------------------------
 
@@ -485,6 +402,14 @@ class BLINK_PLATFORM_EXPORT Platform {
 
   virtual base::PlatformThreadId GetIOThreadId() const {
     return base::kInvalidThreadId;
+  }
+
+  // Returns the sequenced task runner used to funnel video frames from
+  // MediaStreamVideoSource. It may conditionally be the same as the result
+  // from GetIOTaskRunner().
+  virtual scoped_refptr<base::SequencedTaskRunner>
+  GetMediaStreamVideoSourceVideoTaskRunner() const {
+    return GetIOTaskRunner();
   }
 
   // Returns an interface to run nested message loop. Used for debugging.
@@ -625,8 +550,9 @@ class BLINK_PLATFORM_EXPORT Platform {
 
   // Returns a worker context provider that will be bound on the compositor
   // thread.
-  virtual scoped_refptr<viz::RasterContextProvider>
-  SharedCompositorWorkerContextProvider();
+  virtual scoped_refptr<cc::RasterContextProviderWrapper>
+  SharedCompositorWorkerContextProvider(
+      cc::RasterDarkModeFilter* dark_mode_filter);
 
   // Synchronously establish a channel to the GPU plugin if not previously
   // established or if it has been lost (for example if the GPU plugin crashed).
@@ -638,9 +564,6 @@ class BLINK_PLATFORM_EXPORT Platform {
   using EstablishGpuChannelCallback =
       base::OnceCallback<void(scoped_refptr<gpu::GpuChannelHost>)>;
   virtual void EstablishGpuChannel(EstablishGpuChannelCallback callback);
-
-  // The TaskGraphRunner. This must be non-null if compositing any widgets.
-  virtual cc::TaskGraphRunner* GetTaskGraphRunner() { return nullptr; }
 
   // Media stream ----------------------------------------------------
   virtual scoped_refptr<media::AudioCapturerSource> NewAudioCapturerSource(
@@ -694,11 +617,6 @@ class BLINK_PLATFORM_EXPORT Platform {
                                             uint16_t* udp_min_port,
                                             uint16_t* udp_max_port,
                                             bool* allow_mdns_obfuscation) {}
-
-  virtual bool IsWebRtcHWH264DecodingEnabled(
-      webrtc::VideoCodecType video_coded_type) {
-    return true;
-  }
 
   virtual bool IsWebRtcHWEncodingEnabled() { return true; }
 
@@ -760,12 +678,7 @@ class BLINK_PLATFORM_EXPORT Platform {
       const WebString& client_id,
       std::unique_ptr<network::PendingSharedURLLoaderFactory> fallback_factory,
       mojo::PendingReceiver<network::mojom::URLLoaderFactory> receiver,
-      scoped_refptr<base::SequencedTaskRunner> task_runner,
-      scoped_refptr<base::SequencedTaskRunner>
-          worker_timing_callback_task_runner,
-      base::RepeatingCallback<
-          void(int, mojo::PendingReceiver<blink::mojom::WorkerTimingContainer>)>
-          worker_timing_callback);
+      scoped_refptr<base::SequencedTaskRunner> task_runner);
 
   // WebCrypto ----------------------------------------------------------
 
@@ -787,12 +700,6 @@ class BLINK_PLATFORM_EXPORT Platform {
   // for security.
   virtual ThreadSafeBrowserInterfaceBrokerProxy* GetBrowserInterfaceBroker();
 
-  // Media Capabilities --------------------------------------------------
-
-  virtual WebMediaCapabilitiesClient* MediaCapabilitiesClient() {
-    return nullptr;
-  }
-
   // Media Log -----------------------------------------------------------
 
   // MediaLog is used by WebCodecs to report events and errors up to the
@@ -809,9 +716,7 @@ class BLINK_PLATFORM_EXPORT Platform {
   virtual std::unique_ptr<media::MediaLog> GetMediaLog(
       MediaInspectorContext* inspector_context,
       scoped_refptr<base::SingleThreadTaskRunner> owner_task_runner,
-      bool is_on_worker) {
-    return nullptr;
-  }
+      bool is_on_worker);
 
   // GpuVideoAcceleratorFactories --------------------------------------
 
@@ -826,10 +731,6 @@ class BLINK_PLATFORM_EXPORT Platform {
   virtual void SetRenderingColorSpace(const gfx::ColorSpace& color_space) {}
 
   virtual gfx::ColorSpace GetRenderingColorSpace() const;
-
-  // Renderer Memory Metrics ----------------------------------------------
-
-  virtual void RecordMetricsForBackgroundedRendererPurge() {}
 
   // V8 Metrics -----------------------------------------------------------
 
@@ -874,9 +775,26 @@ class BLINK_PLATFORM_EXPORT Platform {
       const WebURL& url,
       blink::WebVector<blink::WebContentSecurityPolicyHeader>* csp) {}
 
+  // Attribution Reporting API ------------------------------------
+
+  // Returns whether OS-level support is enabled for Attribution Reporting API.
+  // See
+  // https://github.com/WICG/attribution-reporting-api/blob/main/app_to_web.md.
+  virtual attribution_reporting::mojom::OsSupport
+  GetOsSupportForAttributionReporting() {
+    return attribution_reporting::mojom::OsSupport::kDisabled;
+  }
+
+#if BUILDFLAG(IS_ANDROID)
+  // User Level Memory Pressure Signal Generator ------------------
+  virtual void SetPrivateMemoryFootprint(
+      uint64_t private_memory_footprint_bytes) {}
+#endif
+
  private:
-  static void InitializeMainThreadCommon(Platform* platform,
-                                         std::unique_ptr<Thread> main_thread);
+  static void InitializeMainThreadCommon(
+      Platform* platform,
+      std::unique_ptr<MainThread> main_thread);
 };
 
 }  // namespace blink

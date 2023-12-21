@@ -37,24 +37,24 @@ import * as ARIAUtils from './ARIAUtils.js';
 import {Size} from './Geometry.js';
 import {AnchorBehavior, GlassPane} from './GlassPane.js';
 import {Icon} from './Icon.js';
-import type {ListDelegate} from './ListControl.js';
-import {ListControl, ListMode} from './ListControl.js';
+
+import {ListControl, ListMode, type ListDelegate} from './ListControl.js';
 import {ListModel} from './ListModel.js';
 import {measurePreferredSize} from './UIUtils.js';
 import suggestBoxStyles from './suggestBox.css.legacy.js';
 
 const UIStrings = {
   /**
-  *@description Aria alert to read the suggestion for the suggestion box when typing in text editor
-  *@example {name} PH1
-  *@example {2} PH2
-  *@example {5} PH3
-  */
+   *@description Aria alert to read the suggestion for the suggestion box when typing in text editor
+   *@example {name} PH1
+   *@example {2} PH2
+   *@example {5} PH3
+   */
   sSuggestionSOfS: '{PH1}, suggestion {PH2} of {PH3}',
   /**
-  *@description Aria alert to confirm the suggestion when it is selected from the suggestion box
-  *@example {name} PH1
-  */
+   *@description Aria alert to confirm the suggestion when it is selected from the suggestion box
+   *@example {name} PH1
+   */
   sSuggestionSSelected: '{PH1}, suggestion selected',
 };
 const str_ = i18n.i18n.registerUIStrings('ui/legacy/SuggestBox.ts', UIStrings);

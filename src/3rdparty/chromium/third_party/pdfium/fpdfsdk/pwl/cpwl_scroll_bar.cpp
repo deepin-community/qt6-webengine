@@ -1,4 +1,4 @@
-// Copyright 2014 PDFium Authors. All rights reserved.
+// Copyright 2014 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -107,9 +107,9 @@ void PWL_SCROLL_PRIVATEDATA::SubBig() {
 
 CPWL_ScrollBar::CPWL_ScrollBar(
     const CreateParams& cp,
-    std::unique_ptr<IPWL_SystemHandler::PerWindowData> pAttachedData)
+    std::unique_ptr<IPWL_FillerNotify::PerWindowData> pAttachedData)
     : CPWL_Wnd(cp, std::move(pAttachedData)) {
-  GetCreationParams()->eCursorType = IPWL_SystemHandler::CursorStyle::kArrow;
+  GetCreationParams()->eCursorType = IPWL_FillerNotify::CursorStyle::kArrow;
 }
 
 CPWL_ScrollBar::~CPWL_ScrollBar() = default;
@@ -119,9 +119,9 @@ void CPWL_ScrollBar::OnDestroy() {
   // subclasses, implement the virtual OnDestroy method that does the
   // cleanup first, then invokes the superclass OnDestroy ... gee,
   // like a dtor would.
-  m_pMinButton.Release();
-  m_pMaxButton.Release();
-  m_pPosButton.Release();
+  m_pMinButton.ExtractAsDangling();
+  m_pMaxButton.ExtractAsDangling();
+  m_pPosButton.ExtractAsDangling();
   CPWL_Wnd::OnDestroy();
 }
 

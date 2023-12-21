@@ -7,14 +7,13 @@
 
 #include "src/gpu/ganesh/glsl/GrGLSLShaderBuilder.h"
 
-#include "include/sksl/DSL.h"
+#include "src/core/SkSLTypeShared.h"
+#include "src/gpu/Blend.h"
 #include "src/gpu/Swizzle.h"
 #include "src/gpu/ganesh/GrShaderCaps.h"
 #include "src/gpu/ganesh/GrShaderVar.h"
-#include "src/gpu/ganesh/glsl/GrGLSLBlend.h"
 #include "src/gpu/ganesh/glsl/GrGLSLColorSpaceXformHelper.h"
 #include "src/gpu/ganesh/glsl/GrGLSLProgramBuilder.h"
-#include "src/sksl/SkSLThreadContext.h"
 #include "src/sksl/ir/SkSLVarDeclarations.h"
 
 GrGLSLShaderBuilder::GrGLSLShaderBuilder(GrGLSLProgramBuilder* program)
@@ -51,7 +50,7 @@ SkString GrGLSLShaderBuilder::getMangledFunctionName(const char* baseName) {
 void GrGLSLShaderBuilder::appendFunctionDecl(SkSLType returnType,
                                              const char* mangledName,
                                              SkSpan<const GrShaderVar> args) {
-    this->functions().appendf("%s %s(", GrGLSLTypeString(returnType), mangledName);
+    this->functions().appendf("%s %s(", SkSLTypeString(returnType), mangledName);
     for (size_t i = 0; i < args.size(); ++i) {
         if (i > 0) {
             this->functions().append(", ");
@@ -89,15 +88,6 @@ void GrGLSLShaderBuilder::emitFunctionPrototype(const char* declaration) {
     this->functions().appendf("%s;\n", declaration);
 }
 
-void GrGLSLShaderBuilder::codeAppend(std::unique_ptr<SkSL::Statement> stmt) {
-    SkASSERT(SkSL::ThreadContext::CurrentProcessor());
-    SkASSERT(stmt);
-    this->codeAppend(stmt->description().c_str());
-    if (stmt->is<SkSL::VarDeclaration>()) {
-        fDeclarations.push_back(std::move(stmt));
-    }
-}
-
 static inline void append_texture_swizzle(SkString* out, skgpu::Swizzle swizzle) {
     if (swizzle != skgpu::Swizzle::RGBA()) {
         out->appendf(".%s", swizzle.asString().c_str());
@@ -130,20 +120,10 @@ void GrGLSLShaderBuilder::appendTextureLookupAndBlend(
         dst = "half4(1)";
     }
     SkString lookup;
-    // This works around an issue in SwiftShader where the texture lookup is messed up
-    // if we use blend_modulate instead of simply operator * on dst and the sampled result.
-    // At this time it's unknown if the same problem exists for other modes.
-    if (mode == SkBlendMode::kModulate) {
-        this->codeAppend("(");
-        this->appendTextureLookup(&lookup, samplerHandle, coordName);
-        this->appendColorGamutXform(lookup.c_str(), colorXformHelper);
-        this->codeAppendf(" * %s)", dst);
-    } else {
-        this->codeAppendf("%s(", GrGLSLBlend::BlendFuncName(mode));
-        this->appendTextureLookup(&lookup, samplerHandle, coordName);
-        this->appendColorGamutXform(lookup.c_str(), colorXformHelper);
-        this->codeAppendf(", %s)", dst);
-    }
+    this->codeAppendf("%s(", skgpu::BlendFuncName(mode));
+    this->appendTextureLookup(&lookup, samplerHandle, coordName);
+    this->appendColorGamutXform(lookup.c_str(), colorXformHelper);
+    this->codeAppendf(", %s)", dst);
 }
 
 void GrGLSLShaderBuilder::appendInputLoad(SamplerHandle samplerHandle) {
@@ -169,7 +149,7 @@ void GrGLSLShaderBuilder::appendColorGamutXform(SkString* out,
     // Any combination of these may be present, although some configurations are much more likely.
 
     auto emitTFFunc = [=](const char* name, GrGLSLProgramDataManager::UniformHandle uniform,
-                          TFKind kind) {
+                          skcms_TFType tfType) {
         const GrShaderVar gTFArgs[] = { GrShaderVar("x", SkSLType::kHalf) };
         const char* coeffs = uniformHandler->getUniformCStr(uniform);
         SkString body;
@@ -184,17 +164,17 @@ void GrGLSLShaderBuilder::appendColorGamutXform(SkString* out,
         body.appendf("half F = %s[6];", coeffs);
         body.append("half s = sign(x);");
         body.append("x = abs(x);");
-        switch (kind) {
-            case TFKind::sRGBish_TF:
+        switch (tfType) {
+            case skcms_TFType_sRGBish:
                 body.append("x = (x < D) ? (C * x) + F : pow(A * x + B, G) + E;");
                 break;
-            case TFKind::PQish_TF:
+            case skcms_TFType_PQish:
                 body.append("x = pow(max(A + B * pow(x, C), 0) / (D + E * pow(x, C)), F);");
                 break;
-            case TFKind::HLGish_TF:
+            case skcms_TFType_HLGish:
                 body.append("x = (x*A <= 1) ? pow(x*A, B) : exp((x-E)*C) + D; x *= (F+1);");
                 break;
-            case TFKind::HLGinvish_TF:
+            case skcms_TFType_HLGinvish:
                 body.append("x /= (F+1); x = (x <= 1) ? A * pow(x, B) : C * log(x - D) + E;");
                 break;
             default:
@@ -203,7 +183,7 @@ void GrGLSLShaderBuilder::appendColorGamutXform(SkString* out,
         }
         body.append("return s * x;");
         SkString funcName = this->getMangledFunctionName(name);
-        this->emitFunction(SkSLType::kHalf, funcName.c_str(), {gTFArgs, SK_ARRAY_COUNT(gTFArgs)},
+        this->emitFunction(SkSLType::kHalf, funcName.c_str(), {gTFArgs, std::size(gTFArgs)},
                            body.c_str());
         return funcName;
     };
@@ -211,13 +191,13 @@ void GrGLSLShaderBuilder::appendColorGamutXform(SkString* out,
     SkString srcTFFuncName;
     if (colorXformHelper->applySrcTF()) {
         srcTFFuncName = emitTFFunc("src_tf", colorXformHelper->srcTFUniform(),
-                                   colorXformHelper->srcTFKind());
+                                   colorXformHelper->srcTFType());
     }
 
     SkString dstTFFuncName;
     if (colorXformHelper->applyDstTF()) {
         dstTFFuncName = emitTFFunc("dst_tf", colorXformHelper->dstTFUniform(),
-                                   colorXformHelper->dstTFKind());
+                                   colorXformHelper->dstTFType());
     }
 
     SkString gamutXformFuncName;
@@ -229,7 +209,7 @@ void GrGLSLShaderBuilder::appendColorGamutXform(SkString* out,
         body.append("return color;");
         gamutXformFuncName = this->getMangledFunctionName("gamut_xform");
         this->emitFunction(SkSLType::kHalf4, gamutXformFuncName.c_str(),
-                           {gGamutXformArgs, SK_ARRAY_COUNT(gGamutXformArgs)}, body.c_str());
+                           {gGamutXformArgs, std::size(gGamutXformArgs)}, body.c_str());
     }
 
     // Now define a wrapper function that applies all the intermediate steps
@@ -238,7 +218,7 @@ void GrGLSLShaderBuilder::appendColorGamutXform(SkString* out,
         // Most GPUs work just fine with half float. Strangely, the GPUs that have this bug
         // (Mali G series) only require us to promote the type of a few temporaries here --
         // the helper functions above can always be written to use half.
-        bool useFloat = fProgramBuilder->shaderCaps()->colorSpaceMathNeedsFloat();
+        bool useFloat = fProgramBuilder->shaderCaps()->fColorSpaceMathNeedsFloat;
 
         const GrShaderVar gColorXformArgs[] = {
                 GrShaderVar("color", useFloat ? SkSLType::kFloat4 : SkSLType::kHalf4)};
@@ -265,7 +245,7 @@ void GrGLSLShaderBuilder::appendColorGamutXform(SkString* out,
         body.append("return half4(color);");
         SkString colorXformFuncName = this->getMangledFunctionName("color_xform");
         this->emitFunction(SkSLType::kHalf4, colorXformFuncName.c_str(),
-                           {gColorXformArgs, SK_ARRAY_COUNT(gColorXformArgs)}, body.c_str());
+                           {gColorXformArgs, std::size(gColorXformArgs)}, body.c_str());
         out->appendf("%s(%s)", colorXformFuncName.c_str(), srcColor);
     }
 }
@@ -294,7 +274,7 @@ void GrGLSLShaderBuilder::appendDecls(const VarArray& vars, SkString* out) const
 }
 
 void GrGLSLShaderBuilder::addLayoutQualifier(const char* param, InterfaceQualifier interface) {
-    SkASSERT(fProgramBuilder->shaderCaps()->generation() >= SkSL::GLSLGeneration::k330 ||
+    SkASSERT(fProgramBuilder->shaderCaps()->fGLSLGeneration >= SkSL::GLSLGeneration::k330 ||
              fProgramBuilder->shaderCaps()->mustEnableAdvBlendEqs());
     fLayoutParams[interface].push_back() = param;
 }
@@ -311,7 +291,7 @@ void GrGLSLShaderBuilder::compileAndAppendLayoutQualifiers() {
             continue;
         }
         this->layoutQualifiers().appendf("layout(%s", params[0].c_str());
-        for (int i = 1; i < params.count(); ++i) {
+        for (int i = 1; i < params.size(); ++i) {
             this->layoutQualifiers().appendf(", %s", params[i].c_str());
         }
         this->layoutQualifiers().appendf(") %s;\n", interfaceQualifierNames[interface]);
@@ -319,7 +299,7 @@ void GrGLSLShaderBuilder::compileAndAppendLayoutQualifiers() {
 
     static_assert(0 == GrGLSLShaderBuilder::kIn_InterfaceQualifier);
     static_assert(1 == GrGLSLShaderBuilder::kOut_InterfaceQualifier);
-    static_assert(SK_ARRAY_COUNT(interfaceQualifierNames) == kLastInterfaceQualifier + 1);
+    static_assert(std::size(interfaceQualifierNames) == kLastInterfaceQualifier + 1);
 }
 
 void GrGLSLShaderBuilder::finalize(uint32_t visibility) {

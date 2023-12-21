@@ -1,4 +1,4 @@
-// Copyright 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -130,8 +130,8 @@ class CC_EXPORT HeadsUpDisplayLayerImpl : public LayerImpl {
   void DrawDebugRect(PaintCanvas* canvas,
                      PaintFlags* flags,
                      const DebugRect& rect,
-                     SkColor stroke_color,
-                     SkColor fill_color,
+                     SkColor4f stroke_color,
+                     SkColor4f fill_color,
                      float stroke_width,
                      const std::string& label_text) const;
   void DrawDebugRects(PaintCanvas* canvas,
@@ -174,7 +174,11 @@ class CC_EXPORT HeadsUpDisplayLayerImpl : public LayerImpl {
 
   ResourcePool::InUsePoolResource in_flight_resource_;
   std::unique_ptr<ResourcePool> pool_;
-  raw_ptr<viz::DrawQuad> current_quad_ = nullptr;
+  // A reference to the DrawQuad that will be replaced by a quad containing the
+  // HUD's contents. The actual quad can't be created until UpdateHudTexture()
+  // which happens during draw, so we hold this reference to it when
+  // constructing the placeholder between these two steps in the draw process.
+  raw_ptr<viz::DrawQuad> placeholder_quad_ = nullptr;
   // Used for software raster when it will be uploaded to a texture.
   sk_sp<SkSurface> staging_surface_;
 

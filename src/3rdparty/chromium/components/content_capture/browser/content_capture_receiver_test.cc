@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,9 @@
 #include "base/test/test_mock_time_task_runner.h"
 #include "build/build_config.h"
 #include "components/content_capture/browser/content_capture_test_helper.h"
+#include "content/public/browser/back_forward_cache.h"
 #include "content/public/common/content_features.h"
+#include "content/public/test/back_forward_cache_util.h"
 #include "content/public/test/test_renderer_host.h"
 #include "content/public/test/test_utils.h"
 #include "third_party/blink/public/mojom/favicon/favicon_url.mojom.h"
@@ -30,11 +32,9 @@ class ContentCaptureReceiverTest : public content::RenderViewHostTestHarness,
                                    public ::testing::WithParamInterface<bool> {
  public:
   void SetUp() override {
-    // TODO (crbug.com/1115234): Remove the param when BFCache same site feature
-    // launched.
     if (GetParam()) {
       scoped_feature_list_.InitWithFeaturesAndParameters(
-          {{{features::kBackForwardCache}, {{"enable_same_site", "true"}}}},
+          {{{features::kBackForwardCache}, {}}},
           // Allow BackForwardCache for all devices regardless of their memory.
           {features::kBackForwardCacheMemoryControls});
     }
@@ -45,7 +45,7 @@ class ContentCaptureReceiverTest : public content::RenderViewHostTestHarness,
     // This needed to keep the WebContentsObserverConsistencyChecker checks
     // happy for when AppendChild is called.
     NavigateAndCommit(GURL(kMainFrameUrl));
-    main_frame_ = web_contents()->GetMainFrame();
+    main_frame_ = web_contents()->GetPrimaryMainFrame();
     EXPECT_TRUE(main_frame_);
 
     main_frame_sender_ = std::make_unique<FakeContentCaptureSender>();
@@ -57,7 +57,7 @@ class ContentCaptureReceiverTest : public content::RenderViewHostTestHarness,
   void NavigateMainFrame(const GURL& url) {
     consumer()->Reset();
     NavigateAndCommit(url);
-    main_frame_ = web_contents()->GetMainFrame();
+    main_frame_ = web_contents()->GetPrimaryMainFrame();
   }
 
   void NavigateMainFrameSameDocument() {
@@ -176,8 +176,8 @@ TEST_P(ContentCaptureReceiverTest, MultipleConsumers) {
   EXPECT_EQ(consumer(), provider()->GetConsumersForTesting()[0]);
 }
 
-// TODO(https://crbug.com/1010179): Fix flakes on win10_chromium_x64_rel_ng and
-// re-enable this test.
+// TODO(https://crbug.com/1010179): Fix flakes on win-rel and re-enable this
+// test.
 #if BUILDFLAG(IS_WIN)
 #define MAYBE_DidCaptureContentWithUpdate DISABLED_DidCaptureContentWithUpdate
 #else
@@ -204,8 +204,8 @@ TEST_P(ContentCaptureReceiverTest, MAYBE_DidCaptureContentWithUpdate) {
             consumer()->captured_data());
 }
 
-// TODO(https://crbug.com/1011204): Fix flakes on win10_chromium_x64_rel_ng and
-// re-enable this test.
+// TODO(https://crbug.com/1011204): Fix flakes on win-rel and re-enable this
+// test.
 #if BUILDFLAG(IS_WIN)
 #define MAYBE_DidUpdateContent DISABLED_DidUpdateContent
 #else
@@ -302,7 +302,7 @@ TEST_P(ContentCaptureReceiverTest, ChildFrameDidCaptureContent) {
 // This test is for issue crbug.com/995121 .
 TEST_P(ContentCaptureReceiverTest, RenderFrameHostGone) {
   auto* receiver = provider()->ContentCaptureReceiverForFrameForTesting(
-      web_contents()->GetMainFrame());
+      web_contents()->GetPrimaryMainFrame());
   // No good way to simulate crbug.com/995121, just set rfh_ to nullptr in
   // ContentCaptureReceiver, so content::WebContents::FromRenderFrameHost()
   // won't return WebContents.
@@ -316,7 +316,7 @@ TEST_P(ContentCaptureReceiverTest, RenderFrameHostGone) {
 
 TEST_P(ContentCaptureReceiverTest, TitleUpdateTaskDelay) {
   auto* receiver = provider()->ContentCaptureReceiverForFrameForTesting(
-      web_contents()->GetMainFrame());
+      web_contents()->GetPrimaryMainFrame());
   auto task_runner = base::MakeRefCounted<base::TestMockTimeTaskRunner>();
   // Uses TestMockTimeTaskRunner to check the task state.
   receiver->title_update_task_runner_ = task_runner;
@@ -364,8 +364,8 @@ TEST_P(ContentCaptureReceiverTest, TitleUpdateTaskDelay) {
   EXPECT_EQ(title2, consumer()->updated_title());
 }
 
-// TODO(https://crbug.com/1010416): Fix flakes on win10_chromium_x64_rel_ng and
-// re-enable this test.
+// TODO(https://crbug.com/1010416): Fix flakes on win-rel and re-enable this
+// test.
 #if BUILDFLAG(IS_WIN)
 #define MAYBE_ChildFrameCaptureContentFirst \
   DISABLED_ChildFrameCaptureContentFirst
@@ -373,6 +373,9 @@ TEST_P(ContentCaptureReceiverTest, TitleUpdateTaskDelay) {
 #define MAYBE_ChildFrameCaptureContentFirst ChildFrameCaptureContentFirst
 #endif
 TEST_P(ContentCaptureReceiverTest, MAYBE_ChildFrameCaptureContentFirst) {
+  // This test performs navigations, expecting the frames to be destroyed.
+  content::DisableBackForwardCacheForTesting(
+      web_contents(), content::BackForwardCache::TEST_REQUIRES_NO_CACHING);
   // Simulate add child frame.
   SetupChildFrame();
   // Simulate to capture the content from child frame.
@@ -550,7 +553,7 @@ class ContentCaptureReceiverMultipleFrameTest
     // This needed to keep the WebContentsObserverConsistencyChecker checks
     // happy for when AppendChild is called.
     NavigateAndCommit(GURL("about:blank"));
-    content::RenderFrameHostTester::For(web_contents()->GetMainFrame())
+    content::RenderFrameHostTester::For(web_contents()->GetPrimaryMainFrame())
         ->AppendChild("child");
 
     helper_.CreateProviderAndConsumer(web_contents());
@@ -564,8 +567,8 @@ class ContentCaptureReceiverMultipleFrameTest
   ContentCaptureTestHelper helper_;
 };
 
-// TODO(https://crbug.com/1010417): Fix flakes on win10_chromium_x64_rel_ng and
-// re-enable this test.
+// TODO(https://crbug.com/1010417): Fix flakes on win-rel and re-enable this
+// test.
 #if BUILDFLAG(IS_WIN)
 #define MAYBE_ReceiverCreatedForExistingFrame \
   DISABLED_ReceiverCreatedForExistingFrame

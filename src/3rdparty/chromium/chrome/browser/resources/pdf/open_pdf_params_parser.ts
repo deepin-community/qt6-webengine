@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,14 +6,14 @@ import {assert} from 'chrome://resources/js/assert_ts.js';
 import {FittingType, NamedDestinationMessageData, Point} from './constants.js';
 import {Size} from './viewport.js';
 
-export type OpenPdfParams = {
-  url?: string,
-  zoom?: number,
-  view?: FittingType,
-  viewPosition?: number,
-  position?: Point,
-  page?: number,
-};
+export interface OpenPdfParams {
+  url?: string;
+  zoom?: number;
+  view?: FittingType;
+  viewPosition?: number;
+  position?: Point;
+  page?: number;
+}
 
 type GetNamedDestinationCallback = (name: string) =>
     Promise<NamedDestinationMessageData>;
@@ -76,7 +76,7 @@ export class OpenPdfParamsParser {
     // Handle #zoom=scale,left,top.
     const position = {
       x: parseFloat(paramValueSplit[1]),
-      y: parseFloat(paramValueSplit[2])
+      y: parseFloat(paramValueSplit[2]),
     };
     return {'position': position, 'zoom': zoomFactor};
   }
@@ -201,7 +201,32 @@ export class OpenPdfParamsParser {
    * @return Whether the toolbar UI element should be shown.
    */
   shouldShowToolbar(url: string): boolean {
-    return this.parseUrlParams_(url).get('toolbar') !== '0';
+    const urlParams = this.parseUrlParams_(url);
+    const navpanes = urlParams.get('navpanes');
+    const toolbar = urlParams.get('toolbar');
+
+    // If navpanes is set to '1', then the toolbar must be shown, regardless of
+    // the value of toolbar.
+    return navpanes === '1' || toolbar !== '0';
+  }
+
+  /**
+   * @param url that needs to be parsed.
+   * @param sidenavCollapsed the default sidenav state if there are no
+   *     overriding open parameters.
+   * @return Whether the sidenav UI element should be shown.
+   */
+  shouldShowSidenav(url: string, sidenavCollapsed: boolean): boolean {
+    const urlParams = this.parseUrlParams_(url);
+    const navpanes = urlParams.get('navpanes');
+    const toolbar = urlParams.get('toolbar');
+
+    // If there are no relevant open parameters, default to the original value.
+    if (navpanes === null && toolbar === null) {
+      return !sidenavCollapsed;
+    }
+
+    return navpanes === '1';
   }
 
   /**

@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,6 +8,7 @@
 
 #include "components/viz/common/quads/draw_quad.h"
 #include "components/viz/common/quads/solid_color_draw_quad.h"
+#include "components/viz/service/display/overlay_candidate_factory.h"
 #include "ui/gfx/geometry/rect_conversions.h"
 #include "ui/gfx/geometry/size_conversions.h"
 
@@ -21,65 +22,7 @@ OverlayStrategyFullscreen::OverlayStrategyFullscreen(
 
 OverlayStrategyFullscreen::~OverlayStrategyFullscreen() {}
 
-bool OverlayStrategyFullscreen::Attempt(
-    const SkM44& output_color_matrix,
-    const OverlayProcessorInterface::FilterOperationsMap&
-        render_pass_backdrop_filters,
-    DisplayResourceProvider* resource_provider,
-    AggregatedRenderPassList* render_pass_list,
-    SurfaceDamageRectList* surface_damage_rect_list,
-    const PrimaryPlane* primary_plane,
-    OverlayCandidateList* candidate_list,
-    std::vector<gfx::Rect>* content_bounds) {
-  // Before we attempt an overlay strategy, the candidate list should be empty.
-  DCHECK(candidate_list->empty());
-  auto* render_pass = render_pass_list->back().get();
-  QuadList* quad_list = &render_pass->quad_list;
-  // First quad of quad_list is the top most quad.
-  auto front = quad_list->begin();
-  while (front != quad_list->end()) {
-    if (!OverlayCandidate::IsInvisibleQuad(*front))
-      break;
-    ++front;
-  }
-
-  if (front == quad_list->end())
-    return false;
-
-  const DrawQuad* quad = *front;
-  if (quad->ShouldDrawWithBlending())
-    return false;
-
-  OverlayCandidate candidate;
-  if (OverlayCandidate::FromDrawQuad(
-          resource_provider, surface_damage_rect_list, output_color_matrix,
-          quad, GetPrimaryPlaneDisplayRect(primary_plane),
-          &candidate) != OverlayCandidate::CandidateStatus::kSuccess) {
-    return false;
-  }
-
-  if (!candidate.display_rect.origin().IsOrigin() ||
-      gfx::ToRoundedSize(candidate.display_rect.size()) !=
-          render_pass->output_rect.size()) {
-    return false;
-  }
-  candidate.is_opaque = true;
-  candidate.plane_z_order = 0;
-  OverlayCandidateList new_candidate_list;
-  new_candidate_list.push_back(candidate);
-  capability_checker_->CheckOverlaySupport(nullptr, &new_candidate_list);
-  if (!new_candidate_list.front().overlay_handled)
-    return false;
-
-  candidate_list->swap(new_candidate_list);
-
-  OverlayProposedCandidate proposed_candidate(front, candidate, this);
-  CommitCandidate(proposed_candidate, render_pass);
-
-  return true;
-}
-
-void OverlayStrategyFullscreen::ProposePrioritized(
+void OverlayStrategyFullscreen::Propose(
     const SkM44& output_color_matrix,
     const OverlayProcessorInterface::FilterOperationsMap&
         render_pass_backdrop_filters,
@@ -108,10 +51,11 @@ void OverlayStrategyFullscreen::ProposePrioritized(
     return;
 
   OverlayCandidate candidate;
-  if (OverlayCandidate::FromDrawQuad(
-          resource_provider, surface_damage_rect_list, output_color_matrix,
-          quad, GetPrimaryPlaneDisplayRect(primary_plane),
-          &candidate) != OverlayCandidate::CandidateStatus::kSuccess) {
+  OverlayCandidateFactory candidate_factory = OverlayCandidateFactory(
+      render_pass, resource_provider, surface_damage_rect_list,
+      &output_color_matrix, GetPrimaryPlaneDisplayRect(primary_plane));
+  if (candidate_factory.FromDrawQuad(quad, candidate) !=
+      OverlayCandidate::CandidateStatus::kSuccess) {
     return;
   }
 
@@ -125,7 +69,7 @@ void OverlayStrategyFullscreen::ProposePrioritized(
   candidates->push_back({front, candidate, this});
 }
 
-bool OverlayStrategyFullscreen::AttemptPrioritized(
+bool OverlayStrategyFullscreen::Attempt(
     const SkM44& output_color_matrix,
     const OverlayProcessorInterface::FilterOperationsMap&
         render_pass_backdrop_filters,

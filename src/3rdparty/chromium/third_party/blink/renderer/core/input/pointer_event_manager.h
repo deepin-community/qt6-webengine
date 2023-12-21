@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,15 +8,15 @@
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/input/boundary_event_dispatcher.h"
 #include "third_party/blink/renderer/core/input/touch_event_manager.h"
-#include "third_party/blink/renderer/core/page/touch_adjustment.h"
+#include "third_party/blink/renderer/core/paint/paint_layer_scrollable_area.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_map.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/wtf/deque.h"
 
 namespace blink {
 
 class LocalFrame;
 class MouseEventManager;
-class GestureManager;
 class WebPointerProperties;
 
 // This class takes care of dispatching all pointer events and keeps track of
@@ -66,6 +66,9 @@ class CORE_EXPORT PointerEventManager final
       const Vector<WebMouseEvent>& coalesced_events,
       const Vector<WebMouseEvent>& predicted_events);
 
+  void SendEffectivePanActionAtPointer(const WebPointerEvent& event,
+                                       const Node* node_at_pointer);
+
   // Resets the internal state of this object.
   void Clear();
 
@@ -106,12 +109,12 @@ class CORE_EXPORT PointerEventManager final
   // function.
   WebInputEventResult FlushEvents();
 
-  void SetGestureManager(GestureManager* gesture_manager);
-
   // Returns the id of the pointer event corresponding to the given pointer
   // properties if exists otherwise s_invalidId.
   int GetPointerEventId(
       const WebPointerProperties& web_pointer_properties) const;
+
+  Element* CurrentTouchDownElement();
 
  private:
   class EventTargetAttributes : public GarbageCollected<EventTargetAttributes> {
@@ -125,10 +128,7 @@ class CORE_EXPORT PointerEventManager final
   // deleted hash value.
   template <typename T>
   using PointerIdKeyMap =
-      HeapHashMap<int64_t,
-                  T,
-                  WTF::IntHash<int64_t>,
-                  WTF::UnsignedWithZeroKeyHashTraits<int64_t>>;
+      HeapHashMap<int64_t, T, IntWithZeroKeyHashTraits<int64_t>>;
   using PointerCapturingMap = PointerIdKeyMap<Member<Element>>;
   using ElementUnderPointerMap = PointerIdKeyMap<Member<EventTargetAttributes>>;
 
@@ -234,10 +234,18 @@ class CORE_EXPORT PointerEventManager final
                               Element** pointer_capture_target,
                               Element** pending_pointer_capture_target);
 
-  // Only adjust touch type primary pointer down.
+  // Only adjust primary pointer down.
   bool ShouldAdjustPointerEvent(const WebPointerEvent&) const;
-  // Adjust coordinates so it can be used to find the best clickable target.
-  void AdjustTouchPointerEvent(WebPointerEvent&);
+
+  // Whether touch adjustment is to be applied for stylus pointer events.
+  bool ShouldAdjustStylusPointerEvent(const WebPointerEvent&) const;
+
+  // Touch agnostic method to adjust coordinates so that it can be used to find
+  // best touch clickable target or best stylus writable target.
+  void AdjustPointerEvent(WebPointerEvent&);
+
+  // Adjust pointer event and set the best adjusted target.
+  void AdjustPointerEvent(WebPointerEvent& pointer_event, Node*& adjusted_node);
 
   // Check if the SkipTouchEventFilter experiment is configured to skip
   // filtering on the given event.
@@ -245,10 +253,16 @@ class CORE_EXPORT PointerEventManager final
 
   bool HandleScrollbarTouchDrag(const WebPointerEvent&, Scrollbar*);
 
+  bool HandleResizerDrag(const WebPointerEvent&,
+                         const event_handling_util::PointerEventTarget&);
+
   // NOTE: If adding a new field to this class please ensure that it is
   // cleared in |PointerEventManager::clear()|.
 
   const Member<LocalFrame> frame_;
+
+  WeakMember<PaintLayerScrollableArea> resize_scrollable_area_;
+  LayoutSize offset_from_resize_corner_;
 
   // Prevents firing mousedown, mousemove & mouseup in-between a canceled
   // pointerdown and next pointerup/pointercancel.
@@ -285,8 +299,6 @@ class CORE_EXPORT PointerEventManager final
   // main thread, or all events (touch start/end/move).
   bool skip_touch_filter_discrete_ = false;
   bool skip_touch_filter_all_ = false;
-
-  Member<GestureManager> gesture_manager_;
 
   WeakMember<Scrollbar> captured_scrollbar_;
 };

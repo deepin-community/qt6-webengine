@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -27,20 +27,10 @@ class BackgroundTracingRule {
 
   virtual ~BackgroundTracingRule();
 
-  void Setup(const base::Value& dict);
-  BackgroundTracingConfigImpl::CategoryPreset category_preset() const {
-    return category_preset_;
-  }
-  void set_category_preset(
-      BackgroundTracingConfigImpl::CategoryPreset category_preset) {
-    category_preset_ = category_preset;
-  }
-
   virtual void Install() {}
-  virtual base::Value ToDict() const;
+  virtual base::Value::Dict ToDict() const;
   virtual void GenerateMetadataProto(MetadataProto* out) const;
   virtual bool ShouldTriggerNamedEvent(const std::string& named_event) const;
-  virtual void OnHistogramTrigger(const std::string& histogram_name) const {}
 
   // Seconds from the rule is triggered to finalization should start.
   virtual int GetTraceDelay() const;
@@ -48,15 +38,8 @@ class BackgroundTracingRule {
   // Probability that we should allow a tigger to  happen.
   double trigger_chance() const { return trigger_chance_; }
 
-  bool stop_tracing_on_repeated_reactive() const {
-    return stop_tracing_on_repeated_reactive_;
-  }
-
   static std::unique_ptr<BackgroundTracingRule> CreateRuleFromDict(
-      const base::Value& dict);
-
-  void SetArgs(const base::Value& args) { args_ = args.Clone(); }
-  const base::Value* args() const { return &args_; }
+      const base::Value::Dict& dict);
 
   const std::string& rule_id() const { return rule_id_; }
 
@@ -66,14 +49,12 @@ class BackgroundTracingRule {
   virtual std::string GetDefaultRuleId() const;
 
  private:
+  void Setup(const base::Value::Dict& dict);
+
   double trigger_chance_ = 1.0;
   int trigger_delay_ = -1;
-  bool stop_tracing_on_repeated_reactive_ = false;
   std::string rule_id_;
-  BackgroundTracingConfigImpl::CategoryPreset category_preset_ =
-      BackgroundTracingConfigImpl::CATEGORY_PRESET_UNSET;
   bool is_crash_ = false;
-  base::Value args_;
 };
 
 }  // namespace content

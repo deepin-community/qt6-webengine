@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,7 +10,7 @@
 #include <memory>
 #include <vector>
 
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "ui/display/types/display_constants.h"
 #include "ui/gfx/color_space.h"
 #include "ui/gfx/geometry/point.h"
@@ -24,6 +24,7 @@ struct GammaRampRGBEntry;
 }  // namespace display
 
 namespace ui {
+
 class DrmDevice;
 class HardwareDisplayControllerInfo;
 
@@ -64,16 +65,19 @@ class DrmDisplay {
   ~DrmDisplay();
 
   int64_t display_id() const { return display_id_; }
+  int64_t base_connector_id() const { return base_connector_id_; }
   scoped_refptr<DrmDevice> drm() const { return drm_; }
   uint32_t crtc() const { return crtc_; }
   uint32_t connector() const;
   const std::vector<drmModeModeInfo>& modes() const { return modes_; }
+  const gfx::Point& origin() { return origin_; }
 
-  std::unique_ptr<display::DisplaySnapshot> Update(
-      HardwareDisplayControllerInfo* info,
-      uint8_t device_index);
-
+  // Updates the internal state of this display in accordance to |info| and
+  // |display_snapshot|.
+  void Update(HardwareDisplayControllerInfo* info,
+              const display::DisplaySnapshot* display_snapshot);
   void SetOrigin(const gfx::Point origin) { origin_ = origin; }
+  bool SetHdcpKeyProp(const std::string& key);
   bool GetHDCPState(display::HDCPState* state,
                     display::ContentProtectionMethod* protection_method);
   bool SetHDCPState(display::HDCPState state,
@@ -94,6 +98,7 @@ class DrmDisplay {
       const std::vector<display::GammaRampRGBEntry>& gamma_lut);
 
   int64_t display_id_ = -1;
+  int64_t base_connector_id_ = 0;
   const scoped_refptr<DrmDevice> drm_;
   uint32_t crtc_ = 0;
   ScopedDrmConnectorPtr connector_;

@@ -1,4 +1,4 @@
-// Copyright 2017 PDFium Authors. All rights reserved.
+// Copyright 2017 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -85,8 +85,7 @@ void CXFA_Linear::Draw(CFGAS_GEGraphics* pGS,
   }
 
   CFGAS_GEShading shading(ptStart, ptEnd, false, false, crStart, crEnd);
-  pGS->SaveGraphState();
+  CFGAS_GEGraphics::StateRestorer restorer(pGS);
   pGS->SetFillColor(CFGAS_GEColor(&shading));
   pGS->FillPath(fillPath, CFX_FillRenderOptions::FillType::kWinding, matrix);
-  pGS->RestoreGraphState();
 }

@@ -19,9 +19,8 @@
 
 #include "absl/strings/string_view.h"
 #include "internal/platform/byte_array.h"
-#include "src/include/openssl/digest.h"
+#include <openssl/digest.h>
 
-namespace location {
 namespace nearby {
 
 // Initialize global crypto state.
@@ -50,4 +49,3 @@ ByteArray Crypto::Sha256(absl::string_view input) {
 }
 
 }  // namespace nearby
-}  // namespace location

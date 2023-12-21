@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -149,6 +149,11 @@ class WarningServiceObserver : public WarningService::Observer {
   const ExtensionId extension_id_;
   base::RunLoop run_loop_;
 };
+
+base::flat_set<int> GetDisabledRuleIdsFromMatcherForTesting(
+    const RulesetManager& ruleset_manager,
+    const Extension& extension,
+    const std::string& ruleset_id_string);
 
 }  // namespace declarative_net_request
 }  // namespace extensions

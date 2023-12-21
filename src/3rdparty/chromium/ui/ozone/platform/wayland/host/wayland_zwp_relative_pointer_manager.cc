@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -28,9 +28,10 @@ void WaylandZwpRelativePointerManager::Instantiate(
     uint32_t name,
     const std::string& interface,
     uint32_t version) {
-  DCHECK_EQ(interface, kInterfaceName);
+  CHECK_EQ(interface, kInterfaceName) << "Expected \"" << kInterfaceName
+                                      << "\" but got \"" << interface << "\"";
 
-  if (connection->wayland_zwp_relative_pointer_manager_ ||
+  if (connection->zwp_relative_pointer_manager_ ||
       !wl::CanBind(interface, version, kMinVersion, kMinVersion)) {
     return;
   }
@@ -42,7 +43,7 @@ void WaylandZwpRelativePointerManager::Instantiate(
     LOG(ERROR) << "Failed to bind zwp_relative_pointer_manager_v1";
     return;
   }
-  connection->wayland_zwp_relative_pointer_manager_ =
+  connection->zwp_relative_pointer_manager_ =
       std::make_unique<WaylandZwpRelativePointerManager>(
           zwp_relative_pointer_manager_v1.release(), connection);
 }

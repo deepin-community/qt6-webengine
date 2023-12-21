@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -17,6 +17,7 @@ class GURL;
 
 namespace blink {
 class BlinkSchemefulSite;
+class StorageKey;
 }  // namespace blink
 
 namespace IPC {
@@ -24,11 +25,9 @@ template <class P>
 struct ParamTraits;
 }  // namespace IPC
 
-namespace network {
-namespace mojom {
+namespace network::mojom {
 class SchemefulSiteDataView;
-}  // namespace mojom
-}  // namespace network
+}  // namespace network::mojom
 
 namespace mojo {
 template <typename DataViewType, typename T>
@@ -152,15 +151,26 @@ class NET_EXPORT SchemefulSite {
   // use opaque origins.
   friend class NetworkIsolationKey;
 
+  // Needed to serialize opaque and non-transient NetworkAnonymizationKeys,
+  // which use opaque origins.
+  friend class NetworkAnonymizationKey;
+
   // Needed to create a bogus origin from a site.
   // TODO(https://crbug.com/1148927): Give IsolationInfos empty origins instead,
   // in this case, and unfriend IsolationInfo.
   friend class IsolationInfo;
 
+  // Needed to create a bogus origin from a site.
+  friend class URLRequest;
+
   // Needed because cookies do not account for scheme.
   friend class CookieMonster;
 
+  // Needed for access to nonce for serialization.
+  friend class blink::StorageKey;
+
   FRIEND_TEST_ALL_PREFIXES(SchemefulSiteTest, OpaqueSerialization);
+  FRIEND_TEST_ALL_PREFIXES(SchemefulSiteTest, InternalValue);
 
   struct ObtainASiteResult {
     url::Origin origin;
@@ -195,6 +205,11 @@ class NET_EXPORT SchemefulSite {
   std::string registrable_domain_or_host() const {
     return site_as_origin_.host();
   }
+
+  // This should not be used casually, it's an opaque Origin or an scheme+eTLD+1
+  // packed into an Origin. If you extract this value SchemefulSite is not
+  // responsible for any unexpected friction you might encounter.
+  const url::Origin& internal_value() const { return site_as_origin_; }
 
   // Origin which stores the result of running the steps documented at
   // https://html.spec.whatwg.org/multipage/origin.html#obtain-a-site.

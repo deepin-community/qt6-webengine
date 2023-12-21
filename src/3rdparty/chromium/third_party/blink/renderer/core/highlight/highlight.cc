@@ -1,4 +1,4 @@
-﻿// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -25,7 +25,7 @@ Highlight::~Highlight() = default;
 void Highlight::Trace(blink::Visitor* visitor) const {
   visitor->Trace(highlight_ranges_);
   visitor->Trace(containing_highlight_registries_);
-  ScriptWrappable::Trace(visitor);
+  EventTargetWithInlineData::Trace(visitor);
 }
 
 void Highlight::ScheduleRepaintsInContainingHighlightRegistries() const {
@@ -80,6 +80,18 @@ bool Highlight::Contains(AbstractRange* range) const {
   return highlight_ranges_.Contains(range);
 }
 
+const AtomicString& Highlight::InterfaceName() const {
+  // TODO(crbug.com/1346693)
+  NOTIMPLEMENTED();
+  return g_null_atom;
+}
+
+ExecutionContext* Highlight::GetExecutionContext() const {
+  // TODO(crbug.com/1346693)
+  NOTIMPLEMENTED();
+  return nullptr;
+}
+
 void Highlight::RegisterIn(HighlightRegistry* highlight_registry) {
   auto map_iterator = containing_highlight_registries_.find(highlight_registry);
   if (map_iterator == containing_highlight_registries_.end()) {
@@ -107,13 +119,12 @@ Highlight::IterationSource::IterationSource(const Highlight& highlight)
   }
 }
 
-bool Highlight::IterationSource::Next(ScriptState*,
-                                      Member<AbstractRange>& key,
-                                      Member<AbstractRange>& value,
-                                      ExceptionState&) {
+bool Highlight::IterationSource::FetchNextItem(ScriptState*,
+                                               AbstractRange*& value,
+                                               ExceptionState&) {
   if (index_ >= highlight_ranges_snapshot_.size())
     return false;
-  key = value = highlight_ranges_snapshot_[index_++];
+  value = highlight_ranges_snapshot_[index_++];
   return true;
 }
 
@@ -122,7 +133,7 @@ void Highlight::IterationSource::Trace(blink::Visitor* visitor) const {
   HighlightSetIterable::IterationSource::Trace(visitor);
 }
 
-HighlightSetIterable::IterationSource* Highlight::StartIteration(
+HighlightSetIterable::IterationSource* Highlight::CreateIterationSource(
     ScriptState*,
     ExceptionState&) {
   return MakeGarbageCollected<IterationSource>(*this);

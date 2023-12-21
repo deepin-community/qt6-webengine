@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -59,6 +59,12 @@ interface SystemInfoObserver {
   // process. TODO(b/184119538): Need to handle the resize issue and virtual
   // keyboard in table mode.
   OnReceivedTabletModeChanged(bool is_tablet_mode);
+
+  // Interface for monitoring the network state of the Android device.
+  // The state is sent by the remote device during the signaling process
+  // and processed by CrOS.
+  OnAndroidDeviceNetworkInfoChanged(bool is_different_network,
+          bool android_device_on_cellular);
 };
 
 // Interface for generating uid. The uid is unique and persistent.
@@ -80,6 +86,9 @@ enum WebNotificationType {
     NOTIFICATION_ACTION_NOT_LAUNCHED,
     LAUNCH_NOTIFICATION_FAILED,
     TABLET_MODE,
+    WIFI_NOT_READY,
+    DIFFERENT_WIFI_NETWORKS,
+    REMOTE_DEVICE_ON_CELLULAR,
 };
 
 // Interface for showing a native notification which was generated from WebUI.
@@ -87,6 +96,8 @@ interface NotificationGenerator {
   // Show a native notification, title and message are from WebUI.
   ShowNotification(mojo_base.mojom.String16 title,
           mojo_base.mojom.String16 message, WebNotificationType type);
+  // Show a native toast, text is from WebUI.
+  ShowToast(mojo_base.mojom.String16 text);
 };
 
 // Enum representing the video streaming status from browser. Numerical
@@ -115,7 +126,11 @@ interface DisplayStreamHandler {
 // Enum representing stream action from Eche SWA. Numerical values should not
 // be changed because they must stay in sync with value on for Eche Web app.
 enum StreamAction {
+    // Notify the stream should be close.
     kStreamActionClose,
+
+    // Notify the stream should go back to the previous page.
+    kStreamActionGoBack,
 };
 
 // A generic interface to observe stream action from Eche SWA native code for
@@ -124,4 +139,19 @@ interface StreamActionObserver {
   // Interface for notifying Eche web app that stream action happens from Eche
   // SWA
   OnStreamAction(StreamAction action);
+};
+
+// Interface to send new orientation for the app streaming bubble from Eche SWA.
+interface StreamOrientationObserver {
+  // Notifies what orientation the stream has changed to.
+  OnStreamOrientationChanged(bool isLandscape);
+};
+
+// Enum representing what EntryPoint was used to launch the eche app stream.
+// Keep in sync with AppStreamLaunchEntryPoint in
+// tools/metrics/histograms/enums.xml
+enum AppStreamLaunchEntryPoint {
+  APPS_LIST = 0,    // App stream was launched from the full apps list.
+  NOTIFICATION = 1, // App stream was launched from a notification.
+  RECENT_APPS = 2,  // App stream was launched from the recent apps.
 };

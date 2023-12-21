@@ -1,4 +1,4 @@
-// Copyright 2017 PDFium Authors. All rights reserved.
+// Copyright 2017 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,6 +12,8 @@
 #include "core/fxge/dib/cstretchengine.h"
 #include "core/fxge/dib/fx_dib.h"
 #include "third_party/base/check.h"
+#include "third_party/base/check_op.h"
+#include "third_party/base/span.h"
 
 namespace {
 
@@ -30,6 +32,41 @@ FXDIB_Format GetStretchedFormat(const CFX_DIBBase& src) {
   if (format == FXDIB_Format::k8bppRgb && src.HasPalette())
     return FXDIB_Format::kRgb;
   return format;
+}
+
+// Builds a new palette with a size of `CFX_DIBBase::kPaletteSize` from the
+// existing palette in `source`. Note: The caller must make sure that the
+// parameters meet the following conditions:
+//   source       - The format must be `FXDIB_Format::k1bppRgb` and it must
+//                  have a palette.
+//   palette_span - The size must be `CFX_DIBBase::kPaletteSize` to be able
+//                  to hold the new palette.
+
+void BuildPaletteFrom1BppSource(const RetainPtr<const CFX_DIBBase>& source,
+                                pdfium::span<FX_ARGB> palette_span) {
+  DCHECK_EQ(FXDIB_Format::k1bppRgb, source->GetFormat());
+  DCHECK(source->HasPalette());
+  DCHECK_EQ(CFX_DIBBase::kPaletteSize, palette_span.size());
+
+  int a0;
+  int r0;
+  int g0;
+  int b0;
+  std::tie(a0, r0, g0, b0) = ArgbDecode(source->GetPaletteArgb(0));
+  int a1;
+  int r1;
+  int g1;
+  int b1;
+  std::tie(a1, r1, g1, b1) = ArgbDecode(source->GetPaletteArgb(1));
+  DCHECK_EQ(255, a0);
+  DCHECK_EQ(255, a1);
+
+  for (int i = 0; i < static_cast<int>(CFX_DIBBase::kPaletteSize); ++i) {
+    int r = r0 + (r1 - r0) * i / 255;
+    int g = g0 + (g1 - g0) * i / 255;
+    int b = b0 + (b1 - b0) * i / 255;
+    palette_span[i] = ArgbEncode(255, r, g, b);
+  }
 }
 
 }  // namespace
@@ -59,24 +96,8 @@ bool CFX_ImageStretcher::Start() {
 
   if (m_pSource->GetFormat() == FXDIB_Format::k1bppRgb &&
       m_pSource->HasPalette()) {
-    FX_ARGB pal[256];
-    int a0;
-    int r0;
-    int g0;
-    int b0;
-    std::tie(a0, r0, g0, b0) = ArgbDecode(m_pSource->GetPaletteArgb(0));
-    int a1;
-    int r1;
-    int g1;
-    int b1;
-    std::tie(a1, r1, g1, b1) = ArgbDecode(m_pSource->GetPaletteArgb(1));
-    for (int i = 0; i < 256; ++i) {
-      int a = a0 + (a1 - a0) * i / 255;
-      int r = r0 + (r1 - r0) * i / 255;
-      int g = g0 + (g1 - g0) * i / 255;
-      int b = b0 + (b1 - b0) * i / 255;
-      pal[i] = ArgbEncode(a, r, g, b);
-    }
+    FX_ARGB pal[CFX_DIBBase::kPaletteSize];
+    BuildPaletteFrom1BppSource(m_pSource, pal);
     if (!m_pDest->SetInfo(m_ClipRect.Width(), m_ClipRect.Height(), m_DestFormat,
                           pal)) {
       return false;
@@ -98,8 +119,8 @@ RetainPtr<const CFX_DIBBase> CFX_ImageStretcher::source() {
 
 bool CFX_ImageStretcher::StartStretch() {
   m_pStretchEngine = std::make_unique<CStretchEngine>(
-      m_pDest.Get(), m_DestFormat, m_DestWidth, m_DestHeight, m_ClipRect,
-      m_pSource, m_ResampleOptions);
+      m_pDest, m_DestFormat, m_DestWidth, m_DestHeight, m_ClipRect, m_pSource,
+      m_ResampleOptions);
   m_pStretchEngine->StartStretchHorz();
   if (SourceSizeWithinLimit(m_pSource->GetWidth(), m_pSource->GetHeight())) {
     m_pStretchEngine->Continue(nullptr);

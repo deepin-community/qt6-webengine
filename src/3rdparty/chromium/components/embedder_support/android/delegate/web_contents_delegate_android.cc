@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -89,7 +89,6 @@ WebContents* WebContentsDelegateAndroid::OpenURLFromTab(
   if (disposition == WindowOpenDisposition::NEW_FOREGROUND_TAB ||
       disposition == WindowOpenDisposition::NEW_BACKGROUND_TAB ||
       disposition == WindowOpenDisposition::OFF_THE_RECORD) {
-    JNIEnv* env = AttachCurrentThread();
     ScopedJavaLocalRef<jobject> java_gurl =
         url::GURLAndroid::FromNativeGURL(env, url);
     ScopedJavaLocalRef<jstring> extra_headers =
@@ -411,6 +410,15 @@ bool WebContentsDelegateAndroid::DoBrowserControlsShrinkRendererSize(
   if (obj.is_null())
     return false;
   return Java_WebContentsDelegateAndroid_controlsResizeView(env, obj);
+}
+
+int WebContentsDelegateAndroid::GetVirtualKeyboardHeight(
+    content::WebContents* contents) {
+  JNIEnv* env = AttachCurrentThread();
+  ScopedJavaLocalRef<jobject> obj = GetJavaDelegate(env);
+  if (obj.is_null())
+    return false;
+  return Java_WebContentsDelegateAndroid_getVirtualKeyboardHeight(env, obj);
 }
 
 blink::mojom::DisplayMode WebContentsDelegateAndroid::GetDisplayMode(

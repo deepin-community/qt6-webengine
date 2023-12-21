@@ -35,6 +35,7 @@ group("docs") {
     "./panel_feedback",
     "./panel_introduction_steps",
     "./perf_piechart",
+    "./performance_panel",
     "./report",
     "./request_link_icon",
     "./style_property_editor",
@@ -44,6 +45,7 @@ group("docs") {
     "./theme_colors",
     "./tree_outline",
     "./trust_tokens_view",
+    "./two_states_counter",
     "./user_agent_client_hints",
     "./webvitals",
   ]

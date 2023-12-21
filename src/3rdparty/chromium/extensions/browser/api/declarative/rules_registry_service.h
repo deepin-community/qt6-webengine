@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,7 +11,7 @@
 #include <vector>
 
 #include "base/memory/raw_ptr.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/observer_list.h"
 #include "base/scoped_observation.h"
 #include "extensions/browser/api/declarative/rules_cache_delegate.h"
@@ -113,6 +113,11 @@ class RulesRegistryService : public BrowserContextKeyedAPI,
   // For testing.
   void SimulateExtensionUninstalled(const Extension* extension);
 
+  // For testing. Returns true if `rule_registries_` has the RulesRegistry for
+  // `event_name` and `rules_registry_id`.
+  bool HasRulesRegistryForTesting(int rules_registry_id,
+                                  const std::string& event_name);
+
  private:
   friend class BrowserContextKeyedAPIFactory<RulesRegistryService>;
 
@@ -165,7 +170,7 @@ class RulesRegistryService : public BrowserContextKeyedAPI,
 
   // Weak pointer into rule_registries_ to make it easier to handle content rule
   // conditions.
-  raw_ptr<ContentRulesRegistry> content_rules_registry_;
+  raw_ptr<ContentRulesRegistry, DanglingUntriaged> content_rules_registry_;
 
   // Listen to extension load, unloaded notification.
   base::ScopedObservation<ExtensionRegistry, ExtensionRegistryObserver>

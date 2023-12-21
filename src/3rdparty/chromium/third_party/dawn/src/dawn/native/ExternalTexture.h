@@ -15,63 +15,73 @@
 #ifndef SRC_DAWN_NATIVE_EXTERNALTEXTURE_H_
 #define SRC_DAWN_NATIVE_EXTERNALTEXTURE_H_
 
+#include <array>
+
 #include "dawn/native/Error.h"
 #include "dawn/native/Forward.h"
 #include "dawn/native/ObjectBase.h"
 #include "dawn/native/Subresource.h"
 
-#include <array>
-
 namespace dawn::native {
 
-    class TextureViewBase;
+class TextureViewBase;
 
-    struct ExternalTextureParams {
-        uint32_t numPlanes;
-        float vr;
-        float vg;
-        float ub;
-        float ug;
-    };
+struct ExternalTextureParams {
+    uint32_t numPlanes;
+    // TODO(crbug.com/dawn/1466): Only go as few steps as necessary.
+    uint32_t doYuvToRgbConversionOnly;
+    std::array<uint32_t, 2> padding;
+    std::array<float, 12> yuvToRgbConversionMatrix;
+    std::array<float, 8> gammaDecodingParams = {};
+    std::array<float, 8> gammaEncodingParams = {};
+    std::array<float, 12> gamutConversionMatrix = {};
+    std::array<float, 6> coordTransformMatrix = {};
+};
 
-    MaybeError ValidateExternalTextureDescriptor(const DeviceBase* device,
-                                                 const ExternalTextureDescriptor* descriptor);
+MaybeError ValidateExternalTextureDescriptor(const DeviceBase* device,
+                                             const ExternalTextureDescriptor* descriptor);
 
-    class ExternalTextureBase : public ApiObjectBase {
-      public:
-        static ResultOrError<Ref<ExternalTextureBase>> Create(
-            DeviceBase* device,
-            const ExternalTextureDescriptor* descriptor);
+class ExternalTextureBase : public ApiObjectBase {
+  public:
+    static ResultOrError<Ref<ExternalTextureBase>> Create(
+        DeviceBase* device,
+        const ExternalTextureDescriptor* descriptor);
 
-        BufferBase* GetParamsBuffer() const;
-        const std::array<Ref<TextureViewBase>, kMaxPlanesPerFormat>& GetTextureViews() const;
-        ObjectType GetType() const override;
+    BufferBase* GetParamsBuffer() const;
+    const std::array<Ref<TextureViewBase>, kMaxPlanesPerFormat>& GetTextureViews() const;
+    ObjectType GetType() const override;
 
-        MaybeError ValidateCanUseInSubmitNow() const;
-        static ExternalTextureBase* MakeError(DeviceBase* device);
+    const Extent2D& GetVisibleSize() const;
+    const Origin2D& GetVisibleOrigin() const;
 
-        void APIDestroy();
+    MaybeError ValidateCanUseInSubmitNow() const;
+    static ExternalTextureBase* MakeError(DeviceBase* device);
 
-      protected:
-        // Constructor used only for mocking and testing.
-        explicit ExternalTextureBase(DeviceBase* device);
-        void DestroyImpl() override;
+    void APIDestroy();
 
-        ~ExternalTextureBase() override;
+  protected:
+    ExternalTextureBase(DeviceBase* device, const ExternalTextureDescriptor* descriptor);
+    void DestroyImpl() override;
 
-      private:
-        ExternalTextureBase(DeviceBase* device, const ExternalTextureDescriptor* descriptor);
+    MaybeError Initialize(DeviceBase* device, const ExternalTextureDescriptor* descriptor);
 
-        enum class ExternalTextureState { Alive, Destroyed };
-        ExternalTextureBase(DeviceBase* device, ObjectBase::ErrorTag tag);
-        MaybeError Initialize(DeviceBase* device, const ExternalTextureDescriptor* descriptor);
+    ~ExternalTextureBase() override;
 
-        Ref<TextureBase> mDummyTexture;
-        Ref<BufferBase> mParamsBuffer;
-        std::array<Ref<TextureViewBase>, kMaxPlanesPerFormat> mTextureViews;
+  private:
+    enum class ExternalTextureState { Alive, Destroyed };
+    ExternalTextureBase(DeviceBase* device, ObjectBase::ErrorTag tag);
 
-        ExternalTextureState mState;
-    };
+    Ref<TextureBase> mPlaceholderTexture;
+    Ref<BufferBase> mParamsBuffer;
+    std::array<Ref<TextureViewBase>, kMaxPlanesPerFormat> mTextureViews;
+
+    // TODO(dawn:1082) Use the visible size and origin in the external texture shader
+    // code to sample video content.
+    Origin2D mVisibleOrigin;
+    Extent2D mVisibleSize;
+
+    ExternalTextureState mState;
+};
 }  // namespace dawn::native
 
 #endif  // SRC_DAWN_NATIVE_EXTERNALTEXTURE_H_

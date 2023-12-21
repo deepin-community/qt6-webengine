@@ -18,12 +18,13 @@
 #include <string>
 
 #include "src/tint/program_builder.h"
-#include "src/tint/sem/atomic_type.h"
 #include "src/tint/sem/block_statement.h"
-#include "src/tint/sem/depth_multisampled_texture_type.h"
 #include "src/tint/sem/for_loop_statement.h"
-#include "src/tint/sem/reference_type.h"
-#include "src/tint/sem/sampler_type.h"
+#include "src/tint/sem/variable.h"
+#include "src/tint/type/atomic.h"
+#include "src/tint/type/depth_multisampled_texture.h"
+#include "src/tint/type/reference.h"
+#include "src/tint/type/sampler.h"
 
 TINT_INSTANTIATE_TYPEINFO(tint::transform::Transform);
 TINT_INSTANTIATE_TYPEINFO(tint::transform::Data);
@@ -45,114 +46,130 @@ Output::Output(Program&& p) : program(std::move(p)) {}
 Transform::Transform() = default;
 Transform::~Transform() = default;
 
-Output Transform::Run(const Program* program,
-                      const DataMap& data /* = {} */) const {
-  ProgramBuilder builder;
-  CloneContext ctx(&builder, program);
-  Output output;
-  Run(ctx, data, output.data);
-  output.program = Program(std::move(builder));
-  return output;
-}
-
-void Transform::Run(CloneContext& ctx, const DataMap&, DataMap&) const {
-  TINT_UNIMPLEMENTED(Transform, ctx.dst->Diagnostics())
-      << "Transform::Run() unimplemented for " << TypeInfo().name;
-}
-
-bool Transform::ShouldRun(const Program*, const DataMap&) const {
-  return true;
+Output Transform::Run(const Program* src, const DataMap& data /* = {} */) const {
+    Output output;
+    if (auto program = Apply(src, data, output.data)) {
+        output.program = std::move(program.value());
+    } else {
+        ProgramBuilder b;
+        CloneContext ctx{&b, src, /* auto_clone_symbols */ true};
+        ctx.Clone();
+        output.program = Program(std::move(b));
+    }
+    return output;
 }
 
 void Transform::RemoveStatement(CloneContext& ctx, const ast::Statement* stmt) {
-  auto* sem = ctx.src->Sem().Get(stmt);
-  if (auto* block = tint::As<sem::BlockStatement>(sem->Parent())) {
-    ctx.Remove(block->Declaration()->statements, stmt);
-    return;
-  }
-  if (tint::Is<sem::ForLoopStatement>(sem->Parent())) {
-    ctx.Replace(stmt, static_cast<ast::Expression*>(nullptr));
-    return;
-  }
-  TINT_ICE(Transform, ctx.dst->Diagnostics())
-      << "unable to remove statement from parent of type "
-      << sem->TypeInfo().name;
+    auto* sem = ctx.src->Sem().Get(stmt);
+    if (auto* block = tint::As<sem::BlockStatement>(sem->Parent())) {
+        ctx.Remove(block->Declaration()->statements, stmt);
+        return;
+    }
+    if (TINT_LIKELY(tint::Is<sem::ForLoopStatement>(sem->Parent()))) {
+        ctx.Replace(stmt, static_cast<ast::Expression*>(nullptr));
+        return;
+    }
+    TINT_ICE(Transform, ctx.dst->Diagnostics())
+        << "unable to remove statement from parent of type " << sem->TypeInfo().name;
 }
 
-const ast::Type* Transform::CreateASTTypeFor(CloneContext& ctx,
-                                             const sem::Type* ty) {
-  if (ty->Is<sem::Void>()) {
-    return ctx.dst->create<ast::Void>();
-  }
-  if (ty->Is<sem::I32>()) {
-    return ctx.dst->create<ast::I32>();
-  }
-  if (ty->Is<sem::U32>()) {
-    return ctx.dst->create<ast::U32>();
-  }
-  if (ty->Is<sem::F32>()) {
-    return ctx.dst->create<ast::F32>();
-  }
-  if (ty->Is<sem::Bool>()) {
-    return ctx.dst->create<ast::Bool>();
-  }
-  if (auto* m = ty->As<sem::Matrix>()) {
-    auto* el = CreateASTTypeFor(ctx, m->type());
-    return ctx.dst->create<ast::Matrix>(el, m->rows(), m->columns());
-  }
-  if (auto* v = ty->As<sem::Vector>()) {
-    auto* el = CreateASTTypeFor(ctx, v->type());
-    return ctx.dst->create<ast::Vector>(el, v->Width());
-  }
-  if (auto* a = ty->As<sem::Array>()) {
-    auto* el = CreateASTTypeFor(ctx, a->ElemType());
-    ast::AttributeList attrs;
-    if (!a->IsStrideImplicit()) {
-      attrs.emplace_back(ctx.dst->create<ast::StrideAttribute>(a->Stride()));
+ast::Type Transform::CreateASTTypeFor(CloneContext& ctx, const type::Type* ty) {
+    if (ty->Is<type::Void>()) {
+        return ast::Type{};
     }
-    if (a->IsRuntimeSized()) {
-      return ctx.dst->ty.array(el, nullptr, std::move(attrs));
-    } else {
-      return ctx.dst->ty.array(el, a->Count(), std::move(attrs));
+    if (ty->Is<type::I32>()) {
+        return ctx.dst->ty.i32();
     }
-  }
-  if (auto* s = ty->As<sem::Struct>()) {
-    return ctx.dst->create<ast::TypeName>(ctx.Clone(s->Declaration()->name));
-  }
-  if (auto* s = ty->As<sem::Reference>()) {
-    return CreateASTTypeFor(ctx, s->StoreType());
-  }
-  if (auto* a = ty->As<sem::Atomic>()) {
-    return ctx.dst->create<ast::Atomic>(CreateASTTypeFor(ctx, a->Type()));
-  }
-  if (auto* t = ty->As<sem::DepthTexture>()) {
-    return ctx.dst->create<ast::DepthTexture>(t->dim());
-  }
-  if (auto* t = ty->As<sem::DepthMultisampledTexture>()) {
-    return ctx.dst->create<ast::DepthMultisampledTexture>(t->dim());
-  }
-  if (ty->Is<sem::ExternalTexture>()) {
-    return ctx.dst->create<ast::ExternalTexture>();
-  }
-  if (auto* t = ty->As<sem::MultisampledTexture>()) {
-    return ctx.dst->create<ast::MultisampledTexture>(
-        t->dim(), CreateASTTypeFor(ctx, t->type()));
-  }
-  if (auto* t = ty->As<sem::SampledTexture>()) {
-    return ctx.dst->create<ast::SampledTexture>(
-        t->dim(), CreateASTTypeFor(ctx, t->type()));
-  }
-  if (auto* t = ty->As<sem::StorageTexture>()) {
-    return ctx.dst->create<ast::StorageTexture>(
-        t->dim(), t->texel_format(), CreateASTTypeFor(ctx, t->type()),
-        t->access());
-  }
-  if (auto* s = ty->As<sem::Sampler>()) {
-    return ctx.dst->create<ast::Sampler>(s->kind());
-  }
-  TINT_UNREACHABLE(Transform, ctx.dst->Diagnostics())
-      << "Unhandled type: " << ty->TypeInfo().name;
-  return nullptr;
+    if (ty->Is<type::U32>()) {
+        return ctx.dst->ty.u32();
+    }
+    if (ty->Is<type::F16>()) {
+        return ctx.dst->ty.f16();
+    }
+    if (ty->Is<type::F32>()) {
+        return ctx.dst->ty.f32();
+    }
+    if (ty->Is<type::Bool>()) {
+        return ctx.dst->ty.bool_();
+    }
+    if (auto* m = ty->As<type::Matrix>()) {
+        auto el = CreateASTTypeFor(ctx, m->type());
+        return ctx.dst->ty.mat(el, m->columns(), m->rows());
+    }
+    if (auto* v = ty->As<type::Vector>()) {
+        auto el = CreateASTTypeFor(ctx, v->type());
+        return ctx.dst->ty.vec(el, v->Width());
+    }
+    if (auto* a = ty->As<type::Array>()) {
+        auto el = CreateASTTypeFor(ctx, a->ElemType());
+        utils::Vector<const ast::Attribute*, 1> attrs;
+        if (!a->IsStrideImplicit()) {
+            attrs.Push(ctx.dst->create<ast::StrideAttribute>(a->Stride()));
+        }
+        if (a->Count()->Is<type::RuntimeArrayCount>()) {
+            return ctx.dst->ty.array(el, std::move(attrs));
+        }
+        if (auto* override = a->Count()->As<sem::NamedOverrideArrayCount>()) {
+            auto* count = ctx.Clone(override->variable->Declaration());
+            return ctx.dst->ty.array(el, count, std::move(attrs));
+        }
+        if (auto* override = a->Count()->As<sem::UnnamedOverrideArrayCount>()) {
+            // If the array count is an unnamed (complex) override expression, then its not safe to
+            // redeclare this type as we'd end up with two types that would not compare equal.
+            // See crbug.com/tint/1764.
+            // Look for a type alias for this array.
+            for (auto* type_decl : ctx.src->AST().TypeDecls()) {
+                if (auto* alias = type_decl->As<ast::Alias>()) {
+                    if (ty == ctx.src->Sem().Get(alias)) {
+                        // Alias found. Use the alias name to ensure types compare equal.
+                        return ctx.dst->ty(ctx.Clone(alias->name->symbol));
+                    }
+                }
+            }
+            // Array is not aliased. Rebuild the array.
+            auto* count = ctx.Clone(override->expr->Declaration());
+            return ctx.dst->ty.array(el, count, std::move(attrs));
+        }
+        auto count = a->ConstantCount();
+        if (TINT_UNLIKELY(!count)) {
+            TINT_ICE(Transform, ctx.dst->Diagnostics()) << type::Array::kErrExpectedConstantCount;
+            return ctx.dst->ty.array(el, u32(1), std::move(attrs));
+        }
+        return ctx.dst->ty.array(el, u32(count.value()), std::move(attrs));
+    }
+    if (auto* s = ty->As<sem::Struct>()) {
+        return ctx.dst->ty(ctx.Clone(s->Declaration()->name->symbol));
+    }
+    if (auto* s = ty->As<type::Reference>()) {
+        return CreateASTTypeFor(ctx, s->StoreType());
+    }
+    if (auto* a = ty->As<type::Atomic>()) {
+        return ctx.dst->ty.atomic(CreateASTTypeFor(ctx, a->Type()));
+    }
+    if (auto* t = ty->As<type::DepthTexture>()) {
+        return ctx.dst->ty.depth_texture(t->dim());
+    }
+    if (auto* t = ty->As<type::DepthMultisampledTexture>()) {
+        return ctx.dst->ty.depth_multisampled_texture(t->dim());
+    }
+    if (ty->Is<type::ExternalTexture>()) {
+        return ctx.dst->ty.external_texture();
+    }
+    if (auto* t = ty->As<type::MultisampledTexture>()) {
+        return ctx.dst->ty.multisampled_texture(t->dim(), CreateASTTypeFor(ctx, t->type()));
+    }
+    if (auto* t = ty->As<type::SampledTexture>()) {
+        return ctx.dst->ty.sampled_texture(t->dim(), CreateASTTypeFor(ctx, t->type()));
+    }
+    if (auto* t = ty->As<type::StorageTexture>()) {
+        return ctx.dst->ty.storage_texture(t->dim(), t->texel_format(), t->access());
+    }
+    if (auto* s = ty->As<type::Sampler>()) {
+        return ctx.dst->ty.sampler(s->kind());
+    }
+    TINT_UNREACHABLE(Transform, ctx.dst->Diagnostics())
+        << "Unhandled type: " << ty->TypeInfo().name;
+    return ast::Type{};
 }
 
 }  // namespace tint::transform

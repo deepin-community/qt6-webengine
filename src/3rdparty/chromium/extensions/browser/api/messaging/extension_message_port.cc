@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,11 +7,13 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/notreached.h"
 #include "base/scoped_observation.h"
 #include "base/strings/strcat.h"
+#include "base/types/optional_util.h"
+#include "base/types/pass_key.h"
 #include "components/back_forward_cache/back_forward_cache_disable.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/navigation_handle.h"
@@ -28,6 +30,8 @@
 #include "extensions/common/api/messaging/messaging_endpoint.h"
 #include "extensions/common/extension_messages.h"
 #include "extensions/common/manifest_handlers/background_info.h"
+#include "services/metrics/public/cpp/ukm_recorder.h"
+#include "services/metrics/public/cpp/ukm_source_id.h"
 
 namespace extensions {
 
@@ -64,14 +68,12 @@ class ExtensionMessagePort::FrameTracker : public content::WebContentsObserver,
     pm_observation_.Observe(ProcessManager::Get(port_->browser_context_));
   }
 
-  void TrackTabFrames(content::WebContents* tab) {
-    Observe(tab);
-  }
+  void TrackTabFrames(content::WebContents* tab) { Observe(tab); }
 
  private:
   // content::WebContentsObserver overrides:
-  void RenderFrameDeleted(content::RenderFrameHost* render_frame_host)
-      override {
+  void RenderFrameDeleted(
+      content::RenderFrameHost* render_frame_host) override {
     port_->UnregisterFrame(render_frame_host);
   }
 
@@ -130,8 +132,8 @@ class ExtensionMessagePort::FrameTracker : public content::WebContentsObserver,
 
 // Represents target of an IPC (render frame, ServiceWorker or render process).
 struct ExtensionMessagePort::IPCTarget {
-  content::RenderProcessHost* render_process_host;
-  content::RenderFrameHost* render_frame_host;
+  raw_ptr<content::RenderProcessHost> render_process_host;
+  raw_ptr<content::RenderFrameHost, DanglingUntriaged> render_frame_host;
   int worker_thread_id;
 };
 
@@ -154,20 +156,16 @@ ExtensionMessagePort::ExtensionMessagePort(
     // prerender so make sure `include_child_frames` is only provided for
     // primary main frames.
     CHECK(rfh->IsInPrimaryMainFrame());
-    rfh->ForEachRenderFrameHost(base::BindRepeating(
-        [](content::WebContents* tab_web_contents,
-           ExtensionMessagePort* message_port, content::RenderFrameHost* rfh) {
-          // RegisterFrame should only be called for frames associated with
-          // `tab` and not any inner WebContents.
-          if (content::WebContents::FromRenderFrameHost(rfh) !=
-              tab_web_contents) {
-            return content::RenderFrameHost::FrameIterationAction::
-                kSkipChildren;
-          }
-          message_port->RegisterFrame(rfh);
-          return content::RenderFrameHost::FrameIterationAction::kContinue;
-        },
-        base::Unretained(tab), base::Unretained(this)));
+    rfh->ForEachRenderFrameHostWithAction([tab, this](
+                                              content::RenderFrameHost* rfh) {
+      // RegisterFrame should only be called for frames associated with
+      // `tab` and not any inner WebContents.
+      if (content::WebContents::FromRenderFrameHost(rfh) != tab) {
+        return content::RenderFrameHost::FrameIterationAction::kSkipChildren;
+      }
+      RegisterFrame(rfh);
+      return content::RenderFrameHost::FrameIterationAction::kContinue;
+    });
   } else {
     RegisterFrame(rfh);
   }
@@ -288,9 +286,8 @@ void ExtensionMessagePort::RevalidatePort() {
 
 void ExtensionMessagePort::DispatchOnConnect(
     const std::string& channel_name,
-    std::unique_ptr<base::DictionaryValue> source_tab,
-    int source_frame_id,
-    const ExtensionApiFrameIdMap::DocumentId& source_document_id,
+    absl::optional<base::Value::Dict> source_tab,
+    const ExtensionApiFrameIdMap::FrameData& source_frame,
     int guest_process_id,
     int guest_render_frame_routing_id,
     const MessagingEndpoint& source_endpoint,
@@ -300,8 +297,8 @@ void ExtensionMessagePort::DispatchOnConnect(
   SendToPort(base::BindRepeating(
       &ExtensionMessagePort::BuildDispatchOnConnectIPC,
       // Called synchronously.
-      base::Unretained(this), channel_name, source_tab.get(), source_frame_id,
-      source_document_id, guest_process_id, guest_render_frame_routing_id,
+      base::Unretained(this), channel_name, base::OptionalToPtr(source_tab),
+      source_frame, guest_process_id, guest_render_frame_routing_id,
       source_endpoint, target_extension_id, source_url, source_origin));
 }
 
@@ -313,7 +310,7 @@ void ExtensionMessagePort::DispatchOnDisconnect(
 }
 
 void ExtensionMessagePort::DispatchOnMessage(const Message& message) {
-  // Since we are now receicing a message, we can mark any asynchronous reply
+  // Since we are now receiving a message, we can mark any asynchronous reply
   // that may have been pending for this port as no longer pending.
   asynchronous_reply_pending_ = false;
   SendToPort(base::BindRepeating(&ExtensionMessagePort::BuildDeliverMessageIPC,
@@ -322,7 +319,7 @@ void ExtensionMessagePort::DispatchOnMessage(const Message& message) {
 }
 
 void ExtensionMessagePort::IncrementLazyKeepaliveCount(
-    bool is_for_native_message_connect) {
+    bool should_have_strong_keepalive) {
   ProcessManager* pm = ProcessManager::Get(browser_context_);
   ExtensionHost* host = pm->GetBackgroundHostForExtension(extension_id_);
   if (host && BackgroundInfo::HasLazyBackgroundPage(host->extension())) {
@@ -330,10 +327,15 @@ void ExtensionMessagePort::IncrementLazyKeepaliveCount(
                                     PortIdToString(port_id_));
   }
 
-  for (const auto& worker_id : service_workers_) {
+  // Increment keepalive count for service workers of the extension managed by
+  // this port.
+  // TODO(richardzh): Add a check to only increment count if the port is in lazy
+  // context.
+  for (const auto& worker_id :
+       pm->GetServiceWorkersForExtension(extension_id_)) {
     std::string request_uuid = pm->IncrementServiceWorkerKeepaliveCount(
         worker_id,
-        is_for_native_message_connect
+        should_have_strong_keepalive
             ? content::ServiceWorkerExternalRequestTimeoutType::kDoesNotTimeout
             : content::ServiceWorkerExternalRequestTimeoutType::kDefault,
         Activity::MESSAGE_PORT, PortIdToString(port_id_));
@@ -355,11 +357,20 @@ void ExtensionMessagePort::DecrementLazyKeepaliveCount() {
     return;
   }
 
-  for (const auto& worker_id : service_workers_) {
-    auto& uuids = pending_keepalive_uuids_[worker_id];
-    DCHECK(!uuids.empty());
-    std::string request_uuid = std::move(uuids.back());
-    uuids.pop_back();
+  // Decrement keepalive count for service workers of the extension managed by
+  // this port.
+  // TODO(richardzh): Add a check to only decrement count if the port is in lazy
+  // context.
+  for (const auto& worker_id :
+       pm->GetServiceWorkersForExtension(extension_id_)) {
+    auto iter = pending_keepalive_uuids_.find(worker_id);
+    if (iter == pending_keepalive_uuids_.end()) {
+      // We may not have a pending keepalive if this worker wasn't created at
+      // the time the message channel opened.
+      continue;
+    }
+    std::string request_uuid = std::move(iter->second.back());
+    iter->second.pop_back();
     pm->DecrementServiceWorkerKeepaliveCount(worker_id, request_uuid,
                                              Activity::MESSAGE_PORT,
                                              PortIdToString(port_id_));
@@ -488,14 +499,23 @@ void ExtensionMessagePort::SendToPort(IPCBuilderCallback ipc_builder) {
     // sees. It is not worth the effort to present all of them to the user. It's
     // unlikely they will see the same one every time and if they do, when they
     // fix that one, they will see the others.
+    //
+    // TODO (crbug.com/1382623): currently we only make use of the base URL,
+    // it's also possible to get the full URL from extension ID so it could
+    // provide more useful context.
     if (target.render_frame_host &&
-        target.render_frame_host->GetLifecycleState() ==
-            content::RenderFrameHost::LifecycleState::kInBackForwardCache) {
+        target.render_frame_host->IsInLifecycleState(
+            content::RenderFrameHost::LifecycleState::kInBackForwardCache)) {
       content::BackForwardCache::DisableForRenderFrameHost(
-          target.render_frame_host, back_forward_cache::DisabledReason(
-                                        back_forward_cache::DisabledReasonId::
-                                            kExtensionSentMessageToCachedFrame,
-                                        /*context=*/extension_id_));
+          target.render_frame_host,
+          back_forward_cache::DisabledReason(
+              back_forward_cache::DisabledReasonId::
+                  kExtensionSentMessageToCachedFrame,
+              /*context=*/extension_id_),
+          ukm::UkmRecorder::GetSourceIdForExtensionUrl(
+              base::PassKey<ExtensionMessagePort>(),
+              Extension::GetBaseURLFromExtensionId(extension_id_)));
+
       continue;
     }
 
@@ -523,9 +543,8 @@ void ExtensionMessagePort::SendToIPCTarget(const IPCTarget& target,
 
 std::unique_ptr<IPC::Message> ExtensionMessagePort::BuildDispatchOnConnectIPC(
     const std::string& channel_name,
-    const base::DictionaryValue* source_tab,
-    int source_frame_id,
-    const ExtensionApiFrameIdMap::DocumentId& source_document_id,
+    const base::Value::Dict* source_tab,
+    const ExtensionApiFrameIdMap::FrameData& source_frame,
     int guest_process_id,
     int guest_render_frame_routing_id,
     const MessagingEndpoint& source_endpoint,
@@ -536,17 +555,13 @@ std::unique_ptr<IPC::Message> ExtensionMessagePort::BuildDispatchOnConnectIPC(
   ExtensionMsg_TabConnectionInfo source;
 
   // Source document ID should exist if and only if there is a source tab.
-  DCHECK_EQ(!!source_tab, !!source_document_id);
+  DCHECK_EQ(!!source_tab, !!source_frame.document_id);
   if (source_tab) {
-    std::unique_ptr<base::Value> source_tab_value =
-        base::Value::ToUniquePtrValue(source_tab->Clone());
-    // TODO(lazyboy): Make ExtensionMsg_TabConnectionInfo.tab a base::Value and
-    // remove this cast.
-    source.tab.Swap(
-        static_cast<base::DictionaryValue*>(source_tab_value.get()));
-    source.document_id = source_document_id.ToString();
+    source.tab = source_tab->Clone();
+    source.document_id = source_frame.document_id.ToString();
+    source.document_lifecycle = ToString(source_frame.document_lifecycle);
   }
-  source.frame_id = source_frame_id;
+  source.frame_id = source_frame.frame_id;
 
   ExtensionMsg_ExternalConnectionInfo info;
   info.target_id = target_extension_id;

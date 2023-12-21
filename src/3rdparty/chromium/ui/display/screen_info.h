@@ -1,10 +1,11 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef UI_DISPLAY_SCREEN_INFO_H_
 #define UI_DISPLAY_SCREEN_INFO_H_
 
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/display/display_export.h"
 #include "ui/display/mojom/screen_orientation.mojom-shared.h"
 #include "ui/display/types/display_constants.h"
@@ -54,6 +55,12 @@ struct DISPLAY_EXPORT ScreenInfo {
   //   some of the rectangle's coordinates may be negative values".
   gfx::Rect available_rect;
 
+  // This lets `window.screen` provide viewport dimensions while the frame is
+  // fullscreen as a speculative site compatibility measure, because web authors
+  // may assume that screen dimensions match window.innerWidth/innerHeight while
+  // a page is fullscreen, but that is not always true. crbug.com/1367416
+  absl::optional<gfx::Size> size_override;
+
   // This is the orientation 'type' or 'name', as in landscape-primary or
   // portrait-secondary for examples.
   // See ui/display/mojom/screen_orientation.mojom for the full list.
@@ -65,19 +72,19 @@ struct DISPLAY_EXPORT ScreenInfo {
   // TODO(crbug.com/840189): we should use an enum rather than a number here.
   uint16_t orientation_angle = 0;
 
-  // Proposed: https://github.com/webscreens/window-placement
   // Whether this Screen is part of a multi-screen extended visual workspace.
   bool is_extended = false;
 
-  // Proposed: https://github.com/webscreens/window-placement
   // Whether this screen is designated as the 'primary' screen by the OS
   // (otherwise it is a 'secondary' screen).
   bool is_primary = false;
 
-  // Proposed: https://github.com/webscreens/window-placement
   // Whether this screen is an 'internal' panel built into the device, like a
   // laptop display (otherwise it is 'external', like a wired monitor).
   bool is_internal = false;
+
+  // A user-friendly label for the screen, determined by the platform.
+  std::string label;
 
   // Not web-exposed; the display::Display::id(), for internal tracking only.
   int64_t display_id = kDefaultDisplayId;

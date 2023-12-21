@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2013 The Chromium Authors. All rights reserved.
+# Copyright 2013 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -197,8 +197,7 @@ def main():
                                         PrettyPrintEnums)
 
   elif 'histograms' in args.filepath:
-    # Specify the individual directory of histograms.xml or
-    # obsolete_histograms.xml.
+    # Specify the individual directory of histograms.xml.
     status = presubmit_util.DoPresubmit(
         sys.argv,
         args.filepath,

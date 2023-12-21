@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -60,7 +60,7 @@ class ShellContentBrowserClient : public content::ContentBrowserClient {
 
   // content::ContentBrowserClient overrides.
   std::unique_ptr<content::BrowserMainParts> CreateBrowserMainParts(
-      content::MainFunctionParams parameters) override;
+      bool is_integration_test) override;
   void RenderProcessWillLaunch(content::RenderProcessHost* host) override;
   bool ShouldUseProcessPerSite(content::BrowserContext* browser_context,
                                const GURL& site_url) override;
@@ -143,8 +143,8 @@ class ShellContentBrowserClient : public content::ContentBrowserClient {
  protected:
   // Subclasses may wish to provide their own ShellBrowserMainParts.
   virtual std::unique_ptr<ShellBrowserMainParts> CreateShellBrowserMainParts(
-      content::MainFunctionParams parameters,
-      ShellBrowserMainDelegate* browser_main_delegate);
+      ShellBrowserMainDelegate* browser_main_delegate,
+      bool is_integration_test);
 
  private:
   // Appends command line switches for a renderer process.
@@ -154,7 +154,7 @@ class ShellContentBrowserClient : public content::ContentBrowserClient {
   const Extension* GetExtension(content::SiteInstance* site_instance);
 
   // Owned by content::BrowserMainLoop.
-  raw_ptr<ShellBrowserMainParts> browser_main_parts_;
+  raw_ptr<ShellBrowserMainParts, DanglingUntriaged> browser_main_parts_;
 
   // Owned by ShellBrowserMainParts.
   raw_ptr<ShellBrowserMainDelegate> browser_main_delegate_;

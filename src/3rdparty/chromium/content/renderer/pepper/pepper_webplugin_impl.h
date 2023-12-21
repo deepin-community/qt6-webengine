@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,6 @@
 #include <memory>
 #include <vector>
 
-#include "base/memory/weak_ptr.h"
 #include "base/task/sequenced_task_runner_helpers.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "ppapi/c/pp_var.h"

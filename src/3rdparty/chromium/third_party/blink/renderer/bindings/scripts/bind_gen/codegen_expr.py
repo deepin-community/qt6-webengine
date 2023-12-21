@@ -1,4 +1,4 @@
-# Copyright 2019 The Chromium Authors. All rights reserved.
+# Copyright 2019 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -181,7 +181,7 @@ def expr_from_exposure(exposure,
     #         feature_selector-2nd-phase-term))
     # which can be represented in more details as:
     #   (and cross_origin_isolated_term
-    #        direct_socket_enabled_term
+    #        isolated_context_term
     #        secure_context_term
     #        uncond_exposed_term
     #        (or
@@ -193,7 +193,7 @@ def expr_from_exposure(exposure,
     #             feature_selector_term)))
     # where
     #   cross_origin_isolated_term represents [CrossOriginIsolated]
-    #   direct_socket_enabled_term represents [DirectSocketEnabled]
+    #   isolated_context_term represents [IsolatedContext]
     #   secure_context_term represents [SecureContext=F1]
     #   uncond_exposed_term represents [Exposed=(G1, G2)]
     #   cond_exposed_term represents [Exposed(G1 F1, G2 F2)]
@@ -226,11 +226,11 @@ def expr_from_exposure(exposure,
     else:
         cross_origin_isolated_term = _Expr(True)
 
-    # [DirectSocketEnabled]
-    if exposure.only_in_direct_socket_contexts:
-        direct_socket_enabled_term = _Expr("${is_direct_socket_enabled}")
+    # [IsolatedContext]
+    if exposure.only_in_isolated_contexts:
+        isolated_context_term = _Expr("${is_in_isolated_context}")
     else:
-        direct_socket_enabled_term = _Expr(True)
+        isolated_context_term = _Expr(True)
 
     # [SecureContext]
     if exposure.only_in_secure_contexts is True:
@@ -251,6 +251,7 @@ def expr_from_exposure(exposure,
         "LayoutWorklet": "IsLayoutWorkletGlobalScope",
         "PaintWorklet": "IsPaintWorkletGlobalScope",
         "ServiceWorker": "IsServiceWorkerGlobalScope",
+        "ShadowRealm": "IsShadowRealmGlobalScope",
         "SharedWorker": "IsSharedWorkerGlobalScope",
         "Window": "IsWindow",
         "Worker": "IsWorkerGlobalScope",
@@ -259,7 +260,13 @@ def expr_from_exposure(exposure,
     if global_names:
         matched_global_count = 0
         for entry in exposure.global_names_and_features:
-            if entry.global_name not in global_names:
+            if entry.global_name == "*":
+                # [Exposed(GLOBAL_NAME FEATURE_NAME)] is not supported.
+                assert entry.feature is None
+                # Constructs with the wildcard exposure ([Exposed=*]) are
+                # unconditionally exposed.
+                pass
+            elif entry.global_name not in global_names:
                 continue
             matched_global_count += 1
             if entry.feature:
@@ -270,8 +277,27 @@ def expr_from_exposure(exposure,
                 or matched_global_count > 0)
     else:
         for entry in exposure.global_names_and_features:
-            pred_term = _Expr("${{execution_context}}->{}()".format(
-                GLOBAL_NAME_TO_EXECUTION_CONTEXT_TEST[entry.global_name]))
+            if entry.global_name == "*":
+                # [Exposed(GLOBAL_NAME FEATURE_NAME)] is not supported.
+                assert entry.feature is None
+                # Constructs with the wildcard exposure ([Exposed=*]) are
+                # unconditionally exposed.
+                continue
+            try:
+                execution_context_check = GLOBAL_NAME_TO_EXECUTION_CONTEXT_TEST[
+                    entry.global_name]
+            except KeyError:
+                # We don't currently have a general way of checking the exposure
+                # of [TargetOfExposed] exposure. If this is actually a global,
+                # add it to GLOBAL_NAME_TO_EXECUTION_CONTEXT_CHECK.
+                return _Expr(
+                    "(::logging::NotReachedError::NotReached"
+                    "(__FILE__, __LINE__) << "
+                    "\"{} exposure test is not supported at runtime\", false)".
+                    format(entry.global_name))
+
+            pred_term = _Expr(
+                "${{execution_context}}->{}()".format(execution_context_check))
             if not entry.feature:
                 uncond_exposed_terms.append(pred_term)
             else:
@@ -303,7 +329,7 @@ def expr_from_exposure(exposure,
     # Build an expression.
     top_level_terms = []
     top_level_terms.append(cross_origin_isolated_term)
-    top_level_terms.append(direct_socket_enabled_term)
+    top_level_terms.append(isolated_context_term)
     top_level_terms.append(secure_context_term)
     if uncond_exposed_terms:
         top_level_terms.append(expr_or(uncond_exposed_terms))
@@ -314,6 +340,8 @@ def expr_from_exposure(exposure,
             top_level_terms.append(expr_or(cond_exposed_terms))
         if feature_enabled_terms:
             top_level_terms.append(expr_and(feature_enabled_terms))
+        if context_enabled_terms:
+            top_level_terms.append(expr_or(context_enabled_terms))
         return expr_and(top_level_terms)
 
     all_enabled_terms = [_Expr("${feature_selector}.IsAll()")]

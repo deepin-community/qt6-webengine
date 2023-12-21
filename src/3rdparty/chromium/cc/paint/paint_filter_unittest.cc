@@ -1,11 +1,11 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "cc/paint/paint_filter.h"
 
 #include "cc/paint/image_provider.h"
-#include "cc/paint/paint_op_buffer.h"
+#include "cc/paint/paint_op.h"
 #include "cc/test/skia_common.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/effects/SkLumaColorFilter.h"
@@ -40,10 +40,10 @@ sk_sp<PaintFilter> CreateTestFilter(PaintFilter::Type filter_type,
   auto image_filter = sk_make_sp<ImagePaintFilter>(
       image, SkRect::MakeWH(100.f, 100.f), SkRect::MakeWH(100.f, 100.f),
       PaintFlags::FilterQuality::kNone);
-  auto record = sk_make_sp<PaintOpBuffer>();
-  record->push<DrawImageOp>(image, 0.f, 0.f);
-  auto record_filter =
-      sk_make_sp<RecordPaintFilter>(record, SkRect::MakeWH(100.f, 100.f));
+  PaintOpBuffer buffer;
+  buffer.push<DrawImageOp>(image, 0.f, 0.f);
+  auto record_filter = sk_make_sp<RecordPaintFilter>(
+      buffer.ReleaseAsRecord(), SkRect::MakeWH(100.f, 100.f));
 
   PaintFilter::CropRect crop_rect(SkRect::MakeWH(100.f, 100.f));
 
@@ -59,7 +59,7 @@ sk_sp<PaintFilter> CreateTestFilter(PaintFilter::Type filter_type,
                                          record_filter, &crop_rect);
     case PaintFilter::Type::kDropShadow:
       return sk_make_sp<DropShadowPaintFilter>(
-          0.1, 0.2f, 0.3f, 0.4f, SK_ColorWHITE,
+          0.1, 0.2f, 0.3f, 0.4f, SkColors::kWhite,
           DropShadowPaintFilter::ShadowMode::kDrawShadowOnly, image_filter,
           &crop_rect);
     case PaintFilter::Type::kMagnifier:
@@ -115,7 +115,7 @@ sk_sp<PaintFilter> CreateTestFilter(PaintFilter::Type filter_type,
       return sk_make_sp<ShaderPaintFilter>(
           PaintShader::MakeImage(image, SkTileMode::kClamp, SkTileMode::kClamp,
                                  nullptr),
-          /*alpha=*/255, PaintFlags::FilterQuality::kNone,
+          /*alpha=*/1.0f, PaintFlags::FilterQuality::kNone,
           SkImageFilters::Dither::kNo, &crop_rect);
     }
     case PaintFilter::Type::kMatrix:
@@ -124,19 +124,16 @@ sk_sp<PaintFilter> CreateTestFilter(PaintFilter::Type filter_type,
     case PaintFilter::Type::kLightingDistant:
       return sk_make_sp<LightingDistantPaintFilter>(
           PaintFilter::LightingType::kDiffuse, SkPoint3::Make(0.1f, 0.2f, 0.3f),
-          SK_ColorWHITE, 0.1f, 0.2f, 0.3f, image_filter, &crop_rect);
+          SkColors::kWhite, 0.1f, 0.2f, 0.3f, image_filter, &crop_rect);
     case PaintFilter::Type::kLightingPoint:
       return sk_make_sp<LightingPointPaintFilter>(
           PaintFilter::LightingType::kDiffuse, SkPoint3::Make(0.1f, 0.2f, 0.3f),
-          SK_ColorWHITE, 0.1f, 0.2f, 0.3f, record_filter, &crop_rect);
+          SkColors::kWhite, 0.1f, 0.2f, 0.3f, record_filter, &crop_rect);
     case PaintFilter::Type::kLightingSpot:
       return sk_make_sp<LightingSpotPaintFilter>(
           PaintFilter::LightingType::kDiffuse, SkPoint3::Make(0.1f, 0.2f, 0.3f),
-          SkPoint3::Make(0.4f, 0.5f, 0.6f), 0.1f, 0.2f, SK_ColorWHITE, 0.4f,
+          SkPoint3::Make(0.4f, 0.5f, 0.6f), 0.1f, 0.2f, SkColors::kWhite, 0.4f,
           0.5f, 0.6f, image_filter, &crop_rect);
-    case PaintFilter::Type::kStretch:
-      return sk_make_sp<StretchPaintFilter>(0.1f, 0.2f, 100.f, 200.f,
-                                            image_filter, &crop_rect);
   }
   NOTREACHED();
   return nullptr;
@@ -181,7 +178,7 @@ TEST_P(PaintFilterTest, SnapshotWithImages) {
     EXPECT_GT(image_provider.image_count_, 0)
         << PaintFilter::TypeToString(GetParamType());
   }
-  EXPECT_EQ(*filter, *snapshot_filter)
+  EXPECT_TRUE(filter->EqualsForTesting(*snapshot_filter))
       << PaintFilter::TypeToString(GetParamType());
 }
 

@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,11 +16,9 @@
 #include "components/autofill/core/browser/metrics/form_events/form_events.h"
 #include "components/autofill/core/browser/sync_utils.h"
 #include "components/autofill/core/common/form_field_data.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "components/autofill/core/common/form_interactions_flow.h"
 
 namespace autofill {
-
-class LogManager;
 
 // Utility to log autofill form events in the relevant histograms depending on
 // the presence of server and/or local data.
@@ -30,7 +28,7 @@ class FormEventLoggerBase {
       const std::string& form_type_name,
       bool is_in_any_main_frame,
       AutofillMetrics::FormInteractionsUkmLogger* form_interactions_ukm_logger,
-      LogManager* log_manager);
+      AutofillClient* client);
 
   inline void set_server_record_type_count(size_t server_record_type_count) {
     server_record_type_count_ = server_record_type_count;
@@ -69,6 +67,12 @@ class FormEventLoggerBase {
   void OnTypedIntoNonFilledField();
   void OnEditedAutofilledField();
 
+  // Must be called right before the event logger is destroyed. It triggers the
+  // logging of funnel and key metrics.
+  // The function must not be called from the destructor, since this makes it
+  // impossible to dispatch virtual functions into the derived classes.
+  void OnDestroyed();
+
   // See BrowserAutofillManager::SuggestionContext for the definitions of the
   // AblationGroup parameters.
   void SetAblationStatus(AblationGroup ablation_group,
@@ -76,7 +80,28 @@ class FormEventLoggerBase {
   void SetTimeFromInteractionToSubmission(
       base::TimeDelta time_from_interaction_to_submission);
 
-  void Log(FormEvent event, const FormStructure& form) const;
+  void OnAutofilledFieldWasClearedByJavaScriptShortlyAfterFill(
+      const FormStructure& form);
+
+  void Log(FormEvent event, const FormStructure& form);
+
+  void OnTextFieldDidChange(const FieldGlobalId& field_global_id);
+
+  const FormInteractionCounts& form_interaction_counts() const {
+    return form_interaction_counts_;
+  }
+
+  void SetFastCheckoutRunId(int64_t run_id) { fast_checkout_run_id_ = run_id; }
+
+  AutofillMetrics::FormEventSet GetFormEvents(FormGlobalId form_global_id);
+
+  const FormInteractionsFlowId& form_interactions_flow_id_for_test() const {
+    return flow_id_;
+  }
+
+  const absl::optional<int64_t> fast_checkout_run_id_for_test() const {
+    return fast_checkout_run_id_;
+  }
 
  protected:
   virtual ~FormEventLoggerBase();
@@ -87,6 +112,15 @@ class FormEventLoggerBase {
 
   virtual void LogWillSubmitForm(const FormStructure& form);
   virtual void LogFormSubmitted(const FormStructure& form);
+
+  // This is a temporary analysis for crbug.com/1352826. We apply local
+  // heuristics to forms if >= 3 fields are discovered by local heuristics. The
+  // working hypothesis is that we should change this to ">= 3 distinct field
+  // types are discovered by local heuristics". To test this hypothesis we want
+  // to calculate the FillingAcceptance for forms for which the stricter
+  // rule would make a difference.
+  // TODO(crbug.com/1352826): Remove this after investigating the impact.
+  void LogImpactOfHeuristicsThreshold(const FormStructure& form);
 
   // Only used for UKM backward compatibility since it depends on IsCreditCard.
   // TODO (crbug.com/925913): Remove IsCreditCard from UKM logs amd replace with
@@ -104,14 +138,39 @@ class FormEventLoggerBase {
                      FormEvent event,
                      const FormStructure& form) const {}
 
-  // Records UMA metrics on the funnel and key metrics. This is not virtual
-  // because it is called in the destructor.
-  void RecordFunnelAndKeyMetrics();
+  // Records UMA metrics on the funnel and key metrics, and writes logs to
+  // autofill-internals.
+  void RecordFunnelMetrics() const;
+  // For each key metric, a separate function is defined below. By making them
+  // virtual, derived classes can change the behavior for specific metrics.
+  // `RecordKeyMetrics()` checks the necessary pre-conditions for metrics to be
+  // emitted and calls the relevant functions.
+  void RecordKeyMetrics() const;
+
+  // Whether for a submitted form, Chrome had data stored that could be
+  // filled.
+  void RecordFillingReadiness(LogBuffer& logs) const;
+
+  // Whether a user accepted a filling suggestion they saw for a form that
+  // was later submitted.
+  void RecordFillingAcceptance(LogBuffer& logs) const;
+
+  // Whether a filled form and submitted form required no fixes to filled
+  // fields.
+  virtual void RecordFillingCorrectness(LogBuffer& logs) const;
+
+  // Whether a submitted form was filled.
+  virtual void RecordFillingAssistance(LogBuffer& logs) const;
+
+  // Whether a (non-)autofilled form was submitted.
+  void RecordFormSubmission(LogBuffer& logs) const;
 
   // Records UMA metrics if this form submission happened as part of an ablation
   // study or the corresponding control group. This is not virtual because it is
   // called in the destructor.
-  void RecordAblationMetrics();
+  void RecordAblationMetrics() const;
+
+  void UpdateFlowId();
 
   // Constructor parameters.
   std::string form_type_name_;
@@ -132,6 +191,9 @@ class FormEventLoggerBase {
   bool logged_suggestion_filled_was_server_data_ = false;
   bool has_logged_typed_into_non_filled_field_ = false;
   bool has_logged_edited_autofilled_field_ = false;
+  bool has_logged_autofilled_field_was_cleared_by_javascript_after_fill_ =
+      false;
+  bool has_called_on_destoryed_ = false;
   AblationGroup ablation_group_ = AblationGroup::kDefault;
   AblationGroup conditional_ablation_group_ = AblationGroup::kDefault;
   absl::optional<base::TimeDelta> time_from_interaction_to_submission_;
@@ -139,12 +201,29 @@ class FormEventLoggerBase {
   // The last field that was polled for suggestions.
   FormFieldData last_polled_field_;
 
+  // Used to count consecutive modifications on the same field as one change.
+  FieldGlobalId last_field_global_id_modified_by_user_;
+  // Keeps counts of Autofill fills and form elements that were modified by the
+  // user.
+  FormInteractionCounts form_interaction_counts_ = {};
+  // Unique random id that is set on the first form interaction and identical
+  // during the flow.
+  FormInteractionsFlowId flow_id_;
+  // Unique ID of a Fast Checkout run. Used for metrics.
+  absl::optional<int64_t> fast_checkout_run_id_;
+
+  // Form types of the submitted form.
+  DenseSet<FormType> submitted_form_types_;
+
+  // A map of the form's global id and its form events.
+  std::map<FormGlobalId, AutofillMetrics::FormEventSet> form_events_set_;
+
   // Weak reference.
   raw_ptr<AutofillMetrics::FormInteractionsUkmLogger>
       form_interactions_ukm_logger_;
 
   // Weak reference.
-  const raw_ptr<LogManager> log_manager_;
+  const raw_ref<AutofillClient> client_;
 
   AutofillSyncSigninState sync_state_ = AutofillSyncSigninState::kNumSyncStates;
 };

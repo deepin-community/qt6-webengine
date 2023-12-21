@@ -156,6 +156,7 @@
   },
   "android-archive-dbg-goma-rbe-ats-canary": {
     "gn_args": {
+      "debuggable_apks": false,
       "is_component_build": true,
       "is_debug": true,
       "symbol_level": 1,
@@ -165,6 +166,7 @@
   },
   "android-archive-dbg-goma-rbe-ats-latest": {
     "gn_args": {
+      "debuggable_apks": false,
       "is_component_build": true,
       "is_debug": true,
       "symbol_level": 1,
@@ -174,6 +176,7 @@
   },
   "android-archive-dbg-goma-rbe-canary": {
     "gn_args": {
+      "debuggable_apks": false,
       "is_component_build": true,
       "is_debug": true,
       "symbol_level": 1,
@@ -183,6 +186,7 @@
   },
   "android-archive-dbg-goma-rbe-latest": {
     "gn_args": {
+      "debuggable_apks": false,
       "is_component_build": true,
       "is_debug": true,
       "symbol_level": 1,
@@ -193,6 +197,7 @@
   "chromeos-amd64-generic-rel-goma-rbe-canary": {
     "args_file": "//build/args/chromeos/amd64-generic-vm.gni",
     "gn_args": {
+      "also_build_lacros_chrome_for_architecture": "amd64",
       "dcheck_always_on": false,
       "is_chromeos_device": true,
       "ozone_platform_headless": true,
@@ -203,6 +208,7 @@
   "chromeos-amd64-generic-rel-goma-rbe-latest": {
     "args_file": "//build/args/chromeos/amd64-generic-vm.gni",
     "gn_args": {
+      "also_build_lacros_chrome_for_architecture": "amd64",
       "dcheck_always_on": false,
       "is_chromeos_device": true,
       "ozone_platform_headless": true,
@@ -215,7 +221,6 @@
       "dcheck_always_on": false,
       "ios_code_signing_identity_description": "Apple Development",
       "ios_enable_code_signing": false,
-      "ios_set_attributes_for_xcode_project_generation": false,
       "is_component_build": false,
       "is_debug": false,
       "symbol_level": 0,
@@ -230,7 +235,6 @@
       "dcheck_always_on": false,
       "ios_code_signing_identity_description": "Apple Development",
       "ios_enable_code_signing": false,
-      "ios_set_attributes_for_xcode_project_generation": false,
       "is_component_build": false,
       "is_debug": false,
       "symbol_level": 0,

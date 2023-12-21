@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,8 +8,8 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
 #include "base/test/simple_test_tick_clock.h"
 #include "base/time/time.h"
@@ -383,7 +383,7 @@ TEST_F(AudioStreamMonitorTest, RenderProcessGone) {
 }
 
 TEST_F(AudioStreamMonitorTest, RenderFrameGone) {
-  RenderFrameHost* render_frame_host = web_contents()->GetMainFrame();
+  RenderFrameHost* render_frame_host = web_contents()->GetPrimaryMainFrame();
   int render_process_id = render_frame_host->GetProcess()->GetID();
   int render_frame_id = render_frame_host->GetRoutingID();
 

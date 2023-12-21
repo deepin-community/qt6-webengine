@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -115,6 +115,10 @@ void FlingingRenderer::SetVolume(float volume) {
 
 base::TimeDelta FlingingRenderer::GetMediaTime() {
   return controller_->GetApproximateCurrentTime();
+}
+
+media::RendererType FlingingRenderer::GetRendererType() {
+  return media::RendererType::kFlinging;
 }
 
 void FlingingRenderer::SetExpectedPlayState(PlayState state) {

@@ -1,9 +1,9 @@
-# Copyright 2018 The Chromium Authors. All rights reserved.
+# Copyright 2018 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//build/config/chromebox_for_meetings/buildflags.gni")
 import("//chrome/common/features.gni")
-import("//chromeos/components/chromebox_for_meetings/buildflags/buildflags.gni")
 import("//third_party/closure_compiler/compile_js.gni")
 import("//tools/grit/grit_rule.gni")
 
@@ -17,12 +17,22 @@ group("resources") {
     "arc_account_picker:resources",
     "assistant_optin:resources",
     "audio:resources",
+    "desk_api:resources",
     "emoji_picker:resources",
+    "enterprise_reporting:resources",
+    "gaia_action_buttons:resources",
+    "healthd_internals:resources",
     "launcher_internals:resources",
+    "lock_screen_reauth:resources",
     "login:conditional_resources",
     "login:unconditional_resources",
+    "manage_mirrorsync:resources",
     "multidevice_internals:resources",
     "network_ui:resources",
+    "notification_tester:resources",
+    "password_change:resources",
+    "supervision:resources",
+    "vc_tray_tester:resources",
   ]
 }
 
@@ -30,11 +40,11 @@ grit("app_icon_resources") {
   source = "app_icon/app_icon_resources.grd"
   defines = chrome_grit_defines
   outputs = [
-    "grit/app_icon_resources.h",
-    "grit/app_icon_resources_map.cc",
-    "grit/app_icon_resources_map.h",
-    "app_icon_resources_100_percent.pak",
-    "app_icon_resources_200_percent.pak",
+    "grit/chromeos_app_icon_resources.h",
+    "grit/chromeos_app_icon_resources_map.cc",
+    "grit/chromeos_app_icon_resources_map.h",
+    "chromeos_app_icon_resources_100_percent.pak",
+    "chromeos_app_icon_resources_200_percent.pak",
   ]
   output_dir = "$root_gen_dir/chrome"
 }
@@ -73,13 +83,10 @@ group("closure_compile") {
     "crostini_installer:closure_compile",
     "crostini_upgrader:closure_compile",
     "edu_coexistence:closure_compile",
-    "emoji_picker:closure_compile",
     "emulator:closure_compile",
     "gaia_action_buttons:closure_compile",
     "internet_config_dialog:closure_compile",
     "internet_detail_dialog:closure_compile",
-    "keyboard:closure_compile",
-    "keyboard:closure_compile_module",
     "login:closure_compile",
     "multidevice_internals:closure_compile",
     "multidevice_setup:closure_compile",
@@ -88,6 +95,7 @@ group("closure_compile") {
     "password_change:closure_compile",
     "set_time_dialog:closure_compile",
     "smb_shares:closure_compile",
+    "supervision:closure_compile",
     "sys_internals:closure_compile",
     "vm:closure_compile",
   ]
@@ -105,16 +113,16 @@ js_type_check("closure_compile_local") {
 
 js_library("power") {
   deps = [
-    "//ui/webui/resources/js:cr.m",
-    "//ui/webui/resources/js:load_time_data.m",
-    "//ui/webui/resources/js:util.m",
+    "//ash/webui/common/resources:cr.m",
+    "//ash/webui/common/resources:load_time_data.m",
+    "//ash/webui/common/resources:util",
   ]
 }
 
 js_library("slow") {
   deps = [
-    "//ui/webui/resources/js:cr.m",
-    "//ui/webui/resources/js:util.m",
+    "//ash/webui/common/resources:cr.m",
+    "//ash/webui/common/resources:util",
   ]
   externs_list = [ "$externs_path/chrome_send.js" ]
 }

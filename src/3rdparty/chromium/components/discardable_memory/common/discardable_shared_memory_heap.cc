@@ -1,15 +1,15 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/discardable_memory/common/discardable_shared_memory_heap.h"
 
-#include <algorithm>
 #include <memory>
 #include <string>
 #include <utility>
 
 #include "base/bits.h"
+#include "base/containers/contains.h"
 #include "base/feature_list.h"
 #include "base/format_macros.h"
 #include "base/memory/aligned_memory.h"
@@ -17,13 +17,15 @@
 #include "base/memory/page_size.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/ranges/algorithm.h"
 #include "base/strings/stringprintf.h"
 #include "base/trace_event/memory_dump_manager.h"
 
 namespace discardable_memory {
 
-const base::Feature kReleaseDiscardableFreeListPages{
-    "ReleaseDiscardableFreeListPages", base::FEATURE_DISABLED_BY_DEFAULT};
+BASE_FEATURE(kReleaseDiscardableFreeListPages,
+             "ReleaseDiscardableFreeListPages",
+             base::FEATURE_DISABLED_BY_DEFAULT);
 
 namespace {
 
@@ -115,7 +117,7 @@ bool DiscardableSharedMemoryHeap::ScopedMemorySegment::ContainsSpan(
 
 size_t DiscardableSharedMemoryHeap::ScopedMemorySegment::CountMarkedPages()
     const {
-  return std::count(dirty_pages_.begin(), dirty_pages_.end(), true);
+  return base::ranges::count(dirty_pages_, true);
 }
 
 base::trace_event::MemoryAllocatorDump*
@@ -151,11 +153,7 @@ DiscardableSharedMemoryHeap::~DiscardableSharedMemoryHeap() {
   memory_segments_.clear();
   DCHECK_EQ(num_blocks_, 0u);
   DCHECK_EQ(num_free_blocks_, 0u);
-  DCHECK_EQ(std::count_if(free_spans_, free_spans_ + std::size(free_spans_),
-                          [](const base::LinkedList<Span>& free_spans) {
-                            return !free_spans.empty();
-                          }),
-            0);
+  DCHECK(!base::Contains(free_spans_, false, &base::LinkedList<Span>::empty));
 }
 
 std::unique_ptr<DiscardableSharedMemoryHeap::Span>
@@ -391,10 +389,11 @@ bool DiscardableSharedMemoryHeap::OnMemoryDump(
     // This iterates over all the memory allocated by the heap, and calls
     // |OnMemoryDump| for each. It does not contain any information about the
     // DiscardableSharedMemoryHeap itself.
-    std::for_each(memory_segments_.begin(), memory_segments_.end(),
-                  [pmd](const std::unique_ptr<ScopedMemorySegment>& segment) {
-                    segment->OnMemoryDump(pmd);
-                  });
+    base::ranges::for_each(
+        memory_segments_,
+        [pmd](const std::unique_ptr<ScopedMemorySegment>& segment) {
+          segment->OnMemoryDump(pmd);
+        });
   }
 
   return true;
@@ -570,11 +569,11 @@ DiscardableSharedMemoryHeap::CreateMemoryAllocatorDump(
     return dump;
   }
 
-  auto it =
-      std::find_if(memory_segments_.begin(), memory_segments_.end(),
-                   [span](const std::unique_ptr<ScopedMemorySegment>& segment) {
-                     return segment->ContainsSpan(span);
-                   });
+  auto it = base::ranges::find_if(
+      memory_segments_,
+      [span](const std::unique_ptr<ScopedMemorySegment>& segment) {
+        return segment->ContainsSpan(span);
+      });
   DCHECK(it != memory_segments_.end());
   return (*it)->CreateMemoryAllocatorDump(span, block_size_, name, pmd);
 }

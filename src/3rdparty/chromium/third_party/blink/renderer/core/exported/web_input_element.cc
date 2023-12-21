@@ -100,23 +100,22 @@ int WebInputElement::size() const {
   return ConstUnwrap<HTMLInputElement>()->size();
 }
 
-void WebInputElement::SetEditingValue(const WebString& value) {
-  Unwrap<HTMLInputElement>()->SetEditingValue(value);
-}
-
 bool WebInputElement::IsValidValue(const WebString& value) const {
   return ConstUnwrap<HTMLInputElement>()->IsValidValue(value);
 }
 
-void WebInputElement::SetChecked(bool now_checked, bool send_events) {
-  Unwrap<HTMLInputElement>()->setChecked(
-      now_checked, send_events
-                       ? TextFieldEventBehavior::kDispatchInputAndChangeEvent
-                       : TextFieldEventBehavior::kDispatchNoEvent);
+void WebInputElement::SetChecked(bool now_checked,
+                                 bool send_events,
+                                 WebAutofillState autofill_state) {
+  Unwrap<HTMLInputElement>()->SetChecked(
+      now_checked,
+      send_events ? TextFieldEventBehavior::kDispatchInputAndChangeEvent
+                  : TextFieldEventBehavior::kDispatchNoEvent,
+      autofill_state);
 }
 
 bool WebInputElement::IsChecked() const {
-  return ConstUnwrap<HTMLInputElement>()->checked();
+  return ConstUnwrap<HTMLInputElement>()->Checked();
 }
 
 bool WebInputElement::IsMultiple() const {

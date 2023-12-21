@@ -1,4 +1,4 @@
-# Copyright 2018 The Chromium Authors. All rights reserved.
+# Copyright 2018 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -22,10 +22,6 @@ imageset("grid_cell_plus_sign") {
 
 colorset("grid_theme_selection_tint_color") {
   sources = [ "grid_theme_selection_tint_color.colorset/Contents.json" ]
-}
-
-colorset("grid_theme_dark_selection_tint_color") {
-  sources = [ "grid_theme_dark_selection_tint_color.colorset/Contents.json" ]
 }
 
 colorset("plus_sign_grid_cell_background_color") {

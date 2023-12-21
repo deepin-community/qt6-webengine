@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-#include "base/callback_forward.h"
+#include "base/functional/callback_forward.h"
 #include "base/time/time.h"
 #include "content/common/content_export.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
@@ -82,6 +82,7 @@ class CONTENT_EXPORT PushMessagingService {
   virtual void SubscribeFromWorker(
       const GURL& requesting_origin,
       int64_t service_worker_registration_id,
+      int render_process_id,
       blink::mojom::PushSubscriptionOptionsPtr options,
       RegisterCallback callback) = 0;
 

@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -28,7 +28,7 @@ namespace google_apis {
 
 namespace calendar {
 
-// Parses the time filed in the calendar Events.list response.
+// Parses the time field in the calendar Events.list response.
 class DateTime {
  public:
   DateTime();
@@ -60,13 +60,27 @@ class CalendarEvent {
   CalendarEvent& operator=(const CalendarEvent&);
   ~CalendarEvent();
 
+  // Status of the event.
+  enum class EventStatus {
+    kUnknown,
+    kCancelled,
+    kConfirmed,
+    kTentative,
+  };
+
+  // The attendee's response status.
+  enum class ResponseStatus {
+    kUnknown,
+    kAccepted,
+    kDeclined,
+    kNeedsAction,
+    kTentative,
+  };
+
   // Registers the mapping between JSON field names and the members in this
   // class.
   static void RegisterJSONConverter(
       base::JSONValueConverter<CalendarEvent>* converter);
-
-  // Creates CalendarEvent from parsed JSON.
-  static std::unique_ptr<CalendarEvent> CreateFrom(const base::Value& value);
 
   // The ID of this Calendar Event.
   const std::string& id() const { return id_; }
@@ -85,14 +99,31 @@ class CalendarEvent {
   void set_color_id(const std::string& color_id) { color_id_ = color_id; }
 
   // The status of the event.
-  const std::string& status() const { return status_; }
-  void set_status(const std::string& status) { status_ = status; }
+  EventStatus status() const { return status_; }
+  void set_status(EventStatus status) { status_ = status; }
+
+  // The self attendency response status of the event.
+  ResponseStatus self_response_status() const { return self_response_status_; }
+  void set_self_response_status(ResponseStatus self_response_status) {
+    self_response_status_ = self_response_status;
+  }
 
   const DateTime& start_time() const { return start_time_; }
   void set_start_time(const DateTime& start_time) { start_time_ = start_time; }
 
   const DateTime& end_time() const { return end_time_; }
   void set_end_time(const DateTime& end_time) { end_time_ = end_time; }
+
+  const bool& all_day_event() const { return all_day_event_; }
+  void set_all_day_event(const bool& all_day_event) {
+    all_day_event_ = all_day_event;
+  }
+
+  // Google Meet video conference URL, if one is attached to the event.
+  const std::string& hangout_link() const { return hangout_link_; }
+  void set_hangout_link(const std::string& hangout_link) {
+    hangout_link_ = hangout_link;
+  }
 
   // Return the approximate size of this event, in bytes.
   int GetApproximateSizeInBytes() const;
@@ -102,9 +133,12 @@ class CalendarEvent {
   std::string summary_;
   std::string html_link_;
   std::string color_id_;
-  std::string status_;
+  EventStatus status_ = EventStatus::kUnknown;
+  ResponseStatus self_response_status_ = ResponseStatus::kUnknown;
   DateTime start_time_;
   DateTime end_time_;
+  bool all_day_event_ = false;
+  std::string hangout_link_;
 };
 
 // Parses a list of calendar events.

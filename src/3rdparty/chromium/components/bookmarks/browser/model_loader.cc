@@ -1,15 +1,16 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/bookmarks/browser/model_loader.h"
 
-#include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
+#include "base/functional/bind.h"
 #include "base/json/json_file_value_serializer.h"
 #include "base/json/json_reader.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/numerics/clamped_math.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
@@ -17,6 +18,8 @@
 #include "components/bookmarks/browser/bookmark_load_details.h"
 #include "components/bookmarks/browser/titled_url_index.h"
 #include "components/bookmarks/browser/url_index.h"
+#include "components/bookmarks/common/bookmark_metrics.h"
+#include "components/bookmarks/common/url_load_stats.h"
 
 namespace bookmarks {
 
@@ -28,6 +31,7 @@ void AddBookmarksToIndex(BookmarkLoadDetails* details, BookmarkNode* node) {
     if (node->url().is_valid())
       details->index()->Add(node);
   } else {
+    details->index()->AddPath(node);
     for (const auto& child : node->children())
       AddBookmarksToIndex(details, child.get());
   }
@@ -44,16 +48,18 @@ void LoadBookmarks(const base::FilePath& path,
     // all bookmarks if some titles have invalid utf.
     JSONFileValueDeserializer deserializer(
         path, base::JSON_REPLACE_INVALID_CHARACTERS);
-    std::unique_ptr<base::Value> root =
+    std::unique_ptr<base::Value> root_value =
         deserializer.Deserialize(nullptr, nullptr);
 
-    if (root) {
+    if (!root_value) {
+      // The bookmark file exists but was not deserialized.
+    } else if (const auto* root_dict = root_value->GetIfDict()) {
       // Building the index can take a while, so we do it on the background
       // thread.
       int64_t max_node_id = 0;
       std::string sync_metadata_str;
       BookmarkCodec codec;
-      codec.Decode(*root, details->bb_node(), details->other_folder_node(),
+      codec.Decode(*root_dict, details->bb_node(), details->other_folder_node(),
                    details->mobile_folder_node(), &max_node_id,
                    &sync_metadata_str);
       details->set_sync_metadata_str(std::move(sync_metadata_str));
@@ -63,6 +69,8 @@ void LoadBookmarks(const base::FilePath& path,
       details->set_ids_reassigned(codec.ids_reassigned());
       details->set_guids_reassigned(codec.guids_reassigned());
       details->set_model_meta_info_map(codec.model_meta_info_map());
+      details->set_model_unsynced_meta_info_map(
+          codec.model_unsynced_meta_info_map());
 
       load_index = true;
     }
@@ -79,59 +87,24 @@ void LoadBookmarks(const base::FilePath& path,
 
   details->CreateUrlIndex();
 
-  UrlIndex::Stats stats = details->url_index()->ComputeStats();
+  UrlLoadStats stats = details->url_index()->ComputeStats();
+  metrics::RecordUrlLoadStatsOnProfileLoad(stats);
 
-  DCHECK_LE(stats.duplicate_url_bookmark_count, stats.total_url_bookmark_count);
-  DCHECK_LE(stats.duplicate_url_and_title_bookmark_count,
-            stats.duplicate_url_bookmark_count);
-  DCHECK_LE(stats.duplicate_url_and_title_and_parent_bookmark_count,
-            stats.duplicate_url_and_title_bookmark_count);
-
-  base::UmaHistogramCounts100000(
-      "Bookmarks.Count.OnProfileLoad",
-      base::saturated_cast<int>(stats.total_url_bookmark_count));
-
-  if (stats.duplicate_url_bookmark_count != 0) {
-    base::UmaHistogramCounts100000(
-        "Bookmarks.Count.OnProfileLoad.DuplicateUrl2",
-        base::saturated_cast<int>(stats.duplicate_url_bookmark_count));
+  int64_t file_size_bytes;
+  if (bookmark_file_exists && base::GetFileSize(path, &file_size_bytes)) {
+    metrics::RecordFileSizeAtStartup(file_size_bytes);
+    metrics::RecordAverageNodeSizeAtStartup(
+        stats.total_url_bookmark_count == 0
+            ? 0
+            : file_size_bytes / stats.total_url_bookmark_count);
   }
-
-  if (stats.duplicate_url_and_title_bookmark_count != 0) {
-    base::UmaHistogramCounts100000(
-        "Bookmarks.Count.OnProfileLoad.DuplicateUrlAndTitle",
-        base::saturated_cast<int>(
-            stats.duplicate_url_and_title_bookmark_count));
-  }
-
-  if (stats.duplicate_url_and_title_and_parent_bookmark_count != 0) {
-    base::UmaHistogramCounts100000(
-        "Bookmarks.Count.OnProfileLoad.DuplicateUrlAndTitleAndParent",
-        base::saturated_cast<int>(
-            stats.duplicate_url_and_title_and_parent_bookmark_count));
-  }
-
-  // Log derived metrics for convenience.
-  base::UmaHistogramCounts100000(
-      "Bookmarks.Count.OnProfileLoad.UniqueUrl",
-      base::saturated_cast<int>(stats.total_url_bookmark_count -
-                                stats.duplicate_url_bookmark_count));
-  base::UmaHistogramCounts100000(
-      "Bookmarks.Count.OnProfileLoad.UniqueUrlAndTitle",
-      base::saturated_cast<int>(stats.total_url_bookmark_count -
-                                stats.duplicate_url_and_title_bookmark_count));
-  base::UmaHistogramCounts100000(
-      "Bookmarks.Count.OnProfileLoad.UniqueUrlAndTitleAndParent",
-      base::saturated_cast<int>(
-          stats.total_url_bookmark_count -
-          stats.duplicate_url_and_title_and_parent_bookmark_count));
 }
 
 }  // namespace
 
 // static
 scoped_refptr<ModelLoader> ModelLoader::Create(
-    const base::FilePath& profile_path,
+    const base::FilePath& file_path,
     std::unique_ptr<BookmarkLoadDetails> details,
     LoadCallback callback) {
   // Note: base::MakeRefCounted is not available here, as ModelLoader's
@@ -144,9 +117,8 @@ scoped_refptr<ModelLoader> ModelLoader::Create(
 
   model_loader->backend_task_runner_->PostTaskAndReplyWithResult(
       FROM_HERE,
-      base::BindOnce(
-          &ModelLoader::DoLoadOnBackgroundThread, model_loader, profile_path,
-          std::move(details)),
+      base::BindOnce(&ModelLoader::DoLoadOnBackgroundThread, model_loader,
+                     file_path, std::move(details)),
       std::move(callback));
   return model_loader;
 }
@@ -162,9 +134,9 @@ ModelLoader::ModelLoader()
 ModelLoader::~ModelLoader() = default;
 
 std::unique_ptr<BookmarkLoadDetails> ModelLoader::DoLoadOnBackgroundThread(
-    const base::FilePath& profile_path,
+    const base::FilePath& file_path,
     std::unique_ptr<BookmarkLoadDetails> details) {
-  LoadBookmarks(profile_path, details.get());
+  LoadBookmarks(file_path, details.get());
   history_bookmark_model_ = details->url_index();
   loaded_signal_.Signal();
   return details;

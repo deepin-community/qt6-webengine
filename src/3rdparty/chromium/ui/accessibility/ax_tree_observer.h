@@ -1,10 +1,11 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef UI_ACCESSIBILITY_AX_TREE_OBSERVER_H_
 #define UI_ACCESSIBILITY_AX_TREE_OBSERVER_H_
 
+#include "base/memory/raw_ptr.h"
 #include "base/observer_list_types.h"
 #include "ui/accessibility/ax_enums.mojom-forward.h"
 #include "ui/accessibility/ax_export.h"
@@ -33,9 +34,11 @@ class AX_EXPORT AXTreeObserver : public base::CheckedObserver {
   // callstack. Do not hold a reference to the node or any relative nodes such
   // as ancestors or descendants described by the node or its node data outside
   // of these events.
-  virtual void OnIgnoredWillChange(AXTree* tree,
-                                   AXNode* node,
-                                   bool is_ignored_new_value) {}
+  virtual void OnIgnoredWillChange(
+      AXTree* tree,
+      AXNode* node,
+      bool is_ignored_new_value,
+      bool is_changing_unignored_parents_children) {}
   virtual void OnNodeDataWillChange(AXTree* tree,
                                     const AXNodeData& old_node_data,
                                     const AXNodeData& new_node_data) {}
@@ -156,7 +159,7 @@ class AX_EXPORT AXTreeObserver : public base::CheckedObserver {
       this->node = node;
       this->type = type;
     }
-    AXNode* node;
+    raw_ptr<AXNode> node;
     ChangeType type;
   };
 

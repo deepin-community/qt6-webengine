@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -19,8 +19,6 @@ class WaitableEvent;
 
 namespace gpu {
 
-struct SyncToken;
-
 class GPU_EXPORT GpuMemoryBufferManager {
  public:
   GpuMemoryBufferManager();
@@ -36,11 +34,6 @@ class GPU_EXPORT GpuMemoryBufferManager {
       gfx::BufferUsage usage,
       gpu::SurfaceHandle surface_handle,
       base::WaitableEvent* shutdown_event) = 0;
-
-  // Associates destruction sync point with |buffer|. It can be called on any
-  // thread.
-  virtual void SetDestructionSyncToken(gfx::GpuMemoryBuffer* buffer,
-                                       const gpu::SyncToken& sync_token) = 0;
 
   // Copies pixel data of GMB to the provided shared memory region.
   virtual void CopyGpuMemoryBufferAsync(

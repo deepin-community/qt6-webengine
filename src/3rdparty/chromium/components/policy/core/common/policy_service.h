@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,9 +8,10 @@
 #include <map>
 #include <string>
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/observer_list_types.h"
+#include "base/scoped_observation_traits.h"
 #include "build/build_config.h"
 #include "components/policy/core/common/policy_map.h"
 #include "components/policy/core/common/policy_namespace.h"
@@ -49,7 +50,7 @@ class POLICY_EXPORT PolicyService {
     // ready. If IsInitializationComplete() is false, then this will be invoked
     // once all the policy providers have finished loading their policies for
     // |domain|. This does not handle failure to load policies from some
-    // providers, so it is possible for for the policy service to be initialised
+    // providers, so it is possible for the policy service to be initialised
     // if the providers failed for example to load its policies cache.
     virtual void OnPolicyServiceInitialized(PolicyDomain domain) {}
 
@@ -172,5 +173,24 @@ class POLICY_EXPORT PolicyChangeRegistrar : public PolicyService::Observer {
 };
 
 }  // namespace policy
+
+namespace base {
+
+template <>
+struct ScopedObservationTraits<policy::PolicyService,
+                               policy::PolicyService::ProviderUpdateObserver> {
+  static void AddObserver(
+      policy::PolicyService* source,
+      policy::PolicyService::ProviderUpdateObserver* observer) {
+    source->AddProviderUpdateObserver(observer);
+  }
+  static void RemoveObserver(
+      policy::PolicyService* source,
+      policy::PolicyService::ProviderUpdateObserver* observer) {
+    source->RemoveProviderUpdateObserver(observer);
+  }
+};
+
+}  // namespace base
 
 #endif  // COMPONENTS_POLICY_CORE_COMMON_POLICY_SERVICE_H_

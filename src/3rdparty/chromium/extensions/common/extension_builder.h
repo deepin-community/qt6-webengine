@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,14 +8,17 @@
 #include <initializer_list>
 #include <memory>
 #include <string>
+#include <utility>
 
 #include "base/files/file_path.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/strings/string_piece.h"
+#include "base/values.h"
 #include "extensions/common/api/extension_action/action_info.h"
 #include "extensions/common/manifest.h"
 #include "extensions/common/mojom/manifest.mojom-shared.h"
 #include "extensions/common/value_builder.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace extensions {
 class Extension;
@@ -61,7 +64,8 @@ class ExtensionBuilder {
   // Initializes an ExtensionBuilder that can be used with various utility
   // methods to automatically construct a manifest. |name| will be the name of
   // the extension and used to generate a stable ID.
-  ExtensionBuilder(const std::string& name, Type type = Type::EXTENSION);
+  explicit ExtensionBuilder(const std::string& name,
+                            Type type = Type::EXTENSION);
 
   ExtensionBuilder(const ExtensionBuilder&) = delete;
   ExtensionBuilder& operator=(const ExtensionBuilder&) = delete;
@@ -88,6 +92,11 @@ class ExtensionBuilder {
   ExtensionBuilder& AddPermission(const std::string& permission);
   ExtensionBuilder& AddPermissions(const std::vector<std::string>& permissions);
 
+  // Add one or more optional permissions to the extension.
+  ExtensionBuilder& AddOptionalPermission(const std::string& permission);
+  ExtensionBuilder& AddOptionalPermissions(
+      const std::vector<std::string>& permissions);
+
   // Sets an action type for the extension to have. By default, no action will
   // be set (though note that we synthesize a page action for most extensions).
   ExtensionBuilder& SetAction(ActionInfo::Type type);
@@ -113,15 +122,13 @@ class ExtensionBuilder {
   // Can be used in conjuction with ListBuilder and DictionaryBuilder for more
   // complex types.
   template <typename T>
-  ExtensionBuilder& SetManifestKey(base::StringPiece key, T value) {
-    SetManifestKeyImpl(key, base::Value(value));
+  ExtensionBuilder& SetManifestKey(base::StringPiece key, T&& value) {
+    SetManifestKeyImpl(key, base::Value(std::forward<T>(value)));
     return *this;
   }
   template <typename T>
-  ExtensionBuilder& SetManifestPath(
-      std::initializer_list<base::StringPiece> path,
-      T value) {
-    SetManifestPathImpl(path, base::Value(value));
+  ExtensionBuilder& SetManifestPath(base::StringPiece path, T&& value) {
+    SetManifestPathImpl(path, base::Value(std::forward<T>(value)));
     return *this;
   }
   // Specializations for unique_ptr<> to allow passing unique_ptr<base::Value>.
@@ -133,9 +140,8 @@ class ExtensionBuilder {
     return *this;
   }
   template <typename T>
-  ExtensionBuilder& SetManifestPath(
-      std::initializer_list<base::StringPiece> path,
-      std::unique_ptr<T> value) {
+  ExtensionBuilder& SetManifestPath(base::StringPiece path,
+                                    std::unique_ptr<T> value) {
     SetManifestPathImpl(path, std::move(*value));
     return *this;
   }
@@ -153,8 +159,7 @@ class ExtensionBuilder {
   // Utility methods for use with custom manifest construction.
 
   // Assigns the extension's manifest to |manifest|.
-  ExtensionBuilder& SetManifest(
-      std::unique_ptr<base::DictionaryValue> manifest);
+  ExtensionBuilder& SetManifest(base::Value::Dict manifest);
 
   //////////////////////////////////////////////////////////////////////////////
   // Common utility methods (usable with both aided and custom manifest
@@ -168,9 +173,7 @@ class ExtensionBuilder {
 
   // Merge another manifest into the current manifest, with new keys taking
   // precedence.
-  ExtensionBuilder& MergeManifest(const base::Value& manifest);
-  ExtensionBuilder& MergeManifest(
-      std::unique_ptr<base::DictionaryValue> manifest);
+  ExtensionBuilder& MergeManifest(base::Value::Dict manifest);
 
   // Add flags to the extension. Default is no flags.
   ExtensionBuilder& AddFlags(int init_from_value_flags);
@@ -184,14 +187,13 @@ class ExtensionBuilder {
   struct ManifestData;
 
   void SetManifestKeyImpl(base::StringPiece key, base::Value value);
-  void SetManifestPathImpl(std::initializer_list<base::StringPiece> path,
-                           base::Value value);
+  void SetManifestPathImpl(base::StringPiece path, base::Value value);
 
   // Information for constructing the manifest; either metadata about the
   // manifest which will be used to construct it, or the dictionary itself. Only
   // one will be present.
   std::unique_ptr<ManifestData> manifest_data_;
-  std::unique_ptr<base::DictionaryValue> manifest_value_;
+  absl::optional<base::Value::Dict> manifest_value_;
 
   base::FilePath path_;
   mojom::ManifestLocation location_;

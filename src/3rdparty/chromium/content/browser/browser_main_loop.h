@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,8 +7,9 @@
 
 #include <memory>
 
-#include "base/callback_helpers.h"
+#include "base/functional/callback_helpers.h"
 #include "base/gtest_prod_util.h"
+#include "base/memory/raw_ref.h"
 #include "base/memory/ref_counted.h"
 #include "base/task/thread_pool/thread_pool_instance.h"
 #include "base/types/strong_alias.h"
@@ -28,7 +29,7 @@ class Env;
 }
 #endif
 
-#if defined(USE_OZONE)
+#if BUILDFLAG(IS_OZONE)
 #include "ui/ozone/buildflags.h"  // nogncheck
 #if BUILDFLAG(OZONE_PLATFORM_X11)
 #define USE_OZONE_PLATFORM_X11
@@ -139,7 +140,7 @@ class CONTENT_EXPORT BrowserMainLoop {
 
   void PreCreateMainMessageLoop();
   // Creates the main message loop, bringing APIs like
-  // ThreadTaskRunnerHandle::Get() online.
+  // SingleThreadTaskRunner::GetCurrentDefault() online.
   void CreateMainMessageLoop();
   void PostCreateMainMessageLoop();
 
@@ -182,7 +183,7 @@ class CONTENT_EXPORT BrowserMainLoop {
     return media_keys_listener_manager_.get();
   }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   // Only expose this on ChromeOS since it's only needed there. On Android this
   // be null if this process started in reduced mode.
   net::NetworkChangeNotifier* network_change_notifier() const {
@@ -232,6 +233,11 @@ class CONTENT_EXPORT BrowserMainLoop {
   void SetSmsProviderForTesting(std::unique_ptr<SmsProvider>);
 
   BrowserMainParts* parts() { return parts_.get(); }
+
+  // This should only be called after the IO thread has been started (and will
+  // crash otherwise). May block on the thread ID being initialized if the IO
+  // thread ThreadMain has not yet run.
+  base::PlatformThreadId GetIOThreadId();
 
  private:
   FRIEND_TEST_ALL_PREFIXES(BrowserMainLoopTest, CreateThreadsInSingleProcess);
@@ -290,7 +296,7 @@ class CONTENT_EXPORT BrowserMainLoop {
 
   // Members initialized on construction ---------------------------------------
   MainFunctionParams parameters_;
-  const base::CommandLine& parsed_command_line_;
+  const raw_ref<const base::CommandLine> parsed_command_line_;
   int result_code_;
   bool created_threads_;  // True if the non-UI threads were created.
   // //content must be initialized single-threaded until

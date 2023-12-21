@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2016 The Chromium Authors. All rights reserved.
+# Copyright 2016 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -175,8 +175,7 @@ def ProcessCompileDatabase(compile_db, filtered_args, target_os=None):
 def GetNinjaPath():
   ninja_executable = 'ninja.exe' if sys.platform == 'win32' else 'ninja'
   return os.path.join(os.path.dirname(os.path.realpath(__file__)), '..', '..',
-                      '..', '..', 'third_party', 'depot_tools',
-                      ninja_executable)
+                      '..', '..', 'third_party', 'ninja', ninja_executable)
 
 
 # FIXME: This really should be a build target, rather than generated at runtime.

@@ -1,15 +1,15 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "device/bluetooth/bluetooth_remote_gatt_descriptor_mac.h"
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #import "base/mac/foundation_util.h"
 #include "base/strings/sys_string_conversions.h"
-#include "base/threading/thread_task_runner_handle.h"
+#import "base/task/single_thread_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #import "device/bluetooth/bluetooth_adapter_mac.h"
-#include "device/bluetooth/bluetooth_adapter_mac_metrics.h"
 #import "device/bluetooth/bluetooth_remote_gatt_characteristic_mac.h"
 
 using base::mac::ObjCCast;
@@ -76,12 +76,12 @@ BluetoothRemoteGattDescriptorMac::~BluetoothRemoteGattDescriptorMac() {
   destructor_called_ = true;
   if (HasPendingRead()) {
     std::move(read_value_callback_)
-        .Run(BluetoothGattService::GATT_ERROR_FAILED,
+        .Run(BluetoothGattService::GattErrorCode::kFailed,
              /*value=*/std::vector<uint8_t>());
   }
   if (HasPendingWrite()) {
     std::move(write_value_callbacks_)
-        .second.Run(BluetoothGattService::GATT_ERROR_FAILED);
+        .second.Run(BluetoothGattService::GattErrorCode::kFailed);
   }
 }
 
@@ -97,10 +97,11 @@ void BluetoothRemoteGattDescriptorMac::ReadRemoteDescriptor(
     ValueCallback callback) {
   if (destructor_called_ || HasPendingRead() || HasPendingWrite()) {
     DVLOG(1) << *this << ": Read failed, already in progress.";
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::BindOnce(std::move(callback),
-                                  BluetoothGattService::GATT_ERROR_IN_PROGRESS,
-                                  /*value=*/std::vector<uint8_t>()));
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE,
+        base::BindOnce(std::move(callback),
+                       BluetoothGattService::GattErrorCode::kInProgress,
+                       /*value=*/std::vector<uint8_t>()));
     return;
   }
   DVLOG(1) << *this << ": Read value.";
@@ -114,10 +115,10 @@ void BluetoothRemoteGattDescriptorMac::WriteRemoteDescriptor(
     ErrorCallback error_callback) {
   if (destructor_called_ || HasPendingRead() || HasPendingWrite()) {
     DVLOG(1) << *this << ": Write failed, already in progress.";
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE,
         base::BindOnce(std::move(error_callback),
-                       BluetoothGattService::GATT_ERROR_IN_PROGRESS));
+                       BluetoothGattService::GattErrorCode::kInProgress));
     return;
   }
   DVLOG(1) << *this << ": Write value.";
@@ -134,13 +135,12 @@ void BluetoothRemoteGattDescriptorMac::DidUpdateValueForDescriptor(
     DVLOG(1) << *this << ": Value updated, no read in progress.";
     return;
   }
-  RecordDidUpdateValueForDescriptorResult(error);
   if (error) {
     BluetoothGattService::GattErrorCode error_code =
         BluetoothDeviceMac::GetGattErrorCodeFromNSError(error);
     DVLOG(1) << *this << ": Read value failed with error: "
              << BluetoothAdapterMac::String(error)
-             << ", converted to error code: " << error_code;
+             << ", converted to error code: " << static_cast<int>(error_code);
     std::move(read_value_callback_)
         .Run(error_code,
              /*value=*/std::vector<uint8_t>());
@@ -159,13 +159,12 @@ void BluetoothRemoteGattDescriptorMac::DidWriteValueForDescriptor(
   }
   std::pair<base::OnceClosure, ErrorCallback> callbacks;
   callbacks.swap(write_value_callbacks_);
-  RecordDidWriteValueForDescriptorResult(error);
   if (error) {
     BluetoothGattService::GattErrorCode error_code =
         BluetoothDeviceMac::GetGattErrorCodeFromNSError(error);
     DVLOG(1) << *this << ": Write value failed with error: "
              << BluetoothAdapterMac::String(error)
-             << ", converted to error code: " << error_code;
+             << ", converted to error code: " << static_cast<int>(error_code);
     std::move(callbacks.second).Run(error_code);
     return;
   }

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,8 +6,6 @@
 #define UI_GL_GL_CONTEXT_CGL_H_
 
 #include <OpenGL/CGLTypes.h>
-
-#include <memory>
 
 #include "ui/gfx/color_space.h"
 #include "ui/gl/gl_context.h"
@@ -20,7 +18,7 @@ class GLSurface;
 // Encapsulates a CGL OpenGL context.
 class GL_EXPORT GLContextCGL final : public GLContextReal {
  public:
-  explicit GLContextCGL(GLShareGroup* share_group, int core_profile_number = 0);
+  explicit GLContextCGL(GLShareGroup* share_group);
 
   GLContextCGL(const GLContextCGL&) = delete;
   GLContextCGL& operator=(const GLContextCGL&) = delete;
@@ -34,8 +32,6 @@ class GL_EXPORT GLContextCGL final : public GLContextReal {
   void* GetHandle() override;
   void SetSafeToForceGpuSwitch() override;
   bool ForceGpuSwitchIfNeeded() override;
-  YUVToRGBConverter* GetYUVToRGBConverter(
-      const gfx::ColorSpace& color_space) override;
   void SetVisibility(bool visibility) override;
 
  protected:
@@ -47,8 +43,6 @@ class GL_EXPORT GLContextCGL final : public GLContextReal {
 
   void* context_ = nullptr;
   GpuPreference gpu_preference_ = GpuPreference::kLowPower;
-  std::map<gfx::ColorSpace, std::unique_ptr<YUVToRGBConverter>>
-      yuv_to_rgb_converters_;
 
   int screen_ = -1;
   int renderer_id_ = -1;
@@ -57,8 +51,6 @@ class GL_EXPORT GLContextCGL final : public GLContextReal {
 
   // Debugging for https://crbug.com/863817
   bool has_switched_gpus_ = false;
-
-  int core_profile_number_ = 0;
 };
 
 }  // namespace gl

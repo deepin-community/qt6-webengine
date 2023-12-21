@@ -1,10 +1,11 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include <map>
 
 #include "base/strings/stringprintf.h"
+#include "base/test/gtest_tags.h"
 #include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
@@ -49,7 +50,7 @@ namespace {
 #if !BUILDFLAG(IS_CHROMEOS_LACROS)
 // Find a browser other than |browser|.
 Browser* FindOtherBrowser(Browser* browser) {
-  Browser* found = NULL;
+  Browser* found = nullptr;
   for (auto* b : *BrowserList::GetInstance()) {
     if (b == browser)
       continue;
@@ -95,7 +96,7 @@ class ExtensionManagementApiTest
   // be sent by the launched app, to ensure the page is fully loaded.
   void LoadAndWaitForLaunch(const std::string& app_path,
                             std::string* out_app_id) {
-    ExtensionTestMessageListener launched_app("launched app", false);
+    ExtensionTestMessageListener launched_app("launched app");
     ASSERT_TRUE(LoadExtension(test_data_dir_.AppendASCII(app_path),
                               {.context_type = ContextType::kFromManifest}));
 
@@ -134,6 +135,9 @@ INSTANTIATE_TEST_SUITE_P(ServiceWorker,
                          ::testing::Values(ContextType::kServiceWorker));
 
 IN_PROC_BROWSER_TEST_P(ExtensionManagementApiTest, Basics) {
+  base::AddFeatureIdTagToTestResult(
+      "screenplay-7a245632-83b2-4dc8-a1db-283ef595e2df");
+
   LoadExtensions();
 
   base::FilePath basedir = test_data_dir_.AppendASCII("management");
@@ -258,20 +262,20 @@ class InstallReplacementWebAppApiTest : public ExtensionManagementApiTest {
     web_app::AppId web_app_id =
         web_app::GenerateAppId(/*manifest_id=*/absl::nullopt, start_url);
     auto* provider = web_app::WebAppProvider::GetForTest(browser()->profile());
-    EXPECT_FALSE(provider->registrar().IsLocallyInstalled(start_url));
+    EXPECT_FALSE(provider->registrar_unsafe().IsLocallyInstalled(start_url));
     EXPECT_EQ(0, static_cast<int>(
                      provider->ui_manager().GetNumWindowsForApp(web_app_id)));
 
     RunTest(manifest, web_app_url, kInstallReplacementWebApp,
             true /* from_webstore */);
-    EXPECT_TRUE(provider->registrar().IsLocallyInstalled(start_url));
+    EXPECT_TRUE(provider->registrar_unsafe().IsLocallyInstalled(start_url));
     EXPECT_EQ(1, static_cast<int>(
                      provider->ui_manager().GetNumWindowsForApp(web_app_id)));
 
     // Call API again. It should launch the app.
     RunTest(manifest, web_app_url, kInstallReplacementWebApp,
             true /* from_webstore */);
-    EXPECT_TRUE(provider->registrar().IsLocallyInstalled(start_url));
+    EXPECT_TRUE(provider->registrar_unsafe().IsLocallyInstalled(start_url));
     EXPECT_EQ(2, static_cast<int>(
                      provider->ui_manager().GetNumWindowsForApp(web_app_id)));
 
@@ -479,7 +483,7 @@ IN_PROC_BROWSER_TEST_P(ExtensionManagementApiTest, ManagementPolicyProhibited) {
 IN_PROC_BROWSER_TEST_P(ExtensionManagementApiTest, LaunchPanelApp) {
   // Load an extension that calls launchApp() on any app that gets
   // installed.
-  ExtensionTestMessageListener launcher_loaded("launcher loaded", false);
+  ExtensionTestMessageListener launcher_loaded("launcher loaded");
   ASSERT_TRUE(LoadExtension(
       test_data_dir_.AppendASCII("management/launch_on_install")));
   ASSERT_TRUE(launcher_loaded.WaitUntilSatisfied());
@@ -528,7 +532,7 @@ IN_PROC_BROWSER_TEST_P(ExtensionManagementApiTest, LaunchPanelApp) {
 IN_PROC_BROWSER_TEST_P(ExtensionManagementApiTest, LaunchTabApp) {
   // Load an extension that calls launchApp() on any app that gets
   // installed.
-  ExtensionTestMessageListener launcher_loaded("launcher loaded", false);
+  ExtensionTestMessageListener launcher_loaded("launcher loaded");
   ASSERT_TRUE(LoadExtension(
       test_data_dir_.AppendASCII("management/launch_on_install")));
   ASSERT_TRUE(launcher_loaded.WaitUntilSatisfied());

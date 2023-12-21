@@ -1,4 +1,4 @@
-// Copyright (c) 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,13 +6,14 @@
 #define GPU_COMMAND_BUFFER_CLIENT_RASTER_INTERFACE_H_
 
 #include <GLES2/gl2.h>
-#include "base/callback.h"
 #include "base/compiler_specific.h"
 #include "base/containers/span.h"
+#include "base/functional/callback.h"
 #include "components/viz/common/resources/resource_format.h"
 #include "gpu/command_buffer/client/interface_base.h"
 #include "gpu/command_buffer/common/raster_cmd_enums.h"
 #include "gpu/command_buffer/common/sync_token.h"
+#include "third_party/skia/include/core/SkColor.h"
 #include "third_party/skia/include/core/SkImageInfo.h"
 #include "third_party/skia/include/core/SkYUVAInfo.h"
 #include "third_party/skia/include/gpu/GrTypes.h"
@@ -47,17 +48,18 @@ class RasterInterface : public InterfaceBase {
   RasterInterface() {}
   virtual ~RasterInterface() {}
 
-  virtual void CopySubTexture(const gpu::Mailbox& source_mailbox,
-                              const gpu::Mailbox& dest_mailbox,
-                              GLenum dest_target,
-                              GLint xoffset,
-                              GLint yoffset,
-                              GLint x,
-                              GLint y,
-                              GLsizei width,
-                              GLsizei height,
-                              GLboolean unpack_flip_y,
-                              GLboolean unpack_premultiply_alpha) = 0;
+  // This function will not perform any color conversion during the copy.
+  virtual void CopySharedImage(const gpu::Mailbox& source_mailbox,
+                               const gpu::Mailbox& dest_mailbox,
+                               GLenum dest_target,
+                               GLint xoffset,
+                               GLint yoffset,
+                               GLint x,
+                               GLint y,
+                               GLsizei width,
+                               GLsizei height,
+                               GLboolean unpack_flip_y,
+                               GLboolean unpack_premultiply_alpha) = 0;
 
   virtual void WritePixels(const gpu::Mailbox& dest_mailbox,
                            int dst_x_offset,
@@ -67,9 +69,15 @@ class RasterInterface : public InterfaceBase {
                            const SkImageInfo& src_info,
                            const void* src_pixels) = 0;
 
+  // Copy `yuva_plane_mailboxes` to `dest_mailbox`. The color space for the
+  // source of the copy is split into `planes_yuv_color_space` which converts
+  // into full range RGB, and `planes_rgb_color_space` which an RGB color space.
+  // If `planes_rgb_color_space` is nullptr, then disable conversion to
+  // `dest_mailbox`'s color space.
   virtual void ConvertYUVAMailboxesToRGB(
       const gpu::Mailbox& dest_mailbox,
       SkYUVColorSpace planes_yuv_color_space,
+      const SkColorSpace* planes_rgb_color_space,
       SkYUVAInfo::PlaneConfig plane_config,
       SkYUVAInfo::Subsampling subsampling,
       const gpu::Mailbox yuva_plane_mailboxes[]) = 0;
@@ -84,7 +92,7 @@ class RasterInterface : public InterfaceBase {
   // OOP-Raster
 
   // msaa_sample_count has no effect unless msaa_mode is set to kMSAA
-  virtual void BeginRasterCHROMIUM(GLuint sk_color,
+  virtual void BeginRasterCHROMIUM(SkColor4f sk_color_4f,
                                    GLboolean needs_clear,
                                    GLuint msaa_sample_count,
                                    MsaaMode msaa_mode,
@@ -104,8 +112,7 @@ class RasterInterface : public InterfaceBase {
                               const gfx::Vector2dF& post_translate,
                               const gfx::Vector2dF& post_scale,
                               bool requires_clear,
-                              size_t* max_op_size_hint,
-                              bool preserve_recording = true) = 0;
+                              size_t* max_op_size_hint) = 0;
 
   // Schedules a hardware-accelerated image decode and a sync token that's
   // released when the image decode is complete. If the decode could not be
@@ -119,19 +126,28 @@ class RasterInterface : public InterfaceBase {
       bool needs_mips) = 0;
 
   // Starts an asynchronous readback of |source_mailbox| into caller-owned
-  // memory |out|. Currently supports the kRGBA_8888_SkColorType and
-  // kBGRA_8888_SkColorType color types. |out| must remain valid
-  // until |readback_done| is called with the origin of the pixels in |out| and
-  // a bool indicating if the readback was successful. On success |out| will
-  // contain the pixel data copied back from the GPU process.
+  // memory |out|.
+  // |dst_row_bytes| is a per row stride expected in the |out| buffer.
+  // |source_origin| specifies texture coordinate directions, but
+  // pixels in |out| laid out with top-left origin.
+  // Currently supports the kRGBA_8888_SkColorType and
+  // kBGRA_8888_SkColorType color types.
+  // |out| must remain valid  until |readback_done| is called with
+  // a bool indicating if the readback was successful.
+  // |source_size| describes dimensions of the |source_mailbox| texture.
+  // |dst_info| |source_starting_point| describe subregion that needs to be read
+  // On success |out| will contain the pixel data copied back from the GPU
+  // process.
   virtual void ReadbackARGBPixelsAsync(
       const gpu::Mailbox& source_mailbox,
       GLenum source_target,
       GrSurfaceOrigin source_origin,
+      const gfx::Size& source_size,
+      const gfx::Point& source_starting_point,
       const SkImageInfo& dst_info,
       GLuint dst_row_bytes,
       unsigned char* out,
-      base::OnceCallback<void(GrSurfaceOrigin, bool)> readback_done) = 0;
+      base::OnceCallback<void(bool)> readback_done) = 0;
 
   // Starts an asynchronus readback and translation of RGBA |source_mailbox|
   // into caller-owned |[yuv]_plane_data|. All provided pointers must remain
@@ -157,13 +173,17 @@ class RasterInterface : public InterfaceBase {
       base::OnceCallback<void()> release_mailbox,
       base::OnceCallback<void(bool)> readback_done) = 0;
 
-  // Synchronously does a readback of SkImage pixels from |source_mailbox| into
-  // caller-owned memory |dst_pixels|.
+  // Synchronously does a readback of SkImage pixels for given |plane_index|
+  // from |source_mailbox| into caller-owned memory |dst_pixels|. |plane_index|
+  // applies to multiplanar textures in mailboxes, for example YUV images
+  // produced by the VideoDecoder. |plane_index| as 0 should be passed for known
+  // single-plane textures.
   virtual void ReadbackImagePixels(const gpu::Mailbox& source_mailbox,
                                    const SkImageInfo& dst_info,
                                    GLuint dst_row_bytes,
                                    int src_x,
                                    int src_y,
+                                   int plane_index,
                                    void* dst_pixels) = 0;
 
   // Raster via GrContext.

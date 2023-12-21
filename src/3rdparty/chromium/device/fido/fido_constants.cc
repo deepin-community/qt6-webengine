@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -26,7 +26,6 @@ const char kPlatformDeviceMapKey[] = "plat";
 const char kEntityIdMapKey[] = "id";
 const char kEntityNameMapKey[] = "name";
 const char kDisplayNameMapKey[] = "displayName";
-const char kIconUrlMapKey[] = "icon";
 const char kCredentialTypeMapKey[] = "type";
 const char kCredentialAlgorithmMapKey[] = "alg";
 const char kCredentialManagementMapKey[] = "credMgmt";
@@ -73,9 +72,37 @@ const char kCtap2_1Version[] = "FIDO_2_1";
 
 const char kExtensionHmacSecret[] = "hmac-secret";
 const char kExtensionCredProtect[] = "credProtect";
+const char kExtensionLargeBlob[] = "largeBlob";
 const char kExtensionLargeBlobKey[] = "largeBlobKey";
 const char kExtensionCredBlob[] = "credBlob";
 const char kExtensionMinPINLength[] = "minPinLength";
+const char kExtensionDevicePublicKey[] = "devicePubKey";
+const char kExtensionPRF[] = "prf";
+
+const char kExtensionPRFEnabled[] = "enabled";
+const char kExtensionPRFEval[] = "eval";
+const char kExtensionPRFEvalByCredential[] = "evalByCredential";
+const char kExtensionPRFFirst[] = "first";
+const char kExtensionPRFResults[] = "results";
+const char kExtensionPRFSecond[] = "second";
+
+const char kExtensionLargeBlobBlob[] = "blob";
+const char kExtensionLargeBlobOriginalSize[] = "originalSize";
+const char kExtensionLargeBlobRead[] = "read";
+const char kExtensionLargeBlobSupport[] = "support";
+const char kExtensionLargeBlobSupported[] = "supported";
+const char kExtensionLargeBlobSupportPreferred[] = "preferred";
+const char kExtensionLargeBlobSupportRequired[] = "required";
+const char kExtensionLargeBlobWrite[] = "write";
+const char kExtensionLargeBlobWritten[] = "written";
+
+const char kDevicePublicKeyAttestationKey[] = "attestation";
+const char kDevicePublicKeyAttestationFormatsKey[] = "attestationFormats";
+const char kDevicePublicKeyAAGUIDKey[] = "aaguid";
+const char kDevicePublicKeyDPKKey[] = "dpk";
+const char kDevicePublicKeyScopeKey[] = "scope";
+const char kDevicePublicKeyNonceKey[] = "nonce";
+const char kDevicePublicKeyEPKey[] = "epAtt";
 
 const base::TimeDelta kBleDevicePairingModeWaitingInterval = base::Seconds(2);
 

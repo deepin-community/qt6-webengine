@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -36,19 +36,26 @@ Process Process::Current() {
 
 // static
 Process Process::Open(ProcessId pid) {
+  if (pid == GetCurrentProcId()) {
+    return Current();
+  }
   return Process(pid);
 }
 
 // static
 Process Process::OpenWithExtraPrivileges(ProcessId pid) {
-  return Process(pid);
+  return Open(pid);
 }
 
 // static
 void Process::TerminateCurrentProcessImmediately(int exit_code) {
   // This method is marked noreturn, so we crash rather than just provide an
   // empty stub implementation.
-  IMMEDIATE_CRASH();
+  ImmediateCrash();
+}
+
+bool Process::Terminate(int exit_code, bool wait) const {
+  return false;
 }
 
 bool Process::IsValid() const {

@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,6 +14,7 @@
 #include "base/sequence_checker.h"
 #include "media/base/media_log.h"
 #include "media/base/media_util.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
@@ -83,7 +84,15 @@ class MODULES_EXPORT CodecLogger final {
     // instance of |CodecLogger|.
     if (parent_media_log_) {
       parent_media_log_->Stop();
-      task_runner_->DeleteSoon(FROM_HERE, std::move(parent_media_log_));
+      if (base::FeatureList::IsEnabled(
+              features::kUseBlinkSchedulerTaskRunnerWithCustomDeleter)) {
+        task_runner_->DeleteSoon(FROM_HERE, std::move(parent_media_log_));
+      } else {
+        // This task runner may be destroyed without running tasks, so don't use
+        // DeleteSoon() which can leak the log. See https://crbug.com/1376851.
+        task_runner_->PostTask(FROM_HERE, base::DoNothingWithBoundArgs(
+                                              std::move(parent_media_log_)));
+      }
     }
   }
 
@@ -130,7 +139,7 @@ class MODULES_EXPORT CodecLogger final {
 
   // Records the first media::Status passed to MakeException.
   typename StatusImpl::Codes status_code() const {
-    return status_code_.value_or(StatusImpl::Traits::DefaultEnumValue());
+    return status_code_.value_or(StatusImpl::Codes::kOk);
   }
 
  private:

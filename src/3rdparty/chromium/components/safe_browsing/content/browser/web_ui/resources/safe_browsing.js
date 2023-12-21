@@ -1,13 +1,11 @@
-/* Copyright 2017 The Chromium Authors. All rights reserved.
+/* Copyright 2017 The Chromium Authors
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file. */
 
-import {addWebUIListener, sendWithPromise} from 'chrome://resources/js/cr.m.js';
-import {decorate} from 'chrome://resources/js/cr/ui.m.js';
-import {TabBox} from 'chrome://resources/js/cr/ui/tabs.js';
-import {$} from 'chrome://resources/js/util.m.js';
+import 'chrome://resources/cr_elements/cr_tab_box/cr_tab_box.js';
 
-decorate('tabbox', TabBox);
+import {addWebUiListener, sendWithPromise} from 'chrome://resources/js/cr.js';
+import {$} from 'chrome://resources/js/util_ts.js';
 
 /**
  * Asks the C++ SafeBrowsingUIHandler to get the lists of Safe Browsing
@@ -34,7 +32,7 @@ function initialize() {
       addDownloadUrlChecked(url_and_result);
     });
   });
-  addWebUIListener('download-url-checked-update', function(url_and_result) {
+  addWebUiListener('download-url-checked-update', function(url_and_result) {
     addDownloadUrlChecked(url_and_result);
   });
 
@@ -44,7 +42,7 @@ function initialize() {
           addSentClientDownloadRequestsInfo(cdr);
         });
       });
-  addWebUIListener('sent-client-download-requests-update', function(result) {
+  addWebUiListener('sent-client-download-requests-update', function(result) {
     addSentClientDownloadRequestsInfo(result);
   });
 
@@ -54,7 +52,7 @@ function initialize() {
           addReceivedClientDownloadResponseInfo(cdr);
         });
       });
-  addWebUIListener(
+  addWebUiListener(
       'received-client-download-responses-update', function(result) {
         addReceivedClientDownloadResponseInfo(result);
       });
@@ -65,7 +63,7 @@ function initialize() {
           addSentClientPhishingRequestsInfo(cpr);
         });
       });
-  addWebUIListener('sent-client-phishing-requests-update', function(result) {
+  addWebUiListener('sent-client-phishing-requests-update', function(result) {
     addSentClientPhishingRequestsInfo(result);
   });
 
@@ -75,7 +73,7 @@ function initialize() {
           addReceivedClientPhishingResponseInfo(cpr);
         });
       });
-  addWebUIListener(
+  addWebUiListener(
       'received-client-phishing-responses-update', function(result) {
         addReceivedClientPhishingResponseInfo(result);
       });
@@ -85,8 +83,17 @@ function initialize() {
       addSentCSBRRsInfo(csbrr);
     });
   });
-  addWebUIListener('sent-csbrr-update', function(result) {
+  addWebUiListener('sent-csbrr-update', function(result) {
     addSentCSBRRsInfo(result);
+  });
+
+  sendWithPromise('getSentHitReports', []).then((sentHitReports) => {
+    sentHitReports.forEach(function(hitReports) {
+      addSentHitReportsInfo(hitReports);
+    });
+  });
+  addWebUiListener('sent-hit-report-list', function(result) {
+    addSentHitReportsInfo(result);
   });
 
   sendWithPromise('getPGEvents', []).then((pgEvents) => {
@@ -94,7 +101,7 @@ function initialize() {
       addPGEvent(pgEvent);
     });
   });
-  addWebUIListener('sent-pg-event', function(result) {
+  addWebUiListener('sent-pg-event', function(result) {
     addPGEvent(result);
   });
 
@@ -103,7 +110,7 @@ function initialize() {
       addSecurityEvent(securityEvent);
     });
   });
-  addWebUIListener('sent-security-event', function(result) {
+  addWebUiListener('sent-security-event', function(result) {
     addSecurityEvent(result);
   });
 
@@ -112,7 +119,7 @@ function initialize() {
       addPGPing(pgPing);
     });
   });
-  addWebUIListener('pg-pings-update', function(result) {
+  addWebUiListener('pg-pings-update', function(result) {
     addPGPing(result);
   });
 
@@ -121,7 +128,7 @@ function initialize() {
       addPGResponse(pgResponse);
     });
   });
-  addWebUIListener('pg-responses-update', function(result) {
+  addWebUiListener('pg-responses-update', function(result) {
     addPGResponse(result);
   });
 
@@ -130,7 +137,7 @@ function initialize() {
       addRTLookupPing(rtLookupPing);
     });
   });
-  addWebUIListener('rt-lookup-pings-update', function(result) {
+  addWebUiListener('rt-lookup-pings-update', function(result) {
     addRTLookupPing(result);
   });
 
@@ -139,7 +146,7 @@ function initialize() {
       addRTLookupResponse(rtLookupResponse);
     });
   });
-  addWebUIListener('rt-lookup-responses-update', function(result) {
+  addWebUiListener('rt-lookup-responses-update', function(result) {
     addRTLookupResponse(result);
   });
 
@@ -148,7 +155,7 @@ function initialize() {
       addLogMessage(message);
     });
   });
-  addWebUIListener('log-messages-update', function(message) {
+  addWebUiListener('log-messages-update', function(message) {
     addLogMessage(message);
   });
 
@@ -157,7 +164,7 @@ function initialize() {
       addReportingEvent(reportingEvent);
     });
   });
-  addWebUIListener('reporting-events-update', function(reportingEvent) {
+  addWebUiListener('reporting-events-update', function(reportingEvent) {
     addReportingEvent(reportingEvent);
   });
 
@@ -166,13 +173,15 @@ function initialize() {
       addDeepScan(request);
     });
   });
-  addWebUIListener('deep-scan-request-update', function(result) {
+  addWebUiListener('deep-scan-request-update', function(result) {
     addDeepScan(result);
   });
 
+  // <if expr="is_android">
   sendWithPromise('getReferringAppInfo', []).then((info) => {
     addReferringAppInfo(info);
   });
+  // </if>
 
   $('get-referrer-chain-form').addEventListener('submit', addReferrerChain);
 
@@ -184,10 +193,9 @@ function initialize() {
   };
 
   // When the tab updates, update the anchor
-  $('tabbox').addEventListener('selectedChange', function() {
-    const tabbox = $('tabbox');
-    const tabs = tabbox.querySelector('tabs').children;
-    const selectedTab = tabs[tabbox.selectedIndex];
+  $('tabbox').addEventListener('selected-index-change', e => {
+    const tabs = document.querySelectorAll('div[slot=\'tab\']');
+    const selectedTab = tabs[e.detail];
     window.location.hash = 'tab-' + selectedTab.id;
   }, true);
 }
@@ -310,6 +318,11 @@ function addSentCSBRRsInfo(result) {
   appendChildWithInnerText(logDiv, result);
 }
 
+function addSentHitReportsInfo(result) {
+  const logDiv = $('sent-hit-report-list');
+  appendChildWithInnerText(logDiv, result);
+}
+
 function addPGEvent(result) {
   const logDiv = $('pg-event-log');
   const eventFormatted = '[' + (new Date(result['time'])).toLocaleString() +
@@ -415,14 +428,19 @@ function addReferrerChain(ev) {
       });
 }
 
+// <if expr="is_android">
 function addReferringAppInfo(info) {
   $('referring-app-info').innerHTML = trustedTypes.emptyHTML;
   $('referring-app-info').textContent = info;
 }
+// </if>
 
 function showTab(tabId) {
-  if ($(tabId)) {
-    $(tabId).selected = 'selected';
+  const tabs = document.querySelectorAll('div[slot=\'tab\']');
+  const index = Array.from(tabs).findIndex(t => t.id === tabId);
+  if (index !== -1) {
+    document.querySelector('cr-tab-box')
+        .setAttribute('selected-index', index.toString());
   }
 }
 

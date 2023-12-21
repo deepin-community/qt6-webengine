@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -70,7 +70,6 @@ class ContentSettingsRegistry {
                 WebsiteSettingsInfo::ScopingType scoping_type,
                 Platforms platforms,
                 ContentSettingsInfo::IncognitoBehavior incognito_behavior,
-                ContentSettingsInfo::StorageBehavior storage_behavior,
                 ContentSettingsInfo::OriginRestriction origin_restriction);
 
   Map content_settings_info_;

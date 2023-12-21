@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,7 @@
 #include <utility>
 #include <vector>
 
-#include "base/callback_helpers.h"
+#include "base/functional/callback_helpers.h"
 #include "base/guid.h"
 #include "base/memory/raw_ptr.h"
 #include "base/strings/utf_string_conversions.h"
@@ -23,6 +23,7 @@
 #include "components/bookmarks/test/test_bookmark_client.h"
 #include "components/favicon/core/test/mock_favicon_service.h"
 #include "components/sync/base/client_tag_hash.h"
+#include "components/sync/base/features.h"
 #include "components/sync/base/unique_position.h"
 #include "components/sync/engine/commit_queue.h"
 #include "components/sync/engine/data_type_activation_response.h"
@@ -36,13 +37,13 @@
 #include "components/undo/bookmark_undo_service.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/base/models/tree_node_iterator.h"
 
 namespace sync_bookmarks {
 
 namespace {
 
 using base::ASCIIToUTF16;
-using testing::_;
 using testing::ElementsAre;
 using testing::Eq;
 using testing::IsEmpty;
@@ -129,7 +130,10 @@ sync_pb::ModelTypeState CreateDummyModelTypeState() {
 // |node| must not be nullptr.
 sync_pb::BookmarkMetadata CreateNodeMetadata(
     const bookmarks::BookmarkNode* node,
-    const std::string& server_id) {
+    const std::string& server_id,
+    const syncer::UniquePosition& unique_position =
+        syncer::UniquePosition::InitialPosition(
+            syncer::UniquePosition::RandomSuffix())) {
   sync_pb::BookmarkMetadata bookmark_metadata;
   bookmark_metadata.set_id(node->id());
   bookmark_metadata.mutable_metadata()->set_server_id(server_id);
@@ -137,6 +141,12 @@ sync_pb::BookmarkMetadata CreateNodeMetadata(
       syncer::ClientTagHash::FromUnhashed(syncer::BOOKMARKS,
                                           node->guid().AsLowercaseString())
           .value());
+  *bookmark_metadata.mutable_metadata()->mutable_unique_position() =
+      unique_position.ToProto();
+  // Required by SyncedBookmarkTracker during validation of local metadata.
+  if (!node->is_folder()) {
+    bookmark_metadata.mutable_metadata()->set_bookmark_favicon_hash(123);
+  }
   return bookmark_metadata;
 }
 
@@ -171,6 +181,29 @@ sync_pb::BookmarkModelMetadata CreateMetadataForPermanentNodes(
   return model_metadata;
 }
 
+syncer::UpdateResponseDataList CreateUpdateResponseDataListForPermanentNodes() {
+  const syncer::UniquePosition kRandomPosition =
+      syncer::UniquePosition::InitialPosition(
+          syncer::UniquePosition::RandomSuffix());
+
+  syncer::UpdateResponseDataList updates;
+  // Add update for the permanent folders.
+  updates.push_back(
+      CreateUpdateResponseData({kBookmarkBarId, std::string(), std::string(),
+                                kBookmarksRootId, kBookmarkBarTag},
+                               kRandomPosition, /*response_version=*/0));
+  updates.push_back(
+      CreateUpdateResponseData({kOtherBookmarksId, std::string(), std::string(),
+                                kBookmarksRootId, kOtherBookmarksTag},
+                               kRandomPosition, /*response_version=*/0));
+  updates.push_back(CreateUpdateResponseData(
+      {kMobileBookmarksId, std::string(), std::string(), kBookmarksRootId,
+       kMobileBookmarksTag},
+      kRandomPosition, /*response_version=*/0));
+
+  return updates;
+}
+
 void AssertState(const BookmarkModelTypeProcessor* processor,
                  const std::vector<BookmarkInfo>& bookmarks) {
   const SyncedBookmarkTracker* tracker = processor->GetTrackerForTest();
@@ -191,38 +224,6 @@ void AssertState(const BookmarkModelTypeProcessor* processor,
         tracker->GetEntityForSyncId(bookmark.parent_id);
     ASSERT_THAT(node->parent(), Eq(parent_entity->bookmark_node()));
   }
-}
-
-// TODO(crbug.com/516866): Replace with a simpler implementation (e.g. by
-// simulating loading from metadata) instead of receiving remote updates.
-// Inititalizes the processor with the bookmarks in |bookmarks|.
-void InitWithSyncedBookmarks(const std::vector<BookmarkInfo>& bookmarks,
-                             BookmarkModelTypeProcessor* processor) {
-  syncer::UpdateResponseDataList updates;
-  syncer::UniquePosition pos = syncer::UniquePosition::InitialPosition(
-      syncer::UniquePosition::RandomSuffix());
-  // Add update for the permanent folders "Bookmarks bar", "Other Bookmarks" and
-  // "Mobile Bookmarks".
-  updates.push_back(
-      CreateUpdateResponseData({kBookmarkBarId, std::string(), std::string(),
-                                kBookmarksRootId, kBookmarkBarTag},
-                               pos, /*response_version=*/0));
-  updates.push_back(
-      CreateUpdateResponseData({kOtherBookmarksId, std::string(), std::string(),
-                                kBookmarksRootId, kOtherBookmarksTag},
-                               pos, /*response_version=*/0));
-  updates.push_back(CreateUpdateResponseData(
-      {kMobileBookmarksId, std::string(), std::string(), kBookmarksRootId,
-       kMobileBookmarksTag},
-      pos, /*response_version=*/0));
-  for (BookmarkInfo bookmark : bookmarks) {
-    pos = syncer::UniquePosition::After(pos,
-                                        syncer::UniquePosition::RandomSuffix());
-    updates.push_back(
-        CreateUpdateResponseData(bookmark, pos, /*response_version=*/0));
-  }
-  processor->OnUpdateReceived(CreateDummyModelTypeState(), std::move(updates));
-  AssertState(processor, bookmarks);
 }
 
 class MockCommitQueue : public syncer::CommitQueue {
@@ -249,13 +250,47 @@ class BookmarkModelTypeProcessorTest : public testing::Test {
       : processor_(std::make_unique<BookmarkModelTypeProcessor>(
             &bookmark_undo_service_)),
         bookmark_model_(bookmarks::TestBookmarkClient::CreateModel()) {
-    // TODO(crbug.com/516866): This class assumes model is loaded and sync has
-    // started before running tests. We should test other variations (i.e. model
-    // isn't loaded yet and/or sync didn't start yet).
     processor_->SetFaviconService(&favicon_service_);
   }
 
-  void SimulateModelReadyToSync() {
+  // Initialized the processor with bookmarks from the existing model and always
+  // initializes permanent folders.
+  void SimulateModelReadyToSyncWithInitialSyncDone() {
+    sync_pb::BookmarkModelMetadata model_metadata =
+        CreateMetadataForPermanentNodes(bookmark_model_.get());
+    DCHECK(model_metadata.model_type_state().initial_sync_done());
+
+    // By default, set that bookmarks are reuploaded to avoid reupload logic.
+    model_metadata.set_bookmarks_hierarchy_fields_reuploaded(true);
+
+    // Rely on the order of iterating over the tree: left child is always
+    // handled before the current one. In this case increasing unique position
+    // will always represent the right order.
+    syncer::UniquePosition next_unique_position =
+        syncer::UniquePosition::InitialPosition(
+            syncer::UniquePosition::RandomSuffix());
+    ui::TreeNodeIterator<const bookmarks::BookmarkNode> iterator(
+        bookmark_model_->root_node());
+    while (iterator.has_next()) {
+      const bookmarks::BookmarkNode* node = iterator.Next();
+      if (node->is_permanent_node()) {
+        // Permanent nodes have been added explicitly.
+        continue;
+      }
+
+      *model_metadata.add_bookmarks_metadata() = CreateNodeMetadata(
+          node, /*server_id=*/"id_" + node->guid().AsLowercaseString(),
+          next_unique_position);
+      next_unique_position = syncer::UniquePosition::After(
+          next_unique_position, syncer::UniquePosition::RandomSuffix());
+    }
+    processor_->ModelReadyToSync(model_metadata.SerializeAsString(),
+                                 schedule_save_closure_.Get(),
+                                 bookmark_model_.get());
+    ASSERT_THAT(processor_->GetTrackerForTest(), NotNull());
+  }
+
+  void SimulateModelReadyToSyncWithoutLocalMetadata() {
     processor_->ModelReadyToSync(
         /*metadata_str=*/std::string(), schedule_save_closure_.Get(),
         bookmark_model_.get());
@@ -264,6 +299,7 @@ class BookmarkModelTypeProcessorTest : public testing::Test {
   void SimulateOnSyncStarting() {
     syncer::DataTypeActivationRequest request;
     request.cache_guid = kCacheGuid;
+    request.error_handler = error_handler_.Get();
     processor_->OnSyncStarting(request, base::DoNothing());
   }
 
@@ -307,9 +343,25 @@ class BookmarkModelTypeProcessorTest : public testing::Test {
     return local_changes;
   }
 
+  base::MockRepeatingCallback<void(const syncer::ModelError&)>*
+  error_handler() {
+    return &error_handler_;
+  }
+
+  sync_pb::ModelTypeState::Invalidation BuildInvalidation(
+      int64_t version,
+      const std::string& payload) {
+    sync_pb::ModelTypeState::Invalidation inv;
+    inv.set_version(version);
+    inv.set_hint(payload);
+    return inv;
+  }
+
  private:
   base::test::TaskEnvironment task_environment_;
   NiceMock<base::MockCallback<base::RepeatingClosure>> schedule_save_closure_;
+  NiceMock<base::MockRepeatingCallback<void(const syncer::ModelError&)>>
+      error_handler_;
   BookmarkUndoService bookmark_undo_service_;
   NiceMock<favicon::MockFaviconService> favicon_service_;
   NiceMock<MockCommitQueue> mock_commit_queue_;
@@ -318,45 +370,28 @@ class BookmarkModelTypeProcessorTest : public testing::Test {
 };
 
 TEST_F(BookmarkModelTypeProcessorTest, ShouldDoInitialMerge) {
-  const syncer::UniquePosition kRandomPosition =
-      syncer::UniquePosition::InitialPosition(
-          syncer::UniquePosition::RandomSuffix());
-
-  SimulateModelReadyToSync();
+  SimulateModelReadyToSyncWithoutLocalMetadata();
   SimulateOnSyncStarting();
 
-  syncer::UpdateResponseDataList updates;
-  // Add update for the permanent folders.
-  updates.push_back(
-      CreateUpdateResponseData({kBookmarkBarId, std::string(), std::string(),
-                                kBookmarksRootId, kBookmarkBarTag},
-                               kRandomPosition, /*response_version=*/0));
-  updates.push_back(
-      CreateUpdateResponseData({kOtherBookmarksId, std::string(), std::string(),
-                                kBookmarksRootId, kOtherBookmarksTag},
-                               kRandomPosition, /*response_version=*/0));
-  updates.push_back(CreateUpdateResponseData(
-      {kMobileBookmarksId, std::string(), std::string(), kBookmarksRootId,
-       kMobileBookmarksTag},
-      kRandomPosition, /*response_version=*/0));
+  syncer::UpdateResponseDataList updates =
+      CreateUpdateResponseDataListForPermanentNodes();
 
   ASSERT_THAT(processor()->GetTrackerForTest(), IsNull());
 
   base::HistogramTester histogram_tester;
-  processor()->OnUpdateReceived(CreateDummyModelTypeState(),
-                                std::move(updates));
+  processor()->OnUpdateReceived(CreateDummyModelTypeState(), std::move(updates),
+                                /*gc_directive=*/absl::nullopt);
   EXPECT_THAT(processor()->GetTrackerForTest(), NotNull());
 
   histogram_tester.ExpectUniqueSample(
       "Sync.ModelTypeInitialUpdateReceived",
       /*sample=*/syncer::ModelTypeHistogramValue(syncer::BOOKMARKS),
-      /*expected_count=*/3);
+      /*expected_bucket_count=*/3);
 }
 
 TEST_F(BookmarkModelTypeProcessorTest, ShouldUpdateModelAfterRemoteCreation) {
-  SimulateModelReadyToSync();
+  SimulateModelReadyToSyncWithInitialSyncDone();
   SimulateOnSyncStarting();
-  InitWithSyncedBookmarks(/*bookmarks=*/{}, processor());
 
   // Add update for another node under the bookmarks bar.
   const std::string kNodeId = "node_id";
@@ -376,8 +411,8 @@ TEST_F(BookmarkModelTypeProcessorTest, ShouldUpdateModelAfterRemoteCreation) {
       bookmark_model()->bookmark_bar_node();
   ASSERT_TRUE(bookmark_bar->children().empty());
 
-  processor()->OnUpdateReceived(CreateDummyModelTypeState(),
-                                std::move(updates));
+  processor()->OnUpdateReceived(CreateDummyModelTypeState(), std::move(updates),
+                                /*gc_directive=*/absl::nullopt);
 
   ASSERT_THAT(bookmark_bar->children().front().get(), NotNull());
   EXPECT_THAT(bookmark_bar->children().front()->GetTitle(),
@@ -386,41 +421,35 @@ TEST_F(BookmarkModelTypeProcessorTest, ShouldUpdateModelAfterRemoteCreation) {
 }
 
 TEST_F(BookmarkModelTypeProcessorTest, ShouldUpdateModelAfterRemoteUpdate) {
-  const std::string kNodeId = "node_id";
   const std::string kTitle = "title";
-  const std::string kUrl = "http://www.url.com";
+  const GURL kUrl("http://www.url.com");
   const syncer::UniquePosition kRandomPosition =
       syncer::UniquePosition::InitialPosition(
           syncer::UniquePosition::RandomSuffix());
 
-  std::vector<BookmarkInfo> bookmarks = {
-      {kNodeId, kTitle, kUrl, kBookmarkBarId, /*server_tag=*/std::string()}};
-
-  SimulateModelReadyToSync();
-  SimulateOnSyncStarting();
-  InitWithSyncedBookmarks(bookmarks, processor());
-
-  // Make sure original bookmark exists.
   const bookmarks::BookmarkNode* bookmark_bar =
       bookmark_model()->bookmark_bar_node();
-  const bookmarks::BookmarkNode* bookmark_node =
-      bookmark_bar->children().front().get();
-  ASSERT_THAT(bookmark_node, NotNull());
-  ASSERT_THAT(bookmark_node->GetTitle(), Eq(ASCIIToUTF16(kTitle)));
-  ASSERT_THAT(bookmark_node->url(), Eq(GURL(kUrl)));
+  const bookmarks::BookmarkNode* bookmark_node = bookmark_model()->AddURL(
+      bookmark_bar, /*index=*/0, base::UTF8ToUTF16(kTitle), kUrl);
+  SimulateOnSyncStarting();
+  SimulateModelReadyToSyncWithInitialSyncDone();
+
+  const SyncedBookmarkTrackerEntity* entity =
+      processor()->GetTrackerForTest()->GetEntityForBookmarkNode(bookmark_node);
+  ASSERT_THAT(entity, NotNull());
 
   // Process an update for the same bookmark.
   const std::string kNewTitle = "new-title";
   const std::string kNewUrl = "http://www.new-url.com";
   syncer::UpdateResponseDataList updates;
   updates.push_back(CreateUpdateResponseData(
-      {kNodeId, kNewTitle, kNewUrl, kBookmarkBarId,
+      {entity->metadata().server_id(), kNewTitle, kNewUrl, kBookmarkBarId,
        /*server_tag=*/std::string()},
       kRandomPosition, /*response_version=*/1, bookmark_node->guid()));
 
   base::HistogramTester histogram_tester;
-  processor()->OnUpdateReceived(CreateDummyModelTypeState(),
-                                std::move(updates));
+  processor()->OnUpdateReceived(CreateDummyModelTypeState(), std::move(updates),
+                                /*gc_directive=*/absl::nullopt);
 
   // Check if the bookmark has been updated properly.
   EXPECT_THAT(bookmark_bar->children().front().get(), Eq(bookmark_node));
@@ -430,44 +459,40 @@ TEST_F(BookmarkModelTypeProcessorTest, ShouldUpdateModelAfterRemoteUpdate) {
   histogram_tester.ExpectUniqueSample(
       "Sync.ModelTypeIncrementalUpdateReceived",
       /*sample=*/syncer::ModelTypeHistogramValue(syncer::BOOKMARKS),
-      /*expected_count=*/1);
+      /*expected_bucket_count=*/1);
 }
 
 TEST_F(
     BookmarkModelTypeProcessorTest,
     ShouldScheduleSaveAfterRemoteUpdateWithOnlyMetadataChangeAndReflections) {
-  const std::string kNodeId = "node_id";
   const std::string kTitle = "title";
-  const std::string kUrl = "http://www.url.com";
+  const GURL kUrl("http://www.url.com");
   const syncer::UniquePosition kRandomPosition =
       syncer::UniquePosition::InitialPosition(
           syncer::UniquePosition::RandomSuffix());
 
-  std::vector<BookmarkInfo> bookmarks = {
-      {kNodeId, kTitle, kUrl, kBookmarkBarId, /*server_tag=*/std::string()}};
-
-  SimulateModelReadyToSync();
-  SimulateOnSyncStarting();
-  InitWithSyncedBookmarks(bookmarks, processor());
-
-  // Make sure original bookmark exists.
   const bookmarks::BookmarkNode* bookmark_bar =
       bookmark_model()->bookmark_bar_node();
-  const bookmarks::BookmarkNode* bookmark_node =
-      bookmark_bar->children().front().get();
-  ASSERT_THAT(bookmark_node, NotNull());
+  const bookmarks::BookmarkNode* bookmark_node = bookmark_model()->AddURL(
+      bookmark_bar, /*index=*/0, base::UTF8ToUTF16(kTitle), kUrl);
+  SimulateModelReadyToSyncWithInitialSyncDone();
+  SimulateOnSyncStarting();
+
+  const SyncedBookmarkTrackerEntity* entity =
+      processor()->GetTrackerForTest()->GetEntityForBookmarkNode(bookmark_node);
+  ASSERT_THAT(entity, NotNull());
 
   // Process an update for the same bookmark with the same data.
   syncer::UpdateResponseDataList updates;
   updates.push_back(CreateUpdateResponseData(
-      {kNodeId, kTitle, kUrl, kBookmarkBarId,
+      {entity->metadata().server_id(), kTitle, kUrl.spec(), kBookmarkBarId,
        /*server_tag=*/std::string()},
       kRandomPosition, /*response_version=*/1, bookmark_node->guid()));
   updates[0].response_version++;
 
   EXPECT_CALL(*schedule_save_closure(), Run());
-  processor()->OnUpdateReceived(CreateDummyModelTypeState(),
-                                std::move(updates));
+  processor()->OnUpdateReceived(CreateDummyModelTypeState(), std::move(updates),
+                                /*gc_directive=*/absl::nullopt);
 }
 
 TEST_F(BookmarkModelTypeProcessorTest, ShouldDecodeSyncMetadata) {
@@ -484,7 +509,7 @@ TEST_F(BookmarkModelTypeProcessorTest, ShouldDecodeSyncMetadata) {
       /*parent=*/bookmark_bar_node, /*index=*/0, base::UTF8ToUTF16(kTitle),
       GURL(kUrl));
 
-  SimulateModelReadyToSync();
+  SimulateModelReadyToSyncWithoutLocalMetadata();
   SimulateOnSyncStarting();
 
   sync_pb::BookmarkModelMetadata model_metadata =
@@ -508,34 +533,27 @@ TEST_F(BookmarkModelTypeProcessorTest, ShouldDecodeSyncMetadata) {
 TEST_F(BookmarkModelTypeProcessorTest, ShouldDecodeEncodedSyncMetadata) {
   const std::string kNodeId1 = "node_id1";
   const std::string kTitle1 = "title1";
-  const std::string kUrl1 = "http://www.url1.com";
+  const GURL kUrl1("http://www.url1.com");
 
   const std::string kNodeId2 = "node_id2";
   const std::string kTitle2 = "title2";
-  const std::string kUrl2 = "http://www.url2.com";
+  const GURL kUrl2("http://www.url2.com");
 
-  std::vector<BookmarkInfo> bookmarks = {
-      {kNodeId1, kTitle1, kUrl1, kBookmarkBarId, /*server_tag=*/std::string()},
-      {kNodeId2, kTitle2, kUrl2, kBookmarkBarId,
-       /*server_tag=*/std::string()}};
-  SimulateModelReadyToSync();
+  const bookmarks::BookmarkNode* bookmark_bar =
+      bookmark_model()->bookmark_bar_node();
+  bookmark_model()->AddURL(bookmark_bar, /*index=*/0,
+                           base::UTF8ToUTF16(kTitle1), kUrl1);
+  bookmark_model()->AddURL(bookmark_bar, /*index=*/1,
+                           base::UTF8ToUTF16(kTitle2), kUrl2);
   SimulateOnSyncStarting();
-  InitWithSyncedBookmarks(bookmarks, processor());
-
-  std::string metadata_str = processor()->EncodeSyncMetadata();
-  // TODO(crbug.com/516866): Remove this after initial sync done is properly set
-  // within the processor.
-  sync_pb::BookmarkModelMetadata model_metadata;
-  model_metadata.ParseFromString(metadata_str);
-  model_metadata.mutable_model_type_state()->set_initial_sync_done(true);
+  SimulateModelReadyToSyncWithInitialSyncDone();
 
   // Create a new processor and init it with the same metadata str.
   BookmarkModelTypeProcessor new_processor(bookmark_undo_service());
-  model_metadata.SerializeToString(&metadata_str);
-  new_processor.ModelReadyToSync(metadata_str, base::DoNothing(),
-                                 bookmark_model());
+  new_processor.ModelReadyToSync(processor()->EncodeSyncMetadata(),
+                                 base::DoNothing(), bookmark_model());
 
-  AssertState(&new_processor, bookmarks);
+  new_processor.GetTrackerForTest()->CheckAllNodesTracked(bookmark_model());
 
   // Make sure shutdown doesn't crash.
   DestroyBookmarkModel();
@@ -548,7 +566,7 @@ TEST_F(BookmarkModelTypeProcessorTest, ShouldDecodeEncodedSyncMetadata) {
 TEST_F(BookmarkModelTypeProcessorTest, ShouldDecodeEmptyMetadata) {
   // No save should be scheduled.
   EXPECT_CALL(*schedule_save_closure(), Run()).Times(0);
-  SimulateModelReadyToSync();
+  SimulateModelReadyToSyncWithoutLocalMetadata();
   EXPECT_THAT(processor()->GetTrackerForTest(), IsNull());
 }
 
@@ -610,10 +628,9 @@ TEST_F(BookmarkModelTypeProcessorTest,
 // key name.
 TEST_F(BookmarkModelTypeProcessorTest,
        ShouldUpdateModelTypeStateUponHandlingRemoteUpdates) {
-  SimulateModelReadyToSync();
-  SimulateOnSyncStarting();
   // Initialize the process to make sure the tracker has been created.
-  InitWithSyncedBookmarks({}, processor());
+  SimulateModelReadyToSyncWithInitialSyncDone();
+  SimulateOnSyncStarting();
   const SyncedBookmarkTracker* tracker = processor()->GetTrackerForTest();
   // The encryption key name should be empty.
   ASSERT_TRUE(tracker->model_type_state().encryption_key_name().empty());
@@ -626,8 +643,8 @@ TEST_F(BookmarkModelTypeProcessorTest,
   // Push empty updates list to the processor together with the updated model
   // type state.
   syncer::UpdateResponseDataList empty_updates_list;
-  processor()->OnUpdateReceived(model_type_state,
-                                std::move(empty_updates_list));
+  processor()->OnUpdateReceived(model_type_state, std::move(empty_updates_list),
+                                /*gc_directive=*/absl::nullopt);
 
   // The model type state inside the tracker should have been updated, and
   // carries the new encryption key name.
@@ -635,16 +652,46 @@ TEST_F(BookmarkModelTypeProcessorTest,
               Eq(kEncryptionKeyName));
 }
 
+// Verifies that the model type state stored in the tracker gets
+// updated upon handling remote updates by replacing new pending invalidations.
+TEST_F(BookmarkModelTypeProcessorTest,
+       ShouldUpdateModelTypeStateUponHandlingInvalidations) {
+  // Initialize the process to make sure the tracker has been created.
+  SimulateModelReadyToSyncWithInitialSyncDone();
+  SimulateOnSyncStarting();
+  const SyncedBookmarkTracker* tracker = processor()->GetTrackerForTest();
+
+  // Build invalidations.
+  sync_pb::ModelTypeState::Invalidation inv_1 =
+      BuildInvalidation(1, "bm_hint_1");
+  sync_pb::ModelTypeState::Invalidation inv_2 =
+      BuildInvalidation(2, "bm_hint_2");
+  EXPECT_CALL(*schedule_save_closure(), Run());
+
+  processor()->StorePendingInvalidations({inv_1, inv_2});
+
+  // The model type state inside the tracker should have been updated, and
+  // carries the new invalidations.
+  EXPECT_EQ(2, tracker->model_type_state().invalidations_size());
+
+  EXPECT_EQ(inv_1.hint(), tracker->model_type_state().invalidations(0).hint());
+  EXPECT_EQ(inv_1.version(),
+            tracker->model_type_state().invalidations(0).version());
+
+  EXPECT_EQ(inv_2.hint(), tracker->model_type_state().invalidations(1).hint());
+  EXPECT_EQ(inv_2.version(),
+            tracker->model_type_state().invalidations(1).version());
+}
+
 // This tests that when the encryption key changes, but the received entities
 // are already encrypted with the up-to-date encryption key, no recommit is
 // needed.
 TEST_F(BookmarkModelTypeProcessorTest,
        ShouldNotRecommitEntitiesWhenEncryptionIsUpToDate) {
-  SimulateModelReadyToSync();
-  SimulateOnSyncStarting();
-  SimulateConnectSync();
   // Initialize the process to make sure the tracker has been created.
-  InitWithSyncedBookmarks({}, processor());
+  SimulateOnSyncStarting();
+  SimulateModelReadyToSyncWithInitialSyncDone();
+  SimulateConnectSync();
   const SyncedBookmarkTracker* tracker = processor()->GetTrackerForTest();
   // The encryption key name should be empty.
   ASSERT_TRUE(tracker->model_type_state().encryption_key_name().empty());
@@ -667,7 +714,8 @@ TEST_F(BookmarkModelTypeProcessorTest,
   EXPECT_CALL(*mock_commit_queue(), NudgeForCommit()).Times(0);
   syncer::UpdateResponseDataList updates;
   updates.push_back(std::move(response_data));
-  processor()->OnUpdateReceived(model_type_state, std::move(updates));
+  processor()->OnUpdateReceived(model_type_state, std::move(updates),
+                                /*gc_directive=*/absl::nullopt);
 
   // The bookmarks shouldn't be marked for committing.
   ASSERT_THAT(tracker->GetEntityForSyncId(kNodeId), NotNull());
@@ -677,7 +725,7 @@ TEST_F(BookmarkModelTypeProcessorTest,
 // Verifies that the processor doesn't crash if sync is stopped before receiving
 // remote updates or tracking metadata.
 TEST_F(BookmarkModelTypeProcessorTest, ShouldStopBeforeReceivingRemoteUpdates) {
-  SimulateModelReadyToSync();
+  SimulateModelReadyToSyncWithoutLocalMetadata();
   SimulateOnSyncStarting();
   ASSERT_THAT(processor()->GetTrackerForTest(), IsNull());
   processor()->OnSyncStopping(syncer::CLEAR_METADATA);
@@ -685,10 +733,9 @@ TEST_F(BookmarkModelTypeProcessorTest, ShouldStopBeforeReceivingRemoteUpdates) {
 }
 
 TEST_F(BookmarkModelTypeProcessorTest, ShouldStopAfterReceivingRemoteUpdates) {
-  SimulateModelReadyToSync();
-  SimulateOnSyncStarting();
   // Initialize the process to make sure the tracker has been created.
-  InitWithSyncedBookmarks({}, processor());
+  SimulateModelReadyToSyncWithInitialSyncDone();
+  SimulateOnSyncStarting();
   ASSERT_THAT(processor()->GetTrackerForTest(), NotNull());
   processor()->OnSyncStopping(syncer::CLEAR_METADATA);
   EXPECT_THAT(processor()->GetTrackerForTest(), IsNull());
@@ -809,17 +856,24 @@ TEST_F(BookmarkModelTypeProcessorTest,
 }
 
 TEST_F(BookmarkModelTypeProcessorTest, ShouldReuploadLegacyBookmarksOnStart) {
-  const std::string kNodeId = "node_id";
   const std::string kTitle = "title";
-  const std::string kUrl = "http://www.url.com";
+  const GURL kUrl("http://www.url.com");
 
-  std::vector<BookmarkInfo> bookmarks = {
-      {kNodeId, kTitle, kUrl, kBookmarkBarId, /*server_tag=*/std::string()}};
+  const bookmarks::BookmarkNode* node =
+      bookmark_model()->AddURL(bookmark_model()->bookmark_bar_node(),
+                               /*index=*/0, base::UTF8ToUTF16(kTitle), kUrl);
 
-  SimulateModelReadyToSync();
   SimulateOnSyncStarting();
+  SimulateModelReadyToSyncWithInitialSyncDone();
   SimulateConnectSync();
-  InitWithSyncedBookmarks(bookmarks, processor());
+
+  ASSERT_THAT(processor()->GetTrackerForTest()->GetEntityForBookmarkNode(node),
+              NotNull());
+  const std::string server_id = processor()
+                                    ->GetTrackerForTest()
+                                    ->GetEntityForBookmarkNode(node)
+                                    ->metadata()
+                                    .server_id();
 
   sync_pb::BookmarkModelMetadata model_metadata =
       processor()->GetTrackerForTest()->BuildBookmarkModelMetadata();
@@ -842,7 +896,7 @@ TEST_F(BookmarkModelTypeProcessorTest, ShouldReuploadLegacyBookmarksOnStart) {
 
   ASSERT_THAT(processor()->GetTrackerForTest(), NotNull());
   const SyncedBookmarkTrackerEntity* entity =
-      processor()->GetTrackerForTest()->GetEntityForSyncId(kNodeId);
+      processor()->GetTrackerForTest()->GetEntityForSyncId(server_id);
   ASSERT_THAT(entity, NotNull());
 
   // Entity should be synced before until first update is received.
@@ -855,7 +909,8 @@ TEST_F(BookmarkModelTypeProcessorTest, ShouldReuploadLegacyBookmarksOnStart) {
   // Synchronize with the server and get any updates.
   EXPECT_CALL(*mock_commit_queue(), NudgeForCommit());
   processor()->OnUpdateReceived(CreateDummyModelTypeState(),
-                                syncer::UpdateResponseDataList());
+                                syncer::UpdateResponseDataList(),
+                                /*gc_directive=*/absl::nullopt);
 
   // Check that all entities are unsynced now and metadata is marked as
   // reuploaded.
@@ -864,6 +919,696 @@ TEST_F(BookmarkModelTypeProcessorTest, ShouldReuploadLegacyBookmarksOnStart) {
                   ->GetTrackerForTest()
                   ->BuildBookmarkModelMetadata()
                   .bookmarks_hierarchy_fields_reuploaded());
+}
+
+TEST_F(BookmarkModelTypeProcessorTest,
+       ShouldReportErrorIfIncrementalLocalCreationCrossesMaxCountLimit) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(syncer::kSyncEnforceBookmarksCountLimit);
+  // Set a limit of 3 bookmarks, i.e. limit it to the 3 permanent nodes.
+  processor()->SetMaxBookmarksTillSyncEnabledForTest(3);
+
+  // Expect failure when adding new bookmark.
+  EXPECT_CALL(*error_handler(), Run);
+
+  SimulateOnSyncStarting();
+  SimulateModelReadyToSyncWithInitialSyncDone();
+  SimulateConnectSync();
+
+  const std::string kNodeId = "node_id1";
+  const std::string kTitle = "title1";
+  const std::string kUrl = "http://www.url1.com";
+  const std::string kIconUrl = "http://www.url1.com/favicon";
+
+  ASSERT_TRUE(processor()->IsConnectedForTest());
+  // Add a new bookmark to exceed the limit.
+  const bookmarks::BookmarkNode* bookmark_bar_node =
+      bookmark_model()->bookmark_bar_node();
+  bookmark_model()->AddURL(
+      /*parent=*/bookmark_bar_node, /*index=*/0, base::UTF8ToUTF16(kTitle),
+      GURL(kUrl));
+
+  EXPECT_FALSE(processor()->IsConnectedForTest());
+  // Expect tracking to still be enabled.
+  EXPECT_THAT(processor()->GetTrackerForTest(), NotNull());
+}
+
+TEST_F(
+    BookmarkModelTypeProcessorTest,
+    ShouldReportErrorIfBookmarksCountExceedsLimitOnStartupWhenMetadataMatchesModel) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(syncer::kSyncEnforceBookmarksCountLimit);
+  // Set a limit of 3 bookmarks, i.e. limit it to the 3 permanent nodes.
+  processor()->SetMaxBookmarksTillSyncEnabledForTest(3);
+
+  // Expect error twice. First, when new bookmark is added. Next after restart.
+  EXPECT_CALL(*error_handler(), Run).Times(2);
+
+  SimulateModelReadyToSyncWithInitialSyncDone();
+  SimulateOnSyncStarting();
+  SimulateConnectSync();
+
+  const std::string kNodeId = "node_id1";
+  const std::string kTitle = "title1";
+  const std::string kUrl = "http://www.url1.com";
+  const std::string kIconUrl = "http://www.url1.com/favicon";
+
+  // Add a new bookmark to exceed the limit.
+  const bookmarks::BookmarkNode* bookmark_bar_node =
+      bookmark_model()->bookmark_bar_node();
+  const bookmarks::BookmarkNode* bookmarknode = bookmark_model()->AddURL(
+      /*parent=*/bookmark_bar_node, /*index=*/0, base::UTF8ToUTF16(kTitle),
+      GURL(kUrl));
+
+  sync_pb::BookmarkModelMetadata model_metadata =
+      CreateMetadataForPermanentNodes(bookmark_model());
+
+  // Add an entry for the bookmark node.
+  *model_metadata.add_bookmarks_metadata() =
+      CreateNodeMetadata(bookmarknode, kNodeId);
+
+  // Save metadata for init after restart.
+  std::string metadata_str;
+  model_metadata.SerializeToString(&metadata_str);
+
+  // Simulate browser restart.
+  ResetModelTypeProcessor();
+  processor()->SetMaxBookmarksTillSyncEnabledForTest(3);
+  processor()->ModelReadyToSync(metadata_str, schedule_save_closure()->Get(),
+                                bookmark_model());
+  // Metadata matches model, so tracker should be not null.
+  EXPECT_THAT(processor()->GetTrackerForTest(), NotNull());
+  // Should invoke error_handler::Run and schedule_save_closure::Run.
+  SimulateOnSyncStarting();
+
+  // Expect tracking to still be enabled.
+  EXPECT_THAT(processor()->GetTrackerForTest(), NotNull());
+}
+
+TEST_F(
+    BookmarkModelTypeProcessorTest,
+    ShouldReportErrorIfBookmarksCountExceedsLimitOnStartupWhenMetadataDoesNotMatchModel) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(syncer::kSyncEnforceBookmarksCountLimit);
+  // Set a limit of 3 bookmarks, i.e. limit it to the 3 permanent nodes.
+  processor()->SetMaxBookmarksTillSyncEnabledForTest(3);
+
+  // Expect error twice. First, when new bookmark is added. Next after restart.
+  EXPECT_CALL(*error_handler(), Run).Times(2);
+
+  SimulateModelReadyToSyncWithInitialSyncDone();
+  SimulateOnSyncStarting();
+  SimulateConnectSync();
+
+  const std::string kNodeId = "node_id1";
+  const std::string kTitle = "title1";
+  const std::string kUrl = "http://www.url1.com";
+  const std::string kIconUrl = "http://www.url1.com/favicon";
+
+  // Add a new bookmark to exceed the limit.
+  const bookmarks::BookmarkNode* bookmark_bar_node =
+      bookmark_model()->bookmark_bar_node();
+  bookmark_model()->AddURL(
+      /*parent=*/bookmark_bar_node, /*index=*/0, base::UTF8ToUTF16(kTitle),
+      GURL(kUrl));
+
+  // Simulate browser restart.
+  ResetModelTypeProcessor();
+  processor()->SetMaxBookmarksTillSyncEnabledForTest(3);
+  SimulateModelReadyToSyncWithoutLocalMetadata();
+  // Metadata does not match model, so tracker should be null.
+  EXPECT_THAT(processor()->GetTrackerForTest(), IsNull());
+  // Should invoke error_handler::Run and schedule_save_closure::Run.
+  SimulateOnSyncStarting();
+}
+
+TEST_F(
+    BookmarkModelTypeProcessorTest,
+    BookmarkModelShouldWorkNormallyEvenAfterSyncReportedErrorDueToMaxLimitCrossed) {
+  // Ensure that bookmarks model works normally even after sync reports error
+  // when max count limit is crossed.
+
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(syncer::kSyncEnforceBookmarksCountLimit);
+  // Set a limit of 3 bookmarks, i.e. limit it to the 3 permanent nodes.
+  processor()->SetMaxBookmarksTillSyncEnabledForTest(3);
+
+  SimulateModelReadyToSyncWithInitialSyncDone();
+  SimulateOnSyncStarting();
+  SimulateConnectSync();
+
+  const std::string kNodeId1 = "node_id1";
+  const std::string kTitle1 = "title1";
+  const std::string kUrl1 = "http://www.url1.com";
+
+  // Add a new bookmark to exceed the limit.
+  const bookmarks::BookmarkNode* bookmark_bar_node =
+      bookmark_model()->bookmark_bar_node();
+  const bookmarks::BookmarkNode* bookmarknode1 = bookmark_model()->AddURL(
+      /*parent=*/bookmark_bar_node, /*index=*/0, base::UTF8ToUTF16(kTitle1),
+      GURL(kUrl1));
+
+  sync_pb::BookmarkModelMetadata model_metadata =
+      CreateMetadataForPermanentNodes(bookmark_model());
+
+  // Add an entry for the bookmark node.
+  *model_metadata.add_bookmarks_metadata() =
+      CreateNodeMetadata(bookmarknode1, kNodeId1);
+
+  // Add another bookmark.
+  const std::string kNodeId2 = "node_id2";
+  const std::string kTitle2 = "title2";
+  const std::string kUrl2 = "http://www.url2.com";
+
+  const bookmarks::BookmarkNode* bookmarknode2 = bookmark_model()->AddURL(
+      /*parent=*/bookmark_bar_node, /*index=*/0, base::UTF8ToUTF16(kTitle2),
+      GURL(kUrl2));
+
+  // Add an entry for the bookmark node.
+  *model_metadata.add_bookmarks_metadata() =
+      CreateNodeMetadata(bookmarknode2, kNodeId2);
+
+  // Save metadata for init after restart.
+  std::string metadata_str;
+  model_metadata.SerializeToString(&metadata_str);
+
+  // Simulate browser restart.
+  ResetModelTypeProcessor();
+  processor()->SetMaxBookmarksTillSyncEnabledForTest(3);
+  processor()->ModelReadyToSync(metadata_str, base::DoNothing(),
+                                bookmark_model());
+  // Should lead to error_handler::Run.
+  SimulateOnSyncStarting();
+
+  // The second bookmark should have been added anyway.
+  EXPECT_EQ(bookmark_model()->bookmark_bar_node()->children().size(), 2u);
+}
+
+TEST_F(BookmarkModelTypeProcessorTest,
+       ShouldReportErrorIfBookmarksCountExceedsLimitAfterInitialUpdate) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(syncer::kSyncEnforceBookmarksCountLimit);
+  // Set a limit of 4 bookmarks: 3 permanent nodes and 1 additional node which
+  // is different from the remote.
+  processor()->SetMaxBookmarksTillSyncEnabledForTest(4);
+
+  const std::string kTitle1 = "title1";
+  const std::string kUrl1 = "http://www.url1.com";
+
+  // Set up a preexisting bookmark under other node.
+  const bookmarks::BookmarkNode* other_node = bookmark_model()->other_node();
+  bookmark_model()->AddURL(
+      /*parent=*/other_node, /*index=*/0, base::UTF8ToUTF16(kTitle1),
+      GURL(kUrl1));
+
+  // Expect failure after initial update is merged.
+  bool error_reported = false;
+  EXPECT_CALL(*error_handler(), Run).Times(1).WillRepeatedly([&]() {
+    error_reported = true;
+  });
+
+  SimulateModelReadyToSyncWithoutLocalMetadata();
+  SimulateOnSyncStarting();
+  SimulateConnectSync();
+
+  const syncer::UniquePosition kRandomPosition =
+      syncer::UniquePosition::InitialPosition(
+          syncer::UniquePosition::RandomSuffix());
+
+  syncer::UpdateResponseDataList updates =
+      CreateUpdateResponseDataListForPermanentNodes();
+
+  // Add update for another node under the bookmarks bar.
+  const std::string kNodeId2 = "node_id2";
+  const std::string kTitle2 = "title2";
+  const std::string kUrl2 = "http://www.url2.com";
+
+  updates.push_back(
+      CreateUpdateResponseData({kNodeId2, kTitle2, kUrl2, kBookmarkBarId,
+                                /*server_tag=*/std::string()},
+                               kRandomPosition, /*response_version=*/0));
+
+  const bookmarks::BookmarkNode* bookmark_bar =
+      bookmark_model()->bookmark_bar_node();
+
+  // Ensures that OnInitialUpdateReceived will be called.
+  ASSERT_THAT(processor()->GetTrackerForTest(), IsNull());
+  ASSERT_TRUE(bookmark_bar->children().empty());
+  ASSERT_TRUE(processor()->IsConnectedForTest());
+
+  ASSERT_FALSE(error_reported);
+  processor()->OnUpdateReceived(CreateDummyModelTypeState(), std::move(updates),
+                                /*gc_directive=*/absl::nullopt);
+  EXPECT_TRUE(error_reported);
+  EXPECT_FALSE(processor()->IsConnectedForTest());
+  // New bookmark gets added though. Note that this is as per the current
+  // behaviour but is not a requirement.
+  EXPECT_FALSE(bookmark_bar->children().empty());
+}
+
+TEST_F(BookmarkModelTypeProcessorTest,
+       ShouldReportErrorIfBookmarksCountExceedsLimitAfterIncrementalUpdate) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(syncer::kSyncEnforceBookmarksCountLimit);
+  // Set a limit of 3 bookmarks, i.e. limit it to the 3 permanent nodes.
+  processor()->SetMaxBookmarksTillSyncEnabledForTest(3);
+
+  // Expect failure after initial update is merged.
+  bool error_reported = false;
+  EXPECT_CALL(*error_handler(), Run).Times(1).WillRepeatedly([&]() {
+    error_reported = true;
+  });
+
+  SimulateModelReadyToSyncWithInitialSyncDone();
+  SimulateOnSyncStarting();
+  SimulateConnectSync();
+
+  const syncer::UniquePosition kRandomPosition =
+      syncer::UniquePosition::InitialPosition(
+          syncer::UniquePosition::RandomSuffix());
+
+  syncer::UpdateResponseDataList updates;
+  // Add update for another node under the bookmarks bar.
+  const std::string kNodeId = "node_id";
+  const std::string kTitle = "title";
+  const std::string kUrl = "http://www.url.com";
+
+  updates.push_back(
+      CreateUpdateResponseData({kNodeId, kTitle, kUrl, kBookmarkBarId,
+                                /*server_tag=*/std::string()},
+                               kRandomPosition, /*response_version=*/0));
+
+  const bookmarks::BookmarkNode* bookmark_bar =
+      bookmark_model()->bookmark_bar_node();
+
+  // Ensures that path for incremental updates will be called.
+  ASSERT_THAT(processor()->GetTrackerForTest(), NotNull());
+  ASSERT_TRUE(bookmark_bar->children().empty());
+  ASSERT_TRUE(processor()->IsConnectedForTest());
+
+  ASSERT_FALSE(error_reported);
+  processor()->OnUpdateReceived(CreateDummyModelTypeState(), std::move(updates),
+                                /*gc_directive=*/absl::nullopt);
+  EXPECT_TRUE(error_reported);
+  EXPECT_FALSE(processor()->IsConnectedForTest());
+  EXPECT_THAT(processor()->GetTrackerForTest(), NotNull());
+  // New bookmark gets added though. Note that this is as per the current
+  // behaviour but is not a requirement.
+  EXPECT_FALSE(bookmark_bar->children().empty());
+}
+
+TEST_F(BookmarkModelTypeProcessorTest,
+       ShouldReportErrorIfInitialUpdatesCrossMaxCountLimit) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(syncer::kSyncEnforceBookmarksCountLimit);
+  // Set a limit of 3 bookmarks, i.e. limit it to the 3 permanent nodes.
+  processor()->SetMaxBookmarksTillSyncEnabledForTest(3);
+
+  // Expect failure when initial update of count 4 is received.
+  bool error_reported = false;
+  EXPECT_CALL(*error_handler(), Run).Times(1).WillRepeatedly([&]() {
+    error_reported = true;
+  });
+  EXPECT_CALL(*mock_commit_queue(), NudgeForCommit()).Times(0);
+
+  SimulateModelReadyToSyncWithoutLocalMetadata();
+  SimulateOnSyncStarting();
+  SimulateConnectSync();
+
+  const syncer::UniquePosition kRandomPosition =
+      syncer::UniquePosition::InitialPosition(
+          syncer::UniquePosition::RandomSuffix());
+
+  syncer::UpdateResponseDataList updates =
+      CreateUpdateResponseDataListForPermanentNodes();
+
+  // Entry for the root folder. The server may or may not send a root node, but
+  // the current implementation still handles it.
+  updates.push_back(CreateUpdateResponseData(
+      {kBookmarksRootId, std::string(), std::string(), std::string(),
+       syncer::ModelTypeToProtocolRootTag(syncer::BOOKMARKS)},
+      kRandomPosition, /*response_version=*/0));
+
+  // Add update for another node under the bookmarks bar.
+  const std::string kNodeId = "node_id";
+  const std::string kTitle = "title";
+  const std::string kUrl = "http://www.url.com";
+
+  updates.push_back(
+      CreateUpdateResponseData({kNodeId, kTitle, kUrl, kBookmarkBarId,
+                                /*server_tag=*/std::string()},
+                               kRandomPosition, /*response_version=*/0));
+
+  const bookmarks::BookmarkNode* bookmark_bar =
+      bookmark_model()->bookmark_bar_node();
+
+  // Ensures that OnInitialUpdateReceived will be called.
+  ASSERT_THAT(processor()->GetTrackerForTest(), IsNull());
+  ASSERT_TRUE(bookmark_bar->children().empty());
+  ASSERT_TRUE(processor()->IsConnectedForTest());
+
+  ASSERT_FALSE(error_reported);
+  processor()->OnUpdateReceived(CreateDummyModelTypeState(), std::move(updates),
+                                /*gc_directive=*/absl::nullopt);
+  EXPECT_TRUE(error_reported);
+  EXPECT_FALSE(processor()->IsConnectedForTest());
+  // Tracker should remain null and bookmark model unchanged.
+  EXPECT_THAT(processor()->GetTrackerForTest(), IsNull());
+  EXPECT_TRUE(bookmark_bar->children().empty());
+}
+
+TEST_F(BookmarkModelTypeProcessorTest,
+       ShouldSaveRemoteUpdatesCountExceedingLimitResultDuringInitialMerge) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(syncer::kSyncEnforceBookmarksCountLimit);
+  // Set a limit of 3 bookmarks, i.e. limit it to the 3 permanent nodes.
+  processor()->SetMaxBookmarksTillSyncEnabledForTest(3);
+
+  SimulateModelReadyToSyncWithoutLocalMetadata();
+  SimulateOnSyncStarting();
+  SimulateConnectSync();
+
+  const syncer::UniquePosition kRandomPosition =
+      syncer::UniquePosition::InitialPosition(
+          syncer::UniquePosition::RandomSuffix());
+
+  syncer::UpdateResponseDataList updates =
+      CreateUpdateResponseDataListForPermanentNodes();
+
+  // Entry for the root folder. The server may or may not send a root node, but
+  // the current implementation still handles it.
+  updates.push_back(CreateUpdateResponseData(
+      {kBookmarksRootId, std::string(), std::string(), std::string(),
+       syncer::ModelTypeToProtocolRootTag(syncer::BOOKMARKS)},
+      kRandomPosition, /*response_version=*/0));
+
+  // Add update for another node under the bookmarks bar.
+  const std::string kNodeId = "node_id";
+  const std::string kTitle = "title";
+  const std::string kUrl = "http://www.url.com";
+
+  updates.push_back(
+      CreateUpdateResponseData({kNodeId, kTitle, kUrl, kBookmarkBarId,
+                                /*server_tag=*/std::string()},
+                               kRandomPosition, /*response_version=*/0));
+
+  // Ensures that OnInitialUpdateReceived will be called.
+  ASSERT_THAT(processor()->GetTrackerForTest(), IsNull());
+  ASSERT_TRUE(processor()->IsConnectedForTest());
+
+  processor()->OnUpdateReceived(CreateDummyModelTypeState(), std::move(updates),
+                                /*gc_directive=*/absl::nullopt);
+
+  ASSERT_THAT(processor()->GetTrackerForTest(), IsNull());
+  ASSERT_FALSE(processor()->IsConnectedForTest());
+
+  // Metadata should contain the relevant field.
+  sync_pb::BookmarkModelMetadata model_metadata;
+  std::string metadata_str = processor()->EncodeSyncMetadata();
+  ASSERT_FALSE(metadata_str.empty());
+  ASSERT_TRUE(model_metadata.ParseFromString(metadata_str));
+  EXPECT_TRUE(
+      model_metadata.last_initial_merge_remote_updates_exceeded_limit());
+}
+
+TEST_F(BookmarkModelTypeProcessorTest,
+       ShouldReportErrorIfRemoteBookmarksCountExceededLimitOnLastTry) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(syncer::kSyncEnforceBookmarksCountLimit);
+  // Set a limit of 3 bookmarks, i.e. limit it to the 3 permanent nodes.
+  processor()->SetMaxBookmarksTillSyncEnabledForTest(3);
+
+  // Expect failure when initial update of count 4 is received.
+  bool error_reported = false;
+  EXPECT_CALL(*error_handler(), Run).Times(2).WillRepeatedly([&]() {
+    error_reported = true;
+  });
+
+  SimulateModelReadyToSyncWithoutLocalMetadata();
+  SimulateOnSyncStarting();
+  SimulateConnectSync();
+
+  const syncer::UniquePosition kRandomPosition =
+      syncer::UniquePosition::InitialPosition(
+          syncer::UniquePosition::RandomSuffix());
+
+  syncer::UpdateResponseDataList updates =
+      CreateUpdateResponseDataListForPermanentNodes();
+
+  // Entry for the root folder. The server may or may not send a root node, but
+  // the current implementation still handles it.
+  updates.push_back(CreateUpdateResponseData(
+      {kBookmarksRootId, std::string(), std::string(), std::string(),
+       syncer::ModelTypeToProtocolRootTag(syncer::BOOKMARKS)},
+      kRandomPosition, /*response_version=*/0));
+
+  // Add update for another node under the bookmarks bar.
+  const std::string kNodeId = "node_id";
+  const std::string kTitle = "title";
+  const std::string kUrl = "http://www.url.com";
+
+  updates.push_back(
+      CreateUpdateResponseData({kNodeId, kTitle, kUrl, kBookmarkBarId,
+                                /*server_tag=*/std::string()},
+                               kRandomPosition, /*response_version=*/0));
+
+  // Ensures that OnInitialUpdateReceived will be called.
+  ASSERT_THAT(processor()->GetTrackerForTest(), IsNull());
+
+  ASSERT_FALSE(error_reported);
+  processor()->OnUpdateReceived(CreateDummyModelTypeState(), std::move(updates),
+                                /*gc_directive=*/absl::nullopt);
+  ASSERT_TRUE(error_reported);
+  ASSERT_THAT(processor()->GetTrackerForTest(), IsNull());
+  ASSERT_FALSE(processor()->IsConnectedForTest());
+
+  sync_pb::BookmarkModelMetadata model_metadata;
+  std::string metadata_str = processor()->EncodeSyncMetadata();
+  ASSERT_FALSE(metadata_str.empty());
+  ASSERT_TRUE(model_metadata.ParseFromString(metadata_str));
+  ASSERT_TRUE(
+      model_metadata.last_initial_merge_remote_updates_exceeded_limit());
+
+  ResetModelTypeProcessor();
+  // Expect failure.
+  error_reported = false;
+  processor()->ModelReadyToSync(metadata_str, schedule_save_closure()->Get(),
+                                bookmark_model());
+  SimulateOnSyncStarting();
+
+  EXPECT_TRUE(error_reported);
+  // Tracker would not be initialised.
+  EXPECT_THAT(processor()->GetTrackerForTest(), IsNull());
+
+  // Metadata remains unchanged on this failure.
+  metadata_str = processor()->EncodeSyncMetadata();
+  ASSERT_FALSE(metadata_str.empty());
+  ASSERT_TRUE(model_metadata.ParseFromString(metadata_str));
+  EXPECT_TRUE(
+      model_metadata.last_initial_merge_remote_updates_exceeded_limit());
+}
+
+TEST_F(BookmarkModelTypeProcessorTest,
+       ShouldPersistRemoteBookmarksCountExceedingLimitAcrossBrowserRestarts) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(syncer::kSyncEnforceBookmarksCountLimit);
+  // Set a limit of 3 bookmarks, i.e. limit it to the 3 permanent nodes.
+  processor()->SetMaxBookmarksTillSyncEnabledForTest(3);
+
+  // Expect failure when initial update of count 4 is received.
+  bool error_reported = false;
+  EXPECT_CALL(*error_handler(), Run).Times(3).WillRepeatedly([&]() {
+    error_reported = true;
+  });
+
+  SimulateModelReadyToSyncWithoutLocalMetadata();
+  SimulateOnSyncStarting();
+
+  const syncer::UniquePosition kRandomPosition =
+      syncer::UniquePosition::InitialPosition(
+          syncer::UniquePosition::RandomSuffix());
+
+  syncer::UpdateResponseDataList updates =
+      CreateUpdateResponseDataListForPermanentNodes();
+
+  // Entry for the root folder. The server may or may not send a root node, but
+  // the current implementation still handles it.
+  updates.push_back(CreateUpdateResponseData(
+      {kBookmarksRootId, std::string(), std::string(), std::string(),
+       syncer::ModelTypeToProtocolRootTag(syncer::BOOKMARKS)},
+      kRandomPosition, /*response_version=*/0));
+
+  // Add update for another node under the bookmarks bar.
+  const std::string kNodeId = "node_id";
+  const std::string kTitle = "title";
+  const std::string kUrl = "http://www.url.com";
+
+  updates.push_back(
+      CreateUpdateResponseData({kNodeId, kTitle, kUrl, kBookmarkBarId,
+                                /*server_tag=*/std::string()},
+                               kRandomPosition, /*response_version=*/0));
+
+  // Ensures that OnInitialUpdateReceived will be called.
+  ASSERT_THAT(processor()->GetTrackerForTest(), IsNull());
+
+  ASSERT_FALSE(error_reported);
+  processor()->OnUpdateReceived(CreateDummyModelTypeState(), std::move(updates),
+                                /*gc_directive=*/absl::nullopt);
+  ASSERT_TRUE(error_reported);
+
+  ASSERT_THAT(processor()->GetTrackerForTest(), IsNull());
+
+  sync_pb::BookmarkModelMetadata model_metadata;
+  std::string metadata_str = processor()->EncodeSyncMetadata();
+  ASSERT_FALSE(metadata_str.empty());
+  ASSERT_TRUE(model_metadata.ParseFromString(metadata_str));
+  ASSERT_TRUE(
+      model_metadata.last_initial_merge_remote_updates_exceeded_limit());
+
+  // Simulate browser restart.
+  ResetModelTypeProcessor();
+  // Expect failure.
+  error_reported = false;
+  processor()->ModelReadyToSync(metadata_str, schedule_save_closure()->Get(),
+                                bookmark_model());
+  SimulateOnSyncStarting();
+  EXPECT_TRUE(error_reported);
+  // Tracker would not be initialised.
+  EXPECT_THAT(processor()->GetTrackerForTest(), IsNull());
+
+  // Metadata remains unchanged on this failure.
+  metadata_str = processor()->EncodeSyncMetadata();
+  ASSERT_FALSE(metadata_str.empty());
+  ASSERT_TRUE(model_metadata.ParseFromString(metadata_str));
+  ASSERT_TRUE(
+      model_metadata.last_initial_merge_remote_updates_exceeded_limit());
+
+  // Simulate browser restart again.
+  ResetModelTypeProcessor();
+  // Expect failure.
+  error_reported = false;
+  processor()->ModelReadyToSync(metadata_str, schedule_save_closure()->Get(),
+                                bookmark_model());
+  SimulateOnSyncStarting();
+  EXPECT_TRUE(error_reported);
+  // Tracker would not be initialised.
+  EXPECT_THAT(processor()->GetTrackerForTest(), IsNull());
+
+  // Metadata remains unchanged on this failure as well.
+  metadata_str = processor()->EncodeSyncMetadata();
+  ASSERT_FALSE(metadata_str.empty());
+  ASSERT_TRUE(model_metadata.ParseFromString(metadata_str));
+  EXPECT_TRUE(
+      model_metadata.last_initial_merge_remote_updates_exceeded_limit());
+}
+
+TEST_F(BookmarkModelTypeProcessorTest, ShouldClearMetadataWhileStopped) {
+  SimulateModelReadyToSyncWithInitialSyncDone();
+  processor()->OnSyncStopping(syncer::KEEP_METADATA);
+  ASSERT_THAT(processor()->GetTrackerForTest(), NotNull());
+
+  base::HistogramTester histogram_tester;
+
+  // Expect saving empty metadata upon call to ClearMetadataWhileStopped().
+  EXPECT_CALL(*schedule_save_closure(), Run);
+
+  processor()->ClearMetadataWhileStopped();
+  // Should clear the tracker even if already stopped.
+  EXPECT_THAT(processor()->GetTrackerForTest(), IsNull());
+  // Expect an entry to the histogram.
+  histogram_tester.ExpectTotalCount(
+      "Sync.ClearMetadataWhileStopped.ImmediateClear", 1);
+}
+
+TEST_F(BookmarkModelTypeProcessorTest,
+       ShouldClearMetadataWhileStoppedUponModelReadyToSync) {
+  ASSERT_THAT(processor()->GetTrackerForTest(), IsNull());
+
+  base::HistogramTester histogram_tester;
+
+  // Expect no call to save metadata before ModelReadyToSync().
+  EXPECT_CALL(*schedule_save_closure(), Run).Times(0);
+  // Call ClearMetadataWhileStopped() before ModelReadyToSync(). This should set
+  // the flag for a pending clearing of metadata.
+  processor()->ClearMetadataWhileStopped();
+  // Nothing recorded to the histograms yet.
+  histogram_tester.ExpectTotalCount(
+      "Sync.ClearMetadataWhileStopped.ImmediateClear", 0);
+  histogram_tester.ExpectTotalCount(
+      "Sync.ClearMetadataWhileStopped.DelayedClear", 0);
+
+  sync_pb::BookmarkModelMetadata model_metadata =
+      CreateMetadataForPermanentNodes(bookmark_model());
+  // Expect saving empty metadata from ModelReadyToSync() while processing the
+  // pending clearing of metadata.
+  EXPECT_CALL(*schedule_save_closure(), Run);
+  // ModelReadyToSync() should take into account the pending metadata clearing
+  // flag and clear the metadata.
+  processor()->ModelReadyToSync(model_metadata.SerializeAsString(),
+                                schedule_save_closure()->Get(),
+                                bookmark_model());
+  // Tracker should have not been set.
+  EXPECT_THAT(processor()->GetTrackerForTest(), IsNull());
+  // Expect recording of the delayed clear.
+  histogram_tester.ExpectTotalCount(
+      "Sync.ClearMetadataWhileStopped.ImmediateClear", 0);
+  histogram_tester.ExpectTotalCount(
+      "Sync.ClearMetadataWhileStopped.DelayedClear", 1);
+}
+
+TEST_F(BookmarkModelTypeProcessorTest,
+       ShouldNotClearMetadataWhileStoppedIfPreviouslyStoppedWithClearMetadata) {
+  SimulateModelReadyToSyncWithInitialSyncDone();
+  SimulateOnSyncStarting();
+  processor()->OnSyncStopping(syncer::CLEAR_METADATA);
+  ASSERT_THAT(processor()->GetTrackerForTest(), IsNull());
+
+  // Expect no call to save metadata upon ClearMetadataWhileStopped().
+  EXPECT_CALL(*schedule_save_closure(), Run).Times(0);
+
+  base::HistogramTester histogram_tester;
+
+  processor()->ClearMetadataWhileStopped();
+  // Expect no entry to the histogram.
+  histogram_tester.ExpectTotalCount(
+      "Sync.ClearMetadataWhileStopped.ImmediateClear", 0);
+}
+
+TEST_F(BookmarkModelTypeProcessorTest,
+       ShouldNotClearMetadataWhileStoppedWithoutMetadataInitially) {
+  SimulateModelReadyToSyncWithoutLocalMetadata();
+  ASSERT_THAT(processor()->GetTrackerForTest(), IsNull());
+
+  base::HistogramTester histogram_tester;
+
+  // Call ClearMetadataWhileStopped() without a prior call to OnSyncStopping().
+  processor()->ClearMetadataWhileStopped();
+
+  // Expect no call to save metadata upon ClearMetadataWhileStopped().
+  EXPECT_CALL(*schedule_save_closure(), Run).Times(0);
+  // Expect no entry to the histogram.
+  histogram_tester.ExpectTotalCount(
+      "Sync.ClearMetadataWhileStopped.ImmediateClear", 0);
+}
+
+TEST_F(BookmarkModelTypeProcessorTest,
+       ShouldNotClearMetadataWhileStoppedUponModelReadyToSyncWithoutMetadata) {
+  base::HistogramTester histogram_tester;
+
+  // Expect no call to save metadata.
+  EXPECT_CALL(*schedule_save_closure(), Run).Times(0);
+  // Call ClearMetadataWhileStopped() before ModelReadyToSync(). This should set
+  // the flag for a pending clearing of metadata.
+  processor()->ClearMetadataWhileStopped();
+
+  SimulateModelReadyToSyncWithoutLocalMetadata();
+  ASSERT_THAT(processor()->GetTrackerForTest(), IsNull());
+
+  // Nothing recorded to the histograms.
+  histogram_tester.ExpectTotalCount(
+      "Sync.ClearMetadataWhileStopped.ImmediateClear", 0);
+  histogram_tester.ExpectTotalCount(
+      "Sync.ClearMetadataWhileStopped.DelayedClear", 0);
 }
 
 }  // namespace

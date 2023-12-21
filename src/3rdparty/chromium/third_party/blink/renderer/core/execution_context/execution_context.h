@@ -31,8 +31,8 @@
 #include <memory>
 
 #include "base/notreached.h"
+#include "base/task/single_thread_task_runner.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
-#include "services/network/public/mojom/ip_address_space.mojom-blink-forward.h"
 #include "services/network/public/mojom/referrer_policy.mojom-blink-forward.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/common/tokens/tokens.h"
@@ -58,6 +58,7 @@
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/supplementable.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
+#include "third_party/perfetto/include/perfetto/tracing/traced_value_forward.h"
 #include "v8/include/v8-callbacks.h"
 #include "v8/include/v8-forward.h"
 
@@ -72,6 +73,10 @@ class UkmRecorder;
 namespace v8 {
 class MicrotaskQueue;
 }  // namespace v8
+
+namespace perfetto::protos::pbzero {
+class BlinkExecutionContext;
+}  // namespace perfetto::protos::pbzero
 
 namespace blink {
 
@@ -90,6 +95,7 @@ class FrameOrWorkerScheduler;
 class KURL;
 class LocalDOMWindow;
 class OriginTrialContext;
+class RuntimeFeatureStateOverrideContext;
 class PolicyContainer;
 class PublicURLManager;
 class ResourceFetcher;
@@ -167,13 +173,24 @@ class CORE_EXPORT ExecutionContext : public Supplementable<ExecutionContext>,
   virtual bool IsLayoutWorkletGlobalScope() const { return false; }
   virtual bool IsPaintWorkletGlobalScope() const { return false; }
   virtual bool IsThreadedWorkletGlobalScope() const { return false; }
+  virtual bool IsShadowRealmGlobalScope() const { return false; }
   virtual bool IsJSExecutionForbidden() const { return false; }
+
+  // TODO(crbug.com/1335924) Change this method to be pure-virtual and each
+  // derivative explicitly override it.
+  virtual bool IsInFencedFrame() const { return false; }
 
   virtual bool IsContextThread() const { return true; }
 
   virtual bool ShouldInstallV8Extensions() const { return false; }
 
   virtual void CountUseOnlyInCrossSiteIframe(mojom::blink::WebFeature feature) {
+  }
+
+  // Return the associated AgentGroupScheduler's compositor tasl runner.
+  virtual scoped_refptr<base::SingleThreadTaskRunner>
+  GetAgentGroupSchedulerCompositorTaskRunner() {
+    return nullptr;
   }
 
   const SecurityOrigin* GetSecurityOrigin() const;
@@ -203,6 +220,7 @@ class CORE_EXPORT ExecutionContext : public Supplementable<ExecutionContext>,
   virtual const KURL& BaseURL() const = 0;
   virtual KURL CompleteURL(const String& url) const = 0;
   virtual void DisableEval(const String& error_message) = 0;
+  virtual void SetWasmEvalErrorMessage(const String& error_message) = 0;
   virtual String UserAgent() const = 0;
   virtual UserAgentMetadata GetUserAgentMetadata() const {
     return UserAgentMetadata();
@@ -265,11 +283,10 @@ class CORE_EXPORT ExecutionContext : public Supplementable<ExecutionContext>,
 
   bool IsContextPaused() const;
   LoaderFreezeMode GetLoaderFreezeMode() const;
-  bool IsContextDestroyed() const { return is_context_destroyed_; }
   mojom::FrameLifecycleState ContextPauseState() const {
     return lifecycle_state_;
   }
-  bool IsLoadDeferred() const;
+  bool IsContextFrozenOrPaused() const;
 
   // Gets the next id in a circular sequence from 1 to 2^31-1.
   int CircularSequentialID();
@@ -313,6 +330,9 @@ class CORE_EXPORT ExecutionContext : public Supplementable<ExecutionContext>,
   network::mojom::ReferrerPolicy GetReferrerPolicy() const;
 
   PolicyContainer* GetPolicyContainer() { return policy_container_.get(); }
+  const PolicyContainer* GetPolicyContainer() const {
+    return policy_container_.get();
+  }
   void SetPolicyContainer(std::unique_ptr<PolicyContainer> container);
   std::unique_ptr<PolicyContainer> TakePolicyContainer();
 
@@ -327,6 +347,11 @@ class CORE_EXPORT ExecutionContext : public Supplementable<ExecutionContext>,
 
   OriginTrialContext* GetOriginTrialContext() const {
     return origin_trial_context_;
+  }
+
+  RuntimeFeatureStateOverrideContext* GetRuntimeFeatureStateOverrideContext()
+      const override {
+    return runtime_feature_state_override_context_;
   }
 
   virtual TrustedTypePolicyFactory* GetTrustedTypes() const { return nullptr; }
@@ -374,9 +399,6 @@ class CORE_EXPORT ExecutionContext : public Supplementable<ExecutionContext>,
       const String& message = g_empty_string,
       const String& source_file = g_empty_string) const {}
 
-  network::mojom::IPAddressSpace AddressSpace() const;
-  void SetAddressSpace(network::mojom::blink::IPAddressSpace ip_address_space);
-
   HeapObserverSet<ContextLifecycleObserver>& ContextLifecycleObserverSet();
   unsigned ContextLifecycleStateObserverCountForTesting() const;
 
@@ -384,10 +406,11 @@ class CORE_EXPORT ExecutionContext : public Supplementable<ExecutionContext>,
   // https://html.spec.whatwg.org/C/webappapis.html#concept-settings-object-cross-origin-isolated-capability
   virtual bool CrossOriginIsolatedCapability() const = 0;
 
-  // Reflects the context's potential ability to use Direct Socket APIs.
+  // Returns true if scripts within this ExecutionContext are allowed to use
+  // Trusted Context APIs (i.e. annotated with [IsolatedContext] IDL attribute).
   //
   // TODO(mkwst): We need a specification for the necessary restrictions.
-  virtual bool DirectSocketCapability() const = 0;
+  virtual bool IsIsolatedContext() const = 0;
 
   // Returns true if SharedArrayBuffers can be transferred via PostMessage,
   // false otherwise. SharedArrayBuffer allows pages to craft high-precision
@@ -402,8 +425,8 @@ class CORE_EXPORT ExecutionContext : public Supplementable<ExecutionContext>,
   // Reports first usage of `navigator.userAgent` and related getters
   void ReportNavigatorUserAgentAccess();
 
-  virtual ukm::UkmRecorder* UkmRecorder() { return nullptr; }
-  virtual ukm::SourceId UkmSourceID() const { return ukm::kInvalidSourceId; }
+  virtual ukm::UkmRecorder* UkmRecorder() = 0;
+  virtual ukm::SourceId UkmSourceID() const = 0;
 
   // Returns the token that uniquely identifies this ExecutionContext.
   virtual ExecutionContextToken GetExecutionContextToken() const = 0;
@@ -437,6 +460,10 @@ class CORE_EXPORT ExecutionContext : public Supplementable<ExecutionContext>,
     return is_in_request_animation_frame_;
   }
 
+  // Write a representation of this object into a trace.
+  using Proto = perfetto::protos::pbzero::BlinkExecutionContext;
+  void WriteIntoTrace(perfetto::TracedProto<Proto> proto) const;
+
   // For use by FrameRequestCallbackCollection::ExecuteFrameCallbacks();
   // IsInRequestAnimationFrame() for the corresponding ExecutionContext will
   // return true while this instance exists.
@@ -457,6 +484,11 @@ class CORE_EXPORT ExecutionContext : public Supplementable<ExecutionContext>,
     ExecutionContext* context_;
   };
 
+  // Returns true if this execution context has obtained storage access via the
+  // Storage Access API. In practice, this can only return true for
+  // LocalDOMWindows.
+  virtual bool HasStorageAccess() const { return false; }
+
  protected:
   explicit ExecutionContext(v8::Isolate* isolate, Agent*);
   ExecutionContext(const ExecutionContext&) = delete;
@@ -475,8 +507,8 @@ class CORE_EXPORT ExecutionContext : public Supplementable<ExecutionContext>,
       const String& message,
       bool discard_duplicates,
       absl::optional<mojom::ConsoleMessageCategory> category) override;
-  virtual void AddConsoleMessageImpl(ConsoleMessage*,
-                                     bool discard_duplicates) = 0;
+  void AddConsoleMessageImpl(ConsoleMessage*,
+                             bool discard_duplicates) override = 0;
 
   v8::Isolate* const isolate_;
 
@@ -492,7 +524,6 @@ class CORE_EXPORT ExecutionContext : public Supplementable<ExecutionContext>,
   HeapVector<Member<ErrorEvent>> pending_exceptions_;
 
   mojom::FrameLifecycleState lifecycle_state_;
-  bool is_context_destroyed_;
 
   bool is_in_back_forward_cache_ = false;
 
@@ -521,6 +552,10 @@ class CORE_EXPORT ExecutionContext : public Supplementable<ExecutionContext>,
   Member<OriginTrialContext> origin_trial_context_;
 
   Member<ContentSecurityPolicy> content_security_policy_;
+
+  Member<RuntimeFeatureStateOverrideContext>
+      runtime_feature_state_override_context_;
+
   bool require_safe_types_ = false;
 };
 

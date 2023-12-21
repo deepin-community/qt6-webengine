@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,6 @@
 #include <memory>
 
 #include "base/check.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "google_apis/gaia/gaia_auth_util.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/network/test/test_cookie_manager.h"
@@ -24,8 +23,7 @@ TestSigninClient::TestSigninClient(
     : test_url_loader_factory_(test_url_loader_factory),
       pref_service_(pref_service),
       are_signin_cookies_allowed_(true),
-      network_calls_delayed_(false),
-      is_signout_allowed_(true) {}
+      network_calls_delayed_(false) {}
 
 TestSigninClient::~TestSigninClient() {}
 
@@ -33,14 +31,6 @@ void TestSigninClient::DoFinalInit() {}
 
 PrefService* TestSigninClient::GetPrefs() {
   return pref_service_;
-}
-
-void TestSigninClient::PreSignOut(
-    base::OnceCallback<void(SignoutDecision)> on_signout_decision_reached,
-    signin_metrics::ProfileSignout signout_source_metric) {
-  std::move(on_signout_decision_reached)
-      .Run(is_signout_allowed_ ? SignoutDecision::ALLOW_SIGNOUT
-                               : SignoutDecision::DISALLOW_SIGNOUT);
 }
 
 scoped_refptr<network::SharedURLLoaderFactory>
@@ -112,10 +102,6 @@ std::unique_ptr<GaiaAuthFetcher> TestSigninClient::CreateGaiaAuthFetcher(
                                            GetURLLoaderFactory());
 }
 
-bool TestSigninClient::IsNonEnterpriseUser(const std::string& email) {
-  return gaia::ExtractDomainName(email) == "gmail.com";
-}
-
 #if BUILDFLAG(IS_CHROMEOS_LACROS)
 absl::optional<account_manager::Account>
 TestSigninClient::GetInitialPrimaryAccount() {
@@ -133,6 +119,8 @@ void TestSigninClient::SetInitialPrimaryAccountForTests(
   is_initial_primary_account_child_ = is_child;
 }
 
+void TestSigninClient::RemoveAccount(
+    const account_manager::AccountKey& account_key) {}
 void TestSigninClient::RemoveAllAccounts() {}
 
 #endif  // BUILDFLAG(IS_CHROMEOS_LACROS)

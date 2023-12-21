@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -22,6 +22,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/synchronization/lock.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/threading/thread.h"
 #include "gpu/config/gpu_preferences.h"
 #include "media/base/video_color_space.h"
@@ -38,7 +39,7 @@ interface IDirect3DSurface9;
 
 namespace gl {
 class GLContext;
-class GLImageDXGI;
+class GLImageEGLStream;
 }
 
 namespace gpu {
@@ -114,9 +115,9 @@ class MEDIA_GPU_EXPORT DXVAVideoDecodeAccelerator
   void Flush() override;
   void Reset() override;
   void Destroy() override;
-  bool TryToSetupDecodeOnSeparateThread(
+  bool TryToSetupDecodeOnSeparateSequence(
       const base::WeakPtr<Client>& decode_client,
-      const scoped_refptr<base::SingleThreadTaskRunner>& decode_task_runner)
+      const scoped_refptr<base::SequencedTaskRunner>& decode_task_runner)
       override;
   GLenum GetSurfaceInternalFormat() const override;
   bool SupportsSharedImagePictureBuffers() const override;
@@ -149,8 +150,8 @@ class MEDIA_GPU_EXPORT DXVAVideoDecodeAccelerator
 
     // Bind the resulting GLImage to the NV12 texture. If the texture's used
     // in a an overlay than use it directly, otherwise copy it to another NV12
-    // texture when necessary.
-    DELAYED_COPY_TO_NV12 = 2,
+    // texture when necessary -- no longer used
+    // DELAYED_COPY_TO_NV12 = 2,
 
     // Bind the NV12 decoder texture directly to the texture used in ANGLE.
     BIND = 3,
@@ -160,41 +161,6 @@ class MEDIA_GPU_EXPORT DXVAVideoDecodeAccelerator
     // update this to be the last one.
     kMaxValue = BIND
   };
-
-  // These values are persisted to logs. Entries should not be renumbered and
-  // numeric values should never be reused.
-  enum class DXVALifetimeProgression {
-    kInitializeStarted = 0,
-
-    // DX11 init completed successfully.
-    kDX11InitializeSucceeded = 1,
-
-    // An error occurred after successful init, split up by whether a frame was
-    // delivered to the client yet or not.
-    kDX11PlaybackFailedBeforeFirstFrame = 2,
-    kDX11PlaybackFailedAfterFirstFrame = 3,
-
-    // Playback succeeded, which requires successful init.
-    kDX11PlaybackSucceeded = 4,
-
-    // DX9 variants of the above.
-    kDX9InitializeSucceeded = 5,
-    kDX9PlaybackFailedBeforeFirstFrame = 6,
-    kDX9PlaybackFailedAfterFirstFrame = 7,
-    kDX9PlaybackSucceeded = 8,
-
-    // For UMA. Must be the last entry. It should be initialized to the
-    // numerically largest value above; if you add more entries, then please
-    // update this to the last one.
-    kMaxValue = kDX9PlaybackSucceeded
-  };
-
-  // Log UMA progression state.
-  void AddLifetimeProgressionStage(DXVALifetimeProgression stage);
-
-  // Logs the appropriate PlaybackSucceeded lifetime stage, if we've completed
-  // init successfully and not logged an error or playback success since then.
-  void AddPlaybackSucceededLifetimeStageIfNeeded();
 
   // Creates and initializes an instance of the D3D device and the
   // corresponding device manager. The device manager instance is eventually
@@ -417,8 +383,8 @@ class MEDIA_GPU_EXPORT DXVAVideoDecodeAccelerator
   void DisableSharedTextureSupport();
 
   // Creates ScopedSharedImages for the provided PictureBuffer. If the buffer
-  // has a GLImageDXGI this function will create SharedImageBackingD3D using the
-  // DX11 texture. Otherwise it will create thin SharedImageBackingGLImage
+  // has a GLImageEGLStream this function will create D3DImageBacking using the
+  // DX11 texture. Otherwise it will create thin GLImageBacking
   // wrappers around the existing textures in |picture_buffer|.
   std::vector<scoped_refptr<Picture::ScopedSharedImage>>
   GetSharedImagesFromPictureBuffer(DXVAPictureBuffer* picture_buffer);
@@ -587,9 +553,6 @@ class MEDIA_GPU_EXPORT DXVAVideoDecodeAccelerator
   // Supports copying the NV12 texture to another NV12 texture to use in
   // ANGLE.
   bool support_copy_nv12_textures_;
-
-  // Supports copying NV12 textures on the main thread to use in ANGLE.
-  bool support_delayed_copy_nv12_textures_;
 
   // Copy video to FP16 scRGB textures.
   bool use_fp16_ = false;

@@ -44,50 +44,50 @@ import elementsPanelStyles from './elementsPanel.css.js';
 
 import type * as Adorners from '../../ui/components/adorners/adorners.js';
 import * as Buttons from '../../ui/components/buttons/buttons.js';
-import * as Components from '../../ui/legacy/components/utils/utils.js';
 import * as UI from '../../ui/legacy/legacy.js';
 
 import {AccessibilityTreeView} from './AccessibilityTreeView.js';
 import * as ElementsComponents from './components/components.js';
 import {ComputedStyleWidget} from './ComputedStyleWidget.js';
 
-import type {ElementsTreeElement} from './ElementsTreeElement.js';
+import {type ElementsTreeElement} from './ElementsTreeElement.js';
 import {ElementsTreeElementHighlighter} from './ElementsTreeElementHighlighter.js';
 import {ElementsTreeOutline} from './ElementsTreeOutline.js';
-import type {MarkerDecorator} from './MarkerDecorator.js';
+import {type MarkerDecorator} from './MarkerDecorator.js';
 import {MetricsSidebarPane} from './MetricsSidebarPane.js';
-import {Events as StylesSidebarPaneEvents, StylesSidebarPane} from './StylesSidebarPane.js';
-import type {StylesUpdateCompletedEvent} from './StylesSidebarPane.js';
+import {LayoutSidebarPane} from './LayoutSidebarPane.js';
+import {
+  Events as StylesSidebarPaneEvents,
+  StylesSidebarPane,
+  type StylesUpdateCompletedEvent,
+} from './StylesSidebarPane.js';
+import {ColorSwatchPopoverIcon} from './ColorSwatchPopoverIcon.js';
 
 const UIStrings = {
   /**
-  * @description Placeholder text for the search box the Elements Panel. Selector refers to CSS
-  * selectors.
-  */
+   * @description Placeholder text for the search box the Elements Panel. Selector refers to CSS
+   * selectors.
+   */
   findByStringSelectorOrXpath: 'Find by string, selector, or `XPath`',
   /**
-  * @description Button text for a button that takes the user to the Accessibility Tree View from the
-  * DOM tree view, in the Elements panel.
-  */
+   * @description Button text for a button that takes the user to the Accessibility Tree View from the
+   * DOM tree view, in the Elements panel.
+   */
   switchToAccessibilityTreeView: 'Switch to Accessibility Tree view',
   /**
-  * @description Button text for a button that takes the user to the DOM tree view from the
-  * Accessibility Tree View, in the Elements panel.
-  */
+   * @description Button text for a button that takes the user to the DOM tree view from the
+   * Accessibility Tree View, in the Elements panel.
+   */
   switchToDomTreeView: 'Switch to DOM Tree view',
   /**
-  * @description Label for a link to a rendering frame.
-  */
-  frame: 'Frame',
-  /**
-  * @description Tooltip for the the Computed Styles sidebar toggle in the Styles pane. Command to
-  * open/show the sidebar.
-  */
+   * @description Tooltip for the the Computed Styles sidebar toggle in the Styles pane. Command to
+   * open/show the sidebar.
+   */
   showComputedStylesSidebar: 'Show Computed Styles sidebar',
   /**
-  * @description Tooltip for the the Computed Styles sidebar toggle in the Styles pane. Command to
-  * close/hide the sidebar.
-  */
+   * @description Tooltip for the the Computed Styles sidebar toggle in the Styles pane. Command to
+   * close/hide the sidebar.
+   */
   hideComputedStylesSidebar: 'Hide Computed Styles sidebar',
   /**
    * @description Screen reader announcement when the computed styles sidebar is shown in the Elements panel.
@@ -98,53 +98,53 @@ const UIStrings = {
    */
   computedStylesHidden: 'Computed Styles sidebar hidden',
   /**
-  * @description Title of a pane in the Elements panel that shows computed styles for the selected
-  * HTML element. Computed styles are the final, actual styles of the element, including all
-  * implicit and specified styles.
-  */
+   * @description Title of a pane in the Elements panel that shows computed styles for the selected
+   * HTML element. Computed styles are the final, actual styles of the element, including all
+   * implicit and specified styles.
+   */
   computed: 'Computed',
   /**
-  * @description Title of a pane in the Elements panel that shows the CSS styles for the selected
-  * HTML element.
-  */
+   * @description Title of a pane in the Elements panel that shows the CSS styles for the selected
+   * HTML element.
+   */
   styles: 'Styles',
   /**
-  * @description A context menu item to reveal a node in the DOM tree of the Elements Panel
-  */
+   * @description A context menu item to reveal a node in the DOM tree of the Elements Panel
+   */
   revealInElementsPanel: 'Reveal in Elements panel',
   /**
-  * @description Warning/error text displayed when a node cannot be found in the current page.
-  */
+   * @description Warning/error text displayed when a node cannot be found in the current page.
+   */
   nodeCannotBeFoundInTheCurrent: 'Node cannot be found in the current page.',
   /**
-  * @description Console warning when a user tries to reveal a non-node type Remote Object. A remote
-  * object is a JavaScript object that is not stored in DevTools, that DevTools has a connection to.
-  * It should correspond to a local node.
-  */
+   * @description Console warning when a user tries to reveal a non-node type Remote Object. A remote
+   * object is a JavaScript object that is not stored in DevTools, that DevTools has a connection to.
+   * It should correspond to a local node.
+   */
   theRemoteObjectCouldNotBe: 'The remote object could not be resolved to a valid node.',
   /**
-  * @description Console warning when the user tries to reveal a deferred DOM Node that resolves as
-  * null. A deferred DOM node is a node we know about but have not yet fetched from the backend (we
-  * defer the work until later).
-  */
+   * @description Console warning when the user tries to reveal a deferred DOM Node that resolves as
+   * null. A deferred DOM node is a node we know about but have not yet fetched from the backend (we
+   * defer the work until later).
+   */
   theDeferredDomNodeCouldNotBe: 'The deferred `DOM` Node could not be resolved to a valid node.',
   /**
-  * @description Text in Elements Panel of the Elements panel. Shows the current CSS Pseudo-classes
-  * applicable to the selected HTML element.
-  * @example {::after, ::before} PH1
-  */
+   * @description Text in Elements Panel of the Elements panel. Shows the current CSS Pseudo-classes
+   * applicable to the selected HTML element.
+   * @example {::after, ::before} PH1
+   */
   elementStateS: 'Element state: {PH1}',
   /**
-  * @description Accessible name for side panel toolbar.
-  */
+   * @description Accessible name for side panel toolbar.
+   */
   sidePanelToolbar: 'Side panel toolbar',
   /**
-  * @description Accessible name for side panel contents.
-  */
+   * @description Accessible name for side panel contents.
+   */
   sidePanelContent: 'Side panel content',
   /**
-  * @description Accessible name for the DOM tree explorer view.
-  */
+   * @description Accessible name for the DOM tree explorer view.
+   */
   domTreeExplorer: 'DOM tree explorer',
 };
 
@@ -194,7 +194,6 @@ export class ElementsPanel extends UI.Panel.Panel implements UI.SearchableView.S
   private readonly computedStyleWidget: ComputedStyleWidget;
   private readonly metricsWidget: MetricsSidebarPane;
   private treeOutlines: Set<ElementsTreeOutline> = new Set();
-  private readonly treeOutlineHeaders: Map<ElementsTreeOutline, Element> = new Map();
   private searchResults!: {
     domModel: SDK.DOMModel.DOMModel,
     index: number,
@@ -248,6 +247,7 @@ export class ElementsPanel extends UI.Panel.Panel implements UI.SearchableView.S
 
     this.mainContainer.id = 'main-content';
     this.domTreeContainer.id = 'elements-content';
+    this.domTreeContainer.tabIndex = -1;
     // FIXME: crbug.com/425984
     if (Common.Settings.Settings.instance().moduleSetting('domWordWrap').get()) {
       this.domTreeContainer.classList.add('elements-wrap');
@@ -367,12 +367,6 @@ export class ElementsPanel extends UI.Panel.Panel implements UI.SearchableView.S
       treeOutline.addEventListener(ElementsTreeOutline.Events.ElementsTreeUpdated, this.updateBreadcrumbIfNeeded, this);
       new ElementsTreeElementHighlighter(treeOutline);
       this.treeOutlines.add(treeOutline);
-      if (domModel.target().parentTarget()) {
-        const element = document.createElement('div');
-        element.classList.add('elements-tree-header');
-        this.treeOutlineHeaders.set(treeOutline, element);
-        this.targetNameChanged(domModel.target());
-      }
     }
     treeOutline.wireToDOMModel(domModel);
 
@@ -381,6 +375,9 @@ export class ElementsPanel extends UI.Panel.Panel implements UI.SearchableView.S
     // Perform attach if necessary.
     if (this.isShowing()) {
       this.wasShown();
+    }
+    if (this.domTreeContainer.hasFocus()) {
+      treeOutline.focus();
     }
   }
 
@@ -395,11 +392,6 @@ export class ElementsPanel extends UI.Panel.Panel implements UI.SearchableView.S
       return;
     }
     this.treeOutlines.delete(treeOutline);
-    const header = this.treeOutlineHeaders.get(treeOutline);
-    if (header) {
-      header.remove();
-    }
-    this.treeOutlineHeaders.delete(treeOutline);
     treeOutline.element.remove();
 
     this.removeStyleTracking(domModel.cssModel());
@@ -414,14 +406,6 @@ export class ElementsPanel extends UI.Panel.Panel implements UI.SearchableView.S
     if (!treeOutline) {
       return;
     }
-    const header = this.treeOutlineHeaders.get(treeOutline);
-    if (!header) {
-      return;
-    }
-    header.removeChildren();
-    header.createChild('div', 'elements-tree-header-frame').textContent = i18nString(UIStrings.frame);
-    header.appendChild(Components.Linkifier.Linkifier.linkifyURL(
-        target.inspectedURL(), ({text: target.name()} as Components.Linkifier.LinkifyURLOptions)));
   }
 
   private updateTreeOutlineVisibleWidth(): void {
@@ -441,6 +425,8 @@ export class ElementsPanel extends UI.Panel.Panel implements UI.SearchableView.S
   focus(): void {
     if (this.treeOutlines.size) {
       this.treeOutlines.values().next().value.focus();
+    } else {
+      this.domTreeContainer.focus();
     }
   }
 
@@ -456,10 +442,6 @@ export class ElementsPanel extends UI.Panel.Panel implements UI.SearchableView.S
     for (const treeOutline of this.treeOutlines) {
       // Attach heavy component lazily
       if (treeOutline.element.parentElement !== this.domTreeContainer) {
-        const header = this.treeOutlineHeaders.get(treeOutline);
-        if (header) {
-          this.domTreeContainer.appendChild(header);
-        }
         this.domTreeContainer.appendChild(treeOutline.element);
       }
     }
@@ -492,10 +474,6 @@ export class ElementsPanel extends UI.Panel.Panel implements UI.SearchableView.S
       treeOutline.setVisible(false);
       // Detach heavy component on hide
       this.domTreeContainer.removeChild(treeOutline.element);
-      const header = this.treeOutlineHeaders.get(treeOutline);
-      if (header) {
-        this.domTreeContainer.removeChild(header);
-      }
     }
     super.willHide();
     UI.Context.Context.instance().setFlavor(ElementsPanel, null);
@@ -629,7 +607,20 @@ export class ElementsPanel extends UI.Panel.Panel implements UI.SearchableView.S
     }
   }
 
-  searchCanceled(): void {
+  onSearchClosed(): void {
+    const selectedNode = this.selectedDOMNode();
+    if (!selectedNode) {
+      return;
+    }
+    const treeElement = this.treeElementForNode(selectedNode);
+    if (!treeElement) {
+      return;
+    }
+
+    treeElement.select();
+  }
+
+  onSearchCanceled(): void {
     this.searchConfig = undefined;
     this.hideSearchHighlights();
 
@@ -650,7 +641,7 @@ export class ElementsPanel extends UI.Panel.Panel implements UI.SearchableView.S
     }
 
     if (!this.searchConfig || this.searchConfig.query !== query) {
-      this.searchCanceled();
+      this.onSearchCanceled();
     } else {
       this.hideSearchHighlights();
     }
@@ -770,6 +761,7 @@ export class ElementsPanel extends UI.Panel.Panel implements UI.SearchableView.S
       if (matches.length) {
         matches[0].scrollIntoViewIfNeeded(false);
       }
+      treeElement.select(/* omitFocus */ true);
     }
   }
 
@@ -804,6 +796,18 @@ export class ElementsPanel extends UI.Panel.Panel implements UI.SearchableView.S
       } else {
         treeOutline.selectDOMNode(null);
       }
+    }
+  }
+
+  selectAndShowSidebarTab(tabId: SidebarPaneTabId): void {
+    if (!this.sidebarPaneView) {
+      return;
+    }
+
+    this.sidebarPaneView.tabbedPane().selectTab(tabId);
+
+    if (!this.isShowing()) {
+      void UI.ViewManager.ViewManager.instance().showView('elements');
     }
   }
 
@@ -878,18 +882,19 @@ export class ElementsPanel extends UI.Panel.Panel implements UI.SearchableView.S
     return node;
   }
 
-  async revealAndSelectNode(node: SDK.DOMModel.DOMNode, focus: boolean, omitHighlight?: boolean): Promise<void> {
+  async revealAndSelectNode(nodeToReveal: SDK.DOMModel.DOMNode, focus: boolean, omitHighlight?: boolean):
+      Promise<void> {
     this.omitDefaultSelection = true;
 
-    node = Common.Settings.Settings.instance().moduleSetting('showUAShadowDOM').get() ?
-        node :
-        this.leaveUserAgentShadowDOM(node);
+    const node = Common.Settings.Settings.instance().moduleSetting('showUAShadowDOM').get() ?
+        nodeToReveal :
+        this.leaveUserAgentShadowDOM(nodeToReveal);
     if (!omitHighlight) {
       node.highlightForTwoSeconds();
     }
 
     if (this.accessibilityTreeView) {
-      void this.accessibilityTreeView.revealAndSelectNode(node);
+      void this.accessibilityTreeView.revealAndSelectNode(nodeToReveal);
     }
 
     await UI.ViewManager.ViewManager.instance().showView('elements', false, !focus);
@@ -1029,7 +1034,7 @@ export class ElementsPanel extends UI.Panel.Panel implements UI.SearchableView.S
     };
 
     this.sidebarPaneView = UI.ViewManager.ViewManager.instance().createTabbedLocation(
-        () => UI.ViewManager.ViewManager.instance().showView('elements'));
+        () => UI.ViewManager.ViewManager.instance().showView('elements'), 'Styles-pane-sidebar', false, true);
     const tabbedPane = this.sidebarPaneView.tabbedPane();
     if (this.splitMode !== _splitMode.Vertical) {
       this.splitWidget.installResizer(tabbedPane.headerElement());
@@ -1142,6 +1147,8 @@ export class ElementsPanel extends UI.Panel.Panel implements UI.SearchableView.S
       if (treeElement) {
         void treeElement.updateStyleAdorners();
       }
+
+      LayoutSidebarPane.instance().update();
     }
   }
 
@@ -1418,6 +1425,20 @@ export class ElementsActionDelegate implements UI.ActionRegistration.ActionDeleg
         void SDK.DOMModel.DOMModelUndoStack.instance().redo();
         ElementsPanel.instance().stylesWidget.forceUpdate();
         return true;
+      case 'elements.show-styles':
+        ElementsPanel.instance().selectAndShowSidebarTab(SidebarPaneTabId.Styles);
+        return true;
+      case 'elements.show-computed':
+        ElementsPanel.instance().selectAndShowSidebarTab(SidebarPaneTabId.Computed);
+        return true;
+      case 'elements.toggle-eye-dropper': {
+        const colorSwatchPopoverIcon = UI.Context.Context.instance().flavor(ColorSwatchPopoverIcon);
+        if (!colorSwatchPopoverIcon) {
+          return false;
+        }
+
+        void colorSwatchPopoverIcon.toggleEyeDropper();
+      }
     }
     return false;
   }

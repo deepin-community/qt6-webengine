@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -56,7 +56,7 @@ TEST_F(MdTextButtonTest, BackgroundColorChangesWithWidgetActivation) {
     // It would make a bit more sense to inset by the border thickness or
     // something, but MdTextButton doesn't expose (or even know) that value
     // without some major abstraction violation.
-    int corner_radius = button->GetCornerRadius();
+    int corner_radius = button->GetCornerRadiusValue();
     return bitmap.getColor(corner_radius, corner_radius);
   };
 

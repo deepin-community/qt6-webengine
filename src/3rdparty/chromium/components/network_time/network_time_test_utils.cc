@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,33 +16,45 @@ namespace network_time {
 
 // Update as follows:
 //
-// curl -i http://clients2.google.com/time/1/current?cup2key=5:123123123
+// curl -i "http://clients2.google.com/time/1/current?cup2key=7:123123123"
 //
-// where 5 is the key version and 123123123 is the nonce.  Copy the response
+// where 7 is the key version and 123123123 is the nonce.  Copy the response
 // and the x-cup-server-proof header into |kGoodTimeResponseBody| and
 // |kGoodTimeResponseServerProofHeader| respectively, and the
 // 'current_time_millis' value of the response into
-// |kGoodTimeResponseHandlerJsTime|.  Do this three times, so that the three
+// |kGoodTimeResponseHandlerJsTime|.  Do this five times, so that the five
 // requests appear in order below.
 const char* kGoodTimeResponseBody[] = {
-    ")]}'\n{\"current_time_millis\":1619464140565,"
-    "\"server_nonce\":-1.656679479914492E230}",
-    ")]}'\n{\"current_time_millis\":1619464273366,"
-    "\"server_nonce\":2.1195306862817135E-5}",
-    ")]}'\n{\"current_time_millis\":1642162812422,"
-    "\"server_nonce\":3.374791108303444E207}"};
+    ")]}'\n{\"current_time_millis\":1676407030473,\"server_nonce\":-7."
+    "963518832647831E9}",
+    ")]}'\n{\"current_time_millis\":1676407054804,\"server_nonce\":2."
+    "660379914224199E64}",
+    ")]}'\n{\"current_time_millis\":1676407071199,\"server_nonce\":5."
+    "150419571081495E-301}",
+    ")]}'\n{\"current_time_millis\":1676407085288,\"server_nonce\":-2."
+    "3616379802443122E-151}",
+    ")]}'\n{\"current_time_millis\":1676407147062,\"server_nonce\":2."
+    "848761209101163E-158}"};
+
 const char* kGoodTimeResponseServerProofHeader[] = {
-    "3045022100f829ced2af34ade53400f66eef6df9af732fa8bfe08517287c2805c92891e321"
-    "022062fb405b2cf12bc3e2ac037985c4b8065a62e86e29a2e745ebff80fd52189c6a:"
-    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "3046022100c78436ad47904634aacd33f4c4bcb55bd6f7f2ed84a620fda0deaede99c32de6"
-    "022100b595458bd03d83f33bfb891de1327b26620d576937f3713af59bb1f2c53f2e8b:"
-    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "3045022100f50a8e6f97d8c362f878e2c988ab2c983e536de4dc2116a314699a4010d7d8b8"
-    "02202ace752a45721399ec6dd704da55700c9b11626f7c55a72037db255b79992476:"
-    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"};
-const double kGoodTimeResponseHandlerJsTime[] = {1619464140565, 1619464273366,
-                                                 1642162812422};
+    "304402200b875bcd9391c08c319504ea4cac3703b58f50797c99ed008068d232c62f0"
+    "86802207babace8807a911ef7af424abdadac5ba118b06d1c68ddbe6c79e0f36da972"
+    "18:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "30450220600b8b15525d52aa939f8174a24b63d3eb2b7543cf1d3a36eabd572518ec5"
+    "118022100d6e79c05701e981308d22e95f945a4a1b7cc2b2ce9c67b87fbec44e3d4b2"
+    "c4a5:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "3045022100f78429f21c9b5e4db283b7b4a81d2f91f51969aae4e9960edf0b82f21c3"
+    "7c84a02200aa5e9e56bbf3cb16441355759425a31b0052fb371dfcb972d127cf185fe"
+    "5424:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "3045022015af65192d3f5024e068cee411b29c6c9093c159a6f5b7e7e8b9726a7eca3"
+    "fa30221008dd1d69dc5e3cf364bb69366b3cc434a057fdf2c52475d92492eaca45f4b"
+    "2ecf:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "3045022100ca8b4a4af0bfacdcbb589ee8d0a7fb0e20e618bcf380c775e0aa573ef9d"
+    "12f300220367ac76938af4b630d8c8ddef72b0c1e59630f505b110a1f3b18cd42229e"
+    "4035:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"};
+
+const double kGoodTimeResponseHandlerJsTime[] = {
+    1676407030473, 1676407054804, 1676407071199, 1676407085288, 1676407147062};
 
 std::unique_ptr<net::test_server::HttpResponse> GoodTimeResponseHandler(
     const net::test_server::HttpRequest& request) {
@@ -62,7 +74,8 @@ FieldTrialTest::~FieldTrialTest() {}
 void FieldTrialTest::SetFeatureParams(
     bool enable,
     float query_probability,
-    NetworkTimeTracker::FetchBehavior fetch_behavior) {
+    NetworkTimeTracker::FetchBehavior fetch_behavior,
+    NetworkTimeTracker::ClockDriftSamples clock_drift_samples) {
   scoped_feature_list_.Reset();
   if (!enable) {
     scoped_feature_list_.InitAndDisableFeature(kNetworkTimeServiceQuerying);
@@ -73,6 +86,7 @@ void FieldTrialTest::SetFeatureParams(
   params["RandomQueryProbability"] = base::NumberToString(query_probability);
   // See string format defined by `base::TimeDeltaFromString`.
   params["CheckTimeInterval"] = "360s";
+  params["ClockDriftSampleDistance"] = "2s";
   std::string fetch_behavior_param;
   switch (fetch_behavior) {
     case NetworkTimeTracker::FETCH_BEHAVIOR_UNKNOWN:
@@ -90,6 +104,24 @@ void FieldTrialTest::SetFeatureParams(
       break;
   }
   params["FetchBehavior"] = fetch_behavior_param;
+
+  std::string num_clock_drift_samples;
+  switch (clock_drift_samples) {
+    case NetworkTimeTracker::ClockDriftSamples::NO_SAMPLES:
+      num_clock_drift_samples = "0";
+      break;
+    case NetworkTimeTracker::ClockDriftSamples::TWO_SAMPLES:
+      num_clock_drift_samples = "2";
+      break;
+    case NetworkTimeTracker::ClockDriftSamples::FOUR_SAMPLES:
+      num_clock_drift_samples = "4";
+      break;
+    case NetworkTimeTracker::ClockDriftSamples::SIX_SAMPLES:
+      num_clock_drift_samples = "6";
+      break;
+  }
+  params["ClockDriftSamples"] = num_clock_drift_samples;
+
   scoped_feature_list_.InitAndEnableFeatureWithParameters(
       kNetworkTimeServiceQuerying, params);
 }

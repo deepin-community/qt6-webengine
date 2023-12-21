@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -184,8 +184,9 @@ TEST(CascadeMapTest, AllHighPriorityBits) {
   uint64_t expected = 0;
   for (CSSPropertyID id : CSSPropertyIDList()) {
     if (IsHighPriority(id)) {
-      if (CSSProperty::Get(id).IsSurrogate())
+      if (CSSProperty::Get(id).IsSurrogate()) {
         continue;
+      }
       map.Add(CSSPropertyName(id), CascadeOrigin::kAuthor);
       expected |= (1ull << static_cast<uint64_t>(id));
     }

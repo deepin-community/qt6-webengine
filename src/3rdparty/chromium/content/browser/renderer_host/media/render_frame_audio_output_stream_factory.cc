@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,11 +10,12 @@
 #include <string>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback.h"
 #include "base/check_op.h"
 #include "base/containers/flat_set.h"
 #include "base/containers/unique_ptr_adapters.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
 #include "base/location.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
@@ -258,8 +259,7 @@ RenderFrameAudioOutputStreamFactory::~RenderFrameAudioOutputStreamFactory() {
   // causes issues in unit tests where the UI thread and the IO thread are the
   // same.
   GetIOThreadTaskRunner({})->PostTask(
-      FROM_HERE,
-      base::BindOnce([](std::unique_ptr<Core>) {}, std::move(core_)));
+      FROM_HERE, base::DoNothingWithBoundArgs(std::move(core_)));
 }
 
 void RenderFrameAudioOutputStreamFactory::

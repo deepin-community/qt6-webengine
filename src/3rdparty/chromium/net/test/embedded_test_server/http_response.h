@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,20 +7,19 @@
 
 #include <string>
 
-#include "absl/types/optional.h"
-#include "base/bind.h"
-#include "base/callback.h"
-#include "base/callback_helpers.h"
 #include "base/compiler_specific.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_split.h"
 #include "base/time/time.h"
 #include "net/http/http_status_code.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
-namespace net {
-namespace test_server {
+namespace net::test_server {
 
 class HttpResponse;
 
@@ -126,7 +125,7 @@ class BasicHttpResponse : public HttpResponse {
   void SendResponse(base::WeakPtr<HttpResponseDelegate> delegate) override;
 
  private:
-  HttpStatusCode code_;
+  HttpStatusCode code_ = HTTP_OK;
   absl::optional<std::string> reason_;
   std::string content_;
   std::string content_type_;
@@ -136,7 +135,7 @@ class BasicHttpResponse : public HttpResponse {
 
 class DelayedHttpResponse : public BasicHttpResponse {
  public:
-  DelayedHttpResponse(const base::TimeDelta delay);
+  explicit DelayedHttpResponse(const base::TimeDelta delay);
 
   DelayedHttpResponse(const DelayedHttpResponse&) = delete;
   DelayedHttpResponse& operator=(const DelayedHttpResponse&) = delete;
@@ -173,12 +172,12 @@ class RawHttpResponse : public HttpResponse {
 // destroyed.
 class HungResponse : public HttpResponse {
  public:
-  HungResponse() {}
+  HungResponse() = default;
 
   HungResponse(const HungResponse&) = delete;
   HungResponse& operator=(const HungResponse&) = delete;
 
-  ~HungResponse() override {}
+  ~HungResponse() override = default;
 
   void SendResponse(base::WeakPtr<HttpResponseDelegate> delegate) override;
 };
@@ -195,7 +194,6 @@ class HungAfterHeadersHttpResponse : public HttpResponse {
   base::StringPairs headers_;
 };
 
-}  // namespace test_server
-}  // namespace net
+}  // namespace net::test_server
 
 #endif  // NET_TEST_EMBEDDED_TEST_SERVER_HTTP_RESPONSE_H_

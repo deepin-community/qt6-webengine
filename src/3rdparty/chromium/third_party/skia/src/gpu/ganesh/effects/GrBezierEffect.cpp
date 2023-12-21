@@ -177,12 +177,12 @@ GrConicEffect::GrConicEffect(const SkPMColor4f& color, const SkMatrix& viewMatri
         , fLocalMatrix(viewMatrix)
         , fUsesLocalCoords(usesLocalCoords)
         , fCoverageScale(coverage) {
-    this->setVertexAttributesWithImplicitOffsets(kAttributes, SK_ARRAY_COUNT(kAttributes));
+    this->setVertexAttributesWithImplicitOffsets(kAttributes, std::size(kAttributes));
 }
 
 //////////////////////////////////////////////////////////////////////////////
 
-GR_DEFINE_GEOMETRY_PROCESSOR_TEST(GrConicEffect);
+GR_DEFINE_GEOMETRY_PROCESSOR_TEST(GrConicEffect)
 
 #if GR_TEST_UTILS
 GrGeometryProcessor* GrConicEffect::TestCreate(GrProcessorTestData* d) {
@@ -330,12 +330,12 @@ GrQuadEffect::GrQuadEffect(const SkPMColor4f& color, const SkMatrix& viewMatrix,
     , fLocalMatrix(localMatrix)
     , fUsesLocalCoords(usesLocalCoords)
     , fCoverageScale(coverage) {
-    this->setVertexAttributesWithImplicitOffsets(kAttributes, SK_ARRAY_COUNT(kAttributes));
+    this->setVertexAttributesWithImplicitOffsets(kAttributes, std::size(kAttributes));
 }
 
 //////////////////////////////////////////////////////////////////////////////
 
-GR_DEFINE_GEOMETRY_PROCESSOR_TEST(GrQuadEffect);
+GR_DEFINE_GEOMETRY_PROCESSOR_TEST(GrQuadEffect)
 
 #if GR_TEST_UTILS
 GrGeometryProcessor* GrQuadEffect::TestCreate(GrProcessorTestData* d) {

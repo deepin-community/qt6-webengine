@@ -64,13 +64,10 @@
         {%- set Optional = "Optional" if member.optional else "" -%}
         WIRE_TRY(provider.Get{{Optional}}Id({{in}}, &{{out}}));
     {%- elif member.type.category == "structure" -%}
-        {%- if member.type.is_wire_transparent -%}
-            static_assert(sizeof({{out}}) == sizeof({{in}}), "Serialize memcpy size must match.");
-            memcpy(&{{out}}, &{{in}}, {{member_transfer_sizeof(member)}});
-        {%- else -%}
-            {%- set Provider = ", provider" if member.type.may_have_dawn_object else "" -%}
-            WIRE_TRY({{as_cType(member.type.name)}}Serialize({{in}}, &{{out}}, buffer{{Provider}}));
-        {%- endif -%}
+        //* Do not memcpy or we may serialize padding bytes which can leak information across a
+        //* trusted boundary.
+        {%- set Provider = ", provider" if member.type.may_have_dawn_object else "" -%}
+        WIRE_TRY({{as_cType(member.type.name)}}Serialize({{in}}, &{{out}}, buffer{{Provider}}));
     {%- else -%}
         {{out}} = {{in}};
     {%- endif -%}
@@ -168,7 +165,7 @@
                 if (has_{{memberName}})
             {% endif %}
             {
-            result += std::strlen(record.{{memberName}});
+            result += Align(std::strlen(record.{{memberName}}), kWireBufferAlignment);
             }
         {% endfor %}
 
@@ -181,7 +178,9 @@
                 {% if member.annotation != "value" %}
                     {{ assert(member.annotation != "const*const*") }}
                     auto memberLength = {{member_length(member, "record.")}};
-                    result += memberLength * {{member_transfer_sizeof(member)}};
+                    auto size = WireAlignSizeofN<{{member_transfer_type(member)}}>(memberLength);
+                    ASSERT(size);
+                    result += *size;
                     //* Structures might contain more pointers so we need to add their extra size as well.
                     {% if member.type.category == "structure" %}
                         for (decltype(memberLength) i = 0; i < memberLength; ++i) {
@@ -434,7 +433,7 @@
     {% set Cmd = Name + "Cmd" %}
 
     size_t {{Cmd}}::GetRequiredSize() const {
-        size_t size = sizeof({{Name}}Transfer) + {{Name}}GetExtraRequiredSize(*this);
+        size_t size = WireAlignSizeof<{{Name}}Transfer>() + {{Name}}GetExtraRequiredSize(*this);
         return size;
     }
 
@@ -512,7 +511,7 @@
                     ) %}
                         case {{as_cEnum(types["s type"].name, sType.name)}}: {
                             const auto& typedStruct = *reinterpret_cast<{{as_cType(sType.name)}} const *>(chainedStruct);
-                            result += sizeof({{as_cType(sType.name)}}Transfer);
+                            result += WireAlignSizeof<{{as_cType(sType.name)}}Transfer>();
                             result += {{as_cType(sType.name)}}GetExtraRequiredSize(typedStruct);
                             chainedStruct = typedStruct.chain.next;
                             break;
@@ -522,7 +521,7 @@
                     case WGPUSType_Invalid:
                     default:
                         // Invalid enum. Reserve space just for the transfer header (sType and hasNext).
-                        result += sizeof(WGPUChainedStructTransfer);
+                        result += WireAlignSizeof<WGPUChainedStructTransfer>();
                         chainedStruct = chainedStruct->next;
                         break;
                 }
@@ -603,7 +602,7 @@
                             WIRE_TRY(deserializeBuffer->Read(&transfer));
 
                             {{CType}}* outStruct;
-                            WIRE_TRY(GetSpace(allocator, sizeof({{CType}}), &outStruct));
+                            WIRE_TRY(GetSpace(allocator, 1u, &outStruct));
                             outStruct->chain.sType = sType;
                             outStruct->chain.next = nullptr;
 
@@ -632,7 +631,7 @@
                         WIRE_TRY(deserializeBuffer->Read(&transfer));
 
                         {{ChainedStruct}}* outStruct;
-                        WIRE_TRY(GetSpace(allocator, sizeof({{ChainedStruct}}), &outStruct));
+                        WIRE_TRY(GetSpace(allocator, 1u, &outStruct));
                         outStruct->sType = WGPUSType_Invalid;
                         outStruct->next = nullptr;
 
@@ -651,44 +650,29 @@
 
 namespace dawn::wire {
 
-    ObjectHandle::ObjectHandle() = default;
-    ObjectHandle::ObjectHandle(ObjectId id, ObjectGeneration generation)
-        : id(id), generation(generation) {
-    }
-
-    ObjectHandle::ObjectHandle(const volatile ObjectHandle& rhs)
-        : id(rhs.id), generation(rhs.generation) {
-    }
-    ObjectHandle& ObjectHandle::operator=(const volatile ObjectHandle& rhs) {
-        id = rhs.id;
-        generation = rhs.generation;
-        return *this;
-    }
-
-    ObjectHandle& ObjectHandle::AssignFrom(const ObjectHandle& rhs) {
-        id = rhs.id;
-        generation = rhs.generation;
-        return *this;
-    }
-    ObjectHandle& ObjectHandle::AssignFrom(const volatile ObjectHandle& rhs) {
-        id = rhs.id;
-        generation = rhs.generation;
-        return *this;
-    }
-
     namespace {
         // Allocates enough space from allocator to countain T[count] and return it in out.
         // Return FatalError if the allocator couldn't allocate the memory.
         // Always writes to |out| on success.
         template <typename T, typename N>
         WireResult GetSpace(DeserializeAllocator* allocator, N count, T** out) {
-            constexpr size_t kMaxCountWithoutOverflows = std::numeric_limits<size_t>::max() / sizeof(T);
-            if (count > kMaxCountWithoutOverflows) {
+            // Because we use this function extensively when `count` == 1, we can optimize the
+            // size computations a bit more for those cases via constexpr version of the
+            // alignment computation.
+            constexpr size_t kSizeofT = WireAlignSizeof<T>();
+            size_t size = 0;
+            if (count == 1) {
+              size = kSizeofT;
+            } else {
+              auto sizeN = WireAlignSizeofN<T>(count);
+              // A size of 0 indicates an overflow, so return an error.
+              if (!sizeN) {
                 return WireResult::FatalError;
+              }
+              size = *sizeN;
             }
 
-            size_t totalSize = sizeof(T) * count;
-            *out = static_cast<T*>(allocator->GetSpace(totalSize));
+            *out = static_cast<T*>(allocator->GetSpace(size));
             if (*out == nullptr) {
                 return WireResult::FatalError;
             }
@@ -783,73 +767,5 @@ namespace dawn::wire {
     {% for command in cmd_records["return command"] %}
         {{ write_command_serialization_methods(command, True) }}
     {% endfor %}
-
-    // Implementations of serialization/deserialization of WPGUDeviceProperties.
-    size_t SerializedWGPUDevicePropertiesSize(const WGPUDeviceProperties* deviceProperties) {
-        return sizeof(WGPUDeviceProperties) +
-               WGPUDevicePropertiesGetExtraRequiredSize(*deviceProperties);
-    }
-
-    void SerializeWGPUDeviceProperties(const WGPUDeviceProperties* deviceProperties,
-                                       char* buffer) {
-        SerializeBuffer serializeBuffer(buffer, SerializedWGPUDevicePropertiesSize(deviceProperties));
-
-        WGPUDevicePropertiesTransfer* transfer;
-
-        WireResult result = serializeBuffer.Next(&transfer);
-        ASSERT(result == WireResult::Success);
-
-        ErrorObjectIdProvider provider;
-        result = WGPUDevicePropertiesSerialize(*deviceProperties, transfer, &serializeBuffer, provider);
-        ASSERT(result == WireResult::Success);
-    }
-
-    bool DeserializeWGPUDeviceProperties(WGPUDeviceProperties* deviceProperties,
-                                         const volatile char* buffer,
-                                         size_t size) {
-        const volatile WGPUDevicePropertiesTransfer* transfer;
-        DeserializeBuffer deserializeBuffer(buffer, size);
-        if (deserializeBuffer.Read(&transfer) != WireResult::Success) {
-            return false;
-        }
-
-        ErrorObjectIdResolver resolver;
-        return WGPUDevicePropertiesDeserialize(deviceProperties, transfer, &deserializeBuffer,
-                                               nullptr, resolver) == WireResult::Success;
-    }
-
-    size_t SerializedWGPUSupportedLimitsSize(const WGPUSupportedLimits* supportedLimits) {
-        return sizeof(WGPUSupportedLimits) +
-               WGPUSupportedLimitsGetExtraRequiredSize(*supportedLimits);
-    }
-
-    void SerializeWGPUSupportedLimits(
-        const WGPUSupportedLimits* supportedLimits,
-        char* buffer) {
-        SerializeBuffer serializeBuffer(buffer, SerializedWGPUSupportedLimitsSize(supportedLimits));
-
-        WGPUSupportedLimitsTransfer* transfer;
-
-        WireResult result = serializeBuffer.Next(&transfer);
-        ASSERT(result == WireResult::Success);
-
-        ErrorObjectIdProvider provider;
-        result = WGPUSupportedLimitsSerialize(*supportedLimits, transfer, &serializeBuffer, provider);
-        ASSERT(result == WireResult::Success);
-    }
-
-    bool DeserializeWGPUSupportedLimits(WGPUSupportedLimits* supportedLimits,
-                                        const volatile char* buffer,
-                                        size_t size) {
-        const volatile WGPUSupportedLimitsTransfer* transfer;
-        DeserializeBuffer deserializeBuffer(buffer, size);
-        if (deserializeBuffer.Read(&transfer) != WireResult::Success) {
-            return false;
-        }
-
-        ErrorObjectIdResolver resolver;
-        return WGPUSupportedLimitsDeserialize(supportedLimits, transfer, &deserializeBuffer,
-                                              nullptr, resolver) == WireResult::Success;
-    }
 
 }  // namespace dawn::wire

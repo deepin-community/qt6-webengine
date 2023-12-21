@@ -1,28 +1,32 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "ui/views/examples/bubble_example.h"
 
 #include <memory>
+#include <utility>
 
 #include "base/strings/utf_string_conversions.h"
 #include "ui/gfx/geometry/insets.h"
 #include "ui/views/bubble/bubble_dialog_delegate_view.h"
 #include "ui/views/controls/button/label_button.h"
 #include "ui/views/controls/label.h"
+#include "ui/views/examples/examples_color_id.h"
 #include "ui/views/examples/examples_window.h"
 #include "ui/views/layout/box_layout.h"
 #include "ui/views/widget/widget.h"
 
 using base::ASCIIToUTF16;
 
-namespace views {
-namespace examples {
+namespace views::examples {
 
 namespace {
 
-SkColor colors[] = {SK_ColorWHITE, SK_ColorGRAY, SK_ColorCYAN, 0xFFC1B1E1};
+ExamplesColorIds colors[] = {ExamplesColorIds::kColorBubbleExampleBackground1,
+                             ExamplesColorIds::kColorBubbleExampleBackground2,
+                             ExamplesColorIds::kColorBubbleExampleBackground3,
+                             ExamplesColorIds::kColorBubbleExampleBackground4};
 
 BubbleBorder::Arrow arrows[] = {
     BubbleBorder::TOP_LEFT,     BubbleBorder::TOP_CENTER,
@@ -94,11 +98,6 @@ void BubbleExample::CreateExampleView(View* container) {
   container->SetLayoutManager(std::make_unique<BoxLayout>(
       BoxLayout::Orientation::kHorizontal, gfx::Insets(), 10));
 
-  no_shadow_legacy_ = container->AddChildView(std::make_unique<LabelButton>(
-      base::BindRepeating(&BubbleExample::ShowBubble, base::Unretained(this),
-                          &no_shadow_legacy_, BubbleBorder::NO_SHADOW_LEGACY,
-                          false),
-      u"No Shadow Legacy"));
   standard_shadow_ = container->AddChildView(std::make_unique<LabelButton>(
       base::BindRepeating(&BubbleExample::ShowBubble, base::Unretained(this),
                           &standard_shadow_, BubbleBorder::STANDARD_SHADOW,
@@ -110,7 +109,7 @@ void BubbleExample::CreateExampleView(View* container) {
       u"No Shadow"));
   persistent_ = container->AddChildView(std::make_unique<LabelButton>(
       base::BindRepeating(&BubbleExample::ShowBubble, base::Unretained(this),
-                          &persistent_, BubbleBorder::NO_SHADOW_LEGACY, true),
+                          &persistent_, BubbleBorder::NO_SHADOW, true),
       u"Persistent"));
 }
 
@@ -127,19 +126,20 @@ void BubbleExample::ShowBubble(Button** button,
   else if (event.IsAltDown())
     arrow = BubbleBorder::FLOAT;
 
+  auto* provider = (*button)->GetColorProvider();
   // |bubble| will be destroyed by its widget when the widget is destroyed.
-  ExampleBubble* bubble = new ExampleBubble(*button, arrow);
-  bubble->set_color(colors[(color_index++) % std::size(colors)]);
+  auto bubble = std::make_unique<ExampleBubble>(*button, arrow);
+  bubble->set_color(
+      provider->GetColor(colors[(color_index++) % std::size(colors)]));
   bubble->set_shadow(shadow);
   if (persistent)
     bubble->set_close_on_deactivate(false);
 
-  BubbleDialogDelegateView::CreateBubble(bubble)->Show();
+  BubbleDialogDelegateView::CreateBubble(std::move(bubble))->Show();
 
   LogStatus(
       "Click with optional modifiers: [Ctrl] for set_arrow(NONE), "
       "[Alt] for set_arrow(FLOAT), or [Shift] to reverse the arrow iteration.");
 }
 
-}  // namespace examples
-}  // namespace views
+}  // namespace views::examples

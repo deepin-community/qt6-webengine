@@ -1,4 +1,4 @@
-# Copyright (c) 2013 The Chromium Authors. All rights reserved.
+# Copyright 2013 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -103,7 +103,6 @@ jumbo_source_set("common_sources") {
     "swap_buffers_complete_params.cc",
     "swap_buffers_complete_params.h",
     "swap_buffers_flags.h",
-    "texture_in_use_response.h",
     "thread_local.h",
     "time.h",
   ]
@@ -204,15 +203,15 @@ source_set("webgpu_sources") {
     "//base",
   ]
 
-  if (use_dawn) {
-    deps += [ "//third_party/dawn/src/dawn_wire" ]
-  }
-
   public_deps = [
     ":common",
-    "//third_party/dawn/src/dawn_wire:dawn_wire_headers",
     "//ui/gl:buildflags",
   ]
+
+  if (use_dawn) {
+    deps += [ "//third_party/dawn/src/dawn/wire" ]
+    public_deps += [ "//third_party/dawn/src/dawn/wire:headers" ]
+  }
 }
 
 component("gles2_utils") {

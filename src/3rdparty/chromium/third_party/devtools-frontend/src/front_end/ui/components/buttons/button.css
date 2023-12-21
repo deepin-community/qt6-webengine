@@ -27,8 +27,21 @@
 }
 
 button {
+  /*
+    --override-button-no-right-border-radius decides
+    whether button has border radius on the right or not.
+
+    It works as a boolean variable:
+    * If it is 1, `--button-has-right-border-radius` becomes a 0 multiplier
+    for the border-radius-top-right and border-radius-bottom-right properties.
+    * If it is not set or 0, it becomes a 1 multiplier
+    for the same properties which means they'll continue to have the given
+    border radius.
+  */
+  --button-has-right-border-radius: calc(1 - var(--override-button-no-right-border-radius, 0));
+
   align-items: center;
-  border-radius: 4px;
+  border-radius: 4px calc(var(--button-has-right-border-radius) * 4px) calc(var(--button-has-right-border-radius) * 4px) 4px;
   display: inline-flex;
   font-family: inherit;
   font-size: 12px;
@@ -38,11 +51,12 @@ button {
   padding: 5px 12px;
   justify-content: center;
   width: 100%;
+  white-space: nowrap;
 }
 
 button.small {
   height: 18px;
-  border-radius: 2px;
+  border-radius: 2px calc(var(--button-has-right-border-radius) * 2px) calc(var(--button-has-right-border-radius) * 2px) 2px;
 }
 
 button:focus-visible {
@@ -52,7 +66,7 @@ button:focus-visible {
 button.toolbar,
 button.round {
   background: transparent;
-  border-radius: 2px;
+  border-radius: 2px calc(var(--button-has-right-border-radius) * 2px) calc(var(--button-has-right-border-radius) * 2px) 2px;
   border: none;
   height: 24px;
   width: 24px;
@@ -75,6 +89,11 @@ button.toolbar.small {
 button.round.small {
   height: 24px;
   width: 24px;
+}
+
+button.round.tiny {
+  height: 18px;
+  width: 18px;
 }
 
 button.primary {
@@ -199,10 +218,26 @@ button.small devtools-icon {
   height: 14px;
 }
 
+button.explicit-size devtools-icon {
+  width: unset;
+  height: unset;
+}
+
 button.toolbar.small devtools-icon,
 button.round.small devtools-icon {
   width: 18px;
   height: 18px;
+}
+
+button.round.tiny devtools-icon {
+  width: 14px;
+  height: 14px;
+}
+
+button.toolbar.explicit-size devtools-icon,
+button.round.explicit-size devtools-icon {
+  width: unset;
+  height: unset;
 }
 
 button.toolbar.active devtools-icon,

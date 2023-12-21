@@ -1,10 +1,10 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/permissions/contexts/geolocation_permission_context.h"
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "components/content_settings/browser/page_specific_content_settings.h"
 #include "components/permissions/permission_request_id.h"
 #include "content/public/browser/browser_thread.h"
@@ -28,7 +28,6 @@ GeolocationPermissionContext::GeolocationPermissionContext(
 GeolocationPermissionContext::~GeolocationPermissionContext() = default;
 
 void GeolocationPermissionContext::DecidePermission(
-    content::WebContents* web_contents,
     const PermissionRequestID& id,
     const GURL& requesting_origin,
     const GURL& embedding_origin,
@@ -36,10 +35,10 @@ void GeolocationPermissionContext::DecidePermission(
     BrowserPermissionCallback callback) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
-  if (!delegate_->DecidePermission(web_contents, id, requesting_origin,
-                                   user_gesture, &callback, this)) {
+  if (!delegate_->DecidePermission(id, requesting_origin, user_gesture,
+                                   &callback, this)) {
     DCHECK(callback);
-    PermissionContextBase::DecidePermission(web_contents, id, requesting_origin,
+    PermissionContextBase::DecidePermission(id, requesting_origin,
                                             embedding_origin, user_gesture,
                                             std::move(callback));
   }
@@ -56,7 +55,7 @@ void GeolocationPermissionContext::UpdateTabContext(
     bool allowed) {
   content_settings::PageSpecificContentSettings* content_settings =
       content_settings::PageSpecificContentSettings::GetForFrame(
-          id.render_process_id(), id.render_frame_id());
+          id.global_render_frame_host_id());
 
   // WebContents might not exist (extensions) or no longer exist. In which case,
   // PageSpecificContentSettings will be null.
@@ -70,10 +69,6 @@ void GeolocationPermissionContext::UpdateTabContext(
   if (allowed) {
     GetGeolocationControl()->UserDidOptIntoLocationServices();
   }
-}
-
-bool GeolocationPermissionContext::IsRestrictedToSecureOrigins() const {
-  return true;
 }
 
 device::mojom::GeolocationControl*

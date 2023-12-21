@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,6 +10,7 @@
 #include "base/types/strong_alias.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/common/permissions_policy/permissions_policy.h"
+#include "third_party/blink/public/mojom/manifest/manifest.mojom-blink-forward.h"
 #include "third_party/blink/public/mojom/manifest/manifest.mojom-blink.h"
 #include "third_party/blink/public/mojom/permissions_policy/permissions_policy.mojom-blink.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
@@ -54,9 +55,11 @@ class MODULES_EXPORT ManifestParser {
   // https://w3c.github.io/manifest/#processing
   bool Parse();
 
-  const mojom::blink::ManifestPtr& manifest() const;
   bool failed() const;
 
+  // Takes ownership of the Manifest produced by Parse(). Once called, the
+  // parser is invalid and should no longer be used.
+  mojom::blink::ManifestPtr TakeManifest();
   void TakeErrors(Vector<mojom::blink::ManifestErrorPtr>* errors);
 
  private:
@@ -216,16 +219,28 @@ class MODULES_EXPORT ManifestParser {
       const JSONObject* object);
 
   // Parses the 'screenshots' field of a Manifest, as defined in:
-  // https://w3c.github.io/manifest/#screenshots-member
+  // https://www.w3.org/TR/manifest-app-info/#screenshots-member
   // Returns a vector of ManifestImageResourcePtr with the successfully parsed
   // screenshots, if any. An empty vector if the field was not present or empty.
-  Vector<mojom::blink::ManifestImageResourcePtr> ParseScreenshots(
+  Vector<mojom::blink::ManifestScreenshotPtr> ParseScreenshots(
       const JSONObject* object);
 
+  // Parse the 'form_factor' field of 'screenshots' as defined in:
+  // https://www.w3.org/TR/manifest-app-info/#form_factor-member
+  mojom::blink::ManifestScreenshot::FormFactor ParseScreenshotFormFactor(
+      const JSONObject* screenshot);
+
+  // Parse the 'label' field of 'screenshots' as defined in:
+  // https://www.w3.org/TR/manifest-app-info/#label-member
+  String ParseScreenshotLabel(const JSONObject* object);
+
   // A helper function for parsing ImageResources under |key| in the manifest.
-  Vector<mojom::blink::ManifestImageResourcePtr> ParseImageResource(
+  Vector<mojom::blink::ManifestImageResourcePtr> ParseImageResourceArray(
       const String& key,
       const JSONObject* object);
+
+  absl::optional<mojom::blink::ManifestImageResourcePtr> ParseImageResource(
+      const JSONValue* object);
 
   // Parses the 'name' field of a shortcut, as defined in:
   // https://w3c.github.io/manifest/#shortcuts-member
@@ -322,6 +337,35 @@ class MODULES_EXPORT ManifestParser {
   absl::optional<mojom::blink::ManifestUrlHandlerPtr> ParseUrlHandler(
       const JSONObject* object);
 
+  // Parses the 'scope_extensions' field of a Manifest, as defined in:
+  // https://github.com/WICG/manifest-incubations/blob/gh-pages/scope_extensions-explainer.md
+  // Returns the parsed list of ScopeExtensions. The returned ScopeExtensions
+  // are empty if the field didn't exist, parsing failed, the input list was
+  // empty, or if the blink feature flag is disabled.
+  // This feature is experimental and is only enabled by the blink feature flag:
+  // blink::features::kWebAppEnableScopeExtensions.
+  Vector<mojom::blink::ManifestScopeExtensionPtr> ParseScopeExtensions(
+      const JSONObject* object);
+
+  // Parses a single scope extension entry in 'scope_extensions', as defined in:
+  // https://github.com/WICG/manifest-incubations/blob/gh-pages/scope_extensions-explainer.md
+  // Returns |absl::nullopt| if the ScopeExtension was invalid, or a
+  // ScopeExtension if parsing succeeded.
+  // This feature is experimental and is only enabled by the blink feature flag:
+  // blink::features::kWebAppEnableScopeExtensions.
+  absl::optional<mojom::blink::ManifestScopeExtensionPtr> ParseScopeExtension(
+      const JSONObject* object);
+
+  // Parses a single scope extension origin in 'scope_extensions', as defined
+  // in:
+  // https://github.com/WICG/manifest-incubations/blob/gh-pages/scope_extensions-explainer.md
+  // Returns |absl::nullopt| if the ScopeExtension origin was invalid, or a
+  // ScopeExtension if parsing succeeded.
+  // This feature is experimental and is only enabled by the blink feature flag:
+  // blink::features::kWebAppEnableScopeExtensions.
+  absl::optional<mojom::blink::ManifestScopeExtensionPtr>
+  ParseScopeExtensionOrigin(const String& origin_string);
+
   // Parses the 'file_handlers' field of a Manifest, as defined in:
   // https://github.com/WICG/file-handling/blob/main/explainer.md
   // Returns the parsed list of FileHandlers. The returned FileHandlers are
@@ -364,6 +408,19 @@ class MODULES_EXPORT ManifestParser {
   // ProtocolHandler if parsing succeeded.
   absl::optional<mojom::blink::ManifestProtocolHandlerPtr> ParseProtocolHandler(
       const JSONObject* protocol_dictionary);
+
+  // Parses the 'start_url' field of the 'lock_screen' field of a Manifest,
+  // as defined in:
+  // https://github.com/WICG/lock-screen/
+  // Returns the parsed KURL if any, or an empty KURL if parsing failed.
+  KURL ParseLockScreenStartUrl(const JSONObject* lock_screen);
+
+  // Parses the 'lock_screen' field of a Manifest, as defined in:
+  // https://github.com/WICG/lock-screen/
+  // Returns a parsed ManifestLockScreenPtr, or nullptr if not present or
+  // parsing failed.
+  mojom::blink::ManifestLockScreenPtr ParseLockScreen(
+      const JSONObject* manifest);
 
   // Parses the 'new_note_url' field of the 'note_taking' field of a Manifest,
   // as defined in:
@@ -423,12 +480,6 @@ class MODULES_EXPORT ManifestParser {
   // Returns the parsed string if any, a null string if the parsing failed.
   String ParseGCMSenderID(const JSONObject* object);
 
-  // Parses the 'isolated_storage' field of the manifest.
-  // This marks whether the application should be loaded in a dedicated storage
-  // partition.
-  // Returns true iff the field could be parsed as the boolean true.
-  bool ParseIsolatedStorage(const JSONObject* object);
-
   // Parses the 'permissions_policy' field of the manifest.
   // This outsources semantic parsing of the policy to the
   // PermissionsPolicyParser.
@@ -438,7 +489,7 @@ class MODULES_EXPORT ManifestParser {
                                       const String& feature);
 
   // Parses the 'launch_handler' field of the manifest as defined in:
-  // https://github.com/WICG/sw-launch/blob/main/launch_handler.md
+  // https://github.com/WICG/web-app-launch/blob/main/launch_handler.md
   // Returns default values if parsing fails.
   mojom::blink::ManifestLaunchHandlerPtr ParseLaunchHandler(
       const JSONObject* object);
@@ -456,14 +507,23 @@ class MODULES_EXPORT ManifestParser {
       const String& preference);
 
   // Parse the 'user_preferences' field of the manifest as defined in:
-  // https://github.com/w3c/manifest/issues/975#issuecomment-960222756
+  // https://github.com/WICG/manifest-incubations/blob/gh-pages/user-preferences-explainer.md
   // Returns nullptr if parsing fails.
   mojom::blink::ManifestUserPreferencesPtr ParseUserPreferences(
       const JSONObject* object);
 
-  // Parse the `handle_links` field of the manifest as defined in:
-  // https://github.com/WICG/pwa-url-handler/blob/main/handle_links/explainer.md
-  mojom::blink::HandleLinks ParseHandleLinks(const JSONObject* object);
+  // Parse the override fields for theme_color and background_color as defined
+  // in: https://github.com/w3c/manifest/issues/1045
+  // Returns the dark mode color if any, or a null optional otherwise.
+  absl::optional<RGBA32> ParseDarkColorOverride(const JSONObject* object,
+                                                const String& key);
+
+  // Parses the 'tab_strip' field of the manifest as defined in:
+  // https://github.com/WICG/manifest-incubations/blob/gh-pages/tabbed-mode-explainer.md
+  mojom::blink::ManifestTabStripPtr ParseTabStrip(const JSONObject* object);
+
+  mojom::blink::TabStripMemberVisibility ParseTabStripMemberVisibility(
+      const JSONValue* json_value);
 
   void AddErrorInfo(const String& error_msg,
                     bool critical = false,

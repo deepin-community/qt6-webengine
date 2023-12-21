@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -78,10 +78,6 @@ unsigned GLImageGLX::GetDataType() {
   return GL_UNSIGNED_BYTE;
 }
 
-GLImageGLX::BindOrCopy GLImageGLX::ShouldBindOrCopy() {
-  return BIND;
-}
-
 bool GLImageGLX::BindTexImage(unsigned target) {
   if (!glx_pixmap_)
     return false;
@@ -108,18 +104,6 @@ void GLImageGLX::ReleaseTexImage(unsigned target) {
 bool GLImageGLX::CopyTexImage(unsigned target) {
   NOTREACHED();
   return false;
-}
-
-bool GLImageGLX::CopyTexSubImage(unsigned target,
-                                 const gfx::Point& offset,
-                                 const gfx::Rect& rect) {
-  return false;
-}
-
-void GLImageGLX::OnMemoryDump(base::trace_event::ProcessMemoryDump* pmd,
-                              uint64_t process_tracing_id,
-                              const std::string& dump_name) {
-  // TODO(ericrk): Implement GLImage OnMemoryDump. crbug.com/514914
 }
 
 }  // namespace gl

@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,7 +12,9 @@
 #include "base/sequence_checker.h"
 #include "media/base/video_codecs.h"
 #include "media/base/video_color_space.h"
+#include "media/base/video_types.h"
 #include "media/gpu/accelerated_video_decoder.h"
+#include "media/gpu/av1_picture.h"
 #include "media/gpu/media_gpu_export.h"
 #include "third_party/libgav1/src/src/utils/constants.h"
 
@@ -22,6 +24,7 @@
 // fulfill std::is_trivially_constructible if it is forward-declared. But
 // ObuSequenceHeader doesn't.
 #include "third_party/libgav1/src/src/obu_parser.h"
+#include "ui/gfx/hdr_metadata.h"
 
 namespace libgav1 {
 struct DecoderState;
@@ -31,7 +34,6 @@ class Vector;
 }  // namespace libgav1
 
 namespace media {
-class AV1Picture;
 using AV1ReferenceFrameVector =
     std::array<scoped_refptr<AV1Picture>, libgav1::kNumReferenceFrameTypes>;
 
@@ -124,6 +126,8 @@ class MEDIA_GPU_EXPORT AV1Decoder : public AcceleratedVideoDecoder {
   gfx::Rect GetVisibleRect() const override;
   VideoCodecProfile GetProfile() const override;
   uint8_t GetBitDepth() const override;
+  VideoChromaSampling GetChromaSampling() const override;
+  absl::optional<gfx::HDRMetadata> GetHDRMetadata() const override;
   size_t GetRequiredNumOfPictures() const override;
   size_t GetNumReferenceFrames() const override;
 
@@ -163,6 +167,8 @@ class MEDIA_GPU_EXPORT AV1Decoder : public AcceleratedVideoDecoder {
   VideoCodecProfile profile_;
   VideoColorSpace container_color_space_;
   uint8_t bit_depth_ = 0;
+  VideoChromaSampling chroma_sampling_ = VideoChromaSampling::kUnknown;
+  absl::optional<gfx::HDRMetadata> hdr_metadata_;
 
   int32_t stream_id_ = 0;
   const uint8_t* stream_ = nullptr;

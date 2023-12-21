@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -22,8 +22,8 @@
 #include "base/values.h"
 #include "pdf/document_attachment_info.h"
 #include "pdf/document_layout.h"
-#include "pdf/document_loader.h"
 #include "pdf/document_metadata.h"
+#include "pdf/loader/document_loader.h"
 #include "pdf/pdf_engine.h"
 #include "pdf/pdfium/pdfium_form_filler.h"
 #include "pdf/pdfium/pdfium_page.h"
@@ -106,7 +106,7 @@ class PDFiumEngine : public PDFEngine,
       const std::vector<int>& page_numbers,
       const blink::WebPrintParams& print_params) override;
   void PrintEnd() override;
-  void StartFind(const std::string& text, bool case_sensitive) override;
+  void StartFind(const std::u16string& text, bool case_sensitive) override;
   bool SelectFindResult(bool forward) override;
   void StopFind() override;
   void ZoomUpdated(double new_zoom_level) override;
@@ -114,7 +114,7 @@ class PDFiumEngine : public PDFEngine,
   void RotateCounterclockwise() override;
   bool IsReadOnly() const override;
   void SetReadOnly(bool enable) override;
-  void SetTwoUpView(bool enable) override;
+  void SetDocumentLayout(DocumentLayout::PageSpread page_spread) override;
   void DisplayAnnotations(bool display) override;
   gfx::Size ApplyDocumentLayout(
       const DocumentLayout::Options& options) override;
@@ -391,7 +391,7 @@ class PDFiumEngine : public PDFEngine,
   void UpdateTickMarks();
 
   // Called to continue searching so we don't block the main thread.
-  void ContinueFind(int32_t result);
+  void ContinueFind(bool case_sensitive);
 
   // Inserts a find result into `find_results_`, which is sorted.
   void AddFindResult(const PDFiumRange& result);
@@ -723,7 +723,7 @@ class PDFiumEngine : public PDFEngine,
   gfx::Point mouse_middle_button_last_position_;
 
   // The current text used for searching.
-  std::string current_find_text_;
+  std::u16string current_find_text_;
   // The results found.
   std::vector<PDFiumRange> find_results_;
   // Whether a search is in progress.

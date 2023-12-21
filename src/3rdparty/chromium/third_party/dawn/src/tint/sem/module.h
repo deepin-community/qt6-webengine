@@ -15,14 +15,14 @@
 #ifndef SRC_TINT_SEM_MODULE_H_
 #define SRC_TINT_SEM_MODULE_H_
 
-#include <vector>
-
+#include "src/tint/ast/diagnostic_control.h"
+#include "src/tint/builtin/extension.h"
 #include "src/tint/sem/node.h"
+#include "src/tint/utils/vector.h"
 
 // Forward declarations
 namespace tint::ast {
 class Node;
-class Module;
 }  // namespace tint::ast
 
 namespace tint::sem {
@@ -30,21 +30,39 @@ namespace tint::sem {
 /// Module holds the top-level semantic types, functions and global variables
 /// used by a Program.
 class Module final : public Castable<Module, Node> {
- public:
-  /// Constructor
-  /// @param dep_ordered_decls the dependency-ordered module-scope declarations
-  explicit Module(std::vector<const ast::Node*> dep_ordered_decls);
+  public:
+    /// Constructor
+    /// @param dep_ordered_decls the dependency-ordered module-scope declarations
+    /// @param extensions the list of enabled extensions in the module
+    Module(utils::VectorRef<const ast::Node*> dep_ordered_decls, builtin::Extensions extensions);
 
-  /// Destructor
-  ~Module() override;
+    /// Destructor
+    ~Module() override;
 
-  /// @returns the dependency-ordered global declarations for the module
-  const std::vector<const ast::Node*>& DependencyOrderedDeclarations() const {
-    return dep_ordered_decls_;
-  }
+    /// @returns the dependency-ordered global declarations for the module
+    utils::VectorRef<const ast::Node*> DependencyOrderedDeclarations() const {
+        return dep_ordered_decls_;
+    }
 
- private:
-  const std::vector<const ast::Node*> dep_ordered_decls_;
+    /// @returns the list of enabled extensions in the module
+    const builtin::Extensions& Extensions() const { return extensions_; }
+
+    /// Modifies the severity of a specific diagnostic rule for this module.
+    /// @param rule the diagnostic rule
+    /// @param severity the new diagnostic severity
+    void SetDiagnosticSeverity(builtin::DiagnosticRule rule, builtin::DiagnosticSeverity severity) {
+        diagnostic_severities_[rule] = severity;
+    }
+
+    /// @returns the diagnostic severity modifications applied to this module
+    const builtin::DiagnosticRuleSeverities& DiagnosticSeverities() const {
+        return diagnostic_severities_;
+    }
+
+  private:
+    const utils::Vector<const ast::Node*, 64> dep_ordered_decls_;
+    builtin::Extensions extensions_;
+    builtin::DiagnosticRuleSeverities diagnostic_severities_;
 };
 
 }  // namespace tint::sem

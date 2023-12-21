@@ -3,6 +3,7 @@ load("@org_tensorflow//tensorflow/lite/core/shims:cc_library_with_tflite.bzl", "
 load("@build_bazel_rules_android//android:rules.bzl", "android_library")
 
 package(
+    default_applicable_licenses = ["//tensorflow_lite_support:license"],
     default_visibility = ["//visibility:public"],
     licenses = ["notice"],  # Apache 2.0
 )
@@ -36,7 +37,6 @@ android_library(
     srcs = glob(["*.java"]) + [
         "//tensorflow_lite_support/java/src/java/org/tensorflow/lite/task/vision/core:base_vision_api_src",
     ],
-    javacopts = ["-source 7 -target 7"],
     manifest = "AndroidManifest.xml",
     deps = [
         "//tensorflow_lite_support/java:tensorflowlite_support_java",

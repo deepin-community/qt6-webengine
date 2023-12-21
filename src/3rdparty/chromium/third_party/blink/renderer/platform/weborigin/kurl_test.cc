@@ -35,13 +35,15 @@
 
 #include <stdint.h>
 
+#include "base/test/scoped_feature_list.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/blink/renderer/platform/scheduler/public/thread.h"
+#include "third_party/blink/renderer/platform/scheduler/public/non_main_thread.h"
 #include "third_party/blink/renderer/platform/weborigin/scheme_registry.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 #include "url/gurl.h"
 #include "url/gurl_abstract_tests.h"
+#include "url/url_features.h"
 #include "url/url_util.h"
 
 namespace blink {
@@ -646,7 +648,7 @@ TEST(KURLTest, Empty) {
   EXPECT_FALSE(kurl.IsValid());
   EXPECT_TRUE(kurl.IsNull());
   EXPECT_TRUE(kurl.GetString().IsNull());
-  EXPECT_TRUE(kurl.GetString().IsEmpty());
+  EXPECT_TRUE(kurl.GetString().empty());
 
   // Test resolving a null URL on an empty string.
   const KURL kurl2(kurl, "");
@@ -654,9 +656,9 @@ TEST(KURLTest, Empty) {
   EXPECT_TRUE(kurl2.IsEmpty());
   EXPECT_FALSE(kurl2.IsValid());
   EXPECT_FALSE(kurl2.GetString().IsNull());
-  EXPECT_TRUE(kurl2.GetString().IsEmpty());
+  EXPECT_TRUE(kurl2.GetString().empty());
   EXPECT_FALSE(kurl2.GetString().IsNull());
-  EXPECT_TRUE(kurl2.GetString().IsEmpty());
+  EXPECT_TRUE(kurl2.GetString().empty());
 
   // Resolve the null URL on a null string.
   const KURL kurl22(kurl, String());
@@ -664,9 +666,9 @@ TEST(KURLTest, Empty) {
   EXPECT_TRUE(kurl22.IsEmpty());
   EXPECT_FALSE(kurl22.IsValid());
   EXPECT_FALSE(kurl22.GetString().IsNull());
-  EXPECT_TRUE(kurl22.GetString().IsEmpty());
+  EXPECT_TRUE(kurl22.GetString().empty());
   EXPECT_FALSE(kurl22.GetString().IsNull());
-  EXPECT_TRUE(kurl22.GetString().IsEmpty());
+  EXPECT_TRUE(kurl22.GetString().empty());
 
   // Test non-hierarchical schemes resolving. The actual URLs will be different.
   // WebKit's one will set the string to "something.gif" and we'll set it to an
@@ -681,7 +683,7 @@ TEST(KURLTest, Empty) {
   EXPECT_TRUE(kurl4.IsEmpty());
   EXPECT_FALSE(kurl4.IsValid());
   EXPECT_TRUE(kurl4.GetString().IsNull());
-  EXPECT_TRUE(kurl4.GetString().IsEmpty());
+  EXPECT_TRUE(kurl4.GetString().empty());
 
   // Resolving an empty URL on an invalid string.
   const KURL kurl5("foo.js");
@@ -696,7 +698,7 @@ TEST(KURLTest, Empty) {
   EXPECT_TRUE(kurl6.IsEmpty());
   EXPECT_FALSE(kurl6.IsValid());
   EXPECT_FALSE(kurl6.GetString().IsNull());
-  EXPECT_TRUE(kurl6.GetString().IsEmpty());
+  EXPECT_TRUE(kurl6.GetString().empty());
 
   // Non-empty but invalid C string as input.
   const KURL kurl7("foo.js");
@@ -754,26 +756,13 @@ TEST(KURLTest, Offsets) {
   EXPECT_EQ(11u, kurl3.PathAfterLastSlash());
 }
 
-TEST(KURLTest, DeepCopy) {
-  const char kUrl[] = "http://www.google.com/";
-  const KURL src(kUrl);
-  EXPECT_TRUE(src.GetString() ==
-              kUrl);  // This really just initializes the cache.
-  const KURL dest = src.Copy();
-  EXPECT_TRUE(dest.GetString() ==
-              kUrl);  // This really just initializes the cache.
-
-  // The pointers should be different for both UTF-8 and UTF-16.
-  EXPECT_NE(dest.GetString().Impl(), src.GetString().Impl());
-}
-
 TEST(KURLTest, DeepCopyInnerURL) {
   const char kUrl[] = "filesystem:http://www.google.com/temporary/test.txt";
   const char kInnerURL[] = "http://www.google.com/temporary";
   const KURL src(kUrl);
   EXPECT_TRUE(src.GetString() == kUrl);
   EXPECT_TRUE(src.InnerURL()->GetString() == kInnerURL);
-  const KURL dest = src.Copy();
+  const KURL dest = src;
   EXPECT_TRUE(dest.GetString() == kUrl);
   EXPECT_TRUE(dest.InnerURL()->GetString() == kInnerURL);
 }
@@ -891,7 +880,9 @@ TEST(KURLTest, urlStrippedForUseAsReferrerRespectsReferrerScheme) {
   const String foobar_scheme = String::FromUTF8("foobar");
 
   EXPECT_EQ("", foobar_url.StrippedForUseAsReferrer().Utf8());
-
+#if DCHECK_IS_ON()
+  WTF::SetIsBeforeThreadCreatedForTest();  // Required for next operation:
+#endif
   SchemeRegistry::RegisterURLSchemeAsAllowedForReferrer(foobar_scheme);
   EXPECT_EQ("foobar://somepage/", foobar_url.StrippedForUseAsReferrer());
   SchemeRegistry::RemoveURLSchemeAsAllowedForReferrer(foobar_scheme);
@@ -937,8 +928,8 @@ TEST(KURLTest, ThreadSafesStaticKurlGetters) {
   KURL null_url = NullURL();
   EXPECT_TRUE(null_url.IsNull());
 
-  auto thread =
-      Thread::CreateThread(ThreadCreationParams(ThreadType::kTestThread));
+  auto thread = NonMainThread::CreateThread(
+      ThreadCreationParams(ThreadType::kTestThread));
   thread->GetTaskRunner()->PostTask(FROM_HERE, base::BindOnce([]() {
                                       // Reference each of the static KURLs
                                       // again, from the background thread,
@@ -1083,7 +1074,7 @@ TEST(KURLTest, InvalidKURLToGURL) {
 
   // This passes the original internal url to GURL, check that it arrives
   // in an internally self-consistent state.
-  GURL gurl = kurl;
+  GURL gurl = GURL(kurl);
   EXPECT_FALSE(gurl.is_valid());
   EXPECT_TRUE(gurl.SchemeIs(url::kHttpScheme));
 
@@ -1091,6 +1082,68 @@ TEST(KURLTest, InvalidKURLToGURL) {
   // becomes an escaped percent sign (%25), and the invalid UTF-8
   // character becomes REPLACEMENT CHARACTER' (U+FFFD) encoded as UTF-8.
   EXPECT_EQ(gurl.host_piece(), "%25t%EF%BF%BD");
+}
+
+TEST(KURLTest, HasIDNA2008DeviationCharacters) {
+  // èxample.com:
+  EXPECT_FALSE(
+      KURL("http://\xE8xample.com/path").HasIDNA2008DeviationCharacter());
+  // faß.de (contains Sharp-S):
+  EXPECT_TRUE(KURL(u"http://fa\u00df.de/path").HasIDNA2008DeviationCharacter());
+  // βόλος.com (contains Greek Final Sigma):
+  EXPECT_TRUE(KURL(u"http://\u03b2\u03cc\u03bb\u03bf\u03c2.com/path")
+                  .HasIDNA2008DeviationCharacter());
+  // ශ්‍රී.com (contains Zero Width Joiner):
+  EXPECT_TRUE(KURL(u"http://\u0DC1\u0DCA\u200D\u0DBB\u0DD3.com")
+                  .HasIDNA2008DeviationCharacter());
+  // http://نامه\u200cای.com (contains Zero Width Non-Joiner):
+  EXPECT_TRUE(KURL(u"http://\u0646\u0627\u0645\u0647\u200C\u0627\u06CC.com")
+                  .HasIDNA2008DeviationCharacter());
+
+  // Copying the URL from a canonical string presently doesn't copy the boolean.
+  KURL url1(u"http://\u03b2\u03cc\u03bb\u03bf\u03c2.com/path");
+  std::string url_string = url1.GetString().Utf8();
+  KURL url2(AtomicString::FromUTF8(url_string.data(), url_string.length()),
+            url1.GetParsed(), url1.IsValid());
+  EXPECT_FALSE(url2.HasIDNA2008DeviationCharacter());
+}
+
+class KURLIPv4EmbeddedIPv6Test : public ::testing::Test,
+                                 public ::testing::WithParamInterface<bool> {
+ public:
+  KURLIPv4EmbeddedIPv6Test() {
+    if (GetParam()) {
+      scoped_feature_list_.InitAndEnableFeature(
+          url::kStrictIPv4EmbeddedIPv6AddressParsing);
+    } else {
+      scoped_feature_list_.InitAndDisableFeature(
+          url::kStrictIPv4EmbeddedIPv6AddressParsing);
+    }
+  }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+INSTANTIATE_TEST_SUITE_P(All,
+                         KURLIPv4EmbeddedIPv6Test,
+                         ::testing::Bool());
+
+TEST_P(KURLIPv4EmbeddedIPv6Test, IPv4EmbeddedIPv6Address) {
+  EXPECT_TRUE(KURL(u"http://[::1.2.3.4.]/").IsValid());
+  EXPECT_TRUE(KURL(u"http://[::1.2.3.4]/").IsValid());
+  EXPECT_FALSE(KURL(u"http://[::1.2.3.4.5]/").IsValid());
+  EXPECT_FALSE(KURL(u"http://[::.1.2]/").IsValid());
+  EXPECT_FALSE(KURL(u"http://[::.]/").IsValid());
+
+  if (base::FeatureList::IsEnabled(
+          url::kStrictIPv4EmbeddedIPv6AddressParsing)) {
+    EXPECT_FALSE(KURL(u"http://[::1.2]/").IsValid());
+    EXPECT_FALSE(KURL(u"http://[::1.2.]/").IsValid());
+  } else {
+    EXPECT_TRUE(KURL(u"http://[::1.2]/").IsValid());
+    EXPECT_TRUE(KURL(u"http://[::1.2.]/").IsValid());
+  }
 }
 
 enum class PortIsValid {

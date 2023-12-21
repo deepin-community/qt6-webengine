@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -42,8 +42,7 @@ class WindowController;
 // we can gracefully handle cases like WebContents, where the RVH, extension,
 // and URL can all change over the lifetime of the tab. Instead, these items
 // are all passed into each request.
-class ExtensionFunctionDispatcher
-    : public base::SupportsWeakPtr<ExtensionFunctionDispatcher> {
+class ExtensionFunctionDispatcher {
  public:
   class Delegate {
    public:
@@ -76,8 +75,7 @@ class ExtensionFunctionDispatcher
   // Dispatches a request and the response is sent in |callback| that is a reply
   // of mojom::LocalFrameHost::Request.
   void Dispatch(mojom::RequestParamsPtr params,
-                content::RenderFrameHost* render_frame_host,
-                int render_process_id,
+                content::RenderFrameHost& frame,
                 mojom::LocalFrameHost::RequestCallback callback);
 
   // Message handlers.
@@ -112,6 +110,10 @@ class ExtensionFunctionDispatcher
   void ProcessServiceWorkerResponse(int request_id,
                                     int64_t service_worker_version_id);
 
+  base::WeakPtr<ExtensionFunctionDispatcher> AsWeakPtr() {
+    return weak_ptr_factory_.GetWeakPtr();
+  }
+
  private:
   // For a given RenderFrameHost instance, ResponseCallbackWrapper
   // creates ExtensionFunction::ResponseCallback instances which send responses
@@ -139,7 +141,6 @@ class ExtensionFunctionDispatcher
       const GURL* rfh_url,
       const ProcessMap& process_map,
       ExtensionAPI* api,
-      void* profile_id,
       ExtensionFunction::ResponseCallback callback);
 
   void DispatchWithCallbackInternal(
@@ -150,9 +151,9 @@ class ExtensionFunctionDispatcher
 
   void RemoveWorkerCallbacksForProcess(int render_process_id);
 
-  raw_ptr<content::BrowserContext> browser_context_;
+  raw_ptr<content::BrowserContext, DanglingUntriaged> browser_context_;
 
-  raw_ptr<Delegate> delegate_;
+  raw_ptr<Delegate, DanglingUntriaged> delegate_;
 
   // This map doesn't own either the keys or the values. When a RenderFrameHost
   // instance goes away, the corresponding entry in this map (if exists) will be
@@ -173,6 +174,8 @@ class ExtensionFunctionDispatcher
   // the renderer. These are removed once the response is processed.
   // The lifetimes of the instances are managed by the instances themselves.
   std::set<ExtensionFunction*> worker_response_targets_;
+
+  base::WeakPtrFactory<ExtensionFunctionDispatcher> weak_ptr_factory_{this};
 };
 
 }  // namespace extensions

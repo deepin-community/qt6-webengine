@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -8,7 +8,7 @@
 
 #include <stdint.h>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/hash/md5.h"
 #include "base/lazy_instance.h"
 #include "base/strings/string_util.h"
@@ -191,7 +191,7 @@ void ThreatDetailsCacheCollector::ReadResponse(
   std::string name, value;
   while (headers->EnumerateHeaderLines(&iter, &name, &value)) {
     // Strip any Set-Cookie headers.
-    if (base::LowerCaseEqualsASCII(name, "set-cookie"))
+    if (base::EqualsCaseInsensitiveASCII(name, "set-cookie"))
       continue;
     ClientSafeBrowsingReportRequest::HTTPHeader* pb_header =
         pb_response->add_headers();

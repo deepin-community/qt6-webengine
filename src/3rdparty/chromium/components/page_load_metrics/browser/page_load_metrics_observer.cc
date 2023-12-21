@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,39 +8,13 @@
 
 #include "net/base/load_timing_info.h"
 
-namespace {
-
-int BucketWithOffsetAndUnit(int num, int offset, int unit) {
-  // Bucketing raw number with `offset` centered.
-  const int grid = (num - offset) / unit;
-  const int bucketed =
-      grid == 0 ? 0
-                : grid > 0 ? std::pow(2, static_cast<int>(std::log2(grid)))
-                           : -std::pow(2, static_cast<int>(std::log2(-grid)));
-  return bucketed * unit + offset;
-}
-
-}  // namespace
-
 namespace page_load_metrics {
-
-int GetBucketedViewportInitialScale(const blink::MobileFriendliness& mf) {
-  return mf.viewport_initial_scale_x10 <= -1
-             ? -1
-             : BucketWithOffsetAndUnit(mf.viewport_initial_scale_x10, 10, 2);
-}
-
-int GetBucketedViewportHardcodedWidth(const blink::MobileFriendliness& mf) {
-  return mf.viewport_hardcoded_width <= -1
-             ? -1
-             : BucketWithOffsetAndUnit(mf.viewport_hardcoded_width, 500, 10);
-}
 
 MemoryUpdate::MemoryUpdate(content::GlobalRenderFrameHostId id, int64_t delta)
     : routing_id(id), delta_bytes(delta) {}
 
 ExtraRequestCompleteInfo::ExtraRequestCompleteInfo(
-    const url::Origin& origin_of_final_url,
+    const url::SchemeHostPort& final_url,
     const net::IPEndPoint& remote_endpoint,
     int frame_tree_node_id,
     bool was_cached,
@@ -49,7 +23,7 @@ ExtraRequestCompleteInfo::ExtraRequestCompleteInfo(
     network::mojom::RequestDestination request_destination,
     int net_error,
     std::unique_ptr<net::LoadTimingInfo> load_timing_info)
-    : origin_of_final_url(origin_of_final_url),
+    : final_url(final_url),
       remote_endpoint(remote_endpoint),
       frame_tree_node_id(frame_tree_node_id),
       was_cached(was_cached),
@@ -61,7 +35,7 @@ ExtraRequestCompleteInfo::ExtraRequestCompleteInfo(
 
 ExtraRequestCompleteInfo::ExtraRequestCompleteInfo(
     const ExtraRequestCompleteInfo& other)
-    : origin_of_final_url(other.origin_of_final_url),
+    : final_url(other.final_url),
       remote_endpoint(other.remote_endpoint),
       frame_tree_node_id(other.frame_tree_node_id),
       was_cached(other.was_cached),
@@ -86,29 +60,11 @@ const char* PageLoadMetricsObserver::GetObserverName() const {
   return nullptr;
 }
 
-base::WeakPtr<PageLoadMetricsObserver> PageLoadMetricsObserver::GetWeakPtr() {
-  return weak_factory_.GetWeakPtr();
-}
-
 PageLoadMetricsObserver::ObservePolicy PageLoadMetricsObserver::OnStart(
     content::NavigationHandle* navigation_handle,
     const GURL& currently_committed_url,
     bool started_in_foreground) {
   return CONTINUE_OBSERVING;
-}
-
-PageLoadMetricsObserver::ObservePolicy
-PageLoadMetricsObserver::OnFencedFramesStart(
-    content::NavigationHandle* navigation_handle,
-    const GURL& currently_committed_url) {
-  return STOP_OBSERVING;
-}
-
-PageLoadMetricsObserver::ObservePolicy
-PageLoadMetricsObserver::OnPrerenderStart(
-    content::NavigationHandle* navigation_handle,
-    const GURL& currently_committed_url) {
-  return STOP_OBSERVING;
 }
 
 PageLoadMetricsObserver::ObservePolicy PageLoadMetricsObserver::OnRedirect(

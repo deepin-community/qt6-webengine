@@ -1,4 +1,4 @@
-// Copyright 2017 PDFium Authors. All rights reserved.
+// Copyright 2017 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -32,7 +32,6 @@ class CFX_XMLElement final : public CFX_XMLNode {
   bool HasAttribute(const WideString& name) const;
   void SetAttribute(const WideString& name, const WideString& value);
   WideString GetAttribute(const WideString& name) const;
-
   void RemoveAttribute(const WideString& name);
 
   CFX_XMLElement* GetFirstChildNamed(WideStringView name) const;

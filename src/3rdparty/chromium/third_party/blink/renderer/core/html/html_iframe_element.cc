@@ -29,6 +29,7 @@
 #include "services/network/public/cpp/web_sandbox_flags.h"
 #include "services/network/public/mojom/trust_tokens.mojom-blink.h"
 #include "services/network/public/mojom/web_sandbox_flags.mojom-blink.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/mojom/frame/frame.mojom-blink.h"
 #include "third_party/blink/public/mojom/permissions_policy/permissions_policy.mojom-blink.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_html_iframe_element.h"
@@ -51,9 +52,33 @@
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/json/json_parser.h"
+#include "third_party/blink/renderer/platform/network/content_security_policy_parsers.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 
 namespace blink {
+
+namespace {
+// Cut down |value| if too long and return empty string if null. This is used to
+// convert the HTML attributes to report to the browser.
+String ConvertToReportValue(const AtomicString& value) {
+  if (value.IsNull()) {
+    return g_empty_string;
+  }
+  static constexpr size_t kMaxLengthToReport = 1024;
+  return value.GetString().Left(kMaxLengthToReport);
+}
+
+bool AnonymousIframeEnabled(const FeatureContext* context) {
+  // AnonymousIframe is enabled via command line flags, or via the Origin Trial.
+  // The origin trial is gated using the `AnonymousIframeOriginTrial` flag until
+  // AnonymousIframe is safe to use. It is useful, because the OT token do not
+  // enforce a specific version.
+  return RuntimeEnabledFeatures::AnonymousIframeEnabled(nullptr) ||
+         (RuntimeEnabledFeatures::AnonymousIframeEnabled(context) &&
+          base::FeatureList::IsEnabled(features::kAnonymousIframeOriginTrial));
+}
+
+}  // namespace
 
 HTMLIFrameElement::HTMLIFrameElement(Document& document)
     : HTMLFrameElementBase(html_names::kIFrameTag, document),
@@ -129,9 +154,13 @@ void HTMLIFrameElement::CollectStyleForPresentationAttribute(
     // off if set to zero.
     if (!value.ToInt()) {
       // Add a rule that nulls out our border width.
-      AddPropertyToPresentationAttributeStyle(
-          style, CSSPropertyID::kBorderWidth, 0,
-          CSSPrimitiveValue::UnitType::kPixels);
+      for (CSSPropertyID property_id :
+           {CSSPropertyID::kBorderTopWidth, CSSPropertyID::kBorderBottomWidth,
+            CSSPropertyID::kBorderLeftWidth,
+            CSSPropertyID::kBorderRightWidth}) {
+        AddPropertyToPresentationAttributeStyle(
+            style, property_id, 0, CSSPrimitiveValue::UnitType::kPixels);
+      }
     }
   } else {
     HTMLFrameElementBase::CollectStyleForPresentationAttribute(name, value,
@@ -143,6 +172,8 @@ void HTMLIFrameElement::ParseAttribute(
     const AttributeModificationParams& params) {
   const QualifiedName& name = params.name;
   const AtomicString& value = params.new_value;
+  // This is only set to true for values needed by the browser.
+  bool should_call_did_change_attributes = false;
   if (name == html_names::kNameAttr) {
     auto* document = DynamicTo<HTMLDocument>(GetDocument());
     if (document && IsInDocumentTree()) {
@@ -151,8 +182,10 @@ void HTMLIFrameElement::ParseAttribute(
     }
     AtomicString old_name = name_;
     name_ = value;
-    if (name_ != old_name)
+    if (name_ != old_name) {
       FrameOwnerPropertiesChanged();
+      should_call_did_change_attributes = true;
+    }
     if (name_.Contains('\n'))
       UseCounter::Count(GetDocument(), WebFeature::kFrameNameContainsNewline);
     if (name_.Contains('<'))
@@ -236,21 +269,21 @@ void HTMLIFrameElement::ParseAttribute(
                          kMaxLengthCSPAttribute)));
     } else if (required_csp_ != value) {
       required_csp_ = value;
-      DidChangeAttributes();
+      should_call_did_change_attributes = true;
       UseCounter::Count(GetDocument(), WebFeature::kIFrameCSPAttribute);
     }
-  } else if (name == html_names::kAnonymousAttr &&
-             RuntimeEnabledFeatures::AnonymousIframeEnabled()) {
+  } else if (name == html_names::kCredentiallessAttr &&
+             AnonymousIframeEnabled(GetExecutionContext())) {
     bool new_value = !value.IsNull();
-    if (anonymous_ != new_value) {
-      anonymous_ = new_value;
-      DidChangeAttributes();
+    if (credentialless_ != new_value) {
+      credentialless_ = new_value;
+      should_call_did_change_attributes = true;
     }
   } else if (name == html_names::kAllowAttr) {
     if (allow_ != value) {
       allow_ = value;
       UpdateContainerPolicy();
-      if (!value.IsEmpty()) {
+      if (!value.empty()) {
         UseCounter::Count(GetDocument(),
                           WebFeature::kFeaturePolicyAllowAttribute);
       }
@@ -283,9 +316,26 @@ void HTMLIFrameElement::ParseAttribute(
           "https://goo.gl/ximf56"));
     }
 
-    if (name == html_names::kSrcAttr)
+    if (name == html_names::kSrcAttr) {
       LogUpdateAttributeIfIsolatedWorldAndInDocument("iframe", params);
+      if (src_ != value) {
+        src_ = value;
+        should_call_did_change_attributes = true;
+      }
+    }
+    if (name == html_names::kIdAttr && id_ != value) {
+      id_ = value;
+      should_call_did_change_attributes = true;
+    }
+    if (name == html_names::kNameAttr && name_ != value) {
+      name_ = value;
+      should_call_did_change_attributes = true;
+    }
     HTMLFrameElementBase::ParseAttribute(params);
+  }
+  if (should_call_did_change_attributes) {
+    // This causes IPC to the browser. Only call it once per parsing.
+    DidChangeAttributes();
   }
 }
 
@@ -294,7 +344,7 @@ DocumentPolicyFeatureState HTMLIFrameElement::ConstructRequiredPolicy() const {
           GetExecutionContext()))
     return {};
 
-  if (!required_policy_.IsEmpty()) {
+  if (!required_policy_.empty()) {
     UseCounter::Count(
         GetDocument(),
         mojom::blink::WebFeature::kDocumentPolicyIframePolicyAttribute);
@@ -393,7 +443,7 @@ ParsedPermissionsPolicy HTMLIFrameElement::ConstructContainerPolicy() const {
   return container_policy;
 }
 
-bool HTMLIFrameElement::LayoutObjectIsNeeded(const ComputedStyle& style) const {
+bool HTMLIFrameElement::LayoutObjectIsNeeded(const DisplayStyle& style) const {
   return ContentFrame() && !collapsed_by_client_ &&
          HTMLElement::LayoutObjectIsNeeded(style);
 }
@@ -459,35 +509,26 @@ HTMLIFrameElement::ConstructTrustTokenParams() const {
     return nullptr;
   }
 
-  // Trust token redemption and signing (but not issuance) require that the
-  // trust-token-redemption permissions policy be present.
-  bool operation_requires_permissions_policy =
-      parsed_params->type ==
-          network::mojom::blink::TrustTokenOperationType::kRedemption ||
-      parsed_params->type ==
-          network::mojom::blink::TrustTokenOperationType::kSigning;
+  // Only the send-redemption-record (the kSigning variant) operation is
+  // valid in the iframe context.
+  if (parsed_params->operation !=
+      network::mojom::blink::TrustTokenOperationType::kSigning) {
+    GetDocument().AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
+        mojom::blink::ConsoleMessageSource::kOther,
+        mojom::blink::ConsoleMessageLevel::kError,
+        "Trust Tokens: Attempted a trusttoken operation which isn't "
+        "send-redemption-record in an iframe."));
+    return nullptr;
+  }
 
-  if (operation_requires_permissions_policy &&
-      (!GetExecutionContext()->IsFeatureEnabled(
-          mojom::blink::PermissionsPolicyFeature::kTrustTokenRedemption))) {
+  if (!GetExecutionContext()->IsFeatureEnabled(
+          mojom::blink::PermissionsPolicyFeature::kTrustTokenRedemption)) {
     GetExecutionContext()->AddConsoleMessage(
         MakeGarbageCollected<ConsoleMessage>(
             mojom::blink::ConsoleMessageSource::kOther,
             mojom::blink::ConsoleMessageLevel::kError,
             "Trust Tokens: Attempted redemption or signing without the "
             "trust-token-redemption Permissions Policy feature present."));
-    return nullptr;
-  }
-
-  if (parsed_params->type ==
-          network::mojom::blink::TrustTokenOperationType::kIssuance &&
-      !IsTrustTokenIssuanceAvailableInExecutionContext(
-          *GetExecutionContext())) {
-    GetDocument().AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
-        mojom::blink::ConsoleMessageSource::kOther,
-        mojom::blink::ConsoleMessageLevel::kError,
-        "Trust Tokens issuance is disabled except in "
-        "contexts with the TrustTokens Origin Trial enabled."));
     return nullptr;
   }
 
@@ -515,9 +556,15 @@ void HTMLIFrameElement::DidChangeAttributes() {
           network::mojom::blink::ContentSecurityPolicySource::kHTTP, KURL());
   DCHECK_LE(csp.size(), 1u);
 
+  auto attributes = mojom::blink::IframeAttributes::New();
+  attributes->parsed_csp_attribute = csp.empty() ? nullptr : std::move(csp[0]);
+  attributes->credentialless = credentialless_;
+
+  attributes->id = ConvertToReportValue(id_);
+  attributes->name = ConvertToReportValue(name_);
+  attributes->src = ConvertToReportValue(src_);
   GetDocument().GetFrame()->GetLocalFrameHostRemote().DidChangeIframeAttributes(
-      ContentFrame()->GetFrameToken(),
-      csp.IsEmpty() ? nullptr : std::move(csp[0]), anonymous_);
+      ContentFrame()->GetFrameToken(), std::move(attributes));
 
   // Make sure we update the srcdoc value, if any, in the browser.
   String srcdoc_value = "";

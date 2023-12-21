@@ -1,4 +1,4 @@
-// Copyright (c) 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -71,7 +71,7 @@ class ShapeResultPerfTest {
 
   Font font;
 
-  HashMap<FontName, String, WTF::IntHash<FontName>> font_path = {
+  HashMap<FontName, String> font_path = {
       {kAhem, "Ahem.woff"},
       {kAmiri, "third_party/Amiri/amiri_arabic.woff2"},
       {kMegalopolis, "third_party/MEgalopolis/MEgalopolisExtra.woff"},

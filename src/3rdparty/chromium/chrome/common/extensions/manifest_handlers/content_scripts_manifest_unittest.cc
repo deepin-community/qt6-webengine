@@ -1,4 +1,4 @@
-// Copyright (c) 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -99,7 +99,7 @@ TEST_F(ContentScriptsManifestTest, FailLoadingNonUTF8Scripts) {
   scoped_refptr<Extension> extension(
       file_util::LoadExtension(install_dir, mojom::ManifestLocation::kUnpacked,
                                Extension::NO_FLAGS, &error));
-  ASSERT_TRUE(extension.get() == NULL);
+  ASSERT_TRUE(extension.get() == nullptr);
   ASSERT_STREQ(
       "Could not load file 'bad_encoding.js' for content script. "
       "It isn't UTF-8 encoded.",
@@ -193,6 +193,39 @@ TEST_F(ContentScriptsManifestTest, MatchOriginAsFallback_FeatureDisabled) {
   // The seventh and final does not specify a value for either.
   EXPECT_EQ(MatchOriginAsFallbackBehavior::kNever,
             user_scripts[6]->match_origin_as_fallback());
+}
+
+TEST_F(ContentScriptsManifestTest, ExecutionWorld) {
+  scoped_refptr<const Extension> extension =
+      LoadAndExpectSuccess("content_script_execution_world.json");
+  const UserScriptList& user_scripts =
+      ContentScriptsInfo::GetContentScripts(extension.get());
+  ASSERT_EQ(3u, user_scripts.size());
+
+  // Content scripts which don't specify an execution world will default to the
+  // isolated world.
+  EXPECT_EQ(mojom::ExecutionWorld::kIsolated,
+            user_scripts[0]->execution_world());
+
+  // Content scripts which specify an execution world will run on the world that
+  // was specified.
+  EXPECT_EQ(mojom::ExecutionWorld::kMain, user_scripts[1]->execution_world());
+  EXPECT_EQ(mojom::ExecutionWorld::kIsolated,
+            user_scripts[2]->execution_world());
+}
+
+TEST_F(ContentScriptsManifestTest, ExecutionWorld_InvalidForMV2) {
+  scoped_refptr<const Extension> extension = LoadAndExpectWarning(
+      "content_script_execution_world_warning_for_mv2.json",
+      errors::kExecutionWorldRestrictedToMV3);
+  const UserScriptList& user_scripts =
+      ContentScriptsInfo::GetContentScripts(extension.get());
+  ASSERT_EQ(1u, user_scripts.size());
+
+  // The content script parsed from the manifest should be executing in the
+  // isolated world.
+  EXPECT_EQ(mojom::ExecutionWorld::kIsolated,
+            user_scripts[0]->execution_world());
 }
 
 }  // namespace extensions

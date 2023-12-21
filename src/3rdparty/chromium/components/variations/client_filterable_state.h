@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,8 +7,8 @@
 
 #include <string>
 
-#include "base/callback.h"
 #include "base/component_export.h"
+#include "base/functional/callback.h"
 #include "base/time/time.h"
 #include "base/version.h"
 #include "components/variations/proto/study.pb.h"
@@ -63,16 +63,16 @@ struct COMPONENT_EXPORT(VARIATIONS) ClientFilterableState {
   base::Version os_version;
 
   // The Channel for this Chrome installation.
-  Study::Channel channel;
+  Study::Channel channel = Study::UNKNOWN;
 
   // The hardware form factor that Chrome is running on.
-  Study::FormFactor form_factor;
+  Study::FormFactor form_factor = Study::DESKTOP;
 
   // The CPU architecture on which Chrome is running.
-  Study::CpuArchitecture cpu_architecture;
+  Study::CpuArchitecture cpu_architecture = Study::X86_64;
 
   // The OS on which Chrome is running.
-  Study::Platform platform;
+  Study::Platform platform = Study::PLATFORM_WINDOWS;
 
   // The named hardware configuration that Chrome is running on -- used to
   // identify models of devices.
@@ -90,6 +90,12 @@ struct COMPONENT_EXPORT(VARIATIONS) ClientFilterableState {
 
   // The restriction applied to Chrome through the "ChromeVariations" policy.
   RestrictionPolicy policy_restriction = RestrictionPolicy::NO_RESTRICTIONS;
+
+  // The list of Google groups that one of more signed-in syncing users are a
+  // a member of.
+  // Each value is the Gaia ID of the google group.
+  // TODO(b/264838828): populate this field.
+  std::set<uint64_t> google_groups;
 
  private:
   // Evaluating enterprise status negatively affects performance, so we only

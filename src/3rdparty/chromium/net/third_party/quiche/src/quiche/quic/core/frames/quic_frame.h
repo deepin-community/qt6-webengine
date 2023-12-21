@@ -34,7 +34,6 @@
 #include "quiche/quic/core/frames/quic_streams_blocked_frame.h"
 #include "quiche/quic/core/frames/quic_window_update_frame.h"
 #include "quiche/quic/core/quic_types.h"
-#include "quiche/quic/platform/api/quic_containers.h"
 #include "quiche/quic/platform/api/quic_export.h"
 
 #ifndef QUIC_FRAME_DEBUG
@@ -167,6 +166,7 @@ QUIC_EXPORT_PRIVATE QuicFrames CopyQuicFrames(
     quiche::QuicheBufferAllocator* allocator, const QuicFrames& frames);
 
 // Human-readable description suitable for logging.
+QUIC_EXPORT_PRIVATE std::string QuicFrameToString(const QuicFrame& frame);
 QUIC_EXPORT_PRIVATE std::string QuicFramesToString(const QuicFrames& frames);
 
 }  // namespace quic

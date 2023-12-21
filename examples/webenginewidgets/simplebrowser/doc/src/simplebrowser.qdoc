@@ -6,6 +6,7 @@
     \title WebEngine Widgets Simple Browser Example
     \ingroup webengine-widgetexamples
     \brief A simple browser based on \QWE Widgets.
+    \examplecategory {Web Technologies}
 
     \image simplebrowser.png
 
@@ -320,6 +321,13 @@
     {QWebEngineDownloadRequest::}{stateChanged} signal when the download is
     finished or when an error occurs. See \c downloadmanagerwidget.cpp for an
     example of how these signals can be handled.
+
+    \section1 Signing Requirement for macOS
+
+    To allow web sites access to the location, camera, and microphone when running
+    \e {Simple Browser} on macOS, the application needs to be signed. This is
+    done automatically when building, but you need to set up a valid signing identity
+    for the build environment.
 
     \section1 Files and Attributions
 

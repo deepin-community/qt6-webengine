@@ -1,4 +1,4 @@
-// Copyright 2021 PDFium Authors. All rights reserved.
+// Copyright 2021 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -47,7 +47,7 @@ FX_PosixFolder::FX_PosixFolder(const ByteString& path, DIR* dir)
     : m_Path(path), m_Dir(dir) {}
 
 FX_PosixFolder::~FX_PosixFolder() {
-  closedir(m_Dir.Release());
+  closedir(m_Dir.ExtractAsDangling());
 }
 
 bool FX_PosixFolder::GetNextFile(ByteString* filename, bool* bFolder) {

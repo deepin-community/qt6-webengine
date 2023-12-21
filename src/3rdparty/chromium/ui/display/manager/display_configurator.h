@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,6 +9,7 @@
 #include <memory>
 #include <vector>
 
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "base/timer/timer.h"
@@ -17,18 +18,16 @@
 #include "ui/display/manager/display_manager_export.h"
 #include "ui/display/types/display_constants.h"
 #include "ui/display/types/native_display_observer.h"
-#include "ui/display/util/display_util.h"
 #include "ui/events/platform_event.h"
 #include "ui/gfx/geometry/size.h"
 
 namespace gfx {
 class Size;
-}
+}  // namespace gfx
 
 namespace display {
 
 class ContentProtectionManager;
-class DisplayLayoutManager;
 class DisplayMode;
 class DisplaySnapshot;
 class ManagedDisplayMode;
@@ -39,7 +38,7 @@ struct GammaRampRGBEntry;
 
 namespace test {
 class DisplayManagerTestApi;
-}
+}  // namespace test
 
 // This class interacts directly with the system display configurator.
 class DISPLAY_MANAGER_EXPORT DisplayConfigurator
@@ -125,7 +124,7 @@ class DISPLAY_MANAGER_EXPORT DisplayConfigurator
     base::TimeDelta GetConfigureDelay() const;
 
    private:
-    DisplayConfigurator* configurator_;  // not owned
+    raw_ptr<DisplayConfigurator> configurator_;  // not owned
   };
 
   // Flags that can be passed to SetDisplayPower().
@@ -178,9 +177,7 @@ class DISPLAY_MANAGER_EXPORT DisplayConfigurator
   void set_mirroring_controller(SoftwareMirroringController* controller) {
     mirroring_controller_ = controller;
   }
-  void set_configure_display(bool configure_display) {
-    configure_display_ = configure_display;
-  }
+  void SetConfigureDisplays(bool configure_displays);
   bool has_unassociated_display() const { return has_unassociated_display_; }
   chromeos::DisplayPowerState current_power_state() const {
     return current_power_state_;
@@ -238,12 +235,19 @@ class DISPLAY_MANAGER_EXPORT DisplayConfigurator
   // current set of connected displays).
   void SetDisplayMode(MultipleDisplayState new_state);
 
+  // Request the display's refresh rate to be throttled. Currently
+  // only supports internal displays. If the underlying panel/display driver
+  // do not support this, it is a no-op.
+  void MaybeSetRefreshRateThrottleState(int64_t display_id,
+                                        RefreshRateThrottleState state);
+
   // NativeDisplayDelegate::Observer overrides:
   void OnConfigurationChanged() override;
   void OnDisplaySnapshotsInvalidated() override;
 
   void AddObserver(Observer* observer);
   void RemoveObserver(Observer* observer);
+  bool HasObserverForTesting(Observer* observer) const;
 
   // Sets all the displays into pre-suspend mode; usually this means
   // configure them for their resume state. This allows faster resume on
@@ -290,13 +294,17 @@ class DISPLAY_MANAGER_EXPORT DisplayConfigurator
     return requested_power_state_;
   }
 
+  // Requests to enable or disable variable refresh rates across all capable
+  // displays, and schedules a configuration change as needed.
+  void SetVrrEnabled(bool enable_vrr);
+
  private:
   friend class test::DisplayManagerTestApi;
 
   class DisplayLayoutManagerImpl;
 
   bool configurator_disabled() const {
-    return !configure_display_ || display_externally_controlled_;
+    return !configure_displays_ || display_externally_controlled_;
   }
 
   // Updates |pending_*| members and applies the passed-in state. |callback| is
@@ -324,13 +332,14 @@ class DISPLAY_MANAGER_EXPORT DisplayConfigurator
   // configuration task.
   void RunPendingConfiguration();
 
-  // Callback for |configuration_taks_|. When the configuration process finishes
+  // Callback for |configuration_task_|. When the configuration process finishes
   // this is called with the result (|success|) and the updated display state.
   void OnConfigured(bool success,
                     const std::vector<DisplaySnapshot*>& displays,
                     const std::vector<DisplaySnapshot*>& unassociated_displays,
                     MultipleDisplayState new_display_state,
-                    chromeos::DisplayPowerState new_power_state);
+                    chromeos::DisplayPowerState new_power_state,
+                    bool new_vrr_state);
 
   // Updates the current and pending power state and notifies observers.
   void UpdatePowerState(chromeos::DisplayPowerState new_power_state);
@@ -342,6 +351,14 @@ class DISPLAY_MANAGER_EXPORT DisplayConfigurator
   // Return true if any of the |requested_*| parameters have been updated. False
   // otherwise.
   bool ShouldRunConfigurationTask() const;
+
+  // Returns true if there are pending configuration changes that should be done
+  // seamlessly.
+  bool HasPendingSeamlessConfiguration() const;
+
+  // Returns true if there are pending configuration changes that require a full
+  // modeset.
+  bool HasPendingFullConfiguration() const;
 
   // Helper functions which will call the callbacks in
   // |in_progress_configuration_callbacks_| and
@@ -363,8 +380,19 @@ class DISPLAY_MANAGER_EXPORT DisplayConfigurator
   void SendRelinquishDisplayControl(DisplayControlCallback callback,
                                     bool success);
 
-  StateController* state_controller_;
-  SoftwareMirroringController* mirroring_controller_;
+  // Returns the requested VRR state, or the current state by default.
+  bool GetRequestedVrrState() const;
+
+  // Returns whether a configuration should occur on account of a pending VRR
+  // request.
+  bool ShouldConfigureVrr() const;
+
+  // Returns whether variable refresh rates are enabled on the internal display
+  // (if there is one).
+  bool IsVrrEnabledOnInternalDisplay() const;
+
+  raw_ptr<StateController> state_controller_;
+  raw_ptr<SoftwareMirroringController> mirroring_controller_;
   std::unique_ptr<NativeDisplayDelegate> native_display_delegate_;
 
   // Used to enable modes which rely on panel fitting.
@@ -373,7 +401,7 @@ class DISPLAY_MANAGER_EXPORT DisplayConfigurator
   // This is detected by the constructor to determine whether or not we should
   // be enabled. If this flag is set to false, any attempts to change the
   // display configuration will immediately fail without changing the state.
-  bool configure_display_;
+  bool configure_displays_;
 
   // Current configuration state.
   MultipleDisplayState current_display_state_;
@@ -397,6 +425,9 @@ class DISPLAY_MANAGER_EXPORT DisplayConfigurator
 
   // Bitwise-or value of the |kSetDisplayPower*| flags defined above.
   int pending_power_flags_;
+
+  // Stores the requested refresh rate throttle state.
+  absl::optional<RefreshRateThrottleState> pending_refresh_rate_throttle_state_;
 
   // List of callbacks from callers waiting for the display configuration to
   // start/finish. Note these callbacks belong to the pending request, not a
@@ -430,7 +461,7 @@ class DISPLAY_MANAGER_EXPORT DisplayConfigurator
   // Whether the displays are currently suspended.
   bool displays_suspended_;
 
-  std::unique_ptr<DisplayLayoutManager> layout_manager_;
+  std::unique_ptr<DisplayLayoutManagerImpl> layout_manager_;
   std::unique_ptr<ContentProtectionManager> content_protection_manager_;
 
   std::unique_ptr<UpdateDisplayConfigurationTask> configuration_task_;
@@ -439,6 +470,11 @@ class DISPLAY_MANAGER_EXPORT DisplayConfigurator
   // This can be caused by crtc shortage. When it is true, the corresponding
   // notification will be created to inform user.
   bool has_unassociated_display_;
+
+  // Stores the current variable refresh rate enabled state.
+  bool current_vrr_state_ = false;
+  // Stores the requested variable refresh rate enabled state.
+  absl::optional<bool> pending_vrr_state_ = absl::nullopt;
 
   // This must be the last variable.
   base::WeakPtrFactory<DisplayConfigurator> weak_ptr_factory_{this};

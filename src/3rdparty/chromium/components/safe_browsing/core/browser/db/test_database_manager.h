@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "base/task/sequenced_task_runner.h"
 #include "components/safe_browsing/core/browser/db/database_manager.h"
 #include "components/safe_browsing/core/browser/db/v4_protocol_manager_util.h"
 #include "services/network/public/mojom/fetch_api.mojom.h"
@@ -31,24 +32,25 @@ class TestSafeBrowsingDatabaseManager : public SafeBrowsingDatabaseManager {
       network::mojom::RequestDestination request_destination) const override;
   bool CanCheckUrl(const GURL& url) const override;
   bool ChecksAreAlwaysAsync() const override;
-  bool CheckBrowseUrl(const GURL& url,
-                      const SBThreatTypeSet& threat_types,
-                      Client* client) override;
+  bool CheckBrowseUrl(
+      const GURL& url,
+      const SBThreatTypeSet& threat_types,
+      Client* client,
+      MechanismExperimentHashDatabaseCache experiment_cache_selection) override;
   AsyncMatch CheckCsdAllowlistUrl(const GURL& url, Client* client) override;
   bool CheckDownloadUrl(const std::vector<GURL>& url_chain,
                         Client* client) override;
   bool CheckExtensionIDs(const std::set<std::string>& extension_ids,
                          Client* client) override;
   bool CheckResourceUrl(const GURL& url, Client* client) override;
-  AsyncMatch CheckUrlForHighConfidenceAllowlist(const GURL& url,
-                                                Client* client) override;
+  bool CheckUrlForHighConfidenceAllowlist(
+      const GURL& url,
+      const std::string& metric_variation) override;
   bool CheckUrlForSubresourceFilter(const GURL& url, Client* client) override;
-  bool CheckUrlForAccuracyTips(const GURL& url, Client* client) override;
   bool MatchDownloadAllowlistUrl(const GURL& url) override;
   bool MatchMalwareIP(const std::string& ip_address) override;
   safe_browsing::ThreatSource GetThreatSource() const override;
   bool IsDownloadProtectionEnabled() const override;
-  bool IsSupported() const override;
   void StartOnIOThread(
       scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
       const V4ProtocolConfig& config) override;

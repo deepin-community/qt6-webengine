@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -47,6 +47,22 @@ class BLINK_COMMON_EXPORT
   static blink::mojom::AncestorChainBit ancestor_chain_bit(
       const blink::StorageKey& key) {
     return key.ancestor_chain_bit();
+  }
+
+  static const net::SchemefulSite top_level_site_if_third_party_enabled(
+      const blink::StorageKey& key) {
+    // We use `CopyWithForceEnabledThirdPartyStoragePartitioning` to ensure the
+    // partitioned values are preserved.
+    return key.CopyWithForceEnabledThirdPartyStoragePartitioning()
+        .top_level_site();
+  }
+
+  static blink::mojom::AncestorChainBit
+  ancestor_chain_bit_if_third_party_enabled(const blink::StorageKey& key) {
+    // We use `CopyWithForceEnabledThirdPartyStoragePartitioning` to ensure the
+    // partitioned values are preserved.
+    return key.CopyWithForceEnabledThirdPartyStoragePartitioning()
+        .ancestor_chain_bit();
   }
 
   static bool Read(blink::mojom::StorageKeyDataView data,

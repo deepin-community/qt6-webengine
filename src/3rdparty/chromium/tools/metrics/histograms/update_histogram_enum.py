@@ -1,4 +1,4 @@
-# Copyright 2014 The Chromium Authors. All rights reserved.
+# Copyright 2014 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -16,7 +16,6 @@ import sys
 from xml.dom import minidom
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'common'))
-import diff_util
 import path_util
 
 import histogram_paths
@@ -172,10 +171,11 @@ def UpdateHistogramDefinitions(histogram_enum_name, source_enum_values,
   new_comments = []
 
   # Add a "Generated from (...)" comment.
-  new_comments.append(document.createComment(
-    ' Generated from {0}.'.format(source_enum_path) + (
-        '\nCalled by {0}.'.format(caller_script_name) if caller_script_name
-             else '')))
+  new_comments.append(
+      document.createComment(
+          ' Generated from {0}.'.format(source_enum_path).replace('\\', '/') +
+          ('\nCalled by {0}.'.format(caller_script_name
+                                     ) if caller_script_name else '')))
 
   # Create item nodes for each of the enum values.
   for value, label in source_enum_values.items():
@@ -296,12 +296,7 @@ def UpdateHistogramFromDict(histogram_enum_name, source_enum_values,
   """
   (xml, new_xml) = _GetOldAndUpdatedXml(histogram_enum_name, source_enum_values,
                                         source_enum_path, caller_script_name)
-  if not diff_util.PromptUserToAcceptDiff(
-      xml, new_xml, 'Is the updated version acceptable?'):
-    Log('Cancelled.')
-    return
-
-  with io.open(ENUMS_PATH, 'w', encoding='utf-8') as f:
+  with io.open(ENUMS_PATH, 'w', encoding='utf-8', newline='') as f:
     f.write(new_xml)
 
   Log('Done.')

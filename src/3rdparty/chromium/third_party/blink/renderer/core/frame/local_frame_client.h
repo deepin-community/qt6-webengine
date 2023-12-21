@@ -54,7 +54,6 @@
 #include "third_party/blink/public/platform/scheduler/web_scoped_virtual_time_pauser.h"
 #include "third_party/blink/public/platform/web_content_settings_client.h"
 #include "third_party/blink/public/platform/web_effective_connection_type.h"
-#include "third_party/blink/public/platform/web_impression.h"
 #include "third_party/blink/public/platform/web_worker_fetch_context.h"
 #include "third_party/blink/public/web/web_frame_load_type.h"
 #include "third_party/blink/public/web/web_history_commit_type.h"
@@ -76,6 +75,10 @@
 #include "third_party/blink/renderer/platform/wtf/forward.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 #include "v8/include/v8.h"
+
+namespace network {
+class SharedURLLoaderFactory;
+}  // namespace network
 
 namespace blink {
 
@@ -108,9 +111,15 @@ class WebRemotePlaybackClient;
 class WebServiceWorkerProvider;
 class WebSpellCheckPanelHostClient;
 class WebTextCheckClient;
+class URLLoader;
 class ResourceLoadInfoNotifierWrapper;
 enum class SyncCondition;
+struct Impression;
 struct MobileFriendliness;
+
+namespace scheduler {
+class TaskAttributionId;
+}  // namespace scheduler
 
 class CORE_EXPORT LocalFrameClient : public FrameClient {
  public:
@@ -156,12 +165,14 @@ class CORE_EXPORT LocalFrameClient : public FrameClient {
 
   virtual void BeginNavigation(
       const ResourceRequest&,
+      const KURL& requestor_base_url,
       mojom::RequestContextFrameType,
       LocalDOMWindow* origin_window,
       DocumentLoader*,
       WebNavigationType,
       NavigationPolicy,
       WebFrameLoadType,
+      mojom::blink::ForceHistoryPush,
       bool is_client_redirect,
       // TODO(crbug.com/1315802): Refactor _unfencedTop handling.
       bool is_unfenced_top_navigation,
@@ -172,18 +183,22 @@ class CORE_EXPORT LocalFrameClient : public FrameClient {
       mojo::PendingRemote<mojom::blink::BlobURLToken>,
       base::TimeTicks input_start_time,
       const String& href_translate,
-      const absl::optional<WebImpression>& impression,
+      const absl::optional<Impression>& impression,
       const LocalFrameToken* initiator_frame_token,
       std::unique_ptr<SourceLocation> source_location,
       mojo::PendingRemote<mojom::blink::PolicyContainerHostKeepAliveHandle>
-          initiator_policy_container_handle) = 0;
+          initiator_policy_container_handle,
+      bool is_container_initiated) = 0;
 
   virtual void DispatchWillSendSubmitEvent(HTMLFormElement*) = 0;
 
   virtual void DidStartLoading() = 0;
   virtual void DidStopLoading() = 0;
 
-  virtual bool NavigateBackForward(int offset) const = 0;
+  virtual bool NavigateBackForward(
+      int offset,
+      absl::optional<scheduler::TaskAttributionId>
+          soft_navigation_heuristics_task_id) const = 0;
 
   virtual void DidDispatchPingLoader(const KURL&) = 0;
 
@@ -204,26 +219,29 @@ class CORE_EXPORT LocalFrameClient : public FrameClient {
   // propogates renderer loading behavior to the browser process for histograms.
   virtual void DidObserveLoadingBehavior(LoadingBehaviorFlag) {}
 
+  // Will be called when a sub resource load happens.
+  virtual void DidObserveSubresourceLoad(
+      uint32_t number_of_subresources_loaded,
+      uint32_t number_of_subresource_loads_handled_by_service_worker,
+      bool pervasive_payload_requested,
+      int64_t pervasive_bytes_fetched,
+      int64_t total_bytes_fetched) {}
+
   // Will be called when a new UseCounterFeature has been observed in a frame.
   // This propagates feature usage to the browser process for histograms.
   virtual void DidObserveNewFeatureUsage(const UseCounterFeature&) {}
+
+  // A new soft navigation was observed.
+  virtual void DidObserveSoftNavigation(uint32_t count) {}
 
   // Reports that visible elements in the frame shifted (bit.ly/lsm-explainer).
   virtual void DidObserveLayoutShift(double score, bool after_input_or_scroll) {
   }
 
-  // Reports the number of LayoutBlock creation, and LayoutObject::UpdateLayout
-  // calls. All values are deltas since the last calls of this function.
-  virtual void DidObserveLayoutNg(uint32_t all_block_count,
-                                  uint32_t ng_block_count,
-                                  uint32_t all_call_count,
-                                  uint32_t ng_call_count) {}
-
   // Notifies the observers of the origins for which subresource redirect
   // optimizations can be preloaded.
   virtual void PreloadSubresourceOptimizationsForOrigins(
-      const WTF::HashSet<scoped_refptr<const SecurityOrigin>,
-                         SecurityOriginHash>& origins) {}
+      const WTF::HashSet<scoped_refptr<const SecurityOrigin>>& origins) {}
 
   // Transmits the change in the set of watched CSS selectors property that
   // match any element on the frame.
@@ -231,12 +249,7 @@ class CORE_EXPORT LocalFrameClient : public FrameClient {
       const Vector<String>& added_selectors,
       const Vector<String>& removed_selectors) = 0;
 
-  virtual DocumentLoader* CreateDocumentLoader(
-      LocalFrame*,
-      WebNavigationType,
-      std::unique_ptr<WebNavigationParams> navigation_params,
-      std::unique_ptr<PolicyContainer> policy_container,
-      std::unique_ptr<WebDocumentLoader::ExtraData> extra_data) = 0;
+  virtual void DidCreateDocumentLoader(DocumentLoader*) = 0;
 
   virtual String UserAgentOverride() = 0;
   virtual String UserAgent() = 0;
@@ -295,7 +308,9 @@ class CORE_EXPORT LocalFrameClient : public FrameClient {
       HTMLMediaElement&) = 0;
 
   virtual void DidCommitDocumentReplacementNavigation(DocumentLoader*) = 0;
-  virtual void DispatchDidClearWindowObjectInMainWorld() = 0;
+  virtual void DispatchDidClearWindowObjectInMainWorld(
+      v8::Isolate* isolate,
+      v8::MicrotaskQueue* microtask_queue) = 0;
   virtual void DocumentElementAvailable() = 0;
   virtual void RunScriptsAtDocumentElementAvailable() = 0;
   virtual void RunScriptsAtDocumentReady(bool document_is_empty) = 0;
@@ -308,6 +323,12 @@ class CORE_EXPORT LocalFrameClient : public FrameClient {
   virtual bool AllowScriptExtensions() = 0;
 
   virtual void DidChangeScrollOffset() {}
+
+  // Immediately notifies the browser of a change in the current HistoryItem.
+  // Prefer DidUpdateCurrentHistoryItem().
+  virtual void NotifyCurrentHistoryItemChanged() {}
+  // Notifies the browser of a change in the current HistoryItem on a timer,
+  // allowing batching of updates.
   virtual void DidUpdateCurrentHistoryItem() {}
 
   // Called when a content-initiated, main frame navigation to a data URL is
@@ -333,8 +354,6 @@ class CORE_EXPORT LocalFrameClient : public FrameClient {
   // returned if the URL is not overriden.
   virtual KURL OverrideFlashEmbedWithHTML(const KURL&) { return KURL(); }
 
-  virtual BlameContext* GetFrameBlameContext() { return nullptr; }
-
   virtual BrowserInterfaceBrokerProxy& GetBrowserInterfaceBroker() = 0;
 
   virtual AssociatedInterfaceProvider*
@@ -348,7 +367,9 @@ class CORE_EXPORT LocalFrameClient : public FrameClient {
 
   virtual WebTextCheckClient* GetTextCheckerClient() const = 0;
 
-  virtual std::unique_ptr<WebURLLoaderFactory> CreateURLLoaderFactory() = 0;
+  virtual scoped_refptr<network::SharedURLLoaderFactory>
+  GetURLLoaderFactory() = 0;
+  virtual std::unique_ptr<URLLoader> CreateURLLoaderForTesting() = 0;
 
   virtual void AnnotatedRegionsChanged() = 0;
 

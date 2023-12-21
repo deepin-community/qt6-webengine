@@ -27,7 +27,7 @@
 [
     DoNotCheckConstants
 ] interface Internals {
-    GCObservation observeGC(any observed);
+    [RaisesException] GCObservation observeGC(any observed);
 
     [RaisesException] DOMString elementLayoutTreeAsText(Element element);
     boolean isPreloaded(DOMString url);
@@ -44,7 +44,7 @@
 
     boolean doesWindowHaveUrlFragment(Window window);
 
-    CSSStyleDeclaration computedStyleIncludingVisitedInfo(Node node);
+    CSSStyleDeclaration computedStyleIncludingVisitedInfo(Element element);
 
     ShadowRoot createUserAgentShadowRoot(Element host);
 
@@ -62,6 +62,7 @@
     Node parentTreeScope(Node node);
     [RaisesException] unsigned short compareTreeScopePosition(Node treeScope1, Node treeScope2);
     [RaisesException] unsigned long updateStyleAndReturnAffectedElementCount();
+    [RaisesException] unsigned long styleForElementCount();
     [RaisesException] unsigned long needsLayoutCount();
     [RaisesException] unsigned long layoutCountForTesting();
     [RaisesException] unsigned long hitTestCount(Document document);
@@ -126,7 +127,6 @@
     [RaisesException] DOMString suggestedValue(Element inputElement);
     [RaisesException] void setSuggestedValue(Element inputElement, DOMString value);
     [RaisesException] void setAutofilledValue(Element inputElement, DOMString value);
-    [RaisesException] void setEditingValue(Element inputElement, DOMString value);
     [RaisesException] void setAutofilled(Element inputElement, boolean enabled);
     [RaisesException] void setSelectionRangeForNumberType(Element inputElement, unsigned long start, unsigned long end);
 
@@ -139,9 +139,11 @@
     [RaisesException] Node touchNodeAdjustedToBestClickableNode(long x, long y, long width, long height, Document document);
     [RaisesException] DOMPoint touchPositionAdjustedToBestContextMenuNode(long x, long y, long width, long height, Document document);
     [RaisesException] Node touchNodeAdjustedToBestContextMenuNode(long x, long y, long width, long height, Document document);
+    [RaisesException] Node touchNodeAdjustedToBestStylusWritableNode(long x, long y, long width, long height, Document document);
 
     [RaisesException] long lastSpellCheckRequestSequence(Document document);
     [RaisesException] long lastSpellCheckProcessedSequence(Document document);
+    [RaisesException] long spellCheckedTextLength(Document document);
     [RaisesException] void cancelCurrentSpellCheckRequest(Document document);
     [RaisesException] DOMString idleTimeSpellCheckerState(Document document);
     [RaisesException] void runIdleTimeSpellChecker(Document document);
@@ -395,10 +397,6 @@
     // be reported as raster under-invalidations.
     void simulateRasterUnderInvalidations(boolean enable);
 
-    // The number of calls to update the blink lifecycle (see:
-    // LocalFrameView::UpdateLifecyclePhasesInternal).
-    unsigned long LifecycleUpdateCount();
-
     // Disable the 'delay' option for IntersectionObserver, so that observations
     // are recomputed on every frame.  This eliminates the need to add
     // setTimeout(..., delay_ms) calls to web tests to wait for notifications
@@ -417,15 +415,7 @@
     // element mechanism.
     [RaisesException] void addEmbedderCustomElementName(DOMString name);
 
-    // https://html.spec.whatwg.org/C/#resolve-a-module-specifier
-    // Throws TypeError on error.
-    // Used for testing Import Maps https://github.com/domenic/import-maps
-    [RaisesException] DOMString resolveModuleSpecifier(DOMString specifier, DOMString base_url, Document document);
-
     // Returns the current serialized import map of the Document.
-    // TODO(crbug.com/927181): Currently this returns the "imports" value,
-    // because Blink doesn't support scopes yet. Update this once scopes are
-    // implemented.
     [RaisesException] DOMString getParsedImportMap(Document document);
 
     // Sets the scale for devtools device emulation.
@@ -443,7 +433,7 @@
     // Request generation of a Reporting report.
     void generateTestReport(DOMString message);
 
-    [RaisesException] void setIsAdSubframe(HTMLIFrameElement iframe);
+    [RaisesException] void setIsAdFrame(Document target_doc);
 
     [RaisesException, CallWith=ScriptState] ReadableStream createReadableStream(long queueSize, DOMString optimizer);
     // The return value consists of a WritableStream (.stream) and a promise of
@@ -451,4 +441,7 @@
     [RaisesException, CallWith=ScriptState] any createWritableStreamAndSink(long queueSize, DOMString optimizer);
 
     void setAllowPerChunkTransferring(ReadableStream stream);
+
+    void setBackForwardCacheRestorationBufferSize(long maxSize);
+
 };

@@ -12,7 +12,7 @@ class GLSurfaceGLXQt: public GLSurfaceQt {
 public:
     explicit GLSurfaceGLXQt(const gfx::Size& size);
 
-    static bool InitializeOneOff();
+    static gl::GLDisplay *InitializeOneOff(gl::GpuPreference preference);
     static bool InitializeExtensionSettingsOneOff();
 
     bool Initialize(GLSurfaceFormat format) override;

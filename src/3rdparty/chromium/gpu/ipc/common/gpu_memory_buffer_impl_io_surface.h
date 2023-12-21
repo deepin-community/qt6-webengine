@@ -1,11 +1,11 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef GPU_IPC_COMMON_GPU_MEMORY_BUFFER_IMPL_IO_SURFACE_H_
 #define GPU_IPC_COMMON_GPU_MEMORY_BUFFER_IMPL_IO_SURFACE_H_
 
-#include <IOSurface/IOSurface.h>
+#include <IOSurface/IOSurfaceRef.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -49,7 +49,6 @@ class GPU_EXPORT GpuMemoryBufferImplIOSurface : public GpuMemoryBufferImpl {
   void Unmap() override;
   int stride(size_t plane) const override;
   void SetColorSpace(const gfx::ColorSpace& color_space) override;
-  void SetHDRMetadata(const gfx::HDRMetadata& hdr_metadata) override;
   gfx::GpuMemoryBufferType GetType() const override;
   gfx::GpuMemoryBufferHandle CloneHandle() const override;
 

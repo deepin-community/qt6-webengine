@@ -11,18 +11,14 @@
 #include "include/core/SkSpan.h"
 #include "include/private/SkSLStatement.h"
 #include "include/private/SkSLString.h"
-#include "include/private/SkTDArray.h"
-#include "src/core/SkTBlockList.h"
+#include "include/private/base/SkTDArray.h"
+#include "src/base/SkTBlockList.h"
 #include "src/gpu/ganesh/GrShaderVar.h"
 #include "src/gpu/ganesh/glsl/GrGLSLUniformHandler.h"
 
 #include <stdarg.h>
 
 class GrGLSLColorSpaceXformHelper;
-
-namespace SkSL {
-    class ThreadContext;
-}
 
 /**
   base class for all shaders builders
@@ -116,8 +112,6 @@ public:
     void codeAppend(const char* str) { this->code().append(str); }
 
     void codeAppend(const char* str, size_t length) { this->code().append(str, length); }
-
-    void codeAppend(std::unique_ptr<SkSL::Statement> stmt);
 
     void codePrependf(const char format[], ...) SK_PRINTF_LIKE(2, 3) {
        va_list args;
@@ -289,6 +283,5 @@ protected:
     friend class GrGLPathProgramBuilder; // to access fInputs.
     friend class GrVkPipelineStateBuilder;
     friend class GrMtlPipelineStateBuilder;
-    friend class SkSL::ThreadContext;
 };
 #endif

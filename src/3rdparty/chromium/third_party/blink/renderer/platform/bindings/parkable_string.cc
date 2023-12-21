@@ -1,25 +1,22 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/platform/bindings/parkable_string.h"
-#include "base/time/time.h"
 
-// parkable_string.h is a widely included header and its size impacts build
-// time. Try not to raise this limit unless necessary. See
-// https://chromium.googlesource.com/chromium/src/+/HEAD/docs/wmax_tokens.md
-#pragma clang max_tokens_here 760000
+#include <array>
 
 #include "base/allocator/partition_allocator/oom.h"
 #include "base/allocator/partition_allocator/partition_alloc.h"
-#include "base/bind.h"
 #include "base/check_op.h"
+#include "base/functional/bind.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/process/memory.h"
 #include "base/synchronization/lock.h"
 #include "base/task/single_thread_task_runner.h"
+#include "base/time/time.h"
 #include "base/timer/elapsed_timer.h"
 #include "base/trace_event/typed_macros.h"
 #include "third_party/blink/public/common/features.h"
@@ -105,10 +102,9 @@ void AsanPoisonString(const String& string) {
 #if defined(ADDRESS_SANITIZER)
   if (string.IsNull())
     return;
-  // Since |string| is not deallocated, it remains in the per-thread
-  // AtomicStringTable, where its content can be accessed for equality
-  // comparison for instance, triggering a poisoned memory access.
-  // See crbug.com/883344 for an example.
+  // Since |string| is not deallocated, it remains in the AtomicStringTable,
+  // where its content can be accessed for equality comparison for instance,
+  // triggering a poisoned memory access. See crbug.com/883344 for an example.
   if (string.Impl()->IsAtomic())
     return;
 
@@ -167,7 +163,7 @@ struct BackgroundTaskParams final {
       size_t size,
       scoped_refptr<base::SingleThreadTaskRunner> callback_task_runner)
       : callback_task_runner(callback_task_runner),
-        string(string),
+        string(std::move(string)),
         data(data),
         size(size) {}
 
@@ -229,25 +225,32 @@ ParkableStringImpl::ParkableMetadata::ParkableMetadata(
     : lock_(),
       lock_depth_(0),
       state_(State::kUnparked),
-      background_task_in_progress_(false),
       compressed_(nullptr),
       digest_(*digest),
       age_(Age::kYoung),
       is_8bit_(string.Is8Bit()),
       length_(string.length()) {}
 
-// static
+// static2
 std::unique_ptr<ParkableStringImpl::SecureDigest>
 ParkableStringImpl::HashString(StringImpl* string) {
   DigestValue digest_result;
-  bool ok = ComputeDigest(kHashAlgorithmSha256,
-                          static_cast<const char*>(string->Bytes()),
-                          string->CharactersSizeInBytes(), digest_result);
+
+  Digestor digestor(kHashAlgorithmSha256);
+  digestor.Update(base::make_span(static_cast<const uint8_t*>(string->Bytes()),
+                                  string->CharactersSizeInBytes()));
+  // Also include encoding in the digest, otherwise two strings with identical
+  // byte content but different encoding will be assumed equal, leading to
+  // crashes when one is replaced by the other one.
+  std::array<uint8_t, 1> is_8bit;
+  is_8bit[0] = string->Is8Bit();
+  digestor.Update(is_8bit);
+  digestor.Finish(digest_result);
 
   // The only case where this can return false in BoringSSL is an allocation
   // failure of the temporary data required for hashing. In this case, there
   // is nothing better to do than crashing.
-  if (!ok) {
+  if (digestor.has_failed()) {
     // Don't know the exact size, the SHA256 spec hints at ~64 (block size)
     // + 32 (digest) bytes.
     base::TerminateBecauseOutOfMemory(64 + kDigestSize);
@@ -287,21 +290,20 @@ ParkableStringImpl::ParkableStringImpl(scoped_refptr<StringImpl>&& impl,
 }
 
 ParkableStringImpl::~ParkableStringImpl() {
-  AssertOnValidThread();
   if (!may_be_parked())
     return;
-
+  // There is nothing thread-hostile in this method, but the current design
+  // should only reach this path through the main thread.
+  AssertOnValidThread();
   DCHECK_EQ(0, lock_depth_for_testing());
   AsanUnpoisonString(string_);
   // Cannot destroy while parking is in progress, as the object is kept alive by
   // the background task.
   DCHECK(!metadata_->background_task_in_progress_);
-
-  auto& manager = ParkableStringManager::Instance();
-  manager.Remove(this);
-
-  if (has_on_disk_data())
-    manager.data_allocator().Discard(std::move(metadata_->on_disk_metadata_));
+  DCHECK(!has_on_disk_data());
+#if DCHECK_IS_ON()
+  ParkableStringManager::Instance().AssertRemoved(this);
+#endif
 }
 
 void ParkableStringImpl::Lock() {
@@ -343,7 +345,6 @@ void ParkableStringImpl::Unlock() {
 }
 
 const String& ParkableStringImpl::ToString() {
-  AssertOnValidThread();
   if (!may_be_parked())
     return string_;
 
@@ -355,7 +356,6 @@ const String& ParkableStringImpl::ToString() {
 }
 
 size_t ParkableStringImpl::CharactersSizeInBytes() const {
-  AssertOnValidThread();
   if (!may_be_parked())
     return string_.CharactersSizeInBytes();
 
@@ -371,8 +371,10 @@ size_t ParkableStringImpl::MemoryFootprintForDump() const {
 
   size += sizeof(ParkableMetadata);
 
-  if (!is_parked())
+  base::AutoLock locker(metadata_->lock_);
+  if (!is_parked_no_lock()) {
     size += string_.CharactersSizeInBytes();
+  }
 
   if (metadata_->compressed_)
     size += metadata_->compressed_->size();
@@ -384,14 +386,14 @@ ParkableStringImpl::AgeOrParkResult ParkableStringImpl::MaybeAgeOrParkString() {
   base::AutoLock locker(metadata_->lock_);
   AssertOnValidThread();
   DCHECK(may_be_parked());
-  DCHECK(!is_on_disk());
+  DCHECK(!is_on_disk_no_lock());
 
   // No concurrent background tasks.
   if (metadata_->background_task_in_progress_)
     return AgeOrParkResult::kSuccessOrTransientFailure;
 
   // TODO(lizeb): Simplify logic below.
-  if (is_parked()) {
+  if (is_parked_no_lock()) {
     if (metadata_->age_ == Age::kVeryOld) {
       bool ok = ParkInternal(ParkingMode::kToDisk);
       if (!ok)
@@ -495,12 +497,22 @@ void ParkableStringImpl::DiscardCompressedData() {
   ParkableStringManager::Instance().OnWrittenToDisk(this);
 }
 
-bool ParkableStringImpl::is_parked() const {
+bool ParkableStringImpl::is_parked_no_lock() const {
   return metadata_->state_ == State::kParked;
 }
 
-bool ParkableStringImpl::is_on_disk() const {
+bool ParkableStringImpl::is_on_disk_no_lock() const {
   return metadata_->state_ == State::kOnDisk;
+}
+
+bool ParkableStringImpl::is_parked() const {
+  base::AutoLock locker(metadata_->lock_);
+  return is_parked_no_lock();
+}
+
+bool ParkableStringImpl::is_on_disk() const {
+  base::AutoLock locker(metadata_->lock_);
+  return is_on_disk_no_lock();
 }
 
 ParkableStringImpl::Status ParkableStringImpl::CurrentStatus() const {
@@ -528,7 +540,6 @@ bool ParkableStringImpl::CanParkNow() const {
 }
 
 void ParkableStringImpl::Unpark() {
-  AssertOnValidThread();
   DCHECK(may_be_parked());
 
   if (metadata_->state_ == State::kUnparked)
@@ -550,7 +561,6 @@ void ParkableStringImpl::Unpark() {
 
   DCHECK(metadata_->compressed_ || metadata_->on_disk_metadata_);
   string_ = UnparkInternal();
-  metadata_->state_ = State::kUnparked;
   if (metadata_->last_disk_parking_time_ != base::TimeTicks()) {
     // Can be quite short, can be multiple hours, hence long times, and 100
     // buckets.
@@ -559,19 +569,16 @@ void ParkableStringImpl::Unpark() {
         base::TimeTicks::Now() - metadata_->last_disk_parking_time_);
     metadata_->last_disk_parking_time_ = base::TimeTicks();
   }
-  ParkableStringManager::Instance().OnUnparked(this);
 }
 
 String ParkableStringImpl::UnparkInternal() {
-  AssertOnValidThread();
-  DCHECK(is_parked() || is_on_disk());
-  // Note: No need for |lock_| to be held, this doesn't touch any member
-  // variable protected by it.
+  DCHECK(is_parked_no_lock() || is_on_disk_no_lock());
 
   base::ElapsedTimer timer;
   auto& manager = ParkableStringManager::Instance();
 
-  if (is_on_disk()) {
+  base::TimeDelta disk_elapsed = base::TimeDelta::Min();
+  if (is_on_disk_no_lock()) {
     TRACE_EVENT("blink", "ParkableStringImpl::ReadFromDisk");
     base::ElapsedTimer disk_read_timer;
     DCHECK(has_on_disk_data());
@@ -580,11 +587,9 @@ String ParkableStringImpl::UnparkInternal() {
         base::checked_cast<wtf_size_t>(metadata_->on_disk_metadata_->size()));
     manager.data_allocator().Read(*metadata_->on_disk_metadata_,
                                   metadata_->compressed_->data());
-    base::TimeDelta elapsed = disk_read_timer.Elapsed();
-    RecordStatistics(metadata_->on_disk_metadata_->size(), elapsed,
+    disk_elapsed = disk_read_timer.Elapsed();
+    RecordStatistics(metadata_->on_disk_metadata_->size(), disk_elapsed,
                      ParkingAction::kRead);
-    manager.OnReadFromDisk(this);
-    manager.RecordDiskReadTime(elapsed);
   }
 
   TRACE_EVENT("blink", "ParkableStringImpl::Decompress");
@@ -638,10 +643,15 @@ String ParkableStringImpl::UnparkInternal() {
   }
 
   base::TimeDelta elapsed = timer.Elapsed();
-  manager.RecordUnparkingTime(elapsed);
   RecordStatistics(CharactersSizeInBytes(), elapsed, ParkingAction::kUnparked);
-
+  metadata_->state_ = State::kUnparked;
+  manager.CompleteUnpark(this, elapsed, disk_elapsed);
   return uncompressed;
+}
+
+void ParkableStringImpl::ReleaseAndRemoveIfNeeded() const {
+  ParkableStringManager::Instance().Remove(
+      const_cast<ParkableStringImpl*>(this));
 }
 
 void ParkableStringImpl::PostBackgroundCompressionTask() {
@@ -649,13 +659,16 @@ void ParkableStringImpl::PostBackgroundCompressionTask() {
   // |string_|'s data should not be touched except in the compression task.
   AsanPoisonString(string_);
   metadata_->background_task_in_progress_ = true;
+  auto& manager = ParkableStringManager::Instance();
+  DCHECK(manager.task_runner()->BelongsToCurrentThread());
   // |params| keeps |this| alive until |OnParkingCompleteOnMainThread()|.
   auto params = std::make_unique<BackgroundTaskParams>(
       this, string_.Bytes(), string_.CharactersSizeInBytes(),
-      Thread::Current()->GetTaskRunner());
+      manager.task_runner());
   worker_pool::PostTask(
-      FROM_HERE, CrossThreadBindOnce(&ParkableStringImpl::CompressInBackground,
-                                     std::move(params)));
+      FROM_HERE, {base::TaskPriority::BEST_EFFORT},
+      CrossThreadBindOnce(&ParkableStringImpl::CompressInBackground,
+                          std::move(params)));
 }
 
 // static
@@ -799,12 +812,13 @@ void ParkableStringImpl::PostBackgroundWritingTask() {
   DCHECK(!metadata_->background_task_in_progress_);
   DCHECK_EQ(State::kParked, metadata_->state_);
   auto& manager = ParkableStringManager::Instance();
+  DCHECK(manager.task_runner()->BelongsToCurrentThread());
   auto& data_allocator = manager.data_allocator();
   if (!has_on_disk_data() && data_allocator.may_write()) {
     metadata_->background_task_in_progress_ = true;
     auto params = std::make_unique<BackgroundTaskParams>(
         this, metadata_->compressed_->data(), metadata_->compressed_->size(),
-        Thread::Current()->GetTaskRunner());
+        manager.task_runner());
     worker_pool::PostTask(
         FROM_HERE, {base::MayBlock()},
         CrossThreadBindOnce(&ParkableStringImpl::WriteToDiskInBackground,
@@ -840,6 +854,7 @@ void ParkableStringImpl::OnWritingCompleteOnMainThread(
     std::unique_ptr<BackgroundTaskParams> params,
     std::unique_ptr<DiskDataMetadata> on_disk_metadata,
     base::TimeDelta writing_time) {
+  base::AutoLock locker(metadata_->lock_);
   DCHECK(metadata_->background_task_in_progress_);
   DCHECK(!metadata_->on_disk_metadata_);
 
@@ -865,7 +880,12 @@ void ParkableStringImpl::OnWritingCompleteOnMainThread(
   ParkableStringManager::Instance().RecordDiskWriteTime(writing_time);
 }
 
-ParkableString::ParkableString(scoped_refptr<StringImpl>&& impl) {
+ParkableString::ParkableString(scoped_refptr<StringImpl>&& impl)
+    : ParkableString(std::move(impl), nullptr) {}
+
+ParkableString::ParkableString(
+    scoped_refptr<StringImpl>&& impl,
+    std::unique_ptr<ParkableStringImpl::SecureDigest> digest) {
   if (!impl) {
     impl_ = nullptr;
     return;
@@ -873,7 +893,8 @@ ParkableString::ParkableString(scoped_refptr<StringImpl>&& impl) {
 
   bool is_parkable = ParkableStringManager::ShouldPark(*impl);
   if (is_parkable) {
-    impl_ = ParkableStringManager::Instance().Add(std::move(impl));
+    impl_ = ParkableStringManager::Instance().Add(std::move(impl),
+                                                  std::move(digest));
   } else {
     impl_ = ParkableStringImpl::MakeNonParkable(std::move(impl));
   }

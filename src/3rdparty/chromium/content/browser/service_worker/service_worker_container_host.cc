@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,12 +7,12 @@
 #include <set>
 #include <utility>
 
-#include "base/callback_helpers.h"
 #include "base/containers/adapters.h"
 #include "base/containers/contains.h"
+#include "base/functional/callback_helpers.h"
 #include "base/guid.h"
 #include "base/strings/stringprintf.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/task/single_thread_task_runner.h"
 #include "content/browser/child_process_security_policy_impl.h"
 #include "content/browser/service_worker/service_worker_consts.h"
 #include "content/browser/service_worker/service_worker_context_core.h"
@@ -251,7 +251,7 @@ void ServiceWorkerContainerHost::Register(
                      weak_factory_.GetWeakPtr(), GURL(script_url),
                      GURL(options->scope), std::move(wrapped_callback),
                      trace_id, mojo::GetBadMessageCallback()),
-      global_frame_id);
+      global_frame_id, policy_container_policies_.value());
 }
 
 void ServiceWorkerContainerHost::GetRegistration(
@@ -289,7 +289,7 @@ void ServiceWorkerContainerHost::GetRegistration(
       GetCorrectStorageKeyForWebSecurityState(client_url);
 
   context_->registry()->FindRegistrationForClientUrl(
-      client_url, key,
+      ServiceWorkerRegistry::Purpose::kNotForNavigation, client_url, key,
       base::BindOnce(&ServiceWorkerContainerHost::GetRegistrationComplete,
                      weak_factory_.GetWeakPtr(), std::move(callback),
                      trace_id));
@@ -608,6 +608,9 @@ void ServiceWorkerContainerHost::SendSetControllerServiceWorker(
   DCHECK_EQ(controller_registration_->active_version(), controller_.get());
 
   controller_info->mode = GetControllerMode();
+  controller_info->fetch_handler_type = controller()->fetch_handler_type();
+  controller_info->effective_fetch_handler_type =
+      controller()->EffectiveFetchHandlerType();
 
   // Pass an endpoint for the client to talk to this controller.
   mojo::Remote<blink::mojom::ControllerServiceWorker> remote =
@@ -719,7 +722,7 @@ ServiceWorkerContainerHost::CreateServiceWorkerObjectInfoToSend(
     return existing_object_host->second->CreateCompleteObjectInfoToSend();
   }
   service_worker_object_hosts_[version_id] =
-      std::make_unique<ServiceWorkerObjectHost>(context_, this,
+      std::make_unique<ServiceWorkerObjectHost>(context_, GetWeakPtr(),
                                                 std::move(version));
   return service_worker_object_hosts_[version_id]
       ->CreateCompleteObjectInfoToSend();
@@ -738,7 +741,7 @@ ServiceWorkerContainerHost::GetOrCreateServiceWorkerObjectHost(
     return existing_object_host->second->AsWeakPtr();
 
   service_worker_object_hosts_[version_id] =
-      std::make_unique<ServiceWorkerObjectHost>(context_, this,
+      std::make_unique<ServiceWorkerObjectHost>(context_, GetWeakPtr(),
                                                 std::move(version));
   return service_worker_object_hosts_[version_id]->AsWeakPtr();
 }
@@ -803,7 +806,7 @@ ServiceWorkerClientInfo ServiceWorkerContainerHost::GetServiceWorkerClientInfo()
 
 void ServiceWorkerContainerHost::OnBeginNavigationCommit(
     const GlobalRenderFrameHostId& rfh_id,
-    const network::CrossOriginEmbedderPolicy& cross_origin_embedder_policy,
+    const PolicyContainerPolicies& policy_container_policies,
     mojo::PendingRemote<network::mojom::CrossOriginEmbedderPolicyReporter>
         coep_reporter,
     ukm::SourceId document_ukm_source_id) {
@@ -816,8 +819,9 @@ void ServiceWorkerContainerHost::OnBeginNavigationCommit(
   if (controller_)
     controller_->UpdateForegroundPriority();
 
-  DCHECK(!cross_origin_embedder_policy_.has_value());
-  cross_origin_embedder_policy_ = cross_origin_embedder_policy;
+  DCHECK(!policy_container_policies_.has_value());
+  policy_container_policies_ = policy_container_policies.Clone();
+
   coep_reporter_.Bind(std::move(coep_reporter));
 
   mojo::PendingRemote<network::mojom::CrossOriginEmbedderPolicyReporter>
@@ -828,9 +832,10 @@ void ServiceWorkerContainerHost::OnBeginNavigationCommit(
   if (controller_ && controller_->fetch_handler_existence() ==
                          ServiceWorkerVersion::FetchHandlerExistence::EXISTS) {
     DCHECK(pending_controller_receiver_);
-    controller_->controller()->Clone(std::move(pending_controller_receiver_),
-                                     cross_origin_embedder_policy_.value(),
-                                     std::move(coep_reporter_to_be_passed));
+    controller_->controller()->Clone(
+        std::move(pending_controller_receiver_),
+        policy_container_policies_->cross_origin_embedder_policy,
+        std::move(coep_reporter_to_be_passed));
   }
 
   auto* rfh = RenderFrameHostImpl::FromID(rfh_id);
@@ -858,20 +863,21 @@ void ServiceWorkerContainerHost::OnEndNavigationCommit() {
 }
 
 void ServiceWorkerContainerHost::CompleteWebWorkerPreparation(
-    const network::CrossOriginEmbedderPolicy& cross_origin_embedder_policy,
+    const PolicyContainerPolicies& policy_container_policies,
     ukm::SourceId worker_ukm_source_id) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(IsContainerForWorkerClient());
 
-  DCHECK(!cross_origin_embedder_policy_.has_value());
-  cross_origin_embedder_policy_ = cross_origin_embedder_policy;
+  DCHECK(!policy_container_policies_);
+  policy_container_policies_ = policy_container_policies.Clone();
   if (controller_ && controller_->fetch_handler_existence() ==
                          ServiceWorkerVersion::FetchHandlerExistence::EXISTS) {
     DCHECK(pending_controller_receiver_);
     // TODO(https://crbug.com/999049): Plumb the COEP reporter.
-    controller_->controller()->Clone(std::move(pending_controller_receiver_),
-                                     cross_origin_embedder_policy_.value(),
-                                     mojo::NullRemote());
+    controller_->controller()->Clone(
+        std::move(pending_controller_receiver_),
+        policy_container_policies_->cross_origin_embedder_policy,
+        mojo::NullRemote());
   }
 
   DCHECK_EQ(ukm_source_id_, ukm::kInvalidSourceId);
@@ -883,7 +889,6 @@ void ServiceWorkerContainerHost::CompleteWebWorkerPreparation(
 
 void ServiceWorkerContainerHost::UpdateUrls(
     const GURL& url,
-    const net::SiteForCookies& site_for_cookies,
     const absl::optional<url::Origin>& top_frame_origin,
     const blink::StorageKey& storage_key) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -891,14 +896,13 @@ void ServiceWorkerContainerHost::UpdateUrls(
 
   DCHECK(!url.has_ref());
   url_ = url;
-  site_for_cookies_ = site_for_cookies;
   top_frame_origin_ = top_frame_origin;
   key_ = storage_key;
 
 #if DCHECK_IS_ON()
-  const url::Origin origin_to_dcheck = IsContainerForClient()
-                                           ? url::Origin::Create(GetUrlForScopeMatch())
-                                           : url::Origin::Create(url);
+  const url::Origin origin_to_dcheck =
+      IsContainerForClient() ? url::Origin::Create(GetUrlForScopeMatch())
+                             : url::Origin::Create(url);
   DCHECK((origin_to_dcheck.opaque() && key_.origin().opaque()) ||
          origin_to_dcheck.IsSameOriginWith(key_.origin()))
       << origin_to_dcheck << " and " << key_.origin() << " should be equal.";
@@ -997,7 +1001,7 @@ ServiceWorkerContainerHost::GetRemoteControllerServiceWorker() {
 
     controller_->controller()->Clone(
         remote_controller.BindNewPipeAndPassReceiver(),
-        cross_origin_embedder_policy_.value(),
+        policy_container_policies_->cross_origin_embedder_policy,
         std::move(coep_reporter_to_be_passed));
   }
   return remote_controller;
@@ -1011,10 +1015,16 @@ bool ServiceWorkerContainerHost::AllowServiceWorker(const GURL& scope,
                                                     const GURL& script_url) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(context_);
+  auto* browser_context = context_->wrapper()->browser_context();
+  // Check that the browser context is not nullptr.  It becomes nullptr
+  // when the service worker process manager is being shutdown.
+  if (!browser_context) {
+    return false;
+  }
   AllowServiceWorkerResult allowed =
       GetContentClient()->browser()->AllowServiceWorker(
           scope, site_for_cookies(), top_frame_origin(), script_url,
-          context_->wrapper()->browser_context());
+          browser_context);
   if (IsContainerForWindowClient()) {
     auto* rfh = RenderFrameHostImpl::FromID(GetRenderFrameHostId());
     auto* web_contents =
@@ -1094,12 +1104,27 @@ int ServiceWorkerContainerHost::GetProcessId() const {
   return process_id_for_worker_client_;
 }
 
-int ServiceWorkerContainerHost::GetFrameTreeNodeIdForOngoingNavigation(
+NavigationRequest*
+ServiceWorkerContainerHost::GetOngoingNavigationRequestBeforeCommit(
     base::PassKey<StoragePartitionImpl>) const {
   DCHECK(IsContainerForWindowClient());
   DCHECK_NE(ongoing_navigation_frame_tree_node_id_,
             RenderFrameHost::kNoFrameTreeNodeId);
-  return ongoing_navigation_frame_tree_node_id_;
+  DCHECK(!GetRenderFrameHostId());
+
+  // It is safe to use `ongoing_navigation_frame_tree_node_id_` to obtain the
+  // corresponding navigation request without being concerned about the case
+  // that a new navigation had started and the old navigation had been deleted,
+  // because the owner of this instance will reset the key that can be used to
+  // retrieve this instance, which makes the old key stale and cannot locate
+  // this instance. This mechanism guarantees that this instance would always be
+  // associated with the latest navigation.
+  // However, this design requires callers to carefully get the
+  // `ServiceWorkerContainerHost` instance from scratch instead of using a
+  // stored one, and it would be better to optimize the design when possible.
+  FrameTreeNode* frame_tree_node =
+      FrameTreeNode::GloballyFindByID(ongoing_navigation_frame_tree_node_id_);
+  return frame_tree_node ? frame_tree_node->navigation_request() : nullptr;
 }
 
 const std::string& ServiceWorkerContainerHost::client_uuid() const {
@@ -1285,7 +1310,7 @@ void ServiceWorkerContainerHost::RunExecutionReadyCallbacks() {
 
   std::vector<ExecutionReadyCallback> callbacks;
   execution_ready_callbacks_.swap(callbacks);
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(&RunCallbacks, std::move(callbacks)));
 }
 
@@ -1399,9 +1424,10 @@ void ServiceWorkerContainerHost::StartControllerComplete(
       DCHECK(IsContainerForWorkerClient());
     }
 
-    controller_->controller()->Clone(std::move(receiver),
-                                     cross_origin_embedder_policy_.value(),
-                                     std::move(coep_reporter_to_be_passed));
+    controller_->controller()->Clone(
+        std::move(receiver),
+        policy_container_policies_->cross_origin_embedder_policy,
+        std::move(coep_reporter_to_be_passed));
   }
 }
 
@@ -1683,17 +1709,10 @@ ServiceWorkerContainerHost::GetCorrectStorageKeyForWebSecurityState(
     url::Origin other_origin = url::Origin::Create(url);
 
     if (key_.origin() != other_origin)
-      return blink::StorageKey(other_origin);
+      return blink::StorageKey::CreateFirstParty(other_origin);
   }
 
   return key_;
-}
-
-const GURL ServiceWorkerContainerHost::GetOrigin() const {
-  // Ideally, the origins of GetUrlForScopeMatch() and url() should be the same
-  // but GURL::GetOrigin() doesn't work with blob URL.
-  // See https://crbug.com/1144717
-  return GetUrlForScopeMatch().DeprecatedGetOriginAsURL();
 }
 
 const GURL& ServiceWorkerContainerHost::GetUrlForScopeMatch() const {
@@ -1712,8 +1731,7 @@ void ServiceWorkerContainerHost::InheritControllerFrom(
             GetClientType());
   DCHECK(blob_url.SchemeIsBlob());
 
-  UpdateUrls(blob_url, net::SiteForCookies::FromUrl(blob_url),
-             creator_host.top_frame_origin(), creator_host.key());
+  UpdateUrls(blob_url, creator_host.top_frame_origin(), creator_host.key());
 
   // Let `scope_match_url_for_blob_client_` be the creator's url for scope match
   // because a client should be handled by the service worker of its creator.

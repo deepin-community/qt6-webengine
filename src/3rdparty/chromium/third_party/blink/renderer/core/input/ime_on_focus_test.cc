@@ -1,10 +1,9 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/common/input/web_coalesced_input_event.h"
-#include "third_party/blink/public/platform/web_url_loader_mock_factory.h"
 #include "third_party/blink/public/web/web_document.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/element.h"
@@ -13,6 +12,7 @@
 #include "third_party/blink/renderer/core/frame/web_local_frame_impl.h"
 #include "third_party/blink/renderer/core/html/html_element.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
+#include "third_party/blink/renderer/platform/testing/url_loader_mock_factory.h"
 #include "third_party/blink/renderer/platform/testing/url_test_helpers.h"
 #include "ui/base/ime/mojom/text_input_state.mojom-blink.h"
 
@@ -63,7 +63,7 @@ void ImeOnFocusTest::SendGestureTap(WebViewImpl* web_view,
 }
 
 void ImeOnFocusTest::Focus(const AtomicString& element) {
-  document_->body()->getElementById(element)->focus();
+  document_->body()->getElementById(element)->Focus();
 }
 
 void ImeOnFocusTest::RunImeOnFocusTest(
@@ -90,7 +90,7 @@ void ImeOnFocusTest::RunImeOnFocusTest(
   if (tap_point.x() >= 0 && tap_point.y() >= 0)
     SendGestureTap(web_view, tap_point);
 
-  if (!frame.IsEmpty()) {
+  if (!frame.empty()) {
     RegisterMockedURLLoadFromBase(WebString(base_url_),
                                   test::CoreTestDataPath(), WebString(frame));
     WebLocalFrame* child_frame =

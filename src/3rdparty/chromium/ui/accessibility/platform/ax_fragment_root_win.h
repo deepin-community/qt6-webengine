@@ -1,12 +1,13 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef UI_ACCESSIBILITY_PLATFORM_AX_FRAGMENT_ROOT_WIN_H_
 #define UI_ACCESSIBILITY_PLATFORM_AX_FRAGMENT_ROOT_WIN_H_
 
+#include "base/component_export.h"
 #include "base/memory/raw_ptr.h"
-#include "ui/accessibility/platform/ax_platform_node_delegate_base.h"
+#include "ui/accessibility/platform/ax_platform_node_delegate.h"
 
 #include <wrl/client.h>
 
@@ -27,7 +28,8 @@ class AXFragmentRootPlatformNodeWin;
 // Since UIA derives some information from the underlying HWND hierarchy, we
 // expose one fragment root per HWND. The class that owns the HWND is expected
 // to own the corresponding AXFragmentRootWin.
-class AX_EXPORT AXFragmentRootWin : public ui::AXPlatformNodeDelegateBase {
+class COMPONENT_EXPORT(AX_PLATFORM) AXFragmentRootWin
+    : public ui::AXPlatformNodeDelegate {
  public:
   AXFragmentRootWin(gfx::AcceleratedWidget widget,
                     AXFragmentRootDelegateWin* delegate);
@@ -59,8 +61,8 @@ class AX_EXPORT AXFragmentRootWin : public ui::AXPlatformNodeDelegateBase {
  private:
   // AXPlatformNodeDelegate overrides.
   gfx::NativeViewAccessible GetParent() const override;
-  int GetChildCount() const override;
-  gfx::NativeViewAccessible ChildAtIndex(int index) override;
+  size_t GetChildCount() const override;
+  gfx::NativeViewAccessible ChildAtIndex(size_t index) override;
   gfx::NativeViewAccessible GetNextSibling() override;
   gfx::NativeViewAccessible GetPreviousSibling() override;
   gfx::NativeViewAccessible HitTestSync(int x, int y) const override;
@@ -74,7 +76,7 @@ class AX_EXPORT AXFragmentRootWin : public ui::AXPlatformNodeDelegateBase {
   // accessibility tree. Rather, the fragment root's child is a child of the
   // fragment root's parent. This helper computes the child's index in the
   // parent's array of children.
-  int GetIndexInParentOfChild() const;
+  size_t GetIndexInParentOfChild() const;
 
   // If a parent node is available, return its delegate.
   AXPlatformNodeDelegate* GetParentNodeDelegate() const;

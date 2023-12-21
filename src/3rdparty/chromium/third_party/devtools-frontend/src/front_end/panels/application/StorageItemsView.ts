@@ -9,20 +9,20 @@ import * as UI from '../../ui/legacy/legacy.js';
 
 const UIStrings = {
   /**
-  *@description Text to refresh the page
-  */
+   *@description Text to refresh the page
+   */
   refresh: 'Refresh',
   /**
-  *@description Text to filter result items
-  */
+   *@description Text to filter result items
+   */
   filter: 'Filter',
   /**
-  *@description Text to clear everything
-  */
+   *@description Text to clear everything
+   */
   clearAll: 'Clear All',
   /**
-  *@description Tooltip text that appears when hovering over the largeicon delete button in the Service Worker Cache Views of the Application panel
-  */
+   *@description Tooltip text that appears when hovering over the largeicon delete button in the Service Worker Cache Views of the Application panel
+   */
   deleteSelected: 'Delete Selected',
   /**
    *@description Text that informs screen reader users that the storage table has been refreshed
@@ -33,11 +33,11 @@ const str_ = i18n.i18n.registerUIStrings('panels/application/StorageItemsView.ts
 const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
 export class StorageItemsView extends UI.Widget.VBox {
   private filterRegex: RegExp|null;
-  private readonly refreshButton: UI.Toolbar.ToolbarButton;
+  readonly refreshButton: UI.Toolbar.ToolbarButton;
   private readonly mainToolbar: UI.Toolbar.Toolbar;
-  private readonly filterItem: UI.Toolbar.ToolbarInput;
-  private readonly deleteAllButton: UI.Toolbar.ToolbarButton;
-  private readonly deleteSelectedButton: UI.Toolbar.ToolbarButton;
+  readonly filterItem: UI.Toolbar.ToolbarInput;
+  readonly deleteAllButton: UI.Toolbar.ToolbarButton;
+  readonly deleteSelectedButton: UI.Toolbar.ToolbarButton;
 
   constructor(_title: string, _filterName: string) {
     super(false);

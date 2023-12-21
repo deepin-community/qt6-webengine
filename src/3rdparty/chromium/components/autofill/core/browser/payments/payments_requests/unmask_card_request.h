@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -23,13 +23,18 @@ class UnmaskCardRequest : public PaymentsRequest {
   UnmaskCardRequest& operator=(const UnmaskCardRequest&) = delete;
   ~UnmaskCardRequest() override;
 
+  const PaymentsClient::UnmaskResponseDetails& GetResponseDetailsForTesting() {
+    return response_details_;
+  }
+
   // PaymentsRequest:
   std::string GetRequestUrlPath() override;
   std::string GetRequestContentType() override;
   std::string GetRequestContent() override;
-  void ParseResponse(const base::Value& response) override;
+  void ParseResponse(const base::Value::Dict& response) override;
   bool IsResponseComplete() override;
   void RespondToDelegate(AutofillClient::PaymentsRpcResult result) override;
+  bool IsRetryableFailure(const std::string& error_code) override;
 
  private:
   // Returns whether the response contains all the information of the virtual

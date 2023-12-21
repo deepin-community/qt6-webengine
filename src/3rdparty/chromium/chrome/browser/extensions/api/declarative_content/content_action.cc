@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -177,9 +177,8 @@ class SetIcon : public ContentAction {
 };
 
 // Helper for getting JS collections into C++.
-static bool AppendJSStringsToCPPStrings(
-    const base::Value::ConstListView& append_strings,
-    std::vector<std::string>* append_to) {
+static bool AppendJSStringsToCPPStrings(const base::Value::List& append_strings,
+                                        std::vector<std::string>* append_to) {
   for (const auto& entry : append_strings) {
     if (entry.is_string()) {
       append_to->push_back(entry.GetString());
@@ -265,16 +264,14 @@ bool RequestContentScript::InitScriptData(const base::Value::Dict* dict,
     return false;
   }
   if (css) {
-    if (!css->is_list() ||
-        !AppendJSStringsToCPPStrings(css->GetListDeprecated(),
-                                     &script_data->css_file_names)) {
+    if (!css->is_list() || !AppendJSStringsToCPPStrings(
+                               css->GetList(), &script_data->css_file_names)) {
       return false;
     }
   }
   if (js) {
-    if (!js->is_list() ||
-        !AppendJSStringsToCPPStrings(js->GetListDeprecated(),
-                                     &script_data->js_file_names)) {
+    if (!js->is_list() || !AppendJSStringsToCPPStrings(
+                              js->GetList(), &script_data->js_file_names)) {
       return false;
     }
   }
@@ -332,17 +329,15 @@ void RequestContentScript::InitScript(const mojom::HostID& host_id,
       script_data.match_about_blank
           ? MatchOriginAsFallbackBehavior::kMatchForAboutSchemeAndClimbTree
           : MatchOriginAsFallbackBehavior::kNever);
-  for (auto it = script_data.css_file_names.cbegin();
-       it != script_data.css_file_names.cend(); ++it) {
-    GURL url = extension->GetResourceURL(*it);
-    ExtensionResource resource = extension->GetResource(*it);
+  for (const auto& css_file_name : script_data.css_file_names) {
+    GURL url = extension->GetResourceURL(css_file_name);
+    ExtensionResource resource = extension->GetResource(css_file_name);
     script_.css_scripts().push_back(std::make_unique<UserScript::File>(
         resource.extension_root(), resource.relative_path(), url));
   }
-  for (auto it = script_data.js_file_names.cbegin();
-       it != script_data.js_file_names.cend(); ++it) {
-    GURL url = extension->GetResourceURL(*it);
-    ExtensionResource resource = extension->GetResource(*it);
+  for (const auto& js_file_name : script_data.js_file_names) {
+    GURL url = extension->GetResourceURL(js_file_name);
+    ExtensionResource resource = extension->GetResource(js_file_name);
     script_.js_scripts().push_back(std::make_unique<UserScript::File>(
         resource.extension_root(), resource.relative_path(), url));
   }
@@ -370,11 +365,12 @@ void RequestContentScript::InstructRenderProcessToInject(
     content::WebContents* contents,
     const Extension* extension) const {
   ContentScriptTracker::WillExecuteCode(base::PassKey<RequestContentScript>(),
-                                        contents->GetMainFrame(), *extension);
+                                        contents->GetPrimaryMainFrame(),
+                                        *extension);
 
   mojom::LocalFrame* local_frame =
       ExtensionWebContentsObserver::GetForWebContents(contents)->GetLocalFrame(
-          contents->GetMainFrame());
+          contents->GetPrimaryMainFrame());
   if (!local_frame) {
     // TODO(https://crbug.com/1203579): Need to review when this method is
     // called with non-live frame.
@@ -409,15 +405,9 @@ std::unique_ptr<ContentAction> SetIcon::Create(
   }
 
   gfx::ImageSkia icon;
-  // TODO(crbug.com/1187011): When removing base::DictionaryValue from
-  // ParseIconFromCanvasDictionary, |canvas_set| should be changed to
-  // base::Value::Dict and checking for base::Value::Type::DICTIONARY should be
-  // removed. This is a temporary solution to prevent content_action base::Value
-  // migration from expanding across too many locations.
-  const base::Value* canvas_set = dict->Find("imageData");
-  if (canvas_set && canvas_set->type() == base::Value::Type::DICTIONARY &&
-      ExtensionAction::ParseIconFromCanvasDictionary(
-          base::Value::AsDictionaryValue(*canvas_set), &icon) !=
+  const base::Value::Dict* canvas_set = dict->FindDict("imageData");
+  if (canvas_set &&
+      ExtensionAction::ParseIconFromCanvasDictionary(*canvas_set, &icon) !=
           ExtensionAction::IconParseResult::kSuccess) {
     *error = kInvalidIconDictionary;
     return nullptr;
@@ -449,15 +439,12 @@ ContentAction::~ContentAction() {}
 std::unique_ptr<ContentAction> ContentAction::Create(
     content::BrowserContext* browser_context,
     const Extension* extension,
-    const base::Value& json_action,
+    const base::Value::Dict& json_action_dict,
     std::string* error) {
   error->clear();
-  // TODO(crbug.com/1306708) Refactor ContentAction::Create to take in a
-  // base::Value::Dict instead of base::Value.
-  const base::Value::Dict* action_dict = json_action.GetIfDict();
   const std::string* instance_type = nullptr;
-  if (!action_dict || !(instance_type = action_dict->FindString(
-                            declarative_content_constants::kInstanceType))) {
+  if (!(instance_type = json_action_dict.FindString(
+            declarative_content_constants::kInstanceType))) {
     *error = kMissingInstanceTypeError;
     return nullptr;
   }
@@ -466,7 +453,7 @@ std::unique_ptr<ContentAction> ContentAction::Create(
   auto factory_method_iter = factory.factory_methods.find(*instance_type);
   if (factory_method_iter != factory.factory_methods.end())
     return (*factory_method_iter->second)(browser_context, extension,
-                                          action_dict, error);
+                                          &json_action_dict, error);
 
   *error =
       base::StringPrintf(kInvalidInstanceTypeError, instance_type->c_str());

@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,9 +7,9 @@
 #include <utility>
 
 #include "base/base64.h"
-#include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
+#include "base/functional/bind.h"
 #include "base/strings/string_util.h"
 #include "base/task/thread_pool.h"
 #include "components/crx_file/crx_verifier.h"
@@ -39,8 +39,7 @@ void PostErrorTasks(const base::FilePath& unpacked_dir,
                     UpdateClientCallback update_client_callback) {
   base::ThreadPool::PostTask(
       FROM_HERE, {base::TaskPriority::BEST_EFFORT, base::MayBlock()},
-      base::BindOnce(base::GetDeletePathRecursivelyCallback(),
-                     unpacked_dir));
+      base::GetDeletePathRecursivelyCallback(unpacked_dir));
   content::GetUIThreadTaskRunner({})->PostTask(
       FROM_HERE,
       base::BindOnce(std::move(update_client_callback),

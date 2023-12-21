@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,7 @@
 
 #include <stdint.h>
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/process/kill.h"
 #include "content/browser/dom_storage/session_storage_namespace_impl.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
@@ -50,21 +50,18 @@ class RenderViewHostDelegate {
   // there is no corresponding delegate.
   virtual RenderViewHostDelegateView* GetDelegateView();
 
-  // The RenderView has been constructed.
+  // The `blink::WebView` has been constructed.
   virtual void RenderViewReady(RenderViewHost* render_view_host) {}
 
-  // The process containing the RenderView exited somehow (either cleanly,
+  // The process containing the `blink::WebView` exited somehow (either cleanly,
   // crash, or user kill).
   virtual void RenderViewTerminated(RenderViewHost* render_view_host,
                                     base::TerminationStatus status,
                                     int error_code) {}
 
-  // The RenderView is going to be deleted. This is called when each
-  // RenderView is going to be destroyed
+  // The `blink::WebView` is going to be deleted. This is called when each
+  // `blink::WebView` is going to be destroyed
   virtual void RenderViewDeleted(RenderViewHost* render_view_host) {}
-
-  // The page is trying to close the RenderView's representation in the client.
-  virtual void Close(RenderViewHost* render_view_host) {}
 
   // Return a dummy RendererPreferences object that will be used by the renderer
   // associated with the owning RenderViewHost.
@@ -109,18 +106,12 @@ class RenderViewHostDelegate {
   // recomputed).
   virtual void RecomputeWebPreferencesSlow() {}
 
-  virtual bool IsJavaScriptDialogShowing() const;
-
-  // If a timer for an unresponsive renderer fires, whether it should be
-  // ignored.
-  virtual bool ShouldIgnoreUnresponsiveRenderer();
-
   // Returns true if the render view is rendering a guest.
   virtual bool IsGuest();
 
-  // Called on RenderView creation to get the initial base background color
-  // for this RenderView. Nullopt means a color is not set, and the blink
-  // default color should be used.
+  // Called on `blink::WebView` creation to get the initial base background
+  // color for this `blink::WebView`. Nullopt means a color is not set, and the
+  // blink default color should be used.
   virtual absl::optional<SkColor> GetBaseBackgroundColor();
 
   virtual const base::Location& GetCreatorLocation() = 0;

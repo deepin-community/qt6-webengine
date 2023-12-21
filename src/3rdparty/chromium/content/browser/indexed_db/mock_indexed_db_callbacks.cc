@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,8 +7,9 @@
 #include <memory>
 #include <utility>
 
+#include "base/task/sequenced_task_runner.h"
+#include "components/services/storage/public/cpp/buckets/bucket_locator.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/blink/public/common/storage_key/storage_key.h"
 
 using blink::IndexedDBDatabaseMetadata;
 using blink::IndexedDBKey;
@@ -17,14 +18,14 @@ namespace content {
 
 MockIndexedDBCallbacks::MockIndexedDBCallbacks()
     : IndexedDBCallbacks(nullptr,
-                         blink::StorageKey(),
+                         absl::nullopt,
                          mojo::NullAssociatedRemote(),
-                         base::SequencedTaskRunnerHandle::Get()) {}
+                         base::SequencedTaskRunner::GetCurrentDefault()) {}
 MockIndexedDBCallbacks::MockIndexedDBCallbacks(bool expect_connection)
     : IndexedDBCallbacks(nullptr,
-                         blink::StorageKey(),
+                         absl::nullopt,
                          mojo::NullAssociatedRemote(),
-                         base::SequencedTaskRunnerHandle::Get()),
+                         base::SequencedTaskRunner::GetCurrentDefault()),
       expect_connection_(expect_connection) {}
 
 MockIndexedDBCallbacks::~MockIndexedDBCallbacks() {

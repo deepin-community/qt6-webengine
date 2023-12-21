@@ -15,52 +15,45 @@
 #ifndef SRC_DAWN_COMMON_GPUINFO_H_
 #define SRC_DAWN_COMMON_GPUINFO_H_
 
-#include <array>
-#include <cstdint>
+#include <string>
 
-using PCIVendorID = uint32_t;
-using PCIDeviceID = uint32_t;
+#include "dawn/common/GPUInfo_autogen.h"
+#include "dawn/common/StackContainer.h"
 
 namespace gpu_info {
 
-    static constexpr PCIVendorID kVendorID_AMD = 0x1002;
-    static constexpr PCIVendorID kVendorID_ARM = 0x13B5;
-    static constexpr PCIVendorID kVendorID_ImgTec = 0x1010;
-    static constexpr PCIVendorID kVendorID_Intel = 0x8086;
-    static constexpr PCIVendorID kVendorID_Mesa = 0x10005;
-    static constexpr PCIVendorID kVendorID_Nvidia = 0x10DE;
-    static constexpr PCIVendorID kVendorID_Qualcomm = 0x5143;
-    static constexpr PCIVendorID kVendorID_Google = 0x1AE0;
-    static constexpr PCIVendorID kVendorID_Microsoft = 0x1414;
+// Four uint16 fields could cover almost all driver version schemas:
+// D3D12: AA.BB.CCC.DDDD
+// Vulkan: AAA.BBB.CCC.DDD on Nvidia, CCC.DDDD for Intel Windows, and AA.BB.CCC for others,
+// See https://vulkan.gpuinfo.org/
+static constexpr uint32_t kMaxVersionFields = 4;
 
-    static constexpr PCIDeviceID kDeviceID_Swiftshader = 0xC0DE;
-    static constexpr PCIDeviceID kDeviceID_WARP = 0x8c;
+class DriverVersion {
+  public:
+    DriverVersion();
+    DriverVersion(const std::initializer_list<uint16_t>& version);
 
-    bool IsAMD(PCIVendorID vendorId);
-    bool IsARM(PCIVendorID vendorId);
-    bool IsImgTec(PCIVendorID vendorId);
-    bool IsIntel(PCIVendorID vendorId);
-    bool IsMesa(PCIVendorID vendorId);
-    bool IsNvidia(PCIVendorID vendorId);
-    bool IsQualcomm(PCIVendorID vendorId);
-    bool IsSwiftshader(PCIVendorID vendorId, PCIDeviceID deviceId);
-    bool IsWARP(PCIVendorID vendorId, PCIDeviceID deviceId);
+    uint16_t& operator[](size_t i);
+    const uint16_t& operator[](size_t i) const;
 
-    using D3DDriverVersion = std::array<uint16_t, 4>;
+    uint32_t size() const;
+    std::string ToString() const;
 
-    // Do comparison between two driver versions. Currently we only support the comparison between
-    // Intel D3D driver versions.
-    // - Return -1 if build number of version1 is smaller
-    // - Return 1 if build number of version1 is bigger
-    // - Return 0 if version1 and version2 represent same driver version
-    int CompareD3DDriverVersion(PCIVendorID vendorId,
-                                const D3DDriverVersion& version1,
-                                const D3DDriverVersion& version2);
+  private:
+    StackVector<uint16_t, kMaxVersionFields> mDriverVersion;
+};
 
-    // Intel architectures
-    bool IsSkylake(PCIDeviceID deviceId);
-    bool IsKabylake(PCIDeviceID deviceId);
-    bool IsCoffeelake(PCIDeviceID deviceId);
+// Do comparison between two driver versions. Currently we only support the comparison between
+// Intel Windows driver versions.
+// - Return -1 if build number of version1 is smaller
+// - Return 1 if build number of version1 is bigger
+// - Return 0 if version1 and version2 represent same driver version
+int CompareWindowsDriverVersion(PCIVendorID vendorId,
+                                const DriverVersion& version1,
+                                const DriverVersion& version2);
+
+// Intel architectures
+bool IsSkylake(PCIDeviceID deviceId);
 
 }  // namespace gpu_info
 #endif  // SRC_DAWN_COMMON_GPUINFO_H_

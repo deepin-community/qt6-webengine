@@ -4,19 +4,19 @@ Forwarded: not-needed
 
 --- a/src/core/configure/BUILD.root.gn.in
 +++ b/src/core/configure/BUILD.root.gn.in
-@@ -445,7 +445,6 @@ repack("qtwebengine_repack_resources") {
-     "$root_gen_dir/components/components_resources.pak",
+@@ -551,7 +551,6 @@ repack("qtwebengine_repack_resources") {
      "$root_gen_dir/components/dev_ui_components_resources.pak",
+     "$root_gen_dir/content/attribution_internals_resources.pak",
      "$root_gen_dir/content/browser/resources/media/media_internals_resources.pak",
 -    "$root_gen_dir/content/browser/tracing/tracing_resources.pak",
      "$root_gen_dir/content/content_resources.pak",
      "$root_gen_dir/content/dev_ui_content_resources.pak",
-     "$root_gen_dir/content/quota_internals_resources.pak",
-@@ -463,7 +462,6 @@ repack("qtwebengine_repack_resources") {
-      "//components/resources:components_resources_grit",
+     "$root_gen_dir/content/indexed_db_resources.pak",
+@@ -571,7 +570,6 @@ repack("qtwebengine_repack_resources") {
       "//components/resources:dev_ui_components_resources_grit",
+      "//content/browser/resources/attribution_reporting:resources",
       "//content/browser/resources/media:resources",
 -     "//content/browser/tracing:resources",
       "//content:content_resources",
+      "//content/browser/resources/indexed_db:resources",
       "//content/browser/resources/quota:resources",
-      "//content:dev_ui_content_resources_grit",

@@ -124,7 +124,7 @@ enum LineDirectionMode { kHorizontalLine, kVerticalLine };
 //   "LogicalLeft" and "LogicalRight".
 //
 // For more information, see the following doc about coordinate spaces:
-// https://chromium.googlesource.com/chromium/src.git/+/master/third_party/blink/renderer/core/layout/README.md#coordinate-spaces
+// https://chromium.googlesource.com/chromium/src.git/+/main/third_party/blink/renderer/core/layout/README.md#coordinate-spaces
 class CORE_EXPORT LayoutBoxModelObject : public LayoutObject {
  public:
   LayoutBoxModelObject(ContainerNode*);
@@ -143,13 +143,22 @@ class CORE_EXPORT LayoutBoxModelObject : public LayoutObject {
                                                 : offset.TransposedSize();
   }
 
-  // Populates StickyPositionConstraints, setting the sticky box rect,
-  // containing block rect and updating the constraint offsets according to the
-  // available space.
-  PhysicalRect ComputeStickyConstrainingRect() const;
-  void UpdateStickyPositionConstraints() const;
+  // If needed, populates StickyPositionConstraints, setting the sticky box
+  // rect, containing block rect and updating the constraint offsets according
+  // to the available space, and returns true. Otherwise returns false.
+  bool UpdateStickyPositionConstraints();
+
   PhysicalOffset StickyPositionOffset() const;
   virtual LayoutBlock* StickyContainer() const;
+
+  StickyPositionScrollingConstraints* StickyConstraints() const {
+    NOT_DESTROYED();
+    return FirstFragment().StickyConstraints();
+  }
+  void SetStickyConstraints(StickyPositionScrollingConstraints* constraints) {
+    NOT_DESTROYED();
+    GetMutableForPainting().FirstFragment().SetStickyConstraints(constraints);
+  }
 
   PhysicalOffset OffsetForInFlowPosition() const;
 
@@ -189,6 +198,10 @@ class CORE_EXPORT LayoutBoxModelObject : public LayoutObject {
   virtual gfx::Rect BorderBoundingBox() const = 0;
 
   virtual PhysicalRect PhysicalVisualOverflowRect() const = 0;
+
+  // Returns the visual overflow rect, expanded to the area affected by any
+  // filters that paint outside of the box, in physical coordinates.
+  PhysicalRect PhysicalVisualOverflowRectIncludingFilters() const;
 
   bool UsesCompositedScrolling() const;
 
@@ -625,8 +638,6 @@ class CORE_EXPORT LayoutBoxModelObject : public LayoutObject {
   void StyleWillChange(StyleDifference,
                        const ComputedStyle& new_style) override;
   void StyleDidChange(StyleDifference, const ComputedStyle* old_style) override;
-
-  void InvalidateStickyConstraints();
 
  public:
   // These functions are only used internally to manipulate the layout tree

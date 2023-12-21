@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -72,6 +72,8 @@ class TabsEventRouter : public TabStripModelObserver,
                               int index) override;
 
   // ZoomObserver:
+  void OnZoomControllerDestroyed(
+      zoom::ZoomController* zoom_controller) override;
   void OnZoomChanged(
       const zoom::ZoomController::ZoomChangedEventData& data) override;
 
@@ -102,8 +104,7 @@ class TabsEventRouter : public TabStripModelObserver,
                              int index,
                              bool was_active);
   void DispatchActiveTabChanged(content::WebContents* old_contents,
-                                content::WebContents* new_contents,
-                                int index);
+                                content::WebContents* new_contents);
   void DispatchTabSelectionChanged(TabStripModel* tab_strip_model,
                                    const ui::ListSelectionModel& old_model);
   void DispatchTabMoved(content::WebContents* contents,
@@ -132,7 +133,7 @@ class TabsEventRouter : public TabStripModelObserver,
   void DispatchEvent(Profile* profile,
                      events::HistogramValue histogram_value,
                      const std::string& event_name,
-                     std::unique_ptr<base::ListValue> args,
+                     base::Value::List args,
                      EventRouter::UserGestureState user_gesture);
 
   // Packages |changed_property_names| as a tab updated event for the tab
@@ -213,6 +214,8 @@ class TabsEventRouter : public TabStripModelObserver,
   base::ScopedMultiSourceObservation<favicon::FaviconDriver,
                                      favicon::FaviconDriverObserver>
       favicon_scoped_observations_{this};
+  base::ScopedMultiSourceObservation<zoom::ZoomController, zoom::ZoomObserver>
+      zoom_scoped_observations_{this};
 
   BrowserTabStripTracker browser_tab_strip_tracker_;
 

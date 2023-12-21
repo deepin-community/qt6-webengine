@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -110,7 +110,7 @@ TEST(NetLogProxySink, TestMultipleObservers) {
       base::TimeTicks() + base::Milliseconds(10);
   base::TimeTicks source1_event0_time =
       source1_start_time + base::Milliseconds(1);
-  base::Value source1_event0_params(base::Value::Type::DICTIONARY);
+  base::Value source1_event0_params(base::Value::Type::DICT);
   source1_event0_params.SetStringKey("hello", "world");
   proxy_sink_remote->AddEntry(
       static_cast<uint32_t>(net::NetLogEventType::REQUEST_ALIVE),

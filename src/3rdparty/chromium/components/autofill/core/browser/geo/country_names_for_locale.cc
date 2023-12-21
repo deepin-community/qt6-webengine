@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -46,8 +46,7 @@ const std::string GetSortKey(const icu::Collator& collator,
 
 // Creates collator for |locale| and sets its attributes as needed.
 std::unique_ptr<icu::Collator> CreateCollator(const icu::Locale& locale) {
-  std::unique_ptr<icu::Collator> collator(
-      autofill::l10n::GetCollatorForLocale(locale));
+  std::unique_ptr<icu::Collator> collator(l10n::GetCollatorForLocale(locale));
   if (!collator)
     return nullptr;
 

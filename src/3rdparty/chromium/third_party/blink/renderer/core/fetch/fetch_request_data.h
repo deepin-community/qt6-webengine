@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -87,6 +87,13 @@ class CORE_EXPORT FetchRequestData final
   }
   void SetMode(network::mojom::RequestMode mode) { mode_ = mode; }
   network::mojom::RequestMode Mode() const { return mode_; }
+  void SetTargetAddressSpace(
+      network::mojom::IPAddressSpace target_address_space) {
+    target_address_space_ = target_address_space;
+  }
+  network::mojom::IPAddressSpace TargetAddressSpace() const {
+    return target_address_space_;
+  }
   void SetCredentials(network::mojom::CredentialsMode credentials) {
     credentials_ = credentials;
   }
@@ -129,6 +136,10 @@ class CORE_EXPORT FetchRequestData final
 
   bool Keepalive() const { return keepalive_; }
   void SetKeepalive(bool b) { keepalive_ = b; }
+
+  bool BrowsingTopics() const { return browsing_topics_; }
+  void SetBrowsingTopics(bool b) { browsing_topics_ = b; }
+
   bool IsHistoryNavigation() const { return is_history_navigation_; }
   void SetIsHistoryNavigation(bool b) { is_history_navigation_ = b; }
 
@@ -154,13 +165,6 @@ class CORE_EXPORT FetchRequestData final
     trust_token_params_ = std::move(trust_token_params);
   }
 
-  void SetAllowHTTP1ForStreamingUpload(bool allow) {
-    allow_http1_for_streaming_upload_ = allow;
-  }
-  bool AllowHTTP1ForStreamingUpload() const {
-    return allow_http1_for_streaming_upload_;
-  }
-
   void Trace(Visitor*) const;
 
  private:
@@ -183,6 +187,8 @@ class CORE_EXPORT FetchRequestData final
   // FIXME: Support m_authenticationFlag;
   // FIXME: Support m_synchronousFlag;
   network::mojom::RequestMode mode_ = network::mojom::RequestMode::kNoCors;
+  network::mojom::IPAddressSpace target_address_space_ =
+      network::mojom::IPAddressSpace::kUnknown;
   network::mojom::CredentialsMode credentials_ =
       network::mojom::CredentialsMode::kOmit;
   // TODO(yiyix): |cache_mode_| is exposed but does not yet affect fetch
@@ -204,6 +210,7 @@ class CORE_EXPORT FetchRequestData final
   network::mojom::RequestDestination original_destination_ =
       network::mojom::RequestDestination::kEmpty;
   bool keepalive_ = false;
+  bool browsing_topics_ = false;
   bool is_history_navigation_ = false;
   // A specific factory that should be used for this request instead of whatever
   // the system would otherwise decide to use to load this request.
@@ -212,7 +219,6 @@ class CORE_EXPORT FetchRequestData final
   HeapMojoRemote<network::mojom::blink::URLLoaderFactory> url_loader_factory_;
   base::UnguessableToken window_id_;
   Member<ExecutionContext> execution_context_;
-  bool allow_http1_for_streaming_upload_ = false;
 };
 
 }  // namespace blink

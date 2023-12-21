@@ -13,6 +13,12 @@ MasqueServerBackend::MasqueServerBackend(MasqueMode masque_mode,
                                          const std::string& server_authority,
                                          const std::string& cache_directory)
     : masque_mode_(masque_mode), server_authority_(server_authority) {
+  // Start with client IP 10.1.1.2.
+  connect_ip_next_client_ip_[0] = 10;
+  connect_ip_next_client_ip_[1] = 1;
+  connect_ip_next_client_ip_[2] = 1;
+  connect_ip_next_client_ip_[3] = 2;
+
   if (!cache_directory.empty()) {
     QuicMemoryCacheBackend::InitializeBackend(cache_directory);
   }
@@ -20,7 +26,6 @@ MasqueServerBackend::MasqueServerBackend(MasqueMode masque_mode,
 
 bool MasqueServerBackend::MaybeHandleMasqueRequest(
     const spdy::Http2HeaderBlock& request_headers,
-    const std::string& request_body,
     QuicSimpleServerBackend::RequestHandler* request_handler) {
   auto method_pair = request_headers.find(":method");
   if (method_pair == request_headers.end()) {
@@ -29,34 +34,12 @@ bool MasqueServerBackend::MaybeHandleMasqueRequest(
   }
   absl::string_view method = method_pair->second;
   std::string masque_path = "";
-  if (masque_mode_ == MasqueMode::kLegacy) {
-    auto path_pair = request_headers.find(":path");
-    auto scheme_pair = request_headers.find(":scheme");
-    if (path_pair == request_headers.end() ||
-        scheme_pair == request_headers.end()) {
-      // This request is missing required headers.
-      return false;
-    }
-    absl::string_view path = path_pair->second;
-    absl::string_view scheme = scheme_pair->second;
-    if (scheme != "https" || method != "POST" || request_body.empty()) {
-      // MASQUE requests MUST be a non-empty https POST.
-      return false;
-    }
-
-    if (path.rfind("/.well-known/masque/", 0) != 0) {
-      // This request is not a MASQUE path.
-      return false;
-    }
-    masque_path = std::string(path.substr(sizeof("/.well-known/masque/") - 1));
-  } else {
-    QUICHE_DCHECK_EQ(masque_mode_, MasqueMode::kOpen);
-    auto protocol_pair = request_headers.find(":protocol");
-    if (method != "CONNECT" || protocol_pair == request_headers.end() ||
-        protocol_pair->second != "connect-udp") {
-      // This is not a MASQUE request.
-      return false;
-    }
+  auto protocol_pair = request_headers.find(":protocol");
+  if (method != "CONNECT" || protocol_pair == request_headers.end() ||
+      (protocol_pair->second != "connect-udp" &&
+       protocol_pair->second != "connect-ip")) {
+    // This is not a MASQUE request.
+    return false;
   }
 
   if (!server_authority_.empty()) {
@@ -82,8 +65,7 @@ bool MasqueServerBackend::MaybeHandleMasqueRequest(
   BackendClient* backend_client = it->second.backend_client;
 
   std::unique_ptr<QuicBackendResponse> response =
-      backend_client->HandleMasqueRequest(masque_path, request_headers,
-                                          request_body, request_handler);
+      backend_client->HandleMasqueRequest(request_headers, request_handler);
   if (response == nullptr) {
     QUIC_LOG(ERROR) << "Backend client did not process request for "
                     << masque_path << request_headers.DebugString();
@@ -103,8 +85,7 @@ void MasqueServerBackend::FetchResponseFromBackend(
     const spdy::Http2HeaderBlock& request_headers,
     const std::string& request_body,
     QuicSimpleServerBackend::RequestHandler* request_handler) {
-  if (MaybeHandleMasqueRequest(request_headers, request_body,
-                               request_handler)) {
+  if (MaybeHandleMasqueRequest(request_headers, request_handler)) {
     // Request was handled as a MASQUE request.
     return;
   }
@@ -112,6 +93,19 @@ void MasqueServerBackend::FetchResponseFromBackend(
                   << request_headers.DebugString();
   QuicMemoryCacheBackend::FetchResponseFromBackend(
       request_headers, request_body, request_handler);
+}
+
+void MasqueServerBackend::HandleConnectHeaders(
+    const spdy::Http2HeaderBlock& request_headers,
+    RequestHandler* request_handler) {
+  if (MaybeHandleMasqueRequest(request_headers, request_handler)) {
+    // Request was handled as a MASQUE request.
+    return;
+  }
+  QUIC_DLOG(INFO) << "Fetching non-MASQUE CONNECT response for "
+                  << request_headers.DebugString();
+  QuicMemoryCacheBackend::HandleConnectHeaders(request_headers,
+                                               request_handler);
 }
 
 void MasqueServerBackend::CloseBackendResponseStream(
@@ -133,6 +127,27 @@ void MasqueServerBackend::RegisterBackendClient(QuicConnectionId connection_id,
 void MasqueServerBackend::RemoveBackendClient(QuicConnectionId connection_id) {
   QUIC_DLOG(INFO) << "Removing backend client for " << connection_id;
   backend_client_states_.erase(connection_id);
+}
+
+QuicIpAddress MasqueServerBackend::GetNextClientIpAddress() {
+  // Makes sure all addresses are in 10.(1-254).(1-254).(2-254)
+  QuicIpAddress address;
+  address.FromPackedString(
+      reinterpret_cast<char*>(&connect_ip_next_client_ip_[0]),
+      sizeof(connect_ip_next_client_ip_));
+  connect_ip_next_client_ip_[3]++;
+  if (connect_ip_next_client_ip_[3] >= 255) {
+    connect_ip_next_client_ip_[3] = 2;
+    connect_ip_next_client_ip_[2]++;
+    if (connect_ip_next_client_ip_[2] >= 255) {
+      connect_ip_next_client_ip_[2] = 1;
+      connect_ip_next_client_ip_[1]++;
+      if (connect_ip_next_client_ip_[1] >= 255) {
+        QUIC_LOG(FATAL) << "Ran out of IP addresses, restarting process.";
+      }
+    }
+  }
+  return address;
 }
 
 }  // namespace quic

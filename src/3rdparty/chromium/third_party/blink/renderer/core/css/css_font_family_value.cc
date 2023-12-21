@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,8 +12,9 @@ namespace blink {
 
 CSSFontFamilyValue* CSSFontFamilyValue::Create(
     const AtomicString& family_name) {
-  if (family_name.IsNull())
+  if (family_name.IsNull()) {
     return MakeGarbageCollected<CSSFontFamilyValue>(family_name);
+  }
   CSSValuePool::FontFamilyValueCache::AddResult entry =
       CssValuePool().GetFontFamilyCacheEntry(family_name);
   if (!entry.stored_value->value) {

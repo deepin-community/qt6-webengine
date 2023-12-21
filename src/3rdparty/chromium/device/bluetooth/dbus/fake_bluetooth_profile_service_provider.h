@@ -1,12 +1,13 @@
-// Copyright (c) 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef DEVICE_BLUETOOTH_DBUS_FAKE_BLUETOOTH_PROFILE_SERVICE_PROVIDER_H_
 #define DEVICE_BLUETOOTH_DBUS_FAKE_BLUETOOTH_PROFILE_SERVICE_PROVIDER_H_
 
-#include "base/bind.h"
-#include "base/callback.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
+#include "base/memory/raw_ptr.h"
 #include "dbus/object_path.h"
 #include "device/bluetooth/bluetooth_export.h"
 #include "device/bluetooth/dbus/bluetooth_profile_service_provider.h"
@@ -54,7 +55,7 @@ class DEVICE_BLUETOOTH_EXPORT FakeBluetoothProfileServiceProvider
   // All incoming method calls are passed on to the Delegate and a callback
   // passed to generate the reply. |delegate_| is generally the object that
   // owns this one, and must outlive it.
-  Delegate* delegate_;
+  raw_ptr<Delegate> delegate_;
 };
 
 }  // namespace bluez

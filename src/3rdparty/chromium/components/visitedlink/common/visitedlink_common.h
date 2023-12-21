@@ -1,4 +1,4 @@
-// Copyright (c) 2006-2008 The Chromium Authors. All rights reserved.
+// Copyright 2006-2008 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -129,7 +129,9 @@ class VisitedLinkCommon {
   }
 
   // pointer to the first item
-  raw_ptr<VisitedLinkCommon::Fingerprint> hash_table_;
+  // May temporarily point to an old unmapped region during update.
+  raw_ptr<VisitedLinkCommon::Fingerprint, DisableDanglingPtrDetection>
+      hash_table_;
 
   // the number of items in the hash table
   int32_t table_length_;

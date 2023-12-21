@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,6 +7,7 @@
 
 #include <map>
 
+#include "base/memory/raw_ref.h"
 #include "base/numerics/checked_math.h"
 #include "base/numerics/math_constants.h"
 #include "device/vr/openxr/openxr_anchor_request.h"
@@ -73,7 +74,7 @@ class OpenXrAnchorManager {
       const mojom::XRNativeOriginInformation& native_origin_information,
       const gfx::Transform& native_origin_from_anchor) const;
 
-  const OpenXrExtensionHelper& extension_helper_;
+  const raw_ref<const OpenXrExtensionHelper> extension_helper_;
   XrSession session_;
   XrSpace mojo_space_;  // The intermediate space that mojom poses are
                         // represented in (currently defined as local space)

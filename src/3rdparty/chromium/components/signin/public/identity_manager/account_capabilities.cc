@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -59,6 +59,10 @@ signin::Tribool AccountCapabilities::GetCapabilityByName(
   return iterator->second ? signin::Tribool::kTrue : signin::Tribool::kFalse;
 }
 
+signin::Tribool AccountCapabilities::can_have_email_address_displayed() const {
+  return GetCapabilityByName(kCanHaveEmailAddressDisplayedCapabilityName);
+}
+
 signin::Tribool AccountCapabilities::can_offer_extended_chrome_sync_promos()
     const {
   return GetCapabilityByName(kCanOfferExtendedChromeSyncPromosCapabilityName);
@@ -71,6 +75,18 @@ signin::Tribool AccountCapabilities::can_run_chrome_privacy_sandbox_trials()
 
 signin::Tribool AccountCapabilities::can_stop_parental_supervision() const {
   return GetCapabilityByName(kCanStopParentalSupervisionCapabilityName);
+}
+
+signin::Tribool AccountCapabilities::can_toggle_auto_updates() const {
+  return GetCapabilityByName(kCanToggleAutoUpdatesName);
+}
+
+signin::Tribool AccountCapabilities::is_allowed_for_machine_learning() const {
+  return GetCapabilityByName(kIsAllowedForMachineLearningCapabilityName);
+}
+
+signin::Tribool AccountCapabilities::is_subject_to_enterprise_policies() const {
+  return GetCapabilityByName(kIsSubjectToEnterprisePoliciesCapabilityName);
 }
 
 signin::Tribool AccountCapabilities::is_subject_to_parental_controls() const {
@@ -140,4 +156,10 @@ AccountCapabilities::ConvertToJavaAccountCapabilities(JNIEnv* env) const {
       base::android::ToJavaBooleanArray(env, capability_values.get(),
                                         capabilities_size));
 }
+#endif
+
+#if BUILDFLAG(IS_IOS)
+AccountCapabilities::AccountCapabilities(
+    base::flat_map<std::string, bool> capabilities)
+    : capabilities_map_(std::move(capabilities)) {}
 #endif

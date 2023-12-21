@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -30,9 +30,7 @@ namespace api {
 
 // Dispatch events related to "sockets.tcp" sockets from callback on native
 // socket instances. There is one instance per profile.
-class TCPServerSocketEventDispatcher
-    : public BrowserContextKeyedAPI,
-      public base::SupportsWeakPtr<TCPServerSocketEventDispatcher> {
+class TCPServerSocketEventDispatcher : public BrowserContextKeyedAPI {
  public:
   explicit TCPServerSocketEventDispatcher(content::BrowserContext* context);
   ~TCPServerSocketEventDispatcher() override;

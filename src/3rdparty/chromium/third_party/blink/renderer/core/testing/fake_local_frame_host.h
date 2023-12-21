@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,6 +14,7 @@
 #include "third_party/blink/public/mojom/frame/frame.mojom-blink.h"
 #include "third_party/blink/public/mojom/frame/policy_container.mojom-blink.h"
 #include "third_party/blink/public/mojom/scroll/scroll_into_view_params.mojom-blink.h"
+#include "ui/base/ime/mojom/virtual_keyboard_types.mojom-blink.h"
 
 namespace blink {
 
@@ -42,7 +43,8 @@ class FakeLocalFrameHost : public mojom::blink::LocalFrameHost {
   void DidContainInsecureFormAction() override;
   void MainDocumentElementAvailable(bool uses_temporary_zoom_level) override;
   void SetNeedsOcclusionTracking(bool needs_tracking) override;
-  void SetVirtualKeyboardOverlayPolicy(bool vk_overlays_content) override;
+  void SetVirtualKeyboardMode(
+      ui::mojom::blink::VirtualKeyboardMode mode) override;
   void VisibilityChanged(mojom::blink::FrameVisibility visibility) override;
   void DidChangeThemeColor(absl::optional<::SkColor> theme_color) override;
   void DidChangeBackgroundColor(SkColor background_color,
@@ -59,7 +61,7 @@ class FakeLocalFrameHost : public mojom::blink::LocalFrameHost {
       blink::mojom::SuddenTerminationDisablerType disabler_type) override;
   void HadStickyUserActivationBeforeNavigationChanged(bool value) override;
   void ScrollRectToVisibleInParentFrame(
-      const gfx::Rect& rect_to_scroll,
+      const gfx::RectF& rect_to_scroll,
       blink::mojom::blink::ScrollIntoViewParamsPtr params) override;
   void BubbleLogicalScrollInParentFrame(
       blink::mojom::blink::ScrollDirection direction,
@@ -70,14 +72,21 @@ class FakeLocalFrameHost : public mojom::blink::LocalFrameHost {
   void DidChangeLoadProgress(double load_progress) override;
   void DidFinishLoad(const KURL& validated_url) override;
   void DispatchLoad() override;
-  void GoToEntryAtOffset(int32_t offset, bool has_user_gesture) override;
-  void NavigateToNavigationApiKey(const WTF::String& key,
-                                  bool has_user_gesture) override {}
+  void GoToEntryAtOffset(
+      int32_t offset,
+      bool has_user_gesture,
+      absl::optional<blink::scheduler::TaskAttributionId>) override;
+  void NavigateToNavigationApiKey(
+      const WTF::String& key,
+      bool has_user_gesture,
+      absl::optional<blink::scheduler::TaskAttributionId> task_id) override {}
+  void NavigateEventHandlerPresenceChanged(bool present) override {}
   void UpdateTitle(const WTF::String& title,
                    base::i18n::TextDirection title_direction) override;
   void UpdateUserActivationState(
       mojom::blink::UserActivationUpdateType update_type,
       mojom::UserActivationNotificationType notification_type) override;
+  void DidConsumeHistoryUserActivation() override {}
   void HandleAccessibilityFindInPageResult(
       mojom::blink::FindInPageResultAXParamsPtr params) override;
   void HandleAccessibilityFindInPageTermination() override;
@@ -136,10 +145,8 @@ class FakeLocalFrameHost : public mojom::blink::LocalFrameHost {
       mojom::blink::FrameOwnerPropertiesPtr frame_owner_properties) override;
   void DidChangeOpener(
       const absl::optional<LocalFrameToken>& opener_frame) override;
-  void DidChangeIframeAttributes(
-      const blink::FrameToken& child_frame_token,
-      network::mojom::blink::ContentSecurityPolicyPtr parsed_csp_attribute,
-      bool anonymous) override;
+  void DidChangeIframeAttributes(const blink::FrameToken& child_frame_token,
+                                 mojom::blink::IframeAttributesPtr) override;
   void DidChangeFramePolicy(const blink::FrameToken& child_frame_token,
                             const FramePolicy& frame_policy) override;
   void CapturePaintPreviewOfSubframe(
@@ -158,12 +165,41 @@ class FakeLocalFrameHost : public mojom::blink::LocalFrameHost {
       const WTF::String& source_id,
       const WTF::String& untrusted_stack_trace) override;
   void FrameSizeChanged(const gfx::Size& frame_size) override;
-  void DidUpdatePreferredColorScheme(
-      blink::mojom::PreferredColorScheme preferred_color_scheme) override;
   void DidInferColorScheme(
       blink::mojom::PreferredColorScheme preferred_color_scheme) override;
   void DidChangeSrcDoc(const blink::FrameToken& child_frame_token,
                        const WTF::String& srcdoc_value) override;
+  void ReceivedDelegatedCapability(
+      blink::mojom::DelegatedCapability delegated_capability) override;
+  void SendFencedFrameReportingBeacon(
+      const WTF::String& event_data,
+      const WTF::String& event_type,
+      blink::FencedFrame::ReportingDestination destination) override;
+  void SetFencedFrameAutomaticBeaconReportEventData(
+      const WTF::String& event_data,
+      const WTF::Vector<blink::FencedFrame::ReportingDestination>& destination)
+      override;
+  void SendPrivateAggregationRequestsForFencedFrameEvent(
+      const WTF::String& event_type) override;
+  void CreatePortal(
+      mojo::PendingAssociatedReceiver<mojom::blink::Portal> portal,
+      mojo::PendingAssociatedRemote<mojom::blink::PortalClient> client,
+      mojom::blink::RemoteFrameInterfacesFromRendererPtr
+          remote_frame_interfaces,
+      CreatePortalCallback callback) override;
+  void AdoptPortal(const PortalToken& portal_token,
+                   mojom::blink::RemoteFrameInterfacesFromRendererPtr
+                       remote_frame_interfaces,
+                   AdoptPortalCallback callback) override;
+  void CreateFencedFrame(
+      mojo::PendingAssociatedReceiver<mojom::blink::FencedFrameOwnerHost>,
+      mojom::blink::FencedFrameMode,
+      mojom::blink::RemoteFrameInterfacesFromRendererPtr
+          remote_frame_interfaces,
+      const RemoteFrameToken& frame_token,
+      const base::UnguessableToken& devtools_frame_token) override;
+  void OnViewTransitionOptInChanged(
+      mojom::blink::ViewTransitionSameOriginOptIn) override {}
 
  private:
   void BindFrameHostReceiver(mojo::ScopedInterfaceEndpointHandle handle);

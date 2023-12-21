@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,12 +16,18 @@ namespace content_settings {
 //              if set.
 // UserSession: Settings will persist no longer than the user session
 //              regardless of expiry date, if set.
+// NonRestorableUserSession: Same as UserSession, except this session-based
+//              setting will be reset when the user session ends regardless
+//              the restore setting. These settings will not be restored e.g.
+//              when the user selected "continue where you left off" or after
+//              a crash or update related restart.
 // OneTime:     Settings will persist for the current "tab session", meaning
 //              until the last tab from the origin is closed.
 enum class SessionModel {
   Durable = 0,
   UserSession = 1,
-  OneTime = 2,
+  NonRestorableUserSession = 2,
+  OneTime = 3,
   kMaxValue = OneTime,
 };
 
@@ -33,6 +39,11 @@ struct ContentSettingConstraints {
   base::Time expiration;
   // Used to specify the lifetime model that should be used.
   SessionModel session_model = SessionModel::Durable;
+  // Set to true to keep track of the last visit to the origin of this
+  // permission.
+  // This is used for the Safety check permission module and unrelated to the
+  // "expiration" keyword above.
+  bool track_last_visit_for_autoexpiration = false;
 };
 
 }  // namespace content_settings

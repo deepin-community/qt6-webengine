@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "chrome/browser/ui/signin_view_controller_delegate.h"
 #include "chrome/browser/ui/webui/constrained_web_dialog_ui.h"
@@ -23,7 +23,7 @@ class WebContents;
 class WebUIMessageHandler;
 }
 
-// A tab-modal dialog to ask the user to confirm his email before signing in.
+// A tab-modal dialog to ask the user to confirm their email before signing in.
 class SigninEmailConfirmationDialog : public ui::WebDialogDelegate,
                                       public SigninViewControllerDelegate {
  public:

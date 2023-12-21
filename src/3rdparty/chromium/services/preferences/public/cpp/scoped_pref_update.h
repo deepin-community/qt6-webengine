@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "base/memory/raw_ptr_exclusion.h"
 #include "base/strings/string_piece.h"
 
 class PrefService;
@@ -58,12 +59,12 @@ class ScopedDictionaryPrefUpdate {
   std::unique_ptr<DictionaryValueUpdate> operator->();
 
  private:
-  void RecordPath(const std::vector<std::string>& path);
+  void RecordPath(std::vector<std::string> path);
 
   // Weak pointer.
   // `service_` is not a raw_ptr<...> for performance reasons (based on analysis
   // of sampling profiler data).
-  PrefService* const service_;
+  RAW_PTR_EXCLUSION PrefService* const service_;
   // Path of the preference being updated.
   const std::string path_;
 

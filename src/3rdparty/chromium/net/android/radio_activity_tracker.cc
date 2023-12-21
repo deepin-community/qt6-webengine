@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,10 +8,8 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/no_destructor.h"
 #include "net/base/features.h"
-#include "net/traffic_annotation/network_traffic_annotation.h"
 
-namespace net {
-namespace android {
+namespace net::android {
 
 namespace {
 
@@ -87,27 +85,4 @@ bool RadioActivityTracker::ShouldRecordActivityForWakeupTriggerInternal() {
   return should_record;
 }
 
-void MaybeRecordTCPWriteForWakeupTrigger(
-    const NetworkTrafficAnnotationTag& traffic_annotation) {
-  if (!RadioActivityTracker::GetInstance()
-           .ShouldRecordActivityForWakeupTrigger()) {
-    return;
-  }
-
-  base::UmaHistogramSparse(kUmaNamePossibleWakeupTriggerTCPWriteAnnotationId,
-                           traffic_annotation.unique_id_hash_code);
-}
-
-void MaybeRecordUDPWriteForWakeupTrigger(
-    const NetworkTrafficAnnotationTag& traffic_annotation) {
-  if (!RadioActivityTracker::GetInstance()
-           .ShouldRecordActivityForWakeupTrigger()) {
-    return;
-  }
-
-  base::UmaHistogramSparse(kUmaNamePossibleWakeupTriggerUDPWriteAnnotationId,
-                           traffic_annotation.unique_id_hash_code);
-}
-
-}  // namespace android
-}  // namespace net
+}  // namespace net::android

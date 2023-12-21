@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,18 +12,28 @@ import "url/mojom/url.mojom";
 interface WebBundleParserFactory {
   // Constructs a parser for the passed |file|.
   GetParserForFile(pending_receiver<WebBundleParser> receiver,
+                   url.mojom.Url? base_url,
                    mojo_base.mojom.ReadOnlyFile file);
 
   // Constructs a parser for the passed |data_source|.
   GetParserForDataSource(pending_receiver<WebBundleParser> receiver,
+                         url.mojom.Url? base_url,
                          pending_remote<BundleDataSource> data_source);
 };
 
 // Parser interface to obtain metadata and multiple responses from the bound
 // application/webbundle data provided on the construction at the factory above.
 interface WebBundleParser {
-  // Parses bundle's metadata.
-  ParseMetadata() => (BundleMetadata? Result, BundleMetadataParseError? error);
+  // Parses bundle's integrity block, if it exists.
+  ParseIntegrityBlock() => (BundleIntegrityBlock? Result,
+                            BundleIntegrityBlockParseError? error);
+
+  // Parses bundle's metadata. If `offset` is >= 0, parsing will begin at the
+  // indicated offset, and the `length` field of the web bundle will be ignored.
+  // If `offset` is -1, and the bundle is read in a random-access context, then
+  // the `length` field of the bundle will be used to determine the offset.
+  ParseMetadata(int64 offset)
+      => (BundleMetadata? Result, BundleMetadataParseError? error);
 
   // Parses a response from the range
   // |[response_offset, response_offset + response_length)|.
@@ -52,6 +62,11 @@ enum BundleParseErrorType {
   kVersionError,
 };
 
+struct BundleIntegrityBlockParseError {
+  BundleParseErrorType type;
+  string message;
+};
+
 struct BundleMetadataParseError {
   BundleParseErrorType type;
   string message;
@@ -62,10 +77,40 @@ struct BundleResponseParseError {
   string message;
 };
 
+struct BundleIntegrityBlock {
+  // If size is 0, then no integrity block was found.
+  uint64 size;
+  array<BundleIntegrityBlockSignatureStackEntry> signature_stack;
+};
+
+// Mapped to `web_package::Ed25519PublicKey`
+struct Ed25519PublicKey {
+  array<uint8, 32> bytes;
+};
+
+// Mapped to `web_package::Ed25519Signature`
+struct Ed25519Signature {
+  array<uint8, 64> bytes;
+};
+
+struct BundleIntegrityBlockSignatureStackEntry {
+  // The CBOR of this signature stack entry.
+  // This is needed for verification of more than one signature later, because
+  // to verify the n+1th signature, the CBOR of the signature stack entries of
+  // all n previous signatures is needed (crbug.com/1366303).
+  array<uint8> complete_entry_cbor;
+  // The CBOR of the attributes of this signature stack entry.
+  array<uint8> attributes_cbor;
+  // The public key of this signature stack entry.
+  Ed25519PublicKey public_key;
+  // The signature of this signature stack entry.
+  Ed25519Signature signature;
+};
+
 // Bundle's metadata, i.e. information in sections other than "responses".
 struct BundleMetadata {
   BundleFormatVersion version;
-  url.mojom.Url primary_url;
+  url.mojom.Url? primary_url;
   map<url.mojom.Url, BundleResponseLocation> requests;
   array<AugmentedCertificate> authorities;
   array<VouchedSubset> vouched_subsets;

@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,7 +6,7 @@
 
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/lazy_instance.h"
 #include "base/no_destructor.h"
 #include "build/build_config.h"
@@ -64,14 +64,14 @@ SerialPortManager::SerialPortManager(content::BrowserContext* context)
   connections_ = manager->data_;
 }
 
-SerialPortManager::~SerialPortManager() {}
+SerialPortManager::~SerialPortManager() = default;
 
-SerialPortManager::ReceiveParams::ReceiveParams() {}
+SerialPortManager::ReceiveParams::ReceiveParams() = default;
 
 SerialPortManager::ReceiveParams::ReceiveParams(const ReceiveParams& other) =
     default;
 
-SerialPortManager::ReceiveParams::~ReceiveParams() {}
+SerialPortManager::ReceiveParams::~ReceiveParams() = default;
 
 void SerialPortManager::GetDevices(
     device::mojom::SerialPortManager::GetDevicesCallback callback) {

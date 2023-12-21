@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -22,6 +22,8 @@
 #include "ui/views/controls/label.h"
 #include "ui/views/controls/textfield/textfield.h"
 #include "ui/views/test/views_test_base.h"
+#include "ui/views/test/widget_test.h"
+#include "ui/views/widget/unique_widget_ptr.h"
 #include "ui/views/widget/widget.h"
 
 namespace views {
@@ -49,7 +51,6 @@ class AXTreeSourceViewsTest : public ViewsTestBase {
     ViewsTestBase::SetUp();
     widget_ = std::make_unique<Widget>();
     Widget::InitParams params(Widget::InitParams::TYPE_WINDOW_FRAMELESS);
-    params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
     params.bounds = gfx::Rect(11, 22, 333, 444);
     params.context = GetContext();
     widget_->Init(std::move(params));
@@ -73,7 +74,7 @@ class AXTreeSourceViewsTest : public ViewsTestBase {
     ViewsTestBase::TearDown();
   }
 
-  std::unique_ptr<Widget> widget_;
+  UniqueWidgetPtr widget_;
   raw_ptr<Label> label1_ = nullptr;         // Owned by views hierarchy.
   raw_ptr<Label> label2_ = nullptr;         // Owned by views hierarchy.
   raw_ptr<Textfield> textfield_ = nullptr;  // Owned by views hierarchy.
@@ -91,14 +92,13 @@ TEST_F(AXTreeSourceViewsTest, Basics) {
   EXPECT_FALSE(tree.GetParent(root));
 
   // The root has the right children.
-  std::vector<AXAuraObjWrapper*> children;
-  tree.GetChildren(root, &children);
-  ASSERT_EQ(3u, children.size());
+  tree.CacheChildrenIfNeeded(root);
+  ASSERT_EQ(3u, tree.GetChildCount(root));
 
   // The labels are the children.
-  AXAuraObjWrapper* label1 = children[0];
-  AXAuraObjWrapper* label2 = children[1];
-  AXAuraObjWrapper* textfield = children[2];
+  AXAuraObjWrapper* label1 = tree.ChildAt(root, 0);
+  AXAuraObjWrapper* label2 = tree.ChildAt(root, 1);
+  AXAuraObjWrapper* textfield = tree.ChildAt(root, 2);
   EXPECT_EQ(label1, cache.GetOrCreate(label1_));
   EXPECT_EQ(label2, cache.GetOrCreate(label2_));
   EXPECT_EQ(textfield, cache.GetOrCreate(textfield_));
@@ -164,9 +164,8 @@ TEST_F(AXTreeSourceViewsTest, ViewWithChildTreeHasNoChildren) {
   TestAXTreeSourceViews tree(cache.GetOrCreate(widget_.get()), &cache);
   auto* ax_obj = cache.GetOrCreate(contents_view);
   EXPECT_TRUE(tree.IsValid(ax_obj));
-  std::vector<AXAuraObjWrapper*> children;
-  ax_obj->GetChildren(&children);
-  EXPECT_TRUE(children.empty());
+  tree.CacheChildrenIfNeeded(ax_obj);
+  EXPECT_EQ(0u, tree.GetChildCount(ax_obj));
   EXPECT_EQ(nullptr, cache.GetOrCreate(textfield_)->GetParent());
 }
 
@@ -198,8 +197,13 @@ TEST_F(AXTreeSourceViewsDesktopWidgetTest, FocusedChildWindowDestroyed) {
   // GetFocus() reflects the focused child window.
   EXPECT_NE(nullptr, cache.GetFocus());
 
+  test::WidgetDestroyedWaiter waiter(widget_.get());
+
   // Close the widget to destroy the child.
   widget_.reset();
+
+  // Wait for the async widget close.
+  waiter.Wait();
 
   // GetFocus() should return null and no use-after-free to call it.
   EXPECT_EQ(nullptr, cache.GetFocus());

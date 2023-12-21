@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -28,6 +28,7 @@ class PLATFORM_EXPORT FontFallbackMap : public FontCacheClient,
   FontSelector* GetFontSelector() const { return font_selector_; }
 
   scoped_refptr<FontFallbackList> Get(const FontDescription& font_description);
+
   void Remove(const FontDescription& font_description);
 
   void Trace(Visitor* visitor) const override;

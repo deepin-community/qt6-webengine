@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,12 +13,12 @@
 #include <string>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/files/file.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_file.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/location.h"
 #include "base/sequence_checker.h"
 #include "base/strings/string_number_conversions.h"
@@ -27,7 +27,6 @@
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/thread_pool.h"
 #include "base/threading/scoped_blocking_call.h"
-#include "base/threading/sequenced_task_runner_handle.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
 #include "components/device_event_log/device_event_log.h"
@@ -198,7 +197,7 @@ struct HidServiceLinux::ConnectParams {
         allow_protected_reports(allow_protected_reports),
         allow_fido_reports(allow_fido_reports),
         callback(std::move(callback)),
-        task_runner(base::SequencedTaskRunnerHandle::Get()),
+        task_runner(base::SequencedTaskRunner::GetCurrentDefault()),
         blocking_task_runner(
             base::ThreadPool::CreateSequencedTaskRunner(kBlockingTaskTraits)) {}
   ~ConnectParams() {}
@@ -216,7 +215,7 @@ class HidServiceLinux::BlockingTaskRunnerHelper : public UdevWatcher::Observer {
  public:
   BlockingTaskRunnerHelper(base::WeakPtr<HidServiceLinux> service)
       : service_(std::move(service)),
-        task_runner_(base::SequencedTaskRunnerHandle::Get()) {
+        task_runner_(base::SequencedTaskRunner::GetCurrentDefault()) {
     DETACH_FROM_SEQUENCE(sequence_checker_);
   }
 
@@ -377,7 +376,7 @@ void HidServiceLinux::Connect(const std::string& device_guid,
 
   const auto& map_entry = devices().find(device_guid);
   if (map_entry == devices().end()) {
-    base::SequencedTaskRunnerHandle::Get()->PostTask(
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(std::move(callback), nullptr));
     return;
   }

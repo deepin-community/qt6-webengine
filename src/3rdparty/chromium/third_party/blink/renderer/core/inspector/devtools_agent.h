@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -19,6 +19,7 @@
 #include "third_party/blink/renderer/platform/mojo/heap_mojo_remote.h"
 #include "third_party/blink/renderer/platform/mojo/heap_mojo_wrapper_mode.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
+#include "third_party/blink/renderer/platform/wtf/functional.h"
 #include "third_party/blink/renderer/platform/wtf/ref_counted.h"
 
 namespace blink {
@@ -95,7 +96,9 @@ class CORE_EXPORT DevToolsAgent : public GarbageCollected<DevToolsAgent>,
       mojo::PendingReceiver<mojom::blink::DevToolsSession> io_session,
       mojom::blink::DevToolsSessionStatePtr reattach_session_state,
       bool client_expects_binary_responses,
-      const WTF::String& session_id) override;
+      bool client_is_trusted,
+      const WTF::String& session_id,
+      bool session_waits_for_debugger) override;
   void InspectElement(const gfx::Point& point) override;
   void ReportChildTargets(bool report,
                           bool wait_for_debugger,
@@ -125,7 +128,9 @@ class CORE_EXPORT DevToolsAgent : public GarbageCollected<DevToolsAgent>,
       mojo::PendingReceiver<mojom::blink::DevToolsSession> io_session,
       mojom::blink::DevToolsSessionStatePtr reattach_session_state,
       bool client_expects_binary_responses,
-      const WTF::String& session_id);
+      bool client_is_trusted,
+      const WTF::String& session_id,
+      bool session_waits_for_debugger);
   void InspectElementImpl(const gfx::Point& point);
   void ReportChildTargetsImpl(bool report,
                               bool wait_for_debugger,

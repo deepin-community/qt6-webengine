@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,11 +9,9 @@
 #include <memory>
 #include <vector>
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "ui/display/types/display_configuration_params.h"
 #include "ui/display/types/display_constants.h"
-#include "ui/gfx/geometry/point.h"
-#include "ui/gfx/native_widget_types.h"
 #include "ui/ozone/platform/drm/common/display_types.h"
 
 using drmModeModeInfo = struct _drmModeModeInfo;
@@ -24,7 +22,7 @@ struct GammaRampRGBEntry;
 
 namespace gfx {
 class ColorSpace;
-}
+}  // namespace gfx
 
 namespace ui {
 
@@ -54,8 +52,15 @@ class DrmGpuDisplayManager {
   bool TakeDisplayControl();
   void RelinquishDisplayControl();
 
+  // Whether or not a udev display change event triggered by a DRM property
+  // should go through or get blocked.
+  bool ShouldDisplayEventTriggerConfiguration(
+      const EventPropertyMap& event_props);
+
   bool ConfigureDisplays(
-      const std::vector<display::DisplayConfigurationParams>& config_requests);
+      const std::vector<display::DisplayConfigurationParams>& config_requests,
+      uint32_t modeset_flag);
+  bool SetHdcpKeyProp(int64_t display_id, const std::string& key);
   bool GetHDCPState(int64_t display_id,
                     display::HDCPState* state,
                     display::ContentProtectionMethod* protection_method);

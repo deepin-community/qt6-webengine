@@ -1,8 +1,8 @@
-// Copyright (c) 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import {$} from 'chrome://resources/js/util.m.js';
+import {$} from 'chrome://resources/js/util_ts.js';
 
 const MAX_NUMBER_OF_STATE_CHANGES_DISPLAYED = 10;
 const MAX_NUMBER_OF_EXPANDED_MEDIASECTIONS = 10;
@@ -95,11 +95,13 @@ export class PeerConnectionUpdateTable {
     }
 
     if (update.type === 'icecandidate' || update.type === 'addIceCandidate') {
-      // extract ICE candidate type from the field following typ.
-      const candidateType = update.value.match(/(?: typ )(host|srflx|relay)/);
-      if (candidateType) {
-        type += ' (' + candidateType[1] + ')';
+      const parts = update.value.split(', ');
+      type += '(' + parts[0] + ', ' + parts[1]; // show sdpMid/sdpMLineIndex.
+      const candidateParts = parts[2].substr(11).split(' ');
+      if (candidateParts && candidateParts[7]) { // show candidate type.
+        type += ', type: ' + candidateParts[7];
       }
+      type += ')';
     } else if (
         update.type === 'createOfferOnSuccess' ||
         update.type === 'createAnswerOnSuccess') {
@@ -122,8 +124,8 @@ export class PeerConnectionUpdateTable {
       const numberOfEvents = el.textContent.split(' => ').length;
       if (numberOfEvents < MAX_NUMBER_OF_STATE_CHANGES_DISPLAYED) {
         el.textContent += ' => ' + update.value;
-      } else if (numberOfEvents === MAX_NUMBER_OF_STATE_CHANGES_DISPLAYED) {
-        el.textContent += ' ...';
+      } else if (numberOfEvents >= MAX_NUMBER_OF_STATE_CHANGES_DISPLAYED) {
+        el.textContent += ' => ...';
       }
     }
 
@@ -136,10 +138,10 @@ export class PeerConnectionUpdateTable {
     const details = row.cells[1].childNodes[0];
     details.appendChild(valueContainer);
 
-    // Highlight ICE failures and failure callbacks.
+    // Highlight ICE/DTLS failures and failure callbacks.
     if ((update.type === 'iceconnectionstatechange' &&
          update.value === 'failed') ||
-        (update.type === 'iceconnectionstatechange (legacy)' &&
+        (update.type === 'connectionstatechange' &&
          update.value === 'failed') ||
         update.type.indexOf('OnFailure') !== -1 ||
         update.type === 'addIceCandidateFailed') {
@@ -199,7 +201,11 @@ export class PeerConnectionUpdateTable {
    */
   ensureUpdateContainer_(peerConnectionElement) {
     const tableId = peerConnectionElement.id + this.UPDATE_LOG_ID_SUFFIX_;
-    let tableElement = $(tableId);
+
+  // Disable getElementById restriction here, since |tableId| is not always
+  // a valid selector.
+  // eslint-disable-next-line no-restricted-properties
+    let tableElement = document.getElementById(tableId);
     if (!tableElement) {
       const tableContainer = document.createElement('div');
       tableContainer.className = this.UPDATE_LOG_CONTAINER_CLASS_;

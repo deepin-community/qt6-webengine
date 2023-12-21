@@ -38,6 +38,7 @@ class WebFormElement;
 class WebInputElement;
 class WebKeyboardEvent;
 class WebNode;
+class WebString;
 
 class WebAutofillClient {
  public:
@@ -51,7 +52,9 @@ class WebAutofillClient {
   // This is called when the datalist for an input has changed.
   virtual void DataListOptionsChanged(const WebInputElement&) {}
 
-  // Called when selected option of select control change.
+  // Called when the selected option of a <select> control is changed as a
+  // result of user activation - see
+  // https://html.spec.whatwg.org/multipage/interaction.html#tracking-user-activation
   virtual void SelectControlDidChange(const WebFormControlElement&) {}
 
   // Called when the options of a select control change.
@@ -62,6 +65,11 @@ class WebAutofillClient {
 
   virtual void DidAssociateFormControlsDynamically() {}
   virtual void AjaxSucceeded() {}
+  // Called when |element| is in autofilled state and the value has been changed
+  // by JavaScript. |old_value| contains the value before being changed.
+  virtual void JavaScriptChangedAutofilledValue(
+      const WebFormControlElement& element,
+      const WebString& old_value) {}
 
   virtual void DidCompleteFocusChangeInFrame() {}
   virtual void DidReceiveLeftMouseDownOrGestureTapInNode(const WebNode&) {}

@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -26,6 +26,7 @@
 #include "services/network/public/mojom/data_pipe_getter.mojom.h"
 #include "services/network/public/mojom/devtools_observer.mojom.h"
 #include "services/network/public/mojom/ip_address_space.mojom.h"
+#include "services/network/public/mojom/trust_token_access_observer.mojom.h"
 #include "services/network/public/mojom/trust_tokens.mojom.h"
 #include "services/network/public/mojom/url_loader.mojom-shared.h"
 #include "services/network/public/mojom/url_request.mojom.h"
@@ -88,8 +89,11 @@ bool StructTraits<network::mojom::TrustedUrlRequestParamsDataView,
   }
   out->disable_secure_dns = data.disable_secure_dns();
   out->has_user_activation = data.has_user_activation();
+  out->allow_cookies_from_browser = data.allow_cookies_from_browser();
   out->cookie_observer = data.TakeCookieObserver<
       mojo::PendingRemote<network::mojom::CookieAccessObserver>>();
+  out->trust_token_observer = data.TakeTrustTokenObserver<
+      mojo::PendingRemote<network::mojom::TrustTokenAccessObserver>>();
   out->url_loader_network_observer = data.TakeUrlLoaderNetworkObserver<
       mojo::PendingRemote<network::mojom::URLLoaderNetworkServiceObserver>>();
   out->devtools_observer = data.TakeDevtoolsObserver<
@@ -198,11 +202,13 @@ bool StructTraits<
       data.update_first_party_url_on_redirect();
   out->load_flags = data.load_flags();
   out->resource_type = data.resource_type();
+  out->priority_incremental = data.priority_incremental();
   out->originated_from_service_worker = data.originated_from_service_worker();
   out->skip_service_worker = data.skip_service_worker();
   out->corb_detachable = data.corb_detachable();
   out->destination = data.destination();
   out->keepalive = data.keepalive();
+  out->browsing_topics = data.browsing_topics();
   out->has_user_gesture = data.has_user_gesture();
   out->enable_load_timing = data.enable_load_timing();
   out->enable_upload_progress = data.enable_upload_progress();
@@ -212,13 +218,11 @@ bool StructTraits<
   out->previews_state = data.previews_state();
   out->upgrade_if_insecure = data.upgrade_if_insecure();
   out->is_revalidating = data.is_revalidating();
-  out->is_signed_exchange_prefetch_cache_enabled =
-      data.is_signed_exchange_prefetch_cache_enabled();
   out->is_fetch_like_api = data.is_fetch_like_api();
   out->is_favicon = data.is_favicon();
-  out->obey_origin_policy = data.obey_origin_policy();
   out->original_destination = data.original_destination();
   out->target_ip_address_space = data.target_ip_address_space();
+  out->has_storage_access = data.has_storage_access();
   return true;
 }
 

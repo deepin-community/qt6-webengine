@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -390,8 +390,8 @@ void OpenSLESOutputStream::FillBufferQueueNoLock() {
       AudioTimestampHelper::FramesToTime(delay_frames, samples_per_second_);
 
   // Read data from the registered client source.
-  const int frames_filled =
-      callback_->OnMoreData(delay, base::TimeTicks::Now(), 0, audio_bus_.get());
+  const int frames_filled = callback_->OnMoreData(delay, base::TimeTicks::Now(),
+                                                  {}, audio_bus_.get());
   if (frames_filled <= 0) {
     // Audio source is shutting down, or halted on error.
     return;

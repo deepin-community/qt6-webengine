@@ -1,12 +1,13 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/safe_browsing/content/renderer/renderer_url_loader_throttle.h"
 
-#include "base/bind.h"
 #include "base/check_op.h"
+#include "base/functional/bind.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/strings/strcat.h"
 #include "base/trace_event/trace_event.h"
 #include "components/safe_browsing/core/common/safebrowsing_constants.h"
 #include "components/safe_browsing/core/common/utils.h"
@@ -15,15 +16,29 @@
 #include "net/url_request/redirect_info.h"
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/mojom/fetch_api.mojom.h"
+#include "services/network/public/mojom/url_response_head.mojom.h"
 
 namespace safe_browsing {
 
 namespace {
 
+constexpr char kFromCacheUmaSuffix[] = ".FromCache";
+constexpr char kFromNetworkUmaSuffix[] = ".FromNetwork";
+
 // Returns true if the URL is known to be safe. We also require that this URL
-// never redirects to a potentially unsafe URL.
+// never redirects to a potentially unsafe URL, because the redirected URLs are
+// also skipped if this function returns true.
 bool KnownSafeUrl(const GURL& url) {
   return url.SchemeIs(content::kChromeUIScheme);
+}
+
+void LogTotalDelay2MetricsWithResponseType(bool is_response_from_cache,
+                                           base::TimeDelta total_delay) {
+  base::UmaHistogramTimes(
+      base::StrCat({"SafeBrowsing.RendererThrottle.TotalDelay2",
+                    is_response_from_cache ? kFromCacheUmaSuffix
+                                           : kFromNetworkUmaSuffix}),
+      total_delay);
 }
 
 }  // namespace
@@ -66,6 +81,8 @@ void RendererURLLoaderThrottle::WillStartRequest(
 
   original_url_ = request->url;
   pending_checks_++;
+  start_request_time_ = base::TimeTicks::Now();
+  is_start_request_called_ = true;
   // Use a weak pointer to self because |safe_browsing_| may not be owned by
   // this object.
   net::HttpRequestHeaders headers;
@@ -117,9 +134,29 @@ void RendererURLLoaderThrottle::WillProcessResponse(
   base::UmaHistogramBoolean(
       "SafeBrowsing.RendererThrottle.IsCheckCompletedOnProcessResponse",
       check_completed);
+  is_response_from_cache_ =
+      response_head->was_fetched_via_cache && !response_head->network_accessed;
+  if (is_start_request_called_) {
+    base::TimeTicks process_time = base::TimeTicks::Now();
+    base::UmaHistogramTimes(
+        "SafeBrowsing.RendererThrottle.IntervalBetweenStartAndProcess",
+        process_time - start_request_time_);
+    base::UmaHistogramTimes(
+        base::StrCat(
+            {"SafeBrowsing.RendererThrottle.IntervalBetweenStartAndProcess",
+             is_response_from_cache_ ? kFromCacheUmaSuffix
+                                     : kFromNetworkUmaSuffix}),
+        process_time - start_request_time_);
+    if (check_completed) {
+      LogTotalDelay2MetricsWithResponseType(is_response_from_cache_,
+                                            base::TimeDelta());
+    }
+    is_start_request_called_ = false;
+  }
 
-  if (check_completed)
+  if (check_completed) {
     return;
+  }
 
   DCHECK(!deferred_);
   deferred_ = true;
@@ -134,15 +171,20 @@ const char* RendererURLLoaderThrottle::NameForLoggingWillProcessResponse() {
   return "SafeBrowsingRendererThrottle";
 }
 
-void RendererURLLoaderThrottle::OnCompleteCheck(bool proceed,
-                                                bool showed_interstitial) {
+void RendererURLLoaderThrottle::OnCompleteCheck(
+    bool proceed,
+    bool showed_interstitial,
+    bool did_perform_real_time_check,
+    bool did_check_allowlist) {
   OnCompleteCheckInternal(true /* slow_check */, proceed, showed_interstitial);
 }
 
 void RendererURLLoaderThrottle::OnCheckUrlResult(
     mojo::PendingReceiver<mojom::UrlCheckNotifier> slow_check_notifier,
     bool proceed,
-    bool showed_interstitial) {
+    bool showed_interstitial,
+    bool did_perform_real_time_check,
+    bool did_check_allowlist) {
   // When this is the callback of safe_browsing_->CreateCheckerAndCheck(), it is
   // possible that we get here after a check with |url_checker_| has completed
   // and blocked the request.
@@ -186,10 +228,18 @@ void RendererURLLoaderThrottle::OnCompleteCheckInternal(
     pending_slow_checks_--;
   }
 
-  // If the resource load is currently deferred and is going to exit that state
-  // (either being cancelled or resumed), record the total delay.
-  if (deferred_ && (!proceed || pending_checks_ == 0))
-    total_delay_ = base::TimeTicks::Now() - defer_start_time_;
+  // If the resource load is going to finish (either being cancelled or
+  // resumed), record the total delay.
+  if (!proceed || pending_checks_ == 0) {
+    // If the resource load is currently deferred, there is a delay.
+    if (deferred_) {
+      total_delay_ = base::TimeTicks::Now() - defer_start_time_;
+      LogTotalDelay2MetricsWithResponseType(is_response_from_cache_,
+                                            total_delay_);
+    }
+    base::UmaHistogramTimes("SafeBrowsing.RendererThrottle.TotalDelay2",
+                            total_delay_);
+  }
 
   if (proceed) {
     if (pending_slow_checks_ == 0 && slow_check)

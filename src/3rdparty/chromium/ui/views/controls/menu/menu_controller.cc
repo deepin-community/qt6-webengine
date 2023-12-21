@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,20 +8,22 @@
 #include <set>
 #include <utility>
 
-#include "base/bind.h"
 #include "base/containers/flat_set.h"
 #include "base/cxx17_backports.h"
+#include "base/functional/bind.h"
 #include "base/i18n/case_conversion.h"
 #include "base/i18n/rtl.h"
 #include "base/memory/raw_ptr.h"
+#include "base/ranges/algorithm.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
 #include "ui/base/dragdrop/drag_drop_types.h"
 #include "ui/base/dragdrop/mojom/drag_drop_types.mojom.h"
 #include "ui/base/dragdrop/os_exchange_data.h"
+#include "ui/base/owned_window_anchor.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/display/screen.h"
 #include "ui/events/event.h"
@@ -70,15 +72,25 @@
 #include "ui/aura/window_delegate.h"
 #endif
 
-#if defined(USE_OZONE)
+#if BUILDFLAG(IS_OZONE)
 #include "ui/ozone/public/ozone_platform.h"
 #endif
 
 using ui::OSExchangeData;
 
+DEFINE_UI_CLASS_PROPERTY_TYPE(std::vector<views::ViewTracker>*)
+
 namespace views {
 
 namespace {
+
+// The menu controller manages the AX index attributes inside menu items. This
+// property maintains a vector of menu children that were last assigned such
+// attributes by MenuController::SetSelectionIndices() so that the controller
+// can update them if children change via MenuController::MenuChildrenChanged().
+DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(std::vector<views::ViewTracker>,
+                                   kOrderedMenuChildren,
+                                   nullptr)
 
 #if BUILDFLAG(IS_MAC)
 bool AcceleratorShouldCancelMenu(const ui::Accelerator& accelerator) {
@@ -113,7 +125,7 @@ bool AcceleratorShouldCancelMenu(const ui::Accelerator& accelerator) {
 #endif
 
 bool ShouldIgnoreScreenBoundsForMenus() {
-#if defined(USE_OZONE)
+#if BUILDFLAG(IS_OZONE)
   // Some platforms, such as Wayland, disallow client applications to manipulate
   // global screen coordinates, requiring menus to be positioned relative to
   // their parent windows. See comment in ozone_platform_wayland.cc.
@@ -292,22 +304,6 @@ static void RepostEventImpl(const ui::LocatedEvent* event,
     LRESULT nc_hit_result = SendMessage(target_window, WM_NCHITTEST, 0, coords);
     const bool client_area = nc_hit_result == HTCLIENT;
 
-    // TODO(sky): this isn't right. The event to generate should correspond with
-    // the event we just got. MouseEvent only tells us what is down, which may
-    // differ. Need to add ability to get changed button from MouseEvent.
-    int event_type;
-    int flags = event->flags();
-    if (flags & ui::EF_LEFT_MOUSE_BUTTON) {
-      event_type = client_area ? WM_LBUTTONDOWN : WM_NCLBUTTONDOWN;
-    } else if (flags & ui::EF_MIDDLE_MOUSE_BUTTON) {
-      event_type = client_area ? WM_MBUTTONDOWN : WM_NCMBUTTONDOWN;
-    } else if (flags & ui::EF_RIGHT_MOUSE_BUTTON) {
-      event_type = client_area ? WM_RBUTTONDOWN : WM_NCRBUTTONDOWN;
-    } else {
-      NOTREACHED();
-      return;
-    }
-
     int window_x = screen_loc_pixels.x();
     int window_y = screen_loc_pixels.y();
     if (client_area) {
@@ -317,9 +313,11 @@ static void RepostEventImpl(const ui::LocatedEvent* event,
       window_y = pt.y;
     }
 
-    WPARAM target = client_area ? event->native_event().wParam : nc_hit_result;
+    WPARAM target = client_area ? event->native_event().wParam
+                                : static_cast<WPARAM>(nc_hit_result);
     LPARAM window_coords = MAKELPARAM(window_x, window_y);
-    PostMessage(target_window, event_type, target, window_coords);
+    PostMessage(target_window, event->native_event().message, target,
+                window_coords);
     return;
   }
 
@@ -335,7 +333,7 @@ static void RepostEventImpl(const ui::LocatedEvent* event,
   gfx::Point root_loc(screen_loc);
   spc->ConvertPointFromScreen(root, &root_loc);
 
-  std::unique_ptr<ui::Event> clone = ui::Event::Clone(*event);
+  std::unique_ptr<ui::Event> clone = event->Clone();
   std::unique_ptr<ui::LocatedEvent> located_event(
       static_cast<ui::LocatedEvent*>(clone.release()));
   located_event->set_location(root_loc);
@@ -434,18 +432,18 @@ struct MenuController::SelectByCharDetails {
   SelectByCharDetails() = default;
 
   // Index of the first menu with the specified mnemonic.
-  int first_match = -1;
+  absl::optional<size_t> first_match;
 
   // If true there are multiple menu items with the same mnemonic.
   bool has_multiple = false;
 
-  // Index of the selected item; may remain -1.
-  int index_of_item = -1;
+  // Index of the selected item; may remain nullopt.
+  absl::optional<size_t> index_of_item;
 
   // If there are multiple matches this is the index of the item after the
-  // currently selected item whose mnemonic matches. This may remain -1 even
-  // though there are matches.
-  int next_match = -1;
+  // currently selected item whose mnemonic matches. This may remain nullopt
+  // even though there are matches.
+  absl::optional<size_t> next_match;
 };
 
 // MenuController:State ------------------------------------------------------
@@ -726,7 +724,7 @@ bool MenuController::OnMouseDragged(SubmenuView* source,
         part.menu = source->GetMenuItem();
       else
         mouse_menu = part.menu;
-      SetSelection(part.menu ? part.menu : state_.item.get(),
+      SetSelection(part.menu ? part.menu.get() : state_.item.get(),
                    SELECTION_OPEN_SUBMENU);
     }
   } else if (part.type == MenuPart::Type::kNone) {
@@ -830,7 +828,7 @@ void MenuController::OnMouseReleased(SubmenuView* source,
     }
   } else if (part.type == MenuPart::Type::kMenuItem) {
     // User either clicked on empty space, or a menu that has children.
-    SetSelection(part.menu ? part.menu : state_.item.get(),
+    SetSelection(part.menu ? part.menu.get() : state_.item.get(),
                  SELECTION_OPEN_SUBMENU | SELECTION_UPDATE_IMMEDIATELY);
   }
   SendMouseCaptureLostToActiveView();
@@ -886,7 +884,7 @@ bool MenuController::OnMouseWheel(SubmenuView* source,
                                   const ui::MouseWheelEvent& event) {
   MenuPart part = GetMenuPart(source, event.location());
 
-  SetSelection(part.menu ? part.menu : state_.item.get(),
+  SetSelection(part.menu ? part.menu.get() : state_.item.get(),
                SELECTION_OPEN_SUBMENU | SELECTION_UPDATE_IMMEDIATELY);
 
   return part.submenu && part.submenu->OnMouseWheel(event);
@@ -937,14 +935,20 @@ void MenuController::OnGestureEvent(SubmenuView* source,
   } else if (event->type() == ui::ET_GESTURE_TAP) {
     if (!part.is_scroll() && part.menu &&
         !(part.should_submenu_show && part.menu->HasSubmenu())) {
-      if (part.menu->GetDelegate()->IsTriggerableEvent(part.menu, *event)) {
+      const int command = part.menu->GetCommand();
+      if (part.menu->GetDelegate()->ShouldExecuteCommandWithoutClosingMenu(
+              command, *event)) {
+        item_selected_by_touch_ = true;
+        part.menu->GetDelegate()->ExecuteCommand(command, 0);
+      } else if (part.menu->GetDelegate()->IsTriggerableEvent(part.menu,
+                                                              *event)) {
         item_selected_by_touch_ = true;
         Accept(part.menu, event->flags());
       }
       event->StopPropagation();
     } else if (part.type == MenuPart::Type::kMenuItem) {
       // User either tapped on empty space, or a menu that has children.
-      SetSelection(part.menu ? part.menu : state_.item.get(),
+      SetSelection(part.menu ? part.menu.get() : state_.item.get(),
                    SELECTION_OPEN_SUBMENU | SELECTION_UPDATE_IMMEDIATELY);
       event->StopPropagation();
     }
@@ -1105,7 +1109,7 @@ views::View::DropCallback MenuController::GetDropCallback(
     SubmenuView* source,
     const ui::DropTargetEvent& event) {
   DCHECK(drop_target_);
-  // NOTE: the delegate may delete us after invoking OnPerformDrop, as such
+  // NOTE: the delegate may delete us after invoking GetDropCallback, as such
   // we don't call cancel here.
 
   MenuItemView* item = state_.item;
@@ -1605,7 +1609,13 @@ bool MenuController::OnKeyPressed(const ui::KeyEvent& event) {
           handled_key_code = true;
           if (!SendAcceleratorToHotTrackedView(event.flags()) &&
               pending_state_.item->GetEnabled()) {
-            Accept(pending_state_.item, event.flags());
+            const int command = pending_state_.item->GetCommand();
+            if (pending_state_.item->GetDelegate()
+                    ->ShouldExecuteCommandWithoutClosingMenu(command, event)) {
+              pending_state_.item->GetDelegate()->ExecuteCommand(command, 0);
+            } else {
+              Accept(pending_state_.item, event.flags());
+            }
           }
         }
       }
@@ -1762,32 +1772,44 @@ void MenuController::Accept(MenuItemView* item, int event_flags) {
       views::ElementTrackerViews::GetInstance()->NotifyViewActivated(id, item);
   }
 
+  // EndPopupFocusOverride before closing the menu, the focus should move on
+  // after closing the menu.
+  item->GetViewAccessibility().EndPopupFocusOverride();
+
+  // Setting `result_` now means that a future Cancel() call will include that
+  // `result_` in its delegate notification, and thus the clicked command will
+  // still be executed even if the menu is canceled during the close animation.
+  // See crbug.com/1251450. Note that we don't set the exit type at this point,
+  // because we want the Cancel's exit type to take precedence.
+  result_ = item;
+  accept_event_flags_ = event_flags;
+
 #if BUILDFLAG(IS_MAC)
   menu_closure_animation_ = std::make_unique<MenuClosureAnimationMac>(
       item, item->GetParentMenuItem()->GetSubmenu(),
-      base::BindOnce(&MenuController::ReallyAccept, base::Unretained(this),
-                     base::Unretained(item), event_flags));
+      base::BindOnce(&MenuController::ReallyAccept, base::Unretained(this)));
   menu_closure_animation_->Start();
 #else
-  ReallyAccept(item, event_flags);
+  ReallyAccept();
 #endif
 }
 
-void MenuController::ReallyAccept(MenuItemView* item, int event_flags) {
+void MenuController::ReallyAccept() {
   DCHECK(!for_drop_);
-  result_ = item;
 #if BUILDFLAG(IS_MAC)
   // Reset the closure animation since it's now finished - this also unblocks
   // input events for the menu.
   menu_closure_animation_.reset();
 #endif
-  if (item && !menu_stack_.empty() &&
-      !item->GetDelegate()->ShouldCloseAllMenusOnExecute(item->GetCommand())) {
+
+  if (result_ && !menu_stack_.empty() &&
+      !result_->GetDelegate()->ShouldCloseAllMenusOnExecute(
+          result_->GetCommand())) {
     SetExitType(ExitType::kOutermost);
   } else {
     SetExitType(ExitType::kAll);
   }
-  accept_event_flags_ = event_flags;
+
   ExitMenu();
 }
 
@@ -1824,11 +1846,8 @@ bool MenuController::ShowSiblingMenu(SubmenuView* source,
 
   delegate_->SiblingMenuCreated(alt_menu);
 
-  if (!button) {
-    // If the delegate returns a menu, they must also return a button.
-    NOTREACHED();
-    return false;
-  }
+  // If the delegate returns a menu, they must also return a button.
+  CHECK(button);
 
   // There is a sibling menu, update the button state, hide the current menu
   // and show the new one.
@@ -2059,14 +2078,14 @@ void MenuController::CommitPendingSelection() {
   state_ = pending_state_;
   state_.open_leading.swap(pending_open_direction);
 
-  int menu_depth = MenuDepth(state_.item);
+  size_t menu_depth = MenuDepth(state_.item);
   if (menu_depth == 0) {
     state_.open_leading.clear();
   } else {
-    int cached_size = static_cast<int>(state_.open_leading.size());
-    DCHECK_GE(menu_depth, 0);
-    while (cached_size-- >= menu_depth)
+    for (size_t cached_size = state_.open_leading.size();
+         cached_size >= menu_depth; --cached_size) {
       state_.open_leading.pop_back();
+    }
   }
 
   if (!state_.item) {
@@ -2229,6 +2248,10 @@ void MenuController::MenuChildrenChanged(MenuItemView* item) {
   // Menu shouldn't be updated during drag operation.
   DCHECK(!active_mouse_view_tracker_->view());
 
+  // If needed, refresh the AX index assignments.
+  if (item->GetProperty(kOrderedMenuChildren))
+    SetSelectionIndices(item);
+
   // If the current item or pending item is a descendant of the item
   // that changed, move the selection back to the changed item.
   const MenuItemView* ancestor = state_.item;
@@ -2256,10 +2279,8 @@ void MenuController::BuildPathsAndCalculateDiff(
   BuildMenuItemPath(old_item, old_path);
   BuildMenuItemPath(new_item, new_path);
 
-  *first_diff_at = std::distance(
-      old_path->cbegin(), std::mismatch(old_path->cbegin(), old_path->cend(),
-                                        new_path->cbegin(), new_path->cend())
-                              .first);
+  *first_diff_at = static_cast<size_t>(std::distance(
+      old_path->begin(), base::ranges::mismatch(*old_path, *new_path).first));
 }
 
 void MenuController::BuildMenuItemPath(MenuItemView* item,
@@ -2752,8 +2773,8 @@ gfx::Rect MenuController::CalculateBubbleMenuBounds(
 }
 
 // static
-int MenuController::MenuDepth(MenuItemView* item) {
-  return item ? (MenuDepth(item->GetParentMenuItem()) + 1) : 0;
+size_t MenuController::MenuDepth(MenuItemView* item) {
+  return item ? (MenuDepth(item->GetParentMenuItem()) + 1) : size_t{0};
 }
 
 void MenuController::IncrementSelection(
@@ -2791,11 +2812,19 @@ void MenuController::IncrementSelection(
 }
 
 void MenuController::SetSelectionIndices(MenuItemView* parent) {
+  if (parent->GetProperty(kOrderedMenuChildren)) {
+    // Clear any old AX index assignments.
+    for (ViewTracker& item : *(parent->GetProperty(kOrderedMenuChildren))) {
+      if (item.view())
+        item.view()->GetViewAccessibility().ClearPosInSetOverride();
+    }
+  }
+
   std::vector<View*> ordering;
   SubmenuView* const submenu = parent->GetSubmenu();
 
   for (MenuItemView* item : submenu->GetMenuItems()) {
-    if (!item->GetVisible() || !item->GetEnabled())
+    if (!item->IsTraversableByKeyboard())
       continue;
 
     bool found_focusable = false;
@@ -2810,12 +2839,18 @@ void MenuController::SetSelectionIndices(MenuItemView* parent) {
       ordering.push_back(item);
   }
 
+  parent->SetProperty(kOrderedMenuChildren,
+                      std::make_unique<std::vector<ViewTracker>>(
+                          ordering.begin(), ordering.end()));
+
   if (ordering.empty())
     return;
 
-  const int set_size = ordering.size();
-  for (int i = 0; i < set_size; ++i)
-    ordering[i]->GetViewAccessibility().OverridePosInSet(i + 1, set_size);
+  const size_t set_size = ordering.size();
+  for (size_t i = 0; i < set_size; ++i) {
+    ordering[i]->GetViewAccessibility().OverridePosInSet(
+        static_cast<int>(i + 1), static_cast<int>(set_size));
+  }
 }
 
 void MenuController::MoveSelectionToFirstOrLastItem(
@@ -2842,38 +2877,20 @@ void MenuController::MoveSelectionToFirstOrLastItem(
 MenuItemView* MenuController::FindInitialSelectableMenuItem(
     MenuItemView* parent,
     SelectionIncrementDirectionType direction) {
-  return FindNextSelectableMenuItem(
-      parent, direction == INCREMENT_SELECTION_DOWN ? -1 : 0, direction, true);
-}
-
-MenuItemView* MenuController::FindNextSelectableMenuItem(
-    MenuItemView* parent,
-    int index,
-    SelectionIncrementDirectionType direction,
-    bool is_initial) {
-  int parent_count =
-      static_cast<int>(parent->GetSubmenu()->GetMenuItems().size());
-  int stop_index = (index + parent_count) % parent_count;
-  bool include_all_items =
-      (index == -1 && direction == INCREMENT_SELECTION_DOWN) ||
-      (index == 0 && direction == INCREMENT_SELECTION_UP);
-  int delta = direction == INCREMENT_SELECTION_UP ? -1 : 1;
-  // Loop through the menu items skipping any invisible menus. The loop stops
-  // when we wrap or find a visible and enabled child.
-  do {
-    if (!MenuConfig::instance().arrow_key_selection_wraps && !is_initial) {
-      if (index == 0 && direction == INCREMENT_SELECTION_UP)
-        return nullptr;
-      if (index == parent_count - 1 && direction == INCREMENT_SELECTION_DOWN)
-        return nullptr;
+  const size_t parent_count = parent->GetSubmenu()->GetMenuItems().size();
+  if (direction == INCREMENT_SELECTION_DOWN) {
+    for (size_t index = 0; index < parent_count; ++index) {
+      MenuItemView* child = parent->GetSubmenu()->GetMenuItemAt(index);
+      if (child->IsTraversableByKeyboard())
+        return child;
     }
-    index = (index + delta + parent_count) % parent_count;
-    if (index == stop_index && !include_all_items)
-      return nullptr;
-    MenuItemView* child = parent->GetSubmenu()->GetMenuItemAt(index);
-    if (child->IsTraversableByKeyboard())
-      return child;
-  } while (index != stop_index);
+  } else {
+    for (size_t index = parent_count; index > 0; --index) {
+      MenuItemView* child = parent->GetSubmenu()->GetMenuItemAt(index - 1);
+      if (child->IsTraversableByKeyboard())
+        return child;
+    }
+  }
   return nullptr;
 }
 
@@ -2920,15 +2937,16 @@ MenuController::SelectByCharDetails MenuController::FindChildForMnemonic(
     MenuItemView* child = menu_items[i];
     if (child->GetEnabled() && child->GetVisible()) {
       if (child == pending_state_.item)
-        details.index_of_item = static_cast<int>(i);
+        details.index_of_item = i;
       if (match_function(child, key)) {
-        if (details.first_match == -1)
-          details.first_match = static_cast<int>(i);
-        else
+        if (!details.first_match.has_value()) {
+          details.first_match = i;
+        } else {
           details.has_multiple = true;
-        if (details.next_match == -1 && details.index_of_item != -1 &&
-            static_cast<int>(i) > details.index_of_item)
-          details.next_match = static_cast<int>(i);
+        }
+        if (!details.next_match.has_value() &&
+            details.index_of_item.has_value() && i > details.index_of_item)
+          details.next_match = i;
       }
     }
   }
@@ -2938,23 +2956,25 @@ MenuController::SelectByCharDetails MenuController::FindChildForMnemonic(
 void MenuController::AcceptOrSelect(MenuItemView* parent,
                                     const SelectByCharDetails& details) {
   // This should only be invoked if there is a match.
-  DCHECK_NE(details.first_match, -1);
+  DCHECK(details.first_match.has_value());
   DCHECK(parent->HasSubmenu());
   SubmenuView* submenu = parent->GetSubmenu();
   DCHECK(submenu);
   if (!details.has_multiple) {
     // There's only one match, activate it (or open if it has a submenu).
-    if (submenu->GetMenuItemAt(details.first_match)->HasSubmenu()) {
-      SetSelection(submenu->GetMenuItemAt(details.first_match),
+    if (submenu->GetMenuItemAt(details.first_match.value())->HasSubmenu()) {
+      SetSelection(submenu->GetMenuItemAt(details.first_match.value()),
                    SELECTION_OPEN_SUBMENU | SELECTION_UPDATE_IMMEDIATELY);
     } else {
-      Accept(submenu->GetMenuItemAt(details.first_match), 0);
+      Accept(submenu->GetMenuItemAt(details.first_match.value()), 0);
     }
-  } else if (details.index_of_item == -1 || details.next_match == -1) {
-    SetSelection(submenu->GetMenuItemAt(details.first_match),
+  } else if (!details.index_of_item.has_value() ||
+             !details.next_match.has_value()) {
+    SetSelection(submenu->GetMenuItemAt(details.first_match.value()),
                  SELECTION_DEFAULT);
   } else {
-    SetSelection(submenu->GetMenuItemAt(details.next_match), SELECTION_DEFAULT);
+    SetSelection(submenu->GetMenuItemAt(details.next_match.value()),
+                 SELECTION_DEFAULT);
   }
 }
 
@@ -2979,7 +2999,7 @@ void MenuController::SelectByChar(char16_t character) {
   // Look for matches based on mnemonic first.
   SelectByCharDetails details =
       FindChildForMnemonic(item, key, &MatchesMnemonic);
-  if (details.first_match != -1) {
+  if (details.first_match.has_value()) {
     AcceptOrSelect(item, details);
     return;
   }
@@ -2992,7 +3012,7 @@ void MenuController::SelectByChar(char16_t character) {
   } else {
     // If no mnemonics found, look at first character of titles.
     details = FindChildForMnemonic(item, key, &TitleMatchesMnemonic);
-    if (details.first_match != -1)
+    if (details.first_match.has_value())
       AcceptOrSelect(item, details);
   }
 }
@@ -3076,7 +3096,7 @@ void MenuController::SetDropMenuItem(MenuItemView* new_target,
 }
 
 void MenuController::UpdateScrolling(const MenuPart& part) {
-  if (!part.is_scroll() && !scroll_task_.get())
+  if ((!part.is_scroll() && !scroll_task_.get()) || !scroll_buttons_enabled)
     return;
 
   if (!scroll_task_.get())
@@ -3186,7 +3206,7 @@ void MenuController::ExitMenu() {
 MenuItemView* MenuController::ExitTopMostMenu() {
   // Release the lock which prevents Chrome from shutting down while the menu is
   // showing.
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE,
       base::BindOnce(&ViewsDelegate::ReleaseRef,
                      base::Unretained(ViewsDelegate::GetInstance())));
@@ -3317,13 +3337,33 @@ void MenuController::SetNextHotTrackedView(
   if (!parent)
     return;
   const auto menu_items = parent->GetSubmenu()->GetMenuItems();
-  if (menu_items.size() <= 1)
+  const size_t num_menu_items = menu_items.size();
+  if (num_menu_items <= 1)
     return;
-  const auto i = std::find(menu_items.cbegin(), menu_items.cend(), item);
+  const auto i = base::ranges::find(menu_items, item);
   DCHECK(i != menu_items.cend());
-  MenuItemView* to_select = FindNextSelectableMenuItem(
-      parent, std::distance(menu_items.cbegin(), i), direction, false);
-  SetInitialHotTrackedView(to_select, direction);
+  auto index = static_cast<size_t>(std::distance(menu_items.cbegin(), i));
+
+  // Loop through the menu items in the desired direction.  Assume we can wrap
+  // all the way back to this item.
+  size_t stop_index = index;
+  if (!MenuConfig::instance().arrow_key_selection_wraps) {
+    // Don't want to allow wrapping, so stop as soon as it happens.
+    stop_index = direction == INCREMENT_SELECTION_UP ? (num_menu_items - 1) : 0;
+  }
+  const size_t delta =
+      direction == INCREMENT_SELECTION_UP ? (num_menu_items - 1) : 1;
+  while (true) {
+    index = (index + delta) % num_menu_items;
+    if (index == stop_index)
+      return;
+    // Stop on the next keyboard-traversable item.
+    MenuItemView* child = parent->GetSubmenu()->GetMenuItemAt(index);
+    if (child->IsTraversableByKeyboard()) {
+      SetInitialHotTrackedView(child, direction);
+      return;
+    }
+  }
 }
 
 void MenuController::SetHotTrackedButton(Button* new_hot_button) {
@@ -3403,7 +3443,6 @@ void MenuController::SetAnchorParametersForItem(MenuItemView* item,
       anchor->anchor_gravity = ui::OwnedWindowAnchorGravity::kBottomRight;
       anchor->constraint_adjustment =
           ui::OwnedWindowConstraintAdjustment::kAdjustmentSlideX |
-          ui::OwnedWindowConstraintAdjustment::kAdjustmentSlideY |
           ui::OwnedWindowConstraintAdjustment::kAdjustmentFlipY |
           ui::OwnedWindowConstraintAdjustment::kAdjustmentRezizeY;
     } else {
@@ -3428,6 +3467,20 @@ bool MenuController::CanProcessInputEvents() const {
 #else
   return true;
 #endif
+}
+
+void MenuController::OnMenuEdgeReached() {
+  StopScrolling();
+  SetEnabledScrollButtons(false);
+}
+
+void MenuController::SetEnabledScrollButtons(bool enabled) {
+  scroll_buttons_enabled = enabled;
+}
+
+void MenuController::SetMenuRoundedCorners(
+    absl::optional<gfx::RoundedCornersF> corners) {
+  rounded_corners_ = corners;
 }
 
 }  // namespace views

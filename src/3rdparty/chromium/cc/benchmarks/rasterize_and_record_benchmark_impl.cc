@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,6 +12,7 @@
 #include <utility>
 
 #include "base/memory/raw_ptr.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/timer/lap_timer.h"
 #include "base/values.h"
 #include "cc/layers/layer_impl.h"
@@ -48,7 +49,7 @@ void RunBenchmark(RasterSource* raster_source,
     // quantization when the layer is very small.
     base::LapTimer timer(kWarmupRuns, base::Milliseconds(kTimeLimitMillis),
                          kTimeCheckInterval);
-    SkColor color = SK_ColorTRANSPARENT;
+    SkColor4f color = SkColors::kTransparent;
     gfx::Rect layer_rect = gfx::ScaleToEnclosingRect(
         content_rect, 1.f / contents_scale.x(), 1.f / contents_scale.y());
     *is_solid_color =
@@ -74,7 +75,9 @@ void RunBenchmark(RasterSource* raster_source,
 
       raster_source->PlaybackToCanvas(
           &canvas, raster_source->GetContentSize(contents_scale), content_rect,
-          content_rect, gfx::AxisTransform2d(contents_scale, gfx::Vector2dF()),
+          content_rect,
+          gfx::AxisTransform2d::FromScaleAndTranslation(contents_scale,
+                                                        gfx::Vector2dF()),
           settings);
 
       timer.NextLap();
@@ -157,7 +160,7 @@ void RasterizeAndRecordBenchmarkImpl::DidCompleteCommit(
     layer->RunMicroBenchmark(this);
   }
 
-  base::Value result(base::Value::Type::DICTIONARY);
+  base::Value result(base::Value::Type::DICT);
   result.SetDoubleKey("rasterize_time_ms",
                       rasterize_results_.total_best_time.InMillisecondsF());
   result.SetIntKey("pixels_rasterized", rasterize_results_.pixels_rasterized);
@@ -173,7 +176,7 @@ void RasterizeAndRecordBenchmarkImpl::DidCompleteCommit(
   result.SetIntKey("total_picture_layers_off_screen",
                    rasterize_results_.total_picture_layers_off_screen);
 
-  base::Value lcd_text_pixels(base::Value::Type::DICTIONARY);
+  base::Value lcd_text_pixels(base::Value::Type::DICT);
   for (size_t i = 0; i < kLCDTextDisallowedReasonCount; i++) {
     lcd_text_pixels.SetIntKey(
         LCDTextDisallowedReasonToString(
@@ -223,7 +226,8 @@ void RasterizeAndRecordBenchmarkImpl::RunOnLayer(PictureLayerImpl* layer) {
           settings.max_preraster_distance_in_screen_pixels);
 
   PictureLayerTiling* tiling = tiling_set->AddTiling(
-      gfx::AxisTransform2d(layer->raster_contents_scale_, {}),
+      gfx::AxisTransform2d::FromScaleAndTranslation(
+          layer->raster_contents_scale_, gfx::Vector2dF()),
       layer->GetRasterSource());
   tiling->set_resolution(HIGH_RESOLUTION);
   tiling->CreateAllTilesForTesting();

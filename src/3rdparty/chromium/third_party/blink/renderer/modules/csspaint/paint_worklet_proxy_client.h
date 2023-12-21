@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -49,6 +49,7 @@ class MODULES_EXPORT PaintWorkletProxyClient
   PaintWorkletProxyClient(
       int worklet_id,
       PaintWorklet*,
+      scoped_refptr<base::SingleThreadTaskRunner> main_thread_runner,
       base::WeakPtr<PaintWorkletPaintDispatcher> compositor_paintee,
       scoped_refptr<base::SingleThreadTaskRunner> compositor_host_queue);
 
@@ -59,10 +60,9 @@ class MODULES_EXPORT PaintWorkletProxyClient
 
   // PaintWorkletPainter implementation.
   int GetWorkletId() const override { return worklet_id_; }
-  sk_sp<PaintRecord> Paint(
-      const CompositorPaintWorkletInput*,
-      const CompositorPaintWorkletJob::AnimatedPropertyValues&
-          animated_property_values) override;
+  PaintRecord Paint(const CompositorPaintWorkletInput*,
+                    const CompositorPaintWorkletJob::AnimatedPropertyValues&
+                        animated_property_values) override;
 
   // Add a global scope to the PaintWorkletProxyClient.
   virtual void AddGlobalScope(WorkletGlobalScope*);

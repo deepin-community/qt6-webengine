@@ -29,10 +29,12 @@
 #include "zlib_wrapper.h"
 
 #include "libavutil/avassert.h"
+#include "libavutil/color_utils.h"
 #include "libavutil/crc.h"
+#include "libavutil/csp.h"
 #include "libavutil/libm.h"
 #include "libavutil/opt.h"
-#include "libavutil/color_utils.h"
+#include "libavutil/rational.h"
 #include "libavutil/stereo3d.h"
 
 #include <zlib.h>
@@ -120,7 +122,7 @@ static void png_get_interlaced_row(uint8_t *dst, int row_size,
     }
 }
 
-static void sub_png_paeth_prediction(uint8_t *dst, uint8_t *src, uint8_t *top,
+static void sub_png_paeth_prediction(uint8_t *dst, const uint8_t *src, const uint8_t *top,
                                      int w, int bpp)
 {
     int i;
@@ -165,7 +167,7 @@ static void sub_left_prediction(PNGEncContext *c, uint8_t *dst, const uint8_t *s
 }
 
 static void png_filter_row(PNGEncContext *c, uint8_t *dst, int filter_type,
-                           uint8_t *src, uint8_t *top, int size, int bpp)
+                           const uint8_t *src, const uint8_t *top, int size, int bpp)
 {
     int i;
 
@@ -194,7 +196,7 @@ static void png_filter_row(PNGEncContext *c, uint8_t *dst, int filter_type,
 }
 
 static uint8_t *png_choose_filter(PNGEncContext *s, uint8_t *dst,
-                                  uint8_t *src, uint8_t *top, int size, int bpp)
+                                  const uint8_t *src, const uint8_t *top, int size, int bpp)
 {
     int pred = s->filter_type;
     av_assert0(bpp || !pred);
@@ -236,7 +238,8 @@ static void png_write_chunk(uint8_t **f, uint32_t tag,
     bytestream_put_be32(f, av_bswap32(tag));
     if (length > 0) {
         crc = av_crc(crc_table, crc, buf, length);
-        memcpy(*f, buf, length);
+        if (*f != buf)
+            memcpy(*f, buf, length);
         *f += length;
     }
     bytestream_put_be32(f, ~crc);
@@ -293,45 +296,22 @@ static int png_write_row(AVCodecContext *avctx, const uint8_t *data, int size)
 }
 
 #define AV_WB32_PNG(buf, n) AV_WB32(buf, lrint((n) * 100000))
+#define AV_WB32_PNG_D(buf, d) AV_WB32_PNG(buf, av_q2d(d))
 static int png_get_chrm(enum AVColorPrimaries prim,  uint8_t *buf)
 {
-    double rx, ry, gx, gy, bx, by, wx = 0.3127, wy = 0.3290;
-    switch (prim) {
-        case AVCOL_PRI_BT709:
-            rx = 0.640; ry = 0.330;
-            gx = 0.300; gy = 0.600;
-            bx = 0.150; by = 0.060;
-            break;
-        case AVCOL_PRI_BT470M:
-            rx = 0.670; ry = 0.330;
-            gx = 0.210; gy = 0.710;
-            bx = 0.140; by = 0.080;
-            wx = 0.310; wy = 0.316;
-            break;
-        case AVCOL_PRI_BT470BG:
-            rx = 0.640; ry = 0.330;
-            gx = 0.290; gy = 0.600;
-            bx = 0.150; by = 0.060;
-            break;
-        case AVCOL_PRI_SMPTE170M:
-        case AVCOL_PRI_SMPTE240M:
-            rx = 0.630; ry = 0.340;
-            gx = 0.310; gy = 0.595;
-            bx = 0.155; by = 0.070;
-            break;
-        case AVCOL_PRI_BT2020:
-            rx = 0.708; ry = 0.292;
-            gx = 0.170; gy = 0.797;
-            bx = 0.131; by = 0.046;
-            break;
-        default:
-            return 0;
-    }
+    const AVColorPrimariesDesc *desc = av_csp_primaries_desc_from_id(prim);
+    if (!desc)
+        return 0;
 
-    AV_WB32_PNG(buf     , wx); AV_WB32_PNG(buf + 4 , wy);
-    AV_WB32_PNG(buf + 8 , rx); AV_WB32_PNG(buf + 12, ry);
-    AV_WB32_PNG(buf + 16, gx); AV_WB32_PNG(buf + 20, gy);
-    AV_WB32_PNG(buf + 24, bx); AV_WB32_PNG(buf + 28, by);
+    AV_WB32_PNG_D(buf,      desc->wp.x);
+    AV_WB32_PNG_D(buf +  4, desc->wp.y);
+    AV_WB32_PNG_D(buf +  8, desc->prim.r.x);
+    AV_WB32_PNG_D(buf + 12, desc->prim.r.y);
+    AV_WB32_PNG_D(buf + 16, desc->prim.g.x);
+    AV_WB32_PNG_D(buf + 20, desc->prim.g.y);
+    AV_WB32_PNG_D(buf + 24, desc->prim.b.x);
+    AV_WB32_PNG_D(buf + 28, desc->prim.b.y);
+
     return 1;
 }
 
@@ -345,10 +325,53 @@ static int png_get_gama(enum AVColorTransferCharacteristic trc, uint8_t *buf)
     return 1;
 }
 
+static int png_write_iccp(PNGEncContext *s, const AVFrameSideData *sd)
+{
+    z_stream *const zstream = &s->zstream.zstream;
+    const AVDictionaryEntry *entry;
+    const char *name;
+    uint8_t *start, *buf;
+    int ret;
+
+    if (!sd || !sd->size)
+        return 0;
+    zstream->next_in  = sd->data;
+    zstream->avail_in = sd->size;
+
+    /* write the chunk contents first */
+    start = s->bytestream + 8; /* make room for iCCP tag + length */
+    buf = start;
+
+    /* profile description */
+    entry = av_dict_get(sd->metadata, "name", NULL, 0);
+    name = (entry && entry->value[0]) ? entry->value : "icc";
+    for (int i = 0;; i++) {
+        char c = (i == 79) ? 0 : name[i];
+        bytestream_put_byte(&buf, c);
+        if (!c)
+            break;
+    }
+
+    /* compression method and profile data */
+    bytestream_put_byte(&buf, 0);
+    zstream->next_out  = buf;
+    zstream->avail_out = s->bytestream_end - buf;
+    ret = deflate(zstream, Z_FINISH);
+    deflateReset(zstream);
+    if (ret != Z_STREAM_END)
+        return AVERROR_EXTERNAL;
+
+    /* rewind to the start and write the chunk header/crc */
+    png_write_chunk(&s->bytestream, MKTAG('i', 'C', 'C', 'P'), start,
+                    zstream->next_out - start);
+    return 0;
+}
+
 static int encode_headers(AVCodecContext *avctx, const AVFrame *pict)
 {
     AVFrameSideData *side_data;
     PNGEncContext *s = avctx->priv_data;
+    int ret;
 
     /* write png header */
     AV_WB32(s->buf, avctx->width);
@@ -394,6 +417,14 @@ static int encode_headers(AVCodecContext *avctx, const AVFrame *pict)
         pict->color_trc == AVCOL_TRC_IEC61966_2_1) {
         s->buf[0] = 1; /* rendering intent, relative colorimetric by default */
         png_write_chunk(&s->bytestream, MKTAG('s', 'R', 'G', 'B'), s->buf, 1);
+    } else if (pict->color_primaries != AVCOL_PRI_UNSPECIFIED ||
+        pict->color_trc != AVCOL_TRC_UNSPECIFIED) {
+        /* these values match H.273 so no translation is needed */
+        s->buf[0] = pict->color_primaries;
+        s->buf[1] = pict->color_trc;
+        s->buf[2] = 0; /* colorspace = RGB */
+        s->buf[3] = pict->color_range == AVCOL_RANGE_MPEG ? 0 : 1;
+        png_write_chunk(&s->bytestream, MKTAG('c', 'I', 'C', 'P'), s->buf, 4);
     }
 
     if (png_get_chrm(pict->color_primaries, s->buf))
@@ -401,7 +432,11 @@ static int encode_headers(AVCodecContext *avctx, const AVFrame *pict)
     if (png_get_gama(pict->color_trc, s->buf))
         png_write_chunk(&s->bytestream, MKTAG('g', 'A', 'M', 'A'), s->buf, 4);
 
-    /* put the palette if needed */
+    side_data = av_frame_get_side_data(pict, AV_FRAME_DATA_ICC_PROFILE);
+    if ((ret = png_write_iccp(s, side_data)))
+        return ret;
+
+    /* put the palette if needed, must be after colorspace information */
     if (s->color_type == PNG_COLOR_TYPE_PALETTE) {
         int has_alpha, alpha, i;
         unsigned int v;
@@ -438,7 +473,7 @@ static int encode_frame(AVCodecContext *avctx, const AVFrame *pict)
     const AVFrame *const p = pict;
     int y, len, ret;
     int row_size, pass_row_size;
-    uint8_t *ptr, *top, *crow_buf, *crow;
+    uint8_t *crow_buf, *crow;
     uint8_t *crow_base       = NULL;
     uint8_t *progressive_buf = NULL;
     uint8_t *top_buf         = NULL;
@@ -472,10 +507,10 @@ static int encode_frame(AVCodecContext *avctx, const AVFrame *pict)
              * output */
             pass_row_size = ff_png_pass_row_size(pass, s->bits_per_pixel, pict->width);
             if (pass_row_size > 0) {
-                top = NULL;
+                uint8_t *top = NULL;
                 for (y = 0; y < pict->height; y++)
                     if ((ff_png_pass_ymask[pass] << (y & 7)) & 0x80) {
-                        ptr = p->data[0] + y * p->linesize[0];
+                        const uint8_t *ptr = p->data[0] + y * p->linesize[0];
                         FFSWAP(uint8_t *, progressive_buf, top_buf);
                         png_get_interlaced_row(progressive_buf, pass_row_size,
                                                s->bits_per_pixel, pass,
@@ -488,9 +523,9 @@ static int encode_frame(AVCodecContext *avctx, const AVFrame *pict)
             }
         }
     } else {
-        top = NULL;
+        const uint8_t *top = NULL;
         for (y = 0; y < pict->height; y++) {
-            ptr = p->data[0] + y * p->linesize[0];
+            const uint8_t *ptr = p->data[0] + y * p->linesize[0];
             crow = png_choose_filter(s, crow_buf, ptr, top,
                                      row_size, s->bits_per_pixel >> 3);
             png_write_row(avctx, crow, row_size + 1);
@@ -525,6 +560,34 @@ the_end:
     return ret;
 }
 
+static int add_icc_profile_size(AVCodecContext *avctx, const AVFrame *pict,
+                                uint64_t *max_packet_size)
+{
+    PNGEncContext *s = avctx->priv_data;
+    const AVFrameSideData *sd;
+    const int hdr_size = 128;
+    uint64_t new_pkt_size;
+    uLong bound;
+
+    if (!pict)
+        return 0;
+    sd = av_frame_get_side_data(pict, AV_FRAME_DATA_ICC_PROFILE);
+    if (!sd || !sd->size)
+        return 0;
+    if (sd->size != (uLong) sd->size)
+        return AVERROR_INVALIDDATA;
+
+    bound = deflateBound(&s->zstream.zstream, sd->size);
+    if (bound > INT32_MAX - hdr_size)
+        return AVERROR_INVALIDDATA;
+
+    new_pkt_size = *max_packet_size + bound + hdr_size;
+    if (new_pkt_size < *max_packet_size)
+        return AVERROR_INVALIDDATA;
+    *max_packet_size = new_pkt_size;
+    return 0;
+}
+
 static int encode_png(AVCodecContext *avctx, AVPacket *pkt,
                       const AVFrame *pict, int *got_packet)
 {
@@ -541,6 +604,8 @@ static int encode_png(AVCodecContext *avctx, AVPacket *pkt,
             enc_row_size +
             12 * (((int64_t)enc_row_size + IOBUF_SIZE - 1) / IOBUF_SIZE) // IDAT * ceil(enc_row_size / IOBUF_SIZE)
         );
+    if ((ret = add_icc_profile_size(avctx, pict, &max_packet_size)))
+        return ret;
     ret = ff_alloc_packet(avctx, pkt, max_packet_size);
     if (ret < 0)
         return ret;
@@ -645,7 +710,7 @@ static int apng_do_inverse_blend(AVFrame *output, const AVFrame *input,
         }
 
         for (y = topmost_y; y < bottommost_y; ++y) {
-            uint8_t *foreground = input->data[0] + input_linesize * y + bpp * leftmost_x;
+            const uint8_t *foreground = input->data[0] + input_linesize * y + bpp * leftmost_x;
             uint8_t *background = output->data[0] + output_linesize * y + bpp * leftmost_x;
             output_data = output->data[0] + output_linesize * (y - topmost_y);
             for (x = leftmost_x; x < rightmost_x; ++x, foreground += bpp, background += bpp, output_data += bpp) {
@@ -870,6 +935,8 @@ static int encode_apng(AVCodecContext *avctx, AVPacket *pkt,
             enc_row_size +
             (4 + 12) * (((int64_t)enc_row_size + IOBUF_SIZE - 1) / IOBUF_SIZE) // fdAT * ceil(enc_row_size / IOBUF_SIZE)
         );
+    if ((ret = add_icc_profile_size(avctx, pict, &max_packet_size)))
+        return ret;
     if (max_packet_size > INT_MAX)
         return AVERROR(ENOMEM);
 
@@ -896,7 +963,12 @@ static int encode_apng(AVCodecContext *avctx, AVPacket *pkt,
             return ret;
 
         memcpy(pkt->data, s->last_frame_packet, s->last_frame_packet_size);
-        pkt->pts = pkt->dts = s->last_frame->pts;
+        pkt->pts = s->last_frame->pts;
+        pkt->duration = s->last_frame->duration;
+
+        ret = ff_encode_reordered_opaque(avctx, pkt, s->last_frame);
+        if (ret < 0)
+            return ret;
     }
 
     if (pict) {
@@ -908,7 +980,7 @@ static int encode_apng(AVCodecContext *avctx, AVPacket *pkt,
         // to have the image data write to the correct place in the buffer
         fctl_chunk.sequence_number = s->sequence_number;
         ++s->sequence_number;
-        s->bytestream += 26 + 12;
+        s->bytestream += APNG_FCTL_CHUNK_SIZE + 12;
 
         ret = apng_encode_frame(avctx, pict, &fctl_chunk, &s->last_frame_fctl);
         if (ret < 0)
@@ -922,7 +994,7 @@ static int encode_apng(AVCodecContext *avctx, AVPacket *pkt,
 
     if (s->last_frame) {
         uint8_t* last_fctl_chunk_start = pkt->data;
-        uint8_t buf[26];
+        uint8_t buf[APNG_FCTL_CHUNK_SIZE];
         if (!s->extra_data_updated) {
             uint8_t *side_data = av_packet_new_side_data(pkt, AV_PKT_DATA_NEW_EXTRADATA, s->extra_data_size);
             if (!side_data)
@@ -940,7 +1012,7 @@ static int encode_apng(AVCodecContext *avctx, AVPacket *pkt,
         AV_WB16(buf + 22, s->last_frame_fctl.delay_den);
         buf[24] = s->last_frame_fctl.dispose_op;
         buf[25] = s->last_frame_fctl.blend_op;
-        png_write_chunk(&last_fctl_chunk_start, MKTAG('f', 'c', 'T', 'L'), buf, 26);
+        png_write_chunk(&last_fctl_chunk_start, MKTAG('f', 'c', 'T', 'L'), buf, sizeof(buf));
 
         *got_packet = 1;
     }
@@ -976,7 +1048,7 @@ static int encode_apng(AVCodecContext *avctx, AVPacket *pkt,
         }
 
         av_frame_unref(s->last_frame);
-        ret = av_frame_ref(s->last_frame, (AVFrame*)pict);
+        ret = av_frame_ref(s->last_frame, pict);
         if (ret < 0)
             return ret;
 
@@ -1113,14 +1185,15 @@ static const AVClass pngenc_class = {
 
 const FFCodec ff_png_encoder = {
     .p.name         = "png",
-    .p.long_name    = NULL_IF_CONFIG_SMALL("PNG (Portable Network Graphics) image"),
+    CODEC_LONG_NAME("PNG (Portable Network Graphics) image"),
     .p.type         = AVMEDIA_TYPE_VIDEO,
     .p.id           = AV_CODEC_ID_PNG,
+    .p.capabilities = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_FRAME_THREADS |
+                      AV_CODEC_CAP_ENCODER_REORDERED_OPAQUE,
     .priv_data_size = sizeof(PNGEncContext),
     .init           = png_enc_init,
     .close          = png_enc_close,
-    .encode2        = encode_png,
-    .p.capabilities = AV_CODEC_CAP_FRAME_THREADS,
+    FF_CODEC_ENCODE_CB(encode_png),
     .p.pix_fmts     = (const enum AVPixelFormat[]) {
         AV_PIX_FMT_RGB24, AV_PIX_FMT_RGBA,
         AV_PIX_FMT_RGB48BE, AV_PIX_FMT_RGBA64BE,
@@ -1130,19 +1203,20 @@ const FFCodec ff_png_encoder = {
         AV_PIX_FMT_MONOBLACK, AV_PIX_FMT_NONE
     },
     .p.priv_class   = &pngenc_class,
-    .caps_internal  = FF_CODEC_CAP_INIT_THREADSAFE,
+    .caps_internal  = FF_CODEC_CAP_ICC_PROFILES,
 };
 
 const FFCodec ff_apng_encoder = {
     .p.name         = "apng",
-    .p.long_name    = NULL_IF_CONFIG_SMALL("APNG (Animated Portable Network Graphics) image"),
+    CODEC_LONG_NAME("APNG (Animated Portable Network Graphics) image"),
     .p.type         = AVMEDIA_TYPE_VIDEO,
     .p.id           = AV_CODEC_ID_APNG,
-    .p.capabilities = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_DELAY,
+    .p.capabilities = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_DELAY |
+                      AV_CODEC_CAP_ENCODER_REORDERED_OPAQUE,
     .priv_data_size = sizeof(PNGEncContext),
     .init           = png_enc_init,
     .close          = png_enc_close,
-    .encode2        = encode_apng,
+    FF_CODEC_ENCODE_CB(encode_apng),
     .p.pix_fmts     = (const enum AVPixelFormat[]) {
         AV_PIX_FMT_RGB24, AV_PIX_FMT_RGBA,
         AV_PIX_FMT_RGB48BE, AV_PIX_FMT_RGBA64BE,
@@ -1152,5 +1226,5 @@ const FFCodec ff_apng_encoder = {
         AV_PIX_FMT_NONE
     },
     .p.priv_class   = &pngenc_class,
-    .caps_internal  = FF_CODEC_CAP_INIT_THREADSAFE,
+    .caps_internal  = FF_CODEC_CAP_ICC_PROFILES,
 };

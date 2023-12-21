@@ -1,9 +1,9 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/bind.h"
 #include "base/compiler_specific.h"
+#include "base/functional/bind.h"
 #include "cc/test/fake_content_layer_client.h"
 #include "cc/test/fake_picture_layer.h"
 #include "cc/test/layer_tree_test.h"
@@ -387,7 +387,7 @@ class LayerTreeHostProxyTestCommitWaitsForActivationMFBA
         // case above). We unblock activate to allow this main frame to commit.
         auto unblock = base::BindOnce(
             &LayerTreeHostImpl::BlockNotifyReadyToActivateForTesting,
-            base::Unretained(impl), false);
+            base::Unretained(impl), false, true);
         // Post the unblock instead of doing it immediately so that the main
         // frame is fully processed by the compositor thread, and it has a full
         // opportunity to wrongly unblock the main thread.

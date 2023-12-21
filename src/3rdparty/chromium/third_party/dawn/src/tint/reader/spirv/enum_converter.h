@@ -16,60 +16,79 @@
 #define SRC_TINT_READER_SPIRV_ENUM_CONVERTER_H_
 
 #include "spirv/unified1/spirv.h"
-#include "src/tint/ast/builtin.h"
+#include "spirv/unified1/spirv.hpp11"
 #include "src/tint/ast/pipeline_stage.h"
-#include "src/tint/ast/storage_class.h"
+#include "src/tint/builtin/address_space.h"
+#include "src/tint/builtin/builtin_value.h"
 #include "src/tint/reader/spirv/fail_stream.h"
-#include "src/tint/sem/storage_texture_type.h"
+#include "src/tint/type/storage_texture.h"
+#include "src/tint/type/texture_dimension.h"
 
 namespace tint::reader::spirv {
 
 /// A converter from SPIR-V enums to Tint AST enums.
 class EnumConverter {
- public:
-  /// Creates a new enum converter.
-  /// @param fail_stream the error reporting stream.
-  explicit EnumConverter(const FailStream& fail_stream);
-  /// Destructor
-  ~EnumConverter();
+  public:
+    /// Creates a new enum converter.
+    /// @param fail_stream the error reporting stream.
+    explicit EnumConverter(const FailStream& fail_stream);
+    /// Destructor
+    ~EnumConverter();
 
-  /// Converts a SPIR-V execution model to a Tint pipeline stage.
-  /// On failure, logs an error and returns kNone
-  /// @param model the SPIR-V entry point execution model
-  /// @returns a Tint AST pipeline stage
-  ast::PipelineStage ToPipelineStage(SpvExecutionModel model);
+    /// Converts a SPIR-V execution model to a Tint pipeline stage.
+    /// On failure, logs an error and returns kNone
+    /// @param model the SPIR-V entry point execution model
+    /// @returns a Tint AST pipeline stage
+    ast::PipelineStage ToPipelineStage(spv::ExecutionModel model);
 
-  /// Converts a SPIR-V storage class to a Tint storage class.
-  /// On failure, logs an error and returns kNone
-  /// @param sc the SPIR-V storage class
-  /// @returns a Tint AST storage class
-  ast::StorageClass ToStorageClass(const SpvStorageClass sc);
+    /// Converts a SPIR-V storage class to a Tint address space.
+    /// On failure, logs an error and returns kNone
+    /// @param sc the SPIR-V storage class
+    /// @returns a Tint AST address space
+    builtin::AddressSpace ToAddressSpace(const spv::StorageClass sc);
 
-  /// Converts a SPIR-V Builtin value a Tint Builtin.
-  /// On failure, logs an error and returns kNone
-  /// @param b the SPIR-V builtin
-  /// @returns a Tint AST builtin
-  ast::Builtin ToBuiltin(SpvBuiltIn b);
+    /// Converts a SPIR-V Builtin value a Tint Builtin.
+    /// On failure, logs an error and returns kNone
+    /// @param b the SPIR-V builtin
+    /// @returns a Tint AST builtin
+    builtin::BuiltinValue ToBuiltin(spv::BuiltIn b);
 
-  /// Converts a possibly arrayed SPIR-V Dim to a Tint texture dimension.
-  /// On failure, logs an error and returns kNone
-  /// @param dim the SPIR-V Dim value
-  /// @param arrayed true if the texture is arrayed
-  /// @returns a Tint AST texture dimension
-  ast::TextureDimension ToDim(SpvDim dim, bool arrayed);
+    /// Converts a possibly arrayed SPIR-V Dim to a Tint texture dimension.
+    /// On failure, logs an error and returns kNone
+    /// @param dim the SPIR-V Dim value
+    /// @param arrayed true if the texture is arrayed
+    /// @returns a Tint AST texture dimension
+    type::TextureDimension ToDim(spv::Dim dim, bool arrayed);
 
-  /// Converts a SPIR-V Image Format to a TexelFormat
-  /// On failure, logs an error and returns kNone
-  /// @param fmt the SPIR-V format
-  /// @returns a Tint AST format
-  ast::TexelFormat ToTexelFormat(SpvImageFormat fmt);
+    /// Converts a possibly arrayed SPIR-V Dim to a Tint texture dimension.
+    /// On failure, logs an error and returns kNone
+    /// @param dim the SPIR-V Dim value
+    /// @param arrayed true if the texture is arrayed
+    /// @returns a Tint AST texture dimension
+    type::TextureDimension ToDim(SpvDim dim, bool arrayed) {
+        return ToDim(static_cast<spv::Dim>(dim), arrayed);
+    }
 
- private:
-  /// Registers a failure and returns a stream for log diagnostics.
-  /// @returns a failure stream
-  FailStream Fail() { return fail_stream_.Fail(); }
+    /// Converts a SPIR-V Image Format to a TexelFormat
+    /// On failure, logs an error and returns kNone
+    /// @param fmt the SPIR-V format
+    /// @returns a Tint AST format
+    builtin::TexelFormat ToTexelFormat(spv::ImageFormat fmt);
 
-  FailStream fail_stream_;
+    /// Converts a SPIR-V Image Format to a TexelFormat
+    /// On failure, logs an error and returns kNone
+    /// @param fmt the SPIR-V format
+    /// @returns a Tint AST format
+    builtin::TexelFormat ToTexelFormat(SpvImageFormat fmt) {
+        return ToTexelFormat(static_cast<spv::ImageFormat>(fmt));
+    }
+
+  private:
+    /// Registers a failure and returns a stream for log diagnostics.
+    /// @returns a failure stream
+    FailStream Fail() { return fail_stream_.Fail(); }
+
+    FailStream fail_stream_;
 };
 
 }  // namespace tint::reader::spirv

@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,6 +6,7 @@
 
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/renderer/core/css/properties/longhands.h"
 #include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
 #include "third_party/blink/renderer/core/loader/empty_clients.h"
@@ -51,8 +52,8 @@ class TestTextInputHostWaiter : public mojom::blink::TextInputHost {
     callback_ = std::move(callback);
     provider.SetBinderForTesting(
         mojom::blink::TextInputHost::Name_,
-        base::BindRepeating(&TestTextInputHostWaiter::BindTextInputHostReceiver,
-                            base::Unretained(this)));
+        WTF::BindRepeating(&TestTextInputHostWaiter::BindTextInputHostReceiver,
+                           WTF::Unretained(this)));
   }
 
   void GotCharacterIndexAtPoint(uint32_t index) override {
@@ -92,7 +93,7 @@ TEST_F(LocalFrameTest, IsLazyLoadingImageAllowedWithFeatureDisabled) {
   ScopedLazyImageLoadingForTest scoped_lazy_image_loading_for_test(false);
   auto page_holder = std::make_unique<DummyPageHolder>(
       gfx::Size(800, 600), nullptr, nullptr,
-      base::BindOnce(&EnableLazyLoadInSettings));
+      WTF::BindOnce(&EnableLazyLoadInSettings));
   EXPECT_EQ(LocalFrame::LazyLoadImageSetting::kDisabled,
             page_holder->GetFrame().GetLazyLoadImageSetting());
 }
@@ -101,7 +102,7 @@ TEST_F(LocalFrameTest, IsLazyLoadingImageAllowedWithSettingDisabled) {
   ScopedLazyImageLoadingForTest scoped_lazy_image_loading_for_test(false);
   auto page_holder = std::make_unique<DummyPageHolder>(
       gfx::Size(800, 600), nullptr, nullptr,
-      base::BindOnce(&DisableLazyLoadInSettings));
+      WTF::BindOnce(&DisableLazyLoadInSettings));
   EXPECT_EQ(LocalFrame::LazyLoadImageSetting::kDisabled,
             page_holder->GetFrame().GetLazyLoadImageSetting());
 }
@@ -110,7 +111,7 @@ TEST_F(LocalFrameTest, IsLazyLoadingImageAllowedWithAutomaticDisabled) {
   ScopedLazyImageLoadingForTest scoped_lazy_image_loading_for_test(true);
   auto page_holder = std::make_unique<DummyPageHolder>(
       gfx::Size(800, 600), nullptr, nullptr,
-      base::BindOnce(&EnableLazyLoadInSettings));
+      WTF::BindOnce(&EnableLazyLoadInSettings));
   EXPECT_EQ(LocalFrame::LazyLoadImageSetting::kEnabledExplicit,
             page_holder->GetFrame().GetLazyLoadImageSetting());
 }
@@ -122,8 +123,9 @@ void TestGreenDiv(DummyPageHolder& page_holder) {
   Element* div = doc.getElementById("div");
   ASSERT_TRUE(div);
   ASSERT_TRUE(div->GetComputedStyle());
-  EXPECT_EQ(MakeRGB(0, 128, 0), div->GetComputedStyle()->VisitedDependentColor(
-                                    GetCSSPropertyColor()));
+  EXPECT_EQ(
+      Color::FromRGB(0, 128, 0),
+      div->GetComputedStyle()->VisitedDependentColor(GetCSSPropertyColor()));
 }
 
 }  // namespace
@@ -221,12 +223,4 @@ TEST_F(LocalFrameTest, CharacterIndexAtPointWithPinchZoom) {
   EXPECT_EQ(waiter.index(), 5ul);
 }
 #endif
-TEST_F(LocalFrameTest, NavigationCounter) {
-  auto page_holder = std::make_unique<DummyPageHolder>();
-  EXPECT_EQ(1u, page_holder->GetFrame().GetNavigationId());
-  page_holder->GetFrame().IncrementNavigationId();
-  EXPECT_EQ(2u, page_holder->GetFrame().GetNavigationId());
-  page_holder->GetFrame().IncrementNavigationId();
-  EXPECT_EQ(3u, page_holder->GetFrame().GetNavigationId());
-}
 }  // namespace blink

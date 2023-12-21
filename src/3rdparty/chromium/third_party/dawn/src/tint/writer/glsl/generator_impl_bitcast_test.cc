@@ -14,42 +14,47 @@
 
 #include "src/tint/writer/glsl/test_helper.h"
 
+using namespace tint::number_suffixes;  // NOLINT
+
 namespace tint::writer::glsl {
 namespace {
 
 using GlslGeneratorImplTest_Bitcast = TestHelper;
 
 TEST_F(GlslGeneratorImplTest_Bitcast, EmitExpression_Bitcast_Float) {
-  auto* bitcast = create<ast::BitcastExpression>(ty.f32(), Expr(1));
-  WrapInFunction(bitcast);
+    auto* a = Let("a", Expr(1_i));
+    auto* bitcast = Bitcast<f32>(Expr("a"));
+    WrapInFunction(a, bitcast);
 
-  GeneratorImpl& gen = Build();
+    GeneratorImpl& gen = Build();
 
-  std::stringstream out;
-  ASSERT_TRUE(gen.EmitExpression(out, bitcast)) << gen.error();
-  EXPECT_EQ(out.str(), "intBitsToFloat(1)");
+    std::stringstream out;
+    ASSERT_TRUE(gen.EmitExpression(out, bitcast)) << gen.error();
+    EXPECT_EQ(out.str(), "intBitsToFloat(a)");
 }
 
 TEST_F(GlslGeneratorImplTest_Bitcast, EmitExpression_Bitcast_Int) {
-  auto* bitcast = create<ast::BitcastExpression>(ty.i32(), Expr(1u));
-  WrapInFunction(bitcast);
+    auto* a = Let("a", Expr(1_u));
+    auto* bitcast = Bitcast<i32>(Expr("a"));
+    WrapInFunction(a, bitcast);
 
-  GeneratorImpl& gen = Build();
+    GeneratorImpl& gen = Build();
 
-  std::stringstream out;
-  ASSERT_TRUE(gen.EmitExpression(out, bitcast)) << gen.error();
-  EXPECT_EQ(out.str(), "int(1u)");
+    std::stringstream out;
+    ASSERT_TRUE(gen.EmitExpression(out, bitcast)) << gen.error();
+    EXPECT_EQ(out.str(), "int(a)");
 }
 
 TEST_F(GlslGeneratorImplTest_Bitcast, EmitExpression_Bitcast_Uint) {
-  auto* bitcast = create<ast::BitcastExpression>(ty.u32(), Expr(1));
-  WrapInFunction(bitcast);
+    auto* a = Let("a", Expr(1_i));
+    auto* bitcast = Bitcast<u32>(Expr("a"));
+    WrapInFunction(a, bitcast);
 
-  GeneratorImpl& gen = Build();
+    GeneratorImpl& gen = Build();
 
-  std::stringstream out;
-  ASSERT_TRUE(gen.EmitExpression(out, bitcast)) << gen.error();
-  EXPECT_EQ(out.str(), "uint(1)");
+    std::stringstream out;
+    ASSERT_TRUE(gen.EmitExpression(out, bitcast)) << gen.error();
+    EXPECT_EQ(out.str(), "uint(a)");
 }
 
 }  // namespace

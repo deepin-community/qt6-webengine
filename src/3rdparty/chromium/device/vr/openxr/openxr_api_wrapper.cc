@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,15 +9,17 @@
 #include <algorithm>
 #include <array>
 
-#include "base/callback_helpers.h"
 #include "base/check.h"
 #include "base/containers/contains.h"
+#include "base/functional/callback_helpers.h"
 #include "base/notreached.h"
 #include "base/ranges/algorithm.h"
+#include "base/task/single_thread_task_runner.h"
+#include "base/trace_event/typed_macros.h"
 #include "components/viz/common/gpu/context_provider.h"
-#include "device/base/features.h"
 #include "device/vr/openxr/openxr_input_helper.h"
 #include "device/vr/openxr/openxr_util.h"
+#include "device/vr/public/cpp/features.h"
 #include "device/vr/test/test_hook.h"
 #include "gpu/GLES2/gl2extchromium.h"
 #include "gpu/command_buffer/client/shared_image_interface.h"
@@ -70,6 +72,44 @@ static_assert(kRightView < kNumPrimaryViews,
 // polled.
 constexpr base::TimeDelta kTimeBetweenPollingEvents = base::Seconds(1);
 
+mojom::XREye GetEyeFromIndex(int i) {
+  if (i == kLeftView) {
+    return mojom::XREye::kLeft;
+  } else if (i == kRightView) {
+    return mojom::XREye::kRight;
+  } else {
+    return mojom::XREye::kNone;
+  }
+}
+
+const char* GetXrSessionStateName(XrSessionState state) {
+  switch (state) {
+    case XR_SESSION_STATE_UNKNOWN:
+      return "Unknown";
+    case XR_SESSION_STATE_IDLE:
+      return "Idle";
+    case XR_SESSION_STATE_READY:
+      return "Ready";
+    case XR_SESSION_STATE_SYNCHRONIZED:
+      return "Synchronized";
+    case XR_SESSION_STATE_VISIBLE:
+      return "Visible";
+    case XR_SESSION_STATE_FOCUSED:
+      return "Focused";
+    case XR_SESSION_STATE_STOPPING:
+      return "Stopping";
+    case XR_SESSION_STATE_LOSS_PENDING:
+      return "Loss_Pending";
+    case XR_SESSION_STATE_EXITING:
+      return "Exiting";
+    case XR_SESSION_STATE_MAX_ENUM:
+      return "Max_Enum";
+  }
+
+  NOTREACHED();
+  return "Unknown";
+}
+
 }  // namespace
 
 std::unique_ptr<OpenXrApiWrapper> OpenXrApiWrapper::Create(
@@ -108,6 +148,7 @@ OpenXrApiWrapper::~OpenXrApiWrapper() {
 }
 
 void OpenXrApiWrapper::Reset() {
+  SetXrSessionState(XR_SESSION_STATE_UNKNOWN);
   anchor_manager_.reset();
   unbounded_space_ = XR_NULL_HANDLE;
   local_space_ = XR_NULL_HANDLE;
@@ -128,7 +169,6 @@ void OpenXrApiWrapper::Reset() {
   secondary_view_configs_.clear();
 
   frame_state_ = {};
-  local_from_viewer_ = {XR_TYPE_SPACE_LOCATION};
   input_helper_.reset();
 
   on_session_started_callback_.Reset();
@@ -184,7 +224,14 @@ void OpenXrApiWrapper::Uninitialize() {
     test_hook_->DetachCurrentThread();
 
   if (on_session_ended_callback_) {
-    on_session_ended_callback_.Run();
+    on_session_ended_callback_.Run(ExitXrPresentReason::kOpenXrUninitialize);
+  }
+
+  // If we haven't reported that the session started yet, we need to report
+  // that it failed, so that the browser doesn't think there's still a pending
+  // session request, and can try again (though it may not recover).
+  if (on_session_started_callback_) {
+    std::move(on_session_started_callback_).Run(XR_ERROR_INITIALIZATION_FAILED);
   }
 
   Reset();
@@ -700,7 +747,7 @@ void OpenXrApiWrapper::CreateSharedMailboxes() {
             base::DoNothing(), nullptr, nullptr);
 
     const uint32_t shared_image_usage = gpu::SHARED_IMAGE_USAGE_SCANOUT |
-                                        gpu::SHARED_IMAGE_USAGE_DISPLAY |
+                                        gpu::SHARED_IMAGE_USAGE_DISPLAY_READ |
                                         gpu::SHARED_IMAGE_USAGE_GLES2;
 
     gpu::MailboxHolder& mailbox_holder = swap_chain_info.mailbox_holder;
@@ -843,9 +890,6 @@ XrResult OpenXrApiWrapper::UpdateViewConfigurations() {
 
   RETURN_IF_XR_FAILED(
       LocateViews(XR_REFERENCE_SPACE_TYPE_LOCAL, primary_view_config_));
-  RETURN_IF_XR_FAILED(xrLocateSpace(view_space_, local_space_,
-                                    frame_state_.predictedDisplayTime,
-                                    &local_from_viewer_));
   RETURN_IF_XR_FAILED(PrepareViewConfigForRender(primary_view_config_));
 
   if (base::Contains(enabled_features_,
@@ -1155,30 +1199,54 @@ std::vector<mojom::XRViewPtr> OpenXrApiWrapper::GetDefaultViews() const {
 }
 
 mojom::VRPosePtr OpenXrApiWrapper::GetViewerPose() const {
-  mojom::VRPosePtr pose = mojom::VRPose::New();
+  XrSpaceLocation local_from_viewer = {XR_TYPE_SPACE_LOCATION};
+  if (XR_FAILED(xrLocateSpace(view_space_, local_space_,
+                              frame_state_.predictedDisplayTime,
+                              &local_from_viewer))) {
+    // We failed to locate the space, so just return nullptr to indicate that
+    // we don't have tracking.
+    return nullptr;
+  }
+
+  const auto& pose_state = local_from_viewer.locationFlags;
+  const bool orientation_valid =
+      pose_state & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
+  const bool orientation_tracked =
+      pose_state & XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT;
+  const bool position_valid = pose_state & XR_SPACE_LOCATION_POSITION_VALID_BIT;
+  const bool position_tracked =
+      pose_state & XR_SPACE_LOCATION_POSITION_TRACKED_BIT;
+
   // emulated_position indicates when there is a fallback from a fully-tracked
   // (i.e. 6DOF) type case to some form of orientation-only type tracking
   // (i.e. 3DOF/IMU type sensors)
-  // Thus we have to make sure orientation is tracked.
-  // Valid Bit only indicates it's either tracked or emulated, we have to check
-  // for XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT to make sure orientation is
-  // tracked.
-  if (local_from_viewer_.locationFlags &
-      XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT) {
-    pose->orientation = gfx::Quaternion(local_from_viewer_.pose.orientation.x,
-                                        local_from_viewer_.pose.orientation.y,
-                                        local_from_viewer_.pose.orientation.z,
-                                        local_from_viewer_.pose.orientation.w);
+  // Thus we have to make sure orientation is tracked to send up a valid pose;
+  // but we can send up a non tracked position, we just have to indicate that it
+  // is emulated.
+  const bool can_send_orientation = orientation_valid && orientation_tracked;
+  const bool can_send_position = position_valid;
+
+  // If we'd end up leaving both pose and orientation unset just return nullptr.
+  if (!can_send_orientation && !can_send_position) {
+    return nullptr;
   }
 
-  if (local_from_viewer_.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) {
-    pose->position = gfx::Point3F(local_from_viewer_.pose.position.x,
-                                  local_from_viewer_.pose.position.y,
-                                  local_from_viewer_.pose.position.z);
+  mojom::VRPosePtr pose = mojom::VRPose::New();
+  if (can_send_orientation) {
+    pose->orientation = gfx::Quaternion(local_from_viewer.pose.orientation.x,
+                                        local_from_viewer.pose.orientation.y,
+                                        local_from_viewer.pose.orientation.z,
+                                        local_from_viewer.pose.orientation.w);
   }
 
-  pose->emulated_position = !(local_from_viewer_.locationFlags &
-                              XR_SPACE_LOCATION_POSITION_TRACKED_BIT);
+  if (can_send_position) {
+    pose->position = gfx::Point3F(local_from_viewer.pose.position.x,
+                                  local_from_viewer.pose.position.y,
+                                  local_from_viewer.pose.position.z);
+  }
+
+  // Position is emulated if it isn't tracked.
+  pose->emulated_position = !position_tracked;
 
   return pose;
 }
@@ -1221,7 +1289,7 @@ void OpenXrApiWrapper::EnsureEventPolling() {
 
     // Verify that OpenXR is still active after processing events.
     if (IsInitialized()) {
-      base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+      base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
           FROM_HERE,
           base::BindOnce(&OpenXrApiWrapper::EnsureEventPolling,
                          weak_ptr_factory_.GetWeakPtr()),
@@ -1241,6 +1309,7 @@ XrResult OpenXrApiWrapper::ProcessEvents() {
       // We only have will only have one session and we should make sure the
       // session that is having state_changed event is ours.
       DCHECK(session_state_changed->session == session_);
+      SetXrSessionState(session_state_changed->state);
       switch (session_state_changed->state) {
         case XR_SESSION_STATE_READY:
           xr_result = BeginSession();
@@ -1261,11 +1330,18 @@ XrResult OpenXrApiWrapper::ProcessEvents() {
           visibility_changed_callback_.Run(
               device::mojom::XRVisibilityState::VISIBLE);
           break;
+        case XR_SESSION_STATE_EXITING:
+          Uninitialize();
+          return xr_result;
         default:
           break;
       }
     } else if (event_data.type == XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING) {
       DCHECK(session_ != XR_NULL_HANDLE);
+      // TODO(https://crbug.com/1335240): Properly handle Instance Loss Pending.
+      LOG(ERROR) << "Received Instance Loss Event";
+      TRACE_EVENT_INSTANT0("xr", "InstanceLossPendingEvent",
+                           TRACE_EVENT_SCOPE_THREAD);
       Uninitialize();
       return XR_ERROR_INSTANCE_LOST;
     } else if (event_data.type ==
@@ -1287,9 +1363,16 @@ XrResult OpenXrApiWrapper::ProcessEvents() {
           reinterpret_cast<XrEventDataInteractionProfileChanged*>(&event_data);
       DCHECK_EQ(interaction_profile_changed->session, session_);
       xr_result = input_helper_->OnInteractionProfileChanged();
+    } else {
+      DVLOG(1) << __func__ << " Unhandled event type: " << event_data.type;
+      TRACE_EVENT_INSTANT1("xr", "UnandledXrEvent", TRACE_EVENT_SCOPE_THREAD,
+                           "type", event_data.type);
     }
 
     if (XR_FAILED(xr_result)) {
+      TRACE_EVENT_INSTANT2("xr", "EventProcessingFailed",
+                           TRACE_EVENT_SCOPE_THREAD, "type", event_data.type,
+                           "xr_result", xr_result);
       Uninitialize();
       return xr_result;
     }
@@ -1298,8 +1381,12 @@ XrResult OpenXrApiWrapper::ProcessEvents() {
     xr_result = xrPollEvent(instance_, &event_data);
   }
 
-  if (XR_FAILED(xr_result))
+  // This catches the error where we failed to poll events only.
+  if (XR_FAILED(xr_result)) {
+    TRACE_EVENT_INSTANT1("xr", "EventPollingFailed", TRACE_EVENT_SCOPE_THREAD,
+                         "xr_result", xr_result);
     Uninitialize();
+  }
   return xr_result;
 }
 
@@ -1397,8 +1484,30 @@ bool OpenXrApiWrapper::GetStageParameters(XrExtent2Df& stage_bounds,
   local_from_stage_decomp.translate[2] =
       local_from_stage_location.pose.position.z;
 
-  local_from_stage = gfx::ComposeTransform(local_from_stage_decomp);
+  local_from_stage = gfx::Transform::Compose(local_from_stage_decomp);
   return true;
+}
+
+void OpenXrApiWrapper::SetXrSessionState(XrSessionState new_state) {
+  if (session_state_ == new_state)
+    return;
+
+  const char* old_state_name = GetXrSessionStateName(session_state_);
+  const char* new_state_name = GetXrSessionStateName(new_state);
+  DVLOG(1) << __func__ << " Transitioning from: " << old_state_name
+           << " to: " << new_state_name;
+
+  if (session_state_ != XR_SESSION_STATE_UNKNOWN) {
+    TRACE_EVENT_NESTABLE_ASYNC_END1("xr", "XRSessionState", this, "state",
+                                    old_state_name);
+  }
+
+  if (new_state != XR_SESSION_STATE_UNKNOWN) {
+    TRACE_EVENT_NESTABLE_ASYNC_BEGIN1("xr", "XRSessionState", this, "state",
+                                      new_state_name);
+  }
+
+  session_state_ = new_state;
 }
 
 bool OpenXrApiWrapper::StageParametersEnabled() const {
@@ -1414,16 +1523,6 @@ void OpenXrApiWrapper::SetTestHook(VRTestHook* hook) {
   test_hook_ = hook;
   if (service_test_hook_) {
     service_test_hook_->SetTestHook(test_hook_);
-  }
-}
-
-mojom::XREye OpenXrApiWrapper::GetEyeFromIndex(int i) {
-  if (i == kLeftView) {
-    return mojom::XREye::kLeft;
-  } else if (i == kRightView) {
-    return mojom::XREye::kRight;
-  } else {
-    return mojom::XREye::kNone;
   }
 }
 

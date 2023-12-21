@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,7 +6,7 @@
 
 #include <unordered_map>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
@@ -439,7 +439,7 @@ bool SpellCheckProvider::SatisfyRequestFromCache(
       if (start <= text_length && end <= text_length)
         ++result_size;
     }
-    blink::WebVector<blink::WebTextCheckingResult> results(last_results_.Data(),
+    blink::WebVector<blink::WebTextCheckingResult> results(last_results_.data(),
                                                            result_size);
     completion->DidFinishCheckingText(results);
     return true;

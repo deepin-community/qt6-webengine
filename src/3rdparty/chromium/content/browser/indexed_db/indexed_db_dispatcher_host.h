@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,21 +14,23 @@
 #include <vector>
 
 #include "base/sequence_checker.h"
+#include "components/services/storage/privileged/mojom/indexed_db_client_state_checker.mojom.h"
+#include "components/services/storage/public/cpp/buckets/bucket_info.h"
+#include "components/services/storage/public/cpp/buckets/bucket_locator.h"
 #include "components/services/storage/public/mojom/blob_storage_context.mojom-forward.h"
 #include "components/services/storage/public/mojom/file_system_access_context.mojom-forward.h"
+#include "content/browser/indexed_db/indexed_db_client_state_checker_wrapper.h"
 #include "content/browser/indexed_db/indexed_db_external_object.h"
 #include "content/common/content_export.h"
 #include "mojo/public/cpp/bindings/pending_associated_receiver.h"
-#include "mojo/public/cpp/bindings/pending_associated_remote.h"
 #include "mojo/public/cpp/bindings/receiver_set.h"
 #include "mojo/public/cpp/bindings/unique_associated_receiver_set.h"
-#include "third_party/blink/public/common/storage_key/storage_key.h"
 #include "third_party/blink/public/mojom/indexeddb/indexeddb.mojom.h"
 
 namespace base {
 class SequencedTaskRunner;
 class TaskRunner;
-}
+}  // namespace base
 
 namespace content {
 class IndexedDBContextImpl;
@@ -40,6 +42,30 @@ class IndexedDBTransaction;
 // happen on the IDB sequenced task runner.
 class CONTENT_EXPORT IndexedDBDispatcherHost : public blink::mojom::IDBFactory {
  public:
+  // The data structure that stores everything bound to the receiver. This will
+  // be stored together with the receiver in the `mojo::ReceiverSet`.
+  struct ReceiverContext {
+    ReceiverContext();
+    ReceiverContext(absl::optional<storage::BucketInfo> bucket,
+                    mojo::PendingAssociatedRemote<
+                        storage::mojom::IndexedDBClientStateChecker>
+                        client_state_checker_remote);
+
+    ~ReceiverContext();
+
+    ReceiverContext(const ReceiverContext&) = delete;
+    ReceiverContext(ReceiverContext&&) noexcept;
+    ReceiverContext& operator=(const ReceiverContext&) = delete;
+    ReceiverContext& operator=(ReceiverContext&&) = delete;
+
+    // The `bucket` might be null if `QuotaDatabase::GetDatabase()` fails
+    // during the IndexedDB binding.
+    absl::optional<storage::BucketInfo> bucket;
+    // This is needed when the checker needs to be copied to other holder, e.g.
+    // `IndexedDBConnection`s that are opened through this dispatcher.
+    scoped_refptr<IndexedDBClientStateCheckerWrapper> client_state_checker;
+  };
+
   explicit IndexedDBDispatcherHost(
       IndexedDBContextImpl* indexed_db_context,
       scoped_refptr<base::TaskRunner> io_task_runner);
@@ -50,7 +76,7 @@ class CONTENT_EXPORT IndexedDBDispatcherHost : public blink::mojom::IDBFactory {
   ~IndexedDBDispatcherHost() override;
 
   void AddReceiver(
-      const blink::StorageKey& storage_key,
+      ReceiverContext context,
       mojo::PendingReceiver<blink::mojom::IDBFactory> pending_receiver);
 
   void AddDatabaseBinding(
@@ -59,7 +85,7 @@ class CONTENT_EXPORT IndexedDBDispatcherHost : public blink::mojom::IDBFactory {
           pending_receiver);
 
   mojo::PendingAssociatedRemote<blink::mojom::IDBCursor> CreateCursorBinding(
-      const blink::StorageKey& storage_key,
+      const storage::BucketLocator& bucket_locator,
       std::unique_ptr<IndexedDBCursor> cursor);
   void RemoveCursorBinding(mojo::ReceiverId receiver_id);
 
@@ -78,7 +104,7 @@ class CONTENT_EXPORT IndexedDBDispatcherHost : public blink::mojom::IDBFactory {
   void CreateAndBindTransactionImpl(
       mojo::PendingAssociatedReceiver<blink::mojom::IDBTransaction>
           transaction_receiver,
-      const blink::StorageKey& storage_key,
+      const storage::BucketLocator& bucket_locator,
       base::WeakPtr<IndexedDBTransaction> transaction);
 
   // Bind this receiver to read from this given file.
@@ -93,7 +119,7 @@ class CONTENT_EXPORT IndexedDBDispatcherHost : public blink::mojom::IDBFactory {
   // Create external objects from |objects| and store the results in
   // |mojo_objects|.  |mojo_objects| must be the same length as |objects|.
   void CreateAllExternalObjects(
-      const blink::StorageKey& storage_key,
+      const storage::BucketLocator& bucket_locator,
       const std::vector<IndexedDBExternalObject>& objects,
       std::vector<blink::mojom::IDBExternalObjectPtr>* mojo_objects);
 
@@ -119,12 +145,6 @@ class CONTENT_EXPORT IndexedDBDispatcherHost : public blink::mojom::IDBFactory {
                           pending_callbacks,
                       const std::u16string& name,
                       bool force_close) override;
-  void AbortTransactionsAndCompactDatabase(
-      AbortTransactionsAndCompactDatabaseCallback callback) override;
-  void AbortTransactionsForDatabase(
-      AbortTransactionsForDatabaseCallback callback) override;
-
-  void InvalidateWeakPtrsAndClearBindings();
 
   base::SequencedTaskRunner* IDBTaskRunner() const;
 
@@ -136,7 +156,9 @@ class CONTENT_EXPORT IndexedDBDispatcherHost : public blink::mojom::IDBFactory {
   // Shared task runner used to read blob files on.
   const scoped_refptr<base::TaskRunner> file_task_runner_;
 
-  mojo::ReceiverSet<blink::mojom::IDBFactory, blink::StorageKey> receivers_;
+  mojo::ReceiverSet<blink::mojom::IDBFactory,
+                    IndexedDBDispatcherHost::ReceiverContext>
+      receivers_;
   mojo::UniqueAssociatedReceiverSet<blink::mojom::IDBDatabase>
       database_receivers_;
   mojo::UniqueAssociatedReceiverSet<blink::mojom::IDBCursor> cursor_receivers_;

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,18 +8,18 @@
 
 #include <stdint.h>
 
-#include <algorithm>
 #include <memory>
 #include <string>
 #include <vector>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
+#include "base/ranges/algorithm.h"
 #include "base/run_loop.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/test/bind.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "content/browser/renderer_host/media/in_process_video_capture_provider.h"
 #include "content/browser/renderer_host/media/media_stream_provider.h"
@@ -144,7 +144,7 @@ class WrappedDeviceFactory final : public media::FakeVideoCaptureDeviceFactory {
   void OnDeviceCreated(WrappedDevice* device) { devices_.push_back(device); }
 
   void OnDeviceDestroyed(WrappedDevice* device) {
-    const auto it = std::find(devices_.begin(), devices_.end(), device);
+    const auto it = base::ranges::find(devices_, device);
     CHECK(it != devices_.end());
     devices_.erase(it);
   }
@@ -179,6 +179,8 @@ class MockFrameObserver : public VideoCaptureControllerEventHandler {
   MOCK_METHOD1(OnStartedUsingGpuDecode,
                void(const VideoCaptureControllerID& id));
 
+  void OnCaptureConfigurationChanged(
+      const VideoCaptureControllerID& id) override {}
   void OnNewBuffer(const VideoCaptureControllerID& id,
                    media::mojom::VideoBufferHandlePtr buffer_handle,
                    int buffer_id) override {}
@@ -187,6 +189,8 @@ class MockFrameObserver : public VideoCaptureControllerEventHandler {
   void OnBufferReady(const VideoCaptureControllerID& id,
                      const ReadyBuffer& buffer,
                      const std::vector<ReadyBuffer>& scaled_buffers) override {}
+  void OnNewCropVersion(const VideoCaptureControllerID& id,
+                        uint32_t crop_version) override {}
   void OnFrameWithEmptyRegionCapture(const VideoCaptureControllerID&) override {
   }
   void OnEnded(const VideoCaptureControllerID& id) override {}
@@ -232,6 +236,7 @@ class VideoCaptureManagerTest : public testing::Test {
 
   void HandleEnumerationResult(
       base::OnceClosure quit_closure,
+      media::mojom::DeviceEnumerationResult result,
       const media::VideoCaptureDeviceDescriptors& descriptors) {
     blink::MediaStreamDevices devices;
     for (const auto& descriptor : descriptors) {
@@ -244,6 +249,7 @@ class VideoCaptureManagerTest : public testing::Test {
 
   void HandleEnumerationResultAsDisplayMediaDevices(
       base::OnceClosure quit_closure,
+      media::mojom::DeviceEnumerationResult result,
       const media::VideoCaptureDeviceDescriptors& descriptors) {
     blink::MediaStreamDevices devices;
     for (const auto& descriptor : descriptors) {
@@ -268,13 +274,14 @@ class VideoCaptureManagerTest : public testing::Test {
     auto video_capture_provider =
         std::make_unique<InProcessVideoCaptureProvider>(
             std::move(video_capture_system),
-            base::ThreadTaskRunnerHandle::Get(), kIgnoreLogMessageCB);
+            base::SingleThreadTaskRunner::GetCurrentDefault(),
+            kIgnoreLogMessageCB);
     screenlock_monitor_source_ = new ScreenlockMonitorTestSource();
     screenlock_monitor_ = std::make_unique<ScreenlockMonitor>(
         std::unique_ptr<ScreenlockMonitorSource>(screenlock_monitor_source_));
 
     vcm_ = new VideoCaptureManager(std::move(video_capture_provider),
-                                   base::DoNothing(), ScreenlockMonitor::Get());
+                                   base::DoNothing());
     const int32_t kNumberOfFakeDevices = 2;
     video_capture_device_factory_->SetToDefaultDevicesConfig(
         kNumberOfFakeDevices);

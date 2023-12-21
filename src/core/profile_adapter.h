@@ -68,7 +68,7 @@ public:
     void addClient(ProfileAdapterClient *adapterClient);
     void removeClient(ProfileAdapterClient *adapterClient);
 
-    void cancelDownload(quint32 downloadId);
+    bool cancelDownload(quint32 downloadId);
     void pauseDownload(quint32 downloadId);
     void resumeDownload(quint32 downloadId);
     void removeDownload(quint32 downloadId);
@@ -100,6 +100,9 @@ public:
     QStringList spellCheckLanguages() const;
     void setSpellCheckEnabled(bool enabled);
     bool isSpellCheckEnabled() const;
+
+    bool pushServiceEnabled() const;
+    void setPushServiceEnabled(bool enabled);
 
     void addWebContentsAdapterClient(WebContentsAdapterClient *client);
     void removeWebContentsAdapterClient(WebContentsAdapterClient *client);
@@ -221,6 +224,7 @@ private:
 
     QList<ProfileAdapterClient*> m_clients;
     QList<WebContentsAdapterClient *> m_webContentsAdapterClients;
+    bool m_pushServiceEnabled;
     int m_httpCacheMaxSize;
     QrcUrlSchemeHandler m_qrcHandler;
     std::unique_ptr<base::CancelableTaskTracker> m_cancelableTaskTracker;

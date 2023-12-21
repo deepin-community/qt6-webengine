@@ -22,38 +22,37 @@ namespace tint::ast {
 class ForLoopStatement;
 }  // namespace tint::ast
 namespace tint::sem {
-class Expression;
+class ValueExpression;
 }  // namespace tint::sem
 
 namespace tint::sem {
 
 /// Holds semantic information about a for-loop statement
-class ForLoopStatement final
-    : public Castable<ForLoopStatement, CompoundStatement> {
- public:
-  /// Constructor
-  /// @param declaration the AST node for this for-loop statement
-  /// @param parent the owning statement
-  /// @param function the owning function
-  ForLoopStatement(const ast::ForLoopStatement* declaration,
-                   const CompoundStatement* parent,
-                   const sem::Function* function);
+class ForLoopStatement final : public Castable<ForLoopStatement, CompoundStatement> {
+  public:
+    /// Constructor
+    /// @param declaration the AST node for this for-loop statement
+    /// @param parent the owning statement
+    /// @param function the owning function
+    ForLoopStatement(const ast::ForLoopStatement* declaration,
+                     const CompoundStatement* parent,
+                     const sem::Function* function);
 
-  /// Destructor
-  ~ForLoopStatement() override;
+    /// Destructor
+    ~ForLoopStatement() override;
 
-  /// @returns the AST node
-  const ast::ForLoopStatement* Declaration() const;
+    /// @returns the AST node
+    const ast::ForLoopStatement* Declaration() const;
 
-  /// @returns the for-loop condition expression
-  const Expression* Condition() const { return condition_; }
+    /// @returns the for-loop condition expression
+    const ValueExpression* Condition() const { return condition_; }
 
-  /// Sets the for-loop condition expression
-  /// @param condition the for-loop condition expression
-  void SetCondition(const Expression* condition) { condition_ = condition; }
+    /// Sets the for-loop condition expression
+    /// @param condition the for-loop condition expression
+    void SetCondition(const ValueExpression* condition) { condition_ = condition; }
 
- private:
-  const Expression* condition_ = nullptr;
+  private:
+    const ValueExpression* condition_ = nullptr;
 };
 
 }  // namespace tint::sem

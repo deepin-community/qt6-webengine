@@ -1,4 +1,4 @@
-// Copyright 2014 PDFium Authors. All rights reserved.
+// Copyright 2014 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,12 +11,12 @@
 #include <memory>
 #include <utility>
 
+#include "core/fxcrt/cfx_timer.h"
 #include "core/fxcrt/mask.h"
 #include "core/fxcrt/observed_ptr.h"
 #include "core/fxcrt/unowned_ptr.h"
 #include "fpdfsdk/cpdfsdk_annot.h"
 #include "fpdfsdk/pwl/ipwl_fillernotify.h"
-#include "fpdfsdk/pwl/ipwl_systemhandler.h"
 #include "public/fpdf_fwlevent.h"
 
 class CFFL_FormField;
@@ -36,9 +36,14 @@ class CFFL_InteractiveFormFiller final : public IPWL_FillerNotify {
     virtual CPDFSDK_PageView* GetOrCreatePageView(IPDF_Page* pPage) = 0;
     virtual CPDFSDK_PageView* GetPageView(IPDF_Page* pPage) = 0;
     virtual CFX_Timer::HandlerIface* GetTimerHandler() = 0;
-    virtual IPWL_SystemHandler* GetSysHandler() = 0;
     virtual CPDFSDK_Annot* GetFocusAnnot() const = 0;
     virtual bool SetFocusAnnot(ObservedPtr<CPDFSDK_Annot>& pAnnot) = 0;
+    virtual void InvalidateRect(CPDFSDK_Widget* pWidget,
+                                const CFX_FloatRect& rect) = 0;
+    virtual void OutputSelectedRect(CFFL_FormField* pFormField,
+                                    const CFX_FloatRect& rect) = 0;
+    virtual bool IsSelectionImplemented() const = 0;
+    virtual void SetCursor(CursorStyle nCursorStyle) = 0;
 
     // See PDF Reference 1.7, table 3.20 for the permission bits. Returns true
     // if any bit in |flags| is set.
@@ -49,7 +54,6 @@ class CFFL_InteractiveFormFiller final : public IPWL_FillerNotify {
   explicit CFFL_InteractiveFormFiller(CallbackIface* pCallbackIface);
   ~CFFL_InteractiveFormFiller() override;
 
-  CallbackIface* GetCallbackIface() { return m_pCallbackIface.Get(); }
   bool Annot_HitTest(const CPDFSDK_Widget* pWidget, const CFX_PointF& point);
   FX_RECT GetViewBBox(const CPDFSDK_PageView* pPageView,
                       CPDFSDK_Widget* pWidget);
@@ -108,12 +112,21 @@ class CFFL_InteractiveFormFiller final : public IPWL_FillerNotify {
   bool OnKillFocus(ObservedPtr<CPDFSDK_Widget>& pWidget,
                    Mask<FWL_EVENTFLAG> nFlag);
 
+  // Wrapper methods for CallbackIface
+  void OnSetFieldInputFocus(const WideString& text);
+  void Invalidate(IPDF_Page* pPage, const FX_RECT& rect);
+  CPDFSDK_PageView* GetOrCreatePageView(IPDF_Page* pPage);
+  CPDFSDK_PageView* GetPageView(IPDF_Page* pPage);
+  CFX_Timer::HandlerIface* GetTimerHandler();
+  void OnChange();
+
   CFFL_FormField* GetFormFieldForTesting(CPDFSDK_Widget* pAnnot) {
     return GetFormField(pAnnot);
   }
 
   WideString GetText(CPDFSDK_Widget* pWidget);
   WideString GetSelectedText(CPDFSDK_Widget* pWidget);
+  void ReplaceAndKeepSelection(CPDFSDK_Widget* pWidget, const WideString& text);
   void ReplaceSelection(CPDFSDK_Widget* pWidget, const WideString& text);
   bool SelectAllText(CPDFSDK_Widget* pWidget);
 
@@ -149,23 +162,28 @@ class CFFL_InteractiveFormFiller final : public IPWL_FillerNotify {
       std::map<CPDFSDK_Widget*, std::unique_ptr<CFFL_FormField>>;
 
   // IPWL_FillerNotify:
-  void QueryWherePopup(const IPWL_SystemHandler::PerWindowData* pAttached,
+  void InvalidateRect(PerWindowData* pWidgetData,
+                      const CFX_FloatRect& rect) override;
+  void OutputSelectedRect(PerWindowData* pWidgetData,
+                          const CFX_FloatRect& rect) override;
+  bool IsSelectionImplemented() const override;
+  void SetCursor(CursorStyle nCursorStyle) override;
+  void QueryWherePopup(const PerWindowData* pAttached,
                        float fPopupMin,
                        float fPopupMax,
                        bool* bBottom,
                        float* fPopupRet) override;
   // Returns {bRC, bExit}.
-  std::pair<bool, bool> OnBeforeKeyStroke(
-      const IPWL_SystemHandler::PerWindowData* pAttached,
-      WideString& strChange,
-      const WideString& strChangeEx,
-      int nSelStart,
-      int nSelEnd,
-      bool bKeyDown,
-      Mask<FWL_EVENTFLAG> nFlag) override;
-  bool OnPopupPreOpen(const IPWL_SystemHandler::PerWindowData* pAttached,
+  std::pair<bool, bool> OnBeforeKeyStroke(const PerWindowData* pAttached,
+                                          WideString& strChange,
+                                          const WideString& strChangeEx,
+                                          int nSelStart,
+                                          int nSelEnd,
+                                          bool bKeyDown,
+                                          Mask<FWL_EVENTFLAG> nFlag) override;
+  bool OnPopupPreOpen(const PerWindowData* pAttached,
                       Mask<FWL_EVENTFLAG> nFlag) override;
-  bool OnPopupPostOpen(const IPWL_SystemHandler::PerWindowData* pAttached,
+  bool OnPopupPostOpen(const PerWindowData* pAttached,
                        Mask<FWL_EVENTFLAG> nFlag) override;
 
 #ifdef PDF_ENABLE_XFA
@@ -185,7 +203,7 @@ class CFFL_InteractiveFormFiller final : public IPWL_FillerNotify {
 #endif  // PDF_ENABLE_XFA
 
   bool IsFillingAllowed(CPDFSDK_Widget* pWidget) const;
-  CFFL_FormField* GetFormField(CPDFSDK_Widget* pAnnot);
+  CFFL_FormField* GetFormField(CPDFSDK_Widget* pWidget);
   CFFL_FormField* GetOrCreateFormField(CPDFSDK_Widget* pWidget);
   void UnregisterFormField(CPDFSDK_Widget* pWidget);
 

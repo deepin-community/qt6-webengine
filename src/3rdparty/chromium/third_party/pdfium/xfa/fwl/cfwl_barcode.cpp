@@ -1,4 +1,4 @@
-// Copyright 2014 PDFium Authors. All rights reserved.
+// Copyright 2014 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -145,7 +145,7 @@ void CFWL_Barcode::GenerateBarcodeImageCache() {
     return;
 
   IFWL_ThemeProvider* pTheme = GetThemeProvider();
-  CFWL_ThemePart part(this);
+  CFWL_ThemePart part(CFWL_ThemePart::Part::kNone, this);
   if (RetainPtr<CFGAS_GEFont> pFont = pTheme->GetFont(part)) {
     if (CFX_Font* pCXFont = pFont->GetDevFont())
       m_pBarcodeEngine->SetFont(pCXFont);

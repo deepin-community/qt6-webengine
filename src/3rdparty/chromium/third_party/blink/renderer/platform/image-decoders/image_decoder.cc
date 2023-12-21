@@ -28,11 +28,12 @@
 #include "base/timer/elapsed_timer.h"
 #include "build/build_config.h"
 #include "media/media_buildflags.h"
+#include "skia/ext/cicp.h"
 #include "third_party/blink/public/common/buildflags.h"
-#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/platform/graphics/bitmap_image_metrics.h"
 #include "third_party/blink/renderer/platform/image-decoders/bmp/bmp_image_decoder.h"
+#include "third_party/blink/renderer/platform/image-decoders/exif_reader.h"
 #include "third_party/blink/renderer/platform/image-decoders/fast_shared_buffer_reader.h"
 #include "third_party/blink/renderer/platform/image-decoders/gif/gif_image_decoder.h"
 #include "third_party/blink/renderer/platform/image-decoders/ico/ico_image_decoder.h"
@@ -43,14 +44,12 @@
 #include "third_party/blink/renderer/platform/network/mime/mime_type_registry.h"
 #include "third_party/skia/include/core/SkColorSpace.h"
 #include "ui/gfx/geometry/size.h"
+#include "ui/gfx/geometry/size_conversions.h"
 
 #if BUILDFLAG(ENABLE_AV1_DECODER)
 #include "third_party/blink/renderer/platform/image-decoders/avif/avif_image_decoder.h"
 #endif
 
-#if BUILDFLAG(ENABLE_JXL_DECODER)
-#include "third_party/blink/renderer/platform/image-decoders/jxl/jxl_image_decoder.h"
-#endif
 namespace blink {
 
 namespace {
@@ -72,10 +71,6 @@ cc::ImageType FileExtensionToImageType(String image_extension) {
   if (image_extension == "avif")
     return cc::ImageType::kAVIF;
 #endif
-#if BUILDFLAG(ENABLE_JXL_DECODER)
-  if (image_extension == "jxl")
-    return cc::ImageType::kJXL;
-#endif
   return cc::ImageType::kInvalid;
 }
 
@@ -95,6 +90,32 @@ wtf_size_t CalculateMaxDecodedBytes(
 
   // ImageDecoder::kHighBitDepthToHalfFloat
   return std::min(8 * num_pixels, max_decoded_bytes);
+}
+
+// Compute the density corrected size based on |metadata| and the physical size
+// of the associated image.
+gfx::Size ExtractDensityCorrectedSize(const DecodedImageMetaData& metadata,
+                                      const gfx::Size& physical_size) {
+  const unsigned kDefaultResolution = 72;
+  const unsigned kResolutionUnitDpi = 2;
+
+  if (metadata.resolution_unit != kResolutionUnitDpi ||
+      metadata.resolution.IsEmpty() || metadata.size.IsEmpty()) {
+    return physical_size;
+  }
+  CHECK(!metadata.resolution.IsEmpty());
+
+  // Division by zero is not possible since we check for empty resolution
+  // earlier.
+  gfx::SizeF size_from_resolution(
+      physical_size.width() * kDefaultResolution / metadata.resolution.width(),
+      physical_size.height() * kDefaultResolution /
+          metadata.resolution.height());
+
+  if (gfx::ToRoundedSize(size_from_resolution) == metadata.size)
+    return metadata.size;
+
+  return physical_size;
 }
 
 inline bool MatchesJPEGSignature(const char* contents) {
@@ -156,12 +177,6 @@ String SniffMimeTypeInternal(scoped_refptr<SegmentReader> reader) {
   if (AVIFImageDecoder::MatchesAVIFSignature(fast_reader))
     return "image/avif";
 #endif
-#if BUILDFLAG(ENABLE_JXL_DECODER)
-  if (base::FeatureList::IsEnabled(features::kJXL) &&
-      JXLImageDecoder::MatchesJXLSignature(fast_reader)) {
-    return "image/jxl";
-  }
-#endif
 
   return String();
 }
@@ -194,7 +209,7 @@ std::unique_ptr<ImageDecoder> ImageDecoder::Create(
     const SkISize& desired_size,
     AnimationOption animation_option) {
   auto type = SniffMimeTypeInternal(data);
-  if (type.IsEmpty())
+  if (type.empty())
     return nullptr;
 
   return CreateByMimeType(type, std::move(data), data_complete, alpha_option,
@@ -245,13 +260,6 @@ std::unique_ptr<ImageDecoder> ImageDecoder::CreateByMimeType(
     decoder = std::make_unique<AVIFImageDecoder>(
         alpha_option, high_bit_depth_decoding_option, color_behavior,
         max_decoded_bytes, animation_option);
-#endif
-#if BUILDFLAG(ENABLE_JXL_DECODER)
-  } else if (base::FeatureList::IsEnabled(features::kJXL) &&
-             mime_type == "image/jxl") {
-    decoder = std::make_unique<JXLImageDecoder>(
-        alpha_option, high_bit_depth_decoding_option, color_behavior,
-        max_decoded_bytes);
 #endif
   }
 
@@ -410,6 +418,7 @@ cc::ImageHeaderMetadata ImageDecoder::MakeMetadataForDecodeAcceleration()
   cc::ImageHeaderMetadata image_metadata{};
   image_metadata.image_type = FileExtensionToImageType(FilenameExtension());
   image_metadata.yuv_subsampling = GetYUVSubsampling();
+  image_metadata.hdr_metadata = GetHDRMetadata();
   image_metadata.image_size = size_;
   image_metadata.has_embedded_color_profile = HasEmbeddedColorProfile();
   return image_metadata;
@@ -779,6 +788,14 @@ wtf_size_t ImageDecoder::FindRequiredPreviousFrame(wtf_size_t frame_index,
   }
 }
 
+void ImageDecoder::ApplyMetadata(const DecodedImageMetaData& metadata,
+                                 const gfx::Size& physical_size) {
+  DCHECK(IsDecodedSizeAvailable());
+  orientation_ = metadata.orientation;
+  density_corrected_size_ =
+      ExtractDensityCorrectedSize(metadata, physical_size);
+}
+
 ImagePlanes::ImagePlanes() {
   color_type_ = kUnknown_SkColorType;
   for (int i = 0; i < cc::kNumYUVPlanes; ++i) {
@@ -844,74 +861,99 @@ void ImageDecoder::SetEmbeddedColorProfile(
   DCHECK(!IgnoresColorSpace());
 
   embedded_color_profile_ = std::move(profile);
-  source_to_target_color_transform_needs_update_ = true;
-  color_space_for_sk_images_ = nullptr;
+  sk_image_color_space_ = nullptr;
+  embedded_to_sk_image_transform_.reset();
 }
 
 ColorProfileTransform* ImageDecoder::ColorTransform() {
-  if (!source_to_target_color_transform_needs_update_)
-    return source_to_target_color_transform_.get();
-  source_to_target_color_transform_needs_update_ = false;
-  source_to_target_color_transform_ = nullptr;
-
-  if (color_behavior_.IsIgnore()) {
-    return nullptr;
-  }
-
-  const skcms_ICCProfile* src_profile = nullptr;
-  skcms_ICCProfile dst_profile;
-  if (color_behavior_.IsTransformToSRGB()) {
-    if (!embedded_color_profile_) {
-      return nullptr;
-    }
-    src_profile = embedded_color_profile_->GetProfile();
-    dst_profile = *skcms_sRGB_profile();
-  } else {
-    DCHECK(color_behavior_.IsTag());
-    src_profile = embedded_color_profile_
-                      ? embedded_color_profile_->GetProfile()
-                      : skcms_sRGB_profile();
-
-    // This will most likely be equal to the |src_profile|.
-    // In that case, we skip the xform when we check for equality below.
-    ColorSpaceForSkImages()->toProfile(&dst_profile);
-  }
-
-  if (skcms_ApproximatelyEqualProfiles(src_profile, &dst_profile)) {
-    return nullptr;
-  }
-
-  source_to_target_color_transform_ =
-      std::make_unique<ColorProfileTransform>(src_profile, &dst_profile);
-  return source_to_target_color_transform_.get();
+  UpdateSkImageColorSpaceAndTransform();
+  return embedded_to_sk_image_transform_.get();
 }
 
 sk_sp<SkColorSpace> ImageDecoder::ColorSpaceForSkImages() {
-  if (color_space_for_sk_images_)
-    return color_space_for_sk_images_;
+  UpdateSkImageColorSpaceAndTransform();
+  return sk_image_color_space_;
+}
 
-  if (!color_behavior_.IsTag())
-    return nullptr;
+void ImageDecoder::UpdateSkImageColorSpaceAndTransform() {
+  if (color_behavior_.IsIgnore())
+    return;
 
-  if (embedded_color_profile_) {
-    const skcms_ICCProfile* profile = embedded_color_profile_->GetProfile();
-    color_space_for_sk_images_ = SkColorSpace::Make(*profile);
+  // If `color_behavior_` is not ignore, then this function will always set
+  // `sk_image_color_space_` to something non-nullptr, so, if it is non-nullptr,
+  // then everything is up to date.
+  if (sk_image_color_space_)
+    return;
 
-    // If the embedded color space isn't supported by Skia,
-    // we xform at decode time.
-    if (!color_space_for_sk_images_ && profile->has_toXYZD50) {
-      // Preserve the gamut, but convert to a standard transfer function.
-      skcms_ICCProfile with_srgb = *profile;
-      skcms_SetTransferFunction(&with_srgb, skcms_sRGB_TransferFunction());
-      color_space_for_sk_images_ = SkColorSpace::Make(with_srgb);
+  if (color_behavior_.IsTag()) {
+    // Set `sk_image_color_space_` to the best SkColorSpace approximation
+    // of `embedded_color_profile_`.
+    if (embedded_color_profile_) {
+      const skcms_ICCProfile* profile = embedded_color_profile_->GetProfile();
+
+      // If the ICC profile has CICP data, prefer to use that.
+      if (profile->has_CICP) {
+        sk_image_color_space_ =
+            skia::CICPGetSkColorSpace(profile->CICP.color_primaries,
+                                      profile->CICP.transfer_characteristics,
+                                      profile->CICP.matrix_coefficients,
+                                      profile->CICP.video_full_range_flag,
+                                      /*prefer_srgb_trfn=*/true);
+        // A CICP profile's SkColorSpace is considered an exact representation
+        // of `profile`, so don't create `embedded_to_sk_image_transform_`.
+        if (sk_image_color_space_) {
+          return;
+        }
+      }
+
+      // If there was not CICP data, then use the ICC profile.
+      DCHECK(!sk_image_color_space_);
+      sk_image_color_space_ = SkColorSpace::Make(*profile);
+
+      // If the embedded color space isn't supported by Skia, we will transform
+      // to a supported color space using `embedded_to_sk_image_transform_` at
+      // decode time.
+      if (!sk_image_color_space_ && profile->has_toXYZD50) {
+        // Preserve the gamut, but convert to a standard transfer function.
+        skcms_ICCProfile with_srgb = *profile;
+        skcms_SetTransferFunction(&with_srgb, skcms_sRGB_TransferFunction());
+        sk_image_color_space_ = SkColorSpace::Make(with_srgb);
+      }
+
+      // For color spaces without an identifiable gamut, just default to sRGB.
+      if (!sk_image_color_space_) {
+        sk_image_color_space_ = SkColorSpace::MakeSRGB();
+      }
+    } else {
+      // If there is no `embedded_color_profile_`, then assume that the content
+      // was sRGB (and `embedded_to_sk_image_transform_` is not needed).
+      sk_image_color_space_ = SkColorSpace::MakeSRGB();
+      return;
+    }
+  } else {
+    DCHECK(color_behavior_.IsTransformToSRGB());
+    sk_image_color_space_ = SkColorSpace::MakeSRGB();
+
+    // If there is no `embedded_color_profile_`, then assume the content was
+    // sRGB  (and, as above, `embedded_to_sk_image_transform_` is not needed).
+    if (!embedded_color_profile_) {
+      return;
     }
   }
 
-  // For color spaces without an identifiable gamut, just fall through to sRGB.
-  if (!color_space_for_sk_images_)
-    color_space_for_sk_images_ = SkColorSpace::MakeSRGB();
+  // If we arrive here then we may need to create a transform from
+  // `embedded_color_profile_` to `sk_image_color_space_`.
+  DCHECK(embedded_color_profile_);
+  DCHECK(sk_image_color_space_);
 
-  return color_space_for_sk_images_;
+  const skcms_ICCProfile* src_profile = embedded_color_profile_->GetProfile();
+  skcms_ICCProfile dst_profile;
+  sk_image_color_space_->toProfile(&dst_profile);
+  if (skcms_ApproximatelyEqualProfiles(src_profile, &dst_profile))
+    return;
+
+  embedded_to_sk_image_transform_ =
+      std::make_unique<ColorProfileTransform>(src_profile, &dst_profile);
 }
 
 }  // namespace blink

@@ -1,11 +1,8 @@
 # to make lintian/ftp-master happy :-/
 embedded-library usr/lib/*/libQt6WebEngineCore.so.6.*.*: srtp
-embedded-library usr/lib/*/libQt6WebEngineCore.so.6.*.*: tiff
+embedded-library usr/lib/*/libQt6WebEngineCore.so.6.*.*: libjsoncpp
 
 
 #libsrtp2 is not packaged, so we can't replace the internal copy #866784
 libqt6webenginecore6: embedded-library srtp [usr/lib/*/libQt6WebEngineCore.so.6.*.*]
-#see https://bugreports.qt.io/browse/QTBUG-63889
-libqt6webenginecore6: embedded-library openjpeg [usr/lib/*/libQt6WebEngineCore.so.6.*.*]
-#
-libqt6webenginecore6: embedded-library tiff [usr/lib/*/libQt6WebEngineCore.so.6.*.*]
+libqt6webenginecore6: embedded-library libjsoncpp [usr/lib/x86_64-linux-gnu/libQt6WebEngineCore.so.6.*.*]

@@ -1,11 +1,10 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
 // SystemStorage eject API browser tests.
 
-#include "base/callback_helpers.h"
-#include "base/files/file_path.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -15,7 +14,6 @@
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/test/test_utils.h"
 #include "extensions/browser/api/system_storage/storage_api_test_util.h"
-#include "extensions/browser/api/system_storage/storage_info_provider.h"
 #include "extensions/browser/extension_host.h"
 #include "extensions/browser/process_manager.h"
 #include "extensions/common/extension.h"
@@ -39,7 +37,7 @@ class SystemStorageEjectApiTest : public extensions::ShellApiTest {
   SystemStorageEjectApiTest& operator=(const SystemStorageEjectApiTest&) =
       delete;
 
-  ~SystemStorageEjectApiTest() override {}
+  ~SystemStorageEjectApiTest() override = default;
 
  protected:
   void SetUpOnMainThread() override {
@@ -48,7 +46,7 @@ class SystemStorageEjectApiTest : public extensions::ShellApiTest {
   }
 
   content::RenderFrameHost* GetMainFrame() {
-    ExtensionTestMessageListener listener("loaded", false);
+    ExtensionTestMessageListener listener("loaded");
     const extensions::Extension* extension = LoadApp("system/storage_eject");
 
     // Wait for the extension to load completely so we can execute
@@ -63,7 +61,7 @@ class SystemStorageEjectApiTest : public extensions::ShellApiTest {
   void ExecuteCmdAndCheckReply(content::RenderFrameHost* frame,
                                const std::string& js_command,
                                const std::string& ok_message) {
-    ExtensionTestMessageListener listener(ok_message, false);
+    ExtensionTestMessageListener listener(ok_message);
     frame->ExecuteJavaScriptForTests(base::ASCIIToUTF16(js_command),
                                      base::NullCallback());
     EXPECT_TRUE(listener.WaitUntilSatisfied());
@@ -85,7 +83,7 @@ class SystemStorageEjectApiTest : public extensions::ShellApiTest {
   }
 
  protected:
-  raw_ptr<TestStorageMonitor> monitor_;
+  raw_ptr<TestStorageMonitor, DanglingUntriaged> monitor_;
 };
 
 IN_PROC_BROWSER_TEST_F(SystemStorageEjectApiTest, EjectTest) {
@@ -97,8 +95,7 @@ IN_PROC_BROWSER_TEST_F(SystemStorageEjectApiTest, EjectTest) {
   // Attach / detach
   const std::string expect_attach_msg =
       base::StringPrintf("%s,%s", "attach_test_ok", kRemovableStorageData.name);
-  ExtensionTestMessageListener attach_finished_listener(expect_attach_msg,
-                                                        false /* no reply */);
+  ExtensionTestMessageListener attach_finished_listener(expect_attach_msg);
   Attach();
   EXPECT_TRUE(attach_finished_listener.WaitUntilSatisfied());
 

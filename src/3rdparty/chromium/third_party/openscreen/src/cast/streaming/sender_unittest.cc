@@ -16,7 +16,6 @@
 #include <vector>
 
 #include "absl/types/optional.h"
-#include "absl/types/span.h"
 #include "cast/streaming/compound_rtcp_builder.h"
 #include "cast/streaming/constants.h"
 #include "cast/streaming/encoded_frame.h"
@@ -35,6 +34,8 @@
 #include "cast/streaming/testing/simple_socket_subscriber.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
+#include "platform/base/span.h"
+#include "platform/test/byte_view_test_util.h"
 #include "platform/test/fake_clock.h"
 #include "platform/test/fake_task_runner.h"
 #include "util/alarm.h"
@@ -303,8 +304,9 @@ class MockReceiver : public Environment::PacketConsumer {
     // testing should exist elsewhere to confirm frame play-out times with real
     // Receivers.
     decrypted->buffer.resize(FrameCrypto::GetPlaintextSize(encrypted));
-    decrypted->data = absl::Span<uint8_t>(decrypted->buffer);
-    crypto_.Decrypt(encrypted, decrypted);
+    crypto_.Decrypt(encrypted, decrypted->buffer);
+    encrypted.CopyMetadataTo(decrypted);
+    decrypted->data = decrypted->buffer;
     incomplete_frames_.erase(frame_id);
     OnFrameComplete(frame_id);
   }
@@ -393,8 +395,8 @@ class SenderTest : public testing::Test {
                                         int num_payload_bytes,
                                         EncodedFrameWithBuffer* frame) {
     frame->dependency = (frame_id == FrameId::first())
-                            ? EncodedFrame::KEY_FRAME
-                            : EncodedFrame::DEPENDS_ON_ANOTHER;
+                            ? EncodedFrame::Dependency::kKeyFrame
+                            : EncodedFrame::Dependency::kDependent;
     frame->frame_id = frame_id;
     frame->referenced_frame_id = frame->frame_id;
     if (frame_id != FrameId::first()) {
@@ -405,7 +407,7 @@ class SenderTest : public testing::Test {
                           (frame_id - FrameId::first()));
     frame->reference_time = reference_time;
     PopulateFramePayloadBuffer(seed, num_payload_bytes, &frame->buffer);
-    frame->data = absl::Span<uint8_t>(frame->buffer);
+    frame->data = frame->buffer;
   }
 
   // Confirms that all |sent_frames| exist in |received_frames|, with identical
@@ -428,7 +430,7 @@ class SenderTest : public testing::Test {
       EXPECT_EQ(sent_frame.referenced_frame_id,
                 received_frame.referenced_frame_id);
       EXPECT_EQ(sent_frame.rtp_timestamp, received_frame.rtp_timestamp);
-      EXPECT_TRUE(sent_frame.data == received_frame.data);
+      ExpectByteViewsHaveSameBytes(sent_frame.data, received_frame.data);
     }
   }
 
@@ -789,7 +791,7 @@ TEST_F(SenderTest, ManagesReceiverPictureLossWorkflow) {
   PopulateFrameWithDefaults(FrameId::first() + 4,
                             FakeClock::now() - kCaptureDelay, 0, 24 /* bytes */,
                             &recovery_frame);
-  recovery_frame.dependency = EncodedFrame::KEY_FRAME;
+  recovery_frame.dependency = EncodedFrame::Dependency::kKeyFrame;
   recovery_frame.referenced_frame_id = recovery_frame.frame_id;
   ASSERT_EQ(Sender::OK, sender()->EnqueueFrame(recovery_frame));
   SimulateExecution(kFrameDuration);
@@ -828,7 +830,7 @@ TEST_F(SenderTest, ManagesReceiverPictureLossWorkflow) {
   PopulateFrameWithDefaults(FrameId::first() + 5,
                             FakeClock::now() - kCaptureDelay, 0, 24 /* bytes */,
                             &another_recovery_frame);
-  another_recovery_frame.dependency = EncodedFrame::KEY_FRAME;
+  another_recovery_frame.dependency = EncodedFrame::Dependency::kKeyFrame;
   another_recovery_frame.referenced_frame_id = another_recovery_frame.frame_id;
   ASSERT_EQ(Sender::OK, sender()->EnqueueFrame(another_recovery_frame));
   SimulateExecution(kFrameDuration);

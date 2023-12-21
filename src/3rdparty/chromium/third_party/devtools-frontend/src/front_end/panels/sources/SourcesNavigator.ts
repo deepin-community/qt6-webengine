@@ -38,13 +38,13 @@ import * as Workspace from '../../models/workspace/workspace.js';
 import * as UI from '../../ui/legacy/legacy.js';
 import * as Snippets from '../snippets/snippets.js';
 
-import type {NavigatorUISourceCodeTreeNode} from './NavigatorView.js';
-import {NavigatorView} from './NavigatorView.js';
+import {NavigatorView, type NavigatorUISourceCodeTreeNode} from './NavigatorView.js';
+import sourcesNavigatorStyles from './sourcesNavigator.css.js';
 
 const UIStrings = {
   /**
-  *@description Text in Sources Navigator of the Sources panel
-  */
+   *@description Text in Sources Navigator of the Sources panel
+   */
   syncChangesInDevtoolsWithThe: 'Sync changes in DevTools with the local filesystem',
   /**
    * @description Text for link in the Filesystem Side View in Sources Panel. Workspaces is a
@@ -53,52 +53,52 @@ const UIStrings = {
    */
   learnMoreAboutWorkspaces: 'Learn more about Workspaces',
   /**
-  *@description Text in Sources Navigator of the Sources panel
-  */
+   *@description Text in Sources Navigator of the Sources panel
+   */
   overridePageAssetsWithFilesFromA: 'Override page assets with files from a local folder',
   /**
-  *@description Text that is usually a hyperlink to more documentation
-  */
+   *@description Text that is usually a hyperlink to more documentation
+   */
   learnMore: 'Learn more',
   /**
-  *@description Tooltip text that appears when hovering over the largeicon clear button in the Sources Navigator of the Sources panel
-  */
+   *@description Tooltip text that appears when hovering over the largeicon clear button in the Sources Navigator of the Sources panel
+   */
   clearConfiguration: 'Clear configuration',
   /**
-  *@description Text in Sources Navigator of the Sources panel
-  */
+   *@description Text in Sources Navigator of the Sources panel
+   */
   selectFolderForOverrides: 'Select folder for overrides',
   /**
-  *@description Text in Sources Navigator of the Sources panel
-  */
+   *@description Text in Sources Navigator of the Sources panel
+   */
   contentScriptsServedByExtensions: 'Content scripts served by extensions appear here',
   /**
-  *@description Text in Sources Navigator of the Sources panel
-  */
+   *@description Text in Sources Navigator of the Sources panel
+   */
   createAndSaveCodeSnippetsFor: 'Create and save code snippets for later reuse',
   /**
-  *@description Text in Sources Navigator of the Sources panel
-  */
+   *@description Text in Sources Navigator of the Sources panel
+   */
   newSnippet: 'New snippet',
   /**
-  *@description Title of an action in the sources tool to create snippet
-  */
+   *@description Title of an action in the sources tool to create snippet
+   */
   createNewSnippet: 'Create new snippet',
   /**
-  *@description A context menu item in the Sources Navigator of the Sources panel
-  */
+   *@description A context menu item in the Sources Navigator of the Sources panel
+   */
   run: 'Run',
   /**
-  *@description A context menu item in the Navigator View of the Sources panel
-  */
+   *@description A context menu item in the Navigator View of the Sources panel
+   */
   rename: 'Rename…',
   /**
-  *@description Label for an item to remove something
-  */
+   *@description Label for an item to remove something
+   */
   remove: 'Remove',
   /**
-  *@description Text to save content as a specific file type
-  */
+   *@description Text to save content as a specific file type
+   */
   saveAs: 'Save as...',
 };
 const str_ = i18n.i18n.registerUIStrings('panels/sources/SourcesNavigator.ts', UIStrings);
@@ -107,13 +107,19 @@ let networkNavigatorViewInstance: NetworkNavigatorView;
 
 export class NetworkNavigatorView extends NavigatorView {
   private constructor() {
-    super();
+    super(true);
     SDK.TargetManager.TargetManager.instance().addEventListener(
         SDK.TargetManager.Events.InspectedURLChanged, this.inspectedURLChanged, this);
 
     // Record the sources tool load time after the file navigator has loaded.
     Host.userMetrics.panelLoaded('sources', 'DevTools.Launch.Sources');
   }
+
+  wasShown(): void {
+    this.registerCSSFiles([sourcesNavigatorStyles]);
+    super.wasShown();
+  }
+
   static instance(opts: {
     forceNew: boolean|null,
   } = {forceNew: null}): NetworkNavigatorView {
@@ -130,7 +136,7 @@ export class NetworkNavigatorView extends NavigatorView {
   }
 
   private inspectedURLChanged(event: Common.EventTarget.EventTargetEvent<SDK.Target.Target>): void {
-    const mainTarget = SDK.TargetManager.TargetManager.instance().mainTarget();
+    const mainTarget = SDK.TargetManager.TargetManager.instance().mainFrameTarget();
     if (event.data !== mainTarget) {
       return;
     }
@@ -146,7 +152,7 @@ export class NetworkNavigatorView extends NavigatorView {
   }
 
   uiSourceCodeAdded(uiSourceCode: Workspace.UISourceCode.UISourceCode): void {
-    const mainTarget = SDK.TargetManager.TargetManager.instance().mainTarget();
+    const mainTarget = SDK.TargetManager.TargetManager.instance().mainFrameTarget();
     const inspectedURL = mainTarget && mainTarget.inspectedURL();
     if (!inspectedURL) {
       return;
@@ -278,7 +284,7 @@ export class OverridesNavigatorView extends NavigatorView {
     this.toolbar.appendToolbarItem(setupButton);
   }
 
-  private async setupNewWorkspace(): Promise<void> {
+  async setupNewWorkspace(): Promise<void> {
     const fileSystem =
         await Persistence.IsolatedFileSystemManager.IsolatedFileSystemManager.instance().addFileSystem('overrides');
     if (!fileSystem) {

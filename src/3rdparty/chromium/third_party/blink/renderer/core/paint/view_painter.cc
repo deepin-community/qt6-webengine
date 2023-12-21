@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -19,6 +19,7 @@
 #include "third_party/blink/renderer/core/paint/paint_info.h"
 #include "third_party/blink/renderer/core/paint/paint_layer.h"
 #include "third_party/blink/renderer/core/paint/paint_layer_scrollable_area.h"
+#include "third_party/blink/renderer/core/view_transition/view_transition_utils.h"
 #include "third_party/blink/renderer/platform/graphics/paint/drawing_recorder.h"
 #include "third_party/blink/renderer/platform/graphics/paint/geometry_mapper.h"
 #include "third_party/blink/renderer/platform/graphics/paint/scoped_paint_chunk_properties.h"
@@ -46,12 +47,19 @@ void ViewPainter::PaintRootGroup(const PaintInfo& paint_info,
                                  const PropertyTreeStateOrAlias& state) {
   if (!layout_view_.GetFrameView()->ShouldPaintBaseBackgroundColor())
     return;
-  bool should_clear_canvas =
-      document.GetSettings() &&
-      document.GetSettings()->GetShouldClearDocumentBackground();
 
   Color base_background_color =
       layout_view_.GetFrameView()->BaseBackgroundColor();
+  if (document.Printing() && base_background_color == Color::kWhite) {
+    // Leave a transparent background, assuming the paper or the PDF viewer
+    // background is white by default. This allows further customization of the
+    // background, e.g. in the case of https://crbug.com/498892.
+    return;
+  }
+
+  bool should_clear_canvas =
+      document.GetSettings() &&
+      document.GetSettings()->GetShouldClearDocumentBackground();
 
   ScopedPaintChunkProperties frame_view_background_state(
       paint_info.context.GetPaintController(), state, client,
@@ -84,9 +92,18 @@ void ViewPainter::PaintBoxDecorationBackground(const PaintInfo& paint_info) {
   bool paints_scroll_hit_test =
       !painting_background_in_contents_space &&
       layout_view_.FirstFragment().PaintProperties()->Scroll();
+  bool is_represented_via_pseudo_elements = [this]() {
+    if (auto* transition = ViewTransitionUtils::GetActiveTransition(
+            layout_view_.GetDocument())) {
+      return transition->IsRepresentedViaPseudoElements(layout_view_);
+    }
+    return false;
+  }();
   if (!layout_view_.HasBoxDecorationBackground() && !has_hit_test_data &&
-      !paints_scroll_hit_test && !has_region_capture_data)
+      !paints_scroll_hit_test && !has_region_capture_data &&
+      !is_represented_via_pseudo_elements) {
     return;
+  }
 
   // The background rect always includes at least the visible content size.
   PhysicalRect background_rect(layout_view_.BackgroundRect());
@@ -128,7 +145,8 @@ void ViewPainter::PaintBoxDecorationBackground(const PaintInfo& paint_info) {
       document.IsHTMLDocument() || document.IsXHTMLDocument();
 
   bool should_paint_background = !paint_info.ShouldSkipBackground() &&
-                                 layout_view_.HasBoxDecorationBackground();
+                                 (layout_view_.HasBoxDecorationBackground() ||
+                                  is_represented_via_pseudo_elements);
 
   LayoutObject* root_object = nullptr;
   if (auto* document_element = document.documentElement())
@@ -243,9 +261,18 @@ void ViewPainter::PaintRootElementGroup(
                                 (frame_view.BaseBackgroundColor().Alpha() > 0);
   Color base_background_color =
       paints_base_background ? frame_view.BaseBackgroundColor() : Color();
+  if (document.Printing() && base_background_color == Color::kWhite) {
+    // Leave a transparent background, assuming the paper or the PDF viewer
+    // background is white by default. This allows further customization of the
+    // background, e.g. in the case of https://crbug.com/498892.
+    base_background_color = Color();
+    paints_base_background = false;
+  }
+
   Color root_element_background_color =
       layout_view_.StyleRef().VisitedDependentColor(
           GetCSSPropertyBackgroundColor());
+
   const LayoutObject* root_object =
       document.documentElement() ? document.documentElement()->GetLayoutObject()
                                  : nullptr;
@@ -255,13 +282,9 @@ void ViewPainter::PaintRootElementGroup(
       BoxModelObjectPainter::ShouldForceWhiteBackgroundForPrintEconomy(
           document, layout_view_.StyleRef());
   if (force_background_to_white) {
-    // If for any reason the view background is not transparent, paint white
-    // instead, otherwise keep transparent as is.
-    if (paints_base_background || root_element_background_color.Alpha() ||
-        layout_view_.StyleRef().BackgroundLayers().AnyLayerHasImage()) {
-      context.FillRect(pixel_snapped_background_rect, Color::kWhite,
-                       AutoDarkMode::Disabled(), SkBlendMode::kSrc);
-    }
+    // Leave a transparent background, assuming the paper or the PDF viewer
+    // background is white by default. This allows further customization of the
+    // background, e.g. in the case of https://crbug.com/498892.
     return;
   }
 
@@ -333,8 +356,7 @@ void ViewPainter::PaintRootElementGroup(
     should_draw_background_in_separate_buffer = true;
   } else {
     // If the root background color is opaque, isolation group can be skipped
-    // because the canvas
-    // will be cleared by root background color.
+    // because the canvas will be cleared by root background color.
     if (!root_element_background_color.HasAlpha())
       should_draw_background_in_separate_buffer = false;
 

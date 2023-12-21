@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -52,7 +52,25 @@ enum class ManagePasswordsReferrer {
   // On Desktop, the Google Password Manager link was clicked in the footer of
   // Save/Update bubble.
   kSaveUpdateBubble = 11,
-  kMaxValue = kSaveUpdateBubble,
+  // On Desktop, the Google Password Manager link was clicked in the password
+  // generation prompt in the Autofill dropdown.
+  kPasswordGenerationPrompt = 12,
+  // Corresponds to the situation when Chrome opens native Password Manager UI
+  // when navigating to specified website.
+  kPasswordsGoogleWebsite = 13,
+
+  // Deprecated as part of APC removal.
+  // kAutomatedPasswordChangeSuccessLink = 14,
+
+  // On Mac and Win after enabling Biometric authentication before filling
+  // a confirmation dialog is shown with an instructions on how to control the
+  // feature from settings.
+  kBiometricAuthenticationBeforeFillingDialog = 15,
+
+  // NOTE: When adding a new value to this enum that applies or could apply to
+  // Android, make sure it is correctly handled by the internal credential
+  // manager launcher java implementation.
+  kMaxValue = kBiometricAuthenticationBeforeFillingDialog,
 };
 
 }  // namespace password_manager

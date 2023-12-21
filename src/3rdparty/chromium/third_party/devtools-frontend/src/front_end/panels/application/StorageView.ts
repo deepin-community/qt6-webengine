@@ -147,6 +147,7 @@ export class StorageView extends UI.ThrottledWidget.ThrottledWidget {
   private reportView: UI.ReportView.ReportView;
   private target: SDK.Target.Target|null;
   private securityOrigin: string|null;
+  private storageKey: string|null;
   private settings: Map<Protocol.Storage.StorageType, Common.Settings.Setting<boolean>>;
   private includeThirdPartyCookiesSetting: Common.Settings.Setting<boolean>;
   private quotaRow: HTMLElement;
@@ -180,6 +181,7 @@ export class StorageView extends UI.ThrottledWidget.ThrottledWidget {
     this.reportView.show(this.contentElement);
     this.target = null;
     this.securityOrigin = null;
+    this.storageKey = null;
 
     this.settings = new Map();
     for (const type of AllStorageTypes) {
@@ -267,7 +269,7 @@ export class StorageView extends UI.ThrottledWidget.ThrottledWidget {
   }
 
   targetAdded(target: SDK.Target.Target): void {
-    if (this.target) {
+    if (target !== SDK.TargetManager.TargetManager.instance().mainFrameTarget()) {
       return;
     }
     this.target = target;
@@ -277,6 +279,11 @@ export class StorageView extends UI.ThrottledWidget.ThrottledWidget {
         securityOriginManager.mainSecurityOrigin(), securityOriginManager.unreachableMainSecurityOrigin());
     securityOriginManager.addEventListener(
         SDK.SecurityOriginManager.Events.MainSecurityOriginChanged, this.originChanged, this);
+    const storageKeyManager =
+        target.model(SDK.StorageKeyManager.StorageKeyManager) as SDK.StorageKeyManager.StorageKeyManager;
+    this.updateStorageKey(storageKeyManager.mainStorageKey());
+    storageKeyManager.addEventListener(
+        SDK.StorageKeyManager.Events.MainStorageKeyChanged, this.storageKeyChanged, this);
   }
 
   targetRemoved(target: SDK.Target.Target): void {
@@ -287,12 +294,22 @@ export class StorageView extends UI.ThrottledWidget.ThrottledWidget {
         SDK.SecurityOriginManager.SecurityOriginManager;
     securityOriginManager.removeEventListener(
         SDK.SecurityOriginManager.Events.MainSecurityOriginChanged, this.originChanged, this);
+    const storageKeyManager =
+        target.model(SDK.StorageKeyManager.StorageKeyManager) as SDK.StorageKeyManager.StorageKeyManager;
+    storageKeyManager.removeEventListener(
+        SDK.StorageKeyManager.Events.MainStorageKeyChanged, this.storageKeyChanged, this);
   }
 
   private originChanged(
       event: Common.EventTarget.EventTargetEvent<SDK.SecurityOriginManager.MainSecurityOriginChangedEvent>): void {
     const {mainSecurityOrigin, unreachableMainSecurityOrigin} = event.data;
     this.updateOrigin(mainSecurityOrigin, unreachableMainSecurityOrigin);
+  }
+
+  private storageKeyChanged(
+      event: Common.EventTarget.EventTargetEvent<SDK.StorageKeyManager.MainStorageKeyChangedEvent>): void {
+    const {mainStorageKey} = event.data;
+    this.updateStorageKey(mainStorageKey);
   }
 
   private updateOrigin(mainOrigin: string, unreachableMainOrigin: string|null): void {
@@ -306,6 +323,20 @@ export class StorageView extends UI.ThrottledWidget.ThrottledWidget {
     }
 
     if (oldOrigin !== this.securityOrigin) {
+      this.quotaOverrideControlRow.classList.add('hidden');
+      this.quotaOverrideCheckbox.checkboxElement.checked = false;
+      this.quotaOverrideErrorMessage.textContent = '';
+    }
+    void this.doUpdate();
+  }
+
+  private updateStorageKey(mainStorageKey: string): void {
+    const oldStorageKey = this.storageKey;
+
+    this.storageKey = mainStorageKey;
+    this.reportView.setSubtitle(mainStorageKey);
+
+    if (oldStorageKey !== this.storageKey) {
       this.quotaOverrideControlRow.classList.add('hidden');
       this.quotaOverrideCheckbox.checkboxElement.checked = false;
       this.quotaOverrideErrorMessage.textContent = '';
@@ -375,7 +406,8 @@ export class StorageView extends UI.ThrottledWidget.ThrottledWidget {
 
     if (this.target) {
       const includeThirdPartyCookies = this.includeThirdPartyCookiesSetting.get();
-      StorageView.clear(this.target, this.securityOrigin, selectedStorageTypes, includeThirdPartyCookies);
+      StorageView.clear(
+          this.target, this.storageKey, this.securityOrigin, selectedStorageTypes, includeThirdPartyCookies);
     }
 
     this.clearButton.disabled = true;
@@ -389,17 +421,22 @@ export class StorageView extends UI.ThrottledWidget.ThrottledWidget {
   }
 
   static clear(
-      target: SDK.Target.Target, securityOrigin: string, selectedStorageTypes: string[],
+      target: SDK.Target.Target, storageKey: string|null, originForCookies: string|null, selectedStorageTypes: string[],
       includeThirdPartyCookies: boolean): void {
-    void target.storageAgent().invoke_clearDataForOrigin(
-        {origin: securityOrigin, storageTypes: selectedStorageTypes.join(',')});
+    console.assert(Boolean(storageKey));
+    if (!storageKey) {
+      return;
+    }
+    void target.storageAgent().invoke_clearDataForStorageKey(
+        {storageKey, storageTypes: selectedStorageTypes.join(',')});
 
     const set = new Set(selectedStorageTypes);
     const hasAll = set.has(Protocol.Storage.StorageType.All);
-    if (set.has(Protocol.Storage.StorageType.Cookies) || hasAll) {
-      const cookieModel = target.model(SDK.CookieModel.CookieModel);
-      if (cookieModel) {
-        void cookieModel.clear(undefined, includeThirdPartyCookies ? undefined : securityOrigin);
+
+    if (set.has(Protocol.Storage.StorageType.Local_storage) || hasAll) {
+      const storageModel = target.model(DOMStorageModel);
+      if (storageModel) {
+        storageModel.clearForStorageKey(storageKey);
       }
     }
 
@@ -407,15 +444,17 @@ export class StorageView extends UI.ThrottledWidget.ThrottledWidget {
       for (const target of SDK.TargetManager.TargetManager.instance().targets()) {
         const indexedDBModel = target.model(IndexedDBModel);
         if (indexedDBModel) {
-          indexedDBModel.clearForOrigin(securityOrigin);
+          indexedDBModel.clearForStorageKey(storageKey);
         }
       }
     }
 
-    if (set.has(Protocol.Storage.StorageType.Local_storage) || hasAll) {
-      const storageModel = target.model(DOMStorageModel);
-      if (storageModel) {
-        storageModel.clearForOrigin(securityOrigin);
+    if (originForCookies && (set.has(Protocol.Storage.StorageType.Cookies) || hasAll)) {
+      void target.storageAgent().invoke_clearDataForOrigin(
+          {origin: originForCookies, storageTypes: Protocol.Storage.StorageType.Cookies});
+      const cookieModel = target.model(SDK.CookieModel.CookieModel);
+      if (cookieModel) {
+        void cookieModel.clear(undefined, includeThirdPartyCookies ? undefined : originForCookies);
       }
     }
 
@@ -428,10 +467,10 @@ export class StorageView extends UI.ThrottledWidget.ThrottledWidget {
     }
 
     if (set.has(Protocol.Storage.StorageType.Cache_storage) || hasAll) {
-      const target = SDK.TargetManager.TargetManager.instance().mainTarget();
+      const target = SDK.TargetManager.TargetManager.instance().mainFrameTarget();
       const model = target && target.model(SDK.ServiceWorkerCacheModel.ServiceWorkerCacheModel);
       if (model) {
-        model.clearForOrigin(securityOrigin);
+        model.clearForStorageKey(storageKey);
       }
     }
   }
@@ -557,7 +596,7 @@ export class ActionDelegate implements UI.ActionRegistration.ActionDelegate {
   }
 
   private handleClear(includeThirdPartyCookies: boolean): boolean {
-    const target = SDK.TargetManager.TargetManager.instance().mainTarget();
+    const target = SDK.TargetManager.TargetManager.instance().mainFrameTarget();
     if (!target) {
       return false;
     }
@@ -566,11 +605,9 @@ export class ActionDelegate implements UI.ActionRegistration.ActionDelegate {
       return false;
     }
     const securityOrigin = resourceTreeModel.getMainSecurityOrigin();
-    if (!securityOrigin) {
-      return false;
-    }
-
-    StorageView.clear(target, securityOrigin, AllStorageTypes, includeThirdPartyCookies);
+    resourceTreeModel.getMainStorageKey().then(storageKey => {
+      StorageView.clear(target, storageKey, securityOrigin, AllStorageTypes, includeThirdPartyCookies);
+    }, _ => {});
     return true;
   }
 }

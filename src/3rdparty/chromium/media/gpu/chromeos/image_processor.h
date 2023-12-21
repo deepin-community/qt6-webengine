@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,7 +11,7 @@
 #include <utility>
 #include <vector>
 
-#include "base/callback_forward.h"
+#include "base/functional/callback_forward.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/sequence_checker.h"
@@ -57,8 +57,7 @@ class MEDIA_GPU_EXPORT ImageProcessor {
           const PortConfig& output_config,
           OutputMode output_mode,
           VideoRotation relative_rotation,
-          ErrorCB error_cb,
-          scoped_refptr<base::SequencedTaskRunner> backend_task_runner)>;
+          ErrorCB error_cb)>;
 
   static std::unique_ptr<ImageProcessor> Create(
       CreateBackendCB create_backend_cb,
@@ -80,6 +79,7 @@ class MEDIA_GPU_EXPORT ImageProcessor {
 
   OutputMode output_mode() const { return backend_->output_mode(); }
 
+  std::string backend_type() const { return backend_->type(); }
   // Called by client to process |frame|. The resulting processed frame will be
   // stored in a ImageProcessor-owned output buffer and notified via |cb|. The
   // processor will drop all its references to |frame| after it finishes
@@ -109,6 +109,15 @@ class MEDIA_GPU_EXPORT ImageProcessor {
   // the output video frames to be CPU-readable with a linear view of the data.
   bool needs_linear_output_buffers() const {
     return needs_linear_output_buffers_;
+  }
+
+  // Returns true if the image processor supports buffers allocated
+  // incoherently. The MTK MDP3 image processor has coherency issues, but the
+  // Libyuv image processor benefits greatly from incoherent allocations.
+  // Defaults to false, since only Libyuv has been shown to support this feature
+  // so far.
+  bool SupportsIncoherentBufs() const {
+    return backend_ && backend_->supports_incoherent_buffers();
   }
 
  protected:

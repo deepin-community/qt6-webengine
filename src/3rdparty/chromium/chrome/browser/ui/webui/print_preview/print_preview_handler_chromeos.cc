@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,12 +11,13 @@
 #include <string>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback.h"
-#include "base/callback_helpers.h"
 #include "base/check.h"
 #include "base/check_op.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
 #include "base/lazy_instance.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
@@ -27,6 +28,7 @@
 #include "chrome/common/printing/printer_capabilities.h"
 #include "chromeos/crosapi/mojom/local_printer.mojom.h"
 #include "chromeos/printing/printer_configuration.h"
+#include "chromeos/printing/printing_constants.h"
 #include "components/signin/public/identity_manager/scope_set.h"
 #include "content/public/browser/web_ui.h"
 #include "mojo/public/cpp/bindings/receiver.h"
@@ -44,18 +46,18 @@ namespace printing {
 
 namespace {
 
-base::Value PrintServersConfigMojomToValue(
+base::Value::Dict PrintServersConfigMojomToValue(
     crosapi::mojom::PrintServersConfigPtr config) {
-  base::Value ui_print_servers(base::Value::Type::LIST);
+  base::Value::List ui_print_servers;
   for (const auto& print_server : config->print_servers) {
-    base::Value ui_print_server(base::Value::Type::DICTIONARY);
-    ui_print_server.SetStringKey("id", print_server->id);
-    ui_print_server.SetStringKey("name", print_server->name);
+    base::Value::Dict ui_print_server;
+    ui_print_server.Set("id", print_server->id);
+    ui_print_server.Set("name", print_server->name);
     ui_print_servers.Append(std::move(ui_print_server));
   }
-  base::Value ui_print_servers_config(base::Value::Type::DICTIONARY);
-  ui_print_servers_config.SetKey("printServers", std::move(ui_print_servers));
-  ui_print_servers_config.SetBoolKey(
+  base::Value::Dict ui_print_servers_config;
+  ui_print_servers_config.Set("printServers", std::move(ui_print_servers));
+  ui_print_servers_config.Set(
       "isSingleServerFetchingMode",
       config->fetching_mode ==
           ash::ServerPrintersFetchingMode::kSingleServerOnly);
@@ -109,6 +111,11 @@ void PrintPreviewHandlerChromeOS::RegisterMessages() {
       "getPrintServersConfig",
       base::BindRepeating(
           &PrintPreviewHandlerChromeOS::HandleGetPrintServersConfig,
+          base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "recordPrintAttemptOutcome",
+      base::BindRepeating(
+          &PrintPreviewHandlerChromeOS::HandleRecordPrintAttemptOutcome,
           base::Unretained(this)));
 }
 
@@ -198,34 +205,30 @@ void PrintPreviewHandlerChromeOS::SendEulaUrl(const std::string& callback_id,
 void PrintPreviewHandlerChromeOS::SendPrinterSetup(
     const std::string& callback_id,
     const std::string& printer_name,
-    base::Value destination_info) {
-  base::Value* caps_value =
-      destination_info.is_dict()
-          ? destination_info.FindKeyOfType(kSettingCapabilities,
-                                           base::Value::Type::DICTIONARY)
-          : nullptr;
+    base::Value::Dict destination_info) {
+  base::Value::Dict* caps_value =
+      destination_info.FindDict(kSettingCapabilities);
   if (!caps_value) {
     VLOG(1) << "Printer setup failed";
     RejectJavascriptCallback(base::Value(callback_id), base::Value());
     return;
   }
 
-  base::Value response(base::Value::Type::DICTIONARY);
-  response.SetKey("printerId", base::Value(printer_name));
-  response.SetKey("capabilities", std::move(*caps_value));
-  base::Value* printer =
-      destination_info.FindKeyOfType(kPrinter, base::Value::Type::DICTIONARY);
+  base::Value::Dict response;
+  response.Set("printerId", printer_name);
+  response.Set("capabilities", std::move(*caps_value));
+  base::Value::Dict* printer = destination_info.FindDict(kPrinter);
   if (printer) {
-    base::Value* policies_value =
-        printer->FindKeyOfType(kSettingPolicies, base::Value::Type::DICTIONARY);
+    base::Value::Dict* policies_value = printer->FindDict(kSettingPolicies);
     if (policies_value)
-      response.SetKey("policies", std::move(*policies_value));
+      response.Set("policies", std::move(*policies_value));
   }
   ResolveJavascriptCallback(base::Value(callback_id), response);
 }
 
 PrintPreviewHandler* PrintPreviewHandlerChromeOS::GetPrintPreviewHandler() {
-  PrintPreviewUI* ui = static_cast<PrintPreviewUI*>(web_ui()->GetController());
+  PrintPreviewUI* ui = web_ui()->GetController()->GetAs<PrintPreviewUI>();
+  CHECK(ui);
   return ui->handler();
 }
 
@@ -243,12 +246,12 @@ void PrintPreviewHandlerChromeOS::MaybeAllowJavascript() {
 
 void PrintPreviewHandlerChromeOS::OnGotExtensionPrinterInfo(
     const std::string& callback_id,
-    const base::DictionaryValue& printer_info) {
-  if (printer_info.DictEmpty()) {
+    const base::Value::Dict& printer_info) {
+  if (printer_info.empty()) {
     RejectJavascriptCallback(base::Value(callback_id), base::Value());
-    return;
+  } else {
+    ResolveJavascriptCallback(base::Value(callback_id), printer_info);
   }
-  ResolveJavascriptCallback(base::Value(callback_id), printer_info);
 }
 
 void PrintPreviewHandlerChromeOS::HandleRequestPrinterStatusUpdate(
@@ -262,8 +265,18 @@ void PrintPreviewHandlerChromeOS::HandleRequestPrinterStatusUpdate(
   PrinterHandler* handler = GetPrinterHandler(mojom::PrinterType::kLocal);
   handler->StartPrinterStatusRequest(
       printer_id,
-      base::BindOnce(&PrintPreviewHandlerChromeOS::ResolveJavascriptCallback,
+      base::BindOnce(&PrintPreviewHandlerChromeOS::
+                         HandleRequestPrinterStatusUpdateCompletion,
                      weak_factory_.GetWeakPtr(), base::Value(callback_id)));
+}
+
+void PrintPreviewHandlerChromeOS::HandleRequestPrinterStatusUpdateCompletion(
+    base::Value callback_id,
+    absl::optional<base::Value::Dict> result) {
+  if (result)
+    ResolveJavascriptCallback(callback_id, *result);
+  else
+    ResolveJavascriptCallback(callback_id, base::Value());
 }
 
 void PrintPreviewHandlerChromeOS::HandleChoosePrintServers(
@@ -300,6 +313,14 @@ void PrintPreviewHandlerChromeOS::HandleGetPrintServersConfig(
           .Then(base::BindOnce(
               &PrintPreviewHandlerChromeOS::ResolveJavascriptCallback,
               weak_factory_.GetWeakPtr(), base::Value(callback_id))));
+}
+
+void PrintPreviewHandlerChromeOS::HandleRecordPrintAttemptOutcome(
+    const base::Value::List& args) {
+  CHECK(args[0].is_int());
+  chromeos::PrintAttemptOutcome result =
+      static_cast<chromeos::PrintAttemptOutcome>(args[0].GetInt());
+  base::UmaHistogramEnumeration("PrintPreview.PrintAttemptOutcome", result);
 }
 
 void PrintPreviewHandlerChromeOS::OnPrintServersChanged(

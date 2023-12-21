@@ -8,8 +8,8 @@ import * as i18n from '../../core/i18n/i18n.js';
 
 const UIStrings = {
   /**
-  *@description Generic menu name accessibility label
-  */
+   *@description Generic menu name accessibility label
+   */
   genericMenuLabel: 'Menu',
 };
 const str_ = i18n.i18n.registerUIStrings('panels/issues/ComboBoxOfCheckBoxes.ts', UIStrings);
@@ -51,15 +51,15 @@ export class ComboBoxOfCheckBoxes extends UI.Toolbar.ToolbarButton {
     return this.#options;
   }
 
-  #showLevelContextMenu({data: mouseEvent}: Common.EventTarget.EventTargetEvent<Event>): void {
+  async #showLevelContextMenu({data: mouseEvent}: Common.EventTarget.EventTargetEvent<Event>): Promise<void> {
     const contextMenu = new UI.ContextMenu.ContextMenu(mouseEvent, {
       useSoftMenu: true,
-      x: this.element.totalOffsetLeft(),
-      y: this.element.totalOffsetTop() + this.element.offsetHeight,
+      x: this.element.getBoundingClientRect().left,
+      y: this.element.getBoundingClientRect().top + this.element.offsetHeight,
     });
 
     for (const {title, callback} of this.#headers) {
-      contextMenu.headerSection().appendCheckboxItem(title, () => callback());
+      contextMenu.headerSection().appendItem(title, () => callback());
     }
     for (const [index, {title, enabled}] of this.#options.entries()) {
       contextMenu.defaultSection().appendCheckboxItem(title, () => {
@@ -67,7 +67,8 @@ export class ComboBoxOfCheckBoxes extends UI.Toolbar.ToolbarButton {
       }, enabled);
     }
     contextMenu.setContextMenuLabel(this.title ?? i18nString(UIStrings.genericMenuLabel));
-    void contextMenu.show();
+    await contextMenu.show();
+    contextMenu.markAsMenuItemCheckBox();
   }
 }
 

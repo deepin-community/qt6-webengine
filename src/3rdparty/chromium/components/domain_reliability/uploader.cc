@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,8 +6,8 @@
 
 #include <utility>
 
-#include "base/callback.h"
 #include "base/containers/unique_ptr_adapters.h"
+#include "base/functional/callback.h"
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
 #include "base/supports_user_data.h"
@@ -72,7 +72,7 @@ class DomainReliabilityUploaderImpl : public DomainReliabilityUploader,
       const std::string& report_json,
       int max_upload_depth,
       const GURL& upload_url,
-      const net::NetworkIsolationKey& network_isolation_key,
+      const net::NetworkAnonymizationKey& network_anonymization_key,
       DomainReliabilityUploader::UploadCallback callback) override {
     DVLOG(1) << "Uploading report to " << upload_url;
     DVLOG(2) << "Report JSON: " << report_json;
@@ -112,7 +112,20 @@ class DomainReliabilityUploaderImpl : public DomainReliabilityUploader,
               "to Google' in Chromium's settings under Privacy. On ChromeOS, "
               "the setting is named 'Automatically send diagnostic and usage "
               "data to Google'."
-            policy_exception_justification: "Not implemented."
+            chrome_policy {
+              subProto1 {
+                DomainReliabilityAllowed {
+                  policy_options {mode: MANDATORY}
+                  DomainReliabilityAllowed: false
+                }
+              }
+            }
+            chrome_policy {
+              MetricsReportingEnabled {
+                policy_options {mode: MANDATORY}
+                MetricsReportingEnabled: false
+              }
+            }
           })");
     std::unique_ptr<net::URLRequest> request =
         url_request_context_->CreateRequest(
@@ -122,8 +135,9 @@ class DomainReliabilityUploaderImpl : public DomainReliabilityUploader,
     request->set_allow_credentials(false);
     request->SetExtraRequestHeaderByName(net::HttpRequestHeaders::kContentType,
                                          kJsonMimeType, true /* overwrite */);
-    request->set_isolation_info(net::IsolationInfo::CreatePartial(
-        net::IsolationInfo::RequestType::kOther, network_isolation_key));
+    request->set_isolation_info_from_network_anonymization_key(
+        network_anonymization_key);
+    request->SetLoadFlags(request->load_flags() | net::LOAD_DISABLE_CACHE);
     std::vector<char> report_data(report_json.begin(), report_json.end());
     auto upload_reader =
         std::make_unique<net::UploadOwnedBytesElementReader>(&report_data);

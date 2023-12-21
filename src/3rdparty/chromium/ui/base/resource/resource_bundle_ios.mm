@@ -1,4 +1,4 @@
-// Copyright 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -131,13 +131,10 @@ gfx::Image& ResourceBundle::GetNativeImageNamed(int resource_id) {
       base::ScopedCFTypeRef<CGColorSpaceRef> color_space(
           CGColorSpaceCreateDeviceRGB());
       base::ScopedCFTypeRef<CGContextRef> context(CGBitmapContextCreate(
-          NULL,
-          target_size.width,
-          target_size.height,
-          8,
-          target_size.width * 4,
+          NULL, target_size.width, target_size.height, 8, target_size.width * 4,
           color_space,
-          kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Host));
+          kCGImageAlphaPremultipliedFirst |
+              static_cast<CGImageAlphaInfo>(kCGBitmapByteOrder32Host)));
 
       CGRect target_rect = CGRectMake(0, 0,
                                       target_size.width, target_size.height);

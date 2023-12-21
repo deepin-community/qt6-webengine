@@ -33,6 +33,7 @@
 
 #include "third_party/blink/public/platform/web_common.h"
 #include "third_party/blink/public/platform/web_string.h"
+#include "third_party/blink/public/platform/web_vector.h"
 #include "v8/include/v8-isolate.h"
 
 namespace mojo {
@@ -121,16 +122,19 @@ BLINK_EXPORT void ForceNextDrawingBufferCreationToFailForTest();
 // agents, not both.
 // This is called at most once. This is called earlier than any frame commit.
 BLINK_EXPORT void SetIsCrossOriginIsolated(bool value);
-BLINK_EXPORT bool IsCrossOriginIsolated();
 
-// Direct sockets require isolation above and beyond what "cross-origin
-// isolation" provides. This flag corresponds to that set of restrictions.
+// Set whether this renderer process is allowed to use Isolated Context APIs.
 // Similarly to the `SetIsCrossOriginIsolated()` method above, this flag is
 // process global, and called at most once, prior to committing a frame.
 //
 // TODO(mkwst): We need a specification for this restriction.
-BLINK_EXPORT void SetIsDirectSocketEnabled(bool value);
-BLINK_EXPORT bool IsDirectSocketEnabled();
+BLINK_EXPORT void SetIsIsolatedContext(bool value);
+
+// Set a list of CORS exempt headers. This list is used for fetching resources
+// from frames.
+BLINK_EXPORT void SetCorsExemptHeaderList(
+    const WebVector<WebString>& web_cors_exempt_header_list);
+
 }  // namespace blink
 
 #endif  // THIRD_PARTY_BLINK_PUBLIC_WEB_BLINK_H_

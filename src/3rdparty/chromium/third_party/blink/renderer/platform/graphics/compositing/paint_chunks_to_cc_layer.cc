@@ -1,10 +1,9 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/platform/graphics/compositing/paint_chunks_to_cc_layer.h"
 
-#include "base/containers/adapters.h"
 #include "base/logging.h"
 #include "base/numerics/safe_conversions.h"
 #include "cc/input/layer_selection_bound.h"
@@ -31,20 +30,37 @@ namespace blink {
 
 namespace {
 
+// Adapts cc::PaintOpBuffer to provide cc::DisplayItemList API with empty
+// implementations.
+class PaintOpBufferExt : public cc::PaintOpBuffer {
+ public:
+  void StartPaint() {}
+  void EndPaintOfUnpaired(const gfx::Rect&) {}
+  void EndPaintOfPairedBegin() {}
+  void EndPaintOfPairedEnd() {}
+  template <typename T, typename... Args>
+  size_t push(Args&&... args) {
+    size_t offset = next_op_offset();
+    PaintOpBuffer::push<T>(std::forward<Args>(args)...);
+    return offset;
+  }
+};
+
+template <typename Result>
 class ConversionContext {
   STACK_ALLOCATED();
 
  public:
   ConversionContext(const PropertyTreeState& layer_state,
                     const gfx::Vector2dF& layer_offset,
-                    cc::DisplayItemList& cc_list)
+                    Result& result)
       : layer_state_(layer_state),
         layer_offset_(layer_offset),
         current_transform_(&layer_state.Transform()),
         current_clip_(&layer_state.Clip()),
         current_effect_(&layer_state.Effect()),
         chunk_to_layer_mapper_(layer_state_, layer_offset_),
-        cc_list_(cc_list) {}
+        result_(result) {}
   ~ConversionContext();
 
   // The main function of this class. It converts a list of paint chunks into
@@ -93,7 +109,8 @@ class ConversionContext {
   // At last, close all pushed states to balance pairs (this happens when the
   // context object is destructed):
   //   Output: End_C4 End_C3 End_C2 End_C1
-  void Convert(const PaintChunkSubset&);
+  void Convert(const PaintChunkSubset&,
+               const gfx::Rect* additional_cull_rect = nullptr);
 
  private:
   // Adjust the translation of the whole display list relative to layer offset.
@@ -144,27 +161,26 @@ class ConversionContext {
   void ApplyTransform(const TransformPaintPropertyNode& target_transform) {
     if (&target_transform == current_transform_)
       return;
-    const auto& translation_2d_or_matrix =
-        GetTranslation2DOrMatrix(target_transform);
-    if (translation_2d_or_matrix.IsIdentityOr2DTranslation()) {
-      const auto& translation = translation_2d_or_matrix.Translation2D();
+    gfx::Transform projection = TargetToCurrentProjection(target_transform);
+    if (projection.IsIdentityOr2dTranslation()) {
+      gfx::Vector2dF translation = projection.To2dTranslation();
       if (!translation.IsZero())
-        cc_list_.push<cc::TranslateOp>(translation.x(), translation.y());
+        push<cc::TranslateOp>(translation.x(), translation.y());
     } else {
-      cc_list_.push<cc::ConcatOp>(translation_2d_or_matrix.ToSkM44());
+      push<cc::ConcatOp>(gfx::TransformToSkM44(projection));
     }
   }
 
-  GeometryMapper::Translation2DOrMatrix GetTranslation2DOrMatrix(
+  gfx::Transform TargetToCurrentProjection(
       const TransformPaintPropertyNode& target_transform) const {
     return GeometryMapper::SourceToDestinationProjection(target_transform,
                                                          *current_transform_);
   }
 
   void AppendRestore() {
-    cc_list_.StartPaint();
-    cc_list_.push<cc::RestoreOp>();
-    cc_list_.EndPaintOfPairedEnd();
+    result_.StartPaint();
+    push<cc::RestoreOp>();
+    result_.EndPaintOfPairedEnd();
   }
 
   // Starts an effect state by adjusting clip and transform state, applying
@@ -188,6 +204,11 @@ class ConversionContext {
   // or the stack is empty.
   void EndClips();
 
+  template <typename T, typename... Args>
+  size_t push(Args&&... args) {
+    return result_.template push<T>(std::forward<Args>(args)...);
+  }
+
   // State stack.
   // The size of the stack is the number of nested paired items that are
   // currently nested. Note that this is a "restore stack", i.e. the top
@@ -196,27 +217,44 @@ class ConversionContext {
   struct StateEntry {
     // Remembers the type of paired begin that caused a state to be saved.
     // This is for checking integrity of the algorithm.
-    enum PairedType { kClip, kEffect } type;
+    enum PairedType { kClip, kClipOmitted, kEffect };
+    explicit StateEntry(PairedType type,
+                        const TransformPaintPropertyNode* transform,
+                        const ClipPaintPropertyNode* clip,
+                        const EffectPaintPropertyNode* effect,
+                        const TransformPaintPropertyNode* previous_transform)
+        : transform(transform),
+          clip(clip),
+          effect(effect),
+          previous_transform(previous_transform),
+          type_(type) {}
+
+    bool IsClip() const { return type_ != kEffect; }
+    bool IsEffect() const { return type_ == kEffect; }
+    bool NeedsRestore() const { return type_ != kClipOmitted; }
 
     // These fields are neve nullptr.
     const TransformPaintPropertyNode* transform;
     const ClipPaintPropertyNode* clip;
     const EffectPaintPropertyNode* effect;
-    // See ConversionContext::previous_transform_.
+    // See ConversionContext<Result>::previous_transform_.
     const TransformPaintPropertyNode* previous_transform;
 #if DCHECK_IS_ON()
     bool has_pre_cap_effect_hierarchy_issue = false;
 #endif
+
+   private:
+    PairedType type_;
   };
-  void PushState(StateEntry::PairedType);
+  void PushState(typename StateEntry::PairedType);
   void PopState();
   Vector<StateEntry> state_stack_;
 
   const PropertyTreeState& layer_state_;
-  gfx::Vector2dF layer_offset_;
+  const gfx::Vector2dF layer_offset_;
   bool translated_for_layer_offset_ = false;
 
-  // These fields are neve nullptr.
+  // These fields are never nullptr.
   const TransformPaintPropertyNode* current_transform_;
   const ClipPaintPropertyNode* current_clip_;
   const EffectPaintPropertyNode* current_effect_;
@@ -250,13 +288,14 @@ class ConversionContext {
 
   ChunkToLayerMapper chunk_to_layer_mapper_;
 
-  cc::DisplayItemList& cc_list_;
+  Result& result_;
 };
 
-ConversionContext::~ConversionContext() {
+template <typename Result>
+ConversionContext<Result>::~ConversionContext() {
   // End all states.
   while (state_stack_.size()) {
-    if (state_stack_.back().type == StateEntry::kEffect)
+    if (state_stack_.back().IsEffect())
       EndEffect();
     else
       EndClip();
@@ -266,18 +305,20 @@ ConversionContext::~ConversionContext() {
     AppendRestore();
 }
 
-void ConversionContext::TranslateForLayerOffsetOnce() {
+template <typename Result>
+void ConversionContext<Result>::TranslateForLayerOffsetOnce() {
   if (translated_for_layer_offset_ || layer_offset_ == gfx::Vector2dF())
     return;
 
-  cc_list_.StartPaint();
-  cc_list_.push<cc::SaveOp>();
-  cc_list_.push<cc::TranslateOp>(-layer_offset_.x(), -layer_offset_.y());
-  cc_list_.EndPaintOfPairedBegin();
+  result_.StartPaint();
+  push<cc::SaveOp>();
+  push<cc::TranslateOp>(-layer_offset_.x(), -layer_offset_.y());
+  result_.EndPaintOfPairedBegin();
   translated_for_layer_offset_ = true;
 }
 
-void ConversionContext::SwitchToChunkState(const PaintChunk& chunk) {
+template <typename Result>
+void ConversionContext<Result>::SwitchToChunkState(const PaintChunk& chunk) {
   TranslateForLayerOffsetOnce();
   chunk_to_layer_mapper_.SwitchToChunk(chunk);
 
@@ -291,6 +332,9 @@ void ConversionContext::SwitchToChunkState(const PaintChunk& chunk) {
 // Returns whether the clip has been combined.
 static bool CombineClip(const ClipPaintPropertyNode& clip,
                         FloatRoundedRect& combined_clip_rect) {
+  if (clip.PixelMovingFilter())
+    return true;
+
   // Don't combine into a clip with clip path.
   DCHECK(clip.Parent());
   if (clip.UnaliasedParent()->ClipPath())
@@ -331,7 +375,9 @@ static bool CombineClip(const ClipPaintPropertyNode& clip,
   return true;
 }
 
-void ConversionContext::SwitchToClip(const ClipPaintPropertyNode& target_clip) {
+template <typename Result>
+void ConversionContext<Result>::SwitchToClip(
+    const ClipPaintPropertyNode& target_clip) {
   if (&target_clip == current_clip_)
     return;
 
@@ -339,7 +385,7 @@ void ConversionContext::SwitchToClip(const ClipPaintPropertyNode& target_clip) {
   const auto* lca_clip =
       &target_clip.LowestCommonAncestor(*current_clip_).Unalias();
   while (current_clip_ != lca_clip) {
-    if (!state_stack_.size() || state_stack_.back().type != StateEntry::kClip) {
+    if (!state_stack_.size() || !state_stack_.back().IsClip()) {
       // TODO(crbug.com/803649): We still have clip hierarchy issues with
       // fragment clips. See crbug.com/1240080 for the test case. Will change
       // the above condition to DCHECK after LayoutNGBlockFragmentation is fully
@@ -400,34 +446,38 @@ void ConversionContext::SwitchToClip(const ClipPaintPropertyNode& target_clip) {
   DCHECK_EQ(current_clip_, &target_clip);
 }
 
-void ConversionContext::StartClip(
+template <typename Result>
+void ConversionContext<Result>::StartClip(
     const FloatRoundedRect& combined_clip_rect,
     const ClipPaintPropertyNode& lowest_combined_clip_node) {
-  DCHECK_EQ(&lowest_combined_clip_node, &lowest_combined_clip_node);
-  const auto& local_transform =
-      lowest_combined_clip_node.LocalTransformSpace().Unalias();
-  if (&local_transform != current_transform_)
-    EndTransform();
-  cc_list_.StartPaint();
-  cc_list_.push<cc::SaveOp>();
-  ApplyTransform(local_transform);
-  const bool antialias = true;
-  if (combined_clip_rect.IsRounded()) {
-    cc_list_.push<cc::ClipRRectOp>(SkRRect(combined_clip_rect),
-                                   SkClipOp::kIntersect, antialias);
+  if (combined_clip_rect.Rect() == gfx::RectF(LayoutRect::InfiniteIntRect())) {
+    PushState(StateEntry::kClipOmitted);
   } else {
-    cc_list_.push<cc::ClipRectOp>(gfx::RectFToSkRect(combined_clip_rect.Rect()),
-                                  SkClipOp::kIntersect, antialias);
-  }
-  if (const auto* clip_path = lowest_combined_clip_node.ClipPath()) {
-    cc_list_.push<cc::ClipPathOp>(clip_path->GetSkPath(), SkClipOp::kIntersect,
-                                  antialias);
-  }
-  cc_list_.EndPaintOfPairedBegin();
+    const auto& local_transform =
+        lowest_combined_clip_node.LocalTransformSpace().Unalias();
+    if (&local_transform != current_transform_)
+      EndTransform();
+    result_.StartPaint();
+    push<cc::SaveOp>();
+    ApplyTransform(local_transform);
+    const bool antialias = true;
+    if (combined_clip_rect.IsRounded()) {
+      push<cc::ClipRRectOp>(SkRRect(combined_clip_rect), SkClipOp::kIntersect,
+                            antialias);
+    } else {
+      push<cc::ClipRectOp>(gfx::RectFToSkRect(combined_clip_rect.Rect()),
+                           SkClipOp::kIntersect, antialias);
+    }
+    if (const auto& clip_path = lowest_combined_clip_node.ClipPath()) {
+      push<cc::ClipPathOp>(clip_path->GetSkPath(), SkClipOp::kIntersect,
+                           antialias);
+    }
+    result_.EndPaintOfPairedBegin();
 
-  PushState(StateEntry::kClip);
+    PushState(StateEntry::kClip);
+    current_transform_ = &local_transform;
+  }
   current_clip_ = &lowest_combined_clip_node;
-  current_transform_ = &local_transform;
 }
 
 bool HasRealEffects(const EffectPaintPropertyNode& current,
@@ -440,7 +490,8 @@ bool HasRealEffects(const EffectPaintPropertyNode& current,
   return false;
 }
 
-void ConversionContext::SwitchToEffect(
+template <typename Result>
+void ConversionContext<Result>::SwitchToEffect(
     const EffectPaintPropertyNode& target_effect) {
   if (&target_effect == current_effect_)
     return;
@@ -507,7 +558,9 @@ void ConversionContext::SwitchToEffect(
   }
 }
 
-void ConversionContext::StartEffect(const EffectPaintPropertyNode& effect) {
+template <typename Result>
+void ConversionContext<Result>::StartEffect(
+    const EffectPaintPropertyNode& effect) {
   // Before each effect can be applied, we must enter its output clip first,
   // or exit all clips if it doesn't have one.
   if (effect.OutputClip())
@@ -526,28 +579,27 @@ void ConversionContext::StartEffect(const EffectPaintPropertyNode& effect) {
   // around all of the effects.
   SwitchToTransform(effect.LocalTransformSpace().Unalias());
 
-  // We always create separate effect nodes for normal effects and filter
-  // effects, so we can handle them separately.
   bool has_filter = !effect.Filter().IsEmpty();
   bool has_opacity = effect.Opacity() != 1.f;
+  // TODO(crbug.com/1334293): Normally backdrop filters should be composited and
+  // effect.BackdropFilter() should be null, but compositing can be disabled in
+  // rare cases such as PaintPreview. For now non-composited backdrop filters
+  // are not supported and are ignored.
   bool has_other_effects = effect.BlendMode() != SkBlendMode::kSrcOver;
+  // We always create separate effect nodes for normal effects and filter
+  // effects, so we can handle them separately.
   DCHECK(!has_filter || !(has_opacity || has_other_effects));
-  // We always composite backdrop filters.
-  DCHECK(!effect.BackdropFilter());
 
   // Apply effects.
-  cc_list_.StartPaint();
+  result_.StartPaint();
   if (!has_filter) {
-    // TODO(ajuma): This should really be rounding instead of flooring the
-    // alpha value, but that breaks slimming paint reftests.
-    auto alpha = base::ClampFloor<uint8_t>(255 * effect.Opacity());
     if (has_other_effects) {
       cc::PaintFlags flags;
       flags.setBlendMode(effect.BlendMode());
-      flags.setAlpha(alpha);
-      save_layer_id = cc_list_.push<cc::SaveLayerOp>(nullptr, &flags);
+      flags.setAlphaf(effect.Opacity());
+      save_layer_id = push<cc::SaveLayerOp>(flags);
     } else {
-      save_layer_id = cc_list_.push<cc::SaveLayerAlphaOp>(nullptr, alpha);
+      save_layer_id = push<cc::SaveLayerAlphaOp>(effect.Opacity());
     }
   } else {
     // Handle filter effect.
@@ -557,9 +609,9 @@ void ConversionContext::StartEffect(const EffectPaintPropertyNode& effect) {
     cc::PaintFlags filter_flags;
     filter_flags.setImageFilter(cc::RenderSurfaceFilters::BuildImageFilter(
         effect.Filter().AsCcFilterOperations(), empty));
-    save_layer_id = cc_list_.push<cc::SaveLayerOp>(nullptr, &filter_flags);
+    save_layer_id = push<cc::SaveLayerOp>(filter_flags);
   }
-  cc_list_.EndPaintOfPairedBegin();
+  result_.EndPaintOfPairedBegin();
 
   DCHECK_NE(save_layer_id, kNotFound);
 
@@ -582,16 +634,17 @@ void ConversionContext::StartEffect(const EffectPaintPropertyNode& effect) {
     effect_bounds_stack_.back().bounds = filtered_bounds;
     // Emit an empty paint operation to add the filtered bounds (mapped to layer
     // space) to the visual rect of the filter's SaveLayerOp.
-    cc_list_.StartPaint();
-    cc_list_.EndPaintOfUnpaired(chunk_to_layer_mapper_.MapVisualRect(
+    result_.StartPaint();
+    result_.EndPaintOfUnpaired(chunk_to_layer_mapper_.MapVisualRect(
         gfx::ToEnclosingRect(filtered_bounds)));
   }
 }
 
-void ConversionContext::UpdateEffectBounds(
+template <typename Result>
+void ConversionContext<Result>::UpdateEffectBounds(
     const gfx::RectF& bounds,
     const TransformPaintPropertyNode& transform) {
-  if (effect_bounds_stack_.IsEmpty() || bounds.IsEmpty())
+  if (effect_bounds_stack_.empty() || bounds.IsEmpty())
     return;
 
   auto& effect_bounds_info = effect_bounds_stack_.back();
@@ -601,10 +654,11 @@ void ConversionContext::UpdateEffectBounds(
   effect_bounds_info.bounds.Union(mapped_bounds);
 }
 
-void ConversionContext::EndEffect() {
+template <typename Result>
+void ConversionContext<Result>::EndEffect() {
 #if DCHECK_IS_ON()
   const auto& previous_state = state_stack_.back();
-  DCHECK_EQ(previous_state.type, StateEntry::kEffect);
+  DCHECK(previous_state.IsEffect());
   if (!previous_state.has_pre_cap_effect_hierarchy_issue)
     DCHECK_EQ(current_effect_->UnaliasedParent(), previous_state.effect);
   DCHECK_EQ(current_clip_, previous_state.clip);
@@ -615,14 +669,14 @@ void ConversionContext::EndEffect() {
   gfx::RectF bounds = bounds_info.bounds;
   if (current_effect_->Filter().IsEmpty()) {
     if (!bounds.IsEmpty()) {
-      cc_list_.UpdateSaveLayerBounds(bounds_info.save_layer_id,
-                                     gfx::RectFToSkRect(bounds));
+      result_.UpdateSaveLayerBounds(bounds_info.save_layer_id,
+                                    gfx::RectFToSkRect(bounds));
     }
   } else {
     // We need an empty bounds for empty filter to avoid performance issue of
     // PDF renderer. See crbug.com/740824.
-    cc_list_.UpdateSaveLayerBounds(bounds_info.save_layer_id,
-                                   gfx::RectFToSkRect(bounds));
+    result_.UpdateSaveLayerBounds(bounds_info.save_layer_id,
+                                  gfx::RectFToSkRect(bounds));
     // We need to propagate the filtered bounds to the parent.
     bounds = current_effect_->MapRect(bounds);
   }
@@ -634,29 +688,35 @@ void ConversionContext::EndEffect() {
   PopState();
 }
 
-void ConversionContext::EndClips() {
-  while (state_stack_.size() && state_stack_.back().type == StateEntry::kClip)
+template <typename Result>
+void ConversionContext<Result>::EndClips() {
+  while (state_stack_.size() && state_stack_.back().IsClip())
     EndClip();
 }
 
-void ConversionContext::EndClip() {
-  DCHECK_EQ(state_stack_.back().type, StateEntry::kClip);
+template <typename Result>
+void ConversionContext<Result>::EndClip() {
+  DCHECK(state_stack_.back().IsClip());
   DCHECK_EQ(state_stack_.back().effect, current_effect_);
   EndTransform();
   PopState();
 }
 
-void ConversionContext::PushState(StateEntry::PairedType type) {
-  state_stack_.emplace_back(StateEntry{type, current_transform_, current_clip_,
-                                       current_effect_, previous_transform_});
+template <typename Result>
+void ConversionContext<Result>::PushState(
+    typename StateEntry::PairedType type) {
+  state_stack_.emplace_back(type, current_transform_, current_clip_,
+                            current_effect_, previous_transform_);
   previous_transform_ = nullptr;
 }
 
-void ConversionContext::PopState() {
+template <typename Result>
+void ConversionContext<Result>::PopState() {
   DCHECK_EQ(nullptr, previous_transform_);
 
   const auto& previous_state = state_stack_.back();
-  AppendRestore();
+  if (previous_state.NeedsRestore())
+    AppendRestore();
   current_transform_ = previous_state.transform;
   previous_transform_ = previous_state.previous_transform;
   current_clip_ = previous_state.clip;
@@ -664,7 +724,8 @@ void ConversionContext::PopState() {
   state_stack_.pop_back();
 }
 
-void ConversionContext::SwitchToTransform(
+template <typename Result>
+void ConversionContext<Result>::SwitchToTransform(
     const TransformPaintPropertyNode& target_transform) {
   if (&target_transform == current_transform_)
     return;
@@ -673,36 +734,38 @@ void ConversionContext::SwitchToTransform(
   if (&target_transform == current_transform_)
     return;
 
-  const auto& translation_2d_or_matrix =
-      GetTranslation2DOrMatrix(target_transform);
-  if (translation_2d_or_matrix.IsIdentity())
+  gfx::Transform projection = TargetToCurrentProjection(target_transform);
+  if (projection.IsIdentity())
     return;
 
-  cc_list_.StartPaint();
-  cc_list_.push<cc::SaveOp>();
-  if (translation_2d_or_matrix.IsIdentityOr2DTranslation()) {
-    const auto& translation = translation_2d_or_matrix.Translation2D();
-    cc_list_.push<cc::TranslateOp>(translation.x(), translation.y());
+  result_.StartPaint();
+  push<cc::SaveOp>();
+  if (projection.IsIdentityOr2dTranslation()) {
+    gfx::Vector2dF translation = projection.To2dTranslation();
+    push<cc::TranslateOp>(translation.x(), translation.y());
   } else {
-    cc_list_.push<cc::ConcatOp>(translation_2d_or_matrix.ToSkM44());
+    push<cc::ConcatOp>(gfx::TransformToSkM44(projection));
   }
-  cc_list_.EndPaintOfPairedBegin();
+  result_.EndPaintOfPairedBegin();
   previous_transform_ = current_transform_;
   current_transform_ = &target_transform;
 }
 
-void ConversionContext::EndTransform() {
+template <typename Result>
+void ConversionContext<Result>::EndTransform() {
   if (!previous_transform_)
     return;
 
-  cc_list_.StartPaint();
-  cc_list_.push<cc::RestoreOp>();
-  cc_list_.EndPaintOfPairedEnd();
+  result_.StartPaint();
+  push<cc::RestoreOp>();
+  result_.EndPaintOfPairedEnd();
   current_transform_ = previous_transform_;
   previous_transform_ = nullptr;
 }
 
-void ConversionContext::Convert(const PaintChunkSubset& chunks) {
+template <typename Result>
+void ConversionContext<Result>::Convert(const PaintChunkSubset& chunks,
+                                        const gfx::Rect* additional_cull_rect) {
   for (auto it = chunks.begin(); it != chunks.end(); ++it) {
     const auto& chunk = *it;
     if (chunk.effectively_invisible)
@@ -711,7 +774,7 @@ void ConversionContext::Convert(const PaintChunkSubset& chunks) {
     bool switched_to_chunk_state = false;
 
     for (const auto& item : it.DisplayItems()) {
-      sk_sp<const PaintRecord> record;
+      PaintRecord record;
       if (auto* scrollbar = DynamicTo<ScrollbarDisplayItem>(item))
         record = scrollbar->Paint();
       else if (auto* drawing = DynamicTo<DrawingDisplayItem>(item))
@@ -724,8 +787,23 @@ void ConversionContext::Convert(const PaintChunkSubset& chunks) {
       // might be for a mask with empty content which should make the masked
       // content fully invisible. We need to "draw" this record to ensure that
       // the effect has correct visual rect.
-      if ((!record || record->size() == 0) &&
-          &chunk_state.Effect() == &EffectPaintPropertyNode::Root()) {
+      bool can_ignore_record =
+          &chunk_state.Effect() == &EffectPaintPropertyNode::Root();
+      if (record.empty() && can_ignore_record) {
+        continue;
+      }
+
+      // `SwitchToChunkState` will also update `chunk_to_layer_mapper_`'s chunk
+      // but we need to explicitly switch the state ahead of time to ensure the
+      // call to `chunk_to_layer_mapper_.MapVisualRect` uses the correct state.
+      if (!switched_to_chunk_state) {
+        chunk_to_layer_mapper_.SwitchToChunk(chunk);
+      }
+
+      gfx::Rect visual_rect =
+          chunk_to_layer_mapper_.MapVisualRect(item.VisualRect());
+      if (additional_cull_rect && can_ignore_record &&
+          !additional_cull_rect->Intersects(visual_rect)) {
         continue;
       }
 
@@ -734,11 +812,11 @@ void ConversionContext::Convert(const PaintChunkSubset& chunks) {
         switched_to_chunk_state = true;
       }
 
-      cc_list_.StartPaint();
-      if (record && record->size() != 0)
-        cc_list_.push<cc::DrawRecordOp>(std::move(record));
-      cc_list_.EndPaintOfUnpaired(
-          chunk_to_layer_mapper_.MapVisualRect(item.VisualRect()));
+      result_.StartPaint();
+      if (!record.empty()) {
+        push<cc::DrawRecordOp>(std::move(record));
+      }
+      result_.EndPaintOfUnpaired(visual_rect);
     }
 
     // If we have an empty paint chunk, then we would prefer ignoring it.
@@ -757,92 +835,41 @@ void ConversionContext::Convert(const PaintChunkSubset& chunks) {
 
 }  // unnamed namespace
 
-void PaintChunksToCcLayer::ConvertInto(const PaintChunkSubset& chunks,
-                                       const PropertyTreeState& layer_state,
-                                       const gfx::Vector2dF& layer_offset,
-                                       cc::DisplayItemList& cc_list) {
-  ConversionContext(layer_state, layer_offset, cc_list).Convert(chunks);
-}
-
-scoped_refptr<cc::DisplayItemList> PaintChunksToCcLayer::Convert(
-    const PaintChunkSubset& paint_chunks,
+void PaintChunksToCcLayer::ConvertInto(
+    const PaintChunkSubset& chunks,
     const PropertyTreeState& layer_state,
     const gfx::Vector2dF& layer_offset,
-    cc::DisplayItemList::UsageHint hint,
-    RasterUnderInvalidationCheckingParams* under_invalidation_checking_params) {
-  auto cc_list = base::MakeRefCounted<cc::DisplayItemList>(hint);
-  ConvertInto(paint_chunks, layer_state, layer_offset, *cc_list);
-
+    RasterUnderInvalidationCheckingParams* under_invalidation_checking_params,
+    cc::DisplayItemList& cc_list) {
+  ConversionContext(layer_state, layer_offset, cc_list).Convert(chunks);
   if (under_invalidation_checking_params) {
     auto& params = *under_invalidation_checking_params;
     PaintRecorder recorder;
-    recorder.beginRecording(gfx::RectToSkRect(params.interest_rect));
+    recorder.beginRecording();
     // Create a complete cloned list for under-invalidation checking. We can't
     // use cc_list because it is not finalized yet.
-    auto list_clone = base::MakeRefCounted<cc::DisplayItemList>(
-        cc::DisplayItemList::kToBeReleasedAsPaintOpBuffer);
-    ConvertInto(paint_chunks, layer_state, layer_offset, *list_clone);
-    recorder.getRecordingCanvas()->drawPicture(list_clone->ReleaseAsRecord());
+    PaintOpBufferExt buffer;
+    ConversionContext(layer_state, layer_offset, buffer).Convert(chunks);
+    recorder.getRecordingCanvas()->drawPicture(buffer.ReleaseAsRecord());
     params.tracking.CheckUnderInvalidations(params.debug_name,
                                             recorder.finishRecordingAsPicture(),
                                             params.interest_rect);
-    if (auto record = params.tracking.UnderInvalidationRecord()) {
-      cc_list->StartPaint();
-      cc_list->push<cc::DrawRecordOp>(std::move(record));
-      cc_list->EndPaintOfUnpaired(params.interest_rect);
+    auto under_invalidation_record = params.tracking.UnderInvalidationRecord();
+    if (!under_invalidation_record.empty()) {
+      cc_list.StartPaint();
+      cc_list.push<cc::DrawRecordOp>(std::move(under_invalidation_record));
+      cc_list.EndPaintOfUnpaired(params.interest_rect);
     }
   }
-
-  cc_list->Finalize();
-  return cc_list;
 }
 
-// The heuristic for picking a checkerboarding color works as follows:
-//   - During paint, PaintChunker will look for background color display items,
-//     and record the blending of background colors if the background is larger
-//     than a ratio of the chunk bounds.
-//   - After layer allocation, the paint chunks assigned to a layer are
-//     examined for a background color annotation.
-//   - The blending of background colors of chunks having background larger than
-//     a ratio of the layer is set as the layer's background color.
-//   - If the above color exists, it's also used as the safe opaque background
-//     color. Otherwise the color of the largest background is used, without the
-//     size requirement, as safe opaque background color should always get a
-//     value if possible.
-static void UpdateBackgroundColor(cc::Layer& layer,
-                                  const EffectPaintPropertyNode& layer_effect,
-                                  const PaintChunkSubset& paint_chunks) {
-  Vector<Color, 4> background_colors;
-  float min_background_area = kMinBackgroundColorCoverageRatio *
-                              layer.bounds().width() * layer.bounds().height();
-  for (auto it = paint_chunks.end(); it != paint_chunks.begin();) {
-    const auto& chunk = *(--it);
-    if (chunk.background_color == Color::kTransparent)
-      continue;
-    if (chunk.background_color_area >= min_background_area) {
-      Color chunk_background_color = chunk.background_color;
-      const auto& chunk_effect = chunk.properties.Effect().Unalias();
-      if (&chunk_effect != &layer_effect) {
-        if (chunk_effect.UnaliasedParent() != &layer_effect ||
-            !chunk_effect.IsOpacityOnly()) {
-          continue;
-        }
-        chunk_background_color =
-            chunk_background_color.CombineWithAlpha(chunk_effect.Opacity());
-      }
-      background_colors.push_back(chunk_background_color);
-      if (!chunk_background_color.HasAlpha()) {
-        // If this color is opaque, blending it with subsequent colors will have
-        // no effect.
-        break;
-      }
-    }
-  }
-
-  Color background_color;
-  for (Color color : base::Reversed(background_colors))
-    background_color = background_color.Blend(color);
-  layer.SetBackgroundColor(background_color.Rgb());
+PaintRecord PaintChunksToCcLayer::Convert(const PaintChunkSubset& chunks,
+                                          const PropertyTreeState& layer_state,
+                                          const gfx::Rect* cull_rect) {
+  PaintOpBufferExt buffer;
+  ConversionContext(layer_state, gfx::Vector2dF(), buffer)
+      .Convert(chunks, cull_rect);
+  return buffer.ReleaseAsRecord();
 }
 
 static void UpdateTouchActionRegion(
@@ -1013,15 +1040,19 @@ ConvertPaintedSelectionBoundToLayerSelectionBound(
   return layer_bound;
 }
 
-void PaintChunksToCcLayer::UpdateLayerSelection(
+bool PaintChunksToCcLayer::UpdateLayerSelection(
     cc::Layer& layer,
     const PropertyTreeState& layer_state,
     const PaintChunkSubset& chunks,
     cc::LayerSelection& layer_selection) {
   gfx::Vector2dF layer_offset = layer.offset_to_transform_parent();
+  bool any_selection_was_painted = false;
   for (const auto& chunk : chunks) {
     if (!chunk.layer_selection_data)
       continue;
+
+    any_selection_was_painted |=
+        chunk.layer_selection_data->any_selection_was_painted;
 
     auto chunk_state = chunk.properties.GetPropertyTreeState().Unalias();
     if (chunk.layer_selection_data->start) {
@@ -1040,13 +1071,14 @@ void PaintChunksToCcLayer::UpdateLayerSelection(
       layer_selection.end.layer_id = layer.id();
     }
   }
+
+  return any_selection_was_painted;
 }
 
 void PaintChunksToCcLayer::UpdateLayerProperties(
     cc::Layer& layer,
     const PropertyTreeState& layer_state,
     const PaintChunkSubset& chunks) {
-  UpdateBackgroundColor(layer, layer_state.Effect(), chunks);
   UpdateTouchActionWheelEventHandlerAndNonFastScrollableRegions(
       layer, layer_state, chunks);
   UpdateRegionCaptureData(layer, layer_state, chunks);

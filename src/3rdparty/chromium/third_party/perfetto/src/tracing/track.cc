@@ -100,8 +100,16 @@ protos::gen::TrackDescriptor CounterTrack::Serialize() const {
     counter->add_categories(category_);
   if (unit_ != perfetto::protos::pbzero::CounterDescriptor::UNIT_UNSPECIFIED)
     counter->set_unit(static_cast<protos::gen::CounterDescriptor_Unit>(unit_));
-  if (unit_name_)
-    counter->set_unit_name(unit_name_);
+  {
+    // if |type| is set, we don't want to emit |unit_name|. Trace processor
+    // infers the track name from the type in that case.
+    if (type_ !=
+        perfetto::protos::gen::CounterDescriptor::COUNTER_UNSPECIFIED) {
+      counter->set_type(type_);
+    } else if (unit_name_) {
+      counter->set_unit_name(unit_name_);
+    }
+  }
   if (unit_multiplier_ != 1)
     counter->set_unit_multiplier(unit_multiplier_);
   if (is_incremental_)
@@ -165,7 +173,7 @@ void TrackRegistry::InitializeInstance() {
   // framework), events emitted by each will be consistently interleaved on
   // common thread and process tracks.
   if (uint64_t start_time = GetProcessStartTime()) {
-    base::Hash hash;
+    base::Hasher hash;
     hash.Update(start_time);
     hash.Update(Platform::GetCurrentProcessId());
     Track::process_uuid = hash.digest();
@@ -176,8 +184,7 @@ void TrackRegistry::InitializeInstance() {
 }
 
 void TrackRegistry::ResetForTesting() {
-  delete instance_;
-  instance_ = nullptr;
+  instance_->tracks_.clear();
 }
 
 void TrackRegistry::UpdateTrack(Track track,

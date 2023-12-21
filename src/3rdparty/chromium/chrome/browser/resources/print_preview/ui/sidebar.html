@@ -39,7 +39,10 @@
     error="[[error]]" sheet-count="[[sheetCount_]]" state="[[state]]"
     settings="[[settings]]" managed="[[controlsManaged]]">
 </print-preview-header>
-<div id="container" show-bottom-shadow>
+<!-- TODO(dizhangg): Need negative tabindex so the container doesn't get
+         focused. Delete this comment when KeyboardFocusableScrollers is enabled
+         by default. -->
+<div id="container" show-bottom-shadow tabindex="-1">
   <print-preview-destination-settings id="destinationSettings"
       dark="[[inDarkMode]]" destination="{{destination}}"
       destination-state="{{destinationState}}"
@@ -48,7 +51,7 @@
       disabled="[[controlsDisabled_]]"
       available class="settings-section">
   </print-preview-destination-settings>
-<if expr="chromeos_ash or chromeos_lacros">
+<if expr="is_chromeos">
   <print-preview-pin-settings state="[[state]]" settings="[[settings]]"
       disabled="[[controlsDisabled_]]"
       hidden$="[[!settings.pin.available]]" class="settings-section">
@@ -121,7 +124,7 @@
         hidden$="[[!settings.vendorItems.available]]"
         class="settings-section">
     </print-preview-advanced-options-settings>
-<if expr="not chromeos_ash and not chromeos_lacros">
+<if expr="not is_chromeos">
     <print-preview-link-container destination="[[destination]]"
         app-kiosk-mode="[[isInAppKioskMode_]]"
         disabled="[[controlsDisabled_]]">

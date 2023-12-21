@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,14 +9,13 @@
 #include <string>
 #include <utility>
 
-#include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/run_loop.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/task_environment.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "storage/browser/blob/shareable_file_reference.h"
 #include "storage/browser/file_system/copy_or_move_file_validator.h"
 #include "storage/browser/file_system/external_mount_points.h"
@@ -24,8 +23,9 @@
 #include "storage/browser/file_system/file_system_context.h"
 #include "storage/browser/file_system/file_system_url.h"
 #include "storage/browser/file_system/isolated_context.h"
-#include "storage/browser/quota/quota_manager_proxy.h"
 #include "storage/browser/test/async_file_test_helper.h"
+#include "storage/browser/test/mock_quota_manager.h"
+#include "storage/browser/test/mock_quota_manager_proxy.h"
 #include "storage/browser/test/mock_special_storage_policy.h"
 #include "storage/browser/test/test_file_system_backend.h"
 #include "storage/browser/test/test_file_system_context.h"
@@ -71,8 +71,16 @@ class CopyOrMoveFileValidatorTestHelper {
     ASSERT_TRUE(base_.CreateUniqueTempDir());
     base::FilePath base_dir = base_.GetPath();
 
-    file_system_context_ = CreateFileSystemContextForTesting(
-        /*quota_manager_proxy=*/nullptr, base_dir);
+    quota_manager_ = base::MakeRefCounted<storage::MockQuotaManager>(
+        /*is_incognito=*/false, base_dir,
+        base::SingleThreadTaskRunner::GetCurrentDefault(),
+        base::MakeRefCounted<storage::MockSpecialStoragePolicy>());
+    quota_manager_proxy_ = base::MakeRefCounted<storage::MockQuotaManagerProxy>(
+        quota_manager_.get(),
+        base::SingleThreadTaskRunner::GetCurrentDefault());
+    // Prepare file system.
+    file_system_context_ = storage::CreateFileSystemContextForTesting(
+        quota_manager_proxy_.get(), base_dir);
 
     // Set up TestFileSystemBackend to require CopyOrMoveFileValidator.
     FileSystemBackend* test_file_system_backend =
@@ -84,8 +92,9 @@ class CopyOrMoveFileValidatorTestHelper {
     FileSystemBackend* src_file_system_backend =
         file_system_context_->GetFileSystemBackend(src_type_);
     src_file_system_backend->ResolveURL(
-        FileSystemURL::CreateForTest(blink::StorageKey(url::Origin(origin_)),
-                                     src_type_, base::FilePath()),
+        FileSystemURL::CreateForTest(
+            blink::StorageKey::CreateFirstParty(url::Origin(origin_)),
+            src_type_, base::FilePath()),
         OPEN_FILE_SYSTEM_CREATE_IF_NONEXISTENT, base::BindOnce(&ExpectOk));
     base::RunLoop().RunUntilIdle();
     ASSERT_EQ(base::File::FILE_OK, CreateDirectory(SourceURL("")));
@@ -148,13 +157,13 @@ class CopyOrMoveFileValidatorTestHelper {
  private:
   FileSystemURL SourceURL(const std::string& path) {
     return file_system_context_->CreateCrackedFileSystemURL(
-        blink::StorageKey(origin_), src_type_,
+        blink::StorageKey::CreateFirstParty(origin_), src_type_,
         base::FilePath().AppendASCII("src").AppendASCII(path));
   }
 
   FileSystemURL DestURL(const std::string& path) {
     return file_system_context_->CreateCrackedFileSystemURL(
-        blink::StorageKey(origin_), dest_type_,
+        blink::StorageKey::CreateFirstParty(origin_), dest_type_,
         base::FilePath().AppendASCII("dest").AppendASCII(path));
   }
 
@@ -187,6 +196,8 @@ class CopyOrMoveFileValidatorTestHelper {
   std::string dest_fsid_;
 
   base::test::TaskEnvironment task_environment_;
+  scoped_refptr<storage::MockQuotaManager> quota_manager_;
+  scoped_refptr<storage::MockQuotaManagerProxy> quota_manager_proxy_;
   scoped_refptr<FileSystemContext> file_system_context_;
 
   FileSystemURL copy_src_;
@@ -238,14 +249,14 @@ class TestCopyOrMoveFileValidatorFactory
 
     void StartPreWriteValidation(ResultCallback result_callback) override {
       // Post the result since a real validator must do work asynchronously.
-      base::ThreadTaskRunnerHandle::Get()->PostTask(
+      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
           FROM_HERE, base::BindOnce(std::move(result_callback), result_));
     }
 
     void StartPostWriteValidation(const base::FilePath& dest_platform_path,
                                   ResultCallback result_callback) override {
       // Post the result since a real validator must do work asynchronously.
-      base::ThreadTaskRunnerHandle::Get()->PostTask(
+      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
           FROM_HERE, base::BindOnce(std::move(result_callback), write_result_));
     }
 

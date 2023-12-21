@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,13 +6,14 @@
 
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/containers/cxx20_erase.h"
 #include "base/feature_list.h"
 #include "base/files/file_util.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/task/thread_pool.h"
 #include "content/browser/notifications/blink_notification_service_impl.h"
 #include "content/browser/notifications/notification_database.h"
@@ -24,11 +25,12 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_database_data.h"
 #include "content/public/browser/permission_controller.h"
-#include "content/public/browser/permission_type.h"
+#include "content/public/browser/permission_result.h"
 #include "content/public/browser/platform_notification_service.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/content_features.h"
 #include "third_party/blink/public/common/notifications/notification_resources.h"
+#include "third_party/blink/public/common/permissions/permission_utils.h"
 
 namespace content {
 namespace {
@@ -154,9 +156,8 @@ void PlatformNotificationContextImpl::Initialize() {
       &PlatformNotificationServiceProxy::RecordNotificationUkmEvent,
       service_proxy_->AsWeakPtr());
 
-  service->GetDisplayedNotifications(
-      base::BindOnce(&PlatformNotificationContextImpl::DidGetNotifications,
-                     this));
+  service->GetDisplayedNotifications(base::BindOnce(
+      &PlatformNotificationContextImpl::DidGetNotifications, this));
 }
 
 void PlatformNotificationContextImpl::DidGetNotifications(
@@ -282,13 +283,16 @@ void PlatformNotificationContextImpl::Shutdown() {
 
 void PlatformNotificationContextImpl::CreateService(
     RenderProcessHost* render_process_host,
-    const url::Origin& origin,
+    const blink::StorageKey& storage_key,
     const GURL& document_url,
+    const WeakDocumentPtr& weak_document_ptr,
+    RenderProcessHost::NotificationServiceCreatorType creator_type,
     mojo::PendingReceiver<blink::mojom::NotificationService> receiver) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   services_.push_back(std::make_unique<BlinkNotificationServiceImpl>(
       this, browser_context_, service_worker_context_, render_process_host,
-      origin, document_url, std::move(receiver)));
+      storage_key, document_url, weak_document_ptr, creator_type,
+      std::move(receiver)));
 }
 
 void PlatformNotificationContextImpl::RemoveService(
@@ -364,8 +368,11 @@ void PlatformNotificationContextImpl::CheckPermissionsAndDeleteBlocked(
 
   // Erase all valid origins so we're left with invalid ones.
   base::EraseIf(origins, [controller](const GURL& origin) {
-    auto permission = controller->GetPermissionStatusForOriginWithoutContext(
-        PermissionType::NOTIFICATIONS, url::Origin::Create(origin));
+    auto permission = controller
+                          ->GetPermissionResultForOriginWithoutContext(
+                              blink::PermissionType::NOTIFICATIONS,
+                              url::Origin::Create(origin))
+                          .status;
     return permission == blink::mojom::PermissionStatus::GRANTED;
   });
 

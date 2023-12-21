@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,17 +13,18 @@
 
 import '//resources/polymer/v3_0/iron-icon/iron-icon.js';
 import '//resources/polymer/v3_0/paper-styles/color.js';
-import '../../cr_elements/icons.m.js';
-import '../../cr_elements/shared_vars_css.m.js';
+import '//resources/cr_elements/icons.html.js';
+import '//resources/cr_elements/cr_shared_vars.css.js';
 
-import {html, PolymerElement} from '//resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+import {I18nMixin} from '//resources/cr_elements/i18n_mixin.js';
+import {WebUiListenerMixin} from '//resources/cr_elements/web_ui_listener_mixin.js';
+import {loadTimeData} from '//resources/js/load_time_data.js';
+import {PolymerElement} from '//resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
-import {I18nMixin} from '../../js/i18n_mixin.js';
-import {loadTimeData} from '../../js/load_time_data.m.js';
-import {WebUIListenerMixin} from '../../js/web_ui_listener_mixin.js';
+import {getTemplate} from './managed_footnote.html.js';
 
 const ManagedFootnoteElementBase =
-    I18nMixin(WebUIListenerMixin(PolymerElement));
+    I18nMixin(WebUiListenerMixin(PolymerElement));
 
 export class ManagedFootnoteElement extends ManagedFootnoteElementBase {
   static get is() {
@@ -31,7 +32,7 @@ export class ManagedFootnoteElement extends ManagedFootnoteElementBase {
   }
 
   static get template() {
-    return html`{__html_template__}`;
+    return getTemplate();
   }
 
   static get properties() {
@@ -55,7 +56,7 @@ export class ManagedFootnoteElement extends ManagedFootnoteElementBase {
       showDeviceInfo: {
         type: Boolean,
         value: false,
-      }
+      },
     };
   }
 
@@ -64,14 +65,14 @@ export class ManagedFootnoteElement extends ManagedFootnoteElementBase {
 
   override ready() {
     super.ready();
-    this.addWebUIListener('is-managed-changed', (managed: boolean) => {
+    this.addWebUiListener('is-managed-changed', (managed: boolean) => {
       loadTimeData.overrideValues({isManaged: managed});
       this.isManaged_ = managed;
     });
   }
 
   /** @return Message to display to the user. */
-  private getManagementString_(): string {
+  private getManagementString_(): TrustedHTML {
     // <if expr="chromeos_ash">
     if (this.showDeviceInfo) {
       return this.i18nAdvanced('deviceManagedByOrg');

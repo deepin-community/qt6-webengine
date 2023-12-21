@@ -8,7 +8,7 @@
   #infoContainer {
     bottom: 0;
     box-sizing: border-box;
-    margin-bottom: 58px;
+    margin-bottom: min(58px, calc(5px + 0.5 * (100vh - var(--view-min-size))));
     position: absolute;
     text-align: center;
     width: 100%;
@@ -56,6 +56,13 @@
     min-width: 210px;
   }
 
+  /* Tangible sync style details are found in go/tangible-sync-ui */
+  .tangible-sync-style cr-button {
+    --cr-button-height: 36px;
+    font-family: 'Google Sans', arial, sans-serif;
+    font-size: 0.75rem;
+  }
+
   #notNowButton {
     margin-top: 18px;
   }
@@ -64,6 +71,18 @@
     margin: 104px auto;
     margin-bottom: 48px;
     text-align: center;
+  }
+
+  .tangible-sync-style .title {
+    font-size: 2.25rem;
+    font-weight: 500;
+    line-height: 43px;
+    margin-bottom: 16px;
+  }
+
+  .tangible-sync-style .subtitle {
+    font-size: 1.25rem;
+    line-height: 24px;
   }
 
   @media (prefers-color-scheme: dark) {
@@ -76,36 +95,48 @@
       background-color: var(--google-grey-700);
     }
   }
+
+@media screen and ((max-width: 780px) or (max-height: 600px)) {
+  .tangible-sync-style .title {
+    font-size: 1.5rem;
+    line-height: 32px;
+  }
+
+  .tangible-sync-style .subtitle {
+    font-size: 0.94rem;
+  }
+}
 </style>
 
-<div id="leftBanner" class="banner"></div>
+<div id="leftBanner" class="banner" hidden="[[isTangibleSyncEnabled_]]"></div>
+<img id="tangible-sync-style-left-banner" hidden="[[!isTangibleSyncEnabled_]]">
 <div id="headerContainer"
     style$="--theme-frame-color:[[profileThemeInfo.themeFrameColor]];
             --theme-text-color:[[profileThemeInfo.themeFrameTextColor]];">
   <cr-icon-button id="backButton" iron-icon="cr:arrow-back"
       on-click="onBackClick_" aria-label$="[[getBackButtonAriaLabel_()]]"
-      disabled="[[loadSigninInProgess_]]">
+      disabled="[[profileCreationInProgress]]">
   </cr-icon-button>
   <div id="avatarContainer">
     <img class="avatar" alt="" src="[[profileThemeInfo.themeGenericAvatar]]">
   </div>
 </div>
-<div class="title-container">
-  <h2>$i18n{profileTypeChoiceTitle}</h2>
-  <h3>$i18n{profileTypeChoiceSubtitle}</h3>
+<div class$="title-container [[getTangibleSyncStyleClass_()]]">
+  <h1 class="title">$i18n{profileTypeChoiceTitle}</h1>
+  <div class="subtitle">$i18n{profileTypeChoiceSubtitle}</div>
 </div>
-<div id="actionContainer">
+<div id="actionContainer" class$="[[getTangibleSyncStyleClass_()]]">
   <cr-button id="signInButton" class="action-button" on-click="onSignInClick_"
-      disabled="[[loadSigninInProgess_]]">
+      disabled="[[profileCreationInProgress]]">
     $i18n{signInButtonLabel}
   </cr-button>
   <cr-button id="notNowButton" on-click="onNotNowClick_"
-      hidden="[[!localProfileCreationFlowSupported_]]"
-      disabled="[[loadSigninInProgess_]]">
+      disabled="[[profileCreationInProgress]]">
     $i18n{notNowButtonLabel}
   </cr-button>
 </div>
-<div id="rightBanner" class="banner"></div>
+<div id="rightBanner" class="banner" hidden="[[isTangibleSyncEnabled_]]"></div>
+<img id="tangible-sync-style-right-banner" hidden="[[!isTangibleSyncEnabled_]]">
 
 <template is="dom-if" if="[[managedDeviceDisclaimer_]]">
   <div id="infoContainer">

@@ -1,17 +1,19 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "content/browser/worker_host/worker_script_loader.h"
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "content/browser/loader/navigation_loader_interceptor.h"
 #include "content/browser/service_worker/service_worker_main_resource_handle.h"
 #include "content/browser/service_worker/service_worker_main_resource_loader_interceptor.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "net/url_request/redirect_util.h"
+#include "services/network/public/cpp/record_ontransfersizeupdate_utils.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
+#include "services/network/public/cpp/url_loader_completion_status.h"
 #include "services/network/public/mojom/early_hints.mojom.h"
 
 namespace content {
@@ -232,9 +234,11 @@ void WorkerScriptLoader::OnReceiveEarlyHints(
 
 void WorkerScriptLoader::OnReceiveResponse(
     network::mojom::URLResponseHeadPtr response_head,
-    mojo::ScopedDataPipeConsumerHandle body) {
+    mojo::ScopedDataPipeConsumerHandle body,
+    absl::optional<mojo_base::BigBuffer> cached_metadata) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  client_->OnReceiveResponse(std::move(response_head), std::move(body));
+  client_->OnReceiveResponse(std::move(response_head), std::move(body),
+                             std::move(cached_metadata));
 }
 
 void WorkerScriptLoader::OnReceiveRedirect(
@@ -260,20 +264,11 @@ void WorkerScriptLoader::OnUploadProgress(
                             std::move(ack_callback));
 }
 
-void WorkerScriptLoader::OnReceiveCachedMetadata(mojo_base::BigBuffer data) {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  client_->OnReceiveCachedMetadata(std::move(data));
-}
-
 void WorkerScriptLoader::OnTransferSizeUpdated(int32_t transfer_size_diff) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  network::RecordOnTransferSizeUpdatedUMA(
+      network::OnTransferSizeUpdatedFrom::kWorkerScriptLoader);
   client_->OnTransferSizeUpdated(transfer_size_diff);
-}
-
-void WorkerScriptLoader::OnStartLoadingResponseBody(
-    mojo::ScopedDataPipeConsumerHandle consumer) {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  client_->OnStartLoadingResponseBody(std::move(consumer));
 }
 
 void WorkerScriptLoader::OnComplete(
@@ -285,6 +280,7 @@ void WorkerScriptLoader::OnComplete(
 // URLLoaderClient end ---------------------------------------------------------
 
 bool WorkerScriptLoader::MaybeCreateLoaderForResponse(
+    const network::URLLoaderCompletionStatus& status,
     network::mojom::URLResponseHeadPtr* response_head,
     mojo::ScopedDataPipeConsumerHandle* response_body,
     mojo::PendingRemote<network::mojom::URLLoader>* response_url_loader,
@@ -304,7 +300,7 @@ bool WorkerScriptLoader::MaybeCreateLoaderForResponse(
     bool skip_other_interceptors = false;
     bool will_return_unsafe_redirect = false;
     if (interceptor->MaybeCreateLoaderForResponse(
-            resource_request_, response_head, response_body,
+            status, resource_request_, response_head, response_body,
             response_url_loader, response_client_receiver, url_loader,
             &skip_other_interceptors, &will_return_unsafe_redirect)) {
       // ServiceWorkerMainResourceLoaderInterceptor doesn't set
@@ -326,10 +322,11 @@ void WorkerScriptLoader::CommitCompleted(
   completed_ = true;
 
   if (status.error_code == net::OK && service_worker_handle_) {
-    // TODO(https://crbug.com/999049): Parse the COEP header and pass it to
-    // the service worker handle.
-    service_worker_handle_->OnBeginWorkerCommit(
-        network::CrossOriginEmbedderPolicy(), ukm_source_id_);
+    // TODO(https://crbug.com/999049): Pass the PolicyContainerPolicies. It can
+    // be built from `WorkerScriptLoader::OnReceiveResponse` from the
+    // `response_head->parsed_headers`.
+    service_worker_handle_->OnBeginWorkerCommit(PolicyContainerPolicies(),
+                                                ukm_source_id_);
   }
 
   client_->OnComplete(status);

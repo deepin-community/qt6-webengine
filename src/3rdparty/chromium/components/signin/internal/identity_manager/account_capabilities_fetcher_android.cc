@@ -1,11 +1,11 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/signin/internal/identity_manager/account_capabilities_fetcher_android.h"
 
 #include "base/android/jni_android.h"
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "components/signin/public/android/jni_headers/AccountCapabilitiesFetcher_jni.h"
 #include "components/signin/public/identity_manager/account_capabilities.h"
 #include "components/signin/public/identity_manager/account_info.h"

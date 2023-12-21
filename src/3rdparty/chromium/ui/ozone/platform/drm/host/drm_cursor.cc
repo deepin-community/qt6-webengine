@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,6 +9,7 @@
 
 #include "base/memory/scoped_refptr.h"
 #include "base/task/current_thread.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/threading/thread_checker.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
@@ -48,7 +49,7 @@ class NullProxy : public DrmCursorProxy {
 }  // namespace
 
 DrmCursor::DrmCursor(DrmWindowHostManager* window_manager)
-    : ui_thread_(base::ThreadTaskRunnerHandle::Get()),
+    : ui_thread_(base::SingleThreadTaskRunner::GetCurrentDefault()),
       window_(gfx::kNullAcceleratedWidget),
       window_manager_(window_manager),
       proxy_(new NullProxy()) {
@@ -124,7 +125,7 @@ void DrmCursor::OnWindowRemoved(gfx::AcceleratedWidget window) {
 
     if (dest_window) {
       window_ = dest_window->GetAcceleratedWidget();
-      display_bounds_in_screen_ = dest_window->GetBounds();
+      display_bounds_in_screen_ = dest_window->GetBoundsInPixels();
       confined_bounds_ = dest_window->GetCursorConfinedBounds();
       SetCursorLocationLocked(gfx::PointF(confined_bounds_.CenterPoint()));
       SendCursorShowLocked();
@@ -168,7 +169,7 @@ void DrmCursor::MoveCursorTo(gfx::AcceleratedWidget window,
 
     // TODO(rjk): pass this in?
     DrmWindowHost* drm_window_host = window_manager_->GetWindow(window);
-    display_bounds_in_screen_ = drm_window_host->GetBounds();
+    display_bounds_in_screen_ = drm_window_host->GetBoundsInPixels();
     confined_bounds_ = drm_window_host->GetCursorConfinedBounds();
     window_ = window;
   }
@@ -200,7 +201,7 @@ void DrmCursor::MoveCursorToOnUiThread(const gfx::PointF& screen_location) {
   }
 
   auto location_in_window =
-      screen_location - window->GetBounds().OffsetFromOrigin();
+      screen_location - window->GetBoundsInPixels().OffsetFromOrigin();
   MoveCursorTo(window->GetAcceleratedWidget(), location_in_window);
 }
 

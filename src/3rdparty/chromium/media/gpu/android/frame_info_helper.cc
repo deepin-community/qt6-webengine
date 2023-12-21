@@ -1,16 +1,17 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "media/gpu/android/frame_info_helper.h"
 
 #include "base/memory/raw_ptr.h"
+#include "base/task/bind_post_task.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/threading/sequence_bound.h"
-#include "gpu/command_buffer/service/shared_image_video.h"
+#include "gpu/command_buffer/service/shared_image/android_video_image_backing.h"
 #include "gpu/ipc/service/command_buffer_stub.h"
 #include "gpu/ipc/service/gpu_channel.h"
 #include "gpu/ipc/service/gpu_channel_manager.h"
-#include "media/base/bind_to_current_loop.h"
 #include "media/gpu/android/codec_output_buffer_renderer.h"
 
 namespace media {
@@ -103,7 +104,7 @@ class FrameInfoHelperImpl : public FrameInfoHelper,
           info.emplace();
           info->coded_size = coded_size;
           info->visible_rect = visible_rect;
-          info->ycbcr_info = gpu::SharedImageVideo::GetYcbcrInfo(
+          info->ycbcr_info = gpu::AndroidVideoImageBacking::GetYcbcrInfo(
               texture_owner.get(), vulkan_context_provider_);
         }
       }
@@ -241,7 +242,7 @@ class FrameInfoHelperImpl : public FrameInfoHelper,
       } else {
         // We have texture_owner and we don't have cached value, so we need to
         // hop to GPU thread and render the frame to get proper size.
-        auto cb = BindToCurrentLoop(
+        auto cb = base::BindPostTaskToCurrentDefault(
             base::BindOnce(&FrameInfoHelperImpl::OnFrameInfoReady,
                            weak_factory_.GetWeakPtr()));
 

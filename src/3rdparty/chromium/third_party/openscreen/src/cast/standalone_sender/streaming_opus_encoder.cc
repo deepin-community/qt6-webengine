@@ -8,13 +8,15 @@
 
 #include <algorithm>
 #include <chrono>
+#include <utility>
 
+#include "platform/base/span.h"
 #include "util/chrono_helpers.h"
 
 namespace openscreen {
 namespace cast {
 
-using openscreen::operator<<;  // To pretty-print chrono values.
+using clock_operators::operator<<;
 
 namespace {
 
@@ -31,9 +33,9 @@ constexpr int kMaxCastFramesBeforeSkip = 3;
 
 StreamingOpusEncoder::StreamingOpusEncoder(int num_channels,
                                            int cast_frames_per_second,
-                                           Sender* sender)
+                                           std::unique_ptr<Sender> sender)
     : num_channels_(num_channels),
-      sender_(sender),
+      sender_(std::move(sender)),
       samples_per_cast_frame_(sample_rate() / cast_frames_per_second),
       approximate_cast_frame_duration_(Clock::to_duration(seconds(1)) /
                                        cast_frames_per_second),
@@ -46,7 +48,7 @@ StreamingOpusEncoder::StreamingOpusEncoder(int num_channels,
   OSP_CHECK_EQ(sample_rate() % cast_frames_per_second, 0);
   OSP_CHECK(approximate_cast_frame_duration_ > Clock::duration::zero());
 
-  frame_.dependency = EncodedFrame::KEY_FRAME;
+  frame_.dependency = EncodedFrame::Dependency::kKeyFrame;
 
   const auto init_result = opus_encoder_init(
       encoder(), sample_rate(), num_channels_, OPUS_APPLICATION_AUDIO);
@@ -116,7 +118,7 @@ void StreamingOpusEncoder::EncodeAndSend(const float* interleaved_samples,
     // Note: It's possible for Opus to encode a zero byte packet. Send a Cast
     // audio frame anyway, to represent the passage of silence and to send other
     // stream metadata.
-    frame_.data = absl::Span<uint8_t>(output_.get(), packet_size_or_error);
+    frame_.data = ByteView(output_.get(), packet_size_or_error);
     last_sent_frame_reference_time_ = frame_.reference_time;
     switch (sender_->EnqueueFrame(frame_)) {
       case Sender::OK:

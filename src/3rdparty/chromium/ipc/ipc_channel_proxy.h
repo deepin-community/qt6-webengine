@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,9 +12,9 @@
 #include <string>
 #include <vector>
 
-#include "base/bind.h"
-#include "base/callback.h"
 #include "base/component_export.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/sequence_checker.h"
@@ -27,7 +27,6 @@
 #include "ipc/ipc_sender.h"
 #include "mojo/public/cpp/bindings/associated_remote.h"
 #include "mojo/public/cpp/bindings/generic_pending_associated_receiver.h"
-#include "mojo/public/cpp/bindings/lib/message_quota_checker.h"
 #include "mojo/public/cpp/bindings/pending_associated_receiver.h"
 #include "mojo/public/cpp/bindings/pending_associated_remote.h"
 #include "mojo/public/cpp/bindings/scoped_interface_endpoint_handle.h"
@@ -367,9 +366,6 @@ class COMPONENT_EXPORT(IPC) ChannelProxy : public Sender {
     // One exception is the thread-safe send. See the class comment.
     std::unique_ptr<Channel> channel_;
     bool channel_connected_called_;
-
-    // The quota checker associated with this channel, if any.
-    scoped_refptr<mojo::internal::MessageQuotaChecker> quota_checker_;
 
     // Lock for |channel_| value. This is only relevant in the context of
     // thread-safe send.

@@ -1,10 +1,10 @@
-// Copyright (c) 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "net/proxy_resolution/network_delegate_error_observer.h"
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/memory/raw_ptr.h"
 #include "base/task/single_thread_task_runner.h"
@@ -69,8 +69,7 @@ void NetworkDelegateErrorObserver::Core::Shutdown() {
 NetworkDelegateErrorObserver::NetworkDelegateErrorObserver(
     NetworkDelegate* network_delegate,
     base::SingleThreadTaskRunner* origin_runner)
-    : core_(new Core(network_delegate, origin_runner)) {
-}
+    : core_(base::MakeRefCounted<Core>(network_delegate, origin_runner)) {}
 
 NetworkDelegateErrorObserver::~NetworkDelegateErrorObserver() {
   core_->Shutdown();

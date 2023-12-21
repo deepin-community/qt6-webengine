@@ -1,19 +1,15 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef CONTENT_BROWSER_ATTRIBUTION_REPORTING_ATTRIBUTION_TRIGGER_H_
 #define CONTENT_BROWSER_ATTRIBUTION_REPORTING_ATTRIBUTION_TRIGGER_H_
 
-#include <stdint.h>
-
-#include <vector>
-
-#include "content/browser/attribution_reporting/attribution_aggregatable_trigger.h"
-#include "content/browser/attribution_reporting/attribution_filter_data.h"
+#include "components/attribution_reporting/suitable_origin.h"
+#include "components/attribution_reporting/trigger_registration.h"
 #include "content/common/content_export.h"
+#include "services/network/public/cpp/trigger_attestation.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
-#include "url/origin.h"
 
 namespace content {
 
@@ -41,7 +37,12 @@ class CONTENT_EXPORT AttributionTrigger {
     kExcessiveReportingOrigins = 9,
     kNoMatchingSourceFilterData = 10,
     kProhibitedByBrowserPolicy = 11,
-    kMaxValue = kProhibitedByBrowserPolicy,
+    kNoMatchingConfigurations = 12,
+    kExcessiveReports = 13,
+    kFalselyAttributedSource = 14,
+    kReportWindowPassed = 15,
+    kNotRegistered = 16,
+    kMaxValue = kNotRegistered,
   };
 
   // Represents the potential aggregatable outcomes from attempting to register
@@ -61,105 +62,58 @@ class CONTENT_EXPORT AttributionTrigger {
     kNoMatchingSourceFilterData = 8,
     kNotRegistered = 9,
     kProhibitedByBrowserPolicy = 10,
-    kMaxValue = kProhibitedByBrowserPolicy,
+    kDeduplicated = 11,
+    kReportWindowPassed = 12,
+    kMaxValue = kReportWindowPassed,
   };
 
-  struct CONTENT_EXPORT EventTriggerData {
-    // Data associated with trigger.
-    // Will be sanitized to a lower entropy by the `AttributionStorageDelegate`
-    // before storage.
-    uint64_t data;
+  AttributionTrigger(attribution_reporting::SuitableOrigin reporting_origin,
+                     attribution_reporting::TriggerRegistration registration,
+                     attribution_reporting::SuitableOrigin destination_origin,
+                     absl::optional<network::TriggerAttestation> attestation,
+                     bool is_within_fenced_frame);
 
-    // Priority specified in conversion redirect. Used to prioritize which
-    // reports to send among multiple different reports for the same attribution
-    // source. Defaults to 0 if not provided.
-    int64_t priority;
-
-    // Key specified in conversion redirect for deduplication against existing
-    // conversions with the same source. If absent, no deduplication is
-    // performed.
-    absl::optional<uint64_t> dedup_key;
-
-    // The filters used to determine whether this `EventTriggerData'`s fields
-    // are used.
-    AttributionFilterData filters;
-
-    // The negated filters used to determine whether this `EventTriggerData'`s
-    // fields are used.
-    AttributionFilterData not_filters;
-
-    EventTriggerData(uint64_t data,
-                     int64_t priority,
-                     absl::optional<uint64_t> dedup_key,
-                     AttributionFilterData filters,
-                     AttributionFilterData not_filters);
-  };
-
-  // Should only be created with values that the browser process has already
-  // validated. |conversion_destination| should be filled by a navigation origin
-  // known by the browser process.
-  AttributionTrigger(url::Origin destination_origin,
-                     url::Origin reporting_origin,
-                     AttributionFilterData filters,
-                     absl::optional<uint64_t> debug_key,
-                     std::vector<EventTriggerData> event_triggers,
-                     AttributionAggregatableTrigger aggregatable_trigger);
-
-  // Should only be created with values that the browser process has already
-  // validated. |trigger_data| and |event_source_trigger_data| will be sanitized
-  // to a lower entropy by the `AttributionStorageDelegate` before storage.
-  // |conversion_destination| should be filled by a navigation origin known by
-  // the browser process.
-  //
-  // TODO(apaseltiner): Remove this constructor once the old
-  // trigger-registration API surface is removed.
-  AttributionTrigger(uint64_t trigger_data,
-                     url::Origin destination_origin,
-                     url::Origin reporting_origin,
-                     uint64_t event_source_trigger_data,
-                     int64_t priority,
-                     absl::optional<uint64_t> dedup_key,
-                     absl::optional<uint64_t> debug_key,
-                     AttributionAggregatableTrigger aggregatable_trigger);
-  AttributionTrigger(const AttributionTrigger& other);
-  AttributionTrigger& operator=(const AttributionTrigger& other);
-  AttributionTrigger(AttributionTrigger&& other);
-  AttributionTrigger& operator=(AttributionTrigger&& other);
+  AttributionTrigger(const AttributionTrigger&);
+  AttributionTrigger& operator=(const AttributionTrigger&);
+  AttributionTrigger(AttributionTrigger&&);
+  AttributionTrigger& operator=(AttributionTrigger&&);
   ~AttributionTrigger();
 
-  const url::Origin& destination_origin() const { return destination_origin_; }
-
-  const url::Origin& reporting_origin() const { return reporting_origin_; }
-
-  const AttributionFilterData& filters() const { return filters_; }
-
-  absl::optional<uint64_t> debug_key() const { return debug_key_; }
-
-  const AttributionAggregatableTrigger& aggregatable_trigger() const {
-    return aggregatable_trigger_;
+  const attribution_reporting::SuitableOrigin& reporting_origin() const {
+    return reporting_origin_;
   }
 
-  void ClearDebugKey() { debug_key_ = absl::nullopt; }
+  const attribution_reporting::TriggerRegistration& registration() const {
+    return registration_;
+  }
 
-  const std::vector<EventTriggerData>& event_triggers() const {
-    return event_triggers_;
+  attribution_reporting::TriggerRegistration& registration() {
+    return registration_;
+  }
+
+  const attribution_reporting::SuitableOrigin& destination_origin() const {
+    return destination_origin_;
+  }
+
+  bool is_within_fenced_frame() const { return is_within_fenced_frame_; }
+
+  const absl::optional<network::TriggerAttestation>& attestation() const {
+    return attestation_;
   }
 
  private:
-  // Origin that this conversion event occurred on.
-  url::Origin destination_origin_;
+  attribution_reporting::SuitableOrigin reporting_origin_;
 
-  // Origin of the conversion redirect url, and the origin that will receive any
-  // reports.
-  url::Origin reporting_origin_;
+  attribution_reporting::TriggerRegistration registration_;
 
-  AttributionFilterData filters_;
+  // Origin on which this trigger was registered.
+  attribution_reporting::SuitableOrigin destination_origin_;
 
-  absl::optional<uint64_t> debug_key_;
+  // Optional token attesting to the veracity of the trigger.
+  absl::optional<network::TriggerAttestation> attestation_;
 
-  std::vector<EventTriggerData> event_triggers_;
-
-  AttributionAggregatableTrigger aggregatable_trigger_;
+  // Whether the trigger is registered within a fenced frame tree.
+  bool is_within_fenced_frame_;
 };
 
 }  // namespace content

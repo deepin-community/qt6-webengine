@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "base/values.h"
 #include "components/webapps/services/web_app_origin_association/public/mojom/web_app_origin_association_parser.mojom.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 
@@ -35,12 +36,12 @@ class WebAppOriginAssociationParser {
 
  private:
   std::vector<mojom::AssociatedWebAppPtr> ParseAssociatedWebApps(
-      const base::Value& root_dict);
+      const base::Value::Dict& root_dict);
   absl::optional<mojom::AssociatedWebAppPtr> ParseAssociatedWebApp(
-      const base::Value& app_dict);
-  absl::optional<GURL> ParseManifestURL(const base::Value& app_dict);
+      const base::Value::Dict& app_dict);
+  absl::optional<GURL> ParseManifestURL(const base::Value::Dict& app_dict);
   absl::optional<std::vector<std::string>> ParsePaths(
-      const base::Value& app_details_dict,
+      const base::Value::Dict& app_details_dict,
       const std::string& key);
   void AddErrorInfo(const std::string& error_msg,
                     int error_line = 0,

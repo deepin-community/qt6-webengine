@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,8 +10,7 @@
 #include "ui/views/controls/native/native_view_host.h"
 #include "ui/views/widget/widget.h"
 
-namespace views {
-namespace test {
+namespace views::test {
 
 // Testing wrapper of the NativeViewHost.
 class NativeViewHostTestBase::NativeViewHostTesting : public NativeViewHost {
@@ -23,6 +22,12 @@ class NativeViewHostTestBase::NativeViewHostTesting : public NativeViewHost {
   NativeViewHostTesting& operator=(const NativeViewHostTesting&) = delete;
 
   ~NativeViewHostTesting() override { owner_->host_destroyed_count_++; }
+
+  // NativeViewHost:
+  bool OnMousePressed(const ui::MouseEvent& event) override {
+    ++owner_->on_mouse_pressed_called_count_;
+    return NativeViewHost::OnMousePressed(event);
+  }
 
  private:
   raw_ptr<NativeViewHostTestBase> owner_;
@@ -37,10 +42,11 @@ void NativeViewHostTestBase::TearDown() {
   ViewsTestBase::TearDown();
 }
 
-void NativeViewHostTestBase::CreateTopLevel() {
+void NativeViewHostTestBase::CreateTopLevel(WidgetDelegate* widget_delegate) {
   toplevel_ = std::make_unique<Widget>();
   Widget::InitParams toplevel_params =
       CreateParams(Widget::InitParams::TYPE_WINDOW);
+  toplevel_params.delegate = widget_delegate;
   toplevel_params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   toplevel_->Init(std::move(toplevel_params));
 }
@@ -84,5 +90,4 @@ NativeViewHostWrapper* NativeViewHostTestBase::GetNativeWrapper() {
   return host_->native_wrapper_.get();
 }
 
-}  // namespace test
-}  // namespace views
+}  // namespace views::test

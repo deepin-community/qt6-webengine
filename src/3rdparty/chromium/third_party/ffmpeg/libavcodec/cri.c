@@ -32,8 +32,8 @@
 #include "avcodec.h"
 #include "bytestream.h"
 #include "codec_internal.h"
+#include "decode.h"
 #include "get_bits.h"
-#include "internal.h"
 #include "thread.h"
 
 typedef struct CRIContext {
@@ -170,7 +170,7 @@ static void unpack_10bit(GetByteContext *gb, uint16_t *dst, int shift,
     }
 }
 
-static int cri_decode_frame(AVCodecContext *avctx, void *data,
+static int cri_decode_frame(AVCodecContext *avctx, AVFrame *p,
                             int *got_frame, AVPacket *avpkt)
 {
     CRIContext *s = avctx->priv_data;
@@ -178,7 +178,6 @@ static int cri_decode_frame(AVCodecContext *avctx, void *data,
     int ret, bps, hflip = 0, vflip = 0;
     AVFrameSideData *rotation;
     int compressed = 0;
-    AVFrame *p = data;
 
     s->data = NULL;
     s->data_size = 0;
@@ -318,6 +317,9 @@ skip:
     if (!s->data || !s->data_size)
         return AVERROR_INVALIDDATA;
 
+    if (avctx->skip_frame >= AVDISCARD_ALL)
+        return avpkt->size;
+
     if ((ret = ff_thread_get_buffer(avctx, p, 0)) < 0)
         return ret;
 
@@ -430,9 +432,10 @@ const FFCodec ff_cri_decoder = {
     .p.id           = AV_CODEC_ID_CRI,
     .priv_data_size = sizeof(CRIContext),
     .init           = cri_decode_init,
-    .decode         = cri_decode_frame,
+    FF_CODEC_DECODE_CB(cri_decode_frame),
     .close          = cri_decode_close,
     .p.capabilities = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_FRAME_THREADS,
-    .caps_internal  = FF_CODEC_CAP_INIT_THREADSAFE | FF_CODEC_CAP_INIT_CLEANUP,
-    .p.long_name    = NULL_IF_CONFIG_SMALL("Cintel RAW"),
+    .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP |
+                      FF_CODEC_CAP_SKIP_FRAME_FILL_PARAM,
+    CODEC_LONG_NAME("Cintel RAW"),
 };

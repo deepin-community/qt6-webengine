@@ -1,13 +1,15 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/core/css/css_property_value_set.h"
+
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/core/css/parser/css_parser.h"
 #include "third_party/blink/renderer/core/css/parser/css_parser_context.h"
 #include "third_party/blink/renderer/core/css/style_rule.h"
 #include "third_party/blink/renderer/core/css/style_sheet_contents.h"
+#include "third_party/blink/renderer/core/execution_context/security_context.h"
 #include "third_party/blink/renderer/core/testing/page_test_base.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 
@@ -90,67 +92,70 @@ TEST_F(CSSPropertyValueSetTest, ConflictingLonghandAndShorthand) {
 
 TEST_F(CSSPropertyValueSetTest, SetPropertyReturnValue) {
   MutableCSSPropertyValueSet properties(kHTMLStandardMode);
-  EXPECT_EQ(
-      MutableCSSPropertyValueSet::kChangedPropertySet,
-      properties.SetProperty(CSSPropertyID::kColor, "red", /*important=*/false,
-                             SecureContextMode::kInsecureContext,
-                             /*context_style_sheet=*/nullptr));
-  EXPECT_EQ(
-      MutableCSSPropertyValueSet::kUnchanged,
-      properties.SetProperty(CSSPropertyID::kColor, "red", /*important=*/false,
-                             SecureContextMode::kInsecureContext,
-                             /*context_style_sheet=*/nullptr));
   EXPECT_EQ(MutableCSSPropertyValueSet::kChangedPropertySet,
-            properties.SetProperty(CSSPropertyID::kBackgroundColor, "white",
-                                   /*important=*/false,
-                                   SecureContextMode::kInsecureContext,
-                                   /*context_style_sheet=*/nullptr));
+            properties.ParseAndSetProperty(CSSPropertyID::kColor, "red",
+                                           /*important=*/false,
+                                           SecureContextMode::kInsecureContext,
+                                           /*context_style_sheet=*/nullptr));
+  EXPECT_EQ(MutableCSSPropertyValueSet::kUnchanged,
+            properties.ParseAndSetProperty(CSSPropertyID::kColor, "red",
+                                           /*important=*/false,
+                                           SecureContextMode::kInsecureContext,
+                                           /*context_style_sheet=*/nullptr));
+  EXPECT_EQ(MutableCSSPropertyValueSet::kChangedPropertySet,
+            properties.ParseAndSetProperty(
+                CSSPropertyID::kBackgroundColor, "white",
+                /*important=*/false, SecureContextMode::kInsecureContext,
+                /*context_style_sheet=*/nullptr));
   EXPECT_EQ(MutableCSSPropertyValueSet::kModifiedExisting,
-            properties.SetProperty(CSSPropertyID::kColor, "green",
-                                   /*important=*/false,
-                                   SecureContextMode::kInsecureContext,
-                                   /*context_style_sheet=*/nullptr));
-  EXPECT_EQ(
-      MutableCSSPropertyValueSet::kChangedPropertySet,
-      properties.SetProperty(CSSPropertyID::kColor, "", /*important=*/false,
-                             SecureContextMode::kInsecureContext,
-                             /*context_style_sheet=*/nullptr));
+            properties.ParseAndSetProperty(CSSPropertyID::kColor, "green",
+                                           /*important=*/false,
+                                           SecureContextMode::kInsecureContext,
+                                           /*context_style_sheet=*/nullptr));
+  EXPECT_EQ(MutableCSSPropertyValueSet::kChangedPropertySet,
+            properties.ParseAndSetProperty(CSSPropertyID::kColor, "",
+                                           /*important=*/false,
+                                           SecureContextMode::kInsecureContext,
+                                           /*context_style_sheet=*/nullptr));
 }
 
 TEST_F(CSSPropertyValueSetTest, SetCustomPropertyReturnValue) {
   MutableCSSPropertyValueSet properties(kHTMLStandardMode);
   EXPECT_EQ(MutableCSSPropertyValueSet::kChangedPropertySet,
-            properties.SetProperty("--my-property", "red", /*important=*/false,
-                                   SecureContextMode::kInsecureContext,
-                                   /*context_style_sheet=*/nullptr,
-                                   /*is_animation_tainted=*/false));
+            properties.ParseAndSetCustomProperty(
+                "--my-property", "red", /*important=*/false,
+                SecureContextMode::kInsecureContext,
+                /*context_style_sheet=*/nullptr,
+                /*is_animation_tainted=*/false));
 
   // Custom property values are compared by instance rather than by value
   // (due to performance constraints), so we don't get a kUnchanged
   // return value here.
   EXPECT_EQ(MutableCSSPropertyValueSet::kModifiedExisting,
-            properties.SetProperty("--my-property", "red", /*important=*/false,
-                                   SecureContextMode::kInsecureContext,
-                                   /*context_style_sheet=*/nullptr,
-                                   /*is_animation_tainted=*/false));
+            properties.ParseAndSetCustomProperty(
+                "--my-property", "red", /*important=*/false,
+                SecureContextMode::kInsecureContext,
+                /*context_style_sheet=*/nullptr,
+                /*is_animation_tainted=*/false));
 
-  EXPECT_EQ(
-      MutableCSSPropertyValueSet::kChangedPropertySet,
-      properties.SetProperty("--your-property", "white", /*important=*/false,
-                             SecureContextMode::kInsecureContext,
-                             /*context_style_sheet=*/nullptr,
-                             /*is_animation_tainted=*/false));
-  EXPECT_EQ(MutableCSSPropertyValueSet::kModifiedExisting,
-            properties.SetProperty("--my-property", "green",
-                                   /*important=*/false,
-                                   SecureContextMode::kInsecureContext,
-                                   /*context_style_sheet=*/nullptr,
-                                   /*is_animation_tainted=*/false));
   EXPECT_EQ(MutableCSSPropertyValueSet::kChangedPropertySet,
-            properties.SetProperty("--my-property", "", /*important=*/false,
-                                   SecureContextMode::kInsecureContext,
-                                   /*context_style_sheet=*/nullptr,
-                                   /*is_animation_tainted=*/false));
+            properties.ParseAndSetCustomProperty(
+                "--your-property", "white",
+                /*important=*/false, SecureContextMode::kInsecureContext,
+                /*context_style_sheet=*/nullptr,
+                /*is_animation_tainted=*/false));
+  EXPECT_EQ(MutableCSSPropertyValueSet::kModifiedExisting,
+            properties.ParseAndSetCustomProperty(
+                "--my-property", "green",
+                /*important=*/false, SecureContextMode::kInsecureContext,
+                /*context_style_sheet=*/nullptr,
+                /*is_animation_tainted=*/false));
+  EXPECT_EQ(MutableCSSPropertyValueSet::kChangedPropertySet,
+            properties.ParseAndSetCustomProperty(
+                "--my-property", "", /*important=*/false,
+                SecureContextMode::kInsecureContext,
+                /*context_style_sheet=*/nullptr,
+                /*is_animation_tainted=*/false));
 }
 
 }  // namespace blink

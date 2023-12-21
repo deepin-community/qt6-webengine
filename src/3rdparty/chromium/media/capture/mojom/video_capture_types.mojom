@@ -1,10 +1,9 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 module media.mojom;
 
-import "mojo/public/mojom/base/time.mojom";
 import "ui/gfx/geometry/mojom/geometry.mojom";
 
 [Stable, Extensible]
@@ -45,6 +44,7 @@ enum VideoCapturePixelFormat {
   [MinVersion=1] YUV420AP10,
   [MinVersion=1] YUV422AP10,
   [MinVersion=1] YUV444AP10,
+  [MinVersion=2] NV12A,
 };
 
 [Stable, Extensible]
@@ -95,15 +95,8 @@ enum VideoCaptureTransportType {
 [Stable, Extensible]
 enum VideoCaptureBufferType {
   kSharedMemory,
-
-  // Warning: This case is a workaround for compatibility with an older version
-  // of Mojo only and will be deleted as soon as the Mojo version of ChromiumOS
-  // becomes compatible with the |kSharedMemory|.
-  // TODO(chfremer): Remove this when https://crbug.com/857537 is resolved.
-  kSharedMemoryViaRawFileDescriptor,
-
+  kSharedMemoryViaRawFileDescriptor_DEPRECATED,  // DEPRECATED, DO NOT USE
   kMailboxHolder,
-
   kGpuMemoryBuffer
 };
 
@@ -253,6 +246,16 @@ enum VideoCaptureError {
   [MinVersion=4] kScreenCaptureKitFailedStopCapture,
   [MinVersion=4] kScreenCaptureKitStreamError,
   [MinVersion=4] kScreenCaptureKitFailedToFindSCDisplay,
+  [MinVersion=5] kVideoCaptureControllerInvalid,
+  [MinVersion=5] kVideoCaptureDeviceFactoryChromeOSCreateDeviceFailed,
+  [MinVersion=5] kVideoCaptureControllerUnsupportedPixelFormat,
+  [MinVersion=5] kVideoCaptureDeviceAlreadyReleased,
+  [MinVersion=5] kVideoCaptureSystemDeviceIdNotFound,
+  [MinVersion=5] kVideoCaptureDeviceFactoryWinUnknownError,
+  [MinVersion=5] kWinMediaFoundationDeviceInitializationFailed,
+  [MinVersion=5] kWinMediaFoundationSourceCreationFailed,
+  [MinVersion=5] kWinDirectShowDeviceFilterCreationFailed,
+  [MinVersion=5] kWinDirectShowDeviceInitializationFailed,
 };
 
 [Stable, Extensible]
@@ -282,7 +285,9 @@ enum VideoCaptureFrameDropReason {
   kResolutionAdapterFrameRateIsHigherThanRequested,
   kResolutionAdapterHasNoCallbacks,
   kVideoTrackFrameDelivererNotEnabledReplacingWithBlackFrame,
-  kRendererSinkFrameDelivererIsNotStarted
+  kRendererSinkFrameDelivererIsNotStarted,
+  [MinVersion=1] kCropVersionNotCurrent,
+  [MinVersion=5] kGpuMemoryBufferMapFailed
 };
 
 [Stable]
@@ -299,6 +304,10 @@ struct VideoCaptureParams {
   ResolutionChangePolicy resolution_change_policy;
   PowerLineFrequency power_line_frequency;
   bool enable_face_detection;
+
+  // TODO(https://crbug.com/1412589): remove this once HiDPI is enabled for
+  // all video capture sessions.
+  [MinVersion=1] bool is_high_dpi_enabled;
 };
 
 [Stable, RenamedFrom="media.mojom.VideoFrameFeedback"]
@@ -379,12 +388,18 @@ struct VideoCaptureDeviceInfo {
 };
 
 // The result of an attempt by the client to start/stop cropping.
-// TODO(crbug.com/1247761): Remove kNotImplemented.
+// TODO(crbug.com/1264849): Remove kNotImplemented.
 enum CropRequestResult {
   kSuccess,
   kErrorGeneric,
   kUnsupportedCaptureDevice,
-  kErrorUnknownDeviceId,
   kNotImplemented,
   kNonIncreasingCropVersion,
+  kInvalidCropTarget,
+};
+
+enum DeviceEnumerationResult {
+  kSuccess,
+  kUnknownError,
+  kErrorCaptureServiceCrash
 };

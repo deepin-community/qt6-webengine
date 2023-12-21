@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,12 +8,11 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/run_loop.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/task/task_runner.h"
-#include "base/threading/sequenced_task_runner_handle.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "mojo/public/cpp/bindings/pending_associated_remote.h"
 #include "ui/display/types/display_snapshot.h"
 #include "ui/ozone/platform/drm/common/display_types.h"
@@ -129,15 +128,17 @@ bool HostDrmDevice::GpuRefreshNativeDisplays() {
 
 void HostDrmDevice::GpuConfigureNativeDisplays(
     const std::vector<display::DisplayConfigurationParams>& config_requests,
-    display::ConfigureCallback callback) {
+    display::ConfigureCallback callback,
+    uint32_t modeset_flag) {
   DCHECK_CALLED_ON_VALID_THREAD(on_ui_thread_);
   if (IsConnected()) {
-    drm_device_->ConfigureNativeDisplays(config_requests, std::move(callback));
+    drm_device_->ConfigureNativeDisplays(config_requests, modeset_flag,
+                                         std::move(callback));
   } else {
     // Post this task to protect the callstack from accumulating too many
     // recursive calls to ConfigureDisplaysTask::Run() in cases in which the GPU
     // process crashes repeatedly.
-    base::SequencedTaskRunnerHandle::Get()->PostTask(
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(std::move(callback), false));
   }
 }
@@ -172,8 +173,7 @@ void HostDrmDevice::GpuAddGraphicsDevice(const base::FilePath& path,
   if (!drm_device_.is_bound())
     return;
 
-  base::File file(std::move(fd));
-  drm_device_->AddGraphicsDevice(path, std::move(file));
+  drm_device_->AddGraphicsDevice(path, mojo::PlatformHandle(std::move(fd)));
 }
 
 bool HostDrmDevice::GpuRemoveGraphicsDevice(const base::FilePath& path) {
@@ -182,6 +182,37 @@ bool HostDrmDevice::GpuRemoveGraphicsDevice(const base::FilePath& path) {
     return false;
 
   drm_device_->RemoveGraphicsDevice(std::move(path));
+
+  return true;
+}
+
+void HostDrmDevice::GpuShouldDisplayEventTriggerConfiguration(
+    const EventPropertyMap& event_props) {
+  DCHECK_CALLED_ON_VALID_THREAD(on_ui_thread_);
+
+  // No connection to DRM device. Block the event since the entire configuration
+  // will most likely fail.
+  if (!IsConnected()) {
+    GpuShouldDisplayEventTriggerConfigurationCallback(/*should_trigger=*/false);
+    return;
+  }
+
+  auto callback = base::BindOnce(
+      &HostDrmDevice::GpuShouldDisplayEventTriggerConfigurationCallback, this);
+  drm_device_->ShouldDisplayEventTriggerConfiguration(event_props,
+                                                      std::move(callback));
+}
+
+bool HostDrmDevice::GpuSetHdcpKeyProp(int64_t display_id,
+                                      const std::string& key) {
+  DCHECK_CALLED_ON_VALID_THREAD(on_ui_thread_);
+  if (!IsConnected()) {
+    return false;
+  }
+
+  auto callback =
+      base::BindOnce(&HostDrmDevice::GpuSetHdcpKeyPropCallback, this);
+  drm_device_->SetHdcpKeyProp(display_id, key, std::move(callback));
 
   return true;
 }
@@ -262,6 +293,18 @@ void HostDrmDevice::GpuTakeDisplayControlCallback(bool success) const {
 void HostDrmDevice::GpuRelinquishDisplayControlCallback(bool success) const {
   DCHECK_CALLED_ON_VALID_THREAD(on_ui_thread_);
   display_manager_->GpuRelinquishedDisplayControl(success);
+}
+
+void HostDrmDevice::GpuShouldDisplayEventTriggerConfigurationCallback(
+    bool should_trigger) const {
+  DCHECK_CALLED_ON_VALID_THREAD(on_ui_thread_);
+  display_manager_->GpuShouldDisplayEventTriggerConfiguration(should_trigger);
+}
+
+void HostDrmDevice::GpuSetHdcpKeyPropCallback(int64_t display_id,
+                                              bool success) const {
+  DCHECK_CALLED_ON_VALID_THREAD(on_ui_thread_);
+  display_manager_->GpuSetHdcpKeyProp(display_id, success);
 }
 
 void HostDrmDevice::GpuGetHDCPStateCallback(

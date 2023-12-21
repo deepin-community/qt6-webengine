@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,7 +6,8 @@
 
 #include <inttypes.h>
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
+#include "base/ranges/algorithm.h"
 #include "base/strings/stringprintf.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
@@ -36,6 +37,19 @@ BitstreamBufferMetadata::BitstreamBufferMetadata(size_t payload_size_bytes,
       key_frame(key_frame),
       timestamp(timestamp) {}
 BitstreamBufferMetadata::~BitstreamBufferMetadata() = default;
+
+absl::optional<uint8_t> BitstreamBufferMetadata::spatial_idx() const {
+  if (vp9) {
+    return vp9->spatial_idx;
+  }
+  if (av1) {
+    return av1->spatial_idx;
+  }
+  if (h265) {
+    return h265->spatial_idx;
+  }
+  return absl::nullopt;
+}
 
 VideoEncodeAccelerator::Config::Config()
     : input_format(PIXEL_FORMAT_UNKNOWN),
@@ -97,6 +111,19 @@ std::string VideoEncodeAccelerator::Config::AsHumanReadableString() const {
     str += base::StringPrintf(", is_constrained_h264: %u", is_constrained_h264);
   }
 
+  str += ", required_encoder_type: ";
+  switch (required_encoder_type) {
+    case EncoderType::kHardware:
+      str += "hardware";
+      break;
+    case EncoderType::kSoftware:
+      str += "software";
+      break;
+    case EncoderType::kNoPreference:
+      str += "no-preference";
+      break;
+  }
+
   if (spatial_layers.empty())
     return str;
 
@@ -110,27 +137,26 @@ std::string VideoEncodeAccelerator::Config::AsHumanReadableString() const {
         sl.num_of_temporal_layers);
   }
 
+  str += ", InterLayerPredMode::";
   switch (inter_layer_pred) {
     case Config::InterLayerPredMode::kOff:
-      str += base::StringPrintf(", InterLayerPredMode::kOff");
+      str += "kOff";
       break;
     case Config::InterLayerPredMode::kOn:
-      str += base::StringPrintf(", InterLayerPredMode::kOn");
+      str += "kOn";
       break;
     case Config::InterLayerPredMode::kOnKeyPic:
-      str += base::StringPrintf(", InterLayerPredMode::kOnKeyPic");
-      break;
-    default:
-      str += base::StringPrintf(", Unknown InterLayerPredMode");
+      str += "kOnKeyPic";
       break;
   }
+
   return str;
 }
 
 bool VideoEncodeAccelerator::Config::HasTemporalLayer() const {
-  return std::any_of(
-      spatial_layers.begin(), spatial_layers.end(),
-      [](const SpatialLayer& sl) { return sl.num_of_temporal_layers > 1u; });
+  return base::ranges::any_of(spatial_layers, [](const SpatialLayer& sl) {
+    return sl.num_of_temporal_layers > 1u;
+  });
 }
 
 bool VideoEncodeAccelerator::Config::HasSpatialLayer() const {
@@ -152,22 +178,19 @@ VideoEncodeAccelerator::SupportedProfile::SupportedProfile(
     const gfx::Size& max_resolution,
     uint32_t max_framerate_numerator,
     uint32_t max_framerate_denominator,
+    SupportedRateControlMode rc_modes,
     const std::vector<SVCScalabilityMode>& scalability_modes)
     : profile(profile),
       max_resolution(max_resolution),
       max_framerate_numerator(max_framerate_numerator),
       max_framerate_denominator(max_framerate_denominator),
+      rate_control_modes(rc_modes),
       scalability_modes(scalability_modes) {}
 
 VideoEncodeAccelerator::SupportedProfile::SupportedProfile(
     const SupportedProfile& other) = default;
 
 VideoEncodeAccelerator::SupportedProfile::~SupportedProfile() = default;
-
-VideoEncodeAccelerator::SupportedProfiles
-VideoEncodeAccelerator::GetSupportedProfilesLight() {
-  return GetSupportedProfiles();
-}
 
 void VideoEncodeAccelerator::Flush(FlushCallback flush_callback) {
   // TODO(owenlin): implements this https://crbug.com/755889.
@@ -180,7 +203,7 @@ bool VideoEncodeAccelerator::IsFlushSupported() {
 }
 
 bool VideoEncodeAccelerator::IsGpuFrameResizeSupported() {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_WIN)
   // TODO(crbug.com/1166889) Add proper method overrides in
   // MojoVideoEncodeAccelerator and other subclasses that might return true.
   return true;
@@ -202,11 +225,18 @@ bool operator==(const VideoEncodeAccelerator::SupportedProfile& l,
          l.max_resolution == r.max_resolution &&
          l.max_framerate_numerator == r.max_framerate_numerator &&
          l.max_framerate_denominator == r.max_framerate_denominator &&
-         l.scalability_modes == r.scalability_modes;
+         l.rate_control_modes == r.rate_control_modes &&
+         l.scalability_modes == r.scalability_modes &&
+         l.is_software_codec == r.is_software_codec;
 }
 
 bool operator==(const H264Metadata& l, const H264Metadata& r) {
   return l.temporal_idx == r.temporal_idx && l.layer_sync == r.layer_sync;
+}
+
+bool operator==(const H265Metadata& l, const H265Metadata& r) {
+  return l.temporal_idx == r.temporal_idx && l.spatial_idx == r.spatial_idx &&
+         l.layer_sync == r.layer_sync;
 }
 
 bool operator==(const Vp8Metadata& l, const Vp8Metadata& r) {
@@ -239,7 +269,8 @@ bool operator==(const BitstreamBufferMetadata& l,
                 const BitstreamBufferMetadata& r) {
   return l.payload_size_bytes == r.payload_size_bytes &&
          l.key_frame == r.key_frame && l.timestamp == r.timestamp &&
-         l.vp8 == r.vp8 && l.vp9 == r.vp9;
+         l.vp8 == r.vp8 && l.vp9 == r.vp9 && l.h264 == r.h264 &&
+         l.av1 == r.av1 && l.h265 == r.h265;
 }
 
 bool operator==(const VideoEncodeAccelerator::Config::SpatialLayer& l,

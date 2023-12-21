@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,6 +6,7 @@
 
 #include "base/logging.h"
 #include "build/build_config.h"
+#include "components/viz/common/resources/shared_image_format.h"
 #include "gpu/GLES2/gl2extchromium.h"
 #include "gpu/command_buffer/client/shared_image_interface.h"
 #include "gpu/command_buffer/common/shared_image_usage.h"
@@ -16,6 +17,7 @@
 #include "third_party/blink/renderer/platform/graphics/gpu/shared_gpu_context.h"
 #include "third_party/blink/renderer/platform/graphics/unaccelerated_static_bitmap_image.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
+#include "third_party/blink/renderer/platform/scheduler/public/thread_scheduler.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 #include "third_party/skia/include/core/SkSurface.h"
 
@@ -454,13 +456,14 @@ void XRWebGLDrawingBuffer::Resize(const gfx::Size& new_size) {
 scoped_refptr<XRWebGLDrawingBuffer::ColorBuffer>
 XRWebGLDrawingBuffer::CreateColorBuffer() {
   auto* sii = drawing_buffer_->ContextProvider()->SharedImageInterface();
-  uint32_t usage = gpu::SHARED_IMAGE_USAGE_DISPLAY |
+  uint32_t usage = gpu::SHARED_IMAGE_USAGE_DISPLAY_READ |
                    gpu::SHARED_IMAGE_USAGE_GLES2 |
                    gpu::SHARED_IMAGE_USAGE_GLES2_FRAMEBUFFER_HINT;
   gpu::Mailbox mailbox = sii->CreateSharedImage(
-      alpha_ ? viz::RGBA_8888 : viz::RGBX_8888, size_, gfx::ColorSpace(),
-      kTopLeft_GrSurfaceOrigin, kPremul_SkAlphaType, usage,
-      gpu::kNullSurfaceHandle);
+      alpha_ ? viz::SinglePlaneFormat::kRGBA_8888
+             : viz::SinglePlaneFormat::kRGBX_8888,
+      size_, gfx::ColorSpace(), kTopLeft_GrSurfaceOrigin, kPremul_SkAlphaType,
+      usage, gpu::kNullSurfaceHandle);
 
   gpu::gles2::GLES2Interface* gl = drawing_buffer_->ContextGL();
   gl->WaitSyncTokenCHROMIUM(sii->GenUnverifiedSyncToken().GetConstData());
@@ -480,7 +483,7 @@ XRWebGLDrawingBuffer::CreateColorBuffer() {
 
 scoped_refptr<XRWebGLDrawingBuffer::ColorBuffer>
 XRWebGLDrawingBuffer::CreateOrRecycleColorBuffer() {
-  if (!recycled_color_buffer_queue_.IsEmpty()) {
+  if (!recycled_color_buffer_queue_.empty()) {
     scoped_refptr<ColorBuffer> recycled =
         recycled_color_buffer_queue_.TakeLast();
     if (recycled->receive_sync_token.HasData()) {
@@ -621,8 +624,10 @@ XRWebGLDrawingBuffer::TransferToStaticBitmapImage() {
       /* shared_image_texture_id = */ 0, sk_image_info, GL_TEXTURE_2D,
       /* is_origin_top_left = */ false,
       drawing_buffer_->ContextProviderWeakPtr(),
-      base::PlatformThread::CurrentRef(), Thread::Current()->GetTaskRunner(),
-      std::move(release_callback), /*supports_display_compositing=*/true,
+      base::PlatformThread::CurrentRef(),
+      ThreadScheduler::Current()->CleanupTaskRunner(),
+      std::move(release_callback),
+      /*supports_display_compositing=*/true,
       // CreateColorBuffer() never sets the SCANOUT usage bit.
       /*is_overlay_candidate=*/false);
 }

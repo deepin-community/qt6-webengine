@@ -1,10 +1,11 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "tools/binary_size/libsupersize/viewer/caspian/model.h"
 
 #include <algorithm>
+#include <cassert>
 #include <iostream>
 #include <list>
 #include <sstream>
@@ -15,6 +16,10 @@
 #include "tools/binary_size/libsupersize/viewer/caspian/function_signature.h"
 
 namespace caspian {
+
+namespace {
+constexpr const char kNoPath[] = "(No path)";
+}  // namespace
 
 Container::Container(const std::string& name_in) : name(name_in) {}
 Container::~Container() = default;
@@ -50,14 +55,14 @@ void Symbol::DeriveNames() const {
              IsOther()) {
     template_name_ = full_name_;
     name_ = full_name_;
+  } else if (IsStringLiteral()) {
+    template_name_ = full_name_;
+    name_ = full_name_;
   } else if (IsDex()) {
     std::tuple<std::string_view, std::string_view, std::string_view>
         parsed_names = ParseJava(full_name_, &size_info_->owned_strings);
     template_name_ = std::get<1>(parsed_names);
     name_ = std::get<2>(parsed_names);
-  } else if (IsStringLiteral()) {
-    template_name_ = full_name_;
-    name_ = full_name_;
   } else if (IsNative()) {
     std::tuple<std::string_view, std::string_view, std::string_view>
         parsed_names = ParseCpp(full_name_, &size_info_->owned_strings);
@@ -69,17 +74,17 @@ void Symbol::DeriveNames() const {
   }
 }
 
-int32_t Symbol::Address() const {
-  return address_;
-}
 int32_t Symbol::Size() const {
   return size_;
 }
-int32_t Symbol::Flags() const {
-  return flags_;
-}
 int32_t Symbol::Padding() const {
   return padding_;
+}
+int32_t Symbol::Address() const {
+  return address_;
+}
+int32_t Symbol::Flags() const {
+  return flags_;
 }
 
 std::string_view Symbol::FullName() const {
@@ -110,6 +115,13 @@ const char* Symbol::ObjectPath() const {
 const char* Symbol::SourcePath() const {
   return source_path_;
 }
+const char* Symbol::GroupingPath() const {
+  if (*source_path_)
+    return source_path_;
+  if (*object_path_)
+    return object_path_;
+  return kNoPath;
+}
 const char* Symbol::SectionName() const {
   return section_name_;
 }
@@ -132,6 +144,12 @@ float Symbol::PaddingPss() const {
   return static_cast<float>(Padding()) / NumAliases();
 }
 
+float Symbol::BeforePss() const {
+  // This function should only used for diff mode.
+  assert(false);
+  return 0.0f;
+}
+
 DiffStatus Symbol::GetDiffStatus() const {
   return DiffStatus::kUnchanged;
 }
@@ -147,13 +165,6 @@ DeltaSymbol::DeltaSymbol(const Symbol* before, const Symbol* after)
 
 DeltaSymbol::~DeltaSymbol() = default;
 
-int32_t DeltaSymbol::Address() const {
-  if (after_) {
-    return after_->Address();
-  }
-  return 0;
-}
-
 int32_t DeltaSymbol::Size() const {
   if (!after_) {
     return -before_->Size();
@@ -168,14 +179,6 @@ int32_t DeltaSymbol::Size() const {
   return after_->SizeWithoutPadding() - before_->SizeWithoutPadding();
 }
 
-int32_t DeltaSymbol::Flags() const {
-  // Compute the union of flags (|) instead of symmetric difference (^), as
-  // that is more useful when querying for symbols with flags.
-  int32_t before_flags = before_ ? before_->Flags() : 0;
-  int32_t after_flags = after_ ? after_->Flags() : 0;
-  return before_flags | after_flags;
-}
-
 int32_t DeltaSymbol::Padding() const {
   if (!after_) {
     return -before_->Padding();
@@ -188,6 +191,21 @@ int32_t DeltaSymbol::Padding() const {
     return after_->Padding() - before_->Padding();
   }
   return 0;
+}
+
+int32_t DeltaSymbol::Address() const {
+  if (after_) {
+    return after_->Address();
+  }
+  return 0;
+}
+
+int32_t DeltaSymbol::Flags() const {
+  // Compute the union of flags (|) instead of symmetric difference (^), as
+  // that is more useful when querying for symbols with flags.
+  int32_t before_flags = before_ ? before_->Flags() : 0;
+  int32_t after_flags = after_ ? after_->Flags() : 0;
+  return before_flags | after_flags;
 }
 
 std::string_view DeltaSymbol::FullName() const {
@@ -221,6 +239,10 @@ const char* DeltaSymbol::ObjectPath() const {
 
 const char* DeltaSymbol::SourcePath() const {
   return (after_ ? after_ : before_)->SourcePath();
+}
+
+const char* DeltaSymbol::GroupingPath() const {
+  return (after_ ? after_ : before_)->GroupingPath();
 }
 
 const char* DeltaSymbol::SectionName() const {
@@ -265,6 +287,10 @@ float DeltaSymbol::PaddingPss() const {
     return after_->PaddingPss() - before_->PaddingPss();
   }
   return 0;
+}
+
+float DeltaSymbol::BeforePss() const {
+  return before_ ? before_->Pss() : 0.0f;
 }
 
 DiffStatus DeltaSymbol::GetDiffStatus() const {
@@ -354,11 +380,10 @@ bool DeltaSizeInfo::IsSparse() const {
 }
 
 void TreeNode::WriteIntoJson(
-    int depth,
+    const JsonWriteOptions& opts,
     std::function<bool(const TreeNode* const& l, const TreeNode* const& r)>
         compare_func,
-    bool is_sparse,
-    bool method_count_mode,
+    int depth,
     Json::Value* out) {
   if (symbol) {
     (*out)["container"] = std::string(symbol->ContainerName());
@@ -367,6 +392,9 @@ void TreeNode::WriteIntoJson(
     (*out)["fullName"] = std::string(symbol->FullName());
     if (symbol->NumAliases() > 1) {
       (*out)["numAliases"] = symbol->NumAliases();
+    }
+    if (symbol->ObjectPath()) {
+      (*out)["objPath"] = symbol->ObjectPath();
     }
     if (symbol->SourcePath()) {
       (*out)["srcPath"] = symbol->SourcePath();
@@ -379,7 +407,7 @@ void TreeNode::WriteIntoJson(
     }
   } else {
     (*out)["idPath"] = id_path.ToString();
-    if (!is_sparse && !children.empty()) {
+    if (!opts.is_sparse && !children.empty()) {
       // Add tag to containers in which all child symbols were added/removed.
       DiffStatus diff_status = node_stats.GetGlobalDiffStatus();
       if (diff_status != DiffStatus::kUnchanged) {
@@ -396,8 +424,17 @@ void TreeNode::WriteIntoJson(
   type += static_cast<char>(biggest_section);
   (*out)["type"] = type;
   (*out)["size"] = size;
+  if (opts.diff_mode) {
+    (*out)["beforeSize"] = before_size;
+  }
+  if (padding) {
+    (*out)["padding"] = padding;
+  }
+  if (address) {
+    (*out)["address"] = address;
+  }
   (*out)["flags"] = flags;
-  node_stats.WriteIntoJson(method_count_mode, &(*out)["childStats"]);
+  node_stats.WriteIntoJson(opts, &(*out)["childStats"]);
 
   const size_t kMaxChildNodesToExpand = 1000;
   if (children.size() > kMaxChildNodesToExpand) {
@@ -413,8 +450,8 @@ void TreeNode::WriteIntoJson(
     // TODO: Support additional compare functions.
     std::sort(children.begin(), children.end(), compare_func);
     for (unsigned int i = 0; i < children.size(); i++) {
-      children[i]->WriteIntoJson(depth - 1, compare_func, is_sparse,
-                                 method_count_mode, &(*out)["children"][i]);
+      children[i]->WriteIntoJson(opts, compare_func, depth - 1,
+                                 &(*out)["children"][i]);
     }
   }
 }
@@ -441,8 +478,10 @@ NodeStats::NodeStats(const BaseSymbol& symbol) {
   }
 }
 
-void NodeStats::WriteIntoJson(bool method_count_mode, Json::Value* out) const {
+void NodeStats::WriteIntoJson(const JsonWriteOptions& opts,
+                              Json::Value* out) const {
   (*out) = Json::Value(Json::objectValue);
+  bool is_diff_count = opts.diff_mode && opts.method_count_mode;
   for (const auto kv : child_stats) {
     const std::string sectionId = std::string(1, static_cast<char>(kv.first));
     const Stat stats = kv.second;
@@ -454,11 +493,7 @@ void NodeStats::WriteIntoJson(bool method_count_mode, Json::Value* out) const {
     // Count is used to store value for "method count" mode.
     // Why? Because that's how it was implemented in the (now removed) .ndjson
     // worker.
-    int count = stats.count;
-    bool is_diff = stats.added > 0 || stats.removed > 0 || stats.changed > 0;
-    if (method_count_mode && is_diff) {
-      count = stats.added - stats.removed;
-    }
+    int count = is_diff_count ? stats.added - stats.removed : stats.count;
     (*out)[sectionId]["count"] = count;
   }
 }

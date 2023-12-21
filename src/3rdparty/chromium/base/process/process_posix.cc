@@ -1,4 +1,4 @@
-// Copyright 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,7 +13,6 @@
 #include <utility>
 
 #include "base/clang_profiling_buildflags.h"
-#include "base/debug/activity_tracker.h"
 #include "base/files/scoped_file.h"
 #include "base/logging.h"
 #include "base/notreached.h"
@@ -23,7 +22,6 @@
 #include "base/time/time.h"
 #include "base/trace_event/base_tracing.h"
 #include "build/build_config.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 #if BUILDFLAG(IS_MAC)
 #include <sys/event.h>
@@ -67,9 +65,9 @@ bool WaitpidWithTimeout(base::ProcessHandle handle,
   }
 
   pid_t ret_pid = HANDLE_EINTR(waitpid(handle, status, WNOHANG));
-  static const int64_t kMaxSleepInMicroseconds = 1 << 18;  // ~256 milliseconds.
-  int64_t max_sleep_time_usecs = 1 << 10;                  // ~1 milliseconds.
-  int64_t double_sleep_time = 0;
+  static const uint32_t kMaxSleepInMicroseconds = 1 << 18;  // ~256 ms.
+  uint32_t max_sleep_time_usecs = 1 << 10;                  // ~1 ms.
+  int double_sleep_time = 0;
 
   // If the process hasn't exited yet, then sleep and try again.
   base::TimeTicks wakeup_time = base::TimeTicks::Now() + wait;
@@ -77,12 +75,10 @@ bool WaitpidWithTimeout(base::ProcessHandle handle,
     base::TimeTicks now = base::TimeTicks::Now();
     if (now > wakeup_time)
       break;
-    // Guaranteed to be non-negative!
-    int64_t sleep_time_usecs = (wakeup_time - now).InMicroseconds();
-    // Sleep for a bit while we wait for the process to finish.
-    if (sleep_time_usecs > max_sleep_time_usecs)
-      sleep_time_usecs = max_sleep_time_usecs;
 
+    const uint32_t sleep_time_usecs = static_cast<uint32_t>(
+        std::min(static_cast<uint64_t>((wakeup_time - now).InMicroseconds()),
+                 uint64_t{max_sleep_time_usecs}));
     // usleep() will return 0 and set errno to EINTR on receipt of a signal
     // such as SIGCHLD.
     usleep(sleep_time_usecs);
@@ -231,20 +227,26 @@ bool WaitForExitWithTimeoutImpl(base::ProcessHandle handle,
 
 namespace base {
 
-Process::Process(ProcessHandle handle) : process_(handle) {
-}
-
-Process::~Process() = default;
+Process::Process(ProcessHandle handle) : process_(handle) {}
 
 Process::Process(Process&& other) : process_(other.process_) {
+#if BUILDFLAG(IS_CHROMEOS)
+  unique_token_ = std::move(other.unique_token_);
+#endif
+
   other.Close();
 }
 
 Process& Process::operator=(Process&& other) {
   process_ = other.process_;
+#if BUILDFLAG(IS_CHROMEOS)
+  unique_token_ = std::move(other.unique_token_);
+#endif
   other.Close();
   return *this;
 }
+
+Process::~Process() = default;
 
 // static
 Process Process::Current() {
@@ -286,7 +288,13 @@ Process Process::Duplicate() const {
   if (is_current())
     return Current();
 
+#if BUILDFLAG(IS_CHROMEOS)
+  Process duplicate = Process(process_);
+  duplicate.unique_token_ = unique_token_;
+  return duplicate;
+#else
   return Process(process_);
+#endif
 }
 
 ProcessHandle Process::Release() {
@@ -314,10 +322,30 @@ bool Process::Terminate(int exit_code, bool wait) const {
   DCHECK(IsValid());
   CHECK_GT(process_, 0);
 
+  // RESULT_CODE_KILLED_BAD_MESSAGE == 3, but layering prevents its use.
+  // |wait| is always false when terminating badly-behaved processes.
+  const bool maybe_compromised = !wait && exit_code == 3;
+  if (maybe_compromised) {
+    // Forcibly terminate the process immediately.
+    const bool was_killed = kill(process_, SIGKILL) != 0;
+#if BUILDFLAG(IS_CHROMEOS)
+    if (was_killed)
+      CleanUpProcessAsync();
+#endif
+    DPLOG_IF(ERROR, !was_killed) << "Unable to terminate process " << process_;
+    return was_killed;
+  }
+
+  // Terminate process giving it a chance to clean up.
   if (kill(process_, SIGTERM) != 0) {
     DPLOG(ERROR) << "Unable to terminate process " << process_;
     return false;
   }
+
+#if BUILDFLAG(IS_CHROMEOS)
+  CleanUpProcessAsync();
+#endif
+
   if (!wait || WaitForExitWithTimeout(Seconds(60), nullptr)) {
     return true;
   }
@@ -333,10 +361,7 @@ bool Process::WaitForExit(int* exit_code) const {
 }
 
 bool Process::WaitForExitWithTimeout(TimeDelta timeout, int* exit_code) const {
-  // Record the event that this thread is blocking upon (for hang diagnosis).
-  absl::optional<debug::ScopedProcessWaitActivity> process_activity;
   if (!timeout.is_zero()) {
-    process_activity.emplace(this);
     // Assert that this thread is allowed to wait below. This intentionally
     // doesn't use ScopedBlockingCallWithBaseSyncPrimitives because the process
     // being waited upon tends to itself be using the CPU and considering this
@@ -354,11 +379,15 @@ bool Process::WaitForExitWithTimeout(TimeDelta timeout, int* exit_code) const {
   return exited;
 }
 
-void Process::Exited(int exit_code) const {}
+void Process::Exited(int exit_code) const {
+#if BUILDFLAG(IS_CHROMEOS)
+  CleanUpProcessAsync();
+#endif
+}
 
 int Process::GetPriority() const {
   DCHECK(IsValid());
-  return getpriority(PRIO_PROCESS, process_);
+  return getpriority(PRIO_PROCESS, static_cast<id_t>(process_));
 }
 
 }  // namespace base

@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,8 +9,8 @@
 #include <string>
 #include <vector>
 
-#include "base/callback.h"
 #include "base/containers/span.h"
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/sequence_checker.h"
@@ -56,6 +56,7 @@ class AuctionV8DevToolsSession : public blink::mojom::DevToolsSession,
       int context_group_id,
       const std::string& session_id,
       bool client_expects_binary_responses,
+      bool session_waits_for_debugger,
       mojo::PendingAssociatedRemote<blink::mojom::DevToolsSessionHost> host,
       scoped_refptr<base::SequencedTaskRunner> io_session_receiver_sequence,
       mojo::PendingReceiver<blink::mojom::DevToolsSession> io_session_receiver,

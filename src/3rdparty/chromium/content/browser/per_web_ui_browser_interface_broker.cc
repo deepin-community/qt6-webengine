@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -34,9 +34,9 @@ PerWebUIBrowserInterfaceBroker::~PerWebUIBrowserInterfaceBroker() = default;
 void PerWebUIBrowserInterfaceBroker::GetInterface(
     mojo::GenericPendingReceiver receiver) {
   auto name = receiver.interface_name().value();
-  if (!binder_map_.TryBind(&controller_, &receiver)) {
+  if (!binder_map_.TryBind(&*controller_, &receiver)) {
     // WebUI page requested an interface that's not registered
-    ShutdownWebUIRenderer(controller_);
+    ShutdownWebUIRenderer(*controller_);
   }
 }
 

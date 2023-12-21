@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -443,9 +443,6 @@ Mock_glCoverStrokePathInstancedNV(GLsizei numPaths,
                                   const GLfloat* transformValues);
 static void GL_BINDING_CALL Mock_glCoverStrokePathNV(GLuint name,
                                                      GLenum coverMode);
-static void GL_BINDING_CALL
-Mock_glCoverageModulationCHROMIUM(GLenum components);
-static void GL_BINDING_CALL Mock_glCoverageModulationNV(GLenum components);
 static void GL_BINDING_CALL
 Mock_glCreateMemoryObjectsEXT(GLsizei n, GLuint* memoryObjects);
 static GLuint GL_BINDING_CALL Mock_glCreateProgram(void);
@@ -1703,6 +1700,7 @@ Mock_glProgramUniformMatrix4x3fv(GLuint program,
                                  GLsizei count,
                                  GLboolean transpose,
                                  const GLfloat* value);
+static void GL_BINDING_CALL Mock_glProvokingVertexANGLE(GLenum provokeMode);
 static void GL_BINDING_CALL Mock_glPushDebugGroup(GLenum source,
                                                   GLuint id,
                                                   GLsizei length,

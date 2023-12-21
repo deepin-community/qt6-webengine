@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -105,10 +105,8 @@ class CORE_EXPORT PointerEventFactory {
   // We use int64_t to cover the whole range for PointerId with no
   // deleted hash value.
   template <typename T>
-  using PointerIdKeyMap = HashMap<int64_t,
-                                  T,
-                                  WTF::IntHash<int64_t>,
-                                  WTF::UnsignedWithZeroKeyHashTraits<int64_t>>;
+  using PointerIdKeyMap =
+      HashMap<int64_t, T, IntWithZeroKeyHashTraits<int64_t>>;
   typedef struct IncomingId : public std::pair<int, int> {
     IncomingId() = default;
     IncomingId(WebPointerProperties::PointerType pointer_type, int raw_id)
@@ -123,9 +121,8 @@ class CORE_EXPORT PointerEventFactory {
   using IncomingIdToPointerIdMap =
       HashMap<IncomingId,
               PointerId,
-              WTF::PairHash<int, int>,
-              WTF::PairHashTraits<WTF::UnsignedWithZeroKeyHashTraits<int>,
-                                  WTF::UnsignedWithZeroKeyHashTraits<int>>>;
+              PairHashTraits<IntWithZeroKeyHashTraits<int>,
+                             IntWithZeroKeyHashTraits<int>>>;
 
   typedef struct PointerAttributes {
     IncomingId incoming_id;

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,6 +9,7 @@
 #include <memory>
 
 #include "base/files/file_path.h"
+#include "base/files/file_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
@@ -17,6 +18,7 @@
 #include "net/disk_cache/blockfile/file_lock.h"
 #include "net/disk_cache/blockfile/stress_support.h"
 #include "net/disk_cache/cache_util.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 using base::TimeTicks;
 
@@ -353,18 +355,24 @@ void BlockFiles::DeleteBlock(Addr address, bool deep) {
   if (deep)
     file->Write(zero_buffer_.data(), size, offset);
 
-  BlockHeader file_header(file);
-  file_header.DeleteMapBlock(address.start_block(), address.num_blocks());
-  file->Flush();
+  absl::optional<FileType> type_to_delete;
+  {
+    // Block Header can't outlive file's buffer.
+    BlockHeader file_header(file);
+    file_header.DeleteMapBlock(address.start_block(), address.num_blocks());
+    file->Flush();
 
-  if (!file_header.Header()->num_entries) {
-    // This file is now empty. Let's try to delete it.
-    FileType type = Addr::RequiredFileType(file_header.Header()->entry_size);
-    if (Addr::BlockSizeForFileType(RANKINGS) ==
-        file_header.Header()->entry_size) {
-      type = RANKINGS;
+    if (!file_header.Header()->num_entries) {
+      // This file is now empty. Let's try to delete it.
+      type_to_delete = Addr::RequiredFileType(file_header.Header()->entry_size);
+      if (Addr::BlockSizeForFileType(RANKINGS) ==
+          file_header.Header()->entry_size) {
+        type_to_delete = RANKINGS;
+      }
     }
-    RemoveEmptyFile(type);  // Ignore failures.
+  }
+  if (type_to_delete.has_value()) {
+    RemoveEmptyFile(type_to_delete.value());  // Ignore failures.
   }
 }
 
@@ -393,8 +401,8 @@ bool BlockFiles::IsValid(Addr address) {
 
   static bool read_contents = false;
   if (read_contents) {
-    std::unique_ptr<char[]> buffer;
-    buffer.reset(new char[Addr::BlockSizeForFileType(BLOCK_4K) * 4]);
+    auto buffer =
+        std::make_unique<char[]>(Addr::BlockSizeForFileType(BLOCK_4K) * 4);
     size_t size = address.BlockSize() * address.num_blocks();
     size_t offset = address.start_block() * address.BlockSize() +
                     kBlockHeaderSize;
@@ -411,7 +419,7 @@ bool BlockFiles::CreateBlockFile(int index, FileType file_type, bool force) {
   int flags = force ? base::File::FLAG_CREATE_ALWAYS : base::File::FLAG_CREATE;
   flags |= base::File::FLAG_WRITE | base::File::FLAG_WIN_EXCLUSIVE_WRITE;
 
-  scoped_refptr<File> file(new File(base::File(name, flags)));
+  auto file = base::MakeRefCounted<File>(base::File(name, flags));
   if (!file->IsValid())
     return false;
 
@@ -434,7 +442,7 @@ bool BlockFiles::OpenBlockFile(int index) {
   }
 
   base::FilePath name = Name(index);
-  scoped_refptr<MappedFile> file(new MappedFile());
+  auto file = base::MakeRefCounted<MappedFile>();
 
   if (!file->Init(name, kBlockHeaderSize)) {
     LOG(ERROR) << "Failed to open " << name.value();
@@ -592,11 +600,11 @@ bool BlockFiles::RemoveEmptyFile(FileType block_type) {
       // We get a new handle to the file and release the old one so that the
       // file gets unmmaped... so we can delete it.
       base::FilePath name = Name(file_index);
-      scoped_refptr<File> this_file(new File(false));
+      auto this_file = base::MakeRefCounted<File>(false);
       this_file->Init(name);
       block_files_[file_index] = nullptr;
 
-      int failure = DeleteCacheFile(name) ? 0 : 1;
+      int failure = base::DeleteFile(name) ? 0 : 1;
       UMA_HISTOGRAM_COUNTS_1M("DiskCache.DeleteFailed2", failure);
       if (failure)
         LOG(ERROR) << "Failed to delete " << name.value() << " from the cache.";

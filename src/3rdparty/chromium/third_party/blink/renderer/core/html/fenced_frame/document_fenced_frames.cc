@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -17,7 +17,12 @@ namespace blink {
 const char DocumentFencedFrames::kSupplementName[] = "DocumentFencedFrame";
 
 // static
-DocumentFencedFrames& DocumentFencedFrames::From(Document& document) {
+DocumentFencedFrames* DocumentFencedFrames::Get(Document& document) {
+  return Supplement<Document>::From<DocumentFencedFrames>(document);
+}
+
+// static
+DocumentFencedFrames& DocumentFencedFrames::GetOrCreate(Document& document) {
   DocumentFencedFrames* supplement =
       Supplement<Document>::From<DocumentFencedFrames>(document);
   if (!supplement) {
@@ -34,13 +39,11 @@ void DocumentFencedFrames::RegisterFencedFrame(
     HTMLFencedFrameElement* fenced_frame) {
   fenced_frames_.push_back(fenced_frame);
 
-  if (features::IsFencedFramesMPArchBased()) {
-    LocalFrame* frame = GetSupplementable()->GetFrame();
-    if (!frame)
-      return;
-    if (Page* page = frame->GetPage())
-      page->IncrementSubframeCount();
-  }
+  LocalFrame* frame = GetSupplementable()->GetFrame();
+  if (!frame)
+    return;
+  if (Page* page = frame->GetPage())
+    page->IncrementSubframeCount();
 }
 
 void DocumentFencedFrames::DeregisterFencedFrame(
@@ -50,13 +53,11 @@ void DocumentFencedFrames::DeregisterFencedFrame(
     fenced_frames_.EraseAt(index);
   }
 
-  if (features::IsFencedFramesMPArchBased()) {
-    LocalFrame* frame = GetSupplementable()->GetFrame();
-    if (!frame)
-      return;
-    if (Page* page = frame->GetPage()) {
-      page->DecrementSubframeCount();
-    }
+  LocalFrame* frame = GetSupplementable()->GetFrame();
+  if (!frame)
+    return;
+  if (Page* page = frame->GetPage()) {
+    page->DecrementSubframeCount();
   }
 }
 

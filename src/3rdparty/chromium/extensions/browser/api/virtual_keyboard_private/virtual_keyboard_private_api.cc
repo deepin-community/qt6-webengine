@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,15 +8,13 @@
 #include <string>
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/lazy_instance.h"
 #include "base/strings/utf_string_conversions.h"
 #include "extensions/browser/api/extensions_api_client.h"
 #include "extensions/browser/api/virtual_keyboard_private/virtual_keyboard_delegate.h"
-#include "extensions/browser/extension_function_registry.h"
 #include "extensions/common/api/virtual_keyboard_private.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
-#include "ui/events/event.h"
 
 namespace extensions {
 
@@ -58,8 +56,6 @@ bool VirtualKeyboardPrivateFunction::PreRunValidation(std::string* error) {
   }
   return true;
 }
-
-VirtualKeyboardPrivateFunction::~VirtualKeyboardPrivateFunction() {}
 
 ExtensionFunction::ResponseAction
 VirtualKeyboardPrivateInsertTextFunction::Run() {
@@ -128,10 +124,9 @@ VirtualKeyboardPrivateGetKeyboardConfigFunction::Run() {
 }
 
 void VirtualKeyboardPrivateGetKeyboardConfigFunction::OnKeyboardConfig(
-    std::unique_ptr<base::DictionaryValue> results) {
-  Respond(results
-              ? OneArgument(base::Value::FromUniquePtrValue(std::move(results)))
-              : Error(kUnknownError));
+    absl::optional<base::Value::Dict> results) {
+  Respond(results ? OneArgument(base::Value(std::move(*results)))
+                  : Error(kUnknownError));
 }
 
 ExtensionFunction::ResponseAction
@@ -312,8 +307,7 @@ VirtualKeyboardAPI::VirtualKeyboardAPI(content::BrowserContext* context) {
       ExtensionsAPIClient::Get()->CreateVirtualKeyboardDelegate(context);
 }
 
-VirtualKeyboardAPI::~VirtualKeyboardAPI() {
-}
+VirtualKeyboardAPI::~VirtualKeyboardAPI() = default;
 
 static base::LazyInstance<BrowserContextKeyedAPIFactory<VirtualKeyboardAPI>>::
     DestructorAtExit g_factory = LAZY_INSTANCE_INITIALIZER;

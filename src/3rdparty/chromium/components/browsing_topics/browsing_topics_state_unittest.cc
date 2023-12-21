@@ -1,15 +1,16 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/browsing_topics/browsing_topics_state.h"
 
 #include "base/base64.h"
-#include "base/callback_helpers.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/functional/callback_helpers.h"
 #include "base/json/json_file_value_serializer.h"
 #include "base/json/values_util.h"
+#include "base/ranges/algorithm.h"
 #include "base/strings/strcat.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
@@ -148,8 +149,7 @@ TEST_F(BrowsingTopicsStateTest, InitFromNoFile_SaveToDiskAfterDelay) {
 
   EXPECT_TRUE(state.epochs().empty());
   EXPECT_TRUE(state.next_scheduled_calculation_time().is_null());
-  EXPECT_TRUE(std::equal(state.hmac_key().begin(), state.hmac_key().end(),
-                         kTestKey.begin()));
+  EXPECT_TRUE(base::ranges::equal(state.hmac_key(), kTestKey));
 
   EXPECT_TRUE(state.HasScheduledSaveForTesting());
   EXPECT_TRUE(observed_state_loaded());
@@ -182,8 +182,7 @@ TEST_F(BrowsingTopicsStateTest,
   EXPECT_TRUE(state.epochs().empty());
   EXPECT_EQ(state.next_scheduled_calculation_time(),
             base::Time::Now() + base::Days(7));
-  EXPECT_TRUE(std::equal(state.hmac_key().begin(), state.hmac_key().end(),
-                         kTestKey.begin()));
+  EXPECT_TRUE(base::ranges::equal(state.hmac_key(), kTestKey));
 
   EXPECT_TRUE(state.HasScheduledSaveForTesting());
 
@@ -225,13 +224,14 @@ TEST_F(BrowsingTopicsStateTest, AddEpoch) {
   EXPECT_EQ(state.epochs()[1].calculation_time(), kTime2);
 
   // Failed topics calculation.
-  state.AddEpoch(EpochTopics());
+  state.AddEpoch(EpochTopics(kTime3));
   EXPECT_EQ(state.epochs().size(), 3u);
   EXPECT_FALSE(state.epochs()[0].empty());
   EXPECT_EQ(state.epochs()[0].calculation_time(), kTime1);
   EXPECT_FALSE(state.epochs()[1].empty());
   EXPECT_EQ(state.epochs()[1].calculation_time(), kTime2);
   EXPECT_TRUE(state.epochs()[2].empty());
+  EXPECT_EQ(state.epochs()[2].calculation_time(), kTime3);
 
   // Successful topics calculation at `kTime4`.
   state.AddEpoch(CreateTestEpochTopics(kTime4));
@@ -258,8 +258,7 @@ TEST_F(BrowsingTopicsStateTest, AddEpoch) {
 
   // The `next_scheduled_calculation_time` and `hmac_key` are unaffected.
   EXPECT_EQ(state.next_scheduled_calculation_time(), base::Time());
-  EXPECT_TRUE(std::equal(state.hmac_key().begin(), state.hmac_key().end(),
-                         kTestKey.begin()));
+  EXPECT_TRUE(base::ranges::equal(state.hmac_key(), kTestKey));
 }
 
 TEST_F(BrowsingTopicsStateTest, EpochsForSite_Empty) {
@@ -276,8 +275,9 @@ TEST_F(BrowsingTopicsStateTest, EpochsForSite_OneEpoch_SwitchTimeNotArrived) {
   state.AddEpoch(CreateTestEpochTopics(kTime1));
   state.UpdateNextScheduledCalculationTime();
 
-  ASSERT_LT(state.CalculateSiteStickyTimeDelta("foo.com") + base::Hours(1),
-            base::Days(7));
+  // The random per-site delay happens to be between (one hour, one day).
+  ASSERT_GT(state.CalculateSiteStickyTimeDelta("foo.com"), base::Hours(1));
+  ASSERT_LT(state.CalculateSiteStickyTimeDelta("foo.com"), base::Days(1));
 
   task_environment_->FastForwardBy(base::Hours(1));
   EXPECT_TRUE(state.EpochsForSite(/*top_domain=*/"foo.com").empty());
@@ -290,8 +290,9 @@ TEST_F(BrowsingTopicsStateTest, EpochsForSite_OneEpoch_SwitchTimeArrived) {
   state.AddEpoch(CreateTestEpochTopics(kTime1));
   state.UpdateNextScheduledCalculationTime();
 
-  ASSERT_GT(state.CalculateSiteStickyTimeDelta("foo.com") + base::Days(1),
-            base::Days(7));
+  // The random per-site delay happens to be between (one hour, one day).
+  ASSERT_GT(state.CalculateSiteStickyTimeDelta("foo.com"), base::Hours(1));
+  ASSERT_LT(state.CalculateSiteStickyTimeDelta("foo.com"), base::Days(1));
 
   task_environment_->FastForwardBy(base::Days(1));
 
@@ -395,8 +396,7 @@ TEST_F(BrowsingTopicsStateTest, InitFromPreexistingFile_CorruptedHmacKey) {
 
   EXPECT_EQ(state.epochs().size(), 0u);
   EXPECT_TRUE(state.next_scheduled_calculation_time().is_null());
-  EXPECT_TRUE(std::equal(state.hmac_key().begin(), state.hmac_key().end(),
-                         kZeroKey.begin()));
+  EXPECT_TRUE(base::ranges::equal(state.hmac_key(), kZeroKey));
 
   histograms.ExpectUniqueSample(
       "BrowsingTopics.BrowsingTopicsState.LoadFinishStatus", false,
@@ -421,8 +421,7 @@ TEST_F(BrowsingTopicsStateTest, InitFromPreexistingFile_SameConfigVersion) {
   EXPECT_FALSE(state.epochs()[0].empty());
   EXPECT_EQ(state.epochs()[0].model_version(), kModelVersion);
   EXPECT_EQ(state.next_scheduled_calculation_time(), kTime2);
-  EXPECT_TRUE(std::equal(state.hmac_key().begin(), state.hmac_key().end(),
-                         kTestKey2.begin()));
+  EXPECT_TRUE(base::ranges::equal(state.hmac_key(), kTestKey2));
 
   histograms.ExpectUniqueSample(
       "BrowsingTopics.BrowsingTopicsState.LoadFinishStatus", true,
@@ -446,8 +445,7 @@ TEST_F(BrowsingTopicsStateTest,
 
   EXPECT_TRUE(state.epochs().empty());
   EXPECT_TRUE(state.next_scheduled_calculation_time().is_null());
-  EXPECT_TRUE(std::equal(state.hmac_key().begin(), state.hmac_key().end(),
-                         kTestKey2.begin()));
+  EXPECT_TRUE(base::ranges::equal(state.hmac_key(), kTestKey2));
 
   histograms.ExpectUniqueSample(
       "BrowsingTopics.BrowsingTopicsState.LoadFinishStatus", true,
@@ -481,8 +479,7 @@ TEST_F(BrowsingTopicsStateTest, ClearOneEpoch) {
 
   EXPECT_EQ(state.next_scheduled_calculation_time(),
             base::Time::Now() + base::Days(7));
-  EXPECT_TRUE(std::equal(state.hmac_key().begin(), state.hmac_key().end(),
-                         kTestKey.begin()));
+  EXPECT_TRUE(base::ranges::equal(state.hmac_key(), kTestKey));
 }
 
 TEST_F(BrowsingTopicsStateTest, ClearAllTopics) {
@@ -509,8 +506,7 @@ TEST_F(BrowsingTopicsStateTest, ClearAllTopics) {
 
   EXPECT_EQ(state.next_scheduled_calculation_time(),
             base::Time::Now() + base::Days(7));
-  EXPECT_TRUE(std::equal(state.hmac_key().begin(), state.hmac_key().end(),
-                         kTestKey.begin()));
+  EXPECT_TRUE(base::ranges::equal(state.hmac_key(), kTestKey));
 }
 
 TEST_F(BrowsingTopicsStateTest, ClearTopic) {

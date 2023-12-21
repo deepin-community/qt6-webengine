@@ -1,15 +1,16 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/password_manager/core/browser/votes_uploader.h"
 
 #include <ctype.h>
-#include <algorithm>
+
 #include <iostream>
 #include <utility>
 
 #include "base/check_op.h"
+#include "base/containers/contains.h"
 #include "base/hash/hash.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/rand_util.h"
@@ -18,10 +19,10 @@
 #include "build/build_config.h"
 #include "components/autofill/core/browser/autofill_download_manager.h"
 #include "components/autofill/core/browser/autofill_field.h"
-#include "components/autofill/core/browser/autofill_regex_constants.h"
-#include "components/autofill/core/browser/autofill_regexes.h"
 #include "components/autofill/core/browser/form_structure.h"
 #include "components/autofill/core/browser/randomized_encoder.h"
+#include "components/autofill/core/common/autofill_regex_constants.h"
+#include "components/autofill/core/common/autofill_regexes.h"
 #include "components/autofill/core/common/form_data.h"
 #include "components/autofill/core/common/form_field_data.h"
 #include "components/autofill/core/common/signatures.h"
@@ -54,9 +55,6 @@ namespace password_manager {
 namespace {
 // Number of distinct low-entropy hash values.
 constexpr uint32_t kNumberOfLowEntropyHashValues = 64;
-
-// Contains all special symbols considered for password-generation.
-constexpr char kSpecialSymbols[] = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
 
 // Helper function that assigns |field_types[field_name]=type| and also sets
 // |field_name_collision| if |field_types[field_name]| is already set.
@@ -166,38 +164,19 @@ bool IsAddingUsernameToExistingMatch(
          match->password_value == credentials.password_value;
 }
 
-// Helper functions for character type classification. The built-in functions
-// depend on locale, platform and other stuff. To make the output more
-// predictable, the function are re-implemented here.
-bool IsNumeric(int c) {
-  return '0' <= c && c <= '9';
-}
-bool IsLowercaseLetter(int c) {
-  return 'a' <= c && c <= 'z';
-}
-bool IsUppercaseLetter(int c) {
-  return 'A' <= c && c <= 'Z';
-}
-
-// Checks if a supplied character |c| is a special symbol.
-// Special symbols are defined by the string |kSpecialSymbols|.
-bool IsSpecialSymbol(int c) {
-  return std::find(std::begin(kSpecialSymbols), std::end(kSpecialSymbols), c) !=
-         std::end(kSpecialSymbols);
-}
-
 // Returns a uniformly distributed random symbol from the set of random symbols
 // defined by the string |kSpecialSymbols|.
 int GetRandomSpecialSymbol() {
-  return kSpecialSymbols[base::RandGenerator(std::size(kSpecialSymbols))];
+  return password_manager_util::kSpecialSymbols[base::RandGenerator(
+      std::size(password_manager_util::kSpecialSymbols))];
 }
 
 // Returns a random special symbol used in |password|.
 // It is expected that |password| contains at least one special symbol.
 int GetRandomSpecialSymbolFromPassword(const std::u16string& password) {
   std::vector<int> symbols;
-  std::copy_if(password.begin(), password.end(), std::back_inserter(symbols),
-               &IsSpecialSymbol);
+  base::ranges::copy_if(password, std::back_inserter(symbols),
+                        &password_manager_util::IsSpecialSymbol);
   DCHECK(!symbols.empty()) << "Password must contain at least one symbol.";
   return symbols[base::RandGenerator(symbols.size())];
 }
@@ -225,20 +204,18 @@ AutofillUploadContents::ValueType GetValueType(
   // Check if |username_value| is an already stored username.
   // TODO(crbug.com/959776) Implement checking against usenames stored for all
   // domains and return STORED_FOR_ANOTHER_DOMAIN in that case.
-  auto credential_match = base::ranges::find_if(
-      stored_credentials, [&username_value](const PasswordForm* credential) {
-        return credential->username_value == username_value;
-      });
-  if (credential_match != stored_credentials.end())
+  if (base::Contains(stored_credentials, username_value,
+                     &PasswordForm::username_value)) {
     return AutofillUploadContents::STORED_FOR_CURRENT_DOMAIN;
+  }
 
-  if (autofill::MatchesPattern(username_value, autofill::kEmailValueRe))
+  if (autofill::MatchesRegex<autofill::kEmailValueRe>(username_value))
     return AutofillUploadContents::EMAIL;
 
-  if (autofill::MatchesPattern(username_value, autofill::kPhoneValueRe))
+  if (autofill::MatchesRegex<autofill::kPhoneValueRe>(username_value))
     return AutofillUploadContents::PHONE;
 
-  if (autofill::MatchesPattern(username_value, autofill::kUsernameLikeValueRe))
+  if (autofill::MatchesRegex<autofill::kUsernameLikeValueRe>(username_value))
     return AutofillUploadContents::USERNAME_LIKE;
 
   if (username_value.find(' ') != std::u16string::npos)
@@ -253,8 +230,11 @@ SingleUsernameVoteData::SingleUsernameVoteData(
     FieldRendererId renderer_id,
     const std::u16string& username_value,
     const FormPredictions& form_predictions,
-    const std::vector<const PasswordForm*>& stored_credentials)
-    : renderer_id(renderer_id), form_predictions(form_predictions) {
+    const std::vector<const PasswordForm*>& stored_credentials,
+    bool password_form_had_username_field)
+    : renderer_id(renderer_id),
+      form_predictions(form_predictions),
+      password_form_had_username_field(password_form_had_username_field) {
   base::TrimWhitespace(username_value, base::TrimPositions::TRIM_ALL,
                        &username_candidate_value);
   value_type = GetValueType(username_candidate_value, stored_credentials);
@@ -282,7 +262,7 @@ void VotesUploader::SendVotesOnSave(
     const PasswordForm& submitted_form,
     const std::vector<const PasswordForm*>& best_matches,
     PasswordForm* pending_credentials) {
-  if (pending_credentials->times_used == 1 ||
+  if (pending_credentials->times_used_in_html_form == 1 ||
       IsAddingUsernameToExistingMatch(*pending_credentials, best_matches)) {
     UploadFirstLoginVotes(best_matches, *pending_credentials, submitted_form);
   }
@@ -291,7 +271,7 @@ void VotesUploader::SendVotesOnSave(
   // by password generation to help determine account creation sites.
   // Credentials that have been previously used (e.g., PSL matches) are checked
   // to see if they are valid account creation forms.
-  if (pending_credentials->times_used == 0) {
+  if (pending_credentials->times_used_in_html_form == 0) {
     MaybeSendSingleUsernameVote();
     UploadPasswordVote(*pending_credentials, submitted_form, autofill::PASSWORD,
                        std::string());
@@ -327,7 +307,7 @@ void VotesUploader::SendVoteOnCredentialsReuse(
     // they aren't from an account creation form.
     // Also bypass uploading if the username was edited. Offering generation
     // in cases where we currently save the wrong username isn't great.
-    if (pending->times_used == 1) {
+    if (pending->times_used_in_html_form == 1) {
       if (UploadPasswordVote(*pending, submitted_form,
                              autofill::ACCOUNT_CREATION_PASSWORD,
                              observed_structure.FormSignatureAsStr())) {
@@ -442,7 +422,7 @@ bool VotesUploader::UploadPasswordVote(
         autofill_type == autofill::NEW_PASSWORD) {
       // The password attributes should be uploaded only on the first save or an
       // update.
-      DCHECK_EQ(form_to_upload.times_used, 0);
+      DCHECK_EQ(form_to_upload.times_used_in_html_form, 0);
       GeneratePasswordAttributesVote(autofill_type == autofill::PASSWORD
                                          ? form_to_upload.password_value
                                          : form_to_upload.new_password_value,
@@ -480,8 +460,8 @@ bool VotesUploader::UploadPasswordVote(
   // code duplication.
   bool success = download_manager->StartUploadRequest(
       form_structure, false /* was_autofilled */, available_field_types,
-      login_form_signature, true /* observed_submission */,
-      nullptr /* prefs */);
+      login_form_signature, true /* observed_submission */, nullptr /* prefs */,
+      nullptr /* observer */);
 
   UMA_HISTOGRAM_BOOLEAN("PasswordGeneration.UploadStarted", success);
   return success;
@@ -546,7 +526,8 @@ void VotesUploader::UploadFirstLoginVotes(
   // code duplication.
   download_manager->StartUploadRequest(
       form_structure, false /* was_autofilled */, available_field_types,
-      std::string(), true /* observed_submission */, nullptr /* prefs */);
+      std::string(), true /* observed_submission */, nullptr /* prefs */,
+      nullptr);
 }
 
 void VotesUploader::SetInitialHashValueOfUsernameField(
@@ -617,7 +598,12 @@ void VotesUploader::MaybeSendSingleUsernameVote() {
       logger.LogFormStructure(Logger::STRING_USERNAME_FIRST_FLOW_VOTE,
                               *form_to_upload);
     }
-    StartUploadRequest(std::move(form_to_upload), available_field_types);
+
+    if (StartUploadRequest(std::move(form_to_upload), available_field_types)) {
+      base::UmaHistogramBoolean(
+          "PasswordManager.SingleUsername.PasswordFormHadUsernameField",
+          single_username_vote_data_->password_form_had_username_field);
+    }
   }
 }
 
@@ -778,25 +764,23 @@ void VotesUploader::GeneratePasswordAttributesVote(
 
   // Don't crowdsource password attributes for non-ascii passwords.
   for (const auto& e : password_value) {
-    if (!(IsUppercaseLetter(e) || IsLowercaseLetter(e) || IsNumeric(e) ||
-          IsSpecialSymbol(e))) {
+    if (!(password_manager_util::IsLetter(e) ||
+          password_manager_util::IsNumeric(e) ||
+          password_manager_util::IsSpecialSymbol(e))) {
       return;
     }
   }
 
   // Select a character class attribute to upload. Upload special symbols more
   // often (8 in 9 cases) as most issues are due to missing or wrong special
-  // symbols. Don't upload info about uppercase and numeric characters as all
-  // sites that allow lowercase letters also uppercase letters, and all sites
-  // allow numeric symbols in passwords.
+  // symbols. Upload info about letters existence otherwise.
   autofill::PasswordAttribute character_class_attribute;
-  bool (*predicate)(int c) = nullptr;
+  bool (*predicate)(char16_t c) = nullptr;
   if (base::RandGenerator(9) == 0) {
-    predicate = &IsLowercaseLetter;
-    character_class_attribute =
-        autofill::PasswordAttribute::kHasLowercaseLetter;
+    predicate = &password_manager_util::IsLetter;
+    character_class_attribute = autofill::PasswordAttribute::kHasLetter;
   } else {
-    predicate = &IsSpecialSymbol;
+    predicate = &password_manager_util::IsSpecialSymbol;
     character_class_attribute = autofill::PasswordAttribute::kHasSpecialSymbol;
   }
 
@@ -853,7 +837,8 @@ bool VotesUploader::StartUploadRequest(
 
   return download_manager->StartUploadRequest(
       *form_to_upload, false /* was_autofilled */, available_field_types,
-      std::string(), true /* observed_submission */, nullptr /* prefs */);
+      std::string(), true /* observed_submission */, nullptr /* prefs */,
+      nullptr);
 }
 
 void VotesUploader::SaveFieldVote(FormSignature form_signature,

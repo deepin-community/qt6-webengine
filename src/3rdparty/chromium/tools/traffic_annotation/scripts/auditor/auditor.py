@@ -1,5 +1,5 @@
 #!/usr/bin/env vpython3
-# Copyright 2020 The Chromium Authors. All rights reserved.
+# Copyright 2020 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -7,6 +7,7 @@ import argparse
 import copy
 import datetime
 import difflib
+import json
 import logging
 import os
 import platform
@@ -14,8 +15,10 @@ import re
 import subprocess
 import sys
 import traceback
-import xml.etree.ElementTree
+import xml.etree.ElementTree as ElementTree
 
+from dataclasses import dataclass
+from xml.dom import minidom
 from enum import Enum, auto
 from google.protobuf import text_format
 from pathlib import Path
@@ -25,6 +28,8 @@ from typing import NewType, TYPE_CHECKING, Any, Optional, List, Dict, Set, \
 from error import AuditorError, ErrorType
 import util
 from util import UniqueId, HashCode
+
+from datetime import datetime
 
 # Path to the directory where this script is.
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -71,7 +76,7 @@ MIN_MILESTONE = 62
 # String that appears at the top of annotations.xml.
 XML_COMMENT = """<?xml version="1.0"?>
 <!--
-Copyright 2017 The Chromium Authors. All rights reserved.
+Copyright 2017 The Chromium Authors
 Use of this source code is governed by a BSD-style license that can be
 found in the LICENSE file.
 
@@ -80,6 +85,22 @@ Refer to README.md for content description and update process.
 
 <annotations>"""
 
+# String that appears at the top of grouping.xml.
+XML_GROUPING_COMMENT = """<!--
+Copyright 2020 The Chromium Authors
+Use of this source code is governed by a BSD-style license that can be
+found in the LICENSE file.
+
+Refer to README.md for content description and update process. Use hidden="true"
+to suppress a given annotation from appearing within the generated document. e.g
+<traffic_annotation unique_id="foobar" hidden="true"/>
+
+Unsorted annotations can be placed under the 'Unsorted' group. Keep
+hidden="true" so that these annotations don't show up in the document.
+These annotations will be changed to hidden="false" eventually
+after discussions on the right group.
+-->
+"""
 
 class Annotation:
   """An annotation in code, typically extracted from C++.
@@ -265,6 +286,9 @@ class Annotation:
     combination.proto.policy.chrome_policy.extend(
         other.proto.policy.chrome_policy)
 
+    combination.proto.policy.chrome_device_policy.extend(
+        other.proto.policy.chrome_device_policy)
+
     return combination, []
 
   def needs_two_ids(self) -> bool:
@@ -288,12 +312,22 @@ class Annotation:
       return self.second_id == other.second_id
     return False
 
+  def is_field_populated(self, field_name: str) -> bool:
+    """Checks if a field has a value. If field is internal or user_data
+        then checks that the list of fields is not empty."""
+    attr = getattr(self.proto.semantics, field_name)
+    if not attr:
+      return False
+    if field_name in ['internal', 'user_data']:
+      return bool(attr.ListFields())
+    return True
+
   def get_semantics_field_numbers(self) -> List[int]:
     """Returns the proto field numbers of TrafficSemantics fields that are
     included in this annotation."""
     return [
         f.number for f in traffic_annotation.TrafficSemantics.DESCRIPTOR.fields
-        if getattr(self.proto.semantics, f.name)
+        if self.is_field_populated(f.name)
     ]
 
   def get_policy_field_numbers(self) -> List[int]:
@@ -362,7 +396,9 @@ class Annotation:
     try:
       text_format.Parse(serialized_annotation.text, self.proto)
     except Exception as e:
-      logger.error(str(e))
+      logger.error(
+          "Error encountered by annotation {}. Error details : {}".format(
+              serialized_annotation.unique_id, str(e)))
       return [AuditorError(ErrorType.SYNTAX, str(e), file_path, line_number)]
 
     return []
@@ -391,10 +427,11 @@ class Annotation:
         and policy.cookies_allowed == CookiesAllowed.YES):
       unspecifieds.append("cookies_store")
 
-    # If either of 'chrome_policy' or 'policy_exception_justification' are
+    # If either a policy or a 'policy_exception_justification' are
     # available, ignore not having the other one.
-    if not policy.chrome_policy and not policy.policy_exception_justification:
+    if (not self.has_policy() and not policy.policy_exception_justification):
       unspecifieds.append("chrome_policy")
+      unspecifieds.append("chrome_device_policy")
       unspecifieds.append("policy_exception_justification")
 
     if unspecifieds:
@@ -419,7 +456,7 @@ class Annotation:
               self.file, self.line)
       ]
 
-    if policy.chrome_policy and policy.policy_exception_justification:
+    if self.has_policy() and policy.policy_exception_justification:
       return [
           AuditorError(
               ErrorType.INCONSISTENT_ANNOTATION,
@@ -427,6 +464,103 @@ class Annotation:
               "present.", self.file, self.line)
       ]
 
+    return []
+
+  def check_new_fields(self, is_safe_listed: bool) -> List[AuditorError]:
+    """Checks empty or invalid value in internal::contacts::email,
+    user_data::type and last_reviewed fields in annotation."""
+    errors = []
+    missing_fields = []
+    semantics = self.proto.semantics
+
+    missing_last_reviewed_field = not semantics.last_reviewed
+    if missing_last_reviewed_field:
+      missing_fields.append("last_reviewed")
+
+    missing_contacts = self._check_contacts()
+    if missing_contacts:
+      missing_fields.append(missing_contacts)
+
+    missing_user_data = not semantics.user_data.type
+    if missing_user_data:
+      missing_fields.append("user_data::type")
+    else:
+      errors.extend(self._validate_user_data_type_values())
+
+    if missing_fields:
+      error_txt = ', '.join(missing_fields)
+      errors.append(
+          AuditorError(ErrorType.MISSING_NEW_FIELDS,
+                       "missing fields: {}".format(error_txt), self.file,
+                       self.line))
+
+    # If file is not in safe list then return all errors encountered for
+    # last_reviewed, contacts and user_data.
+    if not is_safe_listed:
+      return errors
+
+    # Any files should be removed from safe_list list if no error encountered.
+    if not errors:
+      return [
+          AuditorError(ErrorType.REMOVE_FROM_SAFE_LIST,
+                       "Annotation tagged with MISSING_NEW_FIELDS is complete",
+                       self.file, self.line)
+      ]
+
+    # File can only be in safe_list if all 3 fields are missing. Partially
+    # populating fields is not allowed.
+    if missing_contacts and missing_user_data and missing_last_reviewed_field:
+      return []
+
+    # Return error for file in safe_list with partially populated fields.
+    errors.append(
+        AuditorError(
+            ErrorType.MISSING_NEW_FIELDS,
+            "Cannot partially populate fields and add file in safe_list.txt",
+            self.file, self.line))
+
+    return errors
+
+  def check_last_reviewed_date_format(self) -> List[AuditorError]:
+    """If last_reviewed date field format does not match YYYY-mm-dd, then
+    return INVALID_DATE_FORMAT error."""
+    date_str = self.proto.semantics.last_reviewed
+    try:
+      if date_str:
+        datetime.strptime(date_str, '%Y-%m-%d')
+    except ValueError:
+      return [
+          AuditorError(ErrorType.INVALID_DATE_FORMAT, "Should be YYYY-mm-dd",
+                       self.file, self.line)
+      ]
+    return []
+
+  def has_policy(self) -> bool:
+    """Return true if any policy field is set"""
+    return (self.proto.policy.chrome_policy
+            or self.proto.policy.chrome_device_policy)
+
+  def _check_contacts(self) -> Optional[str]:
+    """Checks presence of contacts fields in the annotation. All available
+    contacts fields should contain email"""
+    all_contacts = self.proto.semantics.internal.contacts
+
+    if not all_contacts:
+      return "internal::contacts"
+
+    if any(not contact.email for contact in all_contacts):
+      return "internal::contacts::email"
+
+    return None
+
+  def _validate_user_data_type_values(self) -> List[AuditorError]:
+    """Checks if any of semantics::user_data:type has an UNSPECIFIED value."""
+    semantics = self.proto.semantics
+    if semantics.UserData.UserDataType.UNSPECIFIED in semantics.user_data.type:
+      return [
+          AuditorError(ErrorType.INVALID_USER_DATA_TYPE, "UNSPECIFIED",
+                       self.file, self.line)
+      ]
     return []
 
 
@@ -440,6 +574,9 @@ class ExceptionType(Enum):
   TEST_ANNOTATION = "test_annotation"
   # Ignore CreateMutableNetworkTrafficAnnotationTag().
   MUTABLE_TAG = "mutable_tag"
+  # Ignore usage of newly added fields (contacts, user_data, last_reviewed)
+  # in annotation.
+  MISSING_NEW_FIELDS = "missing_new_fields"
 
   @classmethod
   def from_error_type(cls, error_type: ErrorType):
@@ -736,6 +873,16 @@ class ArchivedAnnotation:
         "{}={}".format(f, repr(getattr(self, f)))
         for f in ArchivedAnnotation.FIELDS))
 
+@dataclass
+class Sender:
+  name: str
+  annotations: List[UniqueId]
+
+@dataclass
+class Group:
+  name: str
+  hidden: bool
+  senders: List[Sender]
 
 class Exporter:
   """Handles loading and saving ArchivedAnnotations in annotations.xml."""
@@ -747,6 +894,8 @@ class Exporter:
 
   def __init__(self, current_platform: str):
     self.archive: Dict[UniqueId, ArchivedAnnotation] = {}
+    self.grouping_archive: List[Group] = []
+    self.grouping_id_sender: Dict[UniqueId, Sender] = {}
 
     assert current_platform in SUPPORTED_PLATFORMS
     self._current_platform = current_platform
@@ -766,7 +915,7 @@ class Exporter:
 
     self.archive = {}
 
-    tree = xml.etree.ElementTree.parse(Exporter.ANNOTATIONS_XML_PATH)
+    tree = ElementTree.parse(Exporter.ANNOTATIONS_XML_PATH)
     root = tree.getroot()
 
     for item in root.iter("item"):
@@ -776,19 +925,10 @@ class Exporter:
       # kwargs.
       kwargs: Dict[str, Any] = dict(item.attrib)
 
-      # Check that all required attribs are present.
-      for field in ArchivedAnnotation.REQUIRED_FIELDS:
-        if field not in kwargs:
-          raise ValueError(
-              "Missing attribute '{}' in annotations.xml: {}".format(
-                  field, xml.etree.ElementTree.tostring(item, "unicode")))
+      self.required_field_check(ArchivedAnnotation.REQUIRED_FIELDS, kwargs,
+                                item)
 
-      # Check for unknown attribs. The constructor for ArchivedAnnotation can
-      # do this for us, but the error message is more readable this way.
-      unknown_fields = kwargs.keys() - set(ArchivedAnnotation.FIELDS)
-      for field in unknown_fields:
-        raise ValueError("Invalid attribute '{}' in annotations.xml: {}".format(
-            field, xml.etree.ElementTree.tostring(item, "unicode")))
+      self.compare_field_check(ArchivedAnnotation.FIELDS, kwargs, item)
 
       # Perform some type conversions.
       kwargs["added_in_milestone"] = int(kwargs["added_in_milestone"])
@@ -812,6 +952,66 @@ class Exporter:
       annotation = ArchivedAnnotation(**kwargs)
       self.archive[annotation.id] = annotation
 
+  def load_grouping_xml(self, grouping_path: str) -> None:
+    """Loads grouping from grouping.xml into self.grouping_archive."""
+    logger.info("Parsing {}.".format(
+        grouping_path.relative_to(SRC_DIR)))
+
+    self.grouping_archive = []
+    GROUPING_FIELDS = ["id", "sender_name", "group_name"]
+    GROUPING_REQUIRED_FIELDS = ["id"]
+
+
+    tree = ElementTree.parse(grouping_path)
+    root = tree.getroot()
+
+    for group_item in root.iter("group"):
+      assert group_item.tag == "group"
+      group_name = str(group_item.attrib["name"])
+      group = Group(group_name, True, [])
+      self.grouping_archive.append(group)
+      for sender_item in group_item.iter("sender"):
+        assert sender_item.tag == "sender"
+        sender_name = str(sender_item.attrib["name"])
+        sender = Sender(sender_name, [])
+        group.senders.append(sender)
+        for traffic_annotation_item in sender_item.iter("annotation"):
+          assert traffic_annotation_item.tag == "annotation"
+
+          # Get unique id, sender name and group name from
+          # kwargs.
+          kwargs: Dict[str, Any] = dict(traffic_annotation_item.attrib)
+          self.required_field_check(GROUPING_REQUIRED_FIELDS, kwargs,
+                                    traffic_annotation_item)
+          unique_id = str(kwargs["id"])
+
+          kwargs["sender_name"] = sender_name
+          kwargs["group_name"] = group_name
+          self.compare_field_check(GROUPING_FIELDS, kwargs,
+                                    traffic_annotation_item)
+
+          sender.annotations.append(unique_id)
+          self.grouping_id_sender[unique_id] = sender
+
+  def required_field_check(self, REQUIRED_FIELDS: List[str],
+                           kwargs: Dict[str, any],
+                           item: Any):
+    # Check that all required attribs are present.
+    for field in REQUIRED_FIELDS:
+      if field not in kwargs:
+        raise ValueError(
+            "Missing attribute '{}' in xml: {}".format(
+                field, ElementTree.tostring(item, "unicode")))
+
+  def compare_field_check(self, FIELDS: List[str],
+                           kwargs: Dict[str, any],
+                           item: Any):
+    # Check for unknown attribs. and raise the error message to more readable.
+    unknown_fields = kwargs.keys() - set(FIELDS)
+    for field in unknown_fields:
+      raise ValueError("Invalid attribute '{}' in xml: {}"
+        .format(field, ElementTree.tostring(item, "unicode")))
+
   def update_annotations(self, annotations: List[Annotation],
                          reserved_ids: List[UniqueId]) -> List[AuditorError]:
     """Updates self.archive with the extracted annotations and reserved ids."""
@@ -824,7 +1024,6 @@ class Exporter:
     default_os_list = DEFAULT_OS_LIST
     if self._current_platform not in default_os_list:
       default_os_list = [self._current_platform]
-
     for annotation in annotations:
       # annotations.xml only stores raw annotations.
       if annotation.is_merged:
@@ -889,6 +1088,55 @@ class Exporter:
 
     return self.check_archived_annotations()
 
+  def update_grouping(self,
+                      annotations: List[Annotation],
+                      reserved_ids: List[UniqueId]) -> List[AuditorError]:
+    """Updates self.grouping_archive with the extracted annotations."""
+    assert self.grouping_archive
+    accepted_types = [Annotation.Type.PARTIAL, Annotation.Type.COMPLETE]
+
+    errors = []
+
+    recently_added_sender = None
+    for group in self.grouping_archive:
+      if group.name != "Unsorted":
+        continue
+      for sender in group.senders:
+        if sender.name == "Recently Added":
+          recently_added_sender = sender
+    assert recently_added_sender is not None
+
+    for annotation in annotations:
+      # annotations.xml only stores raw annotations.
+      if annotation.is_merged:
+        continue
+
+      # If annotation is new, add it to recently added sender.
+      if annotation.unique_id not in self.grouping_id_sender and \
+          annotation.type in accepted_types and \
+          annotation.unique_id not in reserved_ids:
+        recently_added_sender.annotations.append(annotation.unique_id)
+        self.grouping_id_sender[annotation.unique_id] = recently_added_sender
+
+    # If there are annotations that are not used on any OS, remove them from
+    # grouping.xml.
+    annotations_to_remove = [
+        unique_id for unique_id, archived in self.archive.items()
+        if not archived.os_list
+    ]
+
+    # If there are annotations that are removed from annotations.xml, we will
+    # remove from grouping.xml as well.
+    for unique_id in self.grouping_id_sender:
+      if unique_id not in self.archive.keys():
+        annotations_to_remove.append(unique_id)
+
+    for unique_id in annotations_to_remove:
+      sender = self.grouping_id_sender[unique_id]
+      sender.annotations.remove(unique_id)
+
+    return errors
+
   def matches_current_platform(self, archived: ArchivedAnnotation) -> bool:
     return self._current_platform in archived.os_list
 
@@ -898,7 +1146,7 @@ class Exporter:
     # Preserve this order, so we always generate the exact same XML string
     # given the same ArchivedAnnotation object.
     for unique_id, archived in self.archive.items():
-      node = xml.etree.ElementTree.fromstring('<item/>')
+      node = ElementTree.fromstring('<item/>')
 
       # Perform the same type conversions as load_annotations_xml(), but in
       # reverse. FIELDS are already in the right order for this <item/> to
@@ -943,12 +1191,37 @@ class Exporter:
               "Don't know how to serialize value to XML: {} ({})".format(
                   field, value))
 
-      lines.append(" {}".format(xml.etree.ElementTree.tostring(node,
-                                                               "unicode")))
+      lines.append(" {}".format(ElementTree.tostring(node, "unicode")))
 
     lines.append("</annotations>")
     lines.append("")
 
+    return "\n".join(lines)
+
+  def _generate_serialized_grouping_xml(self) -> str:
+    """Generates XML for current report items, for saving to grouping.xml."""
+    lines = [XML_GROUPING_COMMENT]
+    # Preserve this order, we need to map each group with a list of
+    # sender names. Each sender name with a list of unique_ids.
+    # Each group, sender, unique_id has its own node to enclose later after we
+    # put the field and value from self.grouping_archive inside their node body.
+    root_node = ElementTree.Element("groups")
+    for group in self.grouping_archive:
+      group_node = ElementTree.SubElement(root_node, "group")
+      group_node.attrib["name"] = group.name
+      if group.hidden:
+        group_node.attrib["hidden"] = "true"
+      for sender in group.senders:
+        sender_node = ElementTree.SubElement(group_node, "sender")
+        sender_node.attrib["name"] = sender.name
+        for annotation in sender.annotations:
+          annotation_node = ElementTree.SubElement(sender_node, "annotation")
+          annotation_node.attrib["id"] = annotation
+    # Get rid of the header.
+    root_without_header = minidom.parseString(ElementTree.tostring(root_node)) \
+                                 .getElementsByTagName("groups")[0]
+    groups = root_without_header.toprettyxml(indent="  ")
+    lines.append(groups)
     return "\n".join(lines)
 
   def check_archived_annotations(self) -> List[AuditorError]:
@@ -985,11 +1258,18 @@ class Exporter:
     return errors
 
   def save_annotations_xml(self) -> None:
-    """Saves self._archive into annotations.xml"""
+    """Saves self._archive into annotations.xml."""
     logger.info("Saving annotations to {}.".format(
         Exporter.ANNOTATIONS_XML_PATH.relative_to(SRC_DIR)))
     xml_str = self._generate_serialized_xml()
     Exporter.ANNOTATIONS_XML_PATH.write_text(xml_str, encoding="utf-8")
+
+  def save_grouping_xml(self) -> None:
+    """Saves self._archive into annotations.xml."""
+    logger.info("Saving grouping to {}.".format(
+        Exporter.GROUPING_XML_PATH.relative_to(SRC_DIR)))
+    xml_str = self._generate_serialized_grouping_xml()
+    Exporter.GROUPING_XML_PATH.write_text(xml_str, encoding="utf-8")
 
   def get_other_platforms_annotation_ids(self) -> List[UniqueId]:
     """Returns a list of annotations that are not defined on this platform."""
@@ -1028,15 +1308,22 @@ class Exporter:
 
     return Exporter._get_xml_differences(old_xml, new_xml)
 
+  def get_required_updates_grouping(self) -> str:
+    """Returns the required updates to go from one state to another in
+    grouping.xml."""
+    logger.info("Computing required updates for {}.".format(
+        Exporter.GROUPING_XML_PATH.relative_to(SRC_DIR)))
+
+    old_xml = Exporter.GROUPING_XML_PATH.read_text(encoding="utf-8")
+    new_xml = self._generate_serialized_grouping_xml()
+
+    return Exporter._get_xml_differences(old_xml, new_xml)
+
 
 class Auditor:
   """Extracts and validates annotations from the codebase."""
 
-  SAFE_LIST_PATH = (SRC_DIR / "tools" / "traffic_annotation" / "auditor" /
-                    "safe_list.txt")
-  # TODO(b/203773498): Remove ChromeOS safelist after cleanup.
-  CHROME_OS_SAFE_LIST_PATH = (SRC_DIR / "tools" / "traffic_annotation" /
-                              "auditor" / "chromeos" / "safe_list.txt")
+  SAFE_LIST_PATH = SRC_DIR / "tools" / "traffic_annotation" / "safe_list.txt"
 
   def __init__(self, current_platform: str, no_filtering: bool = False):
     if current_platform not in SUPPORTED_PLATFORMS:
@@ -1074,9 +1361,6 @@ class Auditor:
         Auditor.SAFE_LIST_PATH.relative_to(SRC_DIR)))
 
     lines = Auditor.SAFE_LIST_PATH.read_text(encoding="utf-8").splitlines()
-    if self.exporter._current_platform == "chromeos":
-      lines += Auditor.CHROME_OS_SAFE_LIST_PATH.read_text(
-          encoding="utf-8").splitlines()
 
     for line in lines:
       # Ignore comments and empty lines.
@@ -1226,10 +1510,17 @@ class Auditor:
     """Validate the contents of a COMPLETE annotation."""
     assert annotation.type == Annotation.Type.COMPLETE
 
+    is_safe_listed = self._is_safe_listed(annotation.file,
+                                          ExceptionType.MISSING_NEW_FIELDS)
     errors = annotation.check_complete()
+
+    errors.extend(annotation.check_new_fields(is_safe_listed))
 
     if not errors:
       errors = annotation.check_consistent()
+
+    if not errors:
+      errors = annotation.check_last_reviewed_date_format()
 
     return errors
 
@@ -1303,19 +1594,7 @@ class Auditor:
                             ) -> Set[UniqueId]:
     logger.info("Parsing {}.".format(grouping_xml_path.relative_to(SRC_DIR)))
 
-    grouping_xml_ids = set()
-    tree = xml.etree.ElementTree.parse(grouping_xml_path)
-    root = tree.getroot()
-
-    for item in root.iter("traffic_annotation"):
-      assert item.tag == "traffic_annotation"
-      if "unique_id" not in item.attrib:
-        raise ValueError(
-            "Missing attribute 'unique_id' in annotations.xml: {}".format(
-                xml.etree.ElementTree.tostring(item, "unicode")))
-      grouping_xml_ids.add(UniqueId(item.attrib["unique_id"]))
-
-    return grouping_xml_ids
+    return set(self.exporter.grouping_id_sender.keys())
 
   def check_grouping_xml(self) -> List[AuditorError]:
     #TODO(b/203822700): Add grouping.xml for chromeos.
@@ -1325,9 +1604,6 @@ class Auditor:
       return []
 
     grouping_xml_ids = self._get_grouping_xml_ids()
-
-    logger.info("Computing required updates for {}.".format(
-        Exporter.GROUPING_XML_PATH.relative_to(SRC_DIR)))
 
     # Compare with the annotation ids.
     extracted_ids = set()
@@ -1378,7 +1654,8 @@ class Auditor:
             Annotation.load_from_archive(archived))
 
   def run_all_checks(self, path_filters: List[str],
-                     report_xml_updates: bool) -> List[AuditorError]:
+                     report_xml_updates: bool,
+                     grouping_path: str) -> List[AuditorError]:
     """Performs all checks on extracted annotations, and writes annotations.xml.
 
     If test_only is True, returns the changes that would be made to
@@ -1387,6 +1664,7 @@ class Auditor:
     errors = []
 
     self.exporter.load_annotations_xml()
+    self.exporter.load_grouping_xml(grouping_path)
     if path_filters:
       self._add_missing_annotations(path_filters)
 
@@ -1407,14 +1685,25 @@ class Auditor:
       errors.extend(
           self.exporter.update_annotations(self.extracted_annotations,
                                            RESERVED_IDS))
+
+    if not errors:
+      errors.extend(
+          self.exporter.update_grouping(self.extracted_annotations,
+                                        RESERVED_IDS))
       errors.extend(self.check_grouping_xml())
 
-    # If report_xml_updates is true, look at the contents of annotations.xml. If
-    # it needs an update, add an ANNOTATIONS_XML_UPDATE error.
+    # If report_xml_updates is true, look at the contents of annotations.xml
+    # and grouping.xml. If it needs an update,
+    # add an ANNOTATIONS_XML_UPDATE and error.
     if report_xml_updates:
       updates = self.exporter.get_required_updates()
       if updates:
         errors.append(AuditorError(ErrorType.ANNOTATIONS_XML_UPDATE, updates))
+
+      grouping_updates = self.exporter.get_required_updates_grouping()
+      if grouping_updates:
+        errors.append(AuditorError(ErrorType.GROUPING_XML_UPDATE,
+                                   grouping_updates))
 
     return errors
 
@@ -1431,6 +1720,7 @@ class AuditorUI:
                test_only: bool = False,
                error_limit: int = 0,
                annotations_file: Optional[Path] = None,
+               errors_file: Optional[Path] = None,
                skip_compdb: bool = False):
     self.build_path = build_path
     # Convert backslashes to slashes on Windows.
@@ -1439,6 +1729,7 @@ class AuditorUI:
     self.test_only = test_only
     self.error_limit = error_limit
     self.annotations_file = annotations_file
+    self.errors_file = errors_file
     self.skip_compdb = skip_compdb
 
     # Exposed for testing.
@@ -1466,7 +1757,8 @@ class AuditorUI:
     # check the extracted annotations and their consistency with previous state.
     if not errors:
       errors.extend(
-          self.auditor.run_all_checks(self.path_filters, self.test_only))
+          self.auditor.run_all_checks(self.path_filters, self.test_only,
+                                      Exporter.GROUPING_XML_PATH))
 
     # Write annotations TSV file.
     if self.annotations_file is not None:
@@ -1475,14 +1767,20 @@ class AuditorUI:
                                       self.auditor.extracted_annotations,
                                       missing_ids)
 
-    # Update annotations.xml if everything else is OK and the auditor is not
+    # Update annotations.xml and grouping.xml
+    # if everything else is OK and the auditor is not
     # in test-only mode.
     if not self.test_only:
       if not errors:
         self.auditor.exporter.save_annotations_xml()
+        self.auditor.exporter.save_grouping_xml()
       else:
         logger.warning("Not updating {} due to errors in annotations.".format(
             Exporter.ANNOTATIONS_XML_PATH.relative_to(SRC_DIR)))
+
+    if self.errors_file is not None:
+      self.errors_file.write_text(json.dumps(list(map(str, errors))),
+                                  encoding="utf-8")
 
     # Postprocess errors and dump to stdout.
     if errors:
@@ -1534,6 +1832,10 @@ if __name__ == "__main__":
                            type=Path,
                            help="Optional path to a TSV output file with all"
                            " annotations.")
+  args_parser.add_argument("--errors-file",
+                           type=Path,
+                           help="Optional path to a JSON output file with "
+                           "errors.")
   args_parser.add_argument(
       "--skip-compdb",
       help="Assume compile_commands exists in the build-path, and is "
@@ -1556,7 +1858,7 @@ if __name__ == "__main__":
         "TrafficAnnotations' component and CC nicolaso@chromium.org.")
   auditor_ui = AuditorUI(build_path, args.path_filters, args.no_filtering,
                          args.test_only, args.limit, args.annotations_file,
-                         args.skip_compdb)
+                         args.errors_file, args.skip_compdb)
 
   try:
     sys.exit(auditor_ui.main())

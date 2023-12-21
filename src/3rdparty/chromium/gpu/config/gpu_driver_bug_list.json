@@ -1121,7 +1121,7 @@
         "type": "android"
       },
       "features": [
-        "max_texture_size_limit_4096"
+        "webgl_or_caps_max_texture_size_limit_4096"
       ]
     },
     {
@@ -2066,34 +2066,6 @@
       ]
     },
     {
-      "id": 232,
-      "description": "Delayed copy NV12 crashes on Intel on Windows <= 8.1.",
-      "cr_bugs": [727216],
-      "os": {
-        "type": "win",
-        "version": {
-          "op": "<=",
-          "value": "8.1"
-        }
-      },
-      "vendor_id": "0x8086",
-      "features": [
-        "disable_delayed_copy_nv12"
-      ]
-    },
-    {
-      "id": 233,
-      "description": "Delayed copy NV12 displays incorrect colors on NVIDIA drivers.",
-      "cr_bugs": [728670],
-      "os": {
-        "type": "win"
-      },
-      "vendor_id": "0x10de",
-      "features": [
-        "disable_delayed_copy_nv12"
-      ]
-    },
-    {
       "id": 235,
       "description": "Avoid waiting on a egl fence before pageflipping and rely on implicit sync.",
       "cr_bugs": [721463],
@@ -2396,23 +2368,6 @@
       "gl_renderer": "Adreno \\(TM\\) 540",
       "features": [
         "dont_use_eglclientwaitsync_with_timeout"
-      ]
-    },
-    {
-      "id": 261,
-      "cr_bugs": [817286],
-      "description": "Fallback to D3D9 if basic info collection fails on Win7",
-      "os": {
-        "type": "win",
-        "version": {
-          "op": "=",
-          "value": "6.1"
-        }
-      },
-      "vendor_id": "0xffff",
-      "device_id": ["0xfffe"],
-      "features": [
-        "disable_d3d11"
       ]
     },
     {
@@ -2817,8 +2772,8 @@
       },
       "vendor_id": "0x8086",
       "features": [
-        "max_texture_size_limit_4096",
-        "max_3d_array_texture_size_1024"
+        "max_3d_array_texture_size_1024",
+        "webgl_or_caps_max_texture_size_limit_4096"
       ]
     },
     {
@@ -2878,18 +2833,6 @@
       "gl_vendor": "NVIDIA.*",
       "features": [
         "force_gl_flush_on_swap_buffers"
-      ]
-    },
-    {
-      "id": 308,
-      "cr_bugs": [983787],
-      "description": "Delayed copy NV12 causes crashes on GPU main thread when DXVA video decoder runs on another thread",
-      "os": {
-        "type": "win"
-      },
-      "vendor_id": "0x1002",
-      "features": [
-        "disable_delayed_copy_nv12"
       ]
     },
     {
@@ -3215,17 +3158,23 @@
             "op": "between",
             "value": "26.20.11030.2",
             "value2": "26.20.11999.99999"
-          },
+          }
+        },
+        {
           "driver_version": {
             "op": "between",
             "value": "26.20.12020.15",
             "value2": "26.20.12999.99999"
-          },
+          }
+        },
+        {
           "driver_version": {
             "op": "between",
             "value": "26.20.13001.27002",
             "value2": "26.20.13999.99999"
-          },
+          }
+        },
+        {
           "driver_version": {
             "op": ">=",
             "value": "26.20.14001.7001"
@@ -3401,8 +3350,12 @@
       "intel_gpu_series": [
         "icelake",
         "tigerlake",
+        "rocketlake",
+        "dg1",
         "alderlake",
-        "alchemist"
+        "alchemist",
+        "raptorlake",
+        "meteorlake"
       ],
       "features": [
         "force_rgb10a2_overlay_support_flags"
@@ -3459,7 +3412,7 @@
         "type": "win"
       },
       "vendor_id": "0x1002",
-      "device_id": ["0x98e4", "0x15d8", "0x15dd"],
+      "device_id": ["0x98e4", "0x15dd"],
       "features": [
         "disable_d3d11_video_decoder"
       ],
@@ -3558,8 +3511,12 @@
       "intel_gpu_series": [
         "icelake",
         "tigerlake",
+        "rocketlake",
+        "dg1",
         "alderlake",
-        "alchemist"
+        "alchemist",
+        "raptorlake",
+        "meteorlake"
       ],
       "features": [
         "supports_two_yuv_hardware_overlays"
@@ -3695,21 +3652,6 @@
       "vendor_id": "0x1002",
       "features": [
         "disallow_vp9_resilient_dxva_decoding"
-      ]
-    },
-    {
-      "id": 375,
-      "cr_bugs": [1212825],
-      "description": "Always force direct composition full damage on older Windows 10 releases",
-      "os": {
-        "type": "win",
-        "version": {
-          "op": "<",
-          "value": "10.0.19041.508"
-        }
-      },
-      "features": [
-        "force_direct_composition_full_damage_always"
       ]
     },
     {
@@ -3982,6 +3924,283 @@
       "features": [
         "use_virtualized_gl_contexts"
       ]
+    },
+    {
+      "id": 394,
+      "cr_bugs": [1318380],
+      "description": "Only enable video processor super resolution on Intel Gen10+ GPUs and NVIDIA GPUs with 530+ drivers",
+      "os": {
+        "type" : "win"
+      },
+      "exceptions": [
+        {
+          "vendor_id": "0x8086",
+          "intel_gpu_generation": {
+            "op": ">",
+            "value": "9"
+          },
+          "driver_version": {
+            "op": ">",
+            "value": "27.20.100.8681"
+          }
+        },
+        {
+          "vendor_id": "0x10de",
+          "os": {
+            "type" : "win"
+          },
+          "driver_version": {
+            "schema": "nvidia_driver",
+            "op": ">",
+            "value": "530.00"
+          }
+        }
+      ],
+      "features": [
+          "disable_vp_super_resolution"
+      ]
+    },
+    {
+      "id": 395,
+      "cr_bugs": [1327088],
+      "description": "Don't use MPO on Intel TigerLake GPUs with old drivers due to VideoProcessorBlt crash.",
+      "os": {
+        "type": "win"
+      },
+      "vendor_id": "0x8086",
+      "intel_gpu_generation": {
+        "op": ">=",
+        "value": "12"
+      },
+      "driver_version": {
+        "op": "<=",
+        "value": "27.20.100.9168"
+      },
+      "features": [
+        "disable_direct_composition_video_overlays"
+      ]
+    },
+    {
+      "id": 397,
+      "description": "VPx decoding crashes due to a buggy driver / chipset combo.",
+      "cr_bugs": [1333299],
+      "os": {
+        "type": "win",
+        "version": {
+          "op": ">=",
+          "value": "10"
+        }
+      },
+      "vendor_id": "0x8086",
+      "device_id": [ "0x591B" ],
+      "driver_version": {
+        "op": "=",
+        "value": "26.20.100.6998"
+      },
+      "features": [
+        "disable_accelerated_vp9_decode"
+      ]
+    },
+    {
+      "id": 398,
+      "description": "On pre-Ice Lake Intel GPUs MSAA performance is not acceptable for GPU rasterization",
+      "cr_bugs": [527565, 1298585, 1341830],
+      "vendor_id": "0x8086",
+      "intel_gpu_generation": {
+        "op": "<",
+        "value": "11"
+      },
+      "multi_gpu_category": "active",
+      "exceptions": [
+        {
+          "os": {
+            "type": "fuchsia"
+          }
+        }
+      ],
+      "features": [
+        "msaa_is_slow_2"
+      ]
+    },
+    {
+      "id": 399,
+      "description": "On pre-Ice Lake Intel GPUs MSAA performance is not acceptable for GPU rasterization. Duplicate of 398 for Android",
+      "cr_bugs": [759471],
+      "os": {
+        "type": "android"
+      },
+      "gl_vendor": "Intel.*",
+      "intel_gpu_generation": {
+        "op": "<",
+        "value": "11"
+      },
+      "features": [
+        "msaa_is_slow_2"
+      ]
+    },
+    {
+      "id": 400,
+      "description": "Freedreno driver crashes when importing same dma-buf to two different gl textures",
+      "cr_bugs": [1343521],
+      "os": {
+        "type": "chromeos"
+      },
+      "gl_vendor": "freedreno",
+      "features": [
+        "cache_texture_in_ozone_backing"
+      ]
+    },
+    {
+      "id": 401,
+      "description": "Disable DrDc on multiple gpus.",
+      "cr_bugs": [1354201, 1356906, 1362720],
+      "os": {
+        "type": "android"
+      },
+      "gl_renderer": ".*PowerVR Rogue.*|Adreno \\(TM\\) 730|Mali-G57 MC2|Mali-G68 MC4|Mali-G77 MC9",
+      "features": [
+        "disable_drdc"
+      ]
+    },
+    {
+      "id": 402,
+      "description": "Mali driver disregards fences when importing same dma-buf to two different gl textures",
+      "cr_bugs": [1350094],
+      "os": {
+        "type": "chromeos"
+      },
+      "gl_vendor": "ARM.*",
+      "gl_renderer": "Mali.*",
+      "features": [
+        "cache_texture_in_ozone_backing"
+      ]
+    },
+    {
+      "id": 403,
+      "description": "Disable hardware MFT Av1 encoder on machines with multiple GPUs",
+      "cr_bugs": [1367038],
+      "os": {
+        "type": "win"
+      },
+      "gpu_count": {
+        "op": ">",
+        "value": "2"
+      },
+      "features": [
+        "disable_accelerated_av1_encode"
+      ]
+    },
+    {
+      "id": 404,
+      "description": "Disable EGL_EXT_image_dma_buf_import_modifiers for Exo KMS modifier discovery on kms_swrast/llvmpipe",
+      "os": {
+        "type": "chromeos"
+      },
+      "gl_renderer": "llvmpipe.*",
+      "features": [
+        "disable_egl_ext_image_dma_buf_import_modifiers"
+      ]
+    },
+    {
+      "id": 405,
+      "description": "Disable EGL_EXT_image_dma_buf_import_modifiers for Exo KMS modifier discovery on old proprietary Mali drivers",
+      "os": {
+        "type": "chromeos"
+      },
+      "gl_renderer": "Mali.*",
+      "gl_version_string": ".*r26p0-01rel0.*",
+      "features": [
+        "disable_egl_ext_image_dma_buf_import_modifiers"
+      ]
+    },
+    {
+      "id": 406,
+      "description": "VP9 decoder rejects submitted bitstream buffer on some old Intel drivers.",
+      "cr_bugs": [1376513],
+      "os": {
+        "type": "win"
+      },
+      "vendor_id": "0x8086",
+      "driver_version": {
+        "op": "between",
+        "value": "23.20.16.4974",
+        "value2": "23.20.16.5044"
+      },
+      "features": [
+        "disable_accelerated_vp9_decode"
+      ]
+    },
+    {
+      "id": 407,
+      "cr_bugs": [1355946],
+      "description": "ANGLE does not permit rendering to RGB external textures",
+      "os": {
+        "type": "android"
+      },
+      "gl_renderer": "ANGLE.*Samsung Xclipse 920.*",
+      "comment": [
+        "This issue affects the Samsung Galaxy S22 with Exynos chipsets which uses ANGLE",
+        "as the system GLES driver, and the cause appears be overly strict validation."
+      ],
+      "features": [
+        "disable_rendering_to_rgb_external_texture"
+      ]
+    },
+    {
+      "id": 408,
+      "description": "Disable Media Foundation Clear Playback on older AMD drivers.",
+      "comment": [
+        "We see an increased frequency of crashes with Media Foundation for Clear",
+        "playback on older AMD drivers. Disabling the feature for all drivers upto",
+        "the highest observed driver for the failure."
+      ],
+      "os": {
+        "type": "win"
+      },
+      "vendor_id": "0x1002",
+      "driver_version": {
+        "op": "<=",
+        "value": "26.20.15002.61"
+      },
+      "features": [
+        "disable_media_foundation_clear_playback"
+      ]
+    },
+    {
+      "id": 409,
+      "cr_bugs": [1393646],
+      "description": "QC7c requires a flush prior to the creation of a fence.",
+      "comment": [
+        "The hypothesis behind why need a flush on the QC7c is as follows.",
+        "The driver has associated queues per buffer. These buffers are in ",
+        "order say A, B and C. We append our fence to queue C. On submission ",
+        "to the gpu these are reordered to say C, B, and then A. By flushing ",
+        "prior to fence insertion we insure that A, B, and C are submitted to ",
+        "the GPU prior to the fence."
+      ],
+      "os": {
+        "type": "chromeos"
+      },
+      "gl_vendor": "freedreno",
+      "features": [
+        "flush_before_create_fence"
+      ]
+    },
+    {
+      "id": 413,
+      "cr_bugs": [1447972],
+      "description": "Force to use the triple buffer video swap chain of direct composition",
+      "os": {
+        "type": "win"
+      },
+      "vendor_id": "0x8086",
+      "intel_gpu_series": [
+        "meteorlake"
+      ],
+      "features": [
+        "force_dcomp_triple_buffer_video_swap_chain"
+      ]
     }
+
   ]
 }

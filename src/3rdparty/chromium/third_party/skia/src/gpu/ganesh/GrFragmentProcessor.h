@@ -8,9 +8,10 @@
 #ifndef GrFragmentProcessor_DEFINED
 #define GrFragmentProcessor_DEFINED
 
-#include "include/private/SkMacros.h"
+#include "include/private/SkColorData.h"
 #include "include/private/SkSLSampleUsage.h"
 #include "include/private/SkSLString.h"
+#include "include/private/base/SkMacros.h"
 #include "src/gpu/ganesh/GrProcessor.h"
 #include "src/gpu/ganesh/glsl/GrGLSLUniformHandler.h"
 
@@ -94,12 +95,10 @@ public:
             std::unique_ptr<GrFragmentProcessor>);
 
     /**
-     *  Returns a fragment processor which samples the passed-in fragment processor using
-     *  `args.fDestColor` as its input color. Pass a null FP to access `args.fDestColor` directly.
-     *  (This is only meaningful in contexts like blenders, which use a source and dest color.)
+     *  Returns a fragment processor which returns `args.fDestColor`. This is only meaningful in
+     *  contexts like blenders, which use a source and dest color.)
      */
-    static std::unique_ptr<GrFragmentProcessor> UseDestColorAsInput(
-            std::unique_ptr<GrFragmentProcessor>);
+    static std::unique_ptr<GrFragmentProcessor> DestColor();
 
     /**
      *  Returns a fragment processor that calls the passed in fragment processor, and then swizzles
@@ -191,7 +190,7 @@ public:
         }
     }
 
-    int numChildProcessors() const { return fChildProcessors.count(); }
+    int numChildProcessors() const { return fChildProcessors.size(); }
     int numNonNullChildProcessors() const;
 
     GrFragmentProcessor* childProcessor(int index) { return fChildProcessors[index].get(); }
@@ -525,7 +524,7 @@ public:
     // is the responsibility of the caller.
     void setData(const GrGLSLProgramDataManager& pdman, const GrFragmentProcessor& processor);
 
-    int numChildProcessors() const { return fChildProcessors.count(); }
+    int numChildProcessors() const { return fChildProcessors.size(); }
 
     ProgramImpl* childProcessor(int index) const { return fChildProcessors[index].get(); }
 
@@ -656,6 +655,10 @@ static inline GrFPResult GrFPFailure(std::unique_ptr<GrFragmentProcessor> fp) {
 }
 static inline GrFPResult GrFPSuccess(std::unique_ptr<GrFragmentProcessor> fp) {
     SkASSERT(fp);
+    return {true, std::move(fp)};
+}
+// Equivalent to GrFPSuccess except it allows the returned fragment processor to be null.
+static inline GrFPResult GrFPNullableSuccess(std::unique_ptr<GrFragmentProcessor> fp) {
     return {true, std::move(fp)};
 }
 

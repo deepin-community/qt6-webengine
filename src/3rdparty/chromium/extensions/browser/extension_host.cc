@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,6 +11,7 @@
 #include "base/observer_list.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/timer/elapsed_timer.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/native_web_keyboard_event.h"
@@ -36,6 +37,7 @@
 #include "extensions/common/extension_urls.h"
 #include "extensions/common/feature_switch.h"
 #include "extensions/common/manifest_handlers/background_info.h"
+#include "third_party/blink/public/mojom/window_features/window_features.mojom.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/window_open_disposition.h"
 
@@ -56,14 +58,16 @@ ExtensionHost::ExtensionHost(const Extension* extension,
       initial_url_(url),
       extension_host_type_(host_type) {
   DCHECK(host_type == mojom::ViewType::kExtensionBackgroundPage ||
+         host_type == mojom::ViewType::kOffscreenDocument ||
          host_type == mojom::ViewType::kExtensionDialog ||
-         host_type == mojom::ViewType::kExtensionPopup);
+         host_type == mojom::ViewType::kExtensionPopup ||
+         host_type == mojom::ViewType::kExtensionSidePanel);
   host_contents_ = WebContents::Create(
       WebContents::CreateParams(browser_context_, site_instance)),
   content::WebContentsObserver::Observe(host_contents_.get());
   host_contents_->SetDelegate(this);
   SetViewType(host_contents_.get(), host_type);
-  main_frame_host_ = host_contents_->GetMainFrame();
+  main_frame_host_ = host_contents_->GetPrimaryMainFrame();
 
   // Listen for when an extension is unloaded from the same profile, as it may
   // be the same extension that this points to.
@@ -141,8 +145,17 @@ void ExtensionHost::CreateRendererNow() {
 }
 
 void ExtensionHost::Close() {
-  for (auto& observer : observer_list_)
-    observer.OnExtensionHostShouldClose(this);
+  // Some ways of closing the host may be asynchronous, which would allow the
+  // contents to call Close() multiple times. If we've already called the
+  // handler once, ignore subsequent calls. If we haven't called the handler
+  // once, the handler should be present.
+  DCHECK(close_handler_ || called_close_handler_);
+  if (called_close_handler_)
+    return;
+
+  called_close_handler_ = true;
+  std::move(close_handler_).Run(this);
+  // NOTE: `this` may be deleted at this point!
 }
 
 void ExtensionHost::AddObserver(ExtensionHostObserver* observer) {
@@ -169,6 +182,18 @@ void ExtensionHost::OnNetworkRequestStarted(uint64_t request_id) {
 void ExtensionHost::OnNetworkRequestDone(uint64_t request_id) {
   for (auto& observer : observer_list_)
     observer.OnNetworkRequestDone(this, request_id);
+}
+
+void ExtensionHost::SetCloseHandler(CloseHandler close_handler) {
+  DCHECK(!close_handler_);
+  DCHECK(!called_close_handler_);
+  close_handler_ = std::move(close_handler);
+}
+
+bool ExtensionHost::ShouldAllowNavigations() const {
+  // Don't allow background pages or offscreen documents to navigate.
+  return extension_host_type_ != mojom::ViewType::kExtensionBackgroundPage &&
+         extension_host_type_ != mojom::ViewType::kOffscreenDocument;
 }
 
 const GURL& ExtensionHost::GetLastCommittedURL() const {
@@ -211,7 +236,7 @@ void ExtensionHost::PrimaryMainFrameRenderProcessGone(
   // process, so it is expected to lose our connection to the render view.
   // Do nothing.
   RenderProcessHost* process_host =
-      host_contents_->GetMainFrame()->GetProcess();
+      host_contents_->GetPrimaryMainFrame()->GetProcess();
   if (process_host && process_host->FastShutdownStarted())
     return;
 
@@ -346,13 +371,14 @@ content::JavaScriptDialogManager* ExtensionHost::GetJavaScriptDialogManager(
   return delegate_->GetJavaScriptDialogManager();
 }
 
-void ExtensionHost::AddNewContents(WebContents* source,
-                                   std::unique_ptr<WebContents> new_contents,
-                                   const GURL& target_url,
-                                   WindowOpenDisposition disposition,
-                                   const gfx::Rect& initial_rect,
-                                   bool user_gesture,
-                                   bool* was_blocked) {
+void ExtensionHost::AddNewContents(
+    WebContents* source,
+    std::unique_ptr<WebContents> new_contents,
+    const GURL& target_url,
+    WindowOpenDisposition disposition,
+    const blink::mojom::WindowFeatures& window_features,
+    bool user_gesture,
+    bool* was_blocked) {
   // First, if the creating extension view was associated with a tab contents,
   // use that tab content's delegate. We must be careful here that the
   // associated tab contents has the same profile as the new tab contents. In
@@ -369,7 +395,7 @@ void ExtensionHost::AddNewContents(WebContents* source,
       WebContentsDelegate* delegate = associated_contents->GetDelegate();
       if (delegate) {
         delegate->AddNewContents(associated_contents, std::move(new_contents),
-                                 target_url, disposition, initial_rect,
+                                 target_url, disposition, window_features,
                                  user_gesture, was_blocked);
         return;
       }
@@ -377,7 +403,7 @@ void ExtensionHost::AddNewContents(WebContents* source,
   }
 
   delegate_->CreateTab(std::move(new_contents), extension_id_, disposition,
-                       initial_rect, user_gesture);
+                       window_features, user_gesture);
 }
 
 void ExtensionHost::RenderFrameCreated(content::RenderFrameHost* frame_host) {
@@ -439,7 +465,8 @@ bool ExtensionHost::CheckMediaAccessPermission(
 
 bool ExtensionHost::IsNeverComposited(content::WebContents* web_contents) {
   mojom::ViewType view_type = extensions::GetViewType(web_contents);
-  return view_type == extensions::mojom::ViewType::kExtensionBackgroundPage;
+  return view_type == mojom::ViewType::kExtensionBackgroundPage ||
+         view_type == mojom::ViewType::kOffscreenDocument;
 }
 
 content::PictureInPictureResult ExtensionHost::EnterPictureInPicture(
@@ -466,11 +493,6 @@ void ExtensionHost::RecordStopLoadingUMA() {
       UMA_HISTOGRAM_MEDIUM_TIMES("Extensions.BackgroundPageLoadTime2",
                                  load_start_->Elapsed());
     }
-  } else if (extension_host_type_ == mojom::ViewType::kExtensionPopup) {
-    UMA_HISTOGRAM_MEDIUM_TIMES("Extensions.PopupLoadTime2",
-                               load_start_->Elapsed());
-    UMA_HISTOGRAM_MEDIUM_TIMES("Extensions.PopupCreateTime",
-                               create_start_.Elapsed());
   }
 }
 

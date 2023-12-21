@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,15 +7,20 @@
 
 #include "base/containers/contains.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/scoped_feature_list.h"
 #include "components/autofill/core/browser/geo/autofill_country.h"
 #include "components/autofill/core/browser/geo/country_data.h"
+#include "components/autofill/core/common/autofill_features.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/libaddressinput/src/cpp/include/libaddressinput/address_field.h"
+#include "third_party/libaddressinput/src/cpp/include/libaddressinput/address_metadata.h"
 #if defined(ANDROID)
 #include "base/android/build_info.h"
 #endif
 
 using autofill::CountryDataMap;
 using base::ASCIIToUTF16;
+using ::i18n::addressinput::AddressField;
 
 namespace autofill {
 
@@ -45,6 +50,11 @@ TEST(AutofillCountryTest, AutofillCountry) {
   // Unrecognizable country codes remain that way.
   AutofillCountry unknown("Unknown", "en_US");
   EXPECT_EQ("Unknown", unknown.country_code());
+
+  // If no locale is provided, no `name()` is returned.
+  AutofillCountry empty_locale("AT");
+  EXPECT_EQ("AT", empty_locale.country_code());
+  EXPECT_TRUE(empty_locale.name().empty());
 }
 
 // Test locale to country code mapping.
@@ -61,13 +71,19 @@ TEST(AutofillCountryTest, CountryCodeForLocale) {
 // Test the address requirement methods for the US.
 TEST(AutofillCountryTest, UsaAddressRequirements) {
   // The US requires a zip, state, city and line1 entry.
-  AutofillCountry us_autofill_country("US", "en_US");
+  AutofillCountry country("US", "en_US");
 
-  EXPECT_FALSE(us_autofill_country.requires_zip_or_state());
-  EXPECT_TRUE(us_autofill_country.requires_zip());
-  EXPECT_TRUE(us_autofill_country.requires_state());
-  EXPECT_TRUE(us_autofill_country.requires_city());
-  EXPECT_TRUE(us_autofill_country.requires_line1());
+  EXPECT_FALSE(country.requires_zip_or_state());
+  EXPECT_TRUE(country.requires_zip());
+  EXPECT_TRUE(country.requires_state());
+  EXPECT_TRUE(country.requires_city());
+  EXPECT_TRUE(country.requires_line1());
+
+  // The same expectations via libaddressinput AddressField.
+  EXPECT_TRUE(country.IsAddressFieldRequired(AddressField::POSTAL_CODE));
+  EXPECT_TRUE(country.IsAddressFieldRequired(AddressField::ADMIN_AREA));
+  EXPECT_TRUE(country.IsAddressFieldRequired(AddressField::LOCALITY));
+  EXPECT_TRUE(country.IsAddressFieldRequired(AddressField::STREET_ADDRESS));
 }
 
 // Test that unknown country codes have US requirements.
@@ -90,28 +106,40 @@ TEST(AutofillCountryTest, UnknownAddressRequirements) {
 // Test the address requirement method for Brazil.
 TEST(AutofillCountryTest, BrAddressRequirements) {
   // Brazil only requires a zip entry.
-  AutofillCountry brazil_autofill_country("BR", "en_US");
+  AutofillCountry country("BR", "en_US");
 
-  EXPECT_FALSE(brazil_autofill_country.requires_zip_or_state());
-  EXPECT_TRUE(brazil_autofill_country.requires_zip());
-  EXPECT_TRUE(brazil_autofill_country.requires_state());
-  EXPECT_TRUE(brazil_autofill_country.requires_city());
-  EXPECT_TRUE(brazil_autofill_country.requires_line1());
+  EXPECT_FALSE(country.requires_zip_or_state());
+  EXPECT_TRUE(country.requires_zip());
+  EXPECT_TRUE(country.requires_state());
+  EXPECT_TRUE(country.requires_city());
+  EXPECT_TRUE(country.requires_line1());
+
+  // The same expectations via libaddressinput AddressField.
+  EXPECT_TRUE(country.IsAddressFieldRequired(AddressField::POSTAL_CODE));
+  EXPECT_TRUE(country.IsAddressFieldRequired(AddressField::ADMIN_AREA));
+  EXPECT_TRUE(country.IsAddressFieldRequired(AddressField::LOCALITY));
+  EXPECT_TRUE(country.IsAddressFieldRequired(AddressField::STREET_ADDRESS));
 }
 
 // Test the address requirement method for Turkey.
 TEST(AutofillCountryTest, TrAddressRequirements) {
   // Brazil only requires a zip entry.
-  AutofillCountry turkey_autofill_country("TR", "en_US");
+  AutofillCountry country("TR", "en_US");
 
   // Although ZIP codes are existing in Turkey, they are commonly used.
-  EXPECT_FALSE(turkey_autofill_country.requires_zip());
+  EXPECT_FALSE(country.requires_zip());
   // In Turkey, a district is the largest level of the address hierarchy and
   // mapped to the Autofill state.
-  EXPECT_TRUE(turkey_autofill_country.requires_state());
+  EXPECT_TRUE(country.requires_state());
   // And the province as the second largest level is mapped to city.
-  EXPECT_TRUE(turkey_autofill_country.requires_city());
-  EXPECT_TRUE(turkey_autofill_country.requires_line1());
+  EXPECT_TRUE(country.requires_city());
+  EXPECT_TRUE(country.requires_line1());
+
+  // The same expectations via libaddressinput AddressField.
+  EXPECT_FALSE(country.IsAddressFieldRequired(AddressField::POSTAL_CODE));
+  EXPECT_TRUE(country.IsAddressFieldRequired(AddressField::ADMIN_AREA));
+  EXPECT_TRUE(country.IsAddressFieldRequired(AddressField::LOCALITY));
+  EXPECT_TRUE(country.IsAddressFieldRequired(AddressField::STREET_ADDRESS));
 }
 
 // Test mapping all country codes to country names.
@@ -153,10 +181,33 @@ TEST(AutofillCountryTest, AliasMappingsForCountryData) {
       country_data_map->GetCountryCodeForAlias("does_not_exist");
   EXPECT_EQ(expected_country_code, actual_country_code);
 
-  // GB should map the UK.
+  // UK should map the GB.
   expected_country_code = "GB";
   actual_country_code = country_data_map->GetCountryCodeForAlias("UK");
   EXPECT_EQ(expected_country_code, actual_country_code);
+}
+
+// Verifies that all address format extensions correspond to types that are
+// not part of libaddressinputs expected types, but that they are placed
+// after a field that is present in libaddressinput.
+TEST(AutofillCountryTest, VerifyAddressFormatExtensions) {
+  CountryDataMap* country_data_map = CountryDataMap::GetInstance();
+  for (const std::string& country_code : country_data_map->country_codes()) {
+    AutofillCountry country(country_code);
+    for (const AutofillCountry::AddressFormatExtension& rule :
+         country.address_format_extensions()) {
+      // The separator should not be empty.
+      EXPECT_FALSE(rule.separator_before_label.empty());
+      // `rule.type` is not part of `country_code`'s address format, but
+      // `rule.placed_after` is.
+      EXPECT_FALSE(::i18n::addressinput::IsFieldUsed(rule.type, country_code));
+      EXPECT_TRUE(
+          ::i18n::addressinput::IsFieldUsed(rule.placed_after, country_code));
+      // `IsAddressFieldSettingAccessible` considers `rule.type`
+      // setting-accessible.
+      EXPECT_TRUE(country.IsAddressFieldSettingAccessible(rule.type));
+    }
+  }
 }
 
 }  // namespace autofill

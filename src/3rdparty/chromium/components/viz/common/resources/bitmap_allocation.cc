@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -43,7 +43,7 @@ namespace bitmap_allocation {
 
 base::MappedReadOnlyRegion AllocateSharedBitmap(const gfx::Size& size,
                                                 ResourceFormat format) {
-  DCHECK(IsBitmapFormatSupported(format));
+  DCHECK(IsBitmapFormatSupported(format)) << "(format = " << format << ")";
   size_t bytes = 0;
   if (!ResourceSizes::MaybeSizeInBytes(size, format, &bytes)) {
     DLOG(ERROR) << "AllocateMappedBitmap with size that overflows";

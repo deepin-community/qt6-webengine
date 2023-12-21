@@ -31,6 +31,7 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_BINDINGS_WRAPPER_TYPE_INFO_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_BINDINGS_WRAPPER_TYPE_INFO_H_
 
+#include "base/check_op.h"
 #include "gin/public/wrapper_info.h"
 #include "third_party/blink/renderer/platform/bindings/v8_interface_bridge_base.h"
 #include "third_party/blink/renderer/platform/heap/visitor.h"
@@ -87,6 +88,7 @@ struct PLATFORM_EXPORT WrapperTypeInfo final {
     kIdlCallbackInterface,
     kIdlBufferSourceType,
     kIdlObservableArray,
+    kIdlSyncIterator,
     kCustomWrappableKind,
   };
 
@@ -117,8 +119,9 @@ struct PLATFORM_EXPORT WrapperTypeInfo final {
   //
   // - kIdlInterface: v8::FunctionTemplate of interface object
   // - kIdlNamespace: v8::ObjectTemplate of namespace object
-  // - kIdlCallbackInterface: v8::FunctionTemplate of legacy callback interface
-  //       object
+  // - kIdlCallbackInterface: v8::FunctionTemplate of legacy callback
+  //       interface object
+  // - kIdlSyncIterator: v8::FunctionTemplate of default iterator object
   // - kCustomWrappableKind: v8::FunctionTemplate
   v8::Local<v8::Template> GetV8ClassTemplate(
       v8::Isolate* isolate,

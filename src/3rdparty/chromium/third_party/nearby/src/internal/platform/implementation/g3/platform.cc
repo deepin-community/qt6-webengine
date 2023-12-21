@@ -17,9 +17,13 @@
 #include <atomic>
 #include <cstdint>
 #include <memory>
+#include <string>
 
+#include "file/base/path.h"
 #include "absl/memory/memory.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/string_view.h"
 #include "absl/time/time.h"
 #include "internal/platform/implementation/atomic_boolean.h"
 #include "internal/platform/implementation/atomic_reference.h"
@@ -43,66 +47,35 @@
 #include "internal/platform/implementation/g3/bluetooth_adapter.h"
 #include "internal/platform/implementation/g3/bluetooth_classic.h"
 #include "internal/platform/implementation/g3/condition_variable.h"
+#include "internal/platform/implementation/g3/credential_storage_impl.h"
+#include "internal/platform/implementation/g3/device_info.h"
 #include "internal/platform/implementation/g3/log_message.h"
 #include "internal/platform/implementation/g3/multi_thread_executor.h"
 #include "internal/platform/implementation/g3/mutex.h"
 #include "internal/platform/implementation/g3/scheduled_executor.h"
 #include "internal/platform/implementation/g3/single_thread_executor.h"
+#include "internal/platform/implementation/g3/timer.h"
+#include "internal/platform/implementation/g3/wifi.h"
+#include "internal/platform/implementation/g3/wifi_direct.h"
+#include "internal/platform/implementation/g3/wifi_hotspot.h"
 #include "internal/platform/implementation/g3/wifi_lan.h"
 #include "internal/platform/implementation/shared/file.h"
 #include "internal/platform/implementation/wifi.h"
 #include "internal/platform/medium_environment.h"
 
-namespace location {
 namespace nearby {
 namespace api {
 
-std::string ImplementationPlatform::GetDownloadPath(std::string& parent_folder,
-                                                    std::string& file_name) {
-  std::string fullPath("/tmp/");
+std::string ImplementationPlatform::GetCustomSavePath(
+    const std::string& parent_folder, const std::string& file_name) {
+  return file::JoinPath(parent_folder, file_name);
+}
 
-  // If parent_folder starts with a \\ or /, then strip it
-  while (!parent_folder.empty() &&
-         (*parent_folder.begin() == '\\' || *parent_folder.begin() == '/')) {
-    parent_folder.erase(0, 1);
-  }
+std::string ImplementationPlatform::GetDownloadPath(
+    const std::string& parent_folder, const std::string& file_name) {
+  std::string fullPath("/tmp");
 
-  // If parent_folder ends with a \\ or /, then strip it
-  while (!parent_folder.empty() &&
-         (*parent_folder.rbegin() == '\\' || *parent_folder.rbegin() == '/')) {
-    parent_folder.erase(parent_folder.size() - 1);
-  }
-
-  // If file_name starts with a \\, then strip it
-  while (!file_name.empty() &&
-         (*file_name.begin() == '\\' || *file_name.begin() == '/')) {
-    file_name.erase(0, 1);
-  }
-
-  // If file_name ends with a \\, then strip it
-  while (!file_name.empty() &&
-         (*file_name.rbegin() == '\\' || *file_name.rbegin() == '/')) {
-    file_name.erase(file_name.size() - 1);
-  }
-
-  std::stringstream path;
-
-  if (parent_folder.empty() && file_name.empty()) {
-    path << fullPath.c_str();
-    return path.str();
-  }
-  if (parent_folder.empty()) {
-    path << fullPath.c_str() << "\\" << file_name.c_str();
-    return path.str();
-  }
-  if (file_name.empty()) {
-    path << fullPath.c_str() << "\\" << parent_folder.c_str();
-    return path.str();
-  }
-
-  path << fullPath.c_str() << "\\" << parent_folder.c_str() << "\\"
-       << file_name.c_str();
-  return path.str();
+  return file::JoinPath("/tmp", file_name);
 }
 
 OSName ImplementationPlatform::GetCurrentOS() { return OSName::kLinux; }
@@ -157,7 +130,7 @@ std::unique_ptr<InputFile> ImplementationPlatform::CreateInputFile(
 }
 
 std::unique_ptr<InputFile> ImplementationPlatform::CreateInputFile(
-    absl::string_view file_path, size_t size) {
+    const std::string& file_path, size_t size) {
   return shared::IOFile::CreateInputFile(file_path, size);
 }
 
@@ -172,7 +145,7 @@ std::unique_ptr<OutputFile> ImplementationPlatform::CreateOutputFile(
 }
 
 std::unique_ptr<OutputFile> ImplementationPlatform::CreateOutputFile(
-    absl::string_view file_path) {
+    const std::string& file_path) {
   return shared::IOFile::CreateOutputFile(file_path);
 }
 
@@ -197,13 +170,18 @@ ImplementationPlatform::CreateBleV2Medium(api::BluetoothAdapter& adapter) {
   return std::make_unique<g3::BleV2Medium>(adapter);
 }
 
+std::unique_ptr<api::CredentialStorage>
+ImplementationPlatform::CreateCredentialStorage() {
+  return std::make_unique<g3::CredentialStorageImpl>();
+}
+
 std::unique_ptr<ServerSyncMedium>
 ImplementationPlatform::CreateServerSyncMedium() {
   return std::unique_ptr<ServerSyncMedium>(/*new ServerSyncMediumImpl()*/);
 }
 
 std::unique_ptr<WifiMedium> ImplementationPlatform::CreateWifiMedium() {
-  return std::unique_ptr<WifiMedium>();
+  return std::make_unique<g3::WifiMedium>();
 }
 
 std::unique_ptr<WifiLanMedium> ImplementationPlatform::CreateWifiLanMedium() {
@@ -212,7 +190,12 @@ std::unique_ptr<WifiLanMedium> ImplementationPlatform::CreateWifiLanMedium() {
 
 std::unique_ptr<WifiHotspotMedium>
 ImplementationPlatform::CreateWifiHotspotMedium() {
-  return nullptr;
+  return std::make_unique<g3::WifiHotspotMedium>();
+}
+
+std::unique_ptr<WifiDirectMedium>
+ImplementationPlatform::CreateWifiDirectMedium() {
+  return std::make_unique<g3::WifiDirectMedium>();
 }
 
 #ifndef NO_WEBRTC
@@ -224,6 +207,11 @@ std::unique_ptr<WebRtcMedium> ImplementationPlatform::CreateWebRtcMedium() {
   }
 }
 #endif
+
+absl::StatusOr<WebResponse> ImplementationPlatform::SendRequest(
+    const api::WebRequest& request) {
+  return absl::UnimplementedError("");
+}
 
 std::unique_ptr<Mutex> ImplementationPlatform::CreateMutex(Mutex::Mode mode) {
   if (mode == Mutex::Mode::kRecursive)
@@ -238,6 +226,14 @@ ImplementationPlatform::CreateConditionVariable(Mutex* mutex) {
       new g3::ConditionVariable(static_cast<g3::Mutex*>(mutex)));
 }
 
+std::unique_ptr<Timer> ImplementationPlatform::CreateTimer() {
+  return std::make_unique<g3::Timer>();
+}
+
+std::unique_ptr<nearby::api::DeviceInfo>
+ImplementationPlatform::CreateDeviceInfo() {
+  return std::make_unique<g3::DeviceInfo>();
+}
+
 }  // namespace api
 }  // namespace nearby
-}  // namespace location

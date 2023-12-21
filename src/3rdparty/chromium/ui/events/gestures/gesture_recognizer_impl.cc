@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,6 +13,7 @@
 #include "base/command_line.h"
 #include "base/containers/contains.h"
 #include "base/memory/ptr_util.h"
+#include "base/ranges/algorithm.h"
 #include "base/time/time.h"
 #include "ui/events/event.h"
 #include "ui/events/event_constants.h"
@@ -380,7 +381,7 @@ void GestureRecognizerImpl::AddGestureEventHelper(GestureEventHelper* helper) {
 
 void GestureRecognizerImpl::RemoveGestureEventHelper(
     GestureEventHelper* helper) {
-  auto it = std::find(helpers_.begin(), helpers_.end(), helper);
+  auto it = base::ranges::find(helpers_, helper);
   if (it != helpers_.end())
     helpers_.erase(it);
 }

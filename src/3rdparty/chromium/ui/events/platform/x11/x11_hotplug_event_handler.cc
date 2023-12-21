@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,17 +13,16 @@
 #include <string>
 #include <vector>
 
-#include "base/bind.h"
 #include "base/check.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/process/launch.h"
 #include "base/strings/string_util.h"
 #include "base/system/sys_info.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/task/thread_pool.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "ui/events/devices/device_data_manager.h"
 #include "ui/events/devices/device_hotplug_event_observer.h"
 #include "ui/events/devices/device_util_linux.h"
@@ -461,7 +460,7 @@ void X11HotplugEventHandler::OnHotplugEvent() {
       FROM_HERE,
       {base::MayBlock(), base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
       base::BindOnce(&HandleHotplugEventInWorker, device_infos, display_state,
-                     base::ThreadTaskRunnerHandle::Get(),
+                     base::SingleThreadTaskRunner::GetCurrentDefault(),
                      std::move(callbacks)));
 }
 

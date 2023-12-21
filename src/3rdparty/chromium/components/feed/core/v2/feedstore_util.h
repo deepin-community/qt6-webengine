@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,6 +6,7 @@
 #define COMPONENTS_FEED_CORE_V2_FEEDSTORE_UTIL_H_
 
 #include <string>
+#include "base/containers/flat_set.h"
 #include "base/strings/string_piece_forward.h"
 #include "base/time/time.h"
 #include "components/feed/core/proto/v2/store.pb.h"
@@ -20,23 +21,34 @@ class ConsistencyToken;
 namespace feedstore {
 class Metadata;
 
-constexpr base::StringPiece kForYouStreamId{"i"};
-constexpr base::StringPiece kFollowStreamId{"w"};
+const char kForYouStreamKey[] = "i";
+const char kFollowStreamKey[] = "w";
+constexpr base::StringPiece kSingleWebFeedStreamKeyPrefix = "c";
+constexpr base::StringPiece kSingleWebFeedMenuStreamKeyPrefix = "m/";
+constexpr base::StringPiece kSingleWebFeedOtherStreamKeyPrefix = "o/";
 
-base::StringPiece StreamId(const feed::StreamType& stream_type);
-feed::StreamType StreamTypeFromId(base::StringPiece id);
+std::string StreamKey(const feed::StreamType& stream_type);
+feed::StreamType StreamTypeFromKey(base::StringPiece key);
+
+base::StringPiece StreamPrefix(feed::StreamKind stream_type);
 
 ///////////////////////////////////////////////////
 // Functions that operate on feedstore proto types.
 
 int64_t ToTimestampMillis(base::Time t);
 base::Time FromTimestampMillis(int64_t millis);
+int64_t ToTimestampNanos(base::Time t);
+base::Time FromTimestampMicros(int64_t millis);
 void SetLastAddedTime(base::Time t, feedstore::StreamData& data);
+void SetLastServerResponseTime(Metadata& metadata,
+                               const feed::StreamType& stream_type,
+                               const base::Time& server_time);
 
 base::Time GetLastAddedTime(const feedstore::StreamData& data);
 base::Time GetSessionIdExpiryTime(const feedstore::Metadata& metadata);
 base::Time GetStreamViewTime(const Metadata& metadata,
                              const feed::StreamType& stream_type);
+
 bool IsKnownStale(const Metadata& metadata,
                   const feed::StreamType& stream_type);
 base::Time GetLastFetchTime(const Metadata& metadata,
@@ -67,13 +79,19 @@ const Metadata::StreamMetadata* FindMetadataForStream(
 Metadata::StreamMetadata& MetadataForStream(
     Metadata& metadata,
     const feed::StreamType& stream_type);
-absl::optional<Metadata> SetStreamViewContentIds(
+absl::optional<Metadata> SetStreamViewContentHashes(
     const Metadata& metadata,
     const feed::StreamType& stream_type,
-    const feed::ContentIdSet& content_ids);
-feed::ContentIdSet GetContentIds(const StreamData& stream_data);
-feed::ContentIdSet GetViewContentIds(const Metadata& metadata,
-                                     const feed::StreamType& stream_type);
+    const feed::ContentHashSet& content_hashes);
+feed::ContentHashSet GetContentIds(const StreamData& stream_data);
+feed::ContentHashSet GetViewContentIds(const Metadata& metadata,
+                                       const feed::StreamType& stream_type);
+int32_t ContentHashFromPrefetchMetadata(
+    const feedwire::PrefetchMetadata& prefetch_metadata);
+
+base::flat_set<uint32_t> GetViewedContentHashes(
+    const Metadata& metadata,
+    const feed::StreamType& stream_type);
 
 }  // namespace feedstore
 

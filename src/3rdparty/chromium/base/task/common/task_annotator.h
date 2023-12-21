@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,11 +9,16 @@
 
 #include "base/base_export.h"
 #include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ref.h"
 #include "base/pending_task.h"
 #include "base/strings/string_piece.h"
+#include "base/time/tick_clock.h"
 #include "base/trace_event/base_tracing.h"
 
 namespace base {
+
+// Constant used to measure which long-running tasks should be traced.
+constexpr TimeDelta kMaxTaskDurationTimeDelta = Milliseconds(4);
 
 // Implements common debug annotations for posted tasks. This includes data
 // such as task origins, IPC message contexts, queueing durations and memory
@@ -31,7 +36,18 @@ class BASE_EXPORT TaskAnnotator {
   // to be used only from within generated IPC handler dispatch code.
   class ScopedSetIpcHash;
 
+  // This is used to track long-running browser-UI tasks. It is intended to
+  // be used for low-overhead logging to produce longer traces, particularly to
+  // help the scroll jank reduction effort.
+  class LongTaskTracker;
+
   static const PendingTask* CurrentTaskForThread();
+
+  static void OnIPCReceived(const char* interface_name,
+                            uint32_t (*method_info)(),
+                            bool is_response);
+
+  static void MarkCurrentTaskAsInterestingForTracing();
 
   TaskAnnotator();
 
@@ -42,11 +58,9 @@ class BASE_EXPORT TaskAnnotator {
 
   // Called to indicate that a task is about to be queued to run in the future,
   // giving one last chance for this TaskAnnotator to add metadata to
-  // |pending_task| before it is moved into the queue. |task_queue_name| must
-  // live for the duration of the process.
+  // |pending_task| before it is moved into the queue.
   void WillQueueTask(perfetto::StaticString trace_event_name,
-                     PendingTask* pending_task,
-                     const char* task_queue_name);
+                     PendingTask* pending_task);
 
   // Creates a process-wide unique ID to represent this task in trace events.
   // This will be mangled with a Process ID hash to reduce the likelyhood of
@@ -89,8 +103,8 @@ class BASE_EXPORT TaskAnnotator {
 #if BUILDFLAG(ENABLE_BASE_TRACING)
   // TRACE_EVENT argument helper, writing the task location data into
   // EventContext.
-  void EmitTaskLocation(perfetto::EventContext& ctx,
-                        const PendingTask& task) const;
+  static void EmitTaskLocation(perfetto::EventContext& ctx,
+                               const PendingTask& task);
 
   // TRACE_EVENT argument helper, writing the incoming task flow information
   // into EventContext if toplevel.flow category is enabled.
@@ -125,6 +139,53 @@ class BASE_EXPORT TaskAnnotator::ScopedSetIpcHash {
   raw_ptr<ScopedSetIpcHash> old_scoped_ipc_hash_ = nullptr;
   uint32_t ipc_hash_ = 0;
   const char* ipc_interface_name_ = nullptr;
+};
+
+class BASE_EXPORT TaskAnnotator::LongTaskTracker {
+ public:
+  explicit LongTaskTracker(const TickClock* tick_clock,
+                           PendingTask& pending_task,
+                           TaskAnnotator* task_annotator);
+
+  LongTaskTracker(const LongTaskTracker&) = delete;
+
+  ~LongTaskTracker();
+
+  void SetIpcDetails(const char* interface_name,
+                     uint32_t (*method_info)(),
+                     bool is_response);
+
+  void MaybeTraceInterestingTaskDetails();
+
+  // In long-task tracking, not every task (including its queue time) will be
+  // recorded in a trace. If a particular task + queue time needs to be
+  // recorded, flag it explicitly. For example, input tasks are required for
+  // calculating scroll jank metrics.
+  bool is_interesting_task = false;
+
+ private:
+  void EmitReceivedIPCDetails(perfetto::EventContext& ctx);
+
+  // For tracking task duration
+  raw_ptr<const TickClock> tick_clock_;  // Not owned.
+  TimeTicks task_start_time_;
+  TimeTicks task_end_time_;
+
+  // Tracing variables.
+
+  // Use this to ensure that tracing and NowTicks() are not called
+  // unnecessarily.
+  bool is_tracing_;
+  raw_ptr<LongTaskTracker> old_long_task_tracker_ = nullptr;
+  const char* ipc_interface_name_ = nullptr;
+  uint32_t ipc_hash_ = 0;
+
+  // IPC method info to retrieve IPC hash and method address from trace, if
+  // known. Note that this will not compile in the Native client.
+  uint32_t (*ipc_method_info_)();
+  bool is_response_ = false;
+  const raw_ref<PendingTask> pending_task_;
+  raw_ptr<TaskAnnotator> task_annotator_;
 };
 
 }  // namespace base

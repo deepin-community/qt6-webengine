@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -82,8 +82,6 @@ ScriptPromise DOMWindowDigitalGoods::GetDigitalGoodsService(
     return promise;
   }
 
-  base::UmaHistogramBoolean("DigitalGoods.CrossSite",
-                            window.IsCrossSiteSubframeIncludingScheme());
   if (window.IsCrossSiteSubframeIncludingScheme()) {
     resolver->Reject(MakeGarbageCollected<DOMException>(
         DOMExceptionCode::kNotAllowedError,
@@ -99,7 +97,7 @@ ScriptPromise DOMWindowDigitalGoods::GetDigitalGoodsService(
     return promise;
   }
 
-  if (payment_method.IsEmpty()) {
+  if (payment_method.empty()) {
     resolver->Reject(V8ThrowException::CreateTypeError(
         script_state->GetIsolate(), "Empty payment method"));
     return promise;
@@ -112,7 +110,7 @@ ScriptPromise DOMWindowDigitalGoods::GetDigitalGoodsService(
 
   mojo_service_->CreateDigitalGoods(
       payment_method,
-      WTF::Bind(&OnCreateDigitalGoodsResponse, WrapPersistent(resolver)));
+      WTF::BindOnce(&OnCreateDigitalGoodsResponse, WrapPersistent(resolver)));
 
   return promise;
 }

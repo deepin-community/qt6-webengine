@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,6 +12,7 @@
 
 #include "base/files/file_path.h"
 #include "base/format_macros.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/test/task_environment.h"
 #include "base/test/trace_test_utils.h"
 #include "base/trace_event/memory_dump_manager.h"
@@ -40,7 +41,7 @@ class TracingObserverProtoTest : public testing::Test {
     memory_instrumentation::TracingObserverProto::RegisterForTesting();
     tracing::PerfettoTracedProcess::SetSystemProducerEnabledForTesting(false);
     PerfettoTracedProcess::GetTaskRunner()->ResetTaskRunnerForTesting(
-        base::ThreadTaskRunnerHandle::Get());
+        base::SingleThreadTaskRunner::GetCurrentDefault());
   }
 
   static base::trace_event::TraceConfig GetTraceConfig() {
@@ -201,10 +202,19 @@ TEST_F(TracingObserverProtoTest, AddChromeDumpToTraceIfEnabled) {
       args, kTestPid, &pmd, kTimestamp));
   data_source_tester.EndTracing();
 
+  // In SDK build we may see some metadata packets as well.
+#if !BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
   ASSERT_EQ(1ul, data_source_tester.GetFinalizedPacketCount());
+#endif  // !BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
 
-  const perfetto::protos::TracePacket* packet =
-      data_source_tester.GetFinalizedPacket(0);
+  const perfetto::protos::TracePacket* packet = nullptr;
+  for (size_t i = 0; i < data_source_tester.GetFinalizedPacketCount(); ++i) {
+    if (data_source_tester.GetFinalizedPacket(i)
+            ->has_memory_tracker_snapshot()) {
+      packet = data_source_tester.GetFinalizedPacket(i);
+      break;
+    }
+  }
   ASSERT_NE(nullptr, packet);
   EXPECT_TRUE(packet->has_timestamp());
   EXPECT_EQ(kTimestampProto, packet->timestamp());
@@ -266,10 +276,21 @@ TEST_F(TracingObserverProtoTest, AddOsDumpToTraceIfEnabled) {
       args, kTestPid, os_dump, memory_map, kTimestamp));
   data_source_tester.EndTracing();
 
+  // In SDK build we may see some metadata packets as well.
+#if !BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
   EXPECT_EQ(2ul, data_source_tester.GetFinalizedPacketCount());
+#endif  // !BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
 
-  const perfetto::protos::TracePacket* process_stats_trace_packet =
-      data_source_tester.GetFinalizedPacket(0);
+  const perfetto::protos::TracePacket* process_stats_trace_packet = nullptr;
+  const perfetto::protos::TracePacket* smaps_trace_packet = nullptr;
+  for (size_t i = 0; i < data_source_tester.GetFinalizedPacketCount(); ++i) {
+    if (data_source_tester.GetFinalizedPacket(i)->has_process_stats()) {
+      process_stats_trace_packet = data_source_tester.GetFinalizedPacket(i);
+    } else if (data_source_tester.GetFinalizedPacket(i)->has_smaps_packet()) {
+      smaps_trace_packet = data_source_tester.GetFinalizedPacket(i);
+    }
+  }
+
   ASSERT_NE(nullptr, process_stats_trace_packet);
   EXPECT_TRUE(process_stats_trace_packet->has_timestamp());
   EXPECT_EQ(kTimestampProto, process_stats_trace_packet->timestamp());
@@ -297,10 +318,7 @@ TEST_F(TracingObserverProtoTest, AddOsDumpToTraceIfEnabled) {
   EXPECT_TRUE(process.has_is_peak_rss_resettable());
   EXPECT_TRUE(process.is_peak_rss_resettable());
 
-  const perfetto::protos::TracePacket* smaps_trace_packet =
-      data_source_tester.GetFinalizedPacket(1);
-
-  EXPECT_TRUE(smaps_trace_packet->has_smaps_packet());
+  EXPECT_NE(nullptr, smaps_trace_packet);
   const ::perfetto::protos::SmapsPacket& smaps_packet =
       smaps_trace_packet->smaps_packet();
 
@@ -352,7 +370,7 @@ TEST_F(TracingObserverProtoTest, AsProtoInto) {
   };
 
 #if BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
-  perfetto::TrackEvent::Trace([&](perfetto::TrackEvent::TraceContext ctx) {
+  base::TrackEvent::Trace([&](base::TrackEvent::TraceContext ctx) {
     write_dump(ctx.NewTracePacket());
   });
 #else   // !BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
@@ -363,12 +381,21 @@ TEST_F(TracingObserverProtoTest, AsProtoInto) {
   write_dump(trace_writer->NewTracePacket());
 #endif  // !BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
   data_source_tester.EndTracing();
-  EXPECT_EQ(1ul, data_source_tester.GetFinalizedPacketCount());
 
-  const perfetto::protos::TracePacket* packet =
-      data_source_tester.GetFinalizedPacket(0);
+  // In SDK build we may see some metadata packets as well.
+#if !BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
+  EXPECT_EQ(1ul, data_source_tester.GetFinalizedPacketCount());
+#endif  // !BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
+
+  const perfetto::protos::TracePacket* packet = nullptr;
+  for (size_t i = 0; i < data_source_tester.GetFinalizedPacketCount(); ++i) {
+    if (data_source_tester.GetFinalizedPacket(i)
+            ->has_memory_tracker_snapshot()) {
+      packet = data_source_tester.GetFinalizedPacket(i);
+      break;
+    }
+  }
   ASSERT_NE(nullptr, packet);
-  EXPECT_TRUE(packet->has_memory_tracker_snapshot());
 
   const MemoryTrackerSnapshot& snapshot = packet->memory_tracker_snapshot();
   const MemoryTrackerSnapshot::ProcessSnapshot& process_memory_dump =

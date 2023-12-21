@@ -11,7 +11,7 @@
 
 #include "include/core/SkData.h"
 #include "include/core/SkStream.h"
-#include "include/private/SkTo.h"
+#include "include/private/base/SkTo.h"
 #include "src/core/SkAdvancedTypefaceMetrics.h"
 #include "src/core/SkEndian.h"
 #include "src/sfnt/SkOTTableTypes.h"
@@ -191,7 +191,7 @@ sk_sp<SkOTUtils::LocalizedStrings_NameTable>
 SkOTUtils::LocalizedStrings_NameTable::MakeForFamilyNames(const SkTypeface& typeface) {
     return Make(typeface,
                 SkOTUtils::LocalizedStrings_NameTable::familyNameTypes,
-                SK_ARRAY_COUNT(SkOTUtils::LocalizedStrings_NameTable::familyNameTypes));
+                std::size(SkOTUtils::LocalizedStrings_NameTable::familyNameTypes));
 }
 
 bool SkOTUtils::LocalizedStrings_NameTable::next(SkTypeface::LocalizedString* localizedString) {

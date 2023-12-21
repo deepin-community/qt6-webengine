@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,29 +11,74 @@
 namespace blink {
 
 CSSContainerValues::CSSContainerValues(Document& document,
-                                       const ComputedStyle& style,
+                                       Element& container,
                                        absl::optional<double> width,
                                        absl::optional<double> height)
     : MediaValuesDynamic(document.GetFrame()),
+      element_(&container),
       width_(width),
       height_(height),
-      writing_mode_(style.GetWritingMode()),
-      font_sizes_(&style, document.documentElement()->GetComputedStyle()) {}
+      writing_mode_(container.ComputedStyleRef().GetWritingMode()),
+      font_sizes_(CSSToLengthConversionData::FontSizes(
+          container.ComputedStyleRef().GetFontSizeStyle(),
+          document.documentElement()->GetComputedStyle())),
+      line_height_size_(CSSToLengthConversionData::LineHeightSize(
+          container.ComputedStyleRef().GetFontSizeStyle(),
+          document.documentElement()->GetComputedStyle())),
+      container_sizes_(container.ParentOrShadowHostElement()) {}
 
-float CSSContainerValues::EmSize() const {
-  return font_sizes_.Em();
+void CSSContainerValues::Trace(Visitor* visitor) const {
+  visitor->Trace(element_);
+  visitor->Trace(container_sizes_);
+  MediaValuesDynamic::Trace(visitor);
 }
 
-float CSSContainerValues::RemSize() const {
-  return font_sizes_.Rem();
+float CSSContainerValues::EmFontSize(float zoom) const {
+  return font_sizes_.Em(zoom);
 }
 
-float CSSContainerValues::ExSize() const {
-  return font_sizes_.Ex() / font_sizes_.Zoom();
+float CSSContainerValues::RemFontSize(float zoom) const {
+  return font_sizes_.Rem(zoom);
 }
 
-float CSSContainerValues::ChSize() const {
-  return font_sizes_.Ch() / font_sizes_.Zoom();
+float CSSContainerValues::ExFontSize(float zoom) const {
+  return font_sizes_.Ex(zoom);
+}
+
+float CSSContainerValues::RexFontSize(float zoom) const {
+  return font_sizes_.Rex(zoom);
+}
+
+float CSSContainerValues::ChFontSize(float zoom) const {
+  return font_sizes_.Ch(zoom);
+}
+
+float CSSContainerValues::RchFontSize(float zoom) const {
+  return font_sizes_.Rch(zoom);
+}
+
+float CSSContainerValues::IcFontSize(float zoom) const {
+  return font_sizes_.Ic(zoom);
+}
+
+float CSSContainerValues::RicFontSize(float zoom) const {
+  return font_sizes_.Ric(zoom);
+}
+
+float CSSContainerValues::LineHeight(float zoom) const {
+  return line_height_size_.Lh(zoom);
+}
+
+float CSSContainerValues::RootLineHeight(float zoom) const {
+  return line_height_size_.Rlh(zoom);
+}
+
+double CSSContainerValues::ContainerWidth() const {
+  return container_sizes_.Width().value_or(SmallViewportWidth());
+}
+
+double CSSContainerValues::ContainerHeight() const {
+  return container_sizes_.Height().value_or(SmallViewportHeight());
 }
 
 }  // namespace blink

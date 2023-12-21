@@ -29,6 +29,7 @@
 #include "perfetto/ext/base/pipe.h"
 #include "perfetto/ext/base/scoped_file.h"
 #include "perfetto/ext/base/unix_task_runner.h"
+#include "perfetto/ext/base/weak_ptr.h"
 #include "perfetto/ext/tracing/core/consumer.h"
 #include "perfetto/ext/tracing/ipc/consumer_ipc_client.h"
 #include "src/android_stats/perfetto_atoms.h"
@@ -67,6 +68,7 @@ class PerfettoCmd : public Consumer {
   void OnAttach(bool, const TraceConfig&) override;
   void OnTraceStats(bool, const TraceStats&) override;
   void OnObservableEvents(const ObservableEvents&) override;
+  void OnSessionCloned(bool, const std::string&) override;
 
   void SignalCtrlC() { ctrl_c_evt_.Notify(); }
 
@@ -89,6 +91,8 @@ class PerfettoCmd : public Consumer {
   void CheckTraceDataTimeout();
 
   int ConnectToServiceAndRun();
+
+  void ReadbackTraceDataAndQuit(const std::string& error);
 
   enum BgProcessStatus : char {
     kBackgroundOk = 0,
@@ -134,6 +138,7 @@ class PerfettoCmd : public Consumer {
   std::vector<std::string> triggers_to_activate_;
   std::string trace_out_path_;
   base::EventFd ctrl_c_evt_;
+  bool ctrl_c_handler_installed_ = false;
   base::Pipe background_wait_pipe_;
   bool save_to_incidentd_ = false;
   bool report_to_android_framework_ = false;
@@ -151,11 +156,14 @@ class PerfettoCmd : public Consumer {
   bool background_wait_ = false;
   bool ignore_guardrails_ = false;
   bool upload_flag_ = false;
+  bool connected_ = false;
   std::string uuid_;
+  base::Optional<TracingSessionID> clone_tsid_{};
 
   // How long we expect to trace for or 0 if the trace is indefinite.
   uint32_t expected_duration_ms_ = 0;
   bool trace_data_timeout_armed_ = false;
+  base::WeakPtrFactory<PerfettoCmd> weak_factory_{this};
 };
 
 }  // namespace perfetto

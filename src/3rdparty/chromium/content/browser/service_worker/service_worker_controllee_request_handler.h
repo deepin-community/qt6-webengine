@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -15,11 +15,11 @@
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
-#include "content/browser/loader/single_request_url_loader_factory.h"
 #include "content/browser/service_worker/service_worker_accessed_callback.h"
 #include "content/browser/service_worker/service_worker_main_resource_loader.h"
 #include "content/common/content_export.h"
 #include "services/network/public/cpp/resource_request.h"
+#include "services/network/public/cpp/single_request_url_loader_factory.h"
 #include "services/network/public/mojom/fetch_api.mojom.h"
 #include "third_party/blink/public/common/storage_key/storage_key.h"
 #include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom.h"
@@ -43,6 +43,27 @@ class ServiceWorkerVersion;
 // ServiceWorkerMainResourceLoader to perform the resource load.
 class CONTENT_EXPORT ServiceWorkerControlleeRequestHandler final {
  public:
+  // These values are persisted to logs. Entries should not be renumbered and
+  // numeric values should never be reused.
+  //
+  // Only one reason is recorded even if multiple reasons are matched.
+  // The order is following:
+  // 1. kSkippedForEmptyFetchHandler
+  // 2. kMainResourceSkippedDueToOriginTrial
+  // 3. kMainResourceSkippedDueToFeatureFlag
+  // 4. kMainResourceSkippedBecauseMatchedWithAllowedScriptList
+  enum class FetchHandlerSkipReason {
+    kNoFetchHandler = 0,
+    kNotSkipped = 1,
+    kSkippedForEmptyFetchHandler = 2,
+    kMainResourceSkippedDueToOriginTrial = 3,
+    kMainResourceSkippedDueToFeatureFlag = 4,
+    // kMainResourceSkippedBecauseMatchedWithAllowedOriginList = 5,
+    kMainResourceSkippedBecauseMatchedWithAllowedScriptList = 6,
+
+    kMaxValue = kMainResourceSkippedBecauseMatchedWithAllowedScriptList,
+  };
+
   // If |skip_service_worker| is true, service workers are bypassed for
   // request interception.
   ServiceWorkerControlleeRequestHandler(
@@ -84,6 +105,8 @@ class CONTENT_EXPORT ServiceWorkerControlleeRequestHandler final {
       const blink::StorageKey& storage_key);
 
   void ContinueWithRegistration(
+      // True when FindRegistrationForClientUrl() is called for navigation.
+      bool is_for_navigation,
       base::TimeTicks start_time,
       blink::ServiceWorkerStatusCode status,
       scoped_refptr<ServiceWorkerRegistration> registration);
@@ -106,6 +129,19 @@ class CONTENT_EXPORT ServiceWorkerControlleeRequestHandler final {
   // Schedules a service worker update to occur shortly after the page and its
   // initial subresources load, if this handler was for a navigation.
   void MaybeScheduleUpdate();
+
+  // Runs service worker if not running.
+  void MaybeStartServiceWorker(
+      scoped_refptr<ServiceWorkerVersion> active_version);
+
+  // Runs after ServiceWorker has started.
+  // Normally ServiceWorker starts before dispatching the main resource request,
+  // but if the ServiceWorkerBypassFetchHandler feature is enabled, we bypass
+  // the main resource request and then start ServiceWorker for subresources.
+  // Also, if we decided to start the service worker for
+  // the ServiceWorkerSkipEmptyFetchHandler feature and the browser handles
+  // an empty fetch handler, this runs after the service worker starts.
+  void DidStartWorker(blink::ServiceWorkerStatusCode status);
 
   const base::WeakPtr<ServiceWorkerContextCore> context_;
   const base::WeakPtr<ServiceWorkerContainerHost> container_host_;

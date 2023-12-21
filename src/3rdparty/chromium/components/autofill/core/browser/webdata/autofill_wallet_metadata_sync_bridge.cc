@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,10 +9,10 @@
 #include <utility>
 #include <vector>
 
-#include "base/base64.h"
-#include "base/callback_helpers.h"
 #include "base/check_op.h"
 #include "base/containers/contains.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/notreached.h"
 #include "base/pickle.h"
 #include "components/autofill/core/browser/data_model/autofill_metadata.h"
@@ -367,7 +367,9 @@ std::unique_ptr<syncer::MetadataChangeList>
 AutofillWalletMetadataSyncBridge::CreateMetadataChangeList() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   return std::make_unique<syncer::SyncMetadataStoreChangeList>(
-      GetAutofillTable(), syncer::AUTOFILL_WALLET_METADATA);
+      GetAutofillTable(), syncer::AUTOFILL_WALLET_METADATA,
+      base::BindRepeating(&syncer::ModelTypeChangeProcessor::ReportError,
+                          change_processor()->GetWeakPtr()));
 }
 
 absl::optional<syncer::ModelError>
@@ -689,9 +691,7 @@ AutofillWalletMetadataSyncBridge::MergeRemoteChanges(
     web_data_backend_->NotifyOfMultipleAutofillChanges();
   }
 
-  return static_cast<syncer::SyncMetadataStoreChangeList*>(
-             metadata_change_list.get())
-      ->TakeError();
+  return change_processor()->GetError();
 }
 
 template <class DataType>

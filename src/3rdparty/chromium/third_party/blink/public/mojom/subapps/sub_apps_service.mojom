@@ -1,17 +1,40 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 module blink.mojom;
 
-enum SubAppsServiceResult {
+enum SubAppsServiceResultCode {
   kSuccess,
   kFailure,
 };
 
+// `unhashed_app_id_path` is the sub app id generated according to
+// https://www.w3.org/TR/appmanifest/#dfn-identity, but only the path component
+// of the full url.
+// `install_url_path` is a path to a page hosting or containing a link to the
+// app's manifest.
+// Name of this struct can't be "SubAppsServiceAddParams" because it causes a
+// collision in the Android mojo bindings (interface name "SubAppsService" plus
+// method name "Add" plus suffix "Params" create the colliding name).
+struct SubAppsServiceAddParameters {
+  string unhashed_app_id_path;
+  string install_url_path;
+};
+
+struct SubAppsServiceAddResult {
+  string unhashed_app_id_path;
+  SubAppsServiceResultCode result_code;
+};
+
 struct SubAppsServiceListResult {
-  SubAppsServiceResult code;
-  array<string> sub_app_ids;
+  SubAppsServiceResultCode result_code;
+  array<SubAppsServiceListResultEntry> sub_apps_list;
+};
+
+struct SubAppsServiceListResultEntry {
+  string unhashed_app_id_path;
+  string app_name;
 };
 
 // Sub Apps APIs allow installed PWAs to install shortcuts to their various
@@ -23,21 +46,14 @@ struct SubAppsServiceListResult {
 // frame, and it's main-frame only. It is only valid for already-installed apps,
 // and has an origin associated with it.
 interface SubAppsService {
-  // Installs a sub-app of an already-installed app corresponding to this
-  // instance of SubAppsService. `install_path` is the absolute path which will
-  // be attached to the origin of the already-installed app (effectively
-  // limiting the API to same-origin apps).
-  Add(string install_path) => (SubAppsServiceResult result);
+  // Installs one or more sub-apps of an already-installed app corresponding to
+  // this instance of SubAppsService.
+  Add(array<SubAppsServiceAddParameters> sub_apps_to_add) => (array<SubAppsServiceAddResult> result);
 
-  // List all sub-app `app_ids` installed by the app making the API call. The
-  // `app_id` format is the same as the `web_app::GenerateAppIdUnhashed`
-  // function which returns app identity according to the specification:
-  // https://www.w3.org/TR/appmanifest/#dfn-identity.
+  // List all sub-apps installed by the app making the API call.
   List() => (SubAppsServiceListResult result);
 
-  // Uninstalls the sub-app represented by the given `unhashed_app_id`
-  // previously installed via the `Add` method by the same app making the
-  // current API call. Format of the `unhashed_app_id` argument is the same as
-  // the return of the `List` method.
-  Remove(string unhashed_app_id) => (SubAppsServiceResult result);
+  // Uninstalls the sub-app represented by the given argument previously
+  // installed via the `Add` method by the same app making the current API call.
+  Remove(string unhashed_app_id_path) => (SubAppsServiceResultCode result);
 };

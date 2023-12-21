@@ -1,11 +1,11 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/platform/scheduler/worker/worker_thread_scheduler.h"
 
-#include "base/bind.h"
-#include "base/callback.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/task/sequence_manager/test/fake_task.h"
 #include "base/task/sequence_manager/test/sequence_manager_for_test.h"
 #include "base/task/single_thread_task_runner.h"
@@ -15,6 +15,7 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/platform/scheduler/common/process_state.h"
+#include "third_party/blink/renderer/platform/scheduler/common/task_priority.h"
 #include "third_party/blink/renderer/platform/scheduler/test/fake_frame_scheduler.h"
 #include "third_party/blink/renderer/platform/scheduler/test/recording_task_time_observer.h"
 
@@ -94,12 +95,12 @@ class WorkerThreadSchedulerForTest : public WorkerThreadScheduler {
   using WorkerThreadScheduler::SetUkmTaskSamplingRateForTest;
 
   void AddTaskTimeObserver(base::sequence_manager::TaskTimeObserver* observer) {
-    helper()->AddTaskTimeObserver(observer);
+    GetHelper().AddTaskTimeObserver(observer);
   }
 
   void RemoveTaskTimeObserver(
       base::sequence_manager::TaskTimeObserver* observer) {
-    helper()->RemoveTaskTimeObserver(observer);
+    GetHelper().RemoveTaskTimeObserver(observer);
   }
 
   void set_on_microtask_checkpoint(base::OnceClosure cb) {
@@ -146,15 +147,20 @@ class WorkerThreadSchedulerTest : public testing::Test {
             base::sequence_manager::SequenceManagerForTest::Create(
                 nullptr,
                 task_environment_.GetMainThreadTaskRunner(),
-                task_environment_.GetMockTickClock())),
+                task_environment_.GetMockTickClock(),
+                base::sequence_manager::SequenceManager::Settings::Builder()
+                    .SetPrioritySettings(CreatePrioritySettings())
+                    .Build())),
         scheduler_(new WorkerThreadSchedulerForTest(
             sequence_manager_.get(),
             task_environment_.GetMockTickClock(),
             &timeline_)) {
     scheduler_->Init();
     scheduler_->AttachToCurrentThread();
-    default_task_queue_ = scheduler_->CreateTaskQueue("test_tq");
-    default_task_runner_ = default_task_queue_->CreateTaskRunner(0);
+    default_task_queue_ =
+        scheduler_->CreateTaskQueue(base::sequence_manager::QueueName::TEST_TQ);
+    default_task_runner_ =
+        default_task_queue_->GetTaskRunnerWithDefaultTaskType();
     idle_task_runner_ = scheduler_->IdleTaskRunner();
   }
 
@@ -218,7 +224,7 @@ class WorkerThreadSchedulerTest : public testing::Test {
       sequence_manager_;
   Vector<String> timeline_;
   std::unique_ptr<WorkerThreadSchedulerForTest> scheduler_;
-  scoped_refptr<base::sequence_manager::TaskQueue> default_task_queue_;
+  scoped_refptr<NonMainThreadTaskQueue> default_task_queue_;
   scoped_refptr<base::SingleThreadTaskRunner> default_task_runner_;
   scoped_refptr<SingleThreadIdleTaskRunner> idle_task_runner_;
 };
@@ -427,11 +433,12 @@ TEST_F(WorkerThreadSchedulerTest, TestMicrotaskCheckpointTiming) {
 
   base::TimeTicks start_time = task_environment_.NowTicks();
   default_task_runner_->PostTask(
-      FROM_HERE, WTF::Bind(&base::test::TaskEnvironment::FastForwardBy,
-                           base::Unretained(&task_environment_), kTaskTime));
+      FROM_HERE,
+      WTF::BindOnce(&base::test::TaskEnvironment::FastForwardBy,
+                    base::Unretained(&task_environment_), kTaskTime));
   scheduler_->set_on_microtask_checkpoint(
-      WTF::Bind(&base::test::TaskEnvironment::FastForwardBy,
-                base::Unretained(&task_environment_), kMicrotaskTime));
+      WTF::BindOnce(&base::test::TaskEnvironment::FastForwardBy,
+                    base::Unretained(&task_environment_), kMicrotaskTime));
 
   RecordingTaskTimeObserver observer;
 
@@ -463,7 +470,11 @@ class FrameSchedulerDelegateWithUkmSourceId : public FrameScheduler::Delegate {
   void UpdateTaskTime(base::TimeDelta time) override {}
 
   void UpdateBackForwardCacheDisablingFeatures(
-      uint64_t features_mask) override {}
+      uint64_t features_mask,
+      const BFCacheBlockingFeatureAndLocations&
+          non_sticky_features_and_js_locations,
+      const BFCacheBlockingFeatureAndLocations&
+          sticky_features_and_js_locations) override {}
 
   const base::UnguessableToken& GetAgentClusterId() const override {
     return base::UnguessableToken::Null();
@@ -485,16 +496,19 @@ class WorkerThreadSchedulerWithProxyTest : public testing::Test {
             base::sequence_manager::SequenceManagerForTest::Create(
                 nullptr,
                 task_environment_.GetMainThreadTaskRunner(),
-                task_environment_.GetMockTickClock())) {
+                task_environment_.GetMockTickClock(),
+                base::sequence_manager::SequenceManager::Settings::Builder()
+                    .SetPrioritySettings(CreatePrioritySettings())
+                    .Build())) {
     frame_scheduler_delegate_ =
         std::make_unique<FrameSchedulerDelegateWithUkmSourceId>(42);
     frame_scheduler_ = FakeFrameScheduler::Builder()
                            .SetIsPageVisible(false)
                            .SetFrameType(FrameScheduler::FrameType::kSubframe)
-                           .SetIsCrossOriginToMainFrame(true)
+                           .SetIsCrossOriginToNearestMainFrame(true)
                            .SetDelegate(frame_scheduler_delegate_.get())
                            .Build();
-    frame_scheduler_->SetCrossOriginToMainFrame(true);
+    frame_scheduler_->SetCrossOriginToNearestMainFrame(true);
 
     worker_scheduler_proxy_ =
         std::make_unique<WorkerSchedulerProxy>(frame_scheduler_.get());

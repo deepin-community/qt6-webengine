@@ -1,4 +1,4 @@
-// Copyright 2022 The Chromium OS Authors. All rights reserved.
+// Copyright 2022 The ChromiumOS Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -36,6 +36,8 @@ const char kGetNumberOfActiveInputStreams[] = "GetNumberOfActiveInputStreams";
 const char kGetNumberOfActiveOutputStreams[] = "GetNumberOfActiveOutputStreams";
 const char kGetNumberOfInputStreamsWithPermission[] =
     "GetNumberOfInputStreamsWithPermission";
+const char kGetNumberOfNonChromeOutputStreams[] =
+    "GetNumberOfNonChromeOutputStreams";
 const char kIsAudioOutputActive[] = "IsAudioOutputActive";
 const char kSetGlobalOutputChannelRemix[] = "SetGlobalOutputChannelRemix";
 const char kGetSystemAecSupported[] = "GetSystemAecSupported";
@@ -53,6 +55,8 @@ const char kGetDeprioritizeBtWbsMic[] = "GetDeprioritizeBtWbsMic";
 const char kSetNoiseCancellationEnabled[] = "SetNoiseCancellationEnabled";
 const char kIsNoiseCancellationSupported[] = "IsNoiseCancellationSupported";
 const char kSetFlossEnabled[] = "SetFlossEnabled";
+const char kSetSpeakOnMuteDetection[] = "SetSpeakOnMuteDetection";
+const char kSpeakOnMuteDetectionEnabled[] = "SpeakOnMuteDetectionEnabled";
 
 // Names of properties returned by GetNodes() and GetNodeInfos()
 const char kIsInputProperty[] = "IsInput";
@@ -68,6 +72,7 @@ const char kMaxSupportedChannelsProperty[] = "MaxSupportedChannels";
 const char kAudioEffectProperty[] = "AudioEffect";
 const char kNodeVolumeProperty[] = "NodeVolume";
 const char kInputNodeGainProperty[] = "InputNodeGain";
+const char kNumberOfVolumeStepsProperty[] = "NumberOfVolumeSteps";
 // The following two properties are optional.
 const char kNumberOfUnderrunsProperty[] = "NumberOfUnderruns";
 const char kNumberOfSevereUnderrunsProperty[] = "NumberOfSevereUnderruns";
@@ -96,16 +101,20 @@ const char kOutputNodeVolumeChanged[] = "OutputNodeVolumeChanged";
 const char kNodeLeftRightSwappedChanged[] = "NodeLeftRightSwappedChanged";
 const char kInputGainChanged[] = "InputGainChanged";
 const char kInputMuteChanged[] = "InputMuteChanged";
+const char kInputNodeGainChanged[] = "InputNodeGainChanged";
 const char kNodesChanged[] = "NodesChanged";
 const char kActiveOutputNodeChanged[] = "ActiveOutputNodeChanged";
 const char kActiveInputNodeChanged[] = "ActiveInputNodeChanged";
 const char kNumberOfActiveStreamsChanged[] = "NumberOfActiveStreamsChanged";
 const char kNumberOfInputStreamsWithPermissionChanged[] =
     "NumberOfInputStreamsWithPermissionChanged";
+const char kNumberOfNonChromeOutputStreamsChanged[] =
+    "NumberOfNonChromeOutputStreamsChanged";
 const char kAudioOutputActiveStateChanged[] = "AudioOutputActiveStateChanged";
 const char kHotwordTriggered[] = "HotwordTriggered";
 const char kBluetoothBatteryChanged[] = "BluetoothBatteryChanged";
 const char kSurveyTrigger[] = "SurveyTrigger";
+const char kSpeakOnMuteDetected[] = "SpeakOnMuteDetected";
 }  // namespace cras
 
 #endif  // SYSTEM_API_DBUS_AUDIO_DBUS_CONSTANTS_H_

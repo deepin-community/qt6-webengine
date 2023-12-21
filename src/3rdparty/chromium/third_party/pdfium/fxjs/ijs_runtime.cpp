@@ -1,4 +1,4 @@
-// Copyright 2018 PDFium Authors. All rights reserved.
+// Copyright 2018 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -19,7 +19,7 @@ IJS_Runtime::ScopedEventContext::ScopedEventContext(IJS_Runtime* pRuntime)
     : m_pRuntime(pRuntime), m_pContext(pRuntime->NewEventContext()) {}
 
 IJS_Runtime::ScopedEventContext::~ScopedEventContext() {
-  m_pRuntime->ReleaseEventContext(m_pContext.Release());
+  m_pRuntime->ReleaseEventContext(m_pContext.ExtractAsDangling());
 }
 
 // static

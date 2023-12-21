@@ -1,7 +1,7 @@
-/* Copyright (c) 2019-2021 The Khronos Group Inc.
- * Copyright (c) 2019-2021 Valve Corporation
- * Copyright (c) 2019-2021 LunarG, Inc.
- * Copyright (C) 2019-2021 Google Inc.
+/* Copyright (c) 2019-2022 The Khronos Group Inc.
+ * Copyright (c) 2019-2023 Valve Corporation
+ * Copyright (c) 2019-2023 LunarG, Inc.
+ * Copyright (C) 2019-2022 Google Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,9 +19,6 @@
  *
  */
 #pragma once
-
-#ifndef RANGE_VECTOR_H_
-#define RANGE_VECTOR_H_
 
 #include <algorithm>
 #include <cassert>
@@ -112,6 +109,7 @@ struct range {
         return range();  // Empty default range on non-intersection
     }
 
+    index_type size() const { return end - begin; }
     range() : begin(), end() {}
     range(const index_type &begin_, const index_type &end_) : begin(begin_), end(end_) {}
     range(const range &other) : begin(other.begin), end(other.end) {}
@@ -168,6 +166,9 @@ struct split_op_keep_upper {
 
 enum class value_precedence { prefer_source, prefer_dest };
 
+template <typename Iterator, typename Map, typename Range>
+Iterator split(Iterator in, Map &map, const Range &range);
+
 // The range based sparse map implemented on the ImplMap
 template <typename Key, typename T, typename RangeKey = range<Key>, typename ImplMap = std::map<RangeKey, T>>
 class range_map {
@@ -183,6 +184,7 @@ class range_map {
     using value_type = typename ImplMap::value_type;
     using key_type = typename ImplMap::key_type;
     using index_type = typename key_type::index_type;
+    using size_type = typename ImplMap::size_type;
 
   protected:
     template <typename ThisType>
@@ -283,7 +285,7 @@ class range_map {
             return split_it;  // this is a noop we're keeping the upper half which is the same as split_it;
         }
         // Save the contents of it and erase it
-        auto value = std::move(split_it->second);
+        auto value = split_it->second;
         auto next_it = impl_map_.erase(split_it);  // Keep this, just in case the split point results in an empty "keep" set
 
         if (lower_range.empty() && !SplitOp::keep_upper()) {
@@ -375,7 +377,7 @@ class range_map {
                     // for the range
                     pos = split_impl(pos, bounds.end, split_op_keep_both());
                 }
-                // advance to the upper haf of the split which will be upper_bound  or to next which will both be out of bounds
+                // advance to the upper half of the split which will be upper_bound  or to next which will both be out of bounds
                 ++pos;
                 RANGE_ASSERT(!bounds.includes(pos->first.begin));
             }
@@ -385,12 +387,13 @@ class range_map {
         return range<ImplIterator>(lower, pos);
     }
 
-    ImplIterator impl_erase_range(const key_type &bounds, ImplIterator lower) {
+    template <typename TouchOp>
+    ImplIterator impl_erase_range(const key_type &bounds, ImplIterator lower, const TouchOp &touch_mapped_value) {
         // Logic assumes we are starting at a valid lower bound
         RANGE_ASSERT(!at_impl_end(lower));
         RANGE_ASSERT(lower == lower_bound_impl(bounds));
 
-        // Trim/infil the beginning if needed
+        // Trim/infill the beginning if needed
         auto current = lower;
         const auto first_begin = current->first.begin;
         if (bounds.begin > first_begin) {
@@ -409,12 +412,27 @@ class range_map {
 
         // Loop over completely contained entries and erase them
         while (!at_impl_end(current) && (current->first.end <= bounds.end)) {
-            current = impl_erase(current);
+            if (touch_mapped_value(current->second)) {
+                current = impl_erase(current);
+            } else {
+                ++current;
+            }
         }
 
         if (!at_impl_end(current) && current->first.includes(bounds.end)) {
             // last entry extends past the end of the bounds range, snip to only erase the bounded section
-            current = split_impl(current, bounds.end, split_op_keep_upper());
+            current = split_impl(current, bounds.end, split_op_keep_both());
+            // test if lower_bound (eventually) computed in split_impl is not empty.
+            // If it is not empty, then it contains values inside the bounds range,
+            // they need to be touched
+            if ((current->first & bounds).non_empty()) {
+                if (touch_mapped_value(current->second)) {
+                    current = impl_erase(current);
+                } else {
+                    // make current point to upper bound
+                    ++current;
+                }
+            }
         }
 
         RANGE_ASSERT(current == upper_bound_impl(bounds));
@@ -536,15 +554,24 @@ class range_map {
 
     iterator erase(iterator first, iterator last) { return erase(range<iterator>(first, last)); }
 
-    iterator erase_range(const key_type &bounds) {
+    // Before trying to erase a range, function touch_mapped_value is called on the mapped value.
+    // touch_mapped_value is allowed to have it's parameter type to be non const reference.
+    // If it returns true, regular erase will occur.
+    // Else, range is kept.
+    template <typename TouchOp>
+    iterator erase_range_or_touch(const key_type &bounds, const TouchOp &touch_mapped_value) {
         auto lower = lower_bound_impl(bounds);
 
         if (at_impl_end(lower) || !bounds.intersects(lower->first)) {
             // There is nothing in this range lower bound is above bound
             return iterator(lower);
         }
-        auto next = impl_erase_range(bounds, lower);
+        auto next = impl_erase_range(bounds, lower, touch_mapped_value);
         return iterator(next);
+    }
+
+    iterator erase_range(const key_type &bounds) {
+        return erase_range_or_touch(bounds, [](const auto &) { return true; });
     }
 
     void clear() { impl_map_.clear(); }
@@ -595,7 +622,7 @@ class range_map {
         // we don't have to check upper if just check that lower doesn't intersect (which it would if lower != upper)
         auto lower = lower_bound_impl(key);
         if (at_impl_end(lower) || !lower->first.intersects(key)) {
-            // range is not even paritally overlapped, and lower is strictly > than key
+            // range is not even partially overlapped, and lower is strictly > than key
             auto impl_insert = impl_map_.emplace_hint(lower, value);
             // auto impl_insert = impl_map_.emplace(value);
             iterator wrap_it(impl_insert);
@@ -632,6 +659,45 @@ class range_map {
         return iterator(impl_insert);
     }
 
+    // Try to insert value. If insertion failed, recursively split union of retrieved stored range with inserted range.
+    // Split at intersection of stored range and inserted range.
+    // Range intersection is merged using merge_op.
+    // Ranges before and after this intersection are recursively inserted.
+    // merge_pos should have this signature: (mapped_type& current_value, const mapped_type& new_value) -> void
+    template <typename MergeOp>
+    iterator split_and_merge_insert(const value_type &value, const MergeOp &merge_op) {
+        if (!value.first.non_empty()) {
+            return end();
+        }
+
+        if (auto [it, was_inserted] = insert(value); !was_inserted) {
+            // insert failed, so at least one stored range intersects with new range
+            const RangeKey it_range = it->first;
+            const auto &[inserted_range, insert_mapped_value] = value;
+            const RangeKey intersection = it_range & inserted_range;
+            // if intersection is empty or invalid, insertion should have succeeded
+            assert(intersection.non_empty());
+
+            const iterator split_point_it = sparse_container::split(it, *this, intersection);
+            // given it->first and instersection do intersect, split should have succeeded
+            RANGE_ASSERT(split_point_it != end());
+            // merge values at inserted range and retrieved range intersection
+            merge_op(split_point_it->second, insert_mapped_value);
+
+            // Recursively insert ranges before and after intersection
+            const RangeKey range_after_intersection(intersection.end, std::max(it_range.end, inserted_range.end));
+            const RangeKey range_before_intersection(std::min(it_range.begin, inserted_range.begin), intersection.begin);
+            split_and_merge_insert({range_after_intersection, insert_mapped_value}, merge_op);
+            if (range_before_intersection.non_empty()) {
+                return split_and_merge_insert({range_before_intersection, insert_mapped_value}, merge_op);
+            } else {
+                return split_point_it;
+            }
+        } else {
+            return it;
+        }
+    }
+
     template <typename SplitOp>
     iterator split(const iterator whole_it, const index_type &index, const SplitOp &split_op) {
         auto split_it = split_impl(whole_it.pos_, index, split_op);
@@ -648,7 +714,7 @@ class range_map {
         if (!at_impl_end(lower_impl)) {
             // If we're at end (and the hint is good, there's nothing to erase
             RANGE_ASSERT(lower == lower_bound(value.first));
-            insert_hint = impl_erase_range(value.first, lower_impl);
+            insert_hint = impl_erase_range(value.first, lower_impl, [](const auto &) { return true; });
         }
         auto inserted = impl_insert(insert_hint, std::forward<Value>(value));
         return iterator(inserted);
@@ -661,7 +727,7 @@ class range_map {
     }
 
     bool empty() const { return impl_map_.empty(); }
-    size_t size() const { return impl_map_.size(); }
+    size_type size() const { return impl_map_.size(); }
 
     // For configuration/debug use // Use with caution...
     ImplMap &get_implementation_map() { return impl_map_; }
@@ -1531,7 +1597,7 @@ const MappedType &evaluate(const CachedLowerBound &clb, const MappedType &defaul
     return default_value;
 }
 
-// Split a range into pieces bound by the interection of the interator's range and the supplied range
+// Split a range into pieces bound by the intersection of the iterator's range and the supplied range
 template <typename Iterator, typename Map, typename Range>
 Iterator split(Iterator in, Map &map, const Range &range) {
     assert(in != map.end());  // Not designed for use with invalid iterators...
@@ -1754,14 +1820,14 @@ struct update_prefer_source {
         return false;
     }
 
-    layer_data::optional<T> insert(const T &src) const { return layer_data::optional<T>(layer_data::in_place, src); }
+    std::optional<T> insert(const T &src) const { return std::optional<T>(vvl::in_place, src); }
 };
 
 template <typename T>
 struct update_prefer_dest {
     bool update(T &dst, const T &src) const { return false; }
 
-    layer_data::optional<T> insert(const T &src) const { return layer_data::optional<T>(layer_data::in_place, src); }
+    std::optional<T> insert(const T &src) const { return std::optional<T>(vvl::in_place, src); }
 };
 
 template <typename RangeMap, typename SourceIterator = typename RangeMap::const_iterator>
@@ -1822,6 +1888,43 @@ bool update_range_value(Map &map, const Range &range, MapValue &&value, value_pr
     return updated;
 }
 
-}  // namespace sparse_container
+//  combines directly adjacent ranges with equal RangeMap::mapped_type .
+template <typename RangeMap>
+void consolidate(RangeMap &map) {
+    using Value = typename RangeMap::value_type;
+    using Key = typename RangeMap::key_type;
+    using It = typename RangeMap::iterator;
 
-#endif
+    It current = map.begin();
+    const It map_end = map.end();
+
+    // To be included in a merge range there must be no gap in the Key space, and the mapped_type values must match
+    auto can_merge = [](const It &last, const It &cur) {
+        return cur->first.begin == last->first.end && cur->second == last->second;
+    };
+
+    while (current != map_end) {
+        // Establish a trival merge range at the current location, advancing current. Merge range is inclusive of merge_last
+        const It merge_first = current;
+        It merge_last = current;
+        ++current;
+
+        // Expand the merge range as much as possible
+        while (current != map_end && can_merge(merge_last, current)) {
+            merge_last = current;
+            ++current;
+        }
+
+        // Current isn't in the active merge range. If there is a non-trivial merge range, we resolve it here.
+        if (merge_first != merge_last) {
+            // IFF there is more than one range in (merge_first, merge_last)  <- again noting the *inclusive* last
+            // Create a new Val spanning (first, last), substitute it for the multiple entries.
+            Value merged_value = std::make_pair(Key(merge_first->first.begin, merge_last->first.end), merge_last->second);
+            // Note that current points to merge_last + 1, and is valid even if at map_end for these operations
+            map.erase(merge_first, current);
+            map.insert(current, std::move(merged_value));
+        }
+    }
+}
+
+}  // namespace sparse_container

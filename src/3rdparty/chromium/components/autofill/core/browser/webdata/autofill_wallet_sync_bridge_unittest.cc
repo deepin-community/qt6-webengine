@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,9 +9,9 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/bind.h"
@@ -39,12 +39,13 @@
 #include "components/sync/model/in_memory_metadata_change_list.h"
 #include "components/sync/model/sync_data.h"
 #include "components/sync/protocol/autofill_specifics.pb.h"
+#include "components/sync/protocol/data_type_progress_marker.pb.h"
 #include "components/sync/protocol/entity_data.h"
 #include "components/sync/protocol/entity_metadata.pb.h"
 #include "components/sync/protocol/entity_specifics.pb.h"
 #include "components/sync/protocol/model_type_state.pb.h"
-#include "components/sync/test/model/mock_model_type_change_processor.h"
-#include "components/sync/test/model/test_matchers.h"
+#include "components/sync/test/mock_model_type_change_processor.h"
+#include "components/sync/test/test_matchers.h"
 #include "components/webdata/common/web_database.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -268,14 +269,15 @@ class AutofillWalletSyncBridgeTest : public testing::Test {
     // Initialize the processor with initial_sync_done.
     sync_pb::ModelTypeState state;
     state.set_initial_sync_done(true);
-    state.mutable_progress_marker()
-        ->mutable_gc_directive()
-        ->set_version_watermark(1);
+
+    sync_pb::GarbageCollectionDirective gc_directive;
+    gc_directive.set_version_watermark(1);
     syncer::UpdateResponseDataList initial_updates;
     for (const AutofillWalletSpecifics& specifics : remote_data) {
       initial_updates.push_back(SpecificsToUpdateResponse(specifics));
     }
-    real_processor_->OnUpdateReceived(state, std::move(initial_updates));
+    real_processor_->OnUpdateReceived(state, std::move(initial_updates),
+                                      gc_directive);
   }
 
   void ExpectCountsOfWalletMetadataInDB(unsigned int cards_count,
@@ -417,6 +419,8 @@ TEST_F(AutofillWalletSyncBridgeTest,
   CreditCard card_with_nickname = test::GetMaskedServerCardWithNickname();
   card2.set_virtual_card_enrollment_state(
       CreditCard::VirtualCardEnrollmentState::ENROLLED);
+  card2.set_virtual_card_enrollment_type(
+      CreditCard::VirtualCardEnrollmentType::NETWORK);
   table()->SetServerCreditCards({card1, card2, card_with_nickname});
   PaymentsCustomerData customer_data{/*customer_id=*/kCustomerDataId};
   table()->SetPaymentsCustomerData(&customer_data);
@@ -457,6 +461,8 @@ TEST_F(AutofillWalletSyncBridgeTest,
             card_specifics1.masked_card().virtual_card_enrollment_state());
   EXPECT_EQ(sync_pb::WalletMaskedCreditCard::ENROLLED,
             card_specifics2.masked_card().virtual_card_enrollment_state());
+  EXPECT_EQ(sync_pb::WalletMaskedCreditCard::NETWORK,
+            card_specifics2.masked_card().virtual_card_enrollment_type());
   EXPECT_EQ("https://www.example.com/card.png",
             card_specifics1.masked_card().card_art_url());
   EXPECT_TRUE(card_specifics2.masked_card().card_art_url().empty());
@@ -956,8 +962,8 @@ TEST_F(AutofillWalletSyncBridgeTest, MergeSyncData_SetsAllCloudTokenData) {
 }
 
 TEST_F(AutofillWalletSyncBridgeTest, LoadMetadataCalled) {
-  EXPECT_TRUE(table()->UpdateSyncMetadata(syncer::AUTOFILL_WALLET_DATA, "key",
-                                          EntityMetadata()));
+  EXPECT_TRUE(table()->UpdateEntityMetadata(syncer::AUTOFILL_WALLET_DATA, "key",
+                                            EntityMetadata()));
 
   ResetProcessor();
   EXPECT_CALL(mock_processor(), ModelReadyToSync(MetadataBatchContains(

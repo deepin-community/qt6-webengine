@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,8 +14,7 @@
 #include "base/memory/ptr_util.h"
 #include "base/rand_util.h"
 #include "base/time/time.h"
-#include "content/browser/attribution_reporting/attribution_default_random_generator.h"
-#include "content/browser/attribution_reporting/attribution_random_generator.h"
+#include "content/browser/attribution_reporting/attribution_config.h"
 #include "content/browser/attribution_reporting/attribution_report.h"
 #include "content/browser/attribution_reporting/attribution_utils.h"
 #include "content/browser/attribution_reporting/combinatorics.h"
@@ -23,98 +22,34 @@
 
 namespace content {
 
-namespace {
-
-uint64_t TriggerDataCardinality(AttributionSourceType source_type) {
-  switch (source_type) {
-    case AttributionSourceType::kNavigation:
-      return 8;
-    case AttributionSourceType::kEvent:
-      return 2;
-  }
-}
-
-}  // namespace
-
 // static
 std::unique_ptr<AttributionStorageDelegate>
 AttributionStorageDelegateImpl::CreateForTesting(
     AttributionNoiseMode noise_mode,
     AttributionDelayMode delay_mode,
-    std::unique_ptr<AttributionRandomGenerator> rng,
-    AttributionRandomizedResponseRates randomized_response_rates) {
-  return base::WrapUnique(new AttributionStorageDelegateImpl(
-      noise_mode, delay_mode, std::move(rng), randomized_response_rates));
+    const AttributionConfig& config) {
+  return base::WrapUnique(
+      new AttributionStorageDelegateImpl(noise_mode, delay_mode, config));
 }
 
 AttributionStorageDelegateImpl::AttributionStorageDelegateImpl(
     AttributionNoiseMode noise_mode,
     AttributionDelayMode delay_mode)
-    : AttributionStorageDelegateImpl(
-          noise_mode,
-          delay_mode,
-          std::make_unique<AttributionDefaultRandomGenerator>(),
-          AttributionRandomizedResponseRates::kDefault) {}
+    : AttributionStorageDelegateImpl(noise_mode,
+                                     delay_mode,
+                                     AttributionConfig()) {}
 
 AttributionStorageDelegateImpl::AttributionStorageDelegateImpl(
     AttributionNoiseMode noise_mode,
     AttributionDelayMode delay_mode,
-    std::unique_ptr<AttributionRandomGenerator> rng,
-    AttributionRandomizedResponseRates randomized_response_rates)
-    : noise_mode_(noise_mode),
-      delay_mode_(delay_mode),
-      rng_(std::move(rng)),
-      randomized_response_rates_(randomized_response_rates) {
-  DCHECK(rng_);
-
-  DCHECK_GE(randomized_response_rates_.navigation, 0);
-  DCHECK_LE(randomized_response_rates_.navigation, 1);
-
-  DCHECK_GE(randomized_response_rates_.event, 0);
-  DCHECK_LE(randomized_response_rates_.event, 1);
-
+    const AttributionConfig& config)
+    : AttributionStorageDelegate(config),
+      noise_mode_(noise_mode),
+      delay_mode_(delay_mode) {
   DETACH_FROM_SEQUENCE(sequence_checker_);
 }
 
 AttributionStorageDelegateImpl::~AttributionStorageDelegateImpl() = default;
-
-int AttributionStorageDelegateImpl::GetMaxAttributionsPerSource(
-    AttributionSourceType source_type) const {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  switch (source_type) {
-    case AttributionSourceType::kNavigation:
-      return 3;
-    case AttributionSourceType::kEvent:
-      return 1;
-  }
-}
-
-int AttributionStorageDelegateImpl::GetMaxSourcesPerOrigin() const {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  return 1024;
-}
-
-int AttributionStorageDelegateImpl::GetMaxAttributionsPerOrigin() const {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  return 1024;
-}
-
-int AttributionStorageDelegateImpl::
-    GetMaxDestinationsPerSourceSiteReportingOrigin() const {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  return 100;
-}
-
-AttributionStorageDelegate::RateLimitConfig
-AttributionStorageDelegateImpl::GetRateLimits() const {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  return RateLimitConfig{
-      /*.time_window =*/ base::Days(30),
-      /*.max_source_registration_reporting_origins =*/ 100,
-      /*.max_attribution_reporting_origins =*/ 10,
-      /*.max_attributions =*/ 100,
-  };
-}
 
 base::TimeDelta
 AttributionStorageDelegateImpl::GetDeleteExpiredSourcesFrequency() const {
@@ -147,7 +82,15 @@ base::Time AttributionStorageDelegateImpl::GetAggregatableReportTime(
 
   switch (delay_mode_) {
     case AttributionDelayMode::kDefault:
-      return trigger_time + rng_->RandDouble() * base::Hours(1);
+      switch (noise_mode_) {
+        case AttributionNoiseMode::kDefault:
+          return trigger_time + config_.aggregate_limit.min_delay +
+                 base::RandDouble() * config_.aggregate_limit.delay_span;
+        case AttributionNoiseMode::kNone:
+          return trigger_time + config_.aggregate_limit.min_delay +
+                 config_.aggregate_limit.delay_span;
+      }
+
     case AttributionDelayMode::kNone:
       return trigger_time;
   }
@@ -171,8 +114,8 @@ AttributionStorageDelegateImpl::GetOfflineReportDelayConfig() const {
     // sent at reasonable times, and not delayed for many browser sessions due
     // to short session up-times.
     return OfflineReportDelayConfig{
-        /*.min =*/ base::Minutes(0),
-        /*.max =*/ base::Minutes(1),
+        .min = base::Minutes(0),
+        .max = base::Minutes(1),
     };
   }
 
@@ -185,22 +128,10 @@ void AttributionStorageDelegateImpl::ShuffleReports(
 
   switch (noise_mode_) {
     case AttributionNoiseMode::kDefault:
-      rng_->RandomShuffle(reports);
+      base::RandomShuffle(reports.begin(), reports.end());
       break;
     case AttributionNoiseMode::kNone:
       break;
-  }
-}
-
-double AttributionStorageDelegateImpl::GetRandomizedResponseRate(
-    AttributionSourceType source_type) const {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-
-  switch (source_type) {
-    case AttributionSourceType::kNavigation:
-      return randomized_response_rates_.navigation;
-    case AttributionSourceType::kEvent:
-      return randomized_response_rates_.event;
   }
 }
 
@@ -216,7 +147,7 @@ AttributionStorageDelegateImpl::GetRandomizedResponse(
       DCHECK_GE(randomized_trigger_rate, 0);
       DCHECK_LE(randomized_trigger_rate, 1);
 
-      return rng_->RandDouble() < randomized_trigger_rate
+      return base::RandDouble() < randomized_trigger_rate
                  ? absl::make_optional(GetRandomFakeReports(source))
                  : absl::nullopt;
     }
@@ -237,7 +168,7 @@ AttributionStorageDelegateImpl::GetRandomFakeReports(
           NumReportWindows(source.source_type()));
 
   // Subtract 1 because `AttributionRandomGenerator::RandInt()` is inclusive.
-  const int sequence_index = rng_->RandInt(0, num_combinations - 1);
+  const int sequence_index = base::RandInt(0, num_combinations - 1);
 
   return GetFakeReportsForSequenceIndex(source, sequence_index);
 }
@@ -267,8 +198,9 @@ AttributionStorageDelegateImpl::GetFakeReportsForSequenceIndex(
   // c = the maximum number of reports for a source
   // d = the trigger data cardinality for a source
   for (int num_bars : bars_preceding_each_star) {
-    if (num_bars == 0)
+    if (num_bars == 0) {
       continue;
+    }
 
     auto result = std::div(num_bars - 1, trigger_data_cardinality);
 
@@ -276,26 +208,19 @@ AttributionStorageDelegateImpl::GetFakeReportsForSequenceIndex(
     DCHECK_GE(trigger_data, 0);
     DCHECK_LT(trigger_data, trigger_data_cardinality);
 
+    base::Time report_time =
+        ReportTimeAtWindow(source, /*window_index=*/result.quot);
+    base::Time trigger_time = LastTriggerTimeForReportTime(report_time);
+
+    DCHECK_EQ(ComputeReportTime(source, trigger_time), report_time);
+
     fake_reports.push_back({
-        /*.trigger_data =*/ static_cast<uint64_t>(trigger_data),
-        /*.report_time =*/ ReportTimeAtWindow(source, /*window_index=*/result.quot),
+        .trigger_data = static_cast<uint64_t>(trigger_data),
+        .trigger_time = trigger_time,
+        .report_time = report_time,
     });
   }
   return fake_reports;
-}
-
-int64_t AttributionStorageDelegateImpl::GetAggregatableBudgetPerSource() const {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  return 65536;
-}
-
-uint64_t AttributionStorageDelegateImpl::SanitizeTriggerData(
-    uint64_t trigger_data,
-    AttributionSourceType source_type) const {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-
-  const uint64_t cardinality = TriggerDataCardinality(source_type);
-  return trigger_data % cardinality;
 }
 
 }  // namespace content

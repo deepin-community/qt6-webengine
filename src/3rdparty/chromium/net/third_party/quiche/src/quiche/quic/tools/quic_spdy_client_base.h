@@ -18,6 +18,7 @@
 #include "quiche/quic/core/quic_config.h"
 #include "quiche/quic/platform/api/quic_socket_address.h"
 #include "quiche/quic/tools/quic_client_base.h"
+#include "quiche/spdy/core/http2_header_block.h"
 
 namespace quic {
 
@@ -36,7 +37,7 @@ class QuicSpdyClientBase : public QuicClientBase,
     virtual ~ResponseListener() {}
     virtual void OnCompleteResponse(
         QuicStreamId id, const spdy::Http2HeaderBlock& response_headers,
-        const std::string& response_body) = 0;
+        absl::string_view response_body) = 0;
   };
 
   // A piece of data that can be sent multiple times. For example, it can be a
@@ -95,7 +96,7 @@ class QuicSpdyClientBase : public QuicClientBase,
   void SendRequestsAndWaitForResponse(const std::vector<std::string>& url_list);
 
   // Returns a newly created QuicSpdyClientStream.
-  QuicSpdyClientStream* CreateClientStream();
+  virtual QuicSpdyClientStream* CreateClientStream();
 
   // Returns a the session used for this client downcasted to a
   // QuicSpdyClientSession.

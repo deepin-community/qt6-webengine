@@ -16,6 +16,7 @@
 
 #include "src/trace_processor/sqlite/db_sqlite_table.h"
 
+#include "perfetto/ext/base/small_vector.h"
 #include "perfetto/ext/base/string_writer.h"
 #include "src/trace_processor/containers/bit_vector.h"
 #include "src/trace_processor/sqlite/query_cache.h"
@@ -47,18 +48,13 @@ base::Optional<FilterOp> SqliteOpToFilterOp(int sqlite_op) {
       return FilterOp::kIsNull;
     case SQLITE_INDEX_CONSTRAINT_ISNOTNULL:
       return FilterOp::kIsNotNull;
-    case SQLITE_INDEX_CONSTRAINT_LIKE:
     case SQLITE_INDEX_CONSTRAINT_GLOB:
-      return base::nullopt;
-#if SQLITE_VERSION_NUMBER >= 3038000
-    // LIMIT and OFFSET constraints were introduced in 3.38 but we
-    // still build for older versions in most places. We still need
-    // to handle this here as Chrome is very good at staying up to date
-    // with SQLite versions and crashes if we don't have this.
+      return FilterOp::kGlob;
+    case SQLITE_INDEX_CONSTRAINT_LIKE:
+    // TODO(lalitm): start supporting these constraints.
     case SQLITE_INDEX_CONSTRAINT_LIMIT:
     case SQLITE_INDEX_CONSTRAINT_OFFSET:
       return base::nullopt;
-#endif
     default:
       PERFETTO_FATAL("Currently unsupported constraint");
   }
@@ -104,11 +100,35 @@ BitVector ColsUsedBitVector(uint64_t sqlite_cols_used, size_t col_count) {
       });
 }
 
+class SafeStringWriter {
+ public:
+  SafeStringWriter() {}
+  ~SafeStringWriter() {}
+
+  void AppendString(const char* s) {
+    for (const char* c = s; *c; ++c) {
+      buffer_.emplace_back(*c);
+    }
+  }
+
+  void AppendString(const std::string& s) {
+    for (char c : s) {
+      buffer_.emplace_back(c);
+    }
+  }
+
+  base::StringView GetStringView() const {
+    return base::StringView(buffer_.data(), buffer_.size());
+  }
+
+ private:
+  base::SmallVector<char, 2048> buffer_;
+};
+
 }  // namespace
 
 DbSqliteTable::DbSqliteTable(sqlite3*, Context context)
     : cache_(context.cache),
-      schema_(std::move(context.schema)),
       computation_(context.computation),
       static_table_(context.static_table),
       generator_(std::move(context.generator)) {}
@@ -116,10 +136,9 @@ DbSqliteTable::~DbSqliteTable() = default;
 
 void DbSqliteTable::RegisterTable(sqlite3* db,
                                   QueryCache* cache,
-                                  Table::Schema schema,
                                   const Table* table,
                                   const std::string& name) {
-  Context context{cache, schema, TableComputation::kStatic, table, nullptr};
+  Context context{cache, TableComputation::kStatic, table, nullptr};
   SqliteTable::Register<DbSqliteTable, Context>(db, std::move(context), name);
 }
 
@@ -127,22 +146,28 @@ void DbSqliteTable::RegisterTable(
     sqlite3* db,
     QueryCache* cache,
     std::unique_ptr<DynamicTableGenerator> generator) {
-  Table::Schema schema = generator->CreateSchema();
-  std::string name = generator->TableName();
-
   // Figure out if the table needs explicit args (in the form of constraints
   // on hidden columns) passed to it in order to make the query valid.
   base::Status status = generator->ValidateConstraints(
       QueryConstraints(std::numeric_limits<uint64_t>::max()));
   bool requires_args = !status.ok();
 
-  Context context{cache, std::move(schema), TableComputation::kDynamic, nullptr,
+  std::string table_name = generator->TableName();
+  Context context{cache, TableComputation::kDynamic, nullptr,
                   std::move(generator)};
-  SqliteTable::Register<DbSqliteTable, Context>(db, std::move(context), name,
-                                                false, requires_args);
+  SqliteTable::Register<DbSqliteTable, Context>(
+      db, std::move(context), table_name, false, requires_args);
 }
 
 base::Status DbSqliteTable::Init(int, const char* const*, Schema* schema) {
+  switch (computation_) {
+    case TableComputation::kStatic:
+      schema_ = static_table_->ComputeSchema();
+      break;
+    case TableComputation::kDynamic:
+      schema_ = generator_->CreateSchema();
+      break;
+  }
   *schema = ComputeSchema(schema_, name().c_str());
   return base::OkStatus();
 }
@@ -228,13 +253,18 @@ void DbSqliteTable::ModifyConstraints(const Table::Schema& schema,
 
     // Id columns are always very cheap to filter on so try and get them
     // first.
-    if (a_col.is_id && !b_col.is_id)
-      return true;
+    if (a_col.is_id || b_col.is_id)
+      return a_col.is_id && !b_col.is_id;
+
+    // Set id columns are always very cheap to filter on so try and get them
+    // second.
+    if (a_col.is_set_id || b_col.is_set_id)
+      return a_col.is_set_id && !b_col.is_set_id;
 
     // Sorted columns are also quite cheap to filter so order them after
-    // any id columns.
-    if (a_col.is_sorted && !b_col.is_sorted)
-      return true;
+    // any id/set id columns.
+    if (a_col.is_sorted || b_col.is_sorted)
+      return a_col.is_sorted && !b_col.is_sorted;
 
     // TODO(lalitm): introduce more orderings here based on empirical data.
     return false;
@@ -469,9 +499,10 @@ int DbSqliteTable::Cursor::Filter(const QueryConstraints& qc,
       TryCacheCreateSortedTable(qc, history);
       break;
     case TableComputation::kDynamic: {
-      PERFETTO_TP_TRACE("DYNAMIC_TABLE_GENERATE", [this](metatrace::Record* r) {
-        r->AddArg("Table", db_sqlite_table_->name());
-      });
+      PERFETTO_TP_TRACE(metatrace::Category::QUERY, "DYNAMIC_TABLE_GENERATE",
+                        [this](metatrace::Record* r) {
+                          r->AddArg("Table", db_sqlite_table_->name());
+                        });
       // If we have a dynamically created table, regenerate the table based on
       // the new constraints.
       std::unique_ptr<Table> computed_table;
@@ -493,73 +524,77 @@ int DbSqliteTable::Cursor::Filter(const QueryConstraints& qc,
     }
   }
 
-  PERFETTO_TP_TRACE("DB_TABLE_FILTER_AND_SORT", [this](metatrace::Record* r) {
-    const Table* source = SourceTable();
-    char buffer[2048];
-    for (const Constraint& c : constraints_) {
-      base::StringWriter writer(buffer, sizeof(buffer));
-      writer.AppendString(source->GetColumn(c.col_idx).name());
+  PERFETTO_TP_TRACE(
+      metatrace::Category::QUERY, "DB_TABLE_FILTER_AND_SORT",
+      [this](metatrace::Record* r) {
+        const Table* source = SourceTable();
+        r->AddArg("Table", db_sqlite_table_->name());
+        for (const Constraint& c : constraints_) {
+          SafeStringWriter writer;
+          writer.AppendString(source->GetColumn(c.col_idx).name());
 
-      writer.AppendChar(' ');
-      switch (c.op) {
-        case FilterOp::kEq:
-          writer.AppendString("=");
-          break;
-        case FilterOp::kGe:
-          writer.AppendString(">=");
-          break;
-        case FilterOp::kGt:
-          writer.AppendString(">");
-          break;
-        case FilterOp::kLe:
-          writer.AppendString("<=");
-          break;
-        case FilterOp::kLt:
-          writer.AppendString("<");
-          break;
-        case FilterOp::kNe:
-          writer.AppendString("!=");
-          break;
-        case FilterOp::kIsNull:
-          writer.AppendString("IS");
-          break;
-        case FilterOp::kIsNotNull:
-          writer.AppendString("IS NOT");
-          break;
-      }
-      writer.AppendChar(' ');
+          writer.AppendString(" ");
+          switch (c.op) {
+            case FilterOp::kEq:
+              writer.AppendString("=");
+              break;
+            case FilterOp::kGe:
+              writer.AppendString(">=");
+              break;
+            case FilterOp::kGt:
+              writer.AppendString(">");
+              break;
+            case FilterOp::kLe:
+              writer.AppendString("<=");
+              break;
+            case FilterOp::kLt:
+              writer.AppendString("<");
+              break;
+            case FilterOp::kNe:
+              writer.AppendString("!=");
+              break;
+            case FilterOp::kIsNull:
+              writer.AppendString("IS");
+              break;
+            case FilterOp::kIsNotNull:
+              writer.AppendString("IS NOT");
+              break;
+            case FilterOp::kGlob:
+              writer.AppendString("GLOB");
+              break;
+          }
+          writer.AppendString(" ");
 
-      switch (c.value.type) {
-        case SqlValue::kString:
-          writer.AppendString(c.value.AsString());
-          break;
-        case SqlValue::kBytes:
-          writer.AppendString("<bytes>");
-          break;
-        case SqlValue::kNull:
-          writer.AppendString("<null>");
-          break;
-        case SqlValue::kDouble: {
-          writer.AppendDouble(c.value.AsDouble());
-          break;
+          switch (c.value.type) {
+            case SqlValue::kString:
+              writer.AppendString(c.value.AsString());
+              break;
+            case SqlValue::kBytes:
+              writer.AppendString("<bytes>");
+              break;
+            case SqlValue::kNull:
+              writer.AppendString("<null>");
+              break;
+            case SqlValue::kDouble: {
+              writer.AppendString(std::to_string(c.value.AsDouble()));
+              break;
+            }
+            case SqlValue::kLong: {
+              writer.AppendString(std::to_string(c.value.AsLong()));
+              break;
+            }
+          }
+          r->AddArg("Constraint", writer.GetStringView());
         }
-        case SqlValue::kLong: {
-          writer.AppendInt(c.value.AsLong());
-          break;
-        }
-      }
-      r->AddArg("Table", db_sqlite_table_->name());
-      r->AddArg("Constraint", writer.GetStringView());
-    }
 
-    for (const auto& o : orders_) {
-      base::StringWriter writer(buffer, sizeof(buffer));
-      writer.AppendString(source->GetColumn(o.col_idx).name());
-      if (o.desc)
-        writer.AppendString(" desc");
-      r->AddArg("Order by", writer.GetStringView());
-    }
-  });
+        for (const auto& o : orders_) {
+          SafeStringWriter writer;
+          writer.AppendString(source->GetColumn(o.col_idx).name());
+          if (o.desc)
+            writer.AppendString(" desc");
+          r->AddArg("Order by", writer.GetStringView());
+        }
+      });
 
   // Attempt to filter into a RowMap first - weall figure out whether to apply
   // this to the table or we should use the RowMap directly. Also, if we are
@@ -632,8 +667,6 @@ int DbSqliteTable::Cursor::Column(sqlite3_context* ctx, int raw_col) {
                                sqlite_utils::kSqliteStatic);
   return SQLITE_OK;
 }
-
-DbSqliteTable::DynamicTableGenerator::~DynamicTableGenerator() = default;
 
 }  // namespace trace_processor
 }  // namespace perfetto

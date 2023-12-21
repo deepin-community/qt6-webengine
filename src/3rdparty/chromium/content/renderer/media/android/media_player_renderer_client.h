@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,8 +7,9 @@
 
 #include <memory>
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/memory/weak_ptr.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
 #include "content/common/content_export.h"
 #include "media/base/android/stream_texture_wrapper.h"
@@ -46,7 +47,7 @@ class CONTENT_EXPORT MediaPlayerRendererClient
   MediaPlayerRendererClient(
       mojo::PendingRemote<RendererExtention> renderer_extension_remote,
       mojo::PendingReceiver<ClientExtention> client_extension_receiver,
-      scoped_refptr<base::SingleThreadTaskRunner> media_task_runner,
+      scoped_refptr<base::SequencedTaskRunner> media_task_runner,
       scoped_refptr<base::SingleThreadTaskRunner> compositor_task_runner,
       std::unique_ptr<media::MojoRenderer> mojo_renderer,
       media::ScopedStreamTextureWrapper stream_texture_wrapper,
@@ -64,6 +65,7 @@ class CONTENT_EXPORT MediaPlayerRendererClient
   void Initialize(media::MediaResource* media_resource,
                   media::RendererClient* client,
                   media::PipelineStatusCallback init_cb) override;
+  media::RendererType GetRendererType() override;
 
   // media::mojom::MediaPlayerRendererClientExtension implementation
   void OnDurationChange(base::TimeDelta duration) override;
@@ -92,8 +94,7 @@ class CONTENT_EXPORT MediaPlayerRendererClient
 
   media::VideoRendererSink* sink_;
 
-  scoped_refptr<base::SingleThreadTaskRunner> media_task_runner_;
-
+  scoped_refptr<base::SequencedTaskRunner> media_task_runner_;
   // Used by |stream_texture_wrapper_| to signal OnFrameAvailable() and to send
   // VideoFrames to |sink_| on the right thread.
   scoped_refptr<base::SingleThreadTaskRunner> compositor_task_runner_;

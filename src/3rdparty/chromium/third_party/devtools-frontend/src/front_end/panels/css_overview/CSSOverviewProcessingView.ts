@@ -7,13 +7,12 @@ import * as UI from '../../ui/legacy/legacy.js';
 
 import cssOverviewProcessingViewStyles from './cssOverviewProcessingView.css.js';
 
-import type {OverviewController} from './CSSOverviewController.js';
-import {Events} from './CSSOverviewController.js';
+import {Events, type OverviewController} from './CSSOverviewController.js';
 
 const UIStrings = {
   /**
-  *@description Text to cancel something
-  */
+   *@description Text to cancel something
+   */
   cancel: 'Cancel',
 };
 const str_ = i18n.i18n.registerUIStrings('panels/css_overview/CSSOverviewProcessingView.ts', UIStrings);

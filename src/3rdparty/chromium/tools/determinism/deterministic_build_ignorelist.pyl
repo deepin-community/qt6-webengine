@@ -1,4 +1,4 @@
-# Copyright 2016 The Chromium Authors. All rights reserved.
+# Copyright 2016 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 #
@@ -108,6 +108,10 @@
 
     # https://crbug.com/1093166
     'test_data/ppapi/tests/extensions/packaged_app/pnacl/ppapi_tests_extensions_packaged_app_newlib_pnacl.pexe',
+
+    # TODO(hans): Remove once clang is fixed.
+    # https://crbug.com/1373836
+    'swiftshader_reactor_llvm_unittests',
   ],
 
   # TODO(thakis): Move mac det bots to use two distinct build dirs,

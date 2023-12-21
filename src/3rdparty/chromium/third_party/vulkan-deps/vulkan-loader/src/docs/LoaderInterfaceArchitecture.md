@@ -4,14 +4,14 @@
 [1]: https://vulkan.lunarg.com/img/Vulkan_100px_Dec16.png "https://www.khronos.org/vulkan/"
 [2]: https://www.khronos.org/vulkan/
 
-# Architecture of the Vulkan Loader Interfaces
+# Architecture of the Vulkan Loader Interfaces <!-- omit from toc -->
 [![Creative Commons][3]][4]
 
-<!-- Copyright &copy; 2015-2021 LunarG, Inc. -->
+<!-- Copyright &copy; 2015-2023 LunarG, Inc. -->
 
 [3]: https://i.creativecommons.org/l/by-nd/4.0/88x31.png "Creative Commons License"
 [4]: https://creativecommons.org/licenses/by-nd/4.0/
-## Table of Contents
+## Table of Contents <!-- omit from toc -->
 
 - [Overview](#overview)
   - [Who Should Read This Document](#who-should-read-this-document)
@@ -38,8 +38,17 @@
 - [Application Interface to the Loader](#application-interface-to-the-loader)
 - [Layer Interface with the Loader](#layer-interface-with-the-loader)
 - [Driver Interface With the Loader](#driver-interface-with-the-loader)
+- [Debugging Issues](#debugging-issues)
 - [Loader Policies](#loader-policies)
+- [Filter Environment Variable Behaviors](#filter-environment-variable-behaviors)
+  - [Comparison Strings](#comparison-strings)
+  - [Comma-Delimited Lists](#comma-delimited-lists)
+  - [Globs](#globs)
+  - [Case-Insensitive](#case-insensitive)
+  - [Environment Variable Priority](#environment-variable-priority)
 - [Table of Debug Environment Variables](#table-of-debug-environment-variables)
+  - [Active Environment Variables](#active-environment-variables)
+  - [Deprecated Environment Variables](#deprecated-environment-variables)
 - [Glossary of Terms](#glossary-of-terms)
 
 ## Overview
@@ -71,7 +80,7 @@ loader.
 At the bottom of the stack sits the drivers.
 A driver can control one or more physical devices capable of rendering Vulkan,
 implement a conversion from Vulkan into a native graphics API (like
-[MoltenVk](https://github.com/KhronosGroup/MoltenVK], or implement a fully
+[MoltenVk](https://github.com/KhronosGroup/MoltenVK), or implement a fully
 software path that can be executed on a CPU to simulate a Vulkan device (like
 [SwiftShader](https://github.com/google/swiftshader) or LavaPipe).
 Remember, Vulkan-capable hardware may be graphics-based, compute-based, or
@@ -217,7 +226,7 @@ In the future, VkConfig may have additional interactions with the Vulkan
 loader.
 
 More details on VkConfig can be found in its
-[GitHub documentation](https://github.com/LunarG/VulkanTools/blob/master/vkconfig/README.md).
+[GitHub documentation](https://github.com/LunarG/VulkanTools/blob/main/vkconfig/README.md).
 <br/>
 <br/>
 
@@ -340,7 +349,7 @@ More information about device extensions can be found later in this document.
 Vulkan uses an object model to control the scope of a particular action or
 operation.
 The object to be acted on is always the first parameter of a Vulkan call and is
-a dispatchable object (see Vulkan specification section 2.3 Object Model).
+a dispatchable object (see Vulkan specification section 3.3 Object Model).
 Under the covers, the dispatchable object handle is a pointer to a structure,
 which in turn, contains a pointer to a dispatch table maintained by the loader.
 This dispatch table contains pointers to the Vulkan functions appropriate to
@@ -458,6 +467,17 @@ directory as this file.
 <br/>
 
 
+## Debugging Issues
+
+
+If your application is crashing or behaving weirdly, the loader provides
+several mechanisms for you to debug the issues.
+These are detailed in the [LoaderDebugging.md](LoaderDebugging.md) document
+found in the same directory as this file.
+<br/>
+<br/>
+
+
 ## Loader Policies
 
 Loader policies with regards to the loader interaction with drivers and layers
@@ -478,6 +498,62 @@ sections listed below:
 <br/>
 <br/>
 
+## Filter Environment Variable Behaviors
+
+The filter environment variables provided in certain areas have some common
+restrictions and behaviors that should be listed.
+
+### Comparison Strings
+
+The filter variables will be compared against the appropriate strings for either
+drivers or layers.
+The appropriate string for layers is the layer name provided in the layer's
+manifest file.
+Since drivers don’t have a name like layers, this substring is used to compare
+against the driver manifest's filename.
+
+### Comma-Delimited Lists
+
+All of the filter environment variables accept comma-delimited input.
+Therefore, you can chain multiple strings together and it will use the strings
+to individually enable or disable the appropriate item in the current list of
+available items.
+
+### Globs
+
+To provide enough flexibility to limit name searches to only those wanted by the
+developer, the loader uses a limited glob format for strings.
+Acceptable globs are:
+ - Prefixes:   `"string*"`
+ - Suffixes:   `"*string"`
+ - Substrings:  `"*string*"`
+ - Whole strings: `"string"`
+   - In the case of whole strings, the string will be compared against each
+     layer or driver file name in its entirety.
+   - Because of this, it will only match the specific target such as:
+     `VK_LAYER_KHRONOS_validation` will match the layer name
+     `VK_LAYER_KHRONOS_validation`, but **not** a layer named
+     `VK_LAYER_KHRONOS_validation2` (not that there is such a layer).
+
+This is especially useful because it is difficult sometimes to determine the
+full name of a driver manifest file or even some commonly used layers
+such as `VK_LAYER_KHRONOS_validation`.
+
+### Case-Insensitive
+
+All of the filter environment variables assume the strings inside of the glob
+are not case-sensitive.
+Therefore, “Bob”, “bob”, and “BOB” all amount to the same thing.
+
+### Environment Variable Priority
+
+The values from the *disable* environment variable will be considered
+**before** the *enable* or *select* environment variable.
+Because of this, it is possible to disable a layer/driver using the *disable*
+environment variable, only to have it be re-enabled by the *enable*/*select*
+environment variable.
+This is useful if you disable all layers/drivers with the intent of only
+enabling a smaller subset of specific layers/drivers for issue triaging.
 
 ## Table of Debug Environment Variables
 
@@ -486,74 +562,91 @@ Loader.
 These are referenced throughout the text, but collected here for ease of
 discovery.
 
+### Active Environment Variables
+
 <table style="width:100%">
   <tr>
     <th>Environment Variable</th>
     <th>Behavior</th>
+    <th>Restrictions</th>
     <th>Example Format</th>
   </tr>
   <tr>
-    <td><small><i>VK_ADD_DRIVER_FILES</i></small></td>
-    <td>Provide a list of additional driver JSON files that the loader will use
+    <td><small>
+        <i>VK_ADD_DRIVER_FILES</i>
+    </small></td>
+    <td><small>
+        Provide a list of additional driver JSON files that the loader will use
         in addition to the drivers that the loader would find normally.
         The list of drivers will be added first, prior to the list of drivers
         that would be found normally.
         The value contains a list of delimited full path listings to
         driver JSON Manifest files.<br/>
-        <b>NOTE:</b> If a global path to the JSON file is not used, issues
-        may be encountered.<br/>
-        <b>Ignored when running Vulkan application in executing with
-        elevated privileges.</b>
-        See <a href="#elevated-privilege-caveats">Elevated Privilege Caveats</a>
-        for more information.
-    </td>
-    <td><small>export<br/>
+    </small></td>
+    <td><small>
+        If a global path to the JSON file is not used, issues may be encountered.
+        <br/> <br/>
+        <a href="#elevated-privilege-caveats">
+            Ignored when running Vulkan application with elevated privileges.
+        </a>
+    </small></td>
+    <td><small>
+        export<br/>
         &nbsp;&nbsp;VK_ADD_DRIVER_FILES=<br/>
         &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<folder_a>/intel.json:<folder_b>/amd.json
         <br/> <br/>
         set<br/>
         &nbsp;&nbsp;VK_ADD_DRIVER_FILES=<br/>
         &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<folder_a>\nvidia.json;<folder_b>\mesa.json
-        </small>
-    </td>
+    </small></td>
   </tr>
   <tr>
-    <td><small><i>VK_ADD_LAYER_PATH</i></small></td>
-    <td>Provide a list of additional paths that the loader will use to search
+    <td><small>
+        <i>VK_ADD_LAYER_PATH</i>
+    </small></td>
+    <td><small>
+        Provide a list of additional paths that the loader will use to search
         for layers in addition to the loader's standard Layer library search
         folder when looking for explicit layer manifest files.
         The paths will be added first, prior to the list of folders that would
         be searched normally.
-        <br/>
-        <b>Ignored when running Vulkan application in executing with
-        elevated privileges.</b>
-        See <a href="#elevated-privilege-caveats">Elevated Privilege Caveats</a>
-        for more information.
-    </td>
-    <td><small>export<br/>
+    </small></td>
+    <td><small>
+        <a href="#elevated-privilege-caveats">
+            Ignored when running Vulkan application with elevated privileges.
+        </a>
+    </small></td>
+    <td><small>
+        export<br/>
         &nbsp;&nbsp;VK_ADD_LAYER_PATH=<br/>
-        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&lt;path_a&gt;;&lt;path_b&gt;<br/><br/>
+        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&lt;path_a&gt;:&lt;path_b&gt;<br/><br/>
         set<br/>
         &nbsp;&nbsp;VK_ADD_LAYER_PATH=<br/>
         &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&lt;path_a&gt;;&lt;path_b&gt;</small>
     </td>
   </tr>
   <tr>
-    <td><small><i>VK_DRIVER_FILES</i></small></td>
-    <td>Force the loader to use the specific driver JSON files.
+    <td><small>
+        <i>VK_DRIVER_FILES</i>
+    </small></td>
+    <td><small>
+        Force the loader to use the specific driver JSON files.
         The value contains a list of delimited full path listings to
         driver JSON Manifest files.<br/>
+        <br/>
         This has replaced the older deprecated environment variable
         <i>VK_ICD_FILENAMES</i>, however the older environment variable will
         continue to work for some time.
-        <b>NOTE:</b> If a global path to the JSON file is not used, issues
-        may be encountered.<br/>
-        <b>Ignored when running Vulkan application in executing with
-        elevated privileges.</b>
-        See <a href="#elevated-privilege-caveats">Elevated Privilege Caveats</a>
-        for more information.
-    </td>
-    <td><small>export<br/>
+    </small></td>
+    <td><small>
+        If a global path to the JSON file is not used, issues may be encountered.
+        <br/> <br/>
+        <a href="#elevated-privilege-caveats">
+            Ignored when running Vulkan application with elevated privileges.
+        </a>
+    </small></td>
+    <td><small>
+        export<br/>
         &nbsp;&nbsp;VK_DRIVER_FILES=<br/>
         &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<folder_a>/intel.json:<folder_b>/amd.json
         <br/> <br/>
@@ -564,75 +657,32 @@ discovery.
     </td>
   </tr>
   <tr>
-    <td><small><i>VK_INSTANCE_LAYERS</i></small></td>
-    <td>Force the loader to add the given layers to the list of Enabled layers
-        normally passed into <b>vkCreateInstance</b>.
-        These layers are added first, and the loader will remove any duplicate
-        layers that appear in both this list as well as that passed into
-        <i>ppEnabledLayerNames</i>.
-    </td>
-    <td><small>export<br/>
-        &nbsp;&nbsp;VK_INSTANCE_LAYERS=<br/>
-        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&lt;layer_a&gt;;&lt;layer_b&gt;<br/><br/>
-        set<br/>
-        &nbsp;&nbsp;VK_INSTANCE_LAYERS=<br/>
-        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&lt;layer_a&gt;;&lt;layer_b&gt;</small>
-    </td>
-  </tr>
-  <tr>
-    <td><small><i>VK_LAYER_PATH</i></small></td>
-    <td>Override the loader's standard Layer library search folders and use the
-        provided delimited folders to search for explicit layer manifest files.
-        <br/>
-        <b>Ignored when running Vulkan application in executing with
-        elevated privileges.</b>
-        See <a href="#elevated-privilege-caveats">Elevated Privilege Caveats</a>
-        for more information.
-    </td>
-    <td><small>export<br/>
+    <td><small>
+        <i>VK_LAYER_PATH</i></small></td>
+    <td><small>
+        Override the loader's standard Layer library search folders and use the
+        provided delimited file and/or folders to locate explicit layer manifest files.
+    </small></td>
+    <td><small>
+        <a href="#elevated-privilege-caveats">
+            Ignored when running Vulkan application with elevated privileges.
+        </a>
+    </small></td>
+    <td><small>
+        export<br/>
         &nbsp;&nbsp;VK_LAYER_PATH=<br/>
-        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&lt;path_a&gt;;&lt;path_b&gt;<br/><br/>
+        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&lt;path_a&gt;:&lt;path_b&gt;<br/><br/>
         set<br/>
         &nbsp;&nbsp;VK_LAYER_PATH=<br/>
-        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&lt;path_a&gt;;&lt;path_b&gt;</small>
-    </td>
+        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&lt;path_a&gt;;&lt;path_b&gt;
+    </small></td>
   </tr>
   <tr>
-    <td><small><i>VK_LOADER_DEVICE_SELECT</i></small></td>
-    <td><b>Linux Only</b><br/>
-        Allows the user to force a particular device to be prioritized above all
-        other devices in the return order of <i>vkGetPhysicalDevices<i> and
-        <i>vkGetPhysicalDeviceGroups<i> functions.<br/>
-        The value should be "<hex vendor id>:<hex device id>".<br/>
-        <b>NOTE:</b> This not remove devices.
-    </td>
-    <td><small>set VK_LOADER_DEVICE_SELECT=0x10de:0x1f91</small>
-    </td>
-  </tr>
-  <tr>
-    <td><small><i>VK_LOADER_DISABLE_SELECT</i></small></td>
-    <td><b>Linux Only</b><br/>
-        Allows the user to disable the consistent sorting algorithm run in the
-        loader before returning the set of physical devices to layers.<br/>
-    </td>
-    <td><small>set VK_LOADER_DISABLE_SELECT=1</small>
-  </tr>
-  <tr>
-    <td><small><i>VK_LOADER_DISABLE_INST_EXT_FILTER</i></small></td>
-    <td>Disable the filtering out of instance extensions that the loader doesn't
-        know about.
-        This will allow applications to enable instance extensions exposed by
-        drivers but that the loader has no support for.<br/>
-        <b>NOTE:</b> This may cause the loader or application to crash.</td>
-    <td><small>export<br/>
-        &nbsp;&nbsp;VK_LOADER_DISABLE_INST_EXT_FILTER=1<br/><br/>
-        set<br/>
-        &nbsp;&nbsp;VK_LOADER_DISABLE_INST_EXT_FILTER=1</small>
-    </td>
-  </tr>
-  <tr>
-    <td><small><i>VK_LOADER_DEBUG</i></small></td>
-    <td>Enable loader debug messages using a comma-delimited list of level
+    <td><small>
+        <i>VK_LOADER_DEBUG</i>
+    </small></td>
+    <td><small>
+        Enable loader debug messages using a comma-delimited list of level
         options.  These options are:<br/>
         &nbsp;&nbsp;* error (only errors)<br/>
         &nbsp;&nbsp;* warn (only warnings)<br/>
@@ -643,13 +693,272 @@ discovery.
         &nbsp;&nbsp;* all (report out all messages)<br/><br/>
         To enable multiple options (outside of "all") like info, warning and
         error messages, set the value to "error,warn,info".
-    </td>
-    <td><small>export<br/>
+    </small></td>
+    <td><small>
+        None
+    </small></td>
+    <td><small>
+        export<br/>
         &nbsp;&nbsp;VK_LOADER_DEBUG=all<br/>
         <br/>
         set<br/>
-        &nbsp;&nbsp;VK_LOADER_DEBUG=warn</small>
-    </td>
+        &nbsp;&nbsp;VK_LOADER_DEBUG=warn
+    </small></td>
+  </tr>
+  <tr>
+    <td><small>
+        <i>VK_LOADER_DEVICE_SELECT</i>
+    </small></td>
+    <td><small>
+        Allows the user to force a particular device to be prioritized above all
+        other devices in the return order of <i>vkGetPhysicalDevices<i> and
+        <i>vkGetPhysicalDeviceGroups<i> functions.<br/>
+        The value should be "<hex vendor id>:<hex device id>".<br/>
+        <b>NOTE:</b> This DOES NOT REMOVE devices from the list on reorders them.
+    </small></td>
+    <td><small>
+        <b>Linux Only</b>
+    </small></td>
+    <td><small>
+        set VK_LOADER_DEVICE_SELECT=0x10de:0x1f91
+    </small></td>
+  </tr>
+  <tr>
+    <td><small>
+        <i>VK_LOADER_DISABLE_SELECT</i>
+    </small></td>
+    <td><small>
+        Allows the user to disable the consistent sorting algorithm run in the
+        loader before returning the set of physical devices to layers.<br/>
+    </small></td>
+    <td><small>
+        <b>Linux Only</b>
+    </small></td>
+    <td><small>
+        set VK_LOADER_DISABLE_SELECT=1
+    </small></td>
+  </tr>
+  <tr>
+    <td><small>
+        <i>VK_LOADER_DISABLE_INST_EXT_FILTER</i>
+    </small></td>
+    <td><small>
+        Disable the filtering out of instance extensions that the loader doesn't
+        know about.
+        This will allow applications to enable instance extensions exposed by
+        drivers but that the loader has no support for.<br/>
+    </small></td>
+    <td><small>
+        <b>Use Wisely!</b> This may cause the loader or application to crash.
+    </small></td>
+    <td><small>
+        export<br/>
+        &nbsp;&nbsp;VK_LOADER_DISABLE_INST_EXT_FILTER=1<br/><br/>
+        set<br/>
+        &nbsp;&nbsp;VK_LOADER_DISABLE_INST_EXT_FILTER=1
+    </small></td>
+  </tr>
+  <tr>
+    <td><small>
+        <i>VK_LOADER_DRIVERS_SELECT</i>
+    </small></td>
+    <td><small>
+        A comma-delimited list of globs to search for in known drivers and
+        used to select only the drivers whose manifest file names match one or
+        more of the provided globs.<br/>
+        Since drivers don’t have a name like layers, this glob is used to
+        compare against the manifest filename.
+        Known driver manifests being those files that are already found by the
+        loader taking into account default search paths and other environment
+        variables (like <i>VK_ICD_FILENAMES</i> or <i>VK_ADD_DRIVER_FILES</i>).
+    </small></td>
+    <td><small>
+        This functionality is only available with Loaders built with version
+        1.3.234 of the Vulkan headers and later.<br/>
+        If no drivers are found with a manifest filename that matches any of the
+        provided globs, then no driver is enabled and it <b>may</b> result
+        in Vulkan applications failing to run properly.
+    </small></td>
+    <td><small>
+        export<br/>
+        &nbsp;&nbsp;VK_LOADER_DRIVERS_SELECT=nvidia*<br/>
+        <br/>
+        set<br/>
+        &nbsp;&nbsp;VK_LOADER_DRIVERS_SELECT=nvidia*<br/><br/>
+        The above would select only the Nvidia driver if it was present on the
+        system and already visible to the loader.
+    </small></td>
+  </tr>
+  <tr>
+    <td><small>
+        <i>VK_LOADER_DRIVERS_DISABLE</i>
+    </small></td>
+    <td><small>
+        A comma-delimited list of globs to search for in known drivers and
+        used to disable only the drivers whose manifest file names match one or
+        more of the provided globs.<br/>
+        Since drivers don’t have a name like layers, this glob is used to
+        compare against the manifest filename.
+        Known driver manifests being those files that are already found by the
+        loader taking into account default search paths and other environment
+        variables (like <i>VK_ICD_FILENAMES</i> or <i>VK_ADD_DRIVER_FILES</i>).
+    </small></td>
+    <td><small>
+        This functionality is only available with Loaders built with version
+        1.3.234 of the Vulkan headers and later.<br/>
+        If all available drivers are disabled using this environment variable,
+        then no drivers will be found by the loader and <b>will</b> result
+        in Vulkan applications failing to run properly.<br/>
+        This is also checked before other driver environment variables (such as
+        <i>VK_LOADER_DRIVERS_SELECT</i>) so that a user may easily disable all
+        drivers and then selectively re-enable individual drivers using the
+        enable environment variable.
+    </small></td>
+    <td><small>
+        export<br/>
+        &nbsp;&nbsp;VK_LOADER_DRIVERS_DISABLE=*amd*,*intel*<br/>
+        <br/>
+        set<br/>
+        &nbsp;&nbsp;VK_LOADER_DRIVERS_DISABLE=*amd*,*intel*<br/><br/>
+        The above would disable both Intel and AMD drivers if both were present
+        on the system and already visible to the loader.
+    </small></td>
+  </tr>
+  <tr>
+    <td><small>
+        <i>VK_LOADER_LAYERS_ENABLE</i>
+    </small></td>
+    <td><small>
+        A comma-delimited list of globs to search for in known layers and
+        used to select only the layers whose layer name matches one or more of
+        the provided globs.<br/>
+        Known layers are those which are found by the loader taking into account
+        default search paths and other environment variables
+        (like <i>VK_LAYER_PATH</i>).
+        <br/>
+        This has replaced the older deprecated environment variable
+        <i>VK_INSTANCE_LAYERS</i>
+    </small></td>
+    <td><small>
+        This functionality is only available with Loaders built with version
+        1.3.234 of the Vulkan headers and later.
+    </small></td>
+    <td><small>
+        export<br/>
+        &nbsp;&nbsp;VK_LOADER_LAYERS_ENABLE=*validation,*recon*<br/>
+        <br/>
+        set<br/>
+        &nbsp;&nbsp;VK_LOADER_LAYERS_ENABLE=*validation,*recon*<br/><br/>
+        The above would enable the Khronos validation layer and the
+        GfxReconstruct layer, if both were present on the system and already
+        visible to the loader.
+    </small></td>
+  </tr>
+  <tr>
+    <td><small>
+        <i>VK_LOADER_LAYERS_DISABLE</i>
+    </small></td>
+    <td><small>
+        A comma-delimited list of globs to search for in known layers and
+        used to disable only the layers whose layer name matches one or more of
+        the provided globs.<br/>
+        Known layers are those which are found by the loader taking into account
+        default search paths and other environment variables
+        (like <i>VK_LAYER_PATH</i>).
+    </small></td>
+    <td><small>
+        This functionality is only available with Loaders built with version
+        1.3.234 of the Vulkan headers and later.<br/>
+        Disabling a layer that an application intentionally enables as an
+        explicit layer <b>may</b> cause the application to not function
+        properly.<br/>
+        This is also checked before other layer environment variables (such as
+        <i>VK_LOADER_LAYERS_ENABLE</i>) so that a user may easily disable all
+        layers and then selectively re-enable individual layers using the
+        enable environment variable.
+    </small></td>
+    <td><small>
+        export<br/>
+        &nbsp;&nbsp;VK_LOADER_LAYERS_DISABLE=*MESA*,~implicit~<br/>
+        <br/>
+        set<br/>
+        &nbsp;&nbsp;VK_LOADER_LAYERS_DISABLE=*MESA*,~implicit~<br/><br/>
+        The above would disable any Mesa layer and all other implicit layers
+        that would normally be enabled on the system.
+    </small></td>
+  </tr>
+</table>
+
+<br/>
+
+### Deprecated Environment Variables
+
+These environment variables are still active and supported, however support
+may be removed in a future loader release.
+
+<table style="width:100%">
+  <tr>
+    <th>Environment Variable</th>
+    <th>Behavior</th>
+    <th>Replaced By</th>
+    <th>Restrictions</th>
+    <th>Example Format</th>
+  </tr>
+  <tr>
+    <td><small><i>VK_ICD_FILENAMES</i></small></td>
+    <td><small>
+            Force the loader to use the specific driver JSON files.
+            The value contains a list of delimited full path listings to
+            driver JSON Manifest files.<br/>
+            <br/>
+            <b>NOTE:</b> If a global path to the JSON file is not used, issues
+            may be encountered.<br/>
+    </small></td>
+    <td><small>
+        This has been replaced by <i>VK_DRIVER_FILES</i>.
+    </small></td>
+    <td><small>
+        <a href="#elevated-privilege-caveats">
+            Ignored when running Vulkan application with elevated privileges.
+        </a>
+    </small></td>
+    <td><small>
+        export<br/>
+        &nbsp;&nbsp;VK_ICD_FILENAMES=<br/>
+        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<folder_a>/intel.json:<folder_b>/amd.json
+        <br/><br/>
+        set<br/>
+        &nbsp;&nbsp;VK_ICD_FILENAMES=<br/>
+        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<folder_a>\nvidia.json;<folder_b>\mesa.json
+    </small></td>
+  </tr>
+  <tr>
+    <td><small>
+        <i>VK_INSTANCE_LAYERS</i>
+    </small></td>
+    <td><small>
+        Force the loader to add the given layers to the list of Enabled layers
+        normally passed into <b>vkCreateInstance</b>.
+        These layers are added first, and the loader will remove any duplicate
+        layers that appear in both this list as well as that passed into
+        <i>ppEnabledLayerNames</i>.
+    </small></td>
+    <td><small>
+        This has been deprecated by <i>VK_LOADER_LAYERS_ENABLE</i>.
+        It also overrides any layers disabled with
+        <i>VK_LOADER_LAYERS_DISABLE</i>.
+    </small></td>
+    <td><small>
+        None
+    </small></td>
+    <td><small>
+        export<br/>
+        &nbsp;&nbsp;VK_INSTANCE_LAYERS=<br/>
+        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&lt;layer_a&gt;;&lt;layer_b&gt;<br/><br/>
+        set<br/>
+        &nbsp;&nbsp;VK_INSTANCE_LAYERS=<br/>
+        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&lt;layer_a&gt;;&lt;layer_b&gt;
+    </small></td>
   </tr>
 </table>
 <br/>
@@ -715,8 +1024,8 @@ discovery.
     <td>Discovery</td>
     <td>The process of the loader searching for driver and layer files to set up
         the internal list of Vulkan objects available.<br/>
-        On <i>Windows/Linux/macOS</i>, the discovery process typically focuses on
-        searching for Manifest files.<br/>
+        On <i>Windows/Linux/macOS</i>, the discovery process typically focuses
+        on searching for Manifest files.<br/>
         On <i>Android</i>, the process focuses on searching for library files.
     </td>
   </tr>
@@ -881,6 +1190,33 @@ discovery.
         See
         <a href="LoaderApplicationInterface.md#wsi-extensions">WSI Extensions</a>
         for more information.
+    </td>
+  </tr>
+  <tr>
+    <td>Exported Function</td>
+    <td>A function which is intended to be obtained through the platform specific
+        dynamic linker, specifically from a Driver or a Layer library.
+        Functions that are required to be exported are primarily the very first
+        functions the Loader calls on a Layer or Driver library. <br/>
+    </td>
+  </tr>
+  <tr>
+    <td>Exposed Function</td>
+    <td>A function which is intended to be obtained through a Querying Function, such as
+        `vkGetInstanceProcAddr`.
+        The exact Querying Function required for a specific exposed function varies
+        between Layers and Drivers, as well as between interface versions. <br/>
+    </td>
+  </tr>
+  <tr>
+    <td>Querying Functions</td>
+    <td>These are functions which allow the Loader to query other functions from
+        drivers and layers. These functions may be in the Vulkan API but also may be
+        from the private Loader and Driver Interface or the Loader and Layer Interface. <br/>
+        These functions are:
+        `vkGetInstanceProcAddr`, `vkGetDeviceProcAddr`,
+        `vk_icdGetInstanceProcAddr`, `vk_icdGetPhysicalDeviceProcAddr`, and
+        `vk_layerGetPhysicalDeviceProcAddr`.
     </td>
   </tr>
 </table>

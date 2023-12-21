@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -86,6 +86,15 @@ CORE_EXPORT void SetupIDLObservableArrayBackingListTemplate(
     const WrapperTypeInfo* wrapper_type_info,
     v8::Local<v8::ObjectTemplate> instance_template,
     v8::Local<v8::FunctionTemplate> interface_template);
+
+CORE_EXPORT void SetupIDLSyncIteratorTemplate(
+    v8::Isolate* isolate,
+    const WrapperTypeInfo* wrapper_type_info,
+    v8::Local<v8::ObjectTemplate> instance_template,
+    v8::Local<v8::ObjectTemplate> prototype_template,
+    v8::Local<v8::FunctionTemplate> interface_template,
+    v8::Intrinsic parent_intrinsic_prototype,
+    const char* class_string);
 
 // Returns the length of arguments ignoring the undefined values at the end.
 inline int NonUndefinedArgumentLength(
@@ -196,10 +205,7 @@ bool GetDictionaryMemberFromV8Object(v8::Isolate* isolate,
 
   if (v8_value->IsUndefined()) {
     if (is_required) {
-      exception_state.ThrowTypeError(ExceptionMessages::FailedToGet(
-          exception_state.GetInnerMostContext().GetPropertyName(),
-          exception_state.GetInnerMostContext().GetClassName(),
-          "Required member is undefined."));
+      exception_state.ThrowTypeError("Required member is undefined.");
       return false;
     }
     return true;

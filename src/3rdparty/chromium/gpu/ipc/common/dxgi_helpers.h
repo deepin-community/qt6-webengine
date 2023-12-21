@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -62,6 +62,16 @@ class GPU_EXPORT DXGIScopedReleaseKeyedMutex {
 GPU_EXPORT bool CopyDXGIBufferToShMem(
     HANDLE dxgi_handle,
     base::span<uint8_t> shared_memory,
+    ID3D11Device* d3d11_device,
+    Microsoft::WRL::ComPtr<ID3D11Texture2D>* staging_texture);
+
+// Copies from |input_texture| to |dst_buffer| using provided D3D11 device, and
+// a staging texture. The staging texture may be recreated if it does not match
+// input texture size or format. Returns true if succeeded.
+GPU_EXPORT bool CopyD3D11TexToMem(
+    ID3D11Texture2D* input_texture,
+    uint8_t* dst_buffer,
+    size_t buffer_size,
     ID3D11Device* d3d11_device,
     Microsoft::WRL::ComPtr<ID3D11Texture2D>* staging_texture);
 

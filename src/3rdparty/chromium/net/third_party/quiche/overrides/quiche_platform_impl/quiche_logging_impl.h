@@ -1,4 +1,4 @@
-// Copyright (c) 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,7 +11,8 @@
 #include "base/logging.h"
 #include "base/notreached.h"
 #include "build/build_config.h"
-#include "net/base/net_export.h"
+#include "quiche/common/platform/api/quiche_export.h"
+#include "third_party/abseil-cpp/absl/base/optimization.h"
 
 #define QUICHE_LOG_IMPL(severity) QUICHE_CHROMIUM_LOG_##severity
 #define QUICHE_VLOG_IMPL(verbose_level) VLOG(verbose_level)
@@ -72,9 +73,6 @@
 #define QUICHE_CHROMIUM_DLOG_IF_0 QUICHE_CHROMIUM_DLOG_IF_ERROR
 #endif
 
-#define QUICHE_PREDICT_FALSE_IMPL(x) x
-#define QUICHE_PREDICT_TRUE_IMPL(x) x
-
 #define QUICHE_NOTREACHED_IMPL() NOTREACHED()
 
 #define QUICHE_PLOG_IMPL(severity) DVLOG(1)
@@ -86,6 +84,7 @@
 #define QUICHE_CHECK_LT_IMPL(val1, val2) CHECK_LT(val1, val2)
 #define QUICHE_CHECK_GE_IMPL(val1, val2) CHECK_GE(val1, val2)
 #define QUICHE_CHECK_GT_IMPL(val1, val2) CHECK_GT(val1, val2)
+#define QUICHE_CHECK_OK_IMPL(value) CHECK((value).ok())
 
 #define QUICHE_DCHECK_IMPL(condition) DCHECK(condition)
 #define QUICHE_DCHECK_EQ_IMPL(val1, val2) DCHECK_EQ(val1, val2)
@@ -97,8 +96,8 @@
 
 namespace quic {
 template <typename T>
-NET_EXPORT_PRIVATE inline std::ostream& operator<<(std::ostream& out,
-                                                   const std::vector<T>& v) {
+QUICHE_EXPORT inline std::ostream& operator<<(std::ostream& out,
+                                              const std::vector<T>& v) {
   out << "[";
   const char* sep = "";
   for (size_t i = 0; i < v.size(); ++i) {

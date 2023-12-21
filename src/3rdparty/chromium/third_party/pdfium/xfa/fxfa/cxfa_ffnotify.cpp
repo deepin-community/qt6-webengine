@@ -1,4 +1,4 @@
-// Copyright 2014 PDFium Authors. All rights reserved.
+// Copyright 2014 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -104,33 +104,30 @@ CXFA_FFWidget* CXFA_FFNotify::OnCreateContentLayoutItem(CXFA_Node* pNode) {
   CXFA_FFWidget* pWidget = nullptr;
   switch (pNode->GetFFWidgetType()) {
     case XFA_FFWidgetType::kBarcode: {
-      CXFA_Node* child = pNode->GetUIChildNode();
-      if (child->GetElementType() != XFA_Element::Barcode)
+      auto* child = CXFA_Barcode::FromNode(pNode->GetUIChildNode());
+      if (!child)
         return nullptr;
 
       pWidget = cppgc::MakeGarbageCollected<CXFA_FFBarcode>(
-          m_pDoc->GetHeap()->GetAllocationHandle(), pNode,
-          static_cast<CXFA_Barcode*>(child));
+          m_pDoc->GetHeap()->GetAllocationHandle(), pNode, child);
       break;
     }
     case XFA_FFWidgetType::kButton: {
-      CXFA_Node* child = pNode->GetUIChildNode();
-      if (child->GetElementType() != XFA_Element::Button)
+      auto* child = CXFA_Button::FromNode(pNode->GetUIChildNode());
+      if (!child)
         return nullptr;
 
       pWidget = cppgc::MakeGarbageCollected<CXFA_FFPushButton>(
-          m_pDoc->GetHeap()->GetAllocationHandle(), pNode,
-          static_cast<CXFA_Button*>(child));
+          m_pDoc->GetHeap()->GetAllocationHandle(), pNode, child);
       break;
     }
     case XFA_FFWidgetType::kCheckButton: {
-      CXFA_Node* child = pNode->GetUIChildNode();
-      if (child->GetElementType() != XFA_Element::CheckButton)
+      auto* child = CXFA_CheckButton::FromNode(pNode->GetUIChildNode());
+      if (!child)
         return nullptr;
 
       pWidget = cppgc::MakeGarbageCollected<CXFA_FFCheckButton>(
-          m_pDoc->GetHeap()->GetAllocationHandle(), pNode,
-          static_cast<CXFA_CheckButton*>(child));
+          m_pDoc->GetHeap()->GetAllocationHandle(), pNode, child);
       break;
     }
     case XFA_FFWidgetType::kChoiceList: {
@@ -156,13 +153,12 @@ CXFA_FFWidget* CXFA_FFNotify::OnCreateContentLayoutItem(CXFA_Node* pNode) {
           m_pDoc->GetHeap()->GetAllocationHandle(), pNode);
       break;
     case XFA_FFWidgetType::kPasswordEdit: {
-      CXFA_Node* child = pNode->GetUIChildNode();
-      if (child->GetElementType() != XFA_Element::PasswordEdit)
+      auto* child = CXFA_PasswordEdit::FromNode(pNode->GetUIChildNode());
+      if (!child)
         return nullptr;
 
       pWidget = cppgc::MakeGarbageCollected<CXFA_FFPasswordEdit>(
-          m_pDoc->GetHeap()->GetAllocationHandle(), pNode,
-          static_cast<CXFA_PasswordEdit*>(child));
+          m_pDoc->GetHeap()->GetAllocationHandle(), pNode, child);
       break;
     }
     case XFA_FFWidgetType::kSignature:
@@ -253,9 +249,17 @@ CXFA_FFApp::CallbackIface* CXFA_FFNotify::GetAppProvider() {
   return m_pDoc->GetApp()->GetAppProvider();
 }
 
-CXFA_FFWidgetHandler* CXFA_FFNotify::GetWidgetHandler() {
+void CXFA_FFNotify::HandleWidgetEvent(CXFA_Node* pNode,
+                                      CXFA_EventParam* pParam) {
   CXFA_FFDocView* pDocView = m_pDoc->GetDocView();
-  return pDocView ? pDocView->GetWidgetHandler() : nullptr;
+  if (!pDocView)
+    return;
+
+  CXFA_FFWidgetHandler* pHandler = pDocView->GetWidgetHandler();
+  if (!pHandler)
+    return;
+
+  pHandler->ProcessEvent(pNode, pParam);
 }
 
 void CXFA_FFNotify::OpenDropDownList(CXFA_Node* pNode) {
@@ -307,7 +311,7 @@ void CXFA_FFNotify::RunNodeInitialize(CXFA_Node* pNode) {
   pDocView->AddNewFormNode(pNode);
 }
 
-void CXFA_FFNotify::RunSubformIndexChange(CXFA_Node* pSubformNode) {
+void CXFA_FFNotify::RunSubformIndexChange(CXFA_Subform* pSubformNode) {
   CXFA_FFDocView* pDocView = m_pDoc->GetDocView();
   if (!pDocView)
     return;

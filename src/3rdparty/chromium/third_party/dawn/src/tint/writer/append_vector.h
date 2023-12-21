@@ -17,17 +17,20 @@
 
 #include "src/tint/program_builder.h"
 
-// Forward Declarations
+// Forward declarations
 namespace tint::ast {
 class CallExpression;
 class Expression;
 }  // namespace tint::ast
+namespace tint::sem {
+class Call;
+}  // namespace tint::sem
 
 namespace tint::writer {
 
 /// A helper function used to append a vector with an additional scalar.
 /// If the scalar's type does not match the target vector element type,
-/// then it is value-converted (via TypeConstructor) before being added.
+/// then it is value-converted (via ValueConstructor) before being added.
 /// All types must have been assigned to the expressions and their child nodes
 /// before calling.
 /// @param builder the program builder.

@@ -27,7 +27,6 @@
 #include "perfetto/ext/base/file_utils.h"
 #include "perfetto/ext/base/getopt.h"
 #include "perfetto/ext/base/string_utils.h"
-#include "perfetto/ext/base/version.h"
 #include "perfetto/protozero/proto_utils.h"
 #include "src/protozero/filtering/filter_bytecode_generator.h"
 
@@ -86,8 +85,7 @@ bool FilterUtil::LoadMessageDefinition(const std::string& proto_file,
 #if PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
   // If the path is absolute, maps "C:/" -> "C:/" (without hardcoding 'C').
   if (proto_file.size() > 3 && proto_file[1] == ':') {
-    char win_drive[4];
-    sprintf(win_drive, "%c:/", proto_file[0]);
+    char win_drive[4]{proto_file[0], ':', '/', '\0'};
     dst.MapPath(win_drive, win_drive);
   }
 #endif

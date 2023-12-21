@@ -38,7 +38,8 @@ class ExecutionContext;
 class MutableCSSPropertyValueSet;
 class StyleSheetContents;
 
-class AbstractPropertySetCSSStyleDeclaration : public CSSStyleDeclaration {
+class CORE_EXPORT AbstractPropertySetCSSStyleDeclaration
+    : public CSSStyleDeclaration {
  public:
   virtual Element* ParentElement() const { return nullptr; }
   StyleSheetContents* ContextStyleSheet() const;
@@ -71,6 +72,10 @@ class AbstractPropertySetCSSStyleDeclaration : public CSSStyleDeclaration {
   const CSSValue* GetPropertyCSSValueInternal(
       const AtomicString& custom_property_name) final;
   String GetPropertyValueInternal(CSSPropertyID) final;
+  String GetPropertyValueWithHint(const String& property_name,
+                                  unsigned index) final;
+  String GetPropertyPriorityWithHint(const String& property_name,
+                                     unsigned index) final;
   void SetPropertyInternal(CSSPropertyID,
                            const String& custom_property_name,
                            const String& value,
@@ -94,6 +99,8 @@ class AbstractPropertySetCSSStyleDeclaration : public CSSStyleDeclaration {
   virtual void DidMutate(MutationType) {}
   virtual MutableCSSPropertyValueSet& PropertySet() const = 0;
   virtual bool IsKeyframeStyle() const { return false; }
+  bool FastPathSetProperty(CSSPropertyID unresolved_property,
+                           double value) override;
 };
 
 }  // namespace blink

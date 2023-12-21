@@ -1,11 +1,11 @@
-# Copyright 2019 The Chromium Authors. All rights reserved.
+# Copyright 2019 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//build/config/zip.gni")
 import("//build/util/process_version.gni")
 import("//chrome/process_version_rc_template.gni")
 import("//chrome/updater/branding.gni")
+import("//chrome/updater/zip.gni")
 import("//testing/libfuzzer/fuzzer_test.gni")
 import("//testing/test.gni")
 
@@ -26,51 +26,44 @@ config("wrl_strict") {
   defines = [ "__WRL_CLASSIC_COM_STRICT__" ]
 }
 
-executable("updater") {
+source_set("updater_executable") {
   sources = [
     "main.cc",
     "updater.rc",
   ]
 
-  configs -= [ "//build/config/compiler:cet_shadow_stack" ]
-  configs += [ "//build/config/win:windowed" ]
-
   deps = [
-    ":version_resources",
-    "//build/win:default_exe_manifest",
     "//chrome/updater:base",
-    "//chrome/updater:constants_prod",
     "//chrome/updater/win/ui/resources",
   ]
+
+  public_configs = [ "//build/config/win:windowed" ]
+  public_deps = [ "//build/win:default_exe_manifest" ]
 
   data_deps = [ ":uninstall.cmd" ]
 }
 
-executable("updater_test") {
-  sources = [
-    "main.cc",
-    "updater.rc",
-  ]
-
-  configs -= [ "//build/config/compiler:cet_shadow_stack" ]
-  configs += [ "//build/config/win:windowed" ]
-
+executable("updater") {
   deps = [
+    ":updater_executable",
     ":version_resources",
-    "//build/win:default_exe_manifest",
-    "//chrome/updater:base",
-    "//chrome/updater:constants_test",
-    "//chrome/updater/win/ui/resources",
+    "//chrome/updater:constants_prod",
   ]
+}
 
-  data_deps = [ ":uninstall.cmd" ]
+executable("updater_test") {
+  deps = [
+    ":updater_executable",
+    ":version_resources_test",
+    "//chrome/updater:constants_test",
+  ]
 }
 
 copy("signing") {
   sources = [
     "$root_out_dir/certificate_tag.exe",
     "//chrome/tools/build/win/resedit.py",
-    "//third_party/lzma_sdk/7zr.exe",
+    "//third_party/lzma_sdk/bin/win64/7zr.exe",
     "signing/sign.py",
   ]
 
@@ -79,14 +72,16 @@ copy("signing") {
   outputs = [ "$root_out_dir/UpdaterSigning/{{source_file_part}}" ]
 }
 
-zip("updater_zip") {
+artifact_zip("updater_zip") {
   output = "$root_build_dir/updater.zip"
   inputs = [
              "$root_build_dir/UpdaterSetup.exe",
              "$root_build_dir/UpdaterSetup_test.exe",
+             "$root_build_dir/qualification_app.exe",
            ] + get_target_outputs(":signing")
   deps = [
     ":signing",
+    "//chrome/updater/test/qualification_app",
     "//chrome/updater/win/installer",
     "//chrome/updater/win/installer:installer_test",
   ]
@@ -111,6 +106,19 @@ process_version_rc_template("version_resources") {
   }
   sources = [ "updater.ver" ]
   output = "$target_gen_dir/updater_exe.rc"
+  extra_args = [
+    "-e",
+    "PRODUCT_FULLNAME=\"$_product_fullname\"",
+  ]
+}
+
+process_version_rc_template("version_resources_test") {
+  _product_fullname = "$updater_product_full_name (test) " + "($current_cpu)"
+  if (is_debug) {
+    _product_fullname += " (debug)"
+  }
+  sources = [ "updater_test.ver" ]
+  output = "$target_gen_dir/updater_test_exe.rc"
   extra_args = [
     "-e",
     "PRODUCT_FULLNAME=\"$_product_fullname\"",

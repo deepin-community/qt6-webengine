@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,12 +6,11 @@
 
 #include <memory>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/command_line.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/run_loop.h"
 #include "base/task/single_thread_task_runner.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/memory_dump_manager.h"
 #include "base/trace_event/memory_dump_provider.h"
 #include "base/trace_event/memory_dump_request_args.h"
@@ -82,7 +81,8 @@ class MemoryTracingTest : public ContentBrowserTest {
     uint32_t request_index = next_request_index_++;
     auto callback = base::BindOnce(
         &MemoryTracingTest::OnGlobalMemoryDumpDone, base::Unretained(this),
-        base::ThreadTaskRunnerHandle::Get(), std::move(closure), request_index);
+        base::SingleThreadTaskRunner::GetCurrentDefault(), std::move(closure),
+        request_index);
     if (from_renderer_thread) {
       PostTaskToInProcessRendererAndWait(base::BindOnce(
           &memory_instrumentation::MemoryInstrumentation::

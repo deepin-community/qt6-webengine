@@ -1,10 +1,10 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/performance_manager/embedder/performance_manager_lifetime.h"
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/no_destructor.h"
 #include "base/notreached.h"
 #include "components/performance_manager/decorators/frame_visibility_decorator.h"
@@ -17,7 +17,6 @@
 #include "components/performance_manager/graph/worker_node_impl_describer.h"
 #include "components/performance_manager/performance_manager_impl.h"
 #include "components/performance_manager/public/decorators/page_live_state_decorator.h"
-#include "components/performance_manager/public/decorators/tab_properties_decorator.h"
 #include "components/performance_manager/public/graph/graph.h"
 #include "components/performance_manager/v8_memory/v8_context_tracker.h"
 

@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,12 +6,12 @@
 
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
 #include "base/logging.h"
 #include "media/base/video_frame.h"
-#include "media/cast/sender/video_frame_factory.h"
+#include "media/cast/common/video_frame_factory.h"
 
 namespace media {
 namespace cast {
@@ -108,7 +108,7 @@ void CastSenderImpl::InitializeAudio(
     const FrameSenderConfig& audio_config,
     StatusChangeOnceCallback status_change_cb) {
   DCHECK(cast_environment_->CurrentlyOn(CastEnvironment::MAIN));
-  CHECK(audio_config.use_external_encoder ||
+  CHECK(audio_config.use_hardware_encoder ||
         cast_environment_->HasAudioThread());
 
   VLOG(1) << "CastSenderImpl@" << this << "::InitializeAudio()";

@@ -39,6 +39,7 @@ list(APPEND AOM_AV1_COMMON_SOURCES
             "${AOM_ROOT}/av1/common/cfl.c"
             "${AOM_ROOT}/av1/common/cfl.h"
             "${AOM_ROOT}/av1/common/common.h"
+            "${AOM_ROOT}/av1/common/common_data.c"
             "${AOM_ROOT}/av1/common/common_data.h"
             "${AOM_ROOT}/av1/common/convolve.c"
             "${AOM_ROOT}/av1/common/convolve.h"
@@ -66,6 +67,7 @@ list(APPEND AOM_AV1_COMMON_SOURCES
             "${AOM_ROOT}/av1/common/quant_common.h"
             "${AOM_ROOT}/av1/common/reconinter.c"
             "${AOM_ROOT}/av1/common/reconinter.h"
+            "${AOM_ROOT}/av1/common/reconinter_template.inc"
             "${AOM_ROOT}/av1/common/reconintra.c"
             "${AOM_ROOT}/av1/common/reconintra.h"
             "${AOM_ROOT}/av1/common/resize.c"
@@ -110,6 +112,7 @@ list(APPEND AOM_AV1_DECODER_SOURCES
 
 list(APPEND AOM_AV1_ENCODER_SOURCES
             "${AOM_ROOT}/av1/av1_cx_iface.c"
+            "${AOM_ROOT}/av1/av1_cx_iface.h"
             "${AOM_ROOT}/av1/encoder/aq_complexity.c"
             "${AOM_ROOT}/av1/encoder/aq_complexity.h"
             "${AOM_ROOT}/av1/encoder/aq_cyclicrefresh.c"
@@ -134,10 +137,6 @@ list(APPEND AOM_AV1_ENCODER_SOURCES
             "${AOM_ROOT}/av1/encoder/compound_type.h"
             "${AOM_ROOT}/av1/encoder/context_tree.c"
             "${AOM_ROOT}/av1/encoder/context_tree.h"
-            "${AOM_ROOT}/av1/encoder/corner_detect.c"
-            "${AOM_ROOT}/av1/encoder/corner_detect.h"
-            "${AOM_ROOT}/av1/encoder/corner_match.c"
-            "${AOM_ROOT}/av1/encoder/corner_match.h"
             "${AOM_ROOT}/av1/encoder/cost.c"
             "${AOM_ROOT}/av1/encoder/cost.h"
             "${AOM_ROOT}/av1/encoder/encodeframe.c"
@@ -186,6 +185,7 @@ list(APPEND AOM_AV1_ENCODER_SOURCES
             "${AOM_ROOT}/av1/encoder/lookahead.h"
             "${AOM_ROOT}/av1/encoder/mcomp.c"
             "${AOM_ROOT}/av1/encoder/mcomp.h"
+            "${AOM_ROOT}/av1/encoder/mcomp_structs.h"
             "${AOM_ROOT}/av1/encoder/ml.c"
             "${AOM_ROOT}/av1/encoder/ml.h"
             "${AOM_ROOT}/av1/encoder/model_rd.h"
@@ -207,8 +207,6 @@ list(APPEND AOM_AV1_ENCODER_SOURCES
             "${AOM_ROOT}/av1/encoder/picklpf.h"
             "${AOM_ROOT}/av1/encoder/pickrst.c"
             "${AOM_ROOT}/av1/encoder/pickrst.h"
-            "${AOM_ROOT}/av1/encoder/ransac.c"
-            "${AOM_ROOT}/av1/encoder/ransac.h"
             "${AOM_ROOT}/av1/encoder/ratectrl.c"
             "${AOM_ROOT}/av1/encoder/ratectrl.h"
             "${AOM_ROOT}/av1/encoder/rc_utils.h"
@@ -331,7 +329,6 @@ list(APPEND AOM_AV1_ENCODER_ASM_SSSE3_X86_64
 list(APPEND AOM_AV1_ENCODER_INTRIN_SSE4_1
             "${AOM_ROOT}/av1/encoder/x86/av1_fwd_txfm1d_sse4.c"
             "${AOM_ROOT}/av1/encoder/x86/av1_fwd_txfm2d_sse4.c"
-            "${AOM_ROOT}/av1/encoder/x86/corner_match_sse4.c"
             "${AOM_ROOT}/av1/encoder/x86/encodetxb_sse4.c"
             "${AOM_ROOT}/av1/encoder/x86/highbd_fwd_txfm_sse4.c"
             "${AOM_ROOT}/av1/encoder/x86/rdopt_sse4.c"
@@ -339,7 +336,6 @@ list(APPEND AOM_AV1_ENCODER_INTRIN_SSE4_1
 
 list(APPEND AOM_AV1_ENCODER_INTRIN_AVX2
             "${AOM_ROOT}/av1/encoder/x86/av1_quantize_avx2.c"
-            "${AOM_ROOT}/av1/encoder/x86/corner_match_avx2.c"
             "${AOM_ROOT}/av1/encoder/x86/error_intrin_avx2.c"
             "${AOM_ROOT}/av1/encoder/x86/av1_fwd_txfm_avx2.h"
             "${AOM_ROOT}/av1/encoder/x86/av1_fwd_txfm2d_avx2.c"
@@ -354,6 +350,7 @@ list(APPEND AOM_AV1_ENCODER_INTRIN_AVX2
 
 list(APPEND AOM_AV1_ENCODER_INTRIN_NEON
             "${AOM_ROOT}/av1/encoder/arm/neon/quantize_neon.c"
+            "${AOM_ROOT}/av1/encoder/arm/neon/av1_highbd_quantize_neon.c"
             "${AOM_ROOT}/av1/encoder/arm/neon/ml_neon.c"
             "${AOM_ROOT}/av1/encoder/arm/neon/picksrt_neon.c"
             "${AOM_ROOT}/av1/encoder/arm/neon/rdopt_neon.c"
@@ -361,12 +358,12 @@ list(APPEND AOM_AV1_ENCODER_INTRIN_NEON
             "${AOM_ROOT}/av1/encoder/arm/neon/encodetxb_neon.c"
             "${AOM_ROOT}/av1/encoder/arm/neon/hybrid_fwd_txfm_neon.c"
             "${AOM_ROOT}/av1/encoder/arm/neon/av1_fwd_txfm2d_neon.c"
-            "${AOM_ROOT}/av1/encoder/arm/neon/highbd_fwd_txfm_neon.c")
+            "${AOM_ROOT}/av1/encoder/arm/neon/highbd_fwd_txfm_neon.c"
+            "${AOM_ROOT}/av1/encoder/arm/neon/wedge_utils_neon.c"
+            "${AOM_ROOT}/av1/encoder/arm/neon/temporal_filter_neon.c")
 
-list(APPEND AOM_AV1_ENCODER_INTRIN_MSA
-            "${AOM_ROOT}/av1/encoder/mips/msa/error_msa.c"
-            "${AOM_ROOT}/av1/encoder/mips/msa/fdct4x4_msa.c"
-            "${AOM_ROOT}/av1/encoder/mips/msa/temporal_filter_msa.c")
+list(APPEND AOM_AV1_ENCODER_INTRIN_ARM_CRC32
+            "${AOM_ROOT}/av1/encoder/arm/crc32/hash_crc32.c")
 
 list(APPEND AOM_AV1_COMMON_INTRIN_NEON
             "${AOM_ROOT}/av1/common/arm/av1_inv_txfm_neon.c"
@@ -468,34 +465,12 @@ if(CONFIG_INTERNAL_STATS)
 endif()
 
 if(CONFIG_REALTIME_ONLY)
-  list(REMOVE_ITEM AOM_AV1_COMMON_SOURCES "${AOM_ROOT}/av1/common/restoration.c"
-                   "${AOM_ROOT}/av1/common/restoration.h"
-                   "${AOM_ROOT}/av1/common/warped_motion.c"
-                   "${AOM_ROOT}/av1/common/warped_motion.h")
-
-  list(REMOVE_ITEM AOM_AV1_COMMON_INTRIN_SSE2
-                   "${AOM_ROOT}/av1/common/x86/warp_plane_sse2.c")
-
-  list(REMOVE_ITEM AOM_AV1_COMMON_INTRIN_SSE4_1
-                   "${AOM_ROOT}/av1/common/x86/highbd_warp_plane_sse4.c"
-                   "${AOM_ROOT}/av1/common/x86/selfguided_sse4.c"
-                   "${AOM_ROOT}/av1/common/x86/warp_plane_sse4.c")
-
-  list(REMOVE_ITEM AOM_AV1_COMMON_INTRIN_AVX2
-                   "${AOM_ROOT}/av1/common/x86/highbd_warp_affine_avx2.c"
-                   "${AOM_ROOT}/av1/common/x86/selfguided_avx2.c"
-                   "${AOM_ROOT}/av1/common/x86/warp_plane_avx2.c")
-
   list(REMOVE_ITEM AOM_AV1_ENCODER_INTRIN_SSE4_1
                    "${AOM_ROOT}/av1/encoder/x86/pickrst_sse4.c")
 
   list(REMOVE_ITEM AOM_AV1_ENCODER_INTRIN_AVX2
                    "${AOM_ROOT}/av1/encoder/x86/pickrst_avx2.c"
                    "${AOM_ROOT}/av1/encoder/x86/cnn_avx2.c")
-
-  list(REMOVE_ITEM AOM_AV1_COMMON_INTRIN_NEON
-                   "${AOM_ROOT}/av1/common/arm/selfguided_neon.c"
-                   "${AOM_ROOT}/av1/common/arm/warp_plane_neon.c")
 
   list(REMOVE_ITEM AOM_AV1_ENCODER_SOURCES
                    "${AOM_ROOT}/av1/encoder/cnn.c"
@@ -650,6 +625,16 @@ function(setup_av1_targets)
                                       "AOM_AV1_ENCODER_INTRIN_NEON")
       endif()
     endif()
+
+    if(HAVE_ARM_CRC32)
+      if(CONFIG_AV1_ENCODER)
+        if(AOM_AV1_ENCODER_INTRIN_ARM_CRC32)
+          add_intrinsics_object_library("${AOM_ARM_CRC32_FLAG}" "crc32"
+                                        "aom_av1_encoder"
+                                        "AOM_AV1_ENCODER_INTRIN_ARM_CRC32")
+        endif()
+      endif()
+    endif()
   endif()
 
   if(HAVE_VSX)
@@ -657,11 +642,6 @@ function(setup_av1_targets)
       add_intrinsics_object_library("-mvsx -maltivec" "vsx" "aom_av1_common"
                                     "AOM_AV1_COMMON_INTRIN_VSX")
     endif()
-  endif()
-
-  if(HAVE_MSA)
-    add_intrinsics_object_library("" "msa" "aom_av1_encoder"
-                                  "AOM_AV1_ENCODER_INTRIN_MSA")
   endif()
 
   # Pass the new lib targets up to the parent scope instance of

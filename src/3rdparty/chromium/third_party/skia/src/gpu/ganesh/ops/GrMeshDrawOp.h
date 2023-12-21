@@ -11,15 +11,17 @@
 #include "src/gpu/ganesh/GrAppliedClip.h"
 #include "src/gpu/ganesh/GrGeometryProcessor.h"
 #include "src/gpu/ganesh/ops/GrDrawOp.h"
+
 #include <type_traits>
 
 class SkArenaAlloc;
 class GrAtlasManager;
+class GrBuffer;
 class GrCaps;
 class GrMeshDrawTarget;
 class GrOpFlushState;
+class GrProgramInfo;
 struct GrSimpleMesh;
-class GrStrikeCache;
 
 /**
  * Base class for mesh-drawing GrDrawOps.

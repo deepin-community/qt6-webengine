@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,13 +9,14 @@
 #include "base/allocator/partition_allocator/random.h"
 #include "base/check_op.h"
 #include "base/cpu.h"
+#include "base/memory/page_size.h"
 #include "build/build_config.h"
 
 namespace {
 
 // Maps the v8 page permissions into a page configuration from base.
-::partition_alloc::PageAccessibilityConfiguration GetPageConfig(
-    v8::PageAllocator::Permission permission) {
+::partition_alloc::PageAccessibilityConfiguration::Permissions
+GetPagePermissions(v8::PageAllocator::Permission permission) {
   switch (permission) {
     case v8::PageAllocator::Permission::kRead:
       return ::partition_alloc::PageAccessibilityConfiguration::kRead;
@@ -48,17 +49,23 @@ namespace {
   }
 }
 
+::partition_alloc::PageAccessibilityConfiguration GetPageConfig(
+    v8::PageAllocator::Permission permission) {
+  return ::partition_alloc::PageAccessibilityConfiguration(
+      GetPagePermissions(permission));
+}
+
 }  // namespace
 
 namespace gin {
 PageAllocator::~PageAllocator() = default;
 
 size_t PageAllocator::AllocatePageSize() {
-  return base::PageAllocationGranularity();
+  return partition_alloc::internal::PageAllocationGranularity();
 }
 
 size_t PageAllocator::CommitPageSize() {
-  return base::SystemPageSize();
+  return base::GetPageSize();
 }
 
 void PageAllocator::SetRandomMmapSeed(int64_t seed) {
@@ -73,13 +80,14 @@ void* PageAllocator::AllocatePages(void* address,
                                    size_t length,
                                    size_t alignment,
                                    v8::PageAllocator::Permission permissions) {
-  base::PageAccessibilityConfiguration config = GetPageConfig(permissions);
-  return base::AllocPages(address, length, alignment, config,
-                          base::PageTag::kV8);
+  partition_alloc::PageAccessibilityConfiguration config =
+      GetPageConfig(permissions);
+  return partition_alloc::AllocPages(address, length, alignment, config,
+                                     partition_alloc::PageTag::kV8);
 }
 
 bool PageAllocator::FreePages(void* address, size_t length) {
-  base::FreePages(address, length);
+  partition_alloc::FreePages(address, length);
   return true;
 }
 
@@ -91,12 +99,12 @@ bool PageAllocator::ReleasePages(void* address,
   size_t release_size = length - new_length;
 #if BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
   // On POSIX, we can unmap the trailing pages.
-  base::FreePages(release_base, release_size);
+  partition_alloc::FreePages(release_base, release_size);
 #elif BUILDFLAG(IS_WIN)
   // On Windows, we can only de-commit the trailing pages. FreePages() will
   // still free all pages in the region including the released tail, so it's
   // safe to just decommit the tail.
-  base::DecommitSystemPages(
+  partition_alloc::DecommitSystemPages(
       release_base, release_size,
       ::partition_alloc::PageAccessibilityDisposition::kRequireUpdate);
 #else
@@ -114,31 +122,41 @@ bool PageAllocator::SetPermissions(void* address,
     // optimization, to avoid perf regression (see crrev.com/c/2563038 for
     // details). This may cause the memory region to still be accessible on
     // certain platforms, but at least the physical pages will be discarded.
-    base::DecommitSystemPages(
+    partition_alloc::DecommitSystemPages(
         address, length,
         ::partition_alloc::PageAccessibilityDisposition::kAllowKeepForPerf);
     return true;
   } else {
-    return base::TrySetSystemPagesAccess(address, length,
-                                         GetPageConfig(permissions));
+    return partition_alloc::TrySetSystemPagesAccess(address, length,
+                                                    GetPageConfig(permissions));
   }
 }
 
+bool PageAllocator::RecommitPages(void* address,
+                                  size_t length,
+                                  Permission permissions) {
+  partition_alloc::RecommitSystemPages(
+      reinterpret_cast<uintptr_t>(address), length, GetPageConfig(permissions),
+      partition_alloc::PageAccessibilityDisposition::kAllowKeepForPerf);
+  return true;
+}
+
 bool PageAllocator::DiscardSystemPages(void* address, size_t size) {
-  base::DiscardSystemPages(address, size);
+  partition_alloc::DiscardSystemPages(address, size);
   return true;
 }
 
 bool PageAllocator::DecommitPages(void* address, size_t size) {
   // V8 expects the pages to be inaccessible and zero-initialized upon next
   // access.
-  base::DecommitAndZeroSystemPages(address, size);
+  partition_alloc::DecommitAndZeroSystemPages(address, size);
   return true;
 }
 
-base::PageAccessibilityConfiguration PageAllocator::GetPageConfigForTesting(
+partition_alloc::PageAccessibilityConfiguration::Permissions
+PageAllocator::GetPageConfigPermissionsForTesting(
     v8::PageAllocator::Permission permission) {
-  return GetPageConfig(permission);
+  return GetPageConfig(permission).permissions;
 }
 
 }  // namespace gin

@@ -1,4 +1,4 @@
-# Copyright 2016 The Chromium Authors. All rights reserved.
+# Copyright 2016 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -8,8 +8,14 @@ import("//testing/libfuzzer/fuzzer_test.gni")
 
 component("fido") {
   sources = [
+    "attestation_object.cc",
+    "attestation_object.h",
+    "attestation_statement.cc",
+    "attestation_statement.h",
     "attested_credential_data.cc",
     "attested_credential_data.h",
+    "authenticator_data.cc",
+    "authenticator_data.h",
     "authenticator_selection_criteria.cc",
     "authenticator_selection_criteria.h",
     "cable/cable_discovery_data.cc",
@@ -34,6 +40,8 @@ component("fido") {
     "fido_parsing_utils.h",
     "fido_transport_protocol.cc",
     "fido_transport_protocol.h",
+    "opaque_attestation_statement.cc",
+    "opaque_attestation_statement.h",
     "p256_public_key.cc",
     "p256_public_key.h",
     "public_key.cc",
@@ -60,6 +68,7 @@ component("fido") {
     "//crypto",
     "//device/base",
     "//device/fido/strings",
+    "//services/data_decoder/public/cpp",
     "//third_party/boringssl",
     "//third_party/microsoft_webauthn",
     "//ui/base",
@@ -81,16 +90,10 @@ component("fido") {
       "aoa/android_accessory_discovery.h",
       "appid_exclude_probe_task.cc",
       "appid_exclude_probe_task.h",
-      "attestation_object.cc",
-      "attestation_object.h",
-      "attestation_statement.cc",
-      "attestation_statement.h",
       "attestation_statement_formats.cc",
       "attestation_statement_formats.h",
       "auth_token_requester.cc",
       "auth_token_requester.h",
-      "authenticator_data.cc",
-      "authenticator_data.h",
       "authenticator_get_assertion_response.cc",
       "authenticator_get_assertion_response.h",
       "authenticator_get_info_response.cc",
@@ -137,6 +140,8 @@ component("fido") {
       "ctap_make_credential_request.cc",
       "ctap_make_credential_request.h",
       "device_operation.h",
+      "device_public_key_extension.cc",
+      "device_public_key_extension.h",
       "device_response_converter.cc",
       "device_response_converter.h",
       "fido_authenticator.cc",
@@ -176,8 +181,6 @@ component("fido") {
       "make_credential_request_handler.h",
       "make_credential_task.cc",
       "make_credential_task.h",
-      "opaque_attestation_statement.cc",
-      "opaque_attestation_statement.h",
       "pin.cc",
       "pin.h",
       "pin_internal.cc",
@@ -197,6 +200,8 @@ component("fido") {
       "virtual_ctap2_device.h",
       "virtual_fido_device.cc",
       "virtual_fido_device.h",
+      "virtual_fido_device_authenticator.cc",
+      "virtual_fido_device_authenticator.h",
       "virtual_u2f_device.cc",
       "virtual_u2f_device.h",
     ]

@@ -6,7 +6,7 @@ use crate::syntax::atom::Atom::{self, *};
 use crate::syntax::instantiate::{ImplKey, NamedImplKey};
 use crate::syntax::map::UnorderedMap as Map;
 use crate::syntax::set::UnorderedSet;
-use crate::syntax::symbol::Symbol;
+use crate::syntax::symbol::{self, Symbol};
 use crate::syntax::trivial::{self, TrivialReason};
 use crate::syntax::{
     derive, mangle, Api, Doc, Enum, EnumRepr, ExternFn, ExternType, Pair, Signature, Struct, Trait,
@@ -227,6 +227,25 @@ fn pick_includes_and_builtins(out: &mut OutFile, apis: &[Api]) {
     }
 }
 
+fn write_doc(out: &mut OutFile, indent: &str, doc: &Doc) {
+    let mut lines = 0;
+    for line in doc.to_string().lines() {
+        if out.opt.doxygen {
+            writeln!(out, "{}///{}", indent, line);
+        } else {
+            writeln!(out, "{}//{}", indent, line);
+        }
+        lines += 1;
+    }
+    // According to https://www.doxygen.nl/manual/docblocks.html, Doxygen only
+    // interprets `///` as a Doxygen comment block if there are at least 2 of
+    // them. In Rust, a single `///` is definitely still documentation so we
+    // make sure to propagate that as a Doxygen comment.
+    if out.opt.doxygen && lines == 1 {
+        writeln!(out, "{}///", indent);
+    }
+}
+
 fn write_struct<'a>(out: &mut OutFile<'a>, strct: &'a Struct, methods: &[&ExternFn]) {
     let operator_eq = derive::contains(&strct.derives, Trait::PartialEq);
     let operator_ord = derive::contains(&strct.derives, Trait::PartialOrd);
@@ -235,15 +254,11 @@ fn write_struct<'a>(out: &mut OutFile<'a>, strct: &'a Struct, methods: &[&Extern
     let guard = format!("CXXBRIDGE1_STRUCT_{}", strct.name.to_symbol());
     writeln!(out, "#ifndef {}", guard);
     writeln!(out, "#define {}", guard);
-    for line in strct.doc.to_string().lines() {
-        writeln!(out, "//{}", line);
-    }
+    write_doc(out, "", &strct.doc);
     writeln!(out, "struct {} final {{", strct.name.cxx);
 
     for field in &strct.fields {
-        for line in field.doc.to_string().lines() {
-            writeln!(out, "  //{}", line);
-        }
+        write_doc(out, "  ", &field.doc);
         write!(out, "  ");
         write_type_space(out, &field.ty);
         writeln!(out, "{};", field.name.cxx);
@@ -255,9 +270,7 @@ fn write_struct<'a>(out: &mut OutFile<'a>, strct: &'a Struct, methods: &[&Extern
         if !method.doc.is_empty() {
             out.next_section();
         }
-        for line in method.doc.to_string().lines() {
-            writeln!(out, "  //{}", line);
-        }
+        write_doc(out, "  ", &method.doc);
         write!(out, "  ");
         let sig = &method.sig;
         let local_name = method.name.cxx.to_string();
@@ -318,6 +331,7 @@ fn write_struct_decl(out: &mut OutFile, ident: &Pair) {
 
 fn write_enum_decl(out: &mut OutFile, enm: &Enum) {
     let repr = match &enm.repr {
+        #[cfg(feature = "experimental-enum-variants-from-header")]
         EnumRepr::Foreign { .. } => return,
         EnumRepr::Native { atom, .. } => *atom,
     };
@@ -335,9 +349,7 @@ fn write_opaque_type<'a>(out: &mut OutFile<'a>, ety: &'a ExternType, methods: &[
     let guard = format!("CXXBRIDGE1_STRUCT_{}", ety.name.to_symbol());
     writeln!(out, "#ifndef {}", guard);
     writeln!(out, "#define {}", guard);
-    for line in ety.doc.to_string().lines() {
-        writeln!(out, "//{}", line);
-    }
+    write_doc(out, "", &ety.doc);
 
     out.builtin.opaque = true;
     writeln!(
@@ -350,9 +362,7 @@ fn write_opaque_type<'a>(out: &mut OutFile<'a>, ety: &'a ExternType, methods: &[
         if i > 0 && !method.doc.is_empty() {
             out.next_section();
         }
-        for line in method.doc.to_string().lines() {
-            writeln!(out, "  //{}", line);
-        }
+        write_doc(out, "  ", &method.doc);
         write!(out, "  ");
         let sig = &method.sig;
         let local_name = method.name.cxx.to_string();
@@ -381,6 +391,7 @@ fn write_opaque_type<'a>(out: &mut OutFile<'a>, ety: &'a ExternType, methods: &[
 
 fn write_enum<'a>(out: &mut OutFile<'a>, enm: &'a Enum) {
     let repr = match &enm.repr {
+        #[cfg(feature = "experimental-enum-variants-from-header")]
         EnumRepr::Foreign { .. } => return,
         EnumRepr::Native { atom, .. } => *atom,
     };
@@ -388,16 +399,12 @@ fn write_enum<'a>(out: &mut OutFile<'a>, enm: &'a Enum) {
     let guard = format!("CXXBRIDGE1_ENUM_{}", enm.name.to_symbol());
     writeln!(out, "#ifndef {}", guard);
     writeln!(out, "#define {}", guard);
-    for line in enm.doc.to_string().lines() {
-        writeln!(out, "//{}", line);
-    }
+    write_doc(out, "", &enm.doc);
     write!(out, "enum class {} : ", enm.name.cxx);
     write_atom(out, repr);
     writeln!(out, " {{");
     for variant in &enm.variants {
-        for line in variant.doc.to_string().lines() {
-            writeln!(out, "  //{}", line);
-        }
+        write_doc(out, "  ", &variant.doc);
         writeln!(out, "  {} = {},", variant.name.cxx, variant.discriminant);
     }
     writeln!(out, "}};");
@@ -406,6 +413,7 @@ fn write_enum<'a>(out: &mut OutFile<'a>, enm: &'a Enum) {
 
 fn check_enum<'a>(out: &mut OutFile<'a>, enm: &'a Enum) {
     let repr = match &enm.repr {
+        #[cfg(feature = "experimental-enum-variants-from-header")]
         EnumRepr::Foreign { .. } => return,
         EnumRepr::Native { atom, .. } => *atom,
     };
@@ -467,7 +475,25 @@ fn check_trivial_extern_type(out: &mut OutFile, alias: &TypeAlias, reasons: &[Tr
     let id = alias.name.to_fully_qualified();
     out.builtin.relocatable = true;
     writeln!(out, "static_assert(");
-    writeln!(out, "    ::rust::IsRelocatable<{}>::value,", id);
+    if reasons
+        .iter()
+        .all(|r| matches!(r, TrivialReason::StructField(_) | TrivialReason::VecElement))
+    {
+        // If the type is only used as a struct field or Vec element, not as
+        // by-value function argument or return value, then C array of trivially
+        // relocatable type is also permissible.
+        //
+        //     --- means something sane:
+        //     struct T { char buf[N]; };
+        //
+        //     --- means something totally different:
+        //     void f(char buf[N]);
+        //
+        out.builtin.relocatable_or_array = true;
+        writeln!(out, "    ::rust::IsRelocatableOrArray<{}>::value,", id);
+    } else {
+        writeln!(out, "    ::rust::IsRelocatable<{}>::value,", id);
+    }
     writeln!(
         out,
         "    \"type {} should be trivially move constructible and trivially destructible in C++ to be used as {} in Rust\");",
@@ -826,17 +852,9 @@ fn write_cxx_function_shim<'a>(out: &mut OutFile<'a>, efn: &'a ExternFn) {
     }
     writeln!(out, ";");
     if efn.throws {
-        out.include.cstring = true;
-        out.builtin.exception = true;
         writeln!(out, "        throw$.ptr = nullptr;");
         writeln!(out, "      }},");
-        writeln!(out, "      [&](const char *catch$) noexcept {{");
-        writeln!(out, "        throw$.len = ::std::strlen(catch$);");
-        writeln!(
-            out,
-            "        throw$.ptr = const_cast<char *>(::cxxbridge1$exception(catch$, throw$.len));",
-        );
-        writeln!(out, "      }});");
+        writeln!(out, "      ::rust::detail::Fail(throw$));");
         writeln!(out, "  return throw$;");
     }
     writeln!(out, "}}");
@@ -988,9 +1006,7 @@ fn write_rust_function_shim_impl(
     }
     if sig.receiver.is_none() {
         // Member functions already documented at their declaration.
-        for line in doc.to_string().lines() {
-            writeln!(out, "//{}", line);
-        }
+        write_doc(out, "", doc);
     }
     write_rust_function_shim_decl(out, local_name, sig, indirect_call);
     if out.header {
@@ -1372,7 +1388,9 @@ impl<'a> ToMangled for UniquePtr<'a> {
     fn to_mangled(&self, types: &Types) -> Symbol {
         match self {
             UniquePtr::Ident(ident) => ident.to_mangled(types),
-            UniquePtr::CxxVector(element) => element.to_mangled(types).prefix_with("std$vector$"),
+            UniquePtr::CxxVector(element) => {
+                symbol::join(&[&"std", &"vector", &element.to_mangled(types)])
+            }
         }
     }
 }
@@ -1473,6 +1491,11 @@ fn write_rust_vec_extern(out: &mut OutFile, key: NamedImplKey) {
     writeln!(
         out,
         "void cxxbridge1$rust_vec${}$set_len(::rust::Vec<{}> *ptr, ::std::size_t len) noexcept;",
+        instance, inner,
+    );
+    writeln!(
+        out,
+        "void cxxbridge1$rust_vec${}$truncate(::rust::Vec<{}> *ptr, ::std::size_t len) noexcept;",
         instance, inner,
     );
 }
@@ -1582,6 +1605,16 @@ fn write_rust_vec_impl(out: &mut OutFile, key: NamedImplKey) {
     writeln!(
         out,
         "  return cxxbridge1$rust_vec${}$set_len(this, len);",
+        instance,
+    );
+    writeln!(out, "}}");
+
+    writeln!(out, "template <>");
+    begin_function_definition(out);
+    writeln!(out, "void Vec<{}>::truncate(::std::size_t len) {{", inner,);
+    writeln!(
+        out,
+        "  return cxxbridge1$rust_vec${}$truncate(this, len);",
         instance,
     );
     writeln!(out, "}}");

@@ -3,6 +3,7 @@ load("@build_bazel_rules_android//android:rules.bzl", "android_library")
 load("@org_tensorflow//tensorflow/lite:build_def.bzl", "tflite_jni_binary")
 
 package(
+    default_applicable_licenses = ["//tensorflow_lite_support:license"],
     default_visibility = [
         "//tensorflow_lite_support:internal",
     ],
@@ -89,7 +90,7 @@ cc_test(
     ],
     deps = [
         ":edgetpu_coral_plugin",
-        "//tensorflow_lite_support/examples/task/vision/desktop/utils:image_utils",
+        "//tensorflow_lite_support/cc/task/vision/utils:image_utils",
         "@com_google_googletest//:gtest_main",
         "@org_tensorflow//tensorflow/lite:framework",
         "@org_tensorflow//tensorflow/lite/c:common",

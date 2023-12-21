@@ -1,10 +1,11 @@
-// Copyright (c) 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/live_caption/views/caption_bubble_model.h"
 
-#include "base/callback_forward.h"
+#include "base/functional/callback_forward.h"
+#include "base/metrics/histogram_functions.h"
 #include "components/live_caption/caption_bubble_context.h"
 #include "components/live_caption/views/caption_bubble.h"
 
@@ -16,8 +17,9 @@ constexpr int kMaxLines = 9;
 
 namespace captions {
 
-CaptionBubbleModel::CaptionBubbleModel(CaptionBubbleContext* context)
-    : context_(context) {
+CaptionBubbleModel::CaptionBubbleModel(CaptionBubbleContext* context,
+                                       OnCaptionBubbleClosedCallback callback)
+    : caption_bubble_closed_callback_(callback), context_(context) {
   DCHECK(context_);
 }
 
@@ -33,7 +35,7 @@ void CaptionBubbleModel::SetObserver(CaptionBubble* observer) {
   if (observer_) {
     observer_->OnTextChanged();
     observer_->OnErrorChanged(
-        CaptionBubbleErrorType::GENERIC, base::RepeatingClosure(),
+        CaptionBubbleErrorType::kGeneric, base::RepeatingClosure(),
         base::BindRepeating(
             [](CaptionBubbleErrorType error_type, bool checked) {}));
   }
@@ -55,20 +57,20 @@ void CaptionBubbleModel::SetPartialText(const std::string& partial_text) {
     has_error_ = false;
     if (observer_)
       observer_->OnErrorChanged(
-          CaptionBubbleErrorType::GENERIC, base::RepeatingClosure(),
+          CaptionBubbleErrorType::kGeneric, base::RepeatingClosure(),
           base::BindRepeating(
               [](CaptionBubbleErrorType error_type, bool checked) {}));
   }
 }
 
+void CaptionBubbleModel::CloseButtonPressed() {
+  caption_bubble_closed_callback_.Run(context_->GetSessionId());
+  Close();
+}
+
 void CaptionBubbleModel::Close() {
   is_closed_ = true;
   ClearText();
-}
-
-void CaptionBubbleModel::Open() {
-  is_closed_ = false;
-  OnTextChanged();
 }
 
 void CaptionBubbleModel::OnError(
@@ -77,9 +79,12 @@ void CaptionBubbleModel::OnError(
     OnDoNotShowAgainClickedCallback error_silenced_callback) {
   has_error_ = true;
   error_type_ = error_type;
-  if (observer_)
+  if (observer_) {
+    base::UmaHistogramEnumeration(
+        "Accessibility.LiveCaption.CaptionBubbleError", error_type);
     observer_->OnErrorChanged(error_type, std::move(error_clicked_callback),
                               std::move(error_silenced_callback));
+  }
 }
 
 void CaptionBubbleModel::ClearText() {

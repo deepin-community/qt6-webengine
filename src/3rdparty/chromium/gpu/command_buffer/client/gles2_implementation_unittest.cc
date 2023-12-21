@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -15,8 +15,8 @@
 
 #include <memory>
 
-#include "base/bind.h"
 #include "base/compiler_specific.h"
+#include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "gpu/command_buffer/client/client_test_helper.h"
 #include "gpu/command_buffer/client/gles2_cmd_helper.h"
@@ -3002,7 +3002,6 @@ TEST_F(GLES2ImplementationTest, GetString) {
   // GL_CHROMIUM_map_sub is hard coded into GLES2Implementation.
   const char* expected_str =
       "foobar "
-      "GL_CHROMIUM_image "
       "GL_CHROMIUM_map_sub "
       "GL_CHROMIUM_ordering_barrier "
       "GL_CHROMIUM_sync_point "
@@ -3598,7 +3597,7 @@ TEST_F(GLES2ImplementationTest, CreateAndConsumeTextureCHROMIUM) {
     GLbyte data[GL_MAILBOX_SIZE_CHROMIUM];
   };
 
-  Mailbox mailbox = Mailbox::Generate();
+  Mailbox mailbox = Mailbox::GenerateLegacyMailboxForTesting();
   Cmds expected;
   expected.cmd.Init(kTexturesStartId, mailbox.name);
   GLuint id = gl_->CreateAndConsumeTextureCHROMIUM(mailbox.name);
@@ -3614,25 +3613,8 @@ TEST_F(GLES2ImplementationTest, CreateAndTexStorage2DSharedImageCHROMIUM) {
 
   Mailbox mailbox = Mailbox::GenerateForSharedImage();
   Cmds expected;
-  expected.cmd.Init(kTexturesStartId, GL_NONE, mailbox.name);
+  expected.cmd.Init(kTexturesStartId, mailbox.name);
   GLuint id = gl_->CreateAndTexStorage2DSharedImageCHROMIUM(mailbox.name);
-  EXPECT_EQ(0, memcmp(&expected, commands_, sizeof(expected)));
-  EXPECT_EQ(kTexturesStartId, id);
-}
-
-TEST_F(GLES2ImplementationTest,
-       CreateAndTexStorage2DSharedImageWithInternalFormatCHROMIUM) {
-  struct Cmds {
-    cmds::CreateAndTexStorage2DSharedImageINTERNALImmediate cmd;
-    GLbyte data[GL_MAILBOX_SIZE_CHROMIUM];
-  };
-
-  Mailbox mailbox = Mailbox::GenerateForSharedImage();
-  const GLenum kFormat = GL_RGBA;
-  Cmds expected;
-  expected.cmd.Init(kTexturesStartId, kFormat, mailbox.name);
-  GLuint id = gl_->CreateAndTexStorage2DSharedImageWithInternalFormatCHROMIUM(
-      mailbox.name, kFormat);
   EXPECT_EQ(0, memcmp(&expected, commands_, sizeof(expected)));
   EXPECT_EQ(kTexturesStartId, id);
 }

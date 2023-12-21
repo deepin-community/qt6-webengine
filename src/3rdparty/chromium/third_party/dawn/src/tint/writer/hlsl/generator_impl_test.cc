@@ -19,50 +19,65 @@ namespace {
 
 using HlslGeneratorImplTest = TestHelper;
 
+TEST_F(HlslGeneratorImplTest, InvalidProgram) {
+    Diagnostics().add_error(diag::System::Writer, "make the program invalid");
+    ASSERT_FALSE(IsValid());
+    auto program = std::make_unique<Program>(std::move(*this));
+    ASSERT_FALSE(program->IsValid());
+    auto result = Generate(program.get(), Options{});
+    EXPECT_EQ(result.error, "input program is not valid");
+}
+
+TEST_F(HlslGeneratorImplTest, UnsupportedExtension) {
+    Enable(Source{{12, 34}}, builtin::Extension::kUndefined);
+
+    GeneratorImpl& gen = Build();
+
+    ASSERT_FALSE(gen.Generate());
+    EXPECT_EQ(gen.error(), R"(12:34 error: HLSL backend does not support extension 'undefined')");
+}
+
 TEST_F(HlslGeneratorImplTest, Generate) {
-  Func("my_func", ast::VariableList{}, ty.void_(), ast::StatementList{},
-       ast::AttributeList{});
+    Func("my_func", {}, ty.void_(), {});
 
-  GeneratorImpl& gen = Build();
+    GeneratorImpl& gen = Build();
 
-  ASSERT_TRUE(gen.Generate()) << gen.error();
-  EXPECT_EQ(gen.result(), R"(void my_func() {
+    ASSERT_TRUE(gen.Generate()) << gen.error();
+    EXPECT_EQ(gen.result(), R"(void my_func() {
 }
 )");
 }
 
 struct HlslBuiltinData {
-  ast::Builtin builtin;
-  const char* attribute_name;
+    builtin::BuiltinValue builtin;
+    const char* attribute_name;
 };
 inline std::ostream& operator<<(std::ostream& out, HlslBuiltinData data) {
-  out << data.builtin;
-  return out;
+    out << data.builtin;
+    return out;
 }
 using HlslBuiltinConversionTest = TestParamHelper<HlslBuiltinData>;
 TEST_P(HlslBuiltinConversionTest, Emit) {
-  auto params = GetParam();
-  GeneratorImpl& gen = Build();
+    auto params = GetParam();
+    GeneratorImpl& gen = Build();
 
-  EXPECT_EQ(gen.builtin_to_attribute(params.builtin),
-            std::string(params.attribute_name));
+    EXPECT_EQ(gen.builtin_to_attribute(params.builtin), std::string(params.attribute_name));
 }
 INSTANTIATE_TEST_SUITE_P(
     HlslGeneratorImplTest,
     HlslBuiltinConversionTest,
-    testing::Values(
-        HlslBuiltinData{ast::Builtin::kPosition, "SV_Position"},
-        HlslBuiltinData{ast::Builtin::kVertexIndex, "SV_VertexID"},
-        HlslBuiltinData{ast::Builtin::kInstanceIndex, "SV_InstanceID"},
-        HlslBuiltinData{ast::Builtin::kFrontFacing, "SV_IsFrontFace"},
-        HlslBuiltinData{ast::Builtin::kFragDepth, "SV_Depth"},
-        HlslBuiltinData{ast::Builtin::kLocalInvocationId, "SV_GroupThreadID"},
-        HlslBuiltinData{ast::Builtin::kLocalInvocationIndex, "SV_GroupIndex"},
-        HlslBuiltinData{ast::Builtin::kGlobalInvocationId,
-                        "SV_DispatchThreadID"},
-        HlslBuiltinData{ast::Builtin::kWorkgroupId, "SV_GroupID"},
-        HlslBuiltinData{ast::Builtin::kSampleIndex, "SV_SampleIndex"},
-        HlslBuiltinData{ast::Builtin::kSampleMask, "SV_Coverage"}));
+    testing::Values(HlslBuiltinData{builtin::BuiltinValue::kPosition, "SV_Position"},
+                    HlslBuiltinData{builtin::BuiltinValue::kVertexIndex, "SV_VertexID"},
+                    HlslBuiltinData{builtin::BuiltinValue::kInstanceIndex, "SV_InstanceID"},
+                    HlslBuiltinData{builtin::BuiltinValue::kFrontFacing, "SV_IsFrontFace"},
+                    HlslBuiltinData{builtin::BuiltinValue::kFragDepth, "SV_Depth"},
+                    HlslBuiltinData{builtin::BuiltinValue::kLocalInvocationId, "SV_GroupThreadID"},
+                    HlslBuiltinData{builtin::BuiltinValue::kLocalInvocationIndex, "SV_GroupIndex"},
+                    HlslBuiltinData{builtin::BuiltinValue::kGlobalInvocationId,
+                                    "SV_DispatchThreadID"},
+                    HlslBuiltinData{builtin::BuiltinValue::kWorkgroupId, "SV_GroupID"},
+                    HlslBuiltinData{builtin::BuiltinValue::kSampleIndex, "SV_SampleIndex"},
+                    HlslBuiltinData{builtin::BuiltinValue::kSampleMask, "SV_Coverage"}));
 
 }  // namespace
 }  // namespace tint::writer::hlsl

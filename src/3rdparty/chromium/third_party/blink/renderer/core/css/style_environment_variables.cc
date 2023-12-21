@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -26,20 +26,18 @@ void SetDefaultEnvironmentVariables(StyleEnvironmentVariables* instance) {
                         kSafeAreaInsetDefault);
   instance->SetVariable(UADefinedVariable::kSafeAreaInsetRight,
                         kSafeAreaInsetDefault);
-  if (RuntimeEnabledFeatures::VirtualKeyboardEnabled()) {
-    instance->SetVariable(UADefinedVariable::kKeyboardInsetTop,
-                          kKeyboardInsetDefault);
-    instance->SetVariable(UADefinedVariable::kKeyboardInsetLeft,
-                          kKeyboardInsetDefault);
-    instance->SetVariable(UADefinedVariable::kKeyboardInsetBottom,
-                          kKeyboardInsetDefault);
-    instance->SetVariable(UADefinedVariable::kKeyboardInsetRight,
-                          kKeyboardInsetDefault);
-    instance->SetVariable(UADefinedVariable::kKeyboardInsetWidth,
-                          kKeyboardInsetDefault);
-    instance->SetVariable(UADefinedVariable::kKeyboardInsetHeight,
-                          kKeyboardInsetDefault);
-  }
+  instance->SetVariable(UADefinedVariable::kKeyboardInsetTop,
+                        kKeyboardInsetDefault);
+  instance->SetVariable(UADefinedVariable::kKeyboardInsetLeft,
+                        kKeyboardInsetDefault);
+  instance->SetVariable(UADefinedVariable::kKeyboardInsetBottom,
+                        kKeyboardInsetDefault);
+  instance->SetVariable(UADefinedVariable::kKeyboardInsetRight,
+                        kKeyboardInsetDefault);
+  instance->SetVariable(UADefinedVariable::kKeyboardInsetWidth,
+                        kKeyboardInsetDefault);
+  instance->SetVariable(UADefinedVariable::kKeyboardInsetHeight,
+                        kKeyboardInsetDefault);
 }
 
 }  // namespace.
@@ -80,22 +78,16 @@ const AtomicString StyleEnvironmentVariables::GetVariableName(
     case UADefinedVariable::kSafeAreaInsetRight:
       return "safe-area-inset-right";
     case UADefinedVariable::kKeyboardInsetTop:
-      DCHECK(RuntimeEnabledFeatures::VirtualKeyboardEnabled());
       return "keyboard-inset-top";
     case UADefinedVariable::kKeyboardInsetLeft:
-      DCHECK(RuntimeEnabledFeatures::VirtualKeyboardEnabled());
       return "keyboard-inset-left";
     case UADefinedVariable::kKeyboardInsetBottom:
-      DCHECK(RuntimeEnabledFeatures::VirtualKeyboardEnabled());
       return "keyboard-inset-bottom";
     case UADefinedVariable::kKeyboardInsetRight:
-      DCHECK(RuntimeEnabledFeatures::VirtualKeyboardEnabled());
       return "keyboard-inset-right";
     case UADefinedVariable::kKeyboardInsetWidth:
-      DCHECK(RuntimeEnabledFeatures::VirtualKeyboardEnabled());
       return "keyboard-inset-width";
     case UADefinedVariable::kKeyboardInsetHeight:
-      DCHECK(RuntimeEnabledFeatures::VirtualKeyboardEnabled());
       return "keyboard-inset-height";
     case UADefinedVariable::kTitlebarAreaX:
       DCHECK(RuntimeEnabledFeatures::WebAppWindowControlsOverlayEnabled(
@@ -176,14 +168,9 @@ void StyleEnvironmentVariables::SetVariable(const AtomicString& name,
   Vector<CSSParserToken> tokens;
   tokens.AppendVector(tokenizer.TokenizeToEOF());
 
-  Vector<String> backing_strings;
-  backing_strings.push_back(value);
-
-  scoped_refptr<CSSVariableData> variable_data =
-      CSSVariableData::CreateResolved(
-          std::move(tokens), std::move(backing_strings),
-          false /* is_animation_tainted */, false /* has_font_units */,
-          false /* has_root_font_units*/, g_null_atom, WTF::TextEncoding());
+  scoped_refptr<CSSVariableData> variable_data = CSSVariableData::Create(
+      CSSTokenizedValue{CSSParserTokenRange{tokens}, StringView{value}},
+      false /* is_animation_tainted */, false /* needs_variable_resolution */);
   data_.Set(name, std::move(variable_data));
   InvalidateVariable(name);
 }
@@ -194,26 +181,23 @@ void StyleEnvironmentVariables::SetVariable(const AtomicString& name,
                                             const String& value) {
   base::CheckedNumeric<unsigned> first_dimension_size = first_dimension;
   ++first_dimension_size;
-  if (!first_dimension_size.IsValid())
+  if (!first_dimension_size.IsValid()) {
     return;
+  }
 
   base::CheckedNumeric<unsigned> second_dimension_size = second_dimension;
   ++second_dimension_size;
-  if (!second_dimension_size.IsValid())
+  if (!second_dimension_size.IsValid()) {
     return;
+  }
 
   CSSTokenizer tokenizer(value);
   Vector<CSSParserToken> tokens;
   tokens.AppendVector(tokenizer.TokenizeToEOF());
 
-  Vector<String> backing_strings;
-  backing_strings.push_back(value);
-
-  scoped_refptr<CSSVariableData> variable_data =
-      CSSVariableData::CreateResolved(
-          std::move(tokens), std::move(backing_strings),
-          false /* is_animation_tainted */, false /* has_font_units */,
-          false /* has_root_font_units*/, g_null_atom, WTF::TextEncoding());
+  scoped_refptr<CSSVariableData> variable_data = CSSVariableData::Create(
+      CSSTokenizedValue{CSSParserTokenRange{tokens}, StringView{value}},
+      false /* is_animation_tainted */, false /* needs_variable_resolution */);
 
   TwoDimensionVariableValues* values_to_set = nullptr;
   auto it = two_dimension_data_.find(name);
@@ -224,8 +208,9 @@ void StyleEnvironmentVariables::SetVariable(const AtomicString& name,
     values_to_set = &it->value;
   }
 
-  if (first_dimension_size.ValueOrDie() > values_to_set->size())
+  if (first_dimension_size.ValueOrDie() > values_to_set->size()) {
     values_to_set->Grow(first_dimension_size.ValueOrDie());
+  }
 
   if (second_dimension_size.ValueOrDie() >
       (*values_to_set)[first_dimension].size()) {
@@ -272,20 +257,24 @@ CSSVariableData* StyleEnvironmentVariables::ResolveVariable(
     WTF::Vector<unsigned> indices) {
   if (indices.size() == 0u) {
     auto result = data_.find(name);
-    if (result == data_.end() && parent_)
+    if (result == data_.end() && parent_) {
       return parent_->ResolveVariable(name, std::move(indices));
-    if (result == data_.end())
+    }
+    if (result == data_.end()) {
       return nullptr;
+    }
     return result->value.get();
   } else if (indices.size() == 2u) {
     auto result = two_dimension_data_.find(name);
-    if (result == two_dimension_data_.end() && parent_)
+    if (result == two_dimension_data_.end() && parent_) {
       return parent_->ResolveVariable(name, std::move(indices));
+    }
 
     unsigned first_dimension = indices[0];
     unsigned second_dimension = indices[1];
-    if (result == two_dimension_data_.end())
+    if (result == two_dimension_data_.end()) {
       return nullptr;
+    }
     if (first_dimension >= result->value.size() ||
         second_dimension >= result->value[first_dimension].size()) {
       return nullptr;
@@ -301,8 +290,9 @@ void StyleEnvironmentVariables::DetachFromParent() {
 
   // Remove any reference the |parent| has to |this|.
   auto it = parent_->children_.Find(this);
-  if (it != kNotFound)
+  if (it != kNotFound) {
     parent_->children_.EraseAt(it);
+  }
 
   parent_ = nullptr;
 }
@@ -319,8 +309,9 @@ void StyleEnvironmentVariables::ClearForTesting() {
   data_.clear();
 
   // If we are the root then we should re-apply the default variables.
-  if (!parent_)
+  if (!parent_) {
     SetDefaultEnvironmentVariables(this);
+  }
 }
 
 void StyleEnvironmentVariables::BindToParent(
@@ -341,8 +332,9 @@ void StyleEnvironmentVariables::ParentInvalidatedVariable(
 }
 
 void StyleEnvironmentVariables::InvalidateVariable(const AtomicString& name) {
-  for (auto& it : children_)
+  for (auto& it : children_) {
     it->ParentInvalidatedVariable(name);
+  }
 }
 
 }  // namespace blink

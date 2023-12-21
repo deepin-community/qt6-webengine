@@ -1,21 +1,21 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import 'chrome://resources/cr_elements/hidden_style_css.m.js';
-import 'chrome://resources/cr_elements/cr_icon_button/cr_icon_button.m.js';
-import 'chrome://resources/cr_elements/shared_vars_css.m.js';
-import 'chrome://resources/cr_elements/shared_style_css.m.js';
-import 'chrome://resources/cr_elements/cr_checkbox/cr_checkbox.m.js';
+import 'chrome://resources/cr_elements/cr_hidden_style.css.js';
+import 'chrome://resources/cr_elements/cr_icon_button/cr_icon_button.js';
+import 'chrome://resources/cr_elements/cr_shared_vars.css.js';
+import 'chrome://resources/cr_elements/cr_shared_style.css.js';
+import 'chrome://resources/cr_elements/cr_checkbox/cr_checkbox.js';
 import 'chrome://resources/polymer/v3_0/iron-icon/iron-icon.js';
-import './icons.js';
+import './icons.html.js';
 import './profile_card.js';
-import './profile_picker_shared_css.js';
+import './profile_picker_shared.css.js';
 import './strings.m.js';
 
-import {CrCheckboxElement} from 'chrome://resources/cr_elements/cr_checkbox/cr_checkbox.m.js';
-import {loadTimeData} from 'chrome://resources/js/load_time_data.m.js';
-import {WebUIListenerMixin} from 'chrome://resources/js/web_ui_listener_mixin.js';
+import {CrCheckboxElement} from 'chrome://resources/cr_elements/cr_checkbox/cr_checkbox.js';
+import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
+import {WebUiListenerMixin} from 'chrome://resources/cr_elements/web_ui_listener_mixin.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {ManageProfilesBrowserProxy, ManageProfilesBrowserProxyImpl, ProfileState} from './manage_profiles_browser_proxy.js';
@@ -35,7 +35,7 @@ export interface ProfilePickerMainViewElement {
 }
 
 const ProfilePickerMainViewElementBase =
-    WebUIListenerMixin(NavigationMixin(PolymerElement));
+    WebUiListenerMixin(NavigationMixin(PolymerElement));
 
 export class ProfilePickerMainViewElement extends
     ProfilePickerMainViewElementBase {
@@ -73,18 +73,27 @@ export class ProfilePickerMainViewElement extends
         type: Boolean,
         value() {
           return loadTimeData.getBoolean('askOnStartup');
-        }
+        },
+      },
+
+      isTangibleSyncEnabled_: {
+        type: Boolean,
+        value() {
+          return loadTimeData.getBoolean('isTangibleSyncEnabled');
+        },
       },
     };
   }
 
-  private profilesList_: Array<ProfileState>;
+  private profilesList_: ProfileState[];
   private profilesListLoaded_: boolean;
   private hideAskOnStartup_: boolean;
   private askOnStartup_: boolean;
   private manageProfilesBrowserProxy_: ManageProfilesBrowserProxy =
       ManageProfilesBrowserProxyImpl.getInstance();
   private resizeObserver_: ResizeObserver|null = null;
+  private previousRoute_: Routes|null = null;
+  private isTangibleSyncEnabled_: boolean;
 
   override ready() {
     super.ready();
@@ -95,14 +104,16 @@ export class ProfilePickerMainViewElement extends
     if (!isProfileCreationAllowed()) {
       this.$.addProfile.style.display = 'none';
     }
+
+    this.addEventListener('view-enter-finish', this.onViewEnterFinish_);
   }
 
   override connectedCallback() {
     super.connectedCallback();
     this.addResizeObserver_();
-    this.addWebUIListener(
+    this.addWebUiListener(
         'profiles-list-changed', this.handleProfilesListChanged_.bind(this));
-    this.addWebUIListener(
+    this.addWebUiListener(
         'profile-removed', this.handleProfileRemoved_.bind(this));
     this.manageProfilesBrowserProxy_.initializeMainView();
   }
@@ -110,6 +121,21 @@ export class ProfilePickerMainViewElement extends
   override disconnectedCallback() {
     super.disconnectedCallback();
     this.resizeObserver_!.disconnect();
+  }
+
+  override onRouteChange(route: Routes) {
+    if (route === Routes.MAIN) {
+      return;
+    }
+    this.previousRoute_ = route;
+  }
+
+  private onViewEnterFinish_() {
+    if (this.previousRoute_ !== Routes.NEW_PROFILE) {
+      return;
+    }
+    // Focus the 'Add' button if coming back from the Add Profile flow.
+    this.$.addProfile.focus();
   }
 
   private addResizeObserver_() {
@@ -136,7 +162,7 @@ export class ProfilePickerMainViewElement extends
   /**
    * Handler for when the profiles list are updated.
    */
-  private handleProfilesListChanged_(profilesList: Array<ProfileState>) {
+  private handleProfilesListChanged_(profilesList: ProfileState[]) {
     this.profilesListLoaded_ = true;
     this.profilesList_ = profilesList;
   }
@@ -180,6 +206,10 @@ export class ProfilePickerMainViewElement extends
   private computeHideAskOnStartup_(): boolean {
     return !isAskOnStartupAllowed() || !this.profilesList_ ||
         this.profilesList_.length < 2;
+  }
+
+  private getTangibleSyncStyleClass_() {
+    return this.isTangibleSyncEnabled_ ? 'tangible-sync-style' : '';
   }
 }
 

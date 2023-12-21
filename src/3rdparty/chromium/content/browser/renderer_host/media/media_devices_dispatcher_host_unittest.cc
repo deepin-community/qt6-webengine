@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,13 +11,13 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/command_line.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/task/single_thread_task_runner.h"
 #include "build/build_config.h"
 #include "content/browser/media/media_devices_permission_checker.h"
 #include "content/browser/renderer_host/media/in_process_video_capture_provider.h"
@@ -124,11 +124,11 @@ class MediaDevicesDispatcherHostTest
     auto video_capture_provider =
         std::make_unique<InProcessVideoCaptureProvider>(
             std::move(video_capture_system),
-            base::ThreadTaskRunnerHandle::Get(), kIgnoreLogMessageCB);
+            base::SingleThreadTaskRunner::GetCurrentDefault(),
+            kIgnoreLogMessageCB);
 
     media_stream_manager_ = std::make_unique<MediaStreamManager>(
-        audio_system_.get(), audio_manager_->GetTaskRunner(),
-        std::move(video_capture_provider));
+        audio_system_.get(), std::move(video_capture_provider));
     host_ = std::make_unique<MediaDevicesDispatcherHost>(
         kProcessId, kRenderId, media_stream_manager_.get());
     media_stream_manager_->media_devices_manager()
@@ -158,6 +158,15 @@ class MediaDevicesDispatcherHostTest
         {gfx::Size(1020, 780), 30.0, media::PIXEL_FORMAT_I420},
         {gfx::Size(1920, 1080), 20.0, media::PIXEL_FORMAT_I420},
     };
+    expected_video_capture_formats_ = {
+        media::VideoCaptureFormat(gfx::Size(640, 480), 30.0,
+                                  media::PIXEL_FORMAT_I420),
+        media::VideoCaptureFormat(gfx::Size(800, 600), 30.0,
+                                  media::PIXEL_FORMAT_I420),
+        media::VideoCaptureFormat(gfx::Size(1020, 780), 30.0,
+                                  media::PIXEL_FORMAT_I420),
+        media::VideoCaptureFormat(gfx::Size(1920, 1080), 20.0,
+                                  media::PIXEL_FORMAT_I420)};
     // A video device that does not report any formats
     fake_video_devices[1].device_id = kNoFormatsVideoDeviceID;
     ASSERT_TRUE(fake_video_devices[1].supported_formats.empty());
@@ -234,6 +243,11 @@ class MediaDevicesDispatcherHostTest
     expected_set_capture_handle_config_->config = std::move(config);
   }
 
+  void ExpectVideoCaptureFormats(
+      const std::vector<media::VideoCaptureFormat>& formats) {
+    expected_video_capture_formats_ = formats;
+  }
+
   void VideoInputCapabilitiesCallback(
       std::vector<blink::mojom::VideoInputDeviceCapabilitiesPtr> capabilities) {
     MockVideoInputCapabilitiesCallback();
@@ -290,15 +304,7 @@ class MediaDevicesDispatcherHostTest
   void AvailableVideoInputDeviceFormatsCallback(
       const std::vector<media::VideoCaptureFormat>& formats) {
     MockAvailableVideoInputDeviceFormatsCallback();
-    EXPECT_EQ(formats.size(), 4U);
-    EXPECT_EQ(formats[0], media::VideoCaptureFormat(gfx::Size(640, 480), 30.0,
-                                                    media::PIXEL_FORMAT_I420));
-    EXPECT_EQ(formats[1], media::VideoCaptureFormat(gfx::Size(800, 600), 30.0,
-                                                    media::PIXEL_FORMAT_I420));
-    EXPECT_EQ(formats[2], media::VideoCaptureFormat(gfx::Size(1020, 780), 30.0,
-                                                    media::PIXEL_FORMAT_I420));
-    EXPECT_EQ(formats[3], media::VideoCaptureFormat(gfx::Size(1920, 1080), 20.0,
-                                                    media::PIXEL_FORMAT_I420));
+    EXPECT_EQ(formats, expected_video_capture_formats_);
   }
 
  protected:
@@ -497,6 +503,7 @@ class MediaDevicesDispatcherHostTest
   };
   absl::optional<ExpectedCaptureHandleConfig>
       expected_set_capture_handle_config_;
+  std::vector<media::VideoCaptureFormat> expected_video_capture_formats_;
 };
 
 TEST_P(MediaDevicesDispatcherHostTest, EnumerateAudioInputDevices) {
@@ -670,6 +677,40 @@ TEST_P(MediaDevicesDispatcherHostTest,
   EXPECT_CALL(*this, MockOnBadMessage(_, _)).Times(0);
   ExpectOnCaptureHandleConfigAccepted(kProcessId, kRenderId, config->Clone());
   host_->SetCaptureHandleConfig(std::move(config));
+}
+
+TEST_P(MediaDevicesDispatcherHostTest,
+       GetAvailableVideoInputDeviceFormatsUnfoundDevice) {
+  base::RunLoop run_loop;
+  // Expect an empty list of supported formats for an unfound device.
+  ExpectVideoCaptureFormats({});
+  EXPECT_CALL(*this, MockAvailableVideoInputDeviceFormatsCallback())
+      .WillOnce(InvokeWithoutArgs([&run_loop]() { run_loop.Quit(); }));
+  MediaDeviceSaltAndOrigin salt_and_origin =
+      GetMediaDeviceSaltAndOrigin(-1, -1);
+  host_->GetAvailableVideoInputDeviceFormats(
+      "UnknownHashedDeviceId",
+      base::BindOnce(&MediaDevicesDispatcherHostTest::
+                         AvailableVideoInputDeviceFormatsCallback,
+                     base::Unretained(this)));
+  run_loop.Run();
+}
+
+TEST_P(MediaDevicesDispatcherHostTest,
+       GetAllVideoInputDeviceFormatsUnfoundDevice) {
+  base::RunLoop run_loop;
+  // Expect an empty list of supported formats for an unfound device.
+  ExpectVideoCaptureFormats({});
+  EXPECT_CALL(*this, MockAvailableVideoInputDeviceFormatsCallback())
+      .WillOnce(InvokeWithoutArgs([&run_loop]() { run_loop.Quit(); }));
+  MediaDeviceSaltAndOrigin salt_and_origin =
+      GetMediaDeviceSaltAndOrigin(-1, -1);
+  host_->GetAllVideoInputDeviceFormats(
+      "UnknownHashedDeviceId",
+      base::BindOnce(&MediaDevicesDispatcherHostTest::
+                         AvailableVideoInputDeviceFormatsCallback,
+                     base::Unretained(this)));
+  run_loop.Run();
 }
 
 INSTANTIATE_TEST_SUITE_P(All,

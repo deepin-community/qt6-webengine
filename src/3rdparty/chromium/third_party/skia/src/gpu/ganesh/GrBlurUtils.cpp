@@ -7,17 +7,15 @@
 
 #include "src/gpu/ganesh/GrBlurUtils.h"
 
-#if SK_GPU_V1
-
 #include "include/core/SkBitmap.h"
 #include "include/core/SkColorSpace.h"
 #include "include/core/SkPaint.h"
 #include "include/gpu/GrDirectContext.h"
 #include "include/gpu/GrRecordingContext.h"
+#include "src/base/SkTLazy.h"
 #include "src/core/SkDraw.h"
 #include "src/core/SkMaskFilterBase.h"
 #include "src/core/SkMatrixProvider.h"
-#include "src/core/SkTLazy.h"
 #include "src/gpu/ganesh/GrCaps.h"
 #include "src/gpu/ganesh/GrDirectContextPriv.h"
 #include "src/gpu/ganesh/GrFixedClip.h"
@@ -29,9 +27,9 @@
 #include "src/gpu/ganesh/GrThreadSafeCache.h"
 #include "src/gpu/ganesh/GrUtil.h"
 #include "src/gpu/ganesh/SkGr.h"
+#include "src/gpu/ganesh/SurfaceDrawContext.h"
 #include "src/gpu/ganesh/effects/GrTextureEffect.h"
 #include "src/gpu/ganesh/geometry/GrStyledShape.h"
-#include "src/gpu/ganesh/v1/SurfaceDrawContext_v1.h"
 
 static bool clip_bounds_quick_reject(const SkIRect& clipBounds, const SkIRect& rect) {
     return clipBounds.isEmpty() || rect.isEmpty() || !SkIRect::Intersects(clipBounds, rect);
@@ -578,7 +576,12 @@ void GrBlurUtils::drawShapeWithMaskFilter(GrRecordingContext* rContext,
     }
 
     GrPaint grPaint;
-    if (!SkPaintToGrPaint(rContext, sdc->colorInfo(), paint, matrixProvider, &grPaint)) {
+    if (!SkPaintToGrPaint(rContext,
+                          sdc->colorInfo(),
+                          paint,
+                          matrixProvider.localToDevice(),
+                          sdc->surfaceProps(),
+                          &grPaint)) {
         return;
     }
 
@@ -592,24 +595,3 @@ void GrBlurUtils::drawShapeWithMaskFilter(GrRecordingContext* rContext,
                        GrStyledShape(shape));
     }
 }
-
-#else // SK_GPU_V1
-
-void GrBlurUtils::drawShapeWithMaskFilter(GrRecordingContext*,
-                                          skgpu::v1::SurfaceDrawContext*,
-                                          const GrClip*,
-                                          const GrStyledShape&,
-                                          GrPaint&&,
-                                          const SkMatrix& viewMatrix,
-                                          const SkMaskFilter*) {
-}
-
-void GrBlurUtils::drawShapeWithMaskFilter(GrRecordingContext*,
-                                          skgpu::v1::SurfaceDrawContext*,
-                                          const GrClip*,
-                                          const SkPaint&,
-                                          const SkMatrixProvider&,
-                                          const GrStyledShape&) {
-}
-
-#endif // SK_GPU_V1

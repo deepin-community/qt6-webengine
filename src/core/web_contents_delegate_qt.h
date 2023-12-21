@@ -81,7 +81,7 @@ public:
     content::WebContents *OpenURLFromTab(content::WebContents *source, const content::OpenURLParams &params) override;
     void NavigationStateChanged(content::WebContents* source, content::InvalidateTypes changed_flags) override;
     void AddNewContents(content::WebContents *source, std::unique_ptr<content::WebContents> new_contents, const GURL &target_url,
-                        WindowOpenDisposition disposition, const gfx::Rect &initial_pos, bool user_gesture, bool *was_blocked) override;
+                        WindowOpenDisposition disposition, const blink::mojom::WindowFeatures &window_features, bool user_gesture, bool *was_blocked) override;
     void CloseContents(content::WebContents *source) override;
     void LoadProgressChanged(double progress) override;
     bool HandleKeyboardEvent(content::WebContents *source, const content::NativeWebKeyboardEvent &event) override;
@@ -123,12 +123,13 @@ public:
     void DidStopLoading() override;
     void DidFailLoad(content::RenderFrameHost* render_frame_host, const GURL& validated_url, int error_code) override;
     void DidFinishLoad(content::RenderFrameHost *render_frame_host, const GURL &validated_url) override;
-    void BeforeUnloadFired(bool proceed, const base::TimeTicks& proceed_time) override;
-    void OnVisibilityChanged(content::Visibility visibility) override;
     void ActivateContents(content::WebContents* contents) override;
     void ResourceLoadComplete(content::RenderFrameHost* render_frame_host,
                               const content::GlobalRequestID& request_id,
                               const blink::mojom::ResourceLoadInfo& resource_load_info) override;
+    void InnerWebContentsAttached(content::WebContents *inner_web_contents,
+                                  content::RenderFrameHost *render_frame_host,
+                                  bool is_full_page) override;
 
     void didFailLoad(const QUrl &url, int errorCode, const QString &errorDescription);
     void overrideWebPreferences(content::WebContents *, blink::web_pref::WebPreferences*);
@@ -138,8 +139,8 @@ public:
     void launchExternalURL(const QUrl &url, ui::PageTransition page_transition, bool is_main_frame, bool has_user_gesture);
     FindTextHelper *findTextHelper();
 
-    void setSavePageInfo(const SavePageInfo &spi) { m_savePageInfo = spi; }
-    const SavePageInfo &savePageInfo() { return m_savePageInfo; }
+    void setSavePageInfo(SavePageInfo *spi) { m_savePageInfo.reset(spi); }
+    SavePageInfo *savePageInfo() { return m_savePageInfo.get(); }
 
     WebEngineSettings *webEngineSettings() const;
     WebContentsAdapter *webContentsAdapter() const;
@@ -150,8 +151,10 @@ public:
     using LoadingState = WebContentsAdapterClient::LoadingState;
     LoadingState loadingState() const { return m_loadingState; }
 
-    void addDevices(const blink::MediaStreamDevices &devices);
-    void removeDevices(const blink::MediaStreamDevices &devices);
+    void addDevices(const blink::mojom::StreamDevices &devices);
+    void removeDevices(const blink::mojom::StreamDevices &devices);
+    void addDevice(const blink::MediaStreamDevice &device);
+    void removeDevice(const blink::MediaStreamDevice &device);
 
     bool isCapturingAudio() const { return m_audioStreamCount > 0; }
     bool isCapturingVideo() const { return m_videoStreamCount > 0; }
@@ -177,7 +180,7 @@ private:
 
     WebContentsAdapterClient *m_viewClient;
     QScopedPointer<FindTextHelper> m_findTextHelper;
-    SavePageInfo m_savePageInfo;
+    std::unique_ptr<SavePageInfo> m_savePageInfo;
     QSharedPointer<FilePickerController> m_filePickerController;
     LoadingState m_loadingState;
     FrameFocusedObserver m_frameFocusedObserver;
@@ -198,6 +201,7 @@ private:
         int errorCode = 0, errorDomain = 0;
         QString errorDescription;
         bool triggersErrorPage = false;
+        QMultiMap<QByteArray, QByteArray> responseHeaders;
         void clear() { *this = LoadingInfo(); }
     } m_loadingInfo;
 

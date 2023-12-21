@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,7 +12,9 @@
 #include "base/memory/raw_ptr.h"
 #include "base/strings/string_piece_forward.h"
 #include "base/time/time.h"
+#include "base/values.h"
 #include "base/version.h"
+#include "components/user_manager/common_types.h"
 #include "components/user_manager/user_manager_export.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 
@@ -20,10 +22,6 @@ class AccountId;
 enum class AccountType;
 class PrefRegistrySimple;
 class PrefService;
-
-namespace base {
-class Value;
-}
 
 namespace user_manager {
 
@@ -125,6 +123,8 @@ class USER_MANAGER_EXPORT KnownUser final {
                          const std::string& id,
                          const AccountType& account_type);
 
+  AccountId GetAccountIdByCryptohomeId(const CryptohomeId& cryptohome_id);
+
   // Saves |account_id| into known users. Tries to commit the change on disk.
   // Use only if account_id is not yet in the known user list. Important if
   // Chrome crashes shortly after starting a session. Cryptohome should be able
@@ -187,10 +187,11 @@ class USER_MANAGER_EXPORT KnownUser final {
   // Setter and getter for the information about challenge-response keys that
   // can be used by this user to authenticate. The getter returns a null value
   // when the property isn't present. For the format of the value, refer to
-  // ash/components/login/auth/challenge_response/known_user_pref_utils.h.
-  void SetChallengeResponseKeys(const AccountId& account_id, base::Value value);
+  // chromeos/ash/components/login/auth/challenge_response/known_user_pref_utils.h.
+  void SetChallengeResponseKeys(const AccountId& account_id,
+                                base::Value::List value);
 
-  base::Value GetChallengeResponseKeys(const AccountId& account_id);
+  base::Value::List GetChallengeResponseKeys(const AccountId& account_id);
 
   void SetLastOnlineSignin(const AccountId& account_id, base::Time time);
 
@@ -236,6 +237,10 @@ class USER_MANAGER_EXPORT KnownUser final {
 
   const std::string* GetPasswordSyncToken(const AccountId& account_id) const;
 
+  // Removes password sync token associated with the user. Can be relevant e.g.
+  // if user switches from SAML to GAIA.
+  void ClearPasswordSyncToken(const AccountId& account_id);
+
   // Saves the current major version as the version in which the user completed
   // the onboarding flow.
   void SetOnboardingCompletedVersion(
@@ -270,7 +275,7 @@ class USER_MANAGER_EXPORT KnownUser final {
 
   // Performs a lookup of properties associated with |account_id|. Returns
   // nullptr if not found.
-  const base::Value* FindPrefs(const AccountId& account_id) const;
+  const base::Value::Dict* FindPrefs(const AccountId& account_id) const;
 
   // Removes all user preferences associated with |account_id|.
   // Not exported as code should not be calling this outside this component
@@ -288,26 +293,6 @@ class USER_MANAGER_EXPORT KnownUser final {
   const base::raw_ptr<PrefService> local_state_;
 };
 
-// Legacy interface of KnownUsersDatabase.
-// TODO(https://crbug.com/1150434): Migrate callers and remove this.
-namespace known_user {
-// Methods for storage/retrieval of per-user properties in Local State.
-
-// Returns the list of known AccountIds.
-// TODO(https://crbug.com/1150434): Deprecated, use
-// KnownUser::GetKnownAccountIds instead.
-std::vector<AccountId> USER_MANAGER_EXPORT GetKnownAccountIds();
-
-// This call forms full account id of a known user by email and (optionally)
-// gaia_id.
-// This is a temporary call while migrating to AccountId.
-// TODO(https://crbug.com/1150434): Deprecated, use KnownUser::GetAccountId
-// instead.
-AccountId USER_MANAGER_EXPORT GetAccountId(const std::string& user_email,
-                                           const std::string& id,
-                                           const AccountType& account_type);
-
-}  // namespace known_user
 }  // namespace user_manager
 
 #endif  // COMPONENTS_USER_MANAGER_KNOWN_USER_H_

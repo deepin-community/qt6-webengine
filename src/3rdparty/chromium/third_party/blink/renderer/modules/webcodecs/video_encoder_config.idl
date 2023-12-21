@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -24,6 +24,7 @@ dictionary VideoEncoderConfig {
   [EnforceRange] unsigned long displayHeight;
 
   AvcEncoderConfig avc;
+  HevcEncoderConfig hevc;
 
   // Same as in WebRTC SVC (https://w3c.github.io/webrtc-svc/)
   DOMString scalabilityMode;

@@ -1,4 +1,4 @@
-// Copyright 2017 PDFium Authors. All rights reserved.
+// Copyright 2017 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -301,9 +301,6 @@ class CJS_Document final : public CJS_Object, public Observable {
                         const std::vector<v8::Local<v8::Value>>& params);
 
   CJS_Result getPropertyInternal(CJS_Runtime* pRuntime,
-                                 const ByteString& propName);
-  CJS_Result setPropertyInternal(CJS_Runtime* pRuntime,
-                                 v8::Local<v8::Value> vp,
                                  const ByteString& propName);
 
   CPDF_InteractiveForm* GetCoreInteractiveForm();

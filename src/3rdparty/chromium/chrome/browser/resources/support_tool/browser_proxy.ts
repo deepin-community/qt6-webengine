@@ -1,29 +1,40 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import {sendWithPromise} from 'chrome://resources/js/cr.m.js';
+import {sendWithPromise} from 'chrome://resources/js/cr.js';
 
-export type DataCollectorItem = {
-  name: string,
-  isIncluded: boolean,
-  protoEnum: number,
-};
+export interface DataCollectorItem {
+  name: string;
+  isIncluded: boolean;
+  protoEnum: number;
+}
 
-export type IssueDetails = {
-  caseId: string,
-  emailAddress: string,
-  issueDescription: string,
-};
+export interface IssueDetails {
+  caseId: string;
+  emailAddress: string;
+  issueDescription: string;
+}
 
-export type PIIDataItem = {
-  piiTypeDescription: string,
-  piiType: number,
-  detectedData: string,
-  count: number,
-  keep: boolean,
-  expandDetails: boolean,
-};
+export interface PiiDataItem {
+  piiTypeDescription: string;
+  piiType: number;
+  detectedData: string;
+  count: number;
+  keep: boolean;
+  expandDetails: boolean;
+}
+
+export interface StartDataCollectionResult {
+  success: boolean;
+  errorMessage: string;
+}
+
+export interface UrlGenerationResult {
+  success: boolean;
+  url: string;
+  errorMessage: string;
+}
 
 export interface BrowserProxy {
   /**
@@ -36,14 +47,19 @@ export interface BrowserProxy {
   getAllDataCollectors(): Promise<DataCollectorItem[]>;
 
   startDataCollection(
-      issueDetails: IssueDetails,
-      selectedDataCollectors: DataCollectorItem[]): void;
+      issueDetails: IssueDetails, selectedDataCollectors: DataCollectorItem[],
+      screenshotBase64: string): Promise<StartDataCollectionResult>;
+
+  takeScreenshot(): void;
 
   cancelDataCollection(): void;
 
-  startDataExport(piiItems: PIIDataItem[]): void;
+  startDataExport(piiItems: PiiDataItem[]): void;
 
   showExportedDataInFolder(): void;
+
+  generateCustomizedUrl(caseId: string, dataCollectors: DataCollectorItem[]):
+      Promise<UrlGenerationResult>;
 }
 
 export class BrowserProxyImpl implements BrowserProxy {
@@ -59,21 +75,31 @@ export class BrowserProxyImpl implements BrowserProxy {
     return sendWithPromise('getAllDataCollectors');
   }
 
+  takeScreenshot() {
+    chrome.send('takeScreenshot');
+  }
+
   startDataCollection(
-      issueDetails: IssueDetails, dataCollectors: DataCollectorItem[]) {
-    chrome.send('startDataCollection', [issueDetails, dataCollectors]);
+      issueDetails: IssueDetails, dataCollectors: DataCollectorItem[],
+      screenshotBase64: string) {
+    return sendWithPromise(
+        'startDataCollection', issueDetails, dataCollectors, screenshotBase64);
   }
 
   cancelDataCollection() {
     chrome.send('cancelDataCollection');
   }
 
-  startDataExport(piiItems: PIIDataItem[]) {
+  startDataExport(piiItems: PiiDataItem[]) {
     chrome.send('startDataExport', [piiItems]);
   }
 
   showExportedDataInFolder() {
     chrome.send('showExportedDataInFolder');
+  }
+
+  generateCustomizedUrl(caseId: string, dataCollectors: DataCollectorItem[]) {
+    return sendWithPromise('generateCustomizedUrl', caseId, dataCollectors);
   }
 
   static getInstance(): BrowserProxy {

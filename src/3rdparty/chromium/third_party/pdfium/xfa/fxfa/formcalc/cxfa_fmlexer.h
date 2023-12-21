@@ -1,4 +1,4 @@
-// Copyright 2014 PDFium Authors. All rights reserved.
+// Copyright 2014 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -85,18 +85,23 @@ class CXFA_FMLexer {
   CPPGC_STACK_ALLOCATED();  // Raw pointers allowed.
 
  public:
-  struct Token {
+  class Token {
+   public:
     Token();
     explicit Token(XFA_FM_TOKEN token);
+    Token(XFA_FM_TOKEN token, WideStringView str);
     Token(const Token& that);
     ~Token();
 
+    XFA_FM_TOKEN GetType() const { return m_type; }
+    WideStringView GetString() const { return m_string; }
 #ifndef NDEBUG
     WideString ToDebugString() const;
 #endif  // NDEBUG
 
+   private:
+    XFA_FM_TOKEN m_type = TOKreserver;
     WideStringView m_string;
-    XFA_FM_TOKEN m_type;
   };
 
   explicit CXFA_FMLexer(WideStringView wsFormcalc);

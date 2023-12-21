@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -61,7 +61,10 @@ LoginDatabase::EncryptionResult LoginDatabase::EncryptedString(
 
   OSStatus status = SecItemAdd(attributes, NULL);
   if (status != errSecSuccess) {
-    NOTREACHED() << "Unable to save password in keychain: " << status;
+    // TODO(crbug.com/1091121): This was a NOTREACHED() that would trigger when
+    // sync runs on a locked device. When the linked bug is resolved it may be
+    // possible to turn the LOG(ERROR) back into a NOTREACHED().
+    LOG(ERROR) << "Unable to save password in keychain: " << status;
     if (status == errSecDuplicateItem || status == errSecDecode)
       return ENCRYPTION_RESULT_ITEM_FAILURE;
     else

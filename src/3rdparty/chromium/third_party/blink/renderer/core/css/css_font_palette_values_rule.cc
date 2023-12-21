@@ -1,4 +1,4 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -44,7 +44,7 @@ String CSSFontPaletteValuesRule::cssText() const {
   }
 
   String override_colors = overrideColors();
-  if (!override_colors.IsEmpty()) {
+  if (!override_colors.empty()) {
     result.Append(" override-colors: ");
     result.Append(override_colors);
     result.Append(";");
@@ -64,20 +64,23 @@ String CSSFontPaletteValuesRule::name() const {
 }
 
 String CSSFontPaletteValuesRule::fontFamily() const {
-  if (const CSSValue* value = font_palette_values_rule_->GetFontFamily())
+  if (const CSSValue* value = font_palette_values_rule_->GetFontFamily()) {
     return value->CssText();
+  }
   return String();
 }
 
 String CSSFontPaletteValuesRule::basePalette() const {
-  if (const CSSValue* value = font_palette_values_rule_->GetBasePalette())
+  if (const CSSValue* value = font_palette_values_rule_->GetBasePalette()) {
     return value->CssText();
+  }
   return String();
 }
 
 String CSSFontPaletteValuesRule::overrideColors() const {
-  if (const CSSValue* value = font_palette_values_rule_->GetOverrideColors())
+  if (const CSSValue* value = font_palette_values_rule_->GetOverrideColors()) {
     return value->CssText();
+  }
   return String();
 }
 

@@ -8,6 +8,8 @@
 @types/dom-mediacapture-record
 @types/dom-mediacapture-record/*.d.ts
 @types/dom-speech-recognition/index.d.ts
+@types/filesystem/index.d.ts
+@types/filewriter/index.d.ts
 @types/google.analytics
 @types/google.analytics/*.d.ts
 @types/mocha/index.d.ts
@@ -20,6 +22,7 @@
 @types/w3c-image-capture/*.d.ts
 @types/webrtc
 @types/webrtc/*.d.ts
+@types/wicg-file-system-access/index.d.ts
 svgo/.svgo.yml
 typescript/lib/lib.d.ts
 typescript/lib/lib.*.d.ts

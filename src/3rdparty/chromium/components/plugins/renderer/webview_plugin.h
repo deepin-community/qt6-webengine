@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,6 +10,7 @@
 
 #include "base/memory/weak_ptr.h"
 #include "base/task/sequenced_task_runner_helpers.h"
+#include "base/task/single_thread_task_runner.h"
 #include "mojo/public/cpp/bindings/associated_receiver.h"
 #include "mojo/public/cpp/bindings/associated_remote.h"
 #include "third_party/blink/public/mojom/input/focus_type.mojom-forward.h"
@@ -31,6 +32,7 @@ namespace blink {
 namespace web_pref {
 struct WebPreferences;
 }  // namespace web_pref
+struct RendererPreferences;
 class WebLocalFrame;
 class WebMouseEvent;
 }
@@ -179,7 +181,7 @@ class WebViewPlugin : public blink::WebPlugin, public blink::WebViewObserver {
     void BindToFrame(blink::WebNavigationControl* frame) override;
     void DidClearWindowObject() override;
     void FrameDetached() override;
-    std::unique_ptr<blink::WebURLLoaderFactory> CreateURLLoaderFactory()
+    scoped_refptr<network::SharedURLLoaderFactory> GetURLLoaderFactory()
         override;
 
     // blink::mojom::WidgetHost implementation.

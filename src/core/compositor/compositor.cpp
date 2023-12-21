@@ -7,8 +7,8 @@
 #include "components/viz/common/surfaces/frame_sink_id.h"
 
 #include <QHash>
-#include <QImage>
 #include <QMutex>
+#include <QQuickWindow>
 
 namespace QtWebEngineCore {
 
@@ -93,10 +93,8 @@ void Compositor::Observer::unbind()
 
 Compositor::Handle<Compositor> Compositor::Observer::compositor()
 {
-    if (!m_binding)
-        return nullptr;
     g_bindings.lock();
-    if (m_binding->compositor)
+    if (m_binding && m_binding->compositor)
         return m_binding->compositor; // delay unlock
     g_bindings.unlock();
     return nullptr;
@@ -127,30 +125,36 @@ void Compositor::unbind()
 
 Compositor::Handle<Compositor::Observer> Compositor::observer()
 {
-    if (!m_binding)
-        return nullptr;
     g_bindings.lock();
-    if (m_binding->observer)
+    if (m_binding && m_binding->observer)
         return m_binding->observer; // delay unlock
     g_bindings.unlock();
     return nullptr;
 }
 
-QImage Compositor::image()
-{
-    Q_UNREACHABLE();
-    return {};
-}
-
 void Compositor::waitForTexture()
 {
-    Q_UNREACHABLE();
 }
 
-int Compositor::textureId()
+void Compositor::releaseTexture()
+{
+}
+
+QSGTexture *Compositor::texture(QQuickWindow *, uint32_t textureOptions)
 {
     Q_UNREACHABLE();
-    return 0;
+    return nullptr;
+}
+
+bool Compositor::textureIsFlipped()
+{
+    Q_UNREACHABLE();
+    return false;
+}
+
+void Compositor::releaseResources(QQuickWindow *)
+{
+    Q_UNREACHABLE();
 }
 
 // static

@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,7 @@
 #include <stddef.h>
 #include <memory>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/message_loop/message_pump_default.h"
 #include "base/message_loop/message_pump_type.h"
@@ -27,7 +27,6 @@
 #include "base/task/thread_pool/thread_pool_impl.h"
 #include "base/task/thread_pool/thread_pool_instance.h"
 #include "base/threading/thread.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/default_tick_clock.h"
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -114,7 +113,7 @@ class BaseSequenceManagerPerfTestDelegate : public PerfTestDelegate {
   scoped_refptr<TaskRunner> CreateTaskRunner() override {
     scoped_refptr<TestTaskQueue> task_queue =
         manager_->CreateTaskQueueWithType<TestTaskQueue>(
-            TaskQueue::Spec("test"));
+            TaskQueue::Spec(QueueName::TEST_TQ));
     owned_task_queues_.push_back(task_queue);
     return task_queue->task_runner();
   }
@@ -168,7 +167,7 @@ class SequenceManagerWithMessagePumpPerfTestDelegate
     // runner.
     scoped_refptr<TaskQueue> default_task_queue =
         GetManager()->template CreateTaskQueueWithType<TestTaskQueue>(
-            TaskQueue::Spec("default"));
+            TaskQueue::Spec(QueueName::DEFAULT_TQ));
     GetManager()->SetDefaultTaskRunner(default_task_queue->task_runner());
   }
 

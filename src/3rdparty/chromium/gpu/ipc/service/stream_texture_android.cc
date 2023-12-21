@@ -1,4 +1,4 @@
-// Copyright (c) 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,12 +7,11 @@
 #include <string.h>
 
 #include "base/android/scoped_hardware_buffer_fence_sync.h"
-#include "base/bind.h"
 #include "base/feature_list.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/functional/bind.h"
+#include "base/task/single_thread_task_runner.h"
 #include "components/viz/common/resources/resource_sizes.h"
 #include "gpu/command_buffer/common/shared_image_usage.h"
-#include "gpu/command_buffer/service/abstract_texture_impl.h"
 #include "gpu/command_buffer/service/context_state.h"
 #include "gpu/command_buffer/service/feature_info.h"
 #include "gpu/command_buffer/service/mailbox_manager.h"
@@ -20,9 +19,9 @@
 #include "gpu/command_buffer/service/scheduler.h"
 #include "gpu/command_buffer/service/scheduler_task_runner.h"
 #include "gpu/command_buffer/service/shared_context_state.h"
-#include "gpu/command_buffer/service/shared_image_backing.h"
-#include "gpu/command_buffer/service/shared_image_factory.h"
-#include "gpu/command_buffer/service/shared_image_video.h"
+#include "gpu/command_buffer/service/shared_image/android_video_image_backing.h"
+#include "gpu/command_buffer/service/shared_image/shared_image_backing.h"
+#include "gpu/command_buffer/service/shared_image/shared_image_factory.h"
 #include "gpu/config/gpu_finch_features.h"
 #include "gpu/ipc/common/android/scoped_surface_request_conduit.h"
 #include "gpu/ipc/common/command_buffer_id.h"
@@ -94,10 +93,9 @@ StreamTexture::StreamTexture(
     int32_t route_id,
     mojo::PendingAssociatedReceiver<mojom::StreamTexture> receiver,
     scoped_refptr<SharedContextState> context_state)
-    : texture_owner_(
-          TextureOwner::Create(TextureOwner::CreateTexture(context_state),
-                               GetTextureOwnerMode(),
-                               context_state)),
+    : texture_owner_(TextureOwner::Create(GetTextureOwnerMode(),
+                                          context_state,
+                                          /*drdc_lock=*/nullptr)),
       has_pending_frame_(false),
       channel_(channel),
       route_id_(route_id),
@@ -110,9 +108,10 @@ StreamTexture::StreamTexture(
           base::MakeRefCounted<SchedulerTaskRunner>(*channel_->scheduler(),
                                                     sequence_)) {
   channel_->AddRoute(route_id, sequence_);
-  texture_owner_->SetFrameAvailableCallback(base::BindRepeating(
-      &StreamTexture::RunCallback, base::ThreadTaskRunnerHandle::Get(),
-      weak_factory_.GetWeakPtr()));
+  texture_owner_->SetFrameAvailableCallback(
+      base::BindRepeating(&StreamTexture::RunCallback,
+                          base::SingleThreadTaskRunner::GetCurrentDefault(),
+                          weak_factory_.GetWeakPtr()));
 }
 
 StreamTexture::~StreamTexture() {
@@ -168,38 +167,11 @@ bool StreamTexture::TextureOwnerBindsTextureOnUpdate() {
   return texture_owner_->binds_texture_on_update();
 }
 
-bool StreamTexture::CopyTexImage(unsigned target) {
-  DCHECK_CALLED_ON_VALID_THREAD(gpu_main_thread_checker_);
-  if (target != GL_TEXTURE_EXTERNAL_OES)
-    return false;
-
-  if (!texture_owner_.get())
-    return false;
-
-  GLint texture_id;
-  glGetIntegerv(GL_TEXTURE_BINDING_EXTERNAL_OES, &texture_id);
-
-  // CopyTexImage will only be called for TextureOwner's SurfaceTexture
-  // implementation which binds texture to TextureOwner's texture_id on update.
-  // Also ensure that the CopyTexImage() is always called on TextureOwner's
-  // context.
-  DCHECK(texture_owner_->binds_texture_on_update());
-  DCHECK(texture_owner_->GetContext()->IsCurrent(nullptr));
-  if (texture_id > 0 &&
-      static_cast<unsigned>(texture_id) != texture_owner_->GetTextureId())
-    return false;
-
-  // UpdateTexImage happens via OnFrameAvailable callback now. And this code
-  // only runs if |texture_owner| binds texture on update, so there is nothing
-  // else to do here.
-  return true;
-}
-
 void StreamTexture::OnFrameAvailable() {
   DCHECK_CALLED_ON_VALID_THREAD(gpu_main_thread_checker_);
   has_pending_frame_ = true;
 
-  if (!client_ || !texture_owner_)
+  if (!client_ || !texture_owner_ || !channel_)
     return;
 
   // We haven't received size for first time yet from the MediaPlayer we will
@@ -228,27 +200,14 @@ void StreamTexture::OnFrameAvailable() {
     if (context_state_->GrContextIsVulkan()) {
       vulkan_context_provider = context_state_->vk_context_provider();
     }
-    auto ycbcr_info = SharedImageVideo::GetYcbcrInfo(texture_owner_.get(),
-                                                     vulkan_context_provider);
+    auto ycbcr_info = AndroidVideoImageBacking::GetYcbcrInfo(
+        texture_owner_.get(), vulkan_context_provider);
 
     client_->OnFrameWithInfoAvailable(mailbox, coded_size, visible_rect,
                                       ycbcr_info);
   } else {
     client_->OnFrameAvailable();
   }
-}
-
-gfx::Size StreamTexture::GetSize() {
-  DCHECK_CALLED_ON_VALID_THREAD(gpu_main_thread_checker_);
-  return coded_size_;
-}
-
-unsigned StreamTexture::GetInternalFormat() {
-  return GL_RGBA;
-}
-
-unsigned StreamTexture::GetDataType() {
-  return GL_UNSIGNED_BYTE;
 }
 
 void StreamTexture::StartListening(
@@ -279,12 +238,12 @@ gpu::Mailbox StreamTexture::CreateSharedImage(const gfx::Size& coded_size) {
 
   // TODO(vikassoni): Hardcoding colorspace to SRGB. Figure how if we have a
   // colorspace and wire it here.
-  auto shared_image = SharedImageVideo::Create(
+  auto shared_image = AndroidVideoImageBacking::Create(
       mailbox, coded_size, gfx::ColorSpace::CreateSRGB(),
       kTopLeft_GrSurfaceOrigin, kPremul_SkAlphaType, this, context_state_,
-      /*lock=*/nullptr);
+      /*drdc_lock=*/nullptr);
   channel_->shared_image_stub()->factory()->RegisterBacking(
-      std::move(shared_image), /*allow_legacy_mailbox=*/false);
+      std::move(shared_image));
 
   return mailbox;
 }
@@ -301,34 +260,6 @@ void StreamTexture::UpdateRotatedVisibleSize(
   // first so now it's time to send it.
   if (was_empty && has_pending_frame_)
     OnFrameAvailable();
-}
-
-StreamTexture::BindOrCopy StreamTexture::ShouldBindOrCopy() {
-  return COPY;
-}
-
-bool StreamTexture::BindTexImage(unsigned target) {
-  NOTREACHED();
-  return false;
-}
-
-void StreamTexture::ReleaseTexImage(unsigned target) {
-}
-
-bool StreamTexture::CopyTexSubImage(unsigned target,
-                                    const gfx::Point& offset,
-                                    const gfx::Rect& rect) {
-  return false;
-}
-
-void StreamTexture::OnMemoryDump(base::trace_event::ProcessMemoryDump* pmd,
-                                 uint64_t process_tracing_id,
-                                 const std::string& dump_name) {
-  // TODO(ericrk): Add OnMemoryDump for GLImages. crbug.com/514914
-}
-
-bool StreamTexture::HasMutableState() const {
-  return false;
 }
 
 std::unique_ptr<base::android::ScopedHardwareBufferFenceSync>

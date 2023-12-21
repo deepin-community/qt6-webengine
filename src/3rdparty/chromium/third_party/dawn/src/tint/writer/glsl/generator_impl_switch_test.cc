@@ -14,41 +14,60 @@
 
 #include "src/tint/writer/glsl/test_helper.h"
 
+using namespace tint::number_suffixes;  // NOLINT
+
 namespace tint::writer::glsl {
 namespace {
 
 using GlslGeneratorImplTest_Switch = TestHelper;
 
 TEST_F(GlslGeneratorImplTest_Switch, Emit_Switch) {
-  Global("cond", ty.i32(), ast::StorageClass::kPrivate);
+    GlobalVar("cond", ty.i32(), builtin::AddressSpace::kPrivate);
 
-  auto* def_body = Block(create<ast::BreakStatement>());
-  auto* def = create<ast::CaseStatement>(ast::CaseSelectorList{}, def_body);
+    auto* def_body = Block(create<ast::BreakStatement>());
+    auto* def = create<ast::CaseStatement>(utils::Vector{DefaultCaseSelector()}, def_body);
 
-  ast::CaseSelectorList case_val;
-  case_val.push_back(Expr(5));
+    auto* case_body = Block(create<ast::BreakStatement>());
+    auto* case_stmt = create<ast::CaseStatement>(utils::Vector{CaseSelector(5_i)}, case_body);
 
-  auto* case_body = Block(create<ast::BreakStatement>());
+    auto* cond = Expr("cond");
+    auto* s = create<ast::SwitchStatement>(cond, utils::Vector{case_stmt, def});
+    WrapInFunction(s);
 
-  auto* case_stmt = create<ast::CaseStatement>(case_val, case_body);
+    GeneratorImpl& gen = Build();
 
-  ast::CaseStatementList body;
-  body.push_back(case_stmt);
-  body.push_back(def);
+    gen.increment_indent();
 
-  auto* cond = Expr("cond");
-  auto* s = create<ast::SwitchStatement>(cond, body);
-  WrapInFunction(s);
-
-  GeneratorImpl& gen = Build();
-
-  gen.increment_indent();
-
-  ASSERT_TRUE(gen.EmitStatement(s)) << gen.error();
-  EXPECT_EQ(gen.result(), R"(  switch(cond) {
+    ASSERT_TRUE(gen.EmitStatement(s)) << gen.error();
+    EXPECT_EQ(gen.result(), R"(  switch(cond) {
     case 5: {
       break;
     }
+    default: {
+      break;
+    }
+  }
+)");
+}
+
+TEST_F(GlslGeneratorImplTest_Switch, Emit_Switch_MixedDefault) {
+    GlobalVar("cond", ty.i32(), builtin::AddressSpace::kPrivate);
+
+    auto* def_body = Block(create<ast::BreakStatement>());
+    auto* def = create<ast::CaseStatement>(utils::Vector{CaseSelector(5_i), DefaultCaseSelector()},
+                                           def_body);
+
+    auto* cond = Expr("cond");
+    auto* s = create<ast::SwitchStatement>(cond, utils::Vector{def});
+    WrapInFunction(s);
+
+    GeneratorImpl& gen = Build();
+
+    gen.increment_indent();
+
+    ASSERT_TRUE(gen.EmitStatement(s)) << gen.error();
+    EXPECT_EQ(gen.result(), R"(  switch(cond) {
+    case 5:
     default: {
       break;
     }

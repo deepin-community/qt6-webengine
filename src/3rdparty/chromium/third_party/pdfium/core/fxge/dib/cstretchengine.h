@@ -1,4 +1,4 @@
-// Copyright 2017 PDFium Authors. All rights reserved.
+// Copyright 2017 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,10 +7,11 @@
 #ifndef CORE_FXGE_DIB_CSTRETCHENGINE_H_
 #define CORE_FXGE_DIB_CSTRETCHENGINE_H_
 
-#include <vector>
+#include <stdint.h>
 
+#include "core/fxcrt/data_vector.h"
+#include "core/fxcrt/fixed_try_alloc_zeroed_data_vector.h"
 #include "core/fxcrt/fx_coordinates.h"
-#include "core/fxcrt/fx_memory_wrappers.h"
 #include "core/fxcrt/fx_system.h"
 #include "core/fxcrt/retain_ptr.h"
 #include "core/fxcrt/unowned_ptr.h"
@@ -38,6 +39,14 @@ class CStretchEngine {
   static inline uint8_t PixelFromFixed(uint32_t fixed) {
     return static_cast<uint8_t>(fixed >> kFixedPointBits);
   }
+
+  // Indicates whether to manually set interpolate bilinear option to true to
+  // achieve a smoother rendering results.
+  static bool UseInterpolateBilinear(const FXDIB_ResampleOptions& options,
+                                     int dest_width,
+                                     int dest_height,
+                                     int src_width,
+                                     int src_height);
 
   struct PixelWeight {
     static size_t TotalBytesForWeightCount(size_t weight_count);
@@ -89,16 +98,13 @@ class CStretchEngine {
                           const FXDIB_ResampleOptions& options);
 
     const PixelWeight* GetPixelWeight(int pixel) const;
-    PixelWeight* GetPixelWeight(int pixel) {
-      return const_cast<PixelWeight*>(
-          static_cast<const WeightTable*>(this)->GetPixelWeight(pixel));
-    }
+    PixelWeight* GetPixelWeight(int pixel);
 
    private:
     int m_DestMin = 0;
     size_t m_ItemSizeBytes = 0;
     size_t m_WeightTablesSizeBytes = 0;
-    std::vector<uint8_t, FxAllocAllocator<uint8_t>> m_WeightTables;
+    DataVector<uint8_t> m_WeightTables;
   };
 
   CStretchEngine(ScanlineComposerIface* pDestBitmap,
@@ -126,9 +132,7 @@ class CStretchEngine {
     k1BppTo8Bpp,
     k1BppToManyBpp,
     k8BppTo8Bpp,
-    k8BppTo8BppWithAlpha,
     k8BppToManyBpp,
-    k8BppToManyBppWithAlpha,
     kManyBpptoManyBpp,
     kManyBpptoManyBppWithAlpha
   };
@@ -145,17 +149,15 @@ class CStretchEngine {
   const int m_DestWidth;
   const int m_DestHeight;
   const FX_RECT m_DestClip;
-  std::vector<uint8_t, FxAllocAllocator<uint8_t>> m_DestScanline;
-  std::vector<uint8_t, FxAllocAllocator<uint8_t>> m_DestMaskScanline;
-  std::vector<uint8_t, FxAllocAllocator<uint8_t>> m_InterBuf;
-  std::vector<uint8_t, FxAllocAllocator<uint8_t>> m_ExtraAlphaBuf;
+  DataVector<uint8_t> m_DestScanline;
+  FixedTryAllocZeroedDataVector<uint8_t> m_InterBuf;
   FX_RECT m_SrcClip;
   int m_InterPitch;
   int m_ExtraMaskPitch;
   FXDIB_ResampleOptions m_ResampleOptions;
   TransformMethod m_TransMethod;
   State m_State = State::kInitial;
-  int m_CurRow;
+  int m_CurRow = 0;
   WeightTable m_WeightTable;
 };
 

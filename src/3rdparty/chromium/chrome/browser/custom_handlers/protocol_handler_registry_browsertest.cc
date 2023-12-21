@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -74,7 +74,7 @@ class ChromeRegisterProtocolHandlerBrowserTest : public InProcessBrowserTest {
     // We might define browser tests for other embedders, so the test's data
     // files will be shared via //componennts
     embedded_test_server()->ServeFilesFromSourceDirectory(
-        "components/test/data/");
+        "components/test/data/custom_handlers/");
   }
 
   TestRenderViewContextMenu* CreateContextMenu(GURL url) {
@@ -91,9 +91,12 @@ class ChromeRegisterProtocolHandlerBrowserTest : public InProcessBrowserTest {
     params.writing_direction_left_to_right = 0;
     params.writing_direction_right_to_left = 0;
 #endif  // BUILDFLAG(IS_MAC)
-    TestRenderViewContextMenu* menu = new TestRenderViewContextMenu(
-        *browser()->tab_strip_model()->GetActiveWebContents()->GetMainFrame(),
-        params);
+    TestRenderViewContextMenu* menu =
+        new TestRenderViewContextMenu(*browser()
+                                           ->tab_strip_model()
+                                           ->GetActiveWebContents()
+                                           ->GetPrimaryMainFrame(),
+                                      params);
     menu->Init();
     return menu;
   }
@@ -240,7 +243,10 @@ IN_PROC_BROWSER_TEST_F(ChromeRegisterProtocolHandlerBrowserTest, FencedFrame) {
   // Create a FencedFrame.
   content::RenderFrameHost* fenced_frame_host =
       fenced_frame_test_helper().CreateFencedFrame(
-          browser()->tab_strip_model()->GetActiveWebContents()->GetMainFrame(),
+          browser()
+              ->tab_strip_model()
+              ->GetActiveWebContents()
+              ->GetPrimaryMainFrame(),
           embedded_test_server()->GetURL("/fenced_frames/title1.html"));
   ASSERT_TRUE(fenced_frame_host);
 
@@ -309,7 +315,7 @@ class ChromeRegisterProtocolHandlerAndServiceWorkerInterceptor
     // We might define browser tests for other embedders, so the test's data
     // files will be shared via //componennts
     embedded_test_server()->ServeFilesFromSourceDirectory(
-        "components/test/data/");
+        "components/test/data/custom_handlers/");
 
     ASSERT_TRUE(embedded_test_server()->Start());
 

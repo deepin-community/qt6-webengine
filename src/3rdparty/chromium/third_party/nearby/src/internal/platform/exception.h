@@ -19,7 +19,6 @@
 
 #include "absl/meta/type_traits.h"
 
-namespace location {
 namespace nearby {
 
 struct Exception {
@@ -30,7 +29,7 @@ struct Exception {
     kInterrupted = 2,  // Operation was interrupted.
     kInvalidProtocolBuffer = 3,  // Couldn't parse.
     kExecution = 4,              // Couldn't execute.
-    kTimeout = 5,            // Operarion did not finish within specified time.
+    kTimeout = 5,            // Operation did not finish within specified time.
     kIllegalCharacters = 6,  // File name or parent path contained
                              // illegal chars
   };
@@ -79,7 +78,7 @@ class ExceptionOr {
       : result_{result}, exception_{Exception::kSuccess} {}           // NOLINT
   ExceptionOr(Exception::Value exception) : exception_{exception} {}  // NOLINT
   ExceptionOr(Exception exception) : exception_{exception} {}         // NOLINT
-  // If there exists explicit conversion from from U to T,
+  // If there exists explicit conversion from U to T,
   // then allow explicit conversion from ExceptionOr<U> to ExceptionOr<T>.
   template <typename U, typename = absl::void_t<decltype(T{std::declval<U>()})>>
   explicit ExceptionOr<T>(ExceptionOr<U> value) {
@@ -109,6 +108,5 @@ class ExceptionOr {
 };
 
 }  // namespace nearby
-}  // namespace location
 
 #endif  // PLATFORM_BASE_EXCEPTION_H_

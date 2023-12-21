@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -18,9 +18,7 @@ class PasswordStoreInterface;
 }
 
 namespace browsing_data {
-namespace {
 class PasswordStoreFetcher;
-}
 class PasswordsCounter : public browsing_data::BrowsingDataCounter {
  public:
   // A subclass of SyncResult that stores the result value, a boolean

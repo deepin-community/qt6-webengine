@@ -1,10 +1,10 @@
-# Copyright 2014 The Chromium Authors. All rights reserved.
+# Copyright 2014 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
 import("//build/config/chromeos/ui_mode.gni")
 import("//build/config/jumbo.gni")
-import("//build/config/linux/gtk/gtk.gni")
+import("//build/config/features.gni")
 import("//build/config/ui.gni")
 import("//testing/test.gni")
 
@@ -42,23 +42,31 @@ jumbo_component("shell_dialogs") {
     "//url",
   ]
 
-  if (is_chromeos || (is_linux && !use_gtk)) {
+  if (is_chromeos || is_castos || is_cast_android) {
     sources += [ "shell_dialog_stub.cc" ]
-  } else if (is_linux) {
+  }
+
+  if (is_linux && !is_castos) {
     sources += [
       "select_file_dialog_linux.cc",
       "select_file_dialog_linux.h",
       "select_file_dialog_linux_kde.cc",
       "select_file_dialog_linux_kde.h",
-      "select_file_dialog_linux_portal.cc",
-      "select_file_dialog_linux_portal.h",
       "shell_dialog_linux.cc",
       "shell_dialog_linux.h",
     ]
     deps += [
       "//components/dbus/thread_linux",
-      "//dbus",
+      "//ui/linux:linux_ui",
     ]
+    if (use_dbus) {
+      defines += [ "USE_DBUS" ]
+      sources += [
+        "select_file_dialog_linux_portal.cc",
+        "select_file_dialog_linux_portal.h",
+      ]
+      deps += [ "//dbus" ]
+    }
   }
 
   if (is_mac) {
@@ -66,6 +74,10 @@ jumbo_component("shell_dialogs") {
       "select_file_dialog_mac.h",
       "select_file_dialog_mac.mm",
     ]
+  }
+
+  if (is_ios) {
+    sources += [ "select_file_dialog_ios.mm" ]
   }
 
   if (is_win) {
@@ -76,6 +88,7 @@ jumbo_component("shell_dialogs") {
       "execute_select_file_win.h",
       "select_file_dialog_win.cc",
       "select_file_dialog_win.h",
+      "select_file_utils_win.h",
     ]
   }
 
@@ -141,12 +154,15 @@ test("shell_dialogs_unittests") {
 
   if (is_mac) {
     sources += [ "select_file_dialog_mac_unittest.mm" ]
+    weak_frameworks = [
+      "UniformTypeIdentifiers.framework",  # macOS 11
+    ]
   }
 
   if (is_win) {
     sources += [
-      "execute_select_file_win_unittest.cc",
       "select_file_dialog_win_unittest.cc",
+      "select_file_utils_win_unittest.cc",
     ]
   }
 
@@ -178,5 +194,8 @@ source_set("test_support") {
     "fake_select_file_dialog.h",
   ]
   public_deps = [ ":shell_dialogs" ]
-  deps = [ "//base" ]
+  deps = [
+    "//base",
+    "//url",
+  ]
 }

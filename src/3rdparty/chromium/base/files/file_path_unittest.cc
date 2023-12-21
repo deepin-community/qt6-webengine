@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -22,6 +22,9 @@
 #if BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
 #include "base/test/scoped_locale.h"
 #endif
+
+// This macro helps test `FILE_PATH_LITERAL` macro expansion.
+#define TEST_FILE "TestFile"
 
 // This macro helps avoid wrapped lines in the test structs.
 #define FPL(x) FILE_PATH_LITERAL(x)
@@ -739,6 +742,10 @@ TEST_F(FilePathTest, EqualityTest) {
   }
 }
 
+TEST_F(FilePathTest, MacroExpansion) {
+  EXPECT_EQ(FILE_PATH_LITERAL(TEST_FILE), FILE_PATH_LITERAL("TestFile"));
+}
+
 TEST_F(FilePathTest, Extension) {
   FilePath base_dir(FILE_PATH_LITERAL("base_dir"));
 
@@ -803,8 +810,12 @@ TEST_F(FilePathTest, Extension2) {
     { FPL("/foo.tar.bz"),            FPL(".tar.bz") },
     { FPL("/foo.tar.bz2"),           FPL(".tar.bz2") },
     { FPL("/foo.tar.gz"),            FPL(".tar.gz") },
+    { FPL("/foo.tar.lz"),            FPL(".tar.lz") },
+    { FPL("/foo.tar.lzma"),          FPL(".tar.lzma") },
+    { FPL("/foo.tar.lzo"),           FPL(".tar.lzo") },
     { FPL("/foo.tar.xz"),            FPL(".tar.xz") },
     { FPL("/foo.tar.z"),             FPL(".tar.z") },
+    { FPL("/foo.tar.zst"),           FPL(".tar.zst") },
     // `kCommonDoubleExtensions` cases.
     { FPL("/foo.1234.user.js"),      FPL(".user.js") },
     { FPL("foo.user.js"),            FPL(".user.js") },
@@ -1184,6 +1195,13 @@ TEST_F(FilePathTest, CompareIgnoreCase) {
     {{FPL("K\u0301U\u032DO\u0304\u0301N"), FPL("\u1E31\u1E77\u1E53n")}, 0},
     {{FPL("k\u0301u\u032Do\u0304\u0301n"), FPL("\u1E30\u1E76\u1E52n")}, 0},
     {{FPL("k\u0301u\u032Do\u0304\u0302n"), FPL("\u1E30\u1E76\u1E52n")}, 1},
+
+    // Codepoints > 0xFFFF
+    // Here, we compare the `Adlam Letter Shu` in its capital and small version.
+    {{FPL("\U0001E921"), FPL("\U0001E943")}, -1},
+    {{FPL("\U0001E943"), FPL("\U0001E921")}, 1},
+    {{FPL("\U0001E921"), FPL("\U0001E921")}, 0},
+    {{FPL("\U0001E943"), FPL("\U0001E943")}, 0},
 #endif
   };
 

@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,13 +6,11 @@
 
 #include <cmath>
 
-#include "base/bind.h"
 #include "base/check.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/task/single_thread_task_runner.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "third_party/libaddressinput/chromium/addressinput_util.h"
-#include "third_party/libaddressinput/chromium/input_suggester.h"
 #include "third_party/libaddressinput/src/cpp/include/libaddressinput/address_data.h"
 #include "third_party/libaddressinput/src/cpp/include/libaddressinput/address_normalizer.h"
 #include "third_party/libaddressinput/src/cpp/include/libaddressinput/source.h"
@@ -122,33 +120,6 @@ AddressValidator::Status AddressValidator::ValidateAddress(
   return SUCCESS;
 }
 
-AddressValidator::Status AddressValidator::GetSuggestions(
-    const AddressData& user_input,
-    AddressField focused_field,
-    size_t suggestion_limit,
-    std::vector<AddressData>* suggestions) const {
-  if (supplier_->IsPending(user_input.region_code))
-    return RULES_NOT_READY;
-
-  if (!supplier_->IsLoaded(user_input.region_code))
-    return RULES_UNAVAILABLE;
-
-  if (!suggestions)
-    return SUCCESS;
-
-  suggestions->clear();
-
-  if (focused_field == POSTAL_CODE ||
-      (focused_field >= ADMIN_AREA && focused_field <= DEPENDENT_LOCALITY)) {
-    if (!input_suggester_)
-      input_suggester_ = std::make_unique<InputSuggester>(supplier_.get());
-    input_suggester_->GetSuggestions(
-        user_input, focused_field, suggestion_limit, suggestions);
-  }
-
-  return SUCCESS;
-}
-
 bool AddressValidator::NormalizeAddress(AddressData* address) const {
   if (!supplier_->IsLoaded(address->region_code))
     return false;
@@ -183,7 +154,7 @@ void AddressValidator::RulesLoaded(bool success,
   if (success || attempts_number_[region_code] + 1 >= kMaxAttemptsNumber)
     return;
 
-  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
       FROM_HERE,
       base::BindOnce(&AddressValidator::RetryLoadRules,
                      weak_factory_.GetWeakPtr(), region_code),

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -214,11 +214,6 @@ class VIEWS_EXPORT HWNDMessageHandlerDelegate {
 
   // Called to compel the delegate to paint |invalid_rect| accelerated.
   virtual void HandlePaintAccelerated(const gfx::Rect& invalid_rect) = 0;
-
-  // Called to forward a WM_NOTIFY message to the tooltip manager.
-  virtual bool HandleTooltipNotify(int w_param,
-                                   NMHDR* l_param,
-                                   LRESULT* l_result) = 0;
 
   // Invoked on entering/exiting a menu loop.
   virtual void HandleMenuLoop(bool in_menu_loop) = 0;

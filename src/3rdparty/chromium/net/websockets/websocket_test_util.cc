@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -206,14 +206,14 @@ void WebSocketMockClientSocketFactoryMaker::SetExpectations(
   // detail into account if |return_to_read| is big enough.
   for (size_t place = 0; place < detail_->return_to_read.size();
        place += kHttpStreamParserBufferSize) {
-    detail_->reads.push_back(
-        MockRead(SYNCHRONOUS, detail_->return_to_read.data() + place,
-                 std::min(detail_->return_to_read.size() - place,
-                          kHttpStreamParserBufferSize),
-                 sequence++));
+    detail_->reads.emplace_back(SYNCHRONOUS,
+                                detail_->return_to_read.data() + place,
+                                std::min(detail_->return_to_read.size() - place,
+                                         kHttpStreamParserBufferSize),
+                                sequence++);
   }
   auto socket_data = std::make_unique<SequencedSocketData>(
-      detail_->reads, base::make_span(&detail_->write, 1));
+      detail_->reads, base::make_span(&detail_->write, 1u));
   socket_data->set_connect_data(MockConnect(SYNCHRONOUS, OK));
   AddRawExpectations(std::move(socket_data));
 }
@@ -257,8 +257,9 @@ void WebSocketTestURLRequestContextHost::AddSSLSocketDataProvider(
 void WebSocketTestURLRequestContextHost::SetProxyConfig(
     const std::string& proxy_rules) {
   DCHECK(!url_request_context_);
-  auto proxy_resolution_service = ConfiguredProxyResolutionService::CreateFixed(
-      proxy_rules, TRAFFIC_ANNOTATION_FOR_TESTS);
+  auto proxy_resolution_service =
+      ConfiguredProxyResolutionService::CreateFixedForTest(
+          proxy_rules, TRAFFIC_ANNOTATION_FOR_TESTS);
   url_request_context_builder_->set_proxy_resolution_service(
       std::move(proxy_resolution_service));
 }
@@ -290,4 +291,6 @@ void TestWebSocketStreamRequestAPI::OnBasicHandshakeStreamCreated(
 void TestWebSocketStreamRequestAPI::OnHttp2HandshakeStreamCreated(
     WebSocketHttp2HandshakeStream* handshake_stream) {}
 
+void TestWebSocketStreamRequestAPI::OnHttp3HandshakeStreamCreated(
+    WebSocketHttp3HandshakeStream* handshake_stream) {}
 }  // namespace net

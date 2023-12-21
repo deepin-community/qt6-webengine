@@ -16,54 +16,53 @@
 #define SRC_TINT_AST_STRUCT_MEMBER_H_
 
 #include <utility>
-#include <vector>
 
 #include "src/tint/ast/attribute.h"
+#include "src/tint/ast/type.h"
 
 // Forward declarations
 namespace tint::ast {
-class Type;
+class Identifier;
 }  // namespace tint::ast
 
 namespace tint::ast {
 
 /// A struct member statement.
 class StructMember final : public Castable<StructMember, Node> {
- public:
-  /// Create a new struct member statement
-  /// @param pid the identifier of the program that owns this node
-  /// @param src the source of this node for the struct member statement
-  /// @param sym The struct member symbol
-  /// @param type The struct member type
-  /// @param attributes The struct member attributes
-  StructMember(ProgramID pid,
-               const Source& src,
-               const Symbol& sym,
-               const ast::Type* type,
-               AttributeList attributes);
-  /// Move constructor
-  StructMember(StructMember&&);
+  public:
+    /// Create a new struct member statement
+    /// @param pid the identifier of the program that owns this node
+    /// @param nid the unique node identifier
+    /// @param src the source of this node for the struct member statement
+    /// @param name The struct member name
+    /// @param type The struct member type
+    /// @param attributes The struct member attributes
+    StructMember(ProgramID pid,
+                 NodeID nid,
+                 const Source& src,
+                 const Identifier* name,
+                 Type type,
+                 utils::VectorRef<const Attribute*> attributes);
+    /// Move constructor
+    StructMember(StructMember&&);
 
-  ~StructMember() override;
+    ~StructMember() override;
 
-  /// Clones this node and all transitive child nodes using the `CloneContext`
-  /// `ctx`.
-  /// @param ctx the clone context
-  /// @return the newly cloned node
-  const StructMember* Clone(CloneContext* ctx) const override;
+    /// Clones this node and all transitive child nodes using the `CloneContext`
+    /// `ctx`.
+    /// @param ctx the clone context
+    /// @return the newly cloned node
+    const StructMember* Clone(CloneContext* ctx) const override;
 
-  /// The symbol
-  const Symbol symbol;
+    /// The member name
+    const Identifier* const name;
 
-  /// The type
-  const ast::Type* const type;
+    /// The type
+    const Type type;
 
-  /// The attributes
-  const AttributeList attributes;
+    /// The attributes
+    const utils::Vector<const Attribute*, 4> attributes;
 };
-
-/// A list of struct members
-using StructMemberList = std::vector<const StructMember*>;
 
 }  // namespace tint::ast
 

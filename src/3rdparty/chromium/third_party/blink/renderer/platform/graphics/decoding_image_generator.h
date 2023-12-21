@@ -71,9 +71,7 @@ class PLATFORM_EXPORT DecodingImageGenerator final
 
   // PaintImageGenerator implementation.
   sk_sp<SkData> GetEncodedData() const override;
-  bool GetPixels(const SkImageInfo&,
-                 void* pixels,
-                 size_t row_bytes,
+  bool GetPixels(SkPixmap,
                  size_t frame_index,
                  PaintImage::GeneratorClientId client_id,
                  uint32_t lazy_pixel_ref) override;
@@ -84,7 +82,8 @@ class PLATFORM_EXPORT DecodingImageGenerator final
 
   bool GetYUVAPlanes(const SkYUVAPixmaps& pixmaps,
                      size_t frame_index,
-                     uint32_t lazy_pixel_ref) override;
+                     uint32_t lazy_pixel_ref,
+                     PaintImage::GeneratorClientId client_id) override;
 
   SkISize GetSupportedDecodeSize(const SkISize& requested_size) const override;
   PaintImage::ContentId GetContentIdForFrame(size_t frame_index) const override;

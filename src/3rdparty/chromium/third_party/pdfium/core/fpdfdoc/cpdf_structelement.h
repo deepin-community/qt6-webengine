@@ -1,4 +1,4 @@
-// Copyright 2017 PDFium Authors. All rights reserved.
+// Copyright 2017 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,6 +12,7 @@
 #include "core/fxcrt/fx_string.h"
 #include "core/fxcrt/retain_ptr.h"
 #include "core/fxcrt/unowned_ptr.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 class CPDF_Dictionary;
 class CPDF_Object;
@@ -26,16 +27,17 @@ class CPDF_StructElement final : public Retainable {
   WideString GetAltText() const;
   WideString GetActualText() const;
   WideString GetTitle() const;
-
-  // Never returns nullptr.
-  const CPDF_Dictionary* GetDict() const { return m_pDict.Get(); }
+  absl::optional<WideString> GetID() const;
+  absl::optional<WideString> GetLang() const;
+  RetainPtr<const CPDF_Object> GetA() const;
+  RetainPtr<const CPDF_Object> GetK() const;
 
   size_t CountKids() const;
   CPDF_StructElement* GetKidIfElement(size_t index) const;
   bool UpdateKidIfElement(const CPDF_Dictionary* pDict,
                           CPDF_StructElement* pElement);
 
-  CPDF_StructElement* GetParent() const { return m_pParentElement.Get(); }
+  CPDF_StructElement* GetParent() const { return m_pParentElement; }
   void SetParent(CPDF_StructElement* pParentElement) {
     m_pParentElement = pParentElement;
   }
@@ -57,11 +59,13 @@ class CPDF_StructElement final : public Retainable {
   };
 
   CPDF_StructElement(const CPDF_StructTree* pTree,
-                     const CPDF_Dictionary* pDict);
+                     RetainPtr<const CPDF_Dictionary> pDict);
   ~CPDF_StructElement() override;
 
-  void LoadKids(const CPDF_Dictionary* pDict);
-  void LoadKid(uint32_t PageObjNum, const CPDF_Object* pKidObj, Kid* pKid);
+  void LoadKids(RetainPtr<const CPDF_Dictionary> pDict);
+  void LoadKid(uint32_t PageObjNum,
+               RetainPtr<const CPDF_Object> pKidObj,
+               Kid* pKid);
 
   UnownedPtr<const CPDF_StructTree> const m_pTree;
   RetainPtr<const CPDF_Dictionary> const m_pDict;

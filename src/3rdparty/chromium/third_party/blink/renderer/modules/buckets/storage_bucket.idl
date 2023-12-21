@@ -1,11 +1,10 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 // https://github.com/WICG/storage-buckets
 
 [
-  ActiveScriptWrappable,
   RuntimeEnabled=StorageBuckets,
   Exposed=(Window,Worker),
   SecureContext
@@ -17,6 +16,14 @@
 
   [CallWith=ScriptState] Promise<StorageBucketDurability> durability();
 
-  [CallWith=ScriptState] Promise<void> setExpires(DOMTimeStamp expires);
-  [CallWith=ScriptState] Promise<DOMTimeStamp?> expires();
+  [CallWith=ScriptState] Promise<void> setExpires(DOMHighResTimeStamp expires);
+  [CallWith=ScriptState] Promise<DOMHighResTimeStamp?> expires();
+
+  [SameObject] readonly attribute IDBFactory indexedDB;
+
+  [SameObject, RuntimeEnabled=StorageBucketsLocks] readonly attribute LockManager locks;
+
+  [SameObject, RaisesException] readonly attribute CacheStorage caches;
+
+  [CallWith=ScriptState, RaisesException] Promise<FileSystemDirectoryHandle> getDirectory();
 };

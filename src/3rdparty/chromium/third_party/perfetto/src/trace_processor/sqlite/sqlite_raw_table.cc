@@ -37,6 +37,7 @@
 #include "protos/perfetto/trace/ftrace/ftrace_event.pbzero.h"
 #include "protos/perfetto/trace/ftrace/g2d.pbzero.h"
 #include "protos/perfetto/trace/ftrace/irq.pbzero.h"
+#include "protos/perfetto/trace/ftrace/mdss.pbzero.h"
 #include "protos/perfetto/trace/ftrace/power.pbzero.h"
 #include "protos/perfetto/trace/ftrace/sched.pbzero.h"
 #include "protos/perfetto/trace/ftrace/workqueue.pbzero.h"
@@ -204,10 +205,12 @@ void ArgsSerializer::SerializeArgs() {
     WriteArgForField(SS::kPrevStateFieldNumber, [this](const Variadic& value) {
       PERFETTO_DCHECK(value.type == Variadic::Type::kInt);
       auto state = static_cast<uint16_t>(value.int_value);
-      auto kernel_version =
+      base::Optional<VersionNumber> kernel_version =
           SystemInfoTracker::GetOrCreate(context_)->GetKernelVersion();
       writer_->AppendString(
-          ftrace_utils::TaskState(state, kernel_version).ToString('|').data());
+          ftrace_utils::TaskState::FromRawPrevState(state, kernel_version)
+              .ToString('|')
+              .data());
     });
     writer_->AppendLiteral(" ==>");
     WriteArgForField(SS::kNextCommFieldNumber, DVW());
@@ -430,6 +433,18 @@ void ArgsSerializer::SerializeArgs() {
     });
     writer_->AppendString("]");
     return;
+  } else if (event_name_ == "tracing_mark_write") {
+    using TMW = protos::pbzero::TracingMarkWriteFtraceEvent;
+    WriteValueForField(TMW::kTraceBeginFieldNumber,
+                       [this](const Variadic& value) {
+                         PERFETTO_DCHECK(value.type == Variadic::Type::kUint);
+                         writer_->AppendChar(value.uint_value ? 'B' : 'E');
+                       });
+    writer_->AppendString("|");
+    WriteValueForField(TMW::kPidFieldNumber, DVW());
+    writer_->AppendString("|");
+    WriteValueForField(TMW::kTraceNameFieldNumber, DVW());
+    return;
   } else if (event_name_ == "dpu_tracing_mark_write") {
     using TMW = protos::pbzero::DpuTracingMarkWriteFtraceEvent;
     WriteValueForField(TMW::kTypeFieldNumber, [this](const Variadic& value) {
@@ -524,10 +539,9 @@ void ArgsSerializer::WriteValue(const Variadic& value) {
 }  // namespace
 
 SqliteRawTable::SqliteRawTable(sqlite3* db, Context context)
-    : DbSqliteTable(
-          db,
-          {context.cache, tables::RawTable::Schema(), TableComputation::kStatic,
-           &context.context->storage->raw_table(), nullptr}),
+    : DbSqliteTable(db,
+                    {context.cache, TableComputation::kStatic,
+                     &context.context->storage->raw_table(), nullptr}),
       serializer_(context.context) {
   auto fn = [](sqlite3_context* ctx, int argc, sqlite3_value** argv) {
     auto* thiz = static_cast<SqliteRawTable*>(sqlite3_user_data(ctx));

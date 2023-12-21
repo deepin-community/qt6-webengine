@@ -1,11 +1,11 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "content/browser/devtools/service_worker_devtools_agent_host.h"
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/ptr_util.h"
 #include "content/browser/devtools/devtools_renderer_channel.h"
 #include "content/browser/devtools/devtools_session.h"
@@ -226,24 +226,24 @@ ServiceWorkerDevToolsAgentHost::~ServiceWorkerDevToolsAgentHost() {
 
 bool ServiceWorkerDevToolsAgentHost::AttachSession(DevToolsSession* session,
                                                    bool acquire_wake_lock) {
-  session->AddHandler(std::make_unique<protocol::IOHandler>(GetIOContext()));
-  session->AddHandler(std::make_unique<protocol::InspectorHandler>());
-  session->AddHandler(std::make_unique<protocol::NetworkHandler>(
+  session->CreateAndAddHandler<protocol::IOHandler>(GetIOContext());
+  session->CreateAndAddHandler<protocol::InspectorHandler>();
+  session->CreateAndAddHandler<protocol::NetworkHandler>(
       GetId(), devtools_worker_token_, GetIOContext(), base::DoNothing(),
-      session->GetClient()->MayReadLocalFiles()));
+      session->GetClient()->MayReadLocalFiles());
 
-  session->AddHandler(std::make_unique<protocol::FetchHandler>(
+  session->CreateAndAddHandler<protocol::FetchHandler>(
       GetIOContext(),
       base::BindRepeating(
           &ServiceWorkerDevToolsAgentHost::UpdateLoaderFactories,
-          base::Unretained(this))));
-  session->AddHandler(std::make_unique<protocol::SchemaHandler>());
+          base::Unretained(this)));
+  session->CreateAndAddHandler<protocol::SchemaHandler>();
 
-  auto target_handler = std::make_unique<protocol::TargetHandler>(
+  auto* target_handler = session->CreateAndAddHandler<protocol::TargetHandler>(
       protocol::TargetHandler::AccessMode::kAutoAttachOnly, GetId(),
-      auto_attacher_.get(), session->GetRootSession());
+      auto_attacher_.get(), session);
+  DCHECK(target_handler);
   target_handler->DisableAutoAttachOfServiceWorkers();
-  session->AddHandler(std::move(target_handler));
 
   if (state_ == WORKER_READY && sessions().empty())
     UpdateIsAttached(true);
@@ -318,14 +318,11 @@ void ServiceWorkerDevToolsAgentHost::UpdateProcessHost() {
     process_observation_.Observe(rph);
 }
 
-// TODO(caseq): this is only relevant for shutdown, where a RPH may
-// go along with StoragePartition and we won't receive any signals from
-// the DevToolsWorkerManager, so agents would be still attached and
-// may access the storage partition. This is meant to be a temporary
-// workaround, the proper fix is likely to have ServiceWorkerInstance
-// deleted in such case.
 void ServiceWorkerDevToolsAgentHost::RenderProcessHostDestroyed(
     RenderProcessHost* host) {
+  scoped_refptr<DevToolsAgentHost> retain_this;
+  if (context_wrapper_->process_manager()->IsShutdown())
+    retain_this = ForceDetachAllSessionsImpl();
   GetRendererChannel()->SetRenderer(mojo::NullRemote(), mojo::NullReceiver(),
                                     ChildProcessHost::kInvalidUniqueID);
   process_observation_.Reset();

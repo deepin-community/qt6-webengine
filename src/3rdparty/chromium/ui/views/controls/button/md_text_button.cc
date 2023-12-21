@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,11 +8,12 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/i18n/case_conversion.h"
 #include "base/memory/ptr_util.h"
 #include "build/build_config.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
+#include "ui/base/ui_base_features.h"
 #include "ui/color/color_id.h"
 #include "ui/color/color_provider.h"
 #include "ui/gfx/canvas.h"
@@ -49,7 +50,14 @@ MdTextButton::MdTextButton(PressedCallback callback,
       },
       this));
 
-  SetCornerRadius(LayoutProvider::Get()->GetCornerRadiusMetric(Emphasis::kLow));
+  if (features::IsChromeRefresh2023()) {
+    constexpr int kImageSpacing = 8;
+    SetImageLabelSpacing(kImageSpacing);
+  } else {
+    SetCornerRadius(LayoutProvider::Get()->GetCornerRadiusMetric(
+        ShapeContextTokens::kButtonRadius));
+  }
+
   SetHorizontalAlignment(gfx::ALIGN_CENTER);
 
   const int minimum_width = LayoutProvider::Get()->GetDistanceMetric(
@@ -72,18 +80,27 @@ MdTextButton::MdTextButton(PressedCallback callback,
 MdTextButton::~MdTextButton() = default;
 
 void MdTextButton::SetProminent(bool is_prominent) {
-  if (is_prominent_ == is_prominent)
-    return;
-
-  is_prominent_ = is_prominent;
-  SetProperty(kDrawFocusRingBackgroundOutline, is_prominent);
-
+  SetStyle(is_prominent ? Style::kProminent : Style::kDefault);
   UpdateColors();
-  OnPropertyChanged(&is_prominent_, kPropertyEffectsNone);
 }
 
 bool MdTextButton::GetProminent() const {
-  return is_prominent_;
+  return style_ == Style::kProminent;
+}
+
+void MdTextButton::SetStyle(views::MdTextButton::Style button_style) {
+  if (style_ == button_style) {
+    return;
+  }
+
+  style_ = button_style;
+  SetProperty(kDrawFocusRingBackgroundOutline,
+              button_style == Style::kProminent);
+  UpdateColors();
+}
+
+views::MdTextButton::Style MdTextButton::GetStyle() const {
+  return style_;
 }
 
 void MdTextButton::SetBgColorOverride(const absl::optional<SkColor>& color) {
@@ -98,19 +115,22 @@ absl::optional<SkColor> MdTextButton::GetBgColorOverride() const {
   return bg_color_override_;
 }
 
-void MdTextButton::SetCornerRadius(float radius) {
+void MdTextButton::SetCornerRadius(absl::optional<float> radius) {
   if (corner_radius_ == radius)
     return;
   corner_radius_ = radius;
-  InkDrop::Get(this)->SetSmallCornerRadius(corner_radius_);
-  InkDrop::Get(this)->SetLargeCornerRadius(corner_radius_);
-  views::InstallRoundRectHighlightPathGenerator(this, gfx::Insets(),
-                                                corner_radius_);
-  OnPropertyChanged(&corner_radius_, kPropertyEffectsPaint);
+  LabelButton::SetFocusRingCornerRadius(GetCornerRadiusValue());
+  // UpdateColors also updates the background border radius.
+  UpdateColors();
+  OnPropertyChanged(&corner_radius_, kPropertyEffectsNone);
 }
 
-float MdTextButton::GetCornerRadius() const {
+absl::optional<float> MdTextButton::GetCornerRadius() const {
   return corner_radius_;
+}
+
+float MdTextButton::GetCornerRadiusValue() const {
+  return corner_radius_.value_or(0);
 }
 
 void MdTextButton::OnThemeChanged() {
@@ -123,6 +143,12 @@ void MdTextButton::StateChanged(ButtonState old_state) {
   UpdateColors();
 }
 
+void MdTextButton::SetImageModel(ButtonState for_state,
+                                 const ui::ImageModel& image_model) {
+  LabelButton::SetImageModel(for_state, image_model);
+  UpdatePadding();
+}
+
 void MdTextButton::OnFocus() {
   LabelButton::OnFocus();
   UpdateColors();
@@ -131,6 +157,18 @@ void MdTextButton::OnFocus() {
 void MdTextButton::OnBlur() {
   LabelButton::OnBlur();
   UpdateColors();
+}
+
+void MdTextButton::OnBoundsChanged(const gfx::Rect& previous_bounds) {
+  LabelButton::OnBoundsChanged(previous_bounds);
+
+  // A fully rounded corner radius is calculated based on the size of the
+  // button. To avoid overriding a custom corner radius, make sure the default
+  // radius is only called once by checking if the value already exists.
+  if (!corner_radius_) {
+    SetCornerRadius(LayoutProvider::Get()->GetCornerRadiusMetric(
+        ShapeContextTokens::kButtonRadius, size()));
+  }
 }
 
 void MdTextButton::SetEnabledTextColors(absl::optional<SkColor> color) {
@@ -154,8 +192,7 @@ void MdTextButton::SetText(const std::u16string& text) {
 }
 
 PropertyEffects MdTextButton::UpdateStyleToIndicateDefaultStatus() {
-  is_prominent_ = is_prominent_ || GetIsDefault();
-  UpdateColors();
+  SetProminent(style_ == Style::kProminent || GetIsDefault());
   return kPropertyEffectsNone;
 }
 
@@ -182,21 +219,30 @@ gfx::Insets MdTextButton::CalculateDefaultPadding() const {
 
   // TODO(estade): can we get rid of the platform style border hoopla if
   // we apply the MD treatment to all buttons, even GTK buttons?
-  const int horizontal_padding = LayoutProvider::Get()->GetDistanceMetric(
+  int right_padding = LayoutProvider::Get()->GetDistanceMetric(
       DISTANCE_BUTTON_HORIZONTAL_PADDING);
-  return gfx::Insets::TLBR(top_padding, horizontal_padding, bottom_padding,
-                           horizontal_padding);
+  int left_padding = right_padding;
+  if (HasImage(GetVisualState()) && features::IsChromeRefresh2023()) {
+    constexpr int kLeftPadding = 12;
+    left_padding = kLeftPadding;
+  }
+  return gfx::Insets::TLBR(top_padding, left_padding, bottom_padding,
+                           right_padding);
 }
 
 void MdTextButton::UpdateTextColor() {
   if (explicitly_set_normal_color())
     return;
 
-  SkColor enabled_text_color =
-      style::GetColor(*this, label()->GetTextContext(),
-                      is_prominent_ ? style::STYLE_DIALOG_BUTTON_DEFAULT
-                                    : style::STYLE_PRIMARY);
+  style::TextStyle text_style = style::STYLE_PRIMARY;
+  if (style_ == Style::kProminent) {
+    text_style = style::STYLE_DIALOG_BUTTON_DEFAULT;
+  } else if (style_ == Style::kTonal) {
+    text_style = style::STYLE_DIALOG_BUTTON_TONAL;
+  }
 
+  SkColor enabled_text_color =
+      style::GetColor(*this, label()->GetTextContext(), text_style);
   const auto colors = explicitly_set_colors();
   LabelButton::SetEnabledTextColors(enabled_text_color);
   // Disabled buttons need the disabled color explicitly set.
@@ -218,7 +264,7 @@ void MdTextButton::UpdateBackgroundColor() {
 
   if (bg_color_override_) {
     bg_color = *bg_color_override_;
-  } else if (is_prominent_) {
+  } else if (style_ == Style::kProminent) {
     bg_color = color_provider->GetColor(
         HasFocus() ? ui::kColorButtonBackgroundProminentFocused
                    : ui::kColorButtonBackgroundProminent);
@@ -226,23 +272,29 @@ void MdTextButton::UpdateBackgroundColor() {
       bg_color =
           color_provider->GetColor(ui::kColorButtonBackgroundProminentDisabled);
     }
+  } else if (style_ == Style::kTonal) {
+    bg_color = color_provider->GetColor(
+        HasFocus() ? ui::kColorButtonBackgroundTonalFocused
+                   : ui::kColorButtonBackgroundTonal);
+    if (is_disabled) {
+      bg_color =
+          color_provider->GetColor(ui::kColorButtonBackgroundTonalDisabled);
+    }
   }
 
   if (GetState() == STATE_PRESSED) {
     bg_color = GetNativeTheme()->GetSystemButtonPressedColor(bg_color);
   }
 
-  SkColor stroke_color;
-  if (is_prominent_) {
+  SkColor stroke_color = color_provider->GetColor(
+      is_disabled ? ui::kColorButtonBorderDisabled : ui::kColorButtonBorder);
+  if (style_ == Style::kProminent) {
     stroke_color = SK_ColorTRANSPARENT;
-  } else {
-    stroke_color = color_provider->GetColor(
-        is_disabled ? ui::kColorButtonBorderDisabled : ui::kColorButtonBorder);
   }
 
   SetBackground(
       CreateBackgroundFromPainter(Painter::CreateRoundRectWith1PxBorderPainter(
-          bg_color, stroke_color, corner_radius_)));
+          bg_color, stroke_color, GetCornerRadiusValue())));
 }
 
 void MdTextButton::UpdateColors() {
@@ -255,7 +307,7 @@ void MdTextButton::UpdateColors() {
 
 BEGIN_METADATA(MdTextButton, LabelButton)
 ADD_PROPERTY_METADATA(bool, Prominent)
-ADD_PROPERTY_METADATA(float, CornerRadius)
+ADD_PROPERTY_METADATA(absl::optional<float>, CornerRadius)
 ADD_PROPERTY_METADATA(absl::optional<SkColor>, BgColorOverride)
 ADD_PROPERTY_METADATA(absl::optional<gfx::Insets>, CustomPadding)
 END_METADATA

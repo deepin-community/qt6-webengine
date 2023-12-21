@@ -16,12 +16,17 @@
 #define CORE_INTERNAL_ENDPOINT_MANAGER_H_
 
 #include <cstdint>
+#include <functional>
 #include <memory>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/time/time.h"
+#include "connections/implementation/analytics/packet_meta_data.h"
 #include "connections/implementation/client_proxy.h"
 #include "connections/implementation/endpoint_channel.h"
 #include "connections/implementation/endpoint_channel_manager.h"
@@ -30,12 +35,9 @@
 #include "internal/platform/byte_array.h"
 #include "internal/platform/condition_variable.h"
 #include "internal/platform/count_down_latch.h"
-#include "internal/platform/multi_thread_executor.h"
 #include "internal/platform/runnable.h"
 #include "internal/platform/single_thread_executor.h"
-#include "internal/platform/system_clock.h"
 
-namespace location {
 namespace nearby {
 namespace connections {
 
@@ -71,10 +73,11 @@ class EndpointManager {
     // To achieve that, OfflineFrame needs to be either mutabe lvalue reference,
     // or rvalue reference. Rvalue references are discouraged by go/cstyle,
     // and that leaves us with mutable lvalue reference.
-    virtual void OnIncomingFrame(OfflineFrame& offline_frame,
-                                 const std::string& from_endpoint_id,
-                                 ClientProxy* to_client,
-                                 proto::connections::Medium current_medium) = 0;
+    virtual void OnIncomingFrame(
+        location::nearby::connections::OfflineFrame& offline_frame,
+        const std::string& from_endpoint_id, ClientProxy* to_client,
+        location::nearby::proto::connections::Medium current_medium,
+        analytics::PacketMetaData& packet_meta_data) = 0;
 
     // Implementations must call barrier.CountDown() once
     // they're done. This parallelizes the disconnection event across all frame
@@ -82,6 +85,7 @@ class EndpointManager {
     //
     // @EndpointManagerThread
     virtual void OnEndpointDisconnect(ClientProxy* client,
+                                      const std::string& service_id,
                                       const std::string& endpoint_id,
                                       CountDownLatch barrier) = 0;
   };
@@ -93,20 +97,22 @@ class EndpointManager {
   // up the OfflineServiceController implementation.
   // FrameProcessor* instances are of dynamic duration and survive all sessions.
   // Blocks until registration is complete.
-  void RegisterFrameProcessor(V1Frame::FrameType frame_type,
-                              FrameProcessor* processor);
-  void UnregisterFrameProcessor(V1Frame::FrameType frame_type,
-                                const FrameProcessor* processor);
+  void RegisterFrameProcessor(
+      location::nearby::connections::V1Frame::FrameType frame_type,
+      FrameProcessor* processor);
+  void UnregisterFrameProcessor(
+      location::nearby::connections::V1Frame::FrameType frame_type,
+      const FrameProcessor* processor);
 
   // Invoked from the different PcpHandler implementations (of which there can
   // be only one at a time).
   // Blocks until registration is complete.
-  void RegisterEndpoint(ClientProxy* client, const std::string& endpoint_id,
-                        const ConnectionResponseInfo& info,
-                        const ConnectionOptions& connection_options,
-                        std::unique_ptr<EndpointChannel> channel,
-                        const ConnectionListener& listener,
-                        const std::string& connection_token);
+  void RegisterEndpoint(
+      ClientProxy* client, const std::string& endpoint_id,
+      const ConnectionResponseInfo& info,
+      const ConnectionOptions& connection_options,
+      std::unique_ptr<EndpointChannel> channel,
+      const ConnectionListener& listener, const std::string& connection_token);
   // Called when a client explicitly asks to disconnect from this endpoint. In
   // this case, we do not notify the client of onDisconnected().
   void UnregisterEndpoint(ClientProxy* client, const std::string& endpoint_id);
@@ -119,12 +125,17 @@ class EndpointManager {
   //
   // Invoked from the PayloadManager's sendPayload() method.
   std::vector<std::string> SendPayloadChunk(
-      const PayloadTransferFrame::PayloadHeader& payload_header,
-      const PayloadTransferFrame::PayloadChunk& payload_chunk,
-      const std::vector<std::string>& endpoint_ids);
+      const location::nearby::connections::PayloadTransferFrame::PayloadHeader&
+          payload_header,
+      const location::nearby::connections::PayloadTransferFrame::PayloadChunk&
+          payload_chunk,
+      const std::vector<std::string>& endpoint_ids,
+      analytics::PacketMetaData& packet_meta_data);
   std::vector<std::string> SendControlMessage(
-      const PayloadTransferFrame::PayloadHeader& payload_header,
-      const PayloadTransferFrame::ControlMessage& control_message,
+      const location::nearby::connections::PayloadTransferFrame::PayloadHeader&
+          payload_header,
+      const location::nearby::connections::PayloadTransferFrame::ControlMessage&
+          control_message,
       const std::vector<std::string>& endpoint_ids);
 
   // Called when we internally want to get rid of the endpoint, without the
@@ -204,7 +215,8 @@ class EndpointManager {
     friend class LockedFrameProcessor;
   };
 
-  LockedFrameProcessor GetFrameProcessor(V1Frame::FrameType frame_type);
+  LockedFrameProcessor GetFrameProcessor(
+      location::nearby::connections::V1Frame::FrameType frame_type);
 
   ExceptionOr<bool> HandleData(const std::string& endpoint_id,
                                ClientProxy* client_proxy,
@@ -233,8 +245,11 @@ class EndpointManager {
   static void WaitForLatch(const std::string& method_name,
                            CountDownLatch* latch, std::int32_t timeout_millis);
 
+  // We set this to 11s to provide sufficient time for an in-progress WebRTC
+  // bandwidth upgrade to resolve. This is chosen to be slightly longer than the
+  // 10s timeout in WebRtc::AttemptToConnect().
   static constexpr absl::Duration kProcessEndpointDisconnectionTimeout =
-      absl::Milliseconds(2000);
+      absl::Milliseconds(11000);
   static constexpr absl::Time kInvalidTimestamp = absl::InfinitePast();
 
   // It should be noted that this method may be called multiple times (because
@@ -247,15 +262,18 @@ class EndpointManager {
                       bool notify);
 
   void WaitForEndpointDisconnectionProcessing(ClientProxy* client,
+                                              const std::string& service_id,
                                               const std::string& endpoint_id);
 
   CountDownLatch NotifyFrameProcessorsOnEndpointDisconnect(
-      ClientProxy* client, const std::string& endpoint_id);
+      ClientProxy* client, const std::string& service_id,
+      const std::string& endpoint_id);
 
   std::vector<std::string> SendTransferFrameBytes(
       const std::vector<std::string>& endpoint_ids,
       const ByteArray& payload_transfer_frame_bytes, std::int64_t payload_id,
-      std::int64_t offset, const std::string& packet_type);
+      std::int64_t offset, const std::string& packet_type,
+      analytics::PacketMetaData& packet_meta_data);
 
   // Executes all jobs sequentially, on a serial_executor_.
   void RunOnEndpointManagerThread(const std::string& name, Runnable runnable);
@@ -263,7 +281,8 @@ class EndpointManager {
   EndpointChannelManager* channel_manager_;
 
   RecursiveMutex frame_processors_lock_;
-  absl::flat_hash_map<V1Frame::FrameType, FrameProcessorWithMutex>
+  absl::flat_hash_map<location::nearby::connections::V1Frame::FrameType,
+                      FrameProcessorWithMutex>
       frame_processors_ ABSL_GUARDED_BY(frame_processors_lock_);
 
   // We keep track of all registered channel endpoints here.
@@ -280,6 +299,5 @@ bool operator<(const EndpointManager::FrameProcessor& lhs,
 
 }  // namespace connections
 }  // namespace nearby
-}  // namespace location
 
 #endif  // CORE_INTERNAL_ENDPOINT_MANAGER_H_

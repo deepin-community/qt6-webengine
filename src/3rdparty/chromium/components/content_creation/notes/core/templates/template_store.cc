@@ -1,16 +1,15 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/content_creation/notes/core/templates/template_store.h"
 
-#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/containers/flat_map.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
+#include "base/functional/bind.h"
 #include "base/rand_util.h"
-#include "base/task/task_runner_util.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
 #include "base/time/time.h"
@@ -69,7 +68,8 @@ TemplateStore::~TemplateStore() = default;
 
 void TemplateStore::FetchTemplates(GetTemplatesCallback callback) {
   fetcher_->Start(base::BindOnce(&TemplateStore::OnFetchTemplateComplete,
-                                 base::Unretained(this), std::move(callback)));
+                                 weak_ptr_factory_.GetWeakPtr(),
+                                 std::move(callback)));
 }
 
 void TemplateStore::GetTemplates(GetTemplatesCallback callback) {
@@ -86,10 +86,8 @@ void TemplateStore::GetTemplates(GetTemplatesCallback callback) {
   if (IsDynamicTemplatesEnabled()) {
     FetchTemplates(std::move(callback));
   } else {
-    base::PostTaskAndReplyWithResult(
-        task_runner_.get(), FROM_HERE,
-        base::BindOnce(&TemplateStore::BuildDefaultTemplates,
-                       base::Unretained(this)),
+    task_runner_->PostTaskAndReplyWithResult(
+        FROM_HERE, base::BindOnce(&TemplateStore::BuildDefaultTemplates),
         base::BindOnce(&TemplateStore::OnTemplatesReceived,
                        weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
   }
@@ -101,6 +99,7 @@ void TemplateStore::OnFetchTemplateComplete(GetTemplatesCallback callback,
                       ParseTemplatesFromString(response_body));
 }
 
+// static
 std::vector<NoteTemplate> TemplateStore::BuildDefaultTemplates() {
   std::vector<NoteTemplate> templates = {
       GetClassicTemplate(),  GetFriendlyTemplate(),   GetFreshTemplate(),

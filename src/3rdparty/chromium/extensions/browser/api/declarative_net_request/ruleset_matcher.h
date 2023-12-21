@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,6 +9,7 @@
 #include <memory>
 #include <string>
 
+#include "base/containers/flat_set.h"
 #include "base/memory/raw_ptr.h"
 #include "extensions/browser/api/declarative_net_request/extension_url_pattern_index_matcher.h"
 #include "extensions/browser/api/declarative_net_request/flat/extension_ruleset_generated.h"
@@ -74,6 +75,12 @@ class RulesetMatcher {
   // any, for |host|.
   absl::optional<RequestAction> GetAllowlistedFrameActionForTesting(
       content::RenderFrameHost* host) const;
+
+  // Set the disabled rule ids to the ruleset matcher.
+  void SetDisabledRuleIds(base::flat_set<int> disabled_rule_ids);
+
+  // Returns the disabled rule ids for testing.
+  const base::flat_set<int>& GetDisabledRuleIdsForTesting() const;
 
  private:
   const std::string ruleset_data_;

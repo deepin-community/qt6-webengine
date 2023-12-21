@@ -1,5 +1,5 @@
 #!/usr/bin/env vpython3
-# Copyright 2017 The Chromium Authors. All rights reserved.
+# Copyright 2017 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -48,11 +48,11 @@ import tempfile
 import traceback
 import six
 
-import common
 from collections import OrderedDict
 
 CHROMIUM_SRC_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), '..', '..'))
+    os.path.join(os.path.dirname(__file__),
+                 os.path.pardir, os.path.pardir))
 
 PERF_DIR = os.path.join(CHROMIUM_SRC_DIR, 'tools', 'perf')
 sys.path.append(PERF_DIR)
@@ -63,19 +63,16 @@ PERF_CORE_DIR = os.path.join(PERF_DIR, 'core')
 sys.path.append(PERF_CORE_DIR)
 import results_merger
 
-# Add src/testing/ into sys.path for importing xvfb and test_env.
-sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+# Add src/testing/ into sys.path for importing xvfb, test_env, and common.
+sys.path.append(
+    os.path.abspath(os.path.join(os.path.dirname(__file__), os.path.pardir)))
 import xvfb
 import test_env
+from scripts import common
 
-# Unfortunately we need to copy these variables from ../test_env.py.
-# Importing it and using its get_sandbox_env breaks test runs on Linux
-# (it seems to unset DISPLAY).
-CHROME_SANDBOX_ENV = 'CHROME_DEVEL_SANDBOX'
-CHROME_SANDBOX_PATH = '/opt/chromium/chrome_sandbox'
-SHARD_MAPS_DIRECTORY = os.path.join(
-    os.path.dirname(__file__), '..', '..', 'tools', 'perf', 'core',
-    'shard_maps')
+SHARD_MAPS_DIRECTORY = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), os.path.pardir, os.path.pardir,
+                 'tools', 'perf', 'core', 'shard_maps'))
 
 # See https://crbug.com/923564.
 # We want to switch over to using histograms for everything, but converting from
@@ -105,6 +102,8 @@ GTEST_CONVERSION_WHITELIST = [
   'wayland_client_perftests',
   'xr.vr.common_perftests',
 ]
+
+# pylint: disable=useless-object-inheritance
 
 
 class OutputFilePaths(object):
@@ -188,8 +187,7 @@ class GtestCommandGenerator(object):
     executable = str(self.executable_name)
     if IsWindows():
       return r'.\%s.exe' % executable
-    else:
-      return './%s' % executable
+    return './%s' % executable
 
   def _get_additional_flags(self):
     return self._additional_flags
@@ -246,7 +244,7 @@ def write_simple_test_results(return_code, output_filepath, benchmark_name):
           benchmark_name: {
               'expected': 'PASS',
               'actual': 'FAIL' if return_code else 'PASS',
-              'is_unexpected': True if return_code else False,
+              'is_unexpected': bool(return_code),
           },
       },
       'interrupted': False,
@@ -303,10 +301,6 @@ def execute_gtest_perf_test(command_generator, output_paths, use_xvfb=False,
   start = time.time()
 
   env = os.environ.copy()
-  # Assume we want to set up the sandbox environment variables all the
-  # time; doing so is harmless on non-Linux platforms and is needed
-  # all the time on Linux.
-  env[CHROME_SANDBOX_ENV] = CHROME_SANDBOX_PATH
   env['CHROME_HEADLESS'] = '1'
   #TODO(crbug/1138988): Some gtests do not implements the unit_test_launcher.cc.
   # As a result, they will not respect the arguments added by
@@ -351,11 +345,16 @@ def execute_gtest_perf_test(command_generator, output_paths, use_xvfb=False,
     traceback.print_exc()
     return_code = 1
   if os.path.exists(output_paths.perf_results):
-    if command_generator.executable_name in GTEST_CONVERSION_WHITELIST:
+    executable_name = command_generator.executable_name
+    if executable_name.startswith('bin/run_'):
+      # The executable is a wrapper used by Fuchsia. Remove the prefix to get
+      # the actual executable name.
+      executable_name = executable_name[8:]
+    if executable_name in GTEST_CONVERSION_WHITELIST:
       with path_util.SysPath(path_util.GetTracingDir()):
-        # pylint: disable=no-name-in-module
+        # pylint: disable=no-name-in-module,import-outside-toplevel
         from tracing.value import gtest_json_converter
-        # pylint: enable=no-name-in-module
+        # pylint: enable=no-name-in-module,import-outside-toplevel
       gtest_json_converter.ConvertGtestJsonFile(output_paths.perf_results)
   else:
     print('ERROR: gtest perf test %s did not generate perf output' %
@@ -504,18 +503,16 @@ class TelemetryCommandGenerator(object):
 
 
 def execute_telemetry_benchmark(
-    command_generator, output_paths, use_xvfb=False):
+    command_generator, output_paths, use_xvfb=False,
+    return_exit_code_zero=False):
   start = time.time()
 
   env = os.environ.copy()
   env['CHROME_HEADLESS'] = '1'
-  # Assume we want to set up the sandbox environment variables all the
-  # time; doing so is harmless on non-Linux platforms and is needed
-  # all the time on Linux.
-  env[CHROME_SANDBOX_ENV] = CHROME_SANDBOX_PATH
 
   return_code = 1
   temp_dir = tempfile.mkdtemp('telemetry')
+  infra_failure = False
   try:
     command = command_generator.generate(temp_dir)
     if use_xvfb:
@@ -543,6 +540,7 @@ def execute_telemetry_benchmark(
     print('The following exception may have prevented the code from '
           'outputing structured test results and perf results output:')
     print(traceback.format_exc())
+    infra_failure = True
   finally:
     # On swarming bots, don't remove output directory, since Result Sink might
     # still be uploading files to Result DB. Also, swarming bots automatically
@@ -555,6 +553,11 @@ def execute_telemetry_benchmark(
 
   print_duration('executing benchmark %s' % command_generator.benchmark, start)
 
+  if infra_failure:
+    print('There was an infrastructure error encountered during the run. '
+          'Please check the logs above for details')
+    return 1
+
   # Telemetry sets exit code to -1 to indicate that no stories were run. This
   # becomes 255 on linux because linux doesn't support -1 so it does modulo:
   # -1 % 256 == 255.
@@ -565,6 +568,10 @@ def execute_telemetry_benchmark(
           'this as a success.' % return_code)
     return 0
   if return_code:
+    if return_exit_code_zero:
+      print ('run_benchmark returned exit code ' + str(return_code)
+             + ' which indicates there were test failures in the run.')
+      return 0
     return return_code
   return 0
 
@@ -631,6 +638,12 @@ def parse_arguments(args):
                       'replace the static shardmap file.',
                       type=str,
                       required=False)
+  parser.add_argument('--ignore-benchmark-exit-code',
+                      help='If set, return an exit code 0 even if there'
+                            + ' are benchmark failures',
+                      action='store_true',
+                      required=False
+                      )
   options, leftover_args = parser.parse_known_args(args)
   options.passthrough_args.extend(leftover_args)
   return options
@@ -701,7 +714,8 @@ def main(sys_args):
             benchmark, options)
         print('\n### {folder} ###'.format(folder=benchmark))
         return_code = execute_telemetry_benchmark(
-            command_generator, output_paths, options.xvfb)
+            command_generator, output_paths, options.xvfb,
+            options.ignore_benchmark_exit_code)
         overall_return_code = return_code or overall_return_code
         test_results_files.append(output_paths.test_results)
       if options.run_ref_build:
@@ -771,7 +785,8 @@ def _run_benchmarks_on_shardmap(
           story_selection_config=story_selection_config)
       print('\n### {folder} ###'.format(folder=benchmark))
       return_code = execute_telemetry_benchmark(
-          command_generator, output_paths, options.xvfb)
+          command_generator, output_paths, options.xvfb,
+          options.ignore_benchmark_exit_code)
       overall_return_code = return_code or overall_return_code
       test_results_files.append(output_paths.test_results)
       if options.run_ref_build:
@@ -788,7 +803,7 @@ def _run_benchmarks_on_shardmap(
         # reference build.
         execute_telemetry_benchmark(
             reference_command_generator, reference_output_paths,
-            options.xvfb)
+            options.xvfb, options.ignore_benchmark_exit_code)
   if 'executables' in shard_configuration:
     names_and_configs = shard_configuration['executables']
     for (name, configuration) in names_and_configs.items():

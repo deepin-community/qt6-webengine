@@ -14,10 +14,12 @@
 #include "absl/base/attributes.h"
 #include "absl/strings/string_view.h"
 #include "quiche/quic/core/crypto/crypto_handshake.h"
+#include "quiche/quic/core/deterministic_connection_id_generator.h"
 #include "quiche/quic/core/http/quic_client_push_promise_index.h"
 #include "quiche/quic/core/http/quic_spdy_client_session.h"
 #include "quiche/quic/core/http/quic_spdy_client_stream.h"
 #include "quiche/quic/core/quic_config.h"
+#include "quiche/quic/core/quic_connection_id.h"
 #include "quiche/quic/platform/api/quic_socket_address.h"
 
 namespace quic {
@@ -26,13 +28,31 @@ class ProofVerifier;
 class QuicServerId;
 class SessionCache;
 
+// A path context which owns the writer.
+class QUIC_EXPORT_PRIVATE PathMigrationContext
+    : public QuicPathValidationContext {
+ public:
+  PathMigrationContext(std::unique_ptr<QuicPacketWriter> writer,
+                       const QuicSocketAddress& self_address,
+                       const QuicSocketAddress& peer_address)
+      : QuicPathValidationContext(self_address, peer_address),
+        alternative_writer_(std::move(writer)) {}
+
+  QuicPacketWriter* WriterToUse() override { return alternative_writer_.get(); }
+
+  QuicPacketWriter* ReleaseWriter() { return alternative_writer_.release(); }
+
+ private:
+  std::unique_ptr<QuicPacketWriter> alternative_writer_;
+};
+
 // QuicClientBase handles establishing a connection to the passed in
 // server id, including ensuring that it supports the passed in versions
 // and config.
 // Subclasses derived from this class are responsible for creating the
 // actual QuicSession instance, as well as defining functions that
 // create and run the underlying network transport.
-class QuicClientBase {
+class QuicClientBase : public QuicSession::Visitor {
  public:
   // An interface to various network events that the QuicClient will need to
   // interact with.
@@ -72,6 +92,26 @@ class QuicClientBase {
   QuicClientBase& operator=(const QuicClientBase&) = delete;
 
   virtual ~QuicClientBase();
+
+  // Implmenets QuicSession::Visitor
+  void OnConnectionClosed(QuicConnectionId /*server_connection_id*/,
+                          QuicErrorCode /*error*/,
+                          const std::string& /*error_details*/,
+                          ConnectionCloseSource /*source*/) override {}
+
+  void OnWriteBlocked(QuicBlockedWriterInterface* /*blocked_writer*/) override {
+  }
+  void OnRstStreamReceived(const QuicRstStreamFrame& /*frame*/) override {}
+  void OnStopSendingReceived(const QuicStopSendingFrame& /*frame*/) override {}
+  bool TryAddNewConnectionId(
+      const QuicConnectionId& /*server_connection_id*/,
+      const QuicConnectionId& /*new_connection_id*/) override {
+    return false;
+  }
+  void OnConnectionIdRetired(
+      const QuicConnectionId& /*server_connection_id*/) override {}
+  void OnServerPreferredAddressAvailable(
+      const QuicSocketAddress& server_preferred_address) override;
 
   // Initializes the client to create a connection. Should be called exactly
   // once before calling StartConnect or Connect. Returns true if the
@@ -115,6 +155,10 @@ class QuicClientBase {
   // Wait up to 50ms, and handle any events which occur.
   // Returns true if there are any outstanding requests.
   bool WaitForEvents();
+
+  // Performs the part of WaitForEvents() that is done after the actual event
+  // loop call.
+  bool WaitForEventsPostprocessing();
 
   // Migrate to a new socket (new_host) during an active connection.
   bool MigrateSocket(const QuicIpAddress& new_host);
@@ -247,6 +291,19 @@ class QuicClientBase {
     connection_debug_visitor_ = connection_debug_visitor;
   }
 
+  // Sets the interface name to bind. If empty, will not attempt to bind the
+  // socket to that interface. Defaults to empty string.
+  void set_interface_name(std::string interface_name) {
+    interface_name_ = interface_name;
+  }
+
+  std::string interface_name() { return interface_name_; }
+
+  void set_server_connection_id_override(
+      const QuicConnectionId& connection_id) {
+    server_connection_id_override_ = connection_id;
+  }
+
   void set_server_connection_id_length(uint8_t server_connection_id_length) {
     server_connection_id_length_ = server_connection_id_length;
   }
@@ -317,6 +374,9 @@ class QuicClientBase {
 
   // Returns true if the corresponding of this client has active requests.
   virtual bool HasActiveRequests() = 0;
+
+  // Allows derived classes to access this when creating connections.
+  ConnectionIdGeneratorInterface& connection_id_generator();
 
  private:
   // Returns true and set |version| if client can reconnect with a different
@@ -390,6 +450,11 @@ class QuicClientBase {
   // Not owned, must be valid for the lifetime of the QuicClientBase instance.
   QuicConnectionDebugVisitor* connection_debug_visitor_;
 
+  // If set,
+  // - GetNextConnectionId will use this as the next server connection id.
+  // - GenerateNewConnectionId will not be called.
+  absl::optional<QuicConnectionId> server_connection_id_override_;
+
   // GenerateNewConnectionId creates a random connection ID of this length.
   // Defaults to 8.
   uint8_t server_connection_id_length_;
@@ -400,6 +465,13 @@ class QuicClientBase {
 
   // Stores validated paths.
   std::vector<std::unique_ptr<QuicPathValidationContext>> validated_paths_;
+
+  // Stores the interface name to bind. If empty, will not attempt to bind the
+  // socket to that interface. Defaults to empty string.
+  std::string interface_name_;
+
+  DeterministicConnectionIdGenerator connection_id_generator_{
+      kQuicDefaultConnectionIdLength};
 };
 
 }  // namespace quic

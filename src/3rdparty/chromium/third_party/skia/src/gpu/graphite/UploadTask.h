@@ -10,6 +10,7 @@
 
 #include "src/gpu/graphite/Task.h"
 
+#include <memory>
 #include <vector>
 
 #include "include/core/SkImageInfo.h"
@@ -20,14 +21,24 @@ namespace skgpu::graphite {
 
 class Buffer;
 struct BufferTextureCopyData;
-class CommandBuffer;
 class Recorder;
-class ResourceProvider;
 class TextureProxy;
 
 struct MipLevel {
     const void* fPixels = nullptr;
     size_t fRowBytes = 0;
+};
+
+/**
+ * The ConditionalUploadContext, if set, is used to determine whether an upload needs to occur
+ * on Recording playback. Clients will need to create their own subclasses to store the
+ * necessary data and override the needsUpload() method to do this check.
+ */
+class ConditionalUploadContext {
+public:
+    virtual ~ConditionalUploadContext() {}
+
+    virtual bool needsUpload(Context*) const = 0;
 };
 
 /**
@@ -38,24 +49,33 @@ class UploadInstance {
 public:
     static UploadInstance Make(Recorder*,
                                sk_sp<TextureProxy> targetProxy,
-                               SkColorType colorType,
+                               const SkColorInfo& srcColorInfo,
+                               const SkColorInfo& dstColorInfo,
                                const std::vector<MipLevel>& levels,
-                               const SkIRect& dstRect);
+                               const SkIRect& dstRect,
+                               std::unique_ptr<ConditionalUploadContext>);
 
     bool isValid() const { return fBuffer != nullptr; }
 
+    bool prepareResources(ResourceProvider*);
+
     // Adds upload command to the given CommandBuffer
-    void addCommand(ResourceProvider*, CommandBuffer*) const;
+    void addCommand(Context*, CommandBuffer*, Task::ReplayTargetData) const;
 
 private:
     UploadInstance() {}
-    UploadInstance(sk_sp<Buffer>, sk_sp<TextureProxy>, std::vector<BufferTextureCopyData>);
+    UploadInstance(const Buffer*,
+                   size_t bytesPerPixel,
+                   sk_sp<TextureProxy>,
+                   std::vector<BufferTextureCopyData>,
+                   std::unique_ptr<ConditionalUploadContext>);
 
-    sk_sp<Buffer> fBuffer;
+    const Buffer* fBuffer;
+    size_t fBytesPerPixel;
     sk_sp<TextureProxy> fTextureProxy;
     std::vector<BufferTextureCopyData> fCopyData;
+    std::unique_ptr<ConditionalUploadContext> fConditionalContext;
 };
-
 
 /**
  * An UploadList is a mutable collection of UploadCommands.
@@ -70,9 +90,11 @@ class UploadList {
 public:
     bool recordUpload(Recorder*,
                       sk_sp<TextureProxy> targetProxy,
-                      SkColorType colorType,
+                      const SkColorInfo& srcColorInfo,
+                      const SkColorInfo& dstColorInfo,
                       const std::vector<MipLevel>& levels,
-                      const SkIRect& dstRect);
+                      const SkIRect& dstRect,
+                      std::unique_ptr<ConditionalUploadContext>);
 
     int size() { return fInstances.size(); }
 
@@ -91,15 +113,17 @@ private:
 class UploadTask final : public Task {
 public:
     static sk_sp<UploadTask> Make(UploadList*);
-    static sk_sp<UploadTask> Make(const UploadInstance&);
+    static sk_sp<UploadTask> Make(UploadInstance);
 
     ~UploadTask() override;
 
-    bool addCommands(ResourceProvider*, CommandBuffer*) override;
+    bool prepareResources(ResourceProvider*, const RuntimeEffectDictionary*) override;
+
+    bool addCommands(Context*, CommandBuffer*, ReplayTargetData) override;
 
 private:
     UploadTask(std::vector<UploadInstance>);
-    UploadTask(const UploadInstance&);
+    UploadTask(UploadInstance);
 
     std::vector<UploadInstance> fInstances;
 };

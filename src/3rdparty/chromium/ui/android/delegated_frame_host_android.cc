@@ -1,17 +1,22 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "ui/android/delegated_frame_host_android.h"
 
+#include <iterator>
+
 #include "base/android/build_info.h"
-#include "base/bind.h"
 #include "base/check_op.h"
+#include "base/feature_list.h"
+#include "base/functional/bind.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/notreached.h"
-#include "cc/layers/solid_color_layer.h"
-#include "cc/layers/surface_layer.h"
-#include "cc/trees/layer_tree_host.h"
-#include "cc/trees/swap_promise.h"
+#include "base/time/time.h"
+#include "cc/slim/layer.h"
+#include "cc/slim/layer_tree.h"
+#include "cc/slim/surface_layer.h"
+#include "components/viz/common/features.h"
 #include "components/viz/common/frame_sinks/copy_output_result.h"
 #include "components/viz/common/quads/compositor_frame.h"
 #include "components/viz/common/surfaces/surface_id.h"
@@ -27,44 +32,50 @@ namespace ui {
 
 namespace {
 
-class TopControlsSwapPromise : public cc::SwapPromise {
- public:
-  explicit TopControlsSwapPromise(float height) : height_(height) {}
-  ~TopControlsSwapPromise() override = default;
-
-  // cc::SwapPromise:
-  void DidActivate() override {}
-  void WillSwap(viz::CompositorFrameMetadata* metadata) override {
-    DCHECK_GT(metadata->frame_token, 0u);
-    metadata->top_controls_visible_height.emplace(height_);
-  }
-  void DidSwap() override {}
-  cc::SwapPromise::DidNotSwapAction DidNotSwap(
-      DidNotSwapReason reason) override {
-    return DidNotSwapAction::KEEP_ACTIVE;
-  }
-  int64_t GetTraceId() const override { return 0; }
-
- private:
-  const float height_;
-};
-
-scoped_refptr<cc::SurfaceLayer> CreateSurfaceLayer(
+scoped_refptr<cc::slim::SurfaceLayer> CreateSurfaceLayer(
     const viz::SurfaceId& primary_surface_id,
     const viz::SurfaceId& fallback_surface_id,
     const gfx::Size& size_in_pixels,
     const cc::DeadlinePolicy& deadline_policy,
     bool surface_opaque) {
   // manager must outlive compositors using it.
-  auto layer = cc::SurfaceLayer::Create();
+  auto layer = cc::slim::SurfaceLayer::Create();
   layer->SetSurfaceId(primary_surface_id, deadline_policy);
   layer->SetOldestAcceptableFallback(fallback_surface_id);
   layer->SetBounds(size_in_pixels);
   layer->SetIsDrawable(true);
   layer->SetContentsOpaque(surface_opaque);
-  layer->SetSurfaceHitTestable(true);
 
   return layer;
+}
+
+// From content::VisibleTimeRequestTrigger::ConsumeAndMergeRequests
+// TODO(crbug.com/1263687): Use separate start time for each event.
+blink::mojom::RecordContentToVisibleTimeRequestPtr ConsumeAndMergeRequests(
+    blink::mojom::RecordContentToVisibleTimeRequestPtr request1,
+    blink::mojom::RecordContentToVisibleTimeRequestPtr request2) {
+  if (!request1 && !request2)
+    return nullptr;
+
+  // Pick any non-null request to merge into.
+  blink::mojom::RecordContentToVisibleTimeRequestPtr to;
+  blink::mojom::RecordContentToVisibleTimeRequestPtr from;
+  if (request1) {
+    to = std::move(request1);
+    from = std::move(request2);
+  } else {
+    to = std::move(request2);
+    from = std::move(request1);
+  }
+
+  if (from) {
+    to->event_start_time =
+        std::min(to->event_start_time, from->event_start_time);
+    to->destination_is_loaded |= from->destination_is_loaded;
+    to->show_reason_tab_switching |= from->show_reason_tab_switching;
+    to->show_reason_bfcache_restore |= from->show_reason_bfcache_restore;
+  }
+  return to;
 }
 
 }  // namespace
@@ -95,7 +106,7 @@ DelegatedFrameHostAndroid::DelegatedFrameHostAndroid(
 }
 
 DelegatedFrameHostAndroid::~DelegatedFrameHostAndroid() {
-  EvictDelegatedFrame();
+  EvictDelegatedFrame(frame_evictor_->CollectSurfaceIdsForEviction());
   DetachFromCompositor();
   host_frame_sink_manager_->InvalidateFrameSinkId(frame_sink_id_);
 }
@@ -157,25 +168,19 @@ bool DelegatedFrameHostAndroid::CanCopyFromCompositingSurface() const {
   return local_surface_id_.is_valid();
 }
 
-void DelegatedFrameHostAndroid::EvictDelegatedFrame() {
+void DelegatedFrameHostAndroid::EvictDelegatedFrame(
+    const std::vector<viz::SurfaceId>& surface_ids) {
   content_layer_->SetSurfaceId(viz::SurfaceId(),
                                cc::DeadlinePolicy::UseDefaultDeadline());
-  std::vector<viz::SurfaceId> surface_ids;
   // If we have a surface from before a navigation, evict it, regardless of
   // visibility state.
-  if (pre_navigation_local_surface_id_.is_valid()) {
-    viz::SurfaceId pre_nav =
-        viz::SurfaceId(frame_sink_id_, pre_navigation_local_surface_id_);
-    surface_ids.push_back(pre_nav);
-  } else if (!HasSavedFrame() || frame_evictor_->visible()) {
+  if (!pre_navigation_local_surface_id_.is_valid() &&
+      (!HasSavedFrame() || frame_evictor_->visible())) {
     return;
   }
 
-  if (local_surface_id_.is_valid()) {
-    viz::SurfaceId current = viz::SurfaceId(frame_sink_id_, local_surface_id_);
-    surface_ids.push_back(current);
-  }
-
+  UMA_HISTOGRAM_COUNTS_100("MemoryAndroid.EvictedTreeSize2",
+                           surface_ids.size());
   if (surface_ids.empty())
     return;
   host_frame_sink_manager_->EvictSurfaces(surface_ids);
@@ -188,6 +193,22 @@ void DelegatedFrameHostAndroid::EvictDelegatedFrame() {
   client_->WasEvicted();
 }
 
+std::vector<viz::SurfaceId>
+DelegatedFrameHostAndroid::CollectSurfaceIdsForEviction() const {
+  if (base::FeatureList::IsEnabled(features::kEvictSubtree)) {
+    return client_->CollectSurfaceIdsForEviction();
+  }
+  return std::vector<viz::SurfaceId>();
+}
+
+viz::SurfaceId DelegatedFrameHostAndroid::GetCurrentSurfaceId() const {
+  return viz::SurfaceId(frame_sink_id_, local_surface_id_);
+}
+
+viz::SurfaceId DelegatedFrameHostAndroid::GetPreNavigationSurfaceId() const {
+  return viz::SurfaceId(frame_sink_id_, pre_navigation_local_surface_id_);
+}
+
 void DelegatedFrameHostAndroid::ClearFallbackSurfaceForCommitPending() {
   const absl::optional<viz::SurfaceId> fallback_surface_id =
       content_layer_->oldest_acceptable_fallback();
@@ -196,7 +217,7 @@ void DelegatedFrameHostAndroid::ClearFallbackSurfaceForCommitPending() {
   // guarantee that Navigation will complete, evict our surfaces which are from
   // a previous Navigation.
   if (fallback_surface_id && fallback_surface_id->is_valid()) {
-    EvictDelegatedFrame();
+    EvictDelegatedFrame(frame_evictor_->CollectSurfaceIdsForEviction());
     content_layer_->SetOldestAcceptableFallback(viz::SurfaceId());
   }
 }
@@ -216,8 +237,8 @@ void DelegatedFrameHostAndroid::ResetFallbackToFirstNavigationSurface() {
   // If we have a surface from before a navigation, evict it as well.
   if (pre_navigation_local_surface_id_.is_valid() &&
       !first_local_surface_id_after_navigation_.is_valid()) {
-    EvictDelegatedFrame();
-    content_layer_->SetBackgroundColor(SK_ColorTRANSPARENT);
+    EvictDelegatedFrame(frame_evictor_->CollectSurfaceIdsForEviction());
+    content_layer_->SetBackgroundColor(SkColors::kTransparent);
   }
 
   content_layer_->SetOldestAcceptableFallback(
@@ -229,7 +250,7 @@ bool DelegatedFrameHostAndroid::HasDelegatedContent() const {
 }
 
 void DelegatedFrameHostAndroid::CompositorFrameSinkChanged() {
-  EvictDelegatedFrame();
+  EvictDelegatedFrame(frame_evictor_->CollectSurfaceIdsForEviction());
   if (registered_parent_compositor_)
     AttachToCompositor(registered_parent_compositor_);
 }
@@ -240,6 +261,13 @@ void DelegatedFrameHostAndroid::AttachToCompositor(
     DetachFromCompositor();
   compositor->AddChildFrameSink(frame_sink_id_);
   registered_parent_compositor_ = compositor;
+  if (content_to_visible_time_request_) {
+    registered_parent_compositor_
+        ->PostRequestSuccessfulPresentationTimeForNextFrame(
+            content_to_visible_time_recorder_.TabWasShown(
+                /*has_saved_frames=*/true,
+                std::move(content_to_visible_time_request_)));
+  }
 }
 
 void DelegatedFrameHostAndroid::DetachFromCompositor() {
@@ -247,6 +275,7 @@ void DelegatedFrameHostAndroid::DetachFromCompositor() {
     return;
   registered_parent_compositor_->RemoveChildFrameSink(frame_sink_id_);
   registered_parent_compositor_ = nullptr;
+  content_to_visible_time_request_ = nullptr;
 }
 
 bool DelegatedFrameHostAndroid::IsPrimarySurfaceEvicted() const {
@@ -258,13 +287,20 @@ bool DelegatedFrameHostAndroid::HasSavedFrame() const {
 }
 
 void DelegatedFrameHostAndroid::WasHidden() {
+  CancelSuccessfulPresentationTimeRequest();
   frame_evictor_->SetVisible(false);
 }
 
 void DelegatedFrameHostAndroid::WasShown(
     const viz::LocalSurfaceId& new_local_surface_id,
     const gfx::Size& new_size_in_pixels,
-    bool is_fullscreen) {
+    bool is_fullscreen,
+    blink::mojom::RecordContentToVisibleTimeRequestPtr
+        content_to_visible_time_request) {
+  if (content_to_visible_time_request) {
+    PostRequestSuccessfulPresentationTimeForNextFrame(
+        std::move(content_to_visible_time_request));
+  }
   frame_evictor_->SetVisible(true);
 
   EmbedSurface(
@@ -322,8 +358,8 @@ void DelegatedFrameHostAndroid::EmbedSurface(
       content_layer_->SetOldestAcceptableFallback(new_primary_surface_id);
 
       // We default to black background for fullscreen case.
-      content_layer_->SetBackgroundColor(is_fullscreen ? SK_ColorBLACK
-                                                       : SK_ColorTRANSPARENT);
+      content_layer_->SetBackgroundColor(
+          is_fullscreen ? SkColors::kBlack : SkColors::kTransparent);
     }
   }
 
@@ -360,6 +396,18 @@ void DelegatedFrameHostAndroid::EmbedSurface(
     content_layer_->SetSurfaceId(new_primary_surface_id, deadline_policy);
     content_layer_->SetBounds(new_size_in_pixels);
   }
+}
+
+void DelegatedFrameHostAndroid::RequestSuccessfulPresentationTimeForNextFrame(
+    blink::mojom::RecordContentToVisibleTimeRequestPtr
+        content_to_content_to_visible_time_request) {
+  PostRequestSuccessfulPresentationTimeForNextFrame(
+      std::move(content_to_content_to_visible_time_request));
+}
+
+void DelegatedFrameHostAndroid::CancelSuccessfulPresentationTimeRequest() {
+  content_to_visible_time_request_.reset();
+  content_to_visible_time_recorder_.TabWasHidden();
 }
 
 void DelegatedFrameHostAndroid::OnFirstSurfaceActivation(
@@ -430,11 +478,32 @@ void DelegatedFrameHostAndroid::OnNavigateToNewPage() {
 void DelegatedFrameHostAndroid::SetTopControlsVisibleHeight(float height) {
   if (top_controls_visible_height_ == height)
     return;
-  if (!content_layer_ || !content_layer_->layer_tree_host())
+  if (!content_layer_ || !content_layer_->layer_tree()) {
     return;
+  }
   top_controls_visible_height_ = height;
-  auto swap_promise = std::make_unique<TopControlsSwapPromise>(height);
-  content_layer_->layer_tree_host()->QueueSwapPromise(std::move(swap_promise));
+  content_layer_->layer_tree()->UpdateTopControlsVisibleHeight(height);
+}
+
+void DelegatedFrameHostAndroid::
+    PostRequestSuccessfulPresentationTimeForNextFrame(
+        blink::mojom::RecordContentToVisibleTimeRequestPtr
+            content_to_visible_time_request) {
+  // Since we could receive multiple requests while awaiting
+  // `registered_parent_compositor_` we merge them.
+  auto request =
+      ConsumeAndMergeRequests(std::move(content_to_visible_time_request_),
+                              std::move(content_to_visible_time_request));
+
+  if (!registered_parent_compositor_) {
+    content_to_visible_time_request_ = std::move(request);
+    return;
+  }
+
+  registered_parent_compositor_
+      ->PostRequestSuccessfulPresentationTimeForNextFrame(
+          content_to_visible_time_recorder_.TabWasShown(
+              /*has_saved_frames=*/true, std::move(request)));
 }
 
 }  // namespace ui

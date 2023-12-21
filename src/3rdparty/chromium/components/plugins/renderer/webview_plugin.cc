@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,13 +10,12 @@
 #include <string>
 
 #include "base/auto_reset.h"
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/location.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/task/single_thread_task_runner.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "gin/converter.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "skia/ext/platform_canvas.h"
@@ -26,6 +25,7 @@
 #include "third_party/blink/public/common/web_preferences/web_preferences.h"
 #include "third_party/blink/public/mojom/input/focus_type.mojom.h"
 #include "third_party/blink/public/platform/scheduler/web_thread_scheduler.h"
+#include "third_party/blink/public/platform/web_policy_container.h"
 #include "third_party/blink/public/platform/web_url.h"
 #include "third_party/blink/public/platform/web_url_response.h"
 #include "third_party/blink/public/web/web_document.h"
@@ -134,7 +134,8 @@ void WebViewPlugin::Destroy() {
   }
   container_ = nullptr;
   blink::WebViewObserver::Observe(nullptr);
-  base::ThreadTaskRunnerHandle::Get()->DeleteSoon(FROM_HERE, this);
+  base::SingleThreadTaskRunner::GetCurrentDefault()->DeleteSoon(FROM_HERE,
+                                                                this);
 }
 
 v8::Local<v8::Object> WebViewPlugin::V8ScriptableObject(v8::Isolate* isolate) {
@@ -263,7 +264,7 @@ WebViewPlugin::WebViewHelper::WebViewHelper(
     : plugin_(plugin),
       agent_group_scheduler_(
           blink::scheduler::WebThreadScheduler::MainThreadScheduler()
-              ->CreateAgentGroupScheduler()) {
+              ->CreateWebAgentGroupScheduler()) {
   web_view_ = WebView::Create(
       /*client=*/this,
       /*is_hidden=*/false,
@@ -286,7 +287,8 @@ WebViewPlugin::WebViewHelper::WebViewHelper(
   web_view_->SetRendererPreferences(renderer_preferences);
 
   WebLocalFrame* web_frame = WebLocalFrame::CreateMainFrame(
-      web_view_, this, nullptr, blink::LocalFrameToken(), nullptr);
+      web_view_, this, nullptr, blink::LocalFrameToken(),
+      blink::DocumentToken(), nullptr);
   blink::WebFrameWidget* frame_widget = web_frame->InitializeFrameWidget(
       blink::CrossVariantMojoAssociatedRemote<
           blink::mojom::FrameWidgetHostInterfaceBase>(),
@@ -362,13 +364,13 @@ void WebViewPlugin::WebViewHelper::ScheduleNonCompositedAnimation() {
   }
 }
 
-std::unique_ptr<blink::WebURLLoaderFactory>
-WebViewPlugin::WebViewHelper::CreateURLLoaderFactory() {
+scoped_refptr<network::SharedURLLoaderFactory>
+WebViewPlugin::WebViewHelper::GetURLLoaderFactory() {
   return plugin_->Container()
       ->GetDocument()
       .GetFrame()
       ->Client()
-      ->CreateURLLoaderFactory();
+      ->GetURLLoaderFactory();
 }
 
 void WebViewPlugin::WebViewHelper::BindToFrame(
@@ -382,10 +384,11 @@ void WebViewPlugin::WebViewHelper::DidClearWindowObject() {
 
   v8::Isolate* isolate = blink::MainThreadIsolate();
   v8::HandleScope handle_scope(isolate);
-  v8::MicrotasksScope microtasks_scope(
-      isolate, v8::MicrotasksScope::kDoNotRunMicrotasks);
   v8::Local<v8::Context> context = frame_->MainWorldScriptContext();
   DCHECK(!context.IsEmpty());
+  v8::MicrotasksScope microtasks_scope(
+      isolate, context->GetMicrotaskQueue(),
+      v8::MicrotasksScope::kDoNotRunMicrotasks);
 
   v8::Context::Scope context_scope(context);
   v8::Local<v8::Object> global = context->Global();
@@ -411,14 +414,17 @@ void WebViewPlugin::OnZoomLevelChanged() {
 void WebViewPlugin::LoadHTML(const std::string& html_data, const GURL& url) {
   auto params = std::make_unique<blink::WebNavigationParams>();
   params->url = url;
+  params->policy_container = std::make_unique<blink::WebPolicyContainer>();
+
   // The |html_data| comes from files in: chrome/renderer/resources/plugins/
   // Executing scripts is the only capability required.
   //
   // WebSandboxFlags is a bit field. This removes all the capabilities, except
   // script execution.
   using network::mojom::WebSandboxFlags;
-  params->sandbox_flags = static_cast<WebSandboxFlags>(
-      ~static_cast<int>(WebSandboxFlags::kScripts));
+  params->policy_container->policies.sandbox_flags =
+      static_cast<WebSandboxFlags>(
+          ~static_cast<int>(WebSandboxFlags::kScripts));
   blink::WebNavigationParams::FillStaticResponse(params.get(), "text/html",
                                                  "UTF-8", html_data);
   web_view_helper_.main_frame()->CommitNavigation(std::move(params),

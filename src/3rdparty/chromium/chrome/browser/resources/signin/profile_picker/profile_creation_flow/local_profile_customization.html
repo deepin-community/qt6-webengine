@@ -202,12 +202,12 @@
   <cr-icon-button id="backButton" iron-icon="cr:arrow-back"
       on-click="onBackClick_" aria-label$="[[getBackButtonAriaLabel_()]]">
   </cr-icon-button>
-  <h2 id="title">$i18n{localProfileCreationTitle}</h2>
+  <h1 class="title" id="title">$i18n{localProfileCreationTitle}</h1>
   <div id="avatarContainer">
     <img class="avatar" alt="" src$="[[selectedAvatar_.url]]">
     <div id="customizeAvatarEllipse"></div>
     <cr-icon-button id="customizeAvatarIcon"
-        iron-icon="profiles:create" on-click="onCustomizeAvatarClick_"
+        iron-icon="cr:create" on-click="onCustomizeAvatarClick_"
         aria-label="$i18n{localProfileCreationCustomizeAvatarLabel}">
     </cr-icon-button>
   </div>
@@ -238,7 +238,7 @@
   </cr-checkbox>
 
   <cr-button id="save" class="action-button" on-click="onSaveClick_"
-      disabled="[[isSaveDisabled_(createInProgress_, profileName_)]]">
+      disabled="[[isSaveDisabled_(profileCreationInProgress, profileName_)]]">
     $i18n{createProfileConfirm}
   </cr-button>
 </div>

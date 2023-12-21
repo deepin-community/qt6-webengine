@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,7 +12,6 @@
 #include "base/memory/raw_ptr.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/test_mock_time_task_runner.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "components/viz/client/client_resource_provider.h"
 #include "components/viz/common/resources/resource_sizes.h"
@@ -32,7 +31,7 @@ class ResourcePoolTest : public testing::Test {
     context_support_ = context_support.get();
     context_provider_ =
         viz::TestContextProvider::Create(std::move(context_support));
-    context_provider_->BindToCurrentThread();
+    context_provider_->BindToCurrentSequence();
     resource_provider_ = std::make_unique<viz::ClientResourceProvider>();
     test_task_runner_ = base::MakeRefCounted<base::TestMockTimeTaskRunner>();
     resource_pool_ = std::make_unique<ResourcePool>(
@@ -63,7 +62,7 @@ class ResourcePoolTest : public testing::Test {
 
   void SetBackingOnResource(const ResourcePool::InUsePoolResource& resource) {
     auto backing = std::make_unique<StubGpuBacking>();
-    backing->mailbox = gpu::Mailbox::Generate();
+    backing->mailbox = gpu::Mailbox::GenerateForSharedImage();
     backing->mailbox_sync_token.Set(
         gpu::GPU_IO, gpu::CommandBufferId::FromUnsafeValue(1), 1);
     resource.set_gpu_backing(std::move(backing));
@@ -290,7 +289,7 @@ TEST_F(ResourcePoolTest, BusyResourcesNotFreed) {
 
   resource_pool_->ReleaseResource(std::move(resource));
   EXPECT_EQ(40000u, resource_pool_->GetTotalMemoryUsageForTesting());
-  EXPECT_EQ(0u, resource_pool_->memory_usage_bytes());
+  EXPECT_EQ(40000u, resource_pool_->memory_usage_bytes());
   EXPECT_EQ(1u, resource_pool_->GetBusyResourceCountForTesting());
 
   // Wait for our resource pool to evict resources. Wait 10x the expiration
@@ -300,8 +299,14 @@ TEST_F(ResourcePoolTest, BusyResourcesNotFreed) {
   // Busy resources are still held, since they may be in flight to the display
   // compositor and should not be freed.
   EXPECT_EQ(40000u, resource_pool_->GetTotalMemoryUsageForTesting());
-  EXPECT_EQ(0u, resource_pool_->memory_usage_bytes());
+  EXPECT_EQ(40000u, resource_pool_->memory_usage_bytes());
   EXPECT_EQ(1u, resource_pool_->GetBusyResourceCountForTesting());
+
+  resource_provider_->ReleaseAllExportedResources(/*lose=*/false);
+
+  EXPECT_EQ(40000u, resource_pool_->GetTotalMemoryUsageForTesting());
+  EXPECT_EQ(0u, resource_pool_->memory_usage_bytes());
+  EXPECT_EQ(0u, resource_pool_->GetBusyResourceCountForTesting());
 }
 
 TEST_F(ResourcePoolTest, UnusedResourcesEventuallyFreed) {
@@ -721,8 +726,10 @@ TEST_F(ResourcePoolTest, MetadataSentToDisplayCompositor) {
   EXPECT_EQ(transfer[0].mailbox_holder.mailbox, mailbox);
   EXPECT_EQ(transfer[0].mailbox_holder.sync_token, sync_token);
   EXPECT_EQ(transfer[0].mailbox_holder.texture_target, target);
-  EXPECT_EQ(transfer[0].format, format);
-  EXPECT_TRUE(transfer[0].read_lock_fences_enabled);
+  EXPECT_EQ(transfer[0].format.resource_format(), format);
+  EXPECT_EQ(
+      transfer[0].synchronization_type,
+      viz::TransferableResource::SynchronizationType::kGpuCommandsCompleted);
   EXPECT_TRUE(transfer[0].is_overlay_candidate);
 
   resource_pool_->ReleaseResource(std::move(resource));

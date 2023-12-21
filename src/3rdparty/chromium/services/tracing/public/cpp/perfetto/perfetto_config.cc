@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <string>
 
+#include "base/command_line.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/trace_event/memory_dump_manager.h"
@@ -16,6 +17,7 @@
 #include "build/build_config.h"
 #include "build/chromecast_buildflags.h"
 #include "build/chromeos_buildflags.h"
+#include "components/tracing/common/tracing_switches.h"
 #include "services/tracing/public/mojom/perfetto_service.mojom.h"
 
 namespace tracing {
@@ -32,46 +34,23 @@ perfetto::TraceConfig::DataSource* AddDataSourceConfig(
     const std::string& json_agent_label_filter) {
   auto* data_source = perfetto_config->add_data_sources();
   auto* source_config = data_source->mutable_config();
-#if BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
-  if (!strcmp(name, tracing::mojom::kTraceEventDataSourceName)) {
-    source_config->set_name("track_event");
-  } else {
-    source_config->set_name(name);
-  }
-#else
   source_config->set_name(name);
-#endif
   source_config->set_target_buffer(0);
+
   auto* chrome_config = source_config->mutable_chrome_config();
   chrome_config->set_trace_config(chrome_config_string);
   chrome_config->set_privacy_filtering_enabled(privacy_filtering_enabled);
   chrome_config->set_convert_to_legacy_json(convert_to_legacy_json);
   chrome_config->set_client_priority(client_priority);
-
   if (!json_agent_label_filter.empty())
     chrome_config->set_json_agent_label_filter(json_agent_label_filter);
 
 #if BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
   if (!strcmp(name, tracing::mojom::kTraceEventDataSourceName)) {
+    source_config->set_name("track_event");
     base::trace_event::TraceConfig base_config(chrome_config_string);
-    perfetto::protos::gen::TrackEventConfig te_cfg;
-    // If no categories are explicitly enabled, enable the default ones.
-    // Otherwise only matching categories are enabled.
-    if (!base_config.category_filter().included_categories().empty())
-      te_cfg.add_disabled_categories("*");
-    for (const auto& excluded :
-         base_config.category_filter().excluded_categories()) {
-      te_cfg.add_disabled_categories(excluded);
-    }
-    for (const auto& included :
-         base_config.category_filter().included_categories()) {
-      te_cfg.add_enabled_categories(included);
-    }
-    for (const auto& disabled :
-         base_config.category_filter().disabled_categories()) {
-      te_cfg.add_enabled_categories(disabled);
-    }
-    source_config->set_track_event_config_raw(te_cfg.SerializeAsString());
+    source_config->set_track_event_config_raw(
+        base_config.ToPerfettoTrackEventConfigRaw(privacy_filtering_enabled));
   }
 #endif  // BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
 
@@ -123,8 +102,7 @@ void AddDataSourceConfigs(
   if (!privacy_filtering_enabled) {
 // TODO(crbug.com/1052397): Revisit once build flag switch of lacros-chrome is
 // complete.
-#if BUILDFLAG(IS_CHROMEOS_ASH) || \
-    (BUILDFLAG(IS_CHROMECAST) && BUILDFLAG(IS_LINUX))
+#if BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CASTOS)
     if (source_names.empty() ||
         source_names.count(tracing::mojom::kSystemTraceDataSourceName) == 1) {
       AddDataSourceConfig(
@@ -152,6 +130,13 @@ void AddDataSourceConfigs(
                         chrome_config_string, privacy_filtering_enabled,
                         convert_to_legacy_json, client_priority,
                         json_agent_label_filter);
+  }
+
+  if (source_names.count(tracing::mojom::kSamplerProfilerSourceName) == 1) {
+    AddDataSourceConfig(
+        perfetto_config, tracing::mojom::kSamplerProfilerSourceName,
+        chrome_config_string, privacy_filtering_enabled, convert_to_legacy_json,
+        client_priority, json_agent_label_filter);
   }
 
   if (stripped_config.IsCategoryGroupEnabled(
@@ -185,6 +170,22 @@ void AddDataSourceConfigs(
   }
 }
 
+size_t GetDefaultTraceBufferSize() {
+  auto* command_line = base::CommandLine::ForCurrentProcess();
+  std::string switch_value = command_line->GetSwitchValueASCII(
+      switches::kDefaultTraceBufferSizeLimitInKb);
+  size_t switch_kilobytes;
+  if (!switch_value.empty() &&
+      base::StringToSizeT(switch_value, &switch_kilobytes)) {
+    return switch_kilobytes;
+  } else {
+    // TODO(eseckler): Reduce the default buffer size after benchmarks set
+    // what they require. Should also invest some time to reduce the overhead
+    // of begin/end pairs further.
+    return 200 * 1024;
+  }
+}
+
 }  // namespace
 
 perfetto::TraceConfig GetDefaultPerfettoConfig(
@@ -210,10 +211,8 @@ perfetto::TraceConfig COMPONENT_EXPORT(TRACING_CPP)
 
   size_t size_limit = chrome_config.GetTraceBufferSizeInKb();
   if (size_limit == 0) {
-    // TODO(eseckler): Reduce the default buffer size after benchmarks set what
-    // they require. Should also invest some time to reduce the overhead of
-    // begin/end pairs further.
-    size_limit = 200 * 1024;
+    // If trace config did not provide trace buffer size, we will use default
+    size_limit = GetDefaultTraceBufferSize();
   }
   auto* buffer_config = perfetto_config.add_buffers();
   buffer_config->set_size_kb(size_limit);
@@ -249,9 +248,12 @@ perfetto::TraceConfig COMPONENT_EXPORT(TRACING_CPP)
   builtin_data_sources->set_disable_system_info(privacy_filtering_enabled);
   builtin_data_sources->set_disable_service_events(privacy_filtering_enabled);
 
-  // Clear incremental state every 5 seconds, so that we lose at most the first
-  // 5 seconds of the trace (if we wrap around perfetto's central buffer).
-  perfetto_config.mutable_incremental_state_config()->set_clear_period_ms(5000);
+  // Clear incremental state every 0.5 seconds, so that we lose at most the
+  // first 0.5 seconds of the trace (if we wrap around Perfetto's central
+  // buffer).
+  // This value strikes balance between minimizing interned data overhead, and
+  // reducing the risk of data loss in ring buffer mode.
+  perfetto_config.mutable_incremental_state_config()->set_clear_period_ms(500);
 
   // We strip the process filter from the config string we send to Perfetto, so
   // perfetto doesn't reject it from a future TracingService::ChangeTraceConfig

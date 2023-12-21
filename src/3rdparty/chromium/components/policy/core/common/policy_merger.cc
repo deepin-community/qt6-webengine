@@ -1,12 +1,17 @@
-// Copyright (c) 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+
+#include "components/policy/core/common/policy_merger.h"
 
 #include <array>
 #include <map>
 #include <set>
 
-#include "components/policy/core/common/policy_merger.h"
+#include "base/feature_list.h"
+#include "build/build_config.h"
+#include "build/chromeos_buildflags.h"
+#include "components/policy/core/common/features.h"
 #include "components/policy/core/common/policy_pref_names.h"
 #include "components/policy/policy_constants.h"
 #include "components/strings/grit/components_strings.h"
@@ -15,14 +20,17 @@ namespace policy {
 
 namespace {
 
-constexpr std::array<const char*, 6> kDictionaryPoliciesToMerge{
+#if !BUILDFLAG(IS_IOS) && !BUILDFLAG(IS_ANDROID)
+constexpr const char* kDictionaryPoliciesToMerge[] = {
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+    key::kExtensionSettings,       key::kDeviceLoginScreenPowerManagement,
+    key::kKeyPermissions,          key::kPowerManagementIdleSettings,
+    key::kScreenBrightnessPercent, key::kScreenLockDelays,
+#else
     key::kExtensionSettings,
-    key::kDeviceLoginScreenPowerManagement,
-    key::kKeyPermissions,
-    key::kPowerManagementIdleSettings,
-    key::kScreenBrightnessPercent,
-    key::kScreenLockDelays,
+#endif  //  BUILDFLAG(IS_CHROMEOS_ASH)
 };
+#endif  // !BUILDFLAG(IS_IOS) && !BUILDFLAG(IS_ANDROID)
 
 }  // namespace
 
@@ -107,8 +115,19 @@ bool PolicyListMerger::CanMerge(const std::string& policy_name,
   if (policy.source == POLICY_SOURCE_MERGED)
     return false;
 
-  if (policies_to_merge_.find("*") != policies_to_merge_.end())
-    return policy.value(base::Value::Type::LIST) != nullptr;
+  // `base::FeatureList` is not initialized when platform policies are first
+  // applied during browser startup. The feature value is eventually used to
+  // apply the correct merging logic before the browser launches since policies
+  // are applied multiple times during startup.
+  const bool can_merge_conflicts =
+      !base::FeatureList::GetInstance() ||
+      !base::FeatureList::IsEnabled(
+          policy::features::kPolicyMergeMultiSource) ||
+      policy.HasConflicts();
+  if (policies_to_merge_.find("*") != policies_to_merge_.end()) {
+    return can_merge_conflicts &&
+           policy.value(base::Value::Type::LIST) != nullptr;
+  }
 
   if (policies_to_merge_.find(policy_name) == policies_to_merge_.end())
     return false;
@@ -119,7 +138,7 @@ bool PolicyListMerger::CanMerge(const std::string& policy_name,
     return false;
   }
 
-  return true;
+  return can_merge_conflicts;
 }
 
 bool PolicyListMerger::AllowUserCloudPolicyMerging() const {
@@ -136,7 +155,7 @@ void PolicyListMerger::DoMerge(PolicyMap::Entry* policy) const {
   bool value_changed = false;
 
   for (const base::Value& val :
-       policy->value(base::Value::Type::LIST)->GetListDeprecated()) {
+       policy->value(base::Value::Type::LIST)->GetList()) {
     if (duplicates.find(&val) != duplicates.end())
       continue;
     duplicates.insert(&val);
@@ -152,7 +171,7 @@ void PolicyListMerger::DoMerge(PolicyMap::Entry* policy) const {
     }
 
     for (const base::Value& val :
-         it.entry().value(base::Value::Type::LIST)->GetListDeprecated()) {
+         it.entry().value(base::Value::Type::LIST)->GetList()) {
       if (duplicates.find(&val) != duplicates.end())
         continue;
       duplicates.insert(&val);
@@ -164,11 +183,11 @@ void PolicyListMerger::DoMerge(PolicyMap::Entry* policy) const {
 
   auto new_conflict = policy->DeepCopy();
   if (value_changed) {
-    base::Value new_value(base::Value::Type::LIST);
+    base::Value::List new_value;
     for (const base::Value* it : merged_values)
       new_value.Append(it->Clone());
 
-    policy->set_value(std::move(new_value));
+    policy->set_value(base::Value(std::move(new_value)));
   }
   policy->ClearConflicts();
   policy->AddConflictingPolicy(std::move(new_conflict));
@@ -177,10 +196,15 @@ void PolicyListMerger::DoMerge(PolicyMap::Entry* policy) const {
 
 PolicyDictionaryMerger::PolicyDictionaryMerger(
     base::flat_set<std::string> policies_to_merge)
+#if BUILDFLAG(IS_IOS) || BUILDFLAG(IS_ANDROID)
+    : policies_to_merge_(std::move(policies_to_merge)){}
+#else
     : policies_to_merge_(std::move(policies_to_merge)),
-      allowed_policies_(kDictionaryPoliciesToMerge.begin(),
-                        kDictionaryPoliciesToMerge.end()) {}
-PolicyDictionaryMerger::~PolicyDictionaryMerger() = default;
+      allowed_policies_(std::begin(kDictionaryPoliciesToMerge),
+                        std::end(kDictionaryPoliciesToMerge)) {
+}
+#endif
+      PolicyDictionaryMerger::~PolicyDictionaryMerger() = default;
 
 void PolicyDictionaryMerger::Merge(PolicyMap* policies) const {
   DCHECK(policies);
@@ -207,8 +231,19 @@ bool PolicyDictionaryMerger::CanMerge(const std::string& policy_name,
   const bool allowed_to_merge =
       allowed_policies_.find(policy_name) != allowed_policies_.end();
 
-  if (policies_to_merge_.find("*") != policies_to_merge_.end())
-    return allowed_to_merge && policy.value(base::Value::Type::DICT);
+  // `base::FeatureList` is not initialized when platform policies are first
+  // applied during browser startup. The feature value is eventually used to
+  // apply the correct merging logic before the browser launches since policies
+  // are applied multiple times during startup.
+  const bool can_merge_conflicts =
+      !base::FeatureList::GetInstance() ||
+      !base::FeatureList::IsEnabled(
+          policy::features::kPolicyMergeMultiSource) ||
+      policy.HasConflicts();
+  if (policies_to_merge_.find("*") != policies_to_merge_.end()) {
+    return allowed_to_merge && can_merge_conflicts &&
+           policy.value(base::Value::Type::DICT);
+  }
 
   if (policies_to_merge_.find(policy_name) == policies_to_merge_.end())
     return false;
@@ -226,7 +261,7 @@ bool PolicyDictionaryMerger::CanMerge(const std::string& policy_name,
     return false;
   }
 
-  return true;
+  return can_merge_conflicts;
 }
 
 bool PolicyDictionaryMerger::AllowUserCloudPolicyMerging() const {
@@ -246,7 +281,7 @@ void PolicyDictionaryMerger::DoMerge(PolicyMap::Entry* policy,
         return policy_map.EntryHasHigherPriority(*b, *a);
       });
 
-  base::DictionaryValue merged_dictionary;
+  base::Value::Dict merged_dictionary;
   bool value_changed = false;
 
   // Merges all the keys from the policies from different sources.
@@ -255,15 +290,14 @@ void PolicyDictionaryMerger::DoMerge(PolicyMap::Entry* policy,
                             *it, *policy, AllowUserCloudPolicyMerging()))
       continue;
 
-    const base::DictionaryValue* dict = nullptr;
-
-    it->value(base::Value::Type::DICT)->GetAsDictionary(&dict);
+    const base::Value::Dict* dict =
+        it->value(base::Value::Type::DICT)->GetIfDict();
     DCHECK(dict);
 
-    for (auto pair : dict->DictItems()) {
+    for (auto pair : *dict) {
       const auto& key = pair.first;
       const auto& val = pair.second;
-      merged_dictionary.SetKey(key, val.Clone());
+      merged_dictionary.Set(key, val.Clone());
     }
 
     value_changed |= it != policy;
@@ -271,7 +305,7 @@ void PolicyDictionaryMerger::DoMerge(PolicyMap::Entry* policy,
 
   auto new_conflict = policy->DeepCopy();
   if (value_changed)
-    policy->set_value(std::move(merged_dictionary));
+    policy->set_value(base::Value(std::move(merged_dictionary)));
 
   policy->ClearConflicts();
   policy->AddConflictingPolicy(std::move(new_conflict));

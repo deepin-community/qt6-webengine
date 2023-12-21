@@ -1,4 +1,4 @@
-// Copyright 2016 PDFium Authors. All rights reserved.
+// Copyright 2016 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -32,7 +32,6 @@ class CPDF_Type3Char {
   void WillBeDestroyed();
 
   RetainPtr<CFX_DIBitmap> GetBitmap();
-  const RetainPtr<CFX_DIBitmap>& GetBitmap() const;
 
   bool colored() const { return m_bColored; }
   int width() const { return m_Width; }

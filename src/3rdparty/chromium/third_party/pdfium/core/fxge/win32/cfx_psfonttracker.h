@@ -1,4 +1,4 @@
-// Copyright 2021 PDFium Authors. All rights reserved.
+// Copyright 2021 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,6 +7,7 @@
 
 #include <stdint.h>
 
+#include <functional>
 #include <set>
 
 #include "core/fxcrt/unowned_ptr.h"
@@ -28,7 +29,7 @@ class CFX_PSFontTracker {
 
   // For fonts without valid tags, e.g. ones created in-memory, track them by
   // pointer.
-  std::set<UnownedPtr<const CFX_Font>> seen_font_ptrs_;
+  std::set<UnownedPtr<const CFX_Font>, std::less<>> seen_font_ptrs_;
 };
 
 #endif  // CORE_FXGE_WIN32_CFX_PSFONTTRACKER_H_

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -147,7 +147,21 @@ class NSSInitSingleton {
     const std::string modspec =
         base::StringPrintf("configDir='sql:%s' tokenDescription='%s'",
                            path.value().c_str(), description.c_str());
-    PK11SlotInfo* db_slot_info = SECMOD_OpenUserDB(modspec.c_str());
+
+    // TODO(crbug.com/1163303): Presumably there's a race condition with
+    // session_manager around creating/opening the software NSS database. The
+    // retry loop is a temporary workaround that should at least reduce the
+    // amount of failures until a proper fix is implemented.
+    PK11SlotInfo* db_slot_info = nullptr;
+    int attempts_counter = 0;
+    for (; !db_slot_info && (attempts_counter < 10); ++attempts_counter) {
+      db_slot_info = SECMOD_OpenUserDB(modspec.c_str());
+    }
+    if (db_slot_info && (attempts_counter > 1)) {
+      LOG(ERROR) << "Opening persistent database failed "
+                 << attempts_counter - 1 << " times before succeeding";
+    }
+
     if (db_slot_info) {
       if (PK11_NeedUserInit(db_slot_info))
         PK11_InitPin(db_slot_info, nullptr, nullptr);
@@ -186,17 +200,17 @@ class NSSInitSingleton {
     // Initializing NSS causes us to do blocking IO.
     // Temporarily allow it until we fix
     //   http://code.google.com/p/chromium/issues/detail?id=59847
-    base::ThreadRestrictions::ScopedAllowIO allow_io;
+    ScopedAllowBlockingForNSS allow_blocking;
 
     EnsureNSPRInit();
 
-    // We *must* have NSS >= 3.26 at compile time.
-    static_assert((NSS_VMAJOR == 3 && NSS_VMINOR >= 26) || (NSS_VMAJOR > 3),
+    // We *must* have NSS >= 3.35 at compile time.
+    static_assert((NSS_VMAJOR == 3 && NSS_VMINOR >= 35) || (NSS_VMAJOR > 3),
                   "nss version check failed");
     // Also check the run-time NSS version.
     // NSS_VersionCheck is a >= check, not strict equality.
-    if (!NSS_VersionCheck("3.26")) {
-      LOG(FATAL) << "NSS_VersionCheck(\"3.26\") failed. NSS >= 3.26 is "
+    if (!NSS_VersionCheck("3.35")) {
+      LOG(FATAL) << "NSS_VersionCheck(\"3.35\") failed. NSS >= 3.35 is "
                     "required. Please upgrade to the latest NSS, and if you "
                     "still get this error, contact your distribution "
                     "maintainer.";
@@ -204,6 +218,13 @@ class NSSInitSingleton {
 
     SECStatus status = SECFailure;
     base::FilePath database_dir = GetInitialConfigDirectory();
+    // In MSAN, all loaded libraries needs to be instrumented. But the user
+    // config may reference an uninstrumented module, so load NSS without cert
+    // DBs instead. Tests should ideally be run under
+    // testing/run_with_dummy_home.py to eliminate dependencies on user
+    // configuration, but the bots are not currently configured to do so. This
+    // workaround may be removed if/when the bots use run_with_dummy_home.py.
+#if !defined(MEMORY_SANITIZER)
     if (!database_dir.empty()) {
       // Initialize with a persistent database (likely, ~/.pki/nssdb).
       // Use "sql:" which can be shared by multiple processes safely.
@@ -220,6 +241,7 @@ class NSSInitSingleton {
                    << nss_config_dir << "): " << GetNSSErrorMessage();
       }
     }
+#endif  // !defined(MEMORY_SANITIZER)
     if (status != SECSuccess) {
       VLOG(1) << "Initializing NSS without a persistent database.";
       status = NSS_NoDB_Init(nullptr);

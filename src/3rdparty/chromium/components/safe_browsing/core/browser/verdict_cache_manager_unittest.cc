@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,6 +13,7 @@
 #include "components/safe_browsing/core/browser/safe_browsing_sync_observer.h"
 #include "components/safe_browsing/core/common/proto/csd.pb.h"
 #include "components/safe_browsing/core/common/proto/realtimeapi.pb.h"
+#include "components/safe_browsing/core/common/proto/safebrowsingv5_alpha1.pb.h"
 #include "components/safe_browsing/core/common/safe_browsing_prefs.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -20,6 +21,8 @@
 namespace safe_browsing {
 
 namespace {
+
+using testing::SizeIs;
 
 class MockSafeBrowsingSyncObserver : public SafeBrowsingSyncObserver {
  public:
@@ -52,7 +55,8 @@ class VerdictCacheManagerTest : public ::testing::Test {
     HostContentSettingsMap::RegisterProfilePrefs(test_pref_service_.registry());
     content_setting_map_ = new HostContentSettingsMap(
         &test_pref_service_, false /* is_off_the_record */,
-        false /* store_last_modified */, false /* restore_session */);
+        false /* store_last_modified */, false /* restore_session */,
+        false /* should_record_metrics */);
     auto sync_observer = std::make_unique<MockSafeBrowsingSyncObserver>();
     raw_sync_observer_ = sync_observer.get();
     cache_manager_ = std::make_unique<VerdictCacheManager>(
@@ -80,6 +84,24 @@ class VerdictCacheManagerTest : public ::testing::Test {
     response.set_cache_duration_sec(cache_duration_sec);
     cache_manager_->CachePhishGuardVerdict(trigger, password_type, response,
                                            verdict_received_time);
+  }
+
+  void CacheHashPrefixRealTimeLookupResult(int cache_duration_seconds,
+                                           std::string hash_prefix) {
+    V5::Duration duration;
+    duration.set_seconds(cache_duration_seconds);
+    cache_manager_->CacheHashPrefixRealTimeLookupResults(
+        {hash_prefix}, {V5::FullHash()}, duration);
+  }
+  void ConfirmHashPrefixRealTimeLookupCacheContent(std::string hash_prefix,
+                                                   bool should_expect_entry) {
+    // We cannot call the public SearchCache function because that automatically
+    // filters out expired results. We want to confirm that the cache contents
+    // themselves have been cleaned up as expected, so we access |cache_|
+    // directly.
+    EXPECT_EQ(base::Contains(cache_manager_->hash_realtime_cache_->cache_,
+                             hash_prefix),
+              should_expect_entry);
   }
 
   void AddThreatInfoToResponse(
@@ -229,18 +251,18 @@ TEST_F(VerdictCacheManagerTest, TestParseInvalidVerdictEntry) {
   verdict.SerializeToString(&verdict_serialized);
   base::Base64Encode(verdict_serialized, &verdict_serialized);
 
-  auto cache_dictionary = std::make_unique<base::DictionaryValue>();
-  auto* verdict_dictionary =
-      cache_dictionary->SetKey("2", base::Value(base::Value::Type::DICTIONARY));
-  auto* verdict_entry = verdict_dictionary->SetKey(
-      "www.google.com/", base::Value(base::Value::Type::DICTIONARY));
-  verdict_entry->SetStringKey("cache_creation_time", "invalid_time");
-  verdict_entry->SetStringKey("verdict_proto", verdict_serialized);
+  base::Value::Dict verdict_entry;
+  verdict_entry.Set("cache_creation_time", "invalid_time");
+  verdict_entry.Set("verdict_proto", std::move(verdict_serialized));
+  base::Value::Dict verdict_dictionary;
+  verdict_dictionary.Set("www.google.com/", std::move(verdict_entry));
+  base::Value::Dict cache_dictionary;
+  cache_dictionary.Set("2", std::move(verdict_dictionary));
 
   content_setting_map_->SetWebsiteSettingDefaultScope(
       GURL("http://www.google.com/"), GURL(),
       ContentSettingsType::PASSWORD_PROTECTION,
-      base::Value::FromUniquePtrValue(std::move(cache_dictionary)));
+      base::Value(std::move(cache_dictionary)));
 
   ReusedPasswordAccountType password_type;
   password_type.set_account_type(ReusedPasswordAccountType::GSUITE);
@@ -398,6 +420,14 @@ TEST_F(VerdictCacheManagerTest, MAYBE_TestCleanUpExpiredVerdict) {
       GURL("https://www.example1.com"),
       CreatePageLoadToken(now.ToJavaTime(), "token2"));
 
+  CacheHashPrefixRealTimeLookupResult(/*cache_duration_seconds=*/0, "aaaa");
+  CacheHashPrefixRealTimeLookupResult(/*cache_duration_seconds=*/300, "bbbb");
+  // aaaa and bbbb should both be in the cache even though aaaa is expired.
+  ConfirmHashPrefixRealTimeLookupCacheContent(/*hash_prefix=*/"aaaa",
+                                              /*should_expect_entry=*/true);
+  ConfirmHashPrefixRealTimeLookupCacheContent(/*hash_prefix=*/"bbbb",
+                                              /*should_expect_entry=*/true);
+
   cache_manager_->CleanUpExpiredVerdicts();
 
   ASSERT_EQ(1u, cache_manager_->GetStoredPhishGuardVerdictCount(
@@ -467,6 +497,13 @@ TEST_F(VerdictCacheManagerTest, MAYBE_TestCleanUpExpiredVerdict) {
   EXPECT_EQ("token2",
             cache_manager_->GetPageLoadToken(GURL("https://www.example1.com/"))
                 .token_value());
+
+  // aaaa is not in the cache because it was expired and has been cleaned up.
+  ConfirmHashPrefixRealTimeLookupCacheContent(/*hash_prefix=*/"aaaa",
+                                              /*should_expect_entry=*/false);
+  // aaaa is still in the cache because it has not expired.
+  ConfirmHashPrefixRealTimeLookupCacheContent(/*hash_prefix=*/"bbbb",
+                                              /*should_expect_entry=*/true);
 }
 
 TEST_F(VerdictCacheManagerTest, TestCleanUpExpiredVerdictWithInvalidEntry) {
@@ -480,18 +517,18 @@ TEST_F(VerdictCacheManagerTest, TestCleanUpExpiredVerdictWithInvalidEntry) {
   verdict.SerializeToString(&verdict_serialized);
   base::Base64Encode(verdict_serialized, &verdict_serialized);
 
-  auto cache_dictionary = std::make_unique<base::DictionaryValue>();
-  auto* verdict_dictionary =
-      cache_dictionary->SetKey("1", base::Value(base::Value::Type::DICTIONARY));
-  auto* verdict_entry = verdict_dictionary->SetKey(
-      "www.google.com/path", base::Value(base::Value::Type::DICTIONARY));
-  verdict_entry->SetStringKey("cache_creation_time", "invalid_time");
-  verdict_entry->SetStringKey("verdict_proto", verdict_serialized);
+  base::Value::Dict verdict_entry;
+  verdict_entry.Set("cache_creation_time", "invalid_time");
+  verdict_entry.Set("verdict_proto", std::move(verdict_serialized));
+  base::Value::Dict verdict_dictionary;
+  verdict_dictionary.Set("www.google.com/path", std::move(verdict_entry));
+  base::Value::Dict cache_dictionary;
+  cache_dictionary.Set("1", std::move(verdict_dictionary));
 
   content_setting_map_->SetWebsiteSettingDefaultScope(
       GURL("http://www.google.com/"), GURL(),
       ContentSettingsType::PASSWORD_PROTECTION,
-      base::Value::FromUniquePtrValue(std::move(cache_dictionary)));
+      base::Value(std::move(cache_dictionary)));
 
   ReusedPasswordAccountType password_type;
   password_type.set_account_type(ReusedPasswordAccountType::GSUITE);
@@ -501,22 +538,22 @@ TEST_F(VerdictCacheManagerTest, TestCleanUpExpiredVerdictWithInvalidEntry) {
                          "www.google.com/", base::Time::Now());
 
   // Verify we saved two entries under PasswordType PRIMARY_ACCOUNT_PASSWORD
-  EXPECT_EQ(2U, content_setting_map_
-                    ->GetWebsiteSetting(
-                        GURL("http://www.google.com/"), GURL(),
-                        ContentSettingsType::PASSWORD_PROTECTION, nullptr)
-                    .FindDictKey("1")
-                    ->DictSize());
+  base::Value setting_entry = content_setting_map_->GetWebsiteSetting(
+      GURL("http://www.google.com/"), GURL(),
+      ContentSettingsType::PASSWORD_PROTECTION, nullptr);
+  const base::Value::Dict* setting_dict = setting_entry.GetIfDict();
+  ASSERT_TRUE(setting_dict);
+  EXPECT_THAT(*setting_dict->FindDict("1"), SizeIs(2u));
 
   cache_manager_->CleanUpExpiredVerdicts();
 
   // One should have been cleaned up
-  EXPECT_EQ(1U, content_setting_map_
-                    ->GetWebsiteSetting(
-                        GURL("http://www.google.com/"), GURL(),
-                        ContentSettingsType::PASSWORD_PROTECTION, nullptr)
-                    .FindDictKey("1")
-                    ->DictSize());
+  setting_entry = content_setting_map_->GetWebsiteSetting(
+      GURL("http://www.google.com/"), GURL(),
+      ContentSettingsType::PASSWORD_PROTECTION, nullptr);
+  ASSERT_TRUE(setting_entry.is_dict());
+  setting_dict = setting_entry.GetIfDict();
+  EXPECT_THAT(*setting_dict->FindDict("1"), SizeIs(1u));
 }
 
 TEST_F(VerdictCacheManagerTest, TestCanRetrieveCachedRealTimeUrlCheckVerdict) {
@@ -625,6 +662,60 @@ TEST_F(VerdictCacheManagerTest,
   EXPECT_EQ(0u, cache_manager_->GetStoredRealTimeUrlCheckVerdictCount());
   EXPECT_EQ(RTLookupResponse::ThreatInfo::VERDICT_TYPE_UNSPECIFIED,
             cache_manager_->GetCachedRealTimeUrlVerdict(url, &out_verdict));
+}
+
+TEST_F(VerdictCacheManagerTest,
+       TestCanRetrieveCachedRealTimeClientSideDetectionTypeCheck) {
+  base::HistogramTester histograms;
+  GURL url("https://www.example.com/path");
+
+  RTLookupResponse response;
+  AddThreatInfoToResponse(response, RTLookupResponse::ThreatInfo::SAFE,
+                          RTLookupResponse::ThreatInfo::THREAT_TYPE_UNSPECIFIED,
+                          60, "www.example.com/",
+                          RTLookupResponse::ThreatInfo::EXACT_MATCH);
+  AddThreatInfoToResponse(response, RTLookupResponse::ThreatInfo::SUSPICIOUS,
+                          RTLookupResponse::ThreatInfo::SOCIAL_ENGINEERING, 60,
+                          "www.example.com/path",
+                          RTLookupResponse::ThreatInfo::EXACT_MATCH);
+
+  response.set_client_side_detection_type(
+      safe_browsing::ClientSideDetectionType::
+          CLIENT_SIDE_DETECTION_TYPE_UNSPECIFIED);
+
+  cache_manager_->CacheRealTimeUrlVerdict(url, response, base::Time::Now());
+
+  RTLookupResponse::ThreatInfo out_verdict;
+  EXPECT_EQ(RTLookupResponse::ThreatInfo::SUSPICIOUS,
+            cache_manager_->GetCachedRealTimeUrlVerdict(url, &out_verdict));
+  EXPECT_EQ("www.example.com/path",
+            out_verdict.cache_expression_using_match_type());
+  EXPECT_EQ(60, out_verdict.cache_duration_sec());
+  EXPECT_EQ(RTLookupResponse::ThreatInfo::SOCIAL_ENGINEERING,
+            out_verdict.threat_type());
+  EXPECT_EQ(static_cast<int>(safe_browsing::ClientSideDetectionType::
+                                 CLIENT_SIDE_DETECTION_TYPE_UNSPECIFIED),
+            cache_manager_->GetCachedRealTimeUrlClientSideDetectionType(url));
+
+  GURL url2("https://www.example2.com/path2");
+
+  RTLookupResponse response2;
+  AddThreatInfoToResponse(response2, RTLookupResponse::ThreatInfo::SAFE,
+                          RTLookupResponse::ThreatInfo::THREAT_TYPE_UNSPECIFIED,
+                          60, "www.example2.com/",
+                          RTLookupResponse::ThreatInfo::EXACT_MATCH);
+  AddThreatInfoToResponse(response2, RTLookupResponse::ThreatInfo::SAFE,
+                          RTLookupResponse::ThreatInfo::SOCIAL_ENGINEERING, 60,
+                          "www.example2.com/path2",
+                          RTLookupResponse::ThreatInfo::EXACT_MATCH);
+
+  response2.set_client_side_detection_type(
+      safe_browsing::ClientSideDetectionType::FORCE_REQUEST);
+  cache_manager_->CacheRealTimeUrlVerdict(url, response2, base::Time::Now());
+
+  EXPECT_EQ(
+      static_cast<int>(safe_browsing::ClientSideDetectionType::FORCE_REQUEST),
+      cache_manager_->GetCachedRealTimeUrlClientSideDetectionType(url2));
 }
 
 TEST_F(VerdictCacheManagerTest, TestHostSuffixMatching) {
@@ -825,7 +916,7 @@ TEST_F(VerdictCacheManagerTest, TestGetExpiredPageLoadToken) {
       cache_manager_->GetPageLoadToken(url);
   ASSERT_TRUE(token.has_token_value());
 
-  task_environment_.FastForwardBy(base::Minutes(6));
+  task_environment_.FastForwardBy(base::Minutes(11));
   token = cache_manager_->GetPageLoadToken(url);
   // Token is not found because it has already expired.
   ASSERT_FALSE(token.has_token_value());
@@ -858,6 +949,44 @@ TEST_F(VerdictCacheManagerTest, TestClearTokenOnSyncStateChanged) {
   token = cache_manager_->GetPageLoadToken(url);
   // Token is not found because the sync state has changed.
   ASSERT_FALSE(token.has_token_value());
+}
+
+TEST_F(VerdictCacheManagerTest, TestShutdown) {
+  cache_manager_->Shutdown();
+  RTLookupResponse rt_response;
+  // Call to cache_manager after shutdown should not cause a crash.
+  cache_manager_->CacheRealTimeUrlVerdict(GURL("https://www.example.com/"),
+                                          rt_response, base::Time::Now());
+  RTLookupResponse::ThreatInfo out_rt_verdict;
+  cache_manager_->GetCachedRealTimeUrlVerdict(
+      GURL("https://www.example.com/path"), &out_rt_verdict);
+  LoginReputationClientResponse pg_response;
+  ReusedPasswordAccountType password_type;
+  cache_manager_->CachePhishGuardVerdict(
+      LoginReputationClientRequest::UNFAMILIAR_LOGIN_PAGE, password_type,
+      pg_response, base::Time::Now());
+  cache_manager_->GetStoredPhishGuardVerdictCount(
+      LoginReputationClientRequest::UNFAMILIAR_LOGIN_PAGE);
+  LoginReputationClientResponse out_pg_verdict;
+  cache_manager_->GetCachedPhishGuardVerdict(
+      GURL("https://www.example.com/path"),
+      LoginReputationClientRequest::UNFAMILIAR_LOGIN_PAGE, password_type,
+      &out_pg_verdict);
+}
+
+TEST_F(VerdictCacheManagerTest, TestHashPrefixRealTimeLookupCaching) {
+  // Basic test ensuring that the cache manager calls are propagating as
+  // expected to the HashRealTimeCache.
+  EXPECT_TRUE(
+      cache_manager_->GetCachedHashPrefixRealTimeLookupResults({"aaaa", "bbbb"})
+          .empty());
+  CacheHashPrefixRealTimeLookupResult(/*cache_duration_seconds=*/300, "aaaa");
+  CacheHashPrefixRealTimeLookupResult(/*cache_duration_seconds=*/300, "bbbb");
+  auto cache_results = cache_manager_->GetCachedHashPrefixRealTimeLookupResults(
+      {"aaaa", "bbbb", "cccc"});
+  EXPECT_EQ(cache_results.size(), 2u);
+  EXPECT_TRUE(base::Contains(cache_results, "aaaa"));
+  EXPECT_TRUE(base::Contains(cache_results, "bbbb"));
 }
 
 }  // namespace safe_browsing

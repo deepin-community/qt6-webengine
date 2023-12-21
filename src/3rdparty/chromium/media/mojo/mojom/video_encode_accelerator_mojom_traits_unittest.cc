@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -21,6 +21,8 @@ TEST(VideoEncodeAcceleratorSupportedProfile, RoundTrip) {
   input.max_resolution = gfx::Size(4096, 4096);
   input.max_framerate_numerator = 30;
   input.max_framerate_denominator = 1;
+  input.rate_control_modes = VideoEncodeAccelerator::kConstantMode |
+                             VideoEncodeAccelerator::kVariableMode;
   input.scalability_modes.push_back(::media::SVCScalabilityMode::kL1T3);
   input.scalability_modes.push_back(::media::SVCScalabilityMode::kL3T3Key);
 
@@ -33,6 +35,8 @@ TEST(VideoEncodeAcceleratorSupportedProfile, RoundTrip) {
 TEST(VideoEncoderInfoStructTraitTest, RoundTrip) {
   ::media::VideoEncoderInfo input;
   input.implementation_name = "FakeVideoEncodeAccelerator";
+  // Set `frame_delay` but leave `input_capacity` empty.
+  input.frame_delay = 3;
   // FPS allocation.
   for (size_t i = 0; i < ::media::VideoEncoderInfo::kMaxSpatialLayers; ++i)
     input.fps_allocation[i] = {5, 5, 10};

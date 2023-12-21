@@ -1,10 +1,10 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/viz/service/transitions/transferable_resource_tracker.h"
 
-#include <GLES2/gl2.h>
+#include "third_party/khronos/GLES2/gl2.h"
 
 #include <limits>
 #include <memory>
@@ -50,14 +50,21 @@ TransferableResourceTracker::ImportResources(
     if (shared_result.has_value()) {
       resource_frame.shared[i].emplace(
           ImportResource(std::move(*shared_result)));
-      auto shared_element_resource_id =
-          directive.shared_elements()[i].shared_element_resource_id;
-      if (shared_element_resource_id.IsValid()) {
-        resource_frame.element_id_to_resource[shared_element_resource_id] =
+      auto view_transition_element_resource_id =
+          directive.shared_elements()[i].view_transition_element_resource_id;
+      if (view_transition_element_resource_id.IsValid()) {
+        resource_frame
+            .element_id_to_resource[view_transition_element_resource_id] =
             resource_frame.shared[i]->resource;
       }
     }
   }
+
+  for (auto resource_id : frame_copy->empty_resource_ids) {
+    DCHECK(!resource_frame.element_id_to_resource.contains(resource_id));
+    resource_frame.element_id_to_resource[resource_id] = TransferableResource();
+  }
+
   return resource_frame;
 }
 
@@ -87,10 +94,11 @@ TransferableResourceTracker::ImportResource(
   } else {
     DCHECK(output_copy.bitmap.drawsNothing());
 
-    resource = TransferableResource::MakeGL(
+    resource = TransferableResource::MakeGpu(
         output_copy.mailbox, GL_LINEAR, GL_TEXTURE_2D, output_copy.sync_token,
-        output_copy.draw_data.size,
+        output_copy.draw_data.size, RGBA_8888,
         /*is_overlay_candidate=*/false);
+    resource.color_space = output_copy.color_space;
 
     // Run the SingleReleaseCallback when no longer in use.
     if (output_copy.release_callback) {

@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -38,9 +38,10 @@ class CollapsedBorderValueTest : public testing::Test {
       EBorderStyle border_style,
       const Color& color = Color::kBlack,
       EBorderPrecedence precedence = kBorderPrecedenceCell) {
-    auto style = ComputedStyle::Clone(*initial_style_);
-    style->SetBorderLeftWidth(width);
-    style->SetBorderLeftStyle(border_style);
+    ComputedStyleBuilder builder(*initial_style_);
+    builder.SetBorderLeftWidth(LayoutUnit(width));
+    builder.SetBorderLeftStyle(border_style);
+    scoped_refptr<const ComputedStyle> style = builder.TakeStyle();
     CollapsedBorderValue v(style->BorderLeft(), color, precedence);
     EXPECT_EQ(border_style, v.Style());
     EXPECT_EQ(color, v.GetColor());

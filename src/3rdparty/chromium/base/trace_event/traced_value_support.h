@@ -1,10 +1,12 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef BASE_TRACE_EVENT_TRACED_VALUE_SUPPORT_H_
 #define BASE_TRACE_EVENT_TRACED_VALUE_SUPPORT_H_
 
+#include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ref.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string_piece.h"
@@ -89,6 +91,52 @@ struct TraceFormatTraits<::absl::optional<T>,
   }
 };
 
+// If T is serialisable into a trace, raw_ptr<T> is serialisable as well.
+template <class T>
+struct TraceFormatTraits<::base::raw_ptr<T>,
+                         perfetto::check_traced_value_support_t<T>> {
+  static void WriteIntoTrace(perfetto::TracedValue context,
+                             const ::base::raw_ptr<T>& value) {
+    if (!value) {
+      std::move(context).WritePointer(nullptr);
+      return;
+    }
+    perfetto::WriteIntoTracedValue(std::move(context), *value);
+  }
+
+  static void WriteIntoTrace(perfetto::TracedValue context,
+                             ::base::raw_ptr<T>& value) {
+    if (!value) {
+      std::move(context).WritePointer(nullptr);
+      return;
+    }
+    perfetto::WriteIntoTracedValue(std::move(context), *value);
+  }
+};
+
+// If T is serialisable into a trace, raw_ref<T> is serialisable as well.
+template <class T>
+struct TraceFormatTraits<::base::raw_ref<T>,
+                         perfetto::check_traced_value_support_t<T>> {
+  static void WriteIntoTrace(perfetto::TracedValue context,
+                             const ::base::raw_ref<T>& value) {
+    if (!value) {
+      std::move(context).WritePointer(nullptr);
+      return;
+    }
+    perfetto::WriteIntoTracedValue(std::move(context), *value);
+  }
+
+  static void WriteIntoTrace(perfetto::TracedValue context,
+                             ::base::raw_ref<T>& value) {
+    if (!value) {
+      std::move(context).WritePointer(nullptr);
+      return;
+    }
+    perfetto::WriteIntoTracedValue(std::move(context), *value);
+  }
+};
+
 // Time-related classes.
 // TODO(altimin): Make them first-class primitives in TracedValue and Perfetto
 // UI.
@@ -96,7 +144,7 @@ template <>
 struct TraceFormatTraits<::base::TimeDelta> {
   static void WriteIntoTrace(perfetto::TracedValue context,
                              const ::base::TimeDelta& value) {
-    std::move(context).WriteUInt64(value.InMicroseconds());
+    std::move(context).WriteInt64(value.InMicroseconds());
   }
 };
 

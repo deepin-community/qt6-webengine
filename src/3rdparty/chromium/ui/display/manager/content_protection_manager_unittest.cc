@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,8 +13,7 @@
 #include "ui/display/manager/test/test_display_layout_manager.h"
 #include "ui/display/manager/test/test_native_display_delegate.h"
 
-namespace display {
-namespace test {
+namespace display::test {
 
 namespace {
 
@@ -766,5 +765,4 @@ TEST_F(ContentProtectionManagerTest, AnalogDisplaySecurity) {
             observer.security_changes());
 }
 
-}  // namespace test
-}  // namespace display
+}  // namespace display::test

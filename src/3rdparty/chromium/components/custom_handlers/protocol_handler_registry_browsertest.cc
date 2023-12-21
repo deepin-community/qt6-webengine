@@ -1,4 +1,4 @@
-// Copyright (c) 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -105,7 +105,8 @@ class RegisterProtocolHandlerBrowserTest : public content::ContentBrowserTest {
 
 IN_PROC_BROWSER_TEST_F(RegisterProtocolHandlerBrowserTest, CustomHandler) {
   ASSERT_TRUE(embedded_test_server()->Start());
-  GURL handler_url = embedded_test_server()->GetURL("/custom_handler.html");
+  GURL handler_url =
+      embedded_test_server()->GetURL("/custom_handlers/custom_handler.html");
   AddProtocolHandler("news", handler_url);
 
   ASSERT_TRUE(NavigateToURL(shell(), GURL("news:test"), handler_url));
@@ -125,8 +126,8 @@ IN_PROC_BROWSER_TEST_F(RegisterProtocolHandlerBrowserTest, CustomHandler) {
 IN_PROC_BROWSER_TEST_F(RegisterProtocolHandlerBrowserTest,
                        IgnoreRequestWithoutUserGesture) {
   ASSERT_TRUE(embedded_test_server()->Start());
-  ASSERT_TRUE(
-      NavigateToURL(shell(), embedded_test_server()->GetURL("/title1.html")));
+  ASSERT_TRUE(NavigateToURL(
+      shell(), embedded_test_server()->GetURL("/custom_handlers/title1.html")));
 
   // Ensure the registry is currently empty.
   GURL url("web+search:testing");
@@ -151,13 +152,13 @@ IN_PROC_BROWSER_TEST_F(RegisterProtocolHandlerBrowserTest,
 // FencedFrames can not register to handle any protocols.
 IN_PROC_BROWSER_TEST_F(RegisterProtocolHandlerBrowserTest, FencedFrame) {
   ASSERT_TRUE(embedded_test_server()->Start());
-  ASSERT_TRUE(
-      NavigateToURL(shell(), embedded_test_server()->GetURL("/title1.html")));
+  ASSERT_TRUE(NavigateToURL(
+      shell(), embedded_test_server()->GetURL("/custom_handlers/title1.html")));
 
   // Create a FencedFrame.
   content::RenderFrameHost* fenced_frame_host =
       fenced_frame_test_helper().CreateFencedFrame(
-          web_contents()->GetMainFrame(),
+          web_contents()->GetPrimaryMainFrame(),
           embedded_test_server()->GetURL("/fenced_frames/title1.html"));
   ASSERT_TRUE(fenced_frame_host);
 

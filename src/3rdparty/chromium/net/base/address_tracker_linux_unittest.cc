@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,10 +11,10 @@
 #include <unordered_set>
 #include <vector>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/command_line.h"
 #include "base/files/file_util.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/synchronization/waitable_event.h"
@@ -36,8 +36,7 @@
 #define IFA_F_HOMEADDRESS 0x10
 #endif
 
-namespace net {
-namespace internal {
+namespace net::internal {
 namespace {
 
 const int kTestInterfaceEth = 1;
@@ -672,7 +671,7 @@ TEST_F(AddressTrackerLinuxTest, GetInterfaceName) {
 
   for (int i = 0; i < 10; i++) {
     char buf[IFNAMSIZ] = {0};
-    EXPECT_NE((const char*)NULL, original_get_interface_name_(i, buf));
+    EXPECT_NE((const char*)nullptr, original_get_interface_name_(i, buf));
   }
 }
 
@@ -939,5 +938,4 @@ MULTIPROCESS_TEST_MAIN(ChildProcessInitializeTrackerForTesting) {
 #endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
 #endif  // defined(CLONE_NEWUSER) && defined(CLONE_NEWPID)
 
-}  // namespace internal
-}  // namespace net
+}  // namespace net::internal

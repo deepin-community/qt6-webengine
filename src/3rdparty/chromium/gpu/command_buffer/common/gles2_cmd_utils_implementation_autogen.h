@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -613,10 +613,6 @@ static const GLES2Util::EnumToString enum_to_string_table[] = {
         "GL_RELATIVE_SMOOTH_QUADRATIC_CURVE_TO_NV",
     },
     {
-        0x1,
-        "GL_CA_LAYER_EDGE_LEFT_CHROMIUM",
-    },
-    {
         0x10,
         "GL_SMOOTH_CUBIC_CURVE_TO_NV",
     },
@@ -861,10 +857,6 @@ static const GLES2Util::EnumToString enum_to_string_table[] = {
         "GL_EXTENSIONS",
     },
     {
-        0x2,
-        "GL_CA_LAYER_EDGE_RIGHT_CHROMIUM",
-    },
-    {
         0x20,
         "GL_GLYPH_VERTICAL_BEARING_X_BIT_NV",
     },
@@ -965,20 +957,12 @@ static const GLES2Util::EnumToString enum_to_string_table[] = {
         "GL_CONTEXT_LOST",
     },
     {
-        0x4,
-        "GL_CA_LAYER_EDGE_BOTTOM_CHROMIUM",
-    },
-    {
         0x40,
         "GL_GLYPH_VERTICAL_BEARING_Y_BIT_NV",
     },
     {
         0x40000000,
         "GL_MULTISAMPLE_BUFFER_BIT6_QCOM",
-    },
-    {
-        0x6000,
-        "GL_SCANOUT_CHROMIUM",
     },
     {
         0x6003,
@@ -1035,10 +1019,6 @@ static const GLES2Util::EnumToString enum_to_string_table[] = {
     {
         0x78FD,
         "GL_RGB_YCBCR_P010_CHROMIUM",
-    },
-    {
-        0x8,
-        "GL_CA_LAYER_EDGE_TOP_CHROMIUM",
     },
     {
         0x80,
@@ -2685,10 +2665,6 @@ static const GLES2Util::EnumToString enum_to_string_table[] = {
         "GL_SHARED_IMAGE_ACCESS_MODE_READWRITE_CHROMIUM",
     },
     {
-        0x8AF8,
-        "GL_SHARED_IMAGE_ACCESS_MODE_OVERLAY_CHROMIUM",
-    },
-    {
         0x8B30,
         "GL_FRAGMENT_SHADER",
     },
@@ -3907,6 +3883,10 @@ static const GLES2Util::EnumToString enum_to_string_table[] = {
     {
         0x8E4E,
         "GL_LAST_VERTEX_CONVENTION_OES",
+    },
+    {
+        0x8E4F,
+        "GL_PROVOKING_VERTEX_ANGLE",
     },
     {
         0x8E50,
@@ -5299,30 +5279,6 @@ static const GLES2Util::EnumToString enum_to_string_table[] = {
     {
         0x9244,
         "GL_BIND_GENERATES_RESOURCE_CHROMIUM",
-    },
-    {
-        0x9245,
-        "GL_OVERLAY_TRANSFORM_NONE_CHROMIUM",
-    },
-    {
-        0x9246,
-        "GL_OVERLAY_TRANSFORM_FLIP_HORIZONTAL_CHROMIUM",
-    },
-    {
-        0x9247,
-        "GL_OVERLAY_TRANSFORM_FLIP_VERTICAL_CHROMIUM",
-    },
-    {
-        0x9248,
-        "GL_OVERLAY_TRANSFORM_ROTATE_90_CHROMIUM",
-    },
-    {
-        0x9249,
-        "GL_OVERLAY_TRANSFORM_ROTATE_180_CHROMIUM",
-    },
-    {
-        0x924A,
-        "GL_OVERLAY_TRANSFORM_ROTATE_270_CHROMIUM",
     },
     {
         0x9250,
@@ -7037,14 +6993,6 @@ std::string GLES2Util::GetStringCapability(uint32_t value) {
                                            std::size(string_table), value);
 }
 
-std::string GLES2Util::GetStringClientBufferUsage(uint32_t value) {
-  static const EnumToString string_table[] = {
-      {GL_SCANOUT_CHROMIUM, "GL_SCANOUT_CHROMIUM"},
-  };
-  return GLES2Util::GetQualifiedEnumString(string_table,
-                                           std::size(string_table), value);
-}
-
 std::string GLES2Util::GetStringCmpFunction(uint32_t value) {
   static const EnumToString string_table[] = {
       {GL_NEVER, "GL_NEVER"},     {GL_LESS, "GL_LESS"},
@@ -7058,17 +7006,6 @@ std::string GLES2Util::GetStringCmpFunction(uint32_t value) {
 
 std::string GLES2Util::GetStringCompressedTextureFormat(uint32_t value) {
   return GLES2Util::GetQualifiedEnumString(nullptr, 0, value);
-}
-
-std::string GLES2Util::GetStringCoverageModulationComponents(uint32_t value) {
-  static const EnumToString string_table[] = {
-      {GL_RGB, "GL_RGB"},
-      {GL_RGBA, "GL_RGBA"},
-      {GL_ALPHA, "GL_ALPHA"},
-      {GL_NONE, "GL_NONE"},
-  };
-  return GLES2Util::GetQualifiedEnumString(string_table,
-                                           std::size(string_table), value);
 }
 
 std::string GLES2Util::GetStringDrawMode(uint32_t value) {
@@ -7793,8 +7730,6 @@ std::string GLES2Util::GetStringShaderType(uint32_t value) {
 
 std::string GLES2Util::GetStringSharedImageAccessMode(uint32_t value) {
   static const EnumToString string_table[] = {
-      {GL_SHARED_IMAGE_ACCESS_MODE_OVERLAY_CHROMIUM,
-       "GL_SHARED_IMAGE_ACCESS_MODE_OVERLAY_CHROMIUM"},
       {GL_SHARED_IMAGE_ACCESS_MODE_READWRITE_CHROMIUM,
        "GL_SHARED_IMAGE_ACCESS_MODE_READWRITE_CHROMIUM"},
       {GL_SHARED_IMAGE_ACCESS_MODE_READ_CHROMIUM,

@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -15,9 +15,7 @@
 #include "net/log/net_log_with_source.h"
 #include "url/gurl.h"
 
-namespace network {
-
-namespace cors {
+namespace network::cors {
 
 namespace {
 
@@ -37,7 +35,7 @@ enum class CacheMetric {
 };
 
 base::Value NetLogCacheStatusParams(const CacheMetric metric) {
-  base::Value dict(base::Value::Type::DICTIONARY);
+  base::Value dict(base::Value::Type::DICT);
   std::string cache_status;
   switch (metric) {
     case CacheMetric::kHitAndPass:
@@ -106,7 +104,8 @@ bool PreflightCache::CheckIfRequestCanSkipPreflight(
     const std::string& method,
     const net::HttpRequestHeaders& request_headers,
     bool is_revalidating,
-    const net::NetLogWithSource& net_log) {
+    const net::NetLogWithSource& net_log,
+    bool acam_preflight_spec_conformant) {
   // Check if the entry exists in the cache.
   auto key = std::make_tuple(origin, url.spec(), network_isolation_key,
                              target_ip_address_space);
@@ -122,7 +121,8 @@ bool PreflightCache::CheckIfRequestCanSkipPreflight(
     // skip CORS-preflight.
     if (cache_entry->second->EnsureAllowedRequest(
             credentials_mode, method, request_headers, is_revalidating,
-            NonWildcardRequestHeadersSupport(true))) {
+            NonWildcardRequestHeadersSupport(true),
+            acam_preflight_spec_conformant)) {
       // Note that we always use the "with non-wildcard request headers"
       // variant, because it is hard to generate the correct error information
       // from here, and cache miss is in most case recoverable.
@@ -162,6 +162,4 @@ void PreflightCache::MayPurge(size_t max_entries, size_t purge_unit) {
   cache_.erase(purge_begin_entry, purge_end_entry);
 }
 
-}  // namespace cors
-
-}  // namespace network
+}  // namespace network::cors

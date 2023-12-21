@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,8 +6,11 @@
 
 #include "base/command_line.h"
 #include "base/containers/contains.h"
+#include "base/scoped_observation.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/sequenced_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/unguessable_token.h"
 #include "device/bluetooth/bluetooth_adapter_factory.h"
 #include "services/device/public/cpp/bluetooth/bluetooth_utils.h"
@@ -35,6 +38,16 @@ class BluetoothSerialDeviceEnumerator::AdapterHelper
   // The enumerator that owns this instance.
   base::WeakPtr<BluetoothSerialDeviceEnumerator> enumerator_;
   scoped_refptr<base::SequencedTaskRunner> enumerator_runner_;
+
+  // scoped_refptr<BluetoothAdapter> is required to ensure that this object
+  // actually has a reference to the BluetoothAdapter when the call to
+  // RemoveObserver() happens.
+  scoped_refptr<BluetoothAdapter> adapter_;
+
+  // |observation_| needs to be after |adapter_| to ensure it is reset before
+  // |adapter_|'s reset during destruction.
+  base::ScopedObservation<BluetoothAdapter, BluetoothAdapter::Observer>
+      observation_{this};
   SEQUENCE_CHECKER(sequence_checker_);
   base::WeakPtrFactory<AdapterHelper> weak_ptr_factory_{this};
 };
@@ -51,18 +64,19 @@ BluetoothSerialDeviceEnumerator::AdapterHelper::AdapterHelper(
 
 void BluetoothSerialDeviceEnumerator::AdapterHelper::OnGotClassicAdapter(
     scoped_refptr<device::BluetoothAdapter> adapter) {
-  SEQUENCE_CHECKER(sequence_checker_);
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(adapter);
+  adapter_ = std::move(adapter);
 
-  BluetoothAdapter::DeviceList devices = adapter->GetDevices();
+  BluetoothAdapter::DeviceList devices = adapter_->GetDevices();
   for (auto* device : devices) {
-    DeviceAdded(adapter.get(), device);
+    DeviceAdded(adapter_.get(), device);
   }
-  adapter->AddObserver(this);
+  observation_.Observe(adapter_.get());
   enumerator_runner_->PostTask(
       FROM_HERE,
       base::BindOnce(&BluetoothSerialDeviceEnumerator::SetClassicAdapter,
-                     enumerator_, std::move(adapter)));
+                     enumerator_, adapter_));
 }
 
 void BluetoothSerialDeviceEnumerator::AdapterHelper::DeviceAdded(
@@ -92,7 +106,7 @@ BluetoothSerialDeviceEnumerator::BluetoothSerialDeviceEnumerator(
 
   helper_ = base::SequenceBound<AdapterHelper>(
       std::move(adapter_runner), weak_ptr_factory_.GetWeakPtr(),
-      base::SequencedTaskRunnerHandle::Get());
+      base::SequencedTaskRunner::GetCurrentDefault());
 }
 
 BluetoothSerialDeviceEnumerator::~BluetoothSerialDeviceEnumerator() = default;

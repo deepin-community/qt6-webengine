@@ -1,4 +1,4 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -80,7 +80,17 @@ enum class InstallResultCode {
   // commit.
   kAppNotInRegistrarAfterCommit = 27,
 
-  kMaxValue = kAppNotInRegistrarAfterCommit,
+  // The installation stopped due to an uninstall from sync being scheduled.
+  kHaltedBySyncUninstall = 28,
+
+  // Invalid install URL for externally managed apps.
+  kInstallURLInvalid = 29,
+
+  // Downloading failed for all icons in an installation method which requires
+  // non-generated icons.
+  kIconDownloadingFailed = 30,
+
+  kMaxValue = kIconDownloadingFailed,
 };
 
 // Checks if InstallResultCode is not a failure.

@@ -12,9 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "src/tint/ast/fallthrough_statement.h"
 #include "src/tint/writer/spirv/spv_dump.h"
 #include "src/tint/writer/spirv/test_helper.h"
+
+using namespace tint::number_suffixes;  // NOLINT
 
 namespace tint::writer::spirv {
 namespace {
@@ -22,23 +23,23 @@ namespace {
 using BuilderTest = TestHelper;
 
 TEST_F(BuilderTest, Switch_Empty) {
-  // switch (1) {
-  //   default: {}
-  // }
+    // switch (1i) {
+    //   default: {}
+    // }
 
-  auto* expr = Switch(1, DefaultCase());
-  WrapInFunction(expr);
+    auto* expr = Switch(1_i, DefaultCase());
+    WrapInFunction(expr);
 
-  spirv::Builder& b = Build();
+    spirv::Builder& b = Build();
 
-  b.push_function(Function{});
+    b.push_function(Function{});
 
-  EXPECT_TRUE(b.GenerateSwitchStatement(expr)) << b.error();
-  EXPECT_EQ(DumpInstructions(b.types()), R"(%2 = OpTypeInt 32 1
+    EXPECT_TRUE(b.GenerateSwitchStatement(expr)) << b.error();
+    EXPECT_EQ(DumpInstructions(b.types()), R"(%2 = OpTypeInt 32 1
 %3 = OpConstant %2 1
 )");
-  EXPECT_EQ(DumpInstructions(b.functions()[0].instructions()),
-            R"(OpSelectionMerge %1 None
+    EXPECT_EQ(DumpInstructions(b.functions()[0].instructions()),
+              R"(OpSelectionMerge %1 None
 OpSwitch %3 %4
 %4 = OpLabel
 OpBranch %1
@@ -47,32 +48,32 @@ OpBranch %1
 }
 
 TEST_F(BuilderTest, Switch_WithCase) {
-  // switch(a) {
-  //   case 1:
-  //     v = 1;
-  //   case 2:
-  //     v = 2;
-  //   default: {}
-  // }
+    // switch(a) {
+    //   case 1i:
+    //     v = 1i;
+    //   case 2i:
+    //     v = 2i;
+    //   default: {}
+    // }
 
-  auto* v = Global("v", ty.i32(), ast::StorageClass::kPrivate);
-  auto* a = Global("a", ty.i32(), ast::StorageClass::kPrivate);
+    auto* v = GlobalVar("v", ty.i32(), builtin::AddressSpace::kPrivate);
+    auto* a = GlobalVar("a", ty.i32(), builtin::AddressSpace::kPrivate);
 
-  auto* func = Func("a_func", {}, ty.void_(),
-                    {
-                        Switch("a",                                   //
-                               Case(Expr(1), Block(Assign("v", 1))),  //
-                               Case(Expr(2), Block(Assign("v", 2))),  //
-                               DefaultCase()),
-                    });
+    auto* func = Func("a_func", utils::Empty, ty.void_(),
+                      utils::Vector{
+                          Switch("a",                                               //
+                                 Case(CaseSelector(1_i), Block(Assign("v", 1_i))),  //
+                                 Case(CaseSelector(2_i), Block(Assign("v", 2_i))),  //
+                                 DefaultCase()),
+                      });
 
-  spirv::Builder& b = Build();
+    spirv::Builder& b = Build();
 
-  ASSERT_TRUE(b.GenerateGlobalVariable(v)) << b.error();
-  ASSERT_TRUE(b.GenerateGlobalVariable(a)) << b.error();
-  ASSERT_TRUE(b.GenerateFunction(func)) << b.error();
+    ASSERT_TRUE(b.GenerateGlobalVariable(v)) << b.error();
+    ASSERT_TRUE(b.GenerateGlobalVariable(a)) << b.error();
+    ASSERT_TRUE(b.GenerateFunction(func)) << b.error();
 
-  EXPECT_EQ(DumpBuilder(b), R"(OpName %1 "v"
+    EXPECT_EQ(DumpBuilder(b), R"(OpName %1 "v"
 OpName %5 "a"
 OpName %8 "a_func"
 %3 = OpTypeInt 32 1
@@ -104,32 +105,32 @@ OpFunctionEnd
 }
 
 TEST_F(BuilderTest, Switch_WithCase_Unsigned) {
-  // switch(a) {
-  //   case 1u:
-  //     v = 1;
-  //   case 2u:
-  //     v = 2;
-  //   default: {}
-  // }
+    // switch(a) {
+    //   case 1u:
+    //     v = 1i;
+    //   case 2u:
+    //     v = 2i;
+    //   default: {}
+    // }
 
-  auto* v = Global("v", ty.i32(), ast::StorageClass::kPrivate);
-  auto* a = Global("a", ty.u32(), ast::StorageClass::kPrivate);
+    auto* v = GlobalVar("v", ty.i32(), builtin::AddressSpace::kPrivate);
+    auto* a = GlobalVar("a", ty.u32(), builtin::AddressSpace::kPrivate);
 
-  auto* func = Func("a_func", {}, ty.void_(),
-                    {
-                        Switch("a",                                    //
-                               Case(Expr(1u), Block(Assign("v", 1))),  //
-                               Case(Expr(2u), Block(Assign("v", 2))),  //
-                               DefaultCase()),
-                    });
+    auto* func = Func("a_func", utils::Empty, ty.void_(),
+                      utils::Vector{
+                          Switch("a",                                               //
+                                 Case(CaseSelector(1_u), Block(Assign("v", 1_i))),  //
+                                 Case(CaseSelector(2_u), Block(Assign("v", 2_i))),  //
+                                 DefaultCase()),
+                      });
 
-  spirv::Builder& b = Build();
+    spirv::Builder& b = Build();
 
-  ASSERT_TRUE(b.GenerateGlobalVariable(v)) << b.error();
-  ASSERT_TRUE(b.GenerateGlobalVariable(a)) << b.error();
-  ASSERT_TRUE(b.GenerateFunction(func)) << b.error();
+    ASSERT_TRUE(b.GenerateGlobalVariable(v)) << b.error();
+    ASSERT_TRUE(b.GenerateGlobalVariable(a)) << b.error();
+    ASSERT_TRUE(b.GenerateFunction(func)) << b.error();
 
-  EXPECT_EQ(DumpBuilder(b), R"(OpName %1 "v"
+    EXPECT_EQ(DumpBuilder(b), R"(OpName %1 "v"
 OpName %5 "a"
 OpName %11 "a_func"
 %3 = OpTypeInt 32 1
@@ -164,27 +165,27 @@ OpFunctionEnd
 }
 
 TEST_F(BuilderTest, Switch_WithDefault) {
-  // switch(true) {
-  //   default: {}
-  //     v = 1;
-  //  }
+    // switch(true) {
+    //   default: {}
+    //     v = 1i;
+    //  }
 
-  auto* v = Global("v", ty.i32(), ast::StorageClass::kPrivate);
-  auto* a = Global("a", ty.i32(), ast::StorageClass::kPrivate);
+    auto* v = GlobalVar("v", ty.i32(), builtin::AddressSpace::kPrivate);
+    auto* a = GlobalVar("a", ty.i32(), builtin::AddressSpace::kPrivate);
 
-  auto* func = Func("a_func", {}, ty.void_(),
-                    {
-                        Switch("a",                                  //
-                               DefaultCase(Block(Assign("v", 1)))),  //
-                    });
+    auto* func = Func("a_func", utils::Empty, ty.void_(),
+                      utils::Vector{
+                          Switch("a",                                    //
+                                 DefaultCase(Block(Assign("v", 1_i)))),  //
+                      });
 
-  spirv::Builder& b = Build();
+    spirv::Builder& b = Build();
 
-  ASSERT_TRUE(b.GenerateGlobalVariable(v)) << b.error();
-  ASSERT_TRUE(b.GenerateGlobalVariable(a)) << b.error();
-  ASSERT_TRUE(b.GenerateFunction(func)) << b.error();
+    ASSERT_TRUE(b.GenerateGlobalVariable(v)) << b.error();
+    ASSERT_TRUE(b.GenerateGlobalVariable(a)) << b.error();
+    ASSERT_TRUE(b.GenerateFunction(func)) << b.error();
 
-  EXPECT_EQ(DumpBuilder(b), R"(OpName %1 "v"
+    EXPECT_EQ(DumpBuilder(b), R"(OpName %1 "v"
 OpName %5 "a"
 OpName %8 "a_func"
 %3 = OpTypeInt 32 1
@@ -210,35 +211,35 @@ OpFunctionEnd
 }
 
 TEST_F(BuilderTest, Switch_WithCaseAndDefault) {
-  // switch(a) {
-  //   case 1:
-  //      v = 1;
-  //   case 2, 3:
-  //      v = 2;
-  //   default: {}
-  //      v = 3;
-  //  }
+    // switch(a) {
+    //   case 1i:
+    //      v = 1i;
+    //   case 2i, 3i:
+    //      v = 2i;
+    //   default: {}
+    //      v = 3i;
+    //  }
 
-  auto* v = Global("v", ty.i32(), ast::StorageClass::kPrivate);
-  auto* a = Global("a", ty.i32(), ast::StorageClass::kPrivate);
+    auto* v = GlobalVar("v", ty.i32(), builtin::AddressSpace::kPrivate);
+    auto* a = GlobalVar("a", ty.i32(), builtin::AddressSpace::kPrivate);
 
-  auto* func = Func("a_func", {}, ty.void_(),
-                    {
-                        Switch(Expr("a"),                    //
-                               Case(Expr(1),                 //
-                                    Block(Assign("v", 1))),  //
-                               Case({Expr(2), Expr(3)},      //
-                                    Block(Assign("v", 2))),  //
-                               DefaultCase(Block(Assign("v", 3)))),
-                    });
+    auto* func = Func("a_func", utils::Empty, ty.void_(),
+                      utils::Vector{
+                          Switch(Expr("a"),                                                 //
+                                 Case(CaseSelector(1_i),                                    //
+                                      Block(Assign("v", 1_i))),                             //
+                                 Case(utils::Vector{CaseSelector(2_i), CaseSelector(3_i)},  //
+                                      Block(Assign("v", 2_i))),                             //
+                                 DefaultCase(Block(Assign("v", 3_i)))),
+                      });
 
-  spirv::Builder& b = Build();
+    spirv::Builder& b = Build();
 
-  ASSERT_TRUE(b.GenerateGlobalVariable(v)) << b.error();
-  ASSERT_TRUE(b.GenerateGlobalVariable(a)) << b.error();
-  ASSERT_TRUE(b.GenerateFunction(func)) << b.error();
+    ASSERT_TRUE(b.GenerateGlobalVariable(v)) << b.error();
+    ASSERT_TRUE(b.GenerateGlobalVariable(a)) << b.error();
+    ASSERT_TRUE(b.GenerateFunction(func)) << b.error();
 
-  EXPECT_EQ(DumpBuilder(b), R"(OpName %1 "v"
+    EXPECT_EQ(DumpBuilder(b), R"(OpName %1 "v"
 OpName %5 "a"
 OpName %8 "a_func"
 %3 = OpTypeInt 32 1
@@ -271,37 +272,33 @@ OpFunctionEnd
 )");
 }
 
-TEST_F(BuilderTest, Switch_CaseWithFallthrough) {
-  // switch(a) {
-  //   case 1:
-  //      v = 1;
-  //      fallthrough;
-  //   case 2:
-  //      v = 2;
-  //   default: {}
-  //      v = 3;
-  //  }
+TEST_F(BuilderTest, Switch_WithCaseAndMixedDefault) {
+    // switch(a) {
+    //   case 1i:
+    //      v = 1i;
+    //   case 2i, 3i, default:
+    //      v = 2i;
+    //  }
 
-  auto* v = Global("v", ty.i32(), ast::StorageClass::kPrivate);
-  auto* a = Global("a", ty.i32(), ast::StorageClass::kPrivate);
+    auto* v = GlobalVar("v", ty.i32(), builtin::AddressSpace::kPrivate);
+    auto* a = GlobalVar("a", ty.i32(), builtin::AddressSpace::kPrivate);
 
-  auto* func = Func("a_func", {}, ty.void_(),
-                    {
-                        Switch(Expr("a"),                                   //
-                               Case(Expr(1),                                //
-                                    Block(Assign("v", 1), Fallthrough())),  //
-                               Case(Expr(2),                                //
-                                    Block(Assign("v", 2))),                 //
-                               DefaultCase(Block(Assign("v", 3)))),
-                    });
+    auto* func = Func("a_func", utils::Empty, ty.void_(),
+                      utils::Vector{Switch(Expr("a"),                      //
+                                           Case(CaseSelector(1_i),         //
+                                                Block(Assign("v", 1_i))),  //
+                                           Case(utils::Vector{CaseSelector(2_i), CaseSelector(3_i),
+                                                              DefaultCaseSelector()},  //
+                                                Block(Assign("v", 2_i)))               //
+                                           )});
 
-  spirv::Builder& b = Build();
+    spirv::Builder& b = Build();
 
-  ASSERT_TRUE(b.GenerateGlobalVariable(v)) << b.error();
-  ASSERT_TRUE(b.GenerateGlobalVariable(a)) << b.error();
-  ASSERT_TRUE(b.GenerateFunction(func)) << b.error();
+    ASSERT_TRUE(b.GenerateGlobalVariable(v)) << b.error();
+    ASSERT_TRUE(b.GenerateGlobalVariable(a)) << b.error();
+    ASSERT_TRUE(b.GenerateFunction(func)) << b.error();
 
-  EXPECT_EQ(DumpBuilder(b), R"(OpName %1 "v"
+    EXPECT_EQ(DumpBuilder(b), R"(OpName %1 "v"
 OpName %5 "a"
 OpName %8 "a_func"
 %3 = OpTypeInt 32 1
@@ -311,22 +308,18 @@ OpName %8 "a_func"
 %5 = OpVariable %2 Private %4
 %7 = OpTypeVoid
 %6 = OpTypeFunction %7
-%15 = OpConstant %3 1
-%16 = OpConstant %3 2
-%17 = OpConstant %3 3
+%14 = OpConstant %3 1
+%15 = OpConstant %3 2
 %8 = OpFunction %7 None %6
 %9 = OpLabel
 %11 = OpLoad %3 %5
 OpSelectionMerge %10 None
-OpSwitch %11 %12 1 %13 2 %14
+OpSwitch %11 %12 1 %13 2 %12 3 %12
 %13 = OpLabel
-OpStore %1 %15
-OpBranch %14
-%14 = OpLabel
-OpStore %1 %16
+OpStore %1 %14
 OpBranch %10
 %12 = OpLabel
-OpStore %1 %17
+OpStore %1 %15
 OpBranch %10
 %10 = OpLabel
 OpReturn
@@ -335,36 +328,35 @@ OpFunctionEnd
 }
 
 TEST_F(BuilderTest, Switch_WithNestedBreak) {
-  // switch (a) {
-  //   case 1:
-  //     if (true) {
-  //       break;
-  //     }
-  //     v = 1;
-  //   default: {}
-  // }
+    // switch (a) {
+    //   case 1:
+    //     if (true) {
+    //       break;
+    //     }
+    //     v = 1i;
+    //   default: {}
+    // }
 
-  auto* v = Global("v", ty.i32(), ast::StorageClass::kPrivate);
-  auto* a = Global("a", ty.i32(), ast::StorageClass::kPrivate);
+    auto* v = GlobalVar("v", ty.i32(), builtin::AddressSpace::kPrivate);
+    auto* a = GlobalVar("a", ty.i32(), builtin::AddressSpace::kPrivate);
 
-  auto* func = Func(
-      "a_func", {}, ty.void_(),
-      {
-          Switch("a",           //
-                 Case(Expr(1),  //
-                      Block(    //
-                          If(Expr(true), Block(create<ast::BreakStatement>())),
-                          Assign("v", 1))),
-                 DefaultCase()),
-      });
+    auto* func = Func("a_func", utils::Empty, ty.void_(),
+                      utils::Vector{
+                          Switch("a",                     //
+                                 Case(CaseSelector(1_i),  //
+                                      Block(              //
+                                          If(Expr(true), Block(create<ast::BreakStatement>())),
+                                          Assign("v", 1_i))),
+                                 DefaultCase()),
+                      });
 
-  spirv::Builder& b = Build();
+    spirv::Builder& b = Build();
 
-  ASSERT_TRUE(b.GenerateGlobalVariable(v)) << b.error();
-  ASSERT_TRUE(b.GenerateGlobalVariable(a)) << b.error();
-  ASSERT_TRUE(b.GenerateFunction(func)) << b.error();
+    ASSERT_TRUE(b.GenerateGlobalVariable(v)) << b.error();
+    ASSERT_TRUE(b.GenerateGlobalVariable(a)) << b.error();
+    ASSERT_TRUE(b.GenerateFunction(func)) << b.error();
 
-  EXPECT_EQ(DumpBuilder(b), R"(OpName %1 "v"
+    EXPECT_EQ(DumpBuilder(b), R"(OpName %1 "v"
 OpName %5 "a"
 OpName %8 "a_func"
 %3 = OpTypeInt 32 1
@@ -399,30 +391,30 @@ OpFunctionEnd
 }
 
 TEST_F(BuilderTest, Switch_AllReturn) {
-  // switch (1) {
-  //   case 1: {
-  //     return 1;
-  //   }
-  //   case 2: {
-  //     fallthrough;
-  //   }
-  //   default: {
-  //     return 3;
-  //   }
-  // }
+    // switch (1i) {
+    //   case 1i: {
+    //     return 1i;
+    //   }
+    //   case 2i: {
+    //     return 1i;
+    //   }
+    //   default: {
+    //     return 3i;
+    //   }
+    // }
 
-  auto* fn = Func("f", {}, ty.i32(),
-                  {
-                      Switch(1,                                    //
-                             Case(Expr(1), Block(Return(1))),      //
-                             Case(Expr(2), Block(Fallthrough())),  //
-                             DefaultCase(Block(Return(3)))),
-                  });
+    auto* fn = Func("f", utils::Empty, ty.i32(),
+                    utils::Vector{
+                        Switch(1_i,                                          //
+                               Case(CaseSelector(1_i), Block(Return(1_i))),  //
+                               Case(CaseSelector(2_i), Block(Return(1_i))),  //
+                               DefaultCase(Block(Return(3_i)))),
+                    });
 
-  spirv::Builder& b = Build();
+    spirv::Builder& b = Build();
 
-  EXPECT_TRUE(b.GenerateFunction(fn)) << b.error();
-  EXPECT_EQ(DumpBuilder(b), R"(OpName %3 "f"
+    EXPECT_TRUE(b.GenerateFunction(fn)) << b.error();
+    EXPECT_EQ(DumpBuilder(b), R"(OpName %3 "f"
 %2 = OpTypeInt 32 1
 %1 = OpTypeFunction %2
 %6 = OpConstant %2 1
@@ -435,7 +427,7 @@ OpSwitch %6 %7 1 %8 2 %9
 %8 = OpLabel
 OpReturnValue %6
 %9 = OpLabel
-OpBranch %7
+OpReturnValue %6
 %7 = OpLabel
 OpReturnValue %10
 %5 = OpLabel

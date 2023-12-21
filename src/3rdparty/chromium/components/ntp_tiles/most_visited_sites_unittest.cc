@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,10 +14,10 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
 #include "base/callback_list.h"
 #include "base/command_line.h"
 #include "base/feature_list.h"
+#include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
@@ -25,7 +25,6 @@
 #include "base/test/gmock_callback_support.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "components/history/core/browser/top_sites.h"
 #include "components/history/core/browser/top_sites_observer.h"
@@ -84,8 +83,6 @@ using testing::StrictMock;
 
 const char kHomepageUrl[] = "http://homepa.ge/";
 const char16_t kHomepageTitle[] = u"Homepage";
-const char kTestExploreUrl[] = "https://example.com/";
-const char16_t kTestExploreTitle[] = u"Example";
 
 std::string PrintTile(const std::u16string& title,
                       const std::string& url,
@@ -97,15 +94,6 @@ std::string PrintTile(const std::u16string& title,
 
 MATCHER_P3(MatchesTile, title, url, source, PrintTile(title, url, source)) {
   return arg.title == title && arg.url == GURL(url) && arg.source == source;
-}
-
-std::string PrintTileSource(TileSource source) {
-  return std::string("has source ") +
-         testing::PrintToString(static_cast<int>(source));
-}
-
-MATCHER_P(TileWithSource, source, PrintTileSource(source)) {
-  return arg.source == source;
 }
 
 MATCHER_P3(LastTileIs,
@@ -214,17 +202,6 @@ class FakeHomepageClient : public MostVisitedSites::HomepageClient {
   bool homepage_tile_enabled_;
   GURL homepage_url_;
   absl::optional<std::u16string> homepage_title_;
-};
-
-class FakeExploreSitesClient : public MostVisitedSites::ExploreSitesClient {
- public:
-  ~FakeExploreSitesClient() override = default;
-
-  GURL GetExploreSitesUrl() const override { return GURL(kTestExploreUrl); }
-
-  std::u16string GetExploreSitesTitle() const override {
-    return kTestExploreTitle;
-  }
 };
 
 class MockIconCacher : public IconCacher {
@@ -372,9 +349,9 @@ class MostVisitedSitesTest : public ::testing::TestWithParam<bool> {
   MostVisitedSitesTest() {
     MostVisitedSites::RegisterProfilePrefs(pref_service_.registry());
 
-    std::vector<base::Feature> enabled_features;
+    std::vector<base::test::FeatureRef> enabled_features;
     // Disable FaviconServer in most tests and override in specific tests.
-    std::vector<base::Feature> disabled_features = {
+    std::vector<base::test::FeatureRef> disabled_features = {
         kNtpMostLikelyFaviconsFromServerFeature};
     if (IsPopularSitesFeatureEnabled()) {
       enabled_features.push_back(kUsePopularSitesSuggestions);
@@ -384,8 +361,8 @@ class MostVisitedSitesTest : public ::testing::TestWithParam<bool> {
 
     // Updating list value in pref with default gmail URL for unit testing.
     // Also adding migration feature to be enabled for unit test.
-    base::Value::ListStorage defaults;
-    defaults.emplace_back("pjkljhegncpnkpknbcohdijeoejaedia");
+    base::Value::List defaults;
+    defaults.Append("pjkljhegncpnkpknbcohdijeoejaedia");
     pref_service_.registry()->RegisterListPref(
         webapps::kWebAppsMigratedPreinstalledApps,
         base::Value(std::move(defaults)));
@@ -464,13 +441,6 @@ class MostVisitedSitesTest : public ::testing::TestWithParam<bool> {
     auto homepage_client = std::make_unique<FakeHomepageClient>();
     FakeHomepageClient* raw_client_ptr = homepage_client.get();
     most_visited_sites_->SetHomepageClient(std::move(homepage_client));
-    return raw_client_ptr;
-  }
-
-  FakeExploreSitesClient* RegisterNewExploreSitesClient() {
-    auto explore_sites_client = std::make_unique<FakeExploreSitesClient>();
-    FakeExploreSitesClient* raw_client_ptr = explore_sites_client.get();
-    most_visited_sites_->SetExploreSitesClient(std::move(explore_sites_client));
     return raw_client_ptr;
   }
 
@@ -836,67 +806,6 @@ TEST_P(MostVisitedSitesTest, ShouldPinHomepageAgainIfBlockedUndone) {
           Contains(MatchesTile(u"", kHomepageUrl, TileSource::HOMEPAGE))))));
 
   most_visited_sites_->OnBlockedSitesChanged();
-  base::RunLoop().RunUntilIdle();
-}
-
-TEST_P(MostVisitedSitesTest, ShouldNotIncludeTileForExploreSitesIfNoClient) {
-  // Does not register an explore sites client.
-  EXPECT_CALL(*mock_top_sites_, GetMostVisitedURLs(_))
-      .WillRepeatedly(base::test::RunOnceCallback<0>(MostVisitedURLList{
-          MakeMostVisitedURL(u"ESPN", "http://espn.com/"),
-          MakeMostVisitedURL(u"Mobile", "http://m.mobile.de/"),
-          MakeMostVisitedURL(u"Google", "http://www.google.com/")}));
-  EXPECT_CALL(*mock_top_sites_, SyncWithHistory());
-  EXPECT_CALL(mock_observer_,
-              OnURLsAvailable(Not(Contains(
-                  Pair(SectionType::PERSONALIZED,
-                       Contains(TileWithSource(TileSource::EXPLORE)))))));
-  // Note that 5 sites are requested, this means that there should be the 3 from
-  // top sites and two from popular sites.
-  most_visited_sites_->AddMostVisitedURLsObserver(&mock_observer_,
-                                                  /*max_num_sites=*/5);
-  base::RunLoop().RunUntilIdle();
-}
-
-// Tests that the explore sites tile appears when there is a mix of top sites
-// and popular sites.
-TEST_P(MostVisitedSitesTest, ShouldIncludeTileForExploreSites) {
-  RegisterNewExploreSitesClient();
-  EXPECT_CALL(*mock_top_sites_, GetMostVisitedURLs(_))
-      .WillRepeatedly(base::test::RunOnceCallback<0>(MostVisitedURLList{
-          MakeMostVisitedURL(u"ESPN", "http://espn.com/"),
-          MakeMostVisitedURL(u"Mobile", "http://m.mobile.de/"),
-          MakeMostVisitedURL(u"Google", "http://www.google.com/")}));
-  EXPECT_CALL(*mock_top_sites_, SyncWithHistory());
-  EXPECT_CALL(mock_observer_,
-              OnURLsAvailable(LastTileIs(kTestExploreTitle, kTestExploreUrl,
-                                         TileSource::EXPLORE)));
-  // Note that 5 sites are requested, this means that there should be the 3 from
-  // top sites, one from popular sites, and one explore tile.
-  most_visited_sites_->AddMostVisitedURLsObserver(&mock_observer_,
-                                                  /*max_num_sites=*/5);
-  base::RunLoop().RunUntilIdle();
-}
-
-TEST_P(MostVisitedSitesTest, RemovesPersonalSiteIfExploreSitesTilePresent) {
-  RegisterNewExploreSitesClient();
-  EXPECT_CALL(*mock_top_sites_, GetMostVisitedURLs(_))
-      .WillRepeatedly(base::test::RunOnceCallback<0>(MostVisitedURLList{
-          MakeMostVisitedURL(u"ESPN", "http://espn.com/"),
-          MakeMostVisitedURL(u"Mobile", "http://m.mobile.de/"),
-          MakeMostVisitedURL(u"Google", "http://www.google.com/")}));
-  EXPECT_CALL(*mock_top_sites_, SyncWithHistory());
-  EXPECT_CALL(mock_observer_,
-              OnURLsAvailable(Contains(Pair(
-                  SectionType::PERSONALIZED,
-                  ElementsAre(MatchesTile(u"ESPN", "http://espn.com/",
-                                          TileSource::TOP_SITES),
-                              MatchesTile(u"Mobile", "http://m.mobile.de/",
-                                          TileSource::TOP_SITES),
-                              MatchesTile(kTestExploreTitle, kTestExploreUrl,
-                                          TileSource::EXPLORE))))));
-  most_visited_sites_->AddMostVisitedURLsObserver(&mock_observer_,
-                                                  /*max_num_sites=*/3);
   base::RunLoop().RunUntilIdle();
 }
 
@@ -1647,8 +1556,7 @@ TEST(MostVisitedSitesMergeTest, ShouldMergeTilesWithPersonalOnly) {
   // Without any popular tiles, the result after merge should be the personal
   // tiles.
   EXPECT_THAT(MostVisitedSites::MergeTiles(std::move(personal_tiles),
-                                           /*popular_tiles=*/NTPTilesVector(),
-                                           /*explore_tile=*/absl::nullopt),
+                                           /*popular_tiles=*/NTPTilesVector()),
               ElementsAre(MatchesTile(u"Site 1", "https://www.site1.com/",
                                       TileSource::TOP_SITES),
                           MatchesTile(u"Site 2", "https://www.site2.com/",
@@ -1670,8 +1578,7 @@ TEST(MostVisitedSitesMergeTest, ShouldMergeTilesWithPopularOnly) {
   // tiles.
   EXPECT_THAT(
       MostVisitedSites::MergeTiles(/*personal_tiles=*/NTPTilesVector(),
-                                   /*popular_tiles=*/std::move(popular_tiles),
-                                   /*explore_tile=*/absl::nullopt),
+                                   /*popular_tiles=*/std::move(popular_tiles)),
       ElementsAre(
           MatchesTile(u"Site 1", "https://www.site1.com/", TileSource::POPULAR),
           MatchesTile(u"Site 2", "https://www.site2.com/", TileSource::POPULAR),
@@ -1689,22 +1596,17 @@ TEST(MostVisitedSitesMergeTest, ShouldMergeTilesFavoringPersonalOverPopular) {
       MakeTile(u"Site 3", "https://www.site3.com/", TileSource::TOP_SITES),
       MakeTile(u"Site 4", "https://www.site4.com/", TileSource::TOP_SITES),
   };
-  absl::optional<NTPTile> explore_tile{
-      MakeTile(u"Explore", "https://explore.example.com/", TileSource::EXPLORE),
-  };
   EXPECT_THAT(
       MostVisitedSites::MergeTiles(std::move(personal_tiles),
-                                   /*popular_tiles=*/std::move(popular_tiles),
-                                   /*explore_tiles=*/explore_tile),
+                                   /*popular_tiles=*/std::move(popular_tiles)),
       ElementsAre(
           MatchesTile(u"Site 3", "https://www.site3.com/",
                       TileSource::TOP_SITES),
           MatchesTile(u"Site 4", "https://www.site4.com/",
                       TileSource::TOP_SITES),
           MatchesTile(u"Site 1", "https://www.site1.com/", TileSource::POPULAR),
-          MatchesTile(u"Site 2", "https://www.site2.com/", TileSource::POPULAR),
-          MatchesTile(u"Explore", "https://explore.example.com/",
-                      TileSource::EXPLORE)));
+          MatchesTile(u"Site 2", "https://www.site2.com/",
+                      TileSource::POPULAR)));
 }
 
 }  // namespace ntp_tiles

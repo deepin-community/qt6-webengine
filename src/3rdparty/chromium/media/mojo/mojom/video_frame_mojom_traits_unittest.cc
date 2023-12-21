@@ -1,10 +1,10 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "media/mojo/mojom/video_frame_mojom_traits.h"
 
-#include "base/callback_helpers.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/ref_counted.h"
 #include "base/test/task_environment.h"
 #include "build/build_config.h"
@@ -13,7 +13,6 @@
 #include "gpu/command_buffer/common/sync_token.h"
 #include "media/base/color_plane_layout.h"
 #include "media/base/video_frame.h"
-#include "media/mojo/common/mojo_shared_buffer_video_frame.h"
 #include "media/mojo/mojom/traits_test_service.mojom.h"
 #include "media/video/fake_gpu_memory_buffer.h"
 #include "mojo/public/cpp/bindings/receiver_set.h"
@@ -76,30 +75,71 @@ TEST_F(VideoFrameStructTraitsTest, EOS) {
   EXPECT_TRUE(frame->metadata().end_of_stream);
 }
 
-TEST_F(VideoFrameStructTraitsTest, MojoSharedBufferVideoFrame) {
-  VideoPixelFormat formats[] = {PIXEL_FORMAT_I420, PIXEL_FORMAT_NV12};
+TEST_F(VideoFrameStructTraitsTest, MappableVideoFrame) {
+  constexpr VideoFrame::StorageType storage_types[] = {
+      VideoFrame::STORAGE_SHMEM,
+      VideoFrame::STORAGE_OWNED_MEMORY,
+      VideoFrame::STORAGE_UNOWNED_MEMORY,
+  };
+  constexpr VideoPixelFormat formats[] = {PIXEL_FORMAT_I420, PIXEL_FORMAT_NV12};
+  constexpr gfx::Size kCodedSize(100, 100);
+  constexpr gfx::Rect kVisibleRect(kCodedSize);
+  constexpr gfx::Size kNaturalSize = kCodedSize;
+  constexpr double kFrameRate = 42.0;
+  constexpr base::TimeDelta kTimestamp = base::Seconds(100);
   for (auto format : formats) {
-    scoped_refptr<VideoFrame> frame =
-        MojoSharedBufferVideoFrame::CreateDefaultForTesting(
-            format, gfx::Size(100, 100), base::Seconds(100));
-    frame->metadata().frame_rate = 42.0;
+    for (auto storage_type : storage_types) {
+      scoped_refptr<media::VideoFrame> frame;
+      base::MappedReadOnlyRegion region;
+      if (storage_type == VideoFrame::STORAGE_OWNED_MEMORY) {
+        frame = media::VideoFrame::CreateFrame(format, kCodedSize, kVisibleRect,
+                                               kNaturalSize, kTimestamp);
+      } else {
+        std::vector<int32_t> strides =
+            VideoFrame::ComputeStrides(format, kCodedSize);
+        size_t aggregate_size = 0;
+        size_t sizes[3] = {};
+        for (size_t i = 0; i < strides.size(); ++i) {
+          sizes[i] = media::VideoFrame::Rows(i, format, kCodedSize.height()) *
+                     strides[i];
+          aggregate_size += sizes[i];
+        }
+        region = base::ReadOnlySharedMemoryRegion::Create(aggregate_size);
+        ASSERT_TRUE(region.IsValid());
 
-    ASSERT_TRUE(RoundTrip(&frame));
-    ASSERT_TRUE(frame);
-    EXPECT_FALSE(frame->metadata().end_of_stream);
-    EXPECT_EQ(*frame->metadata().frame_rate, 42.0);
-    EXPECT_EQ(frame->coded_size(), gfx::Size(100, 100));
-    EXPECT_EQ(frame->timestamp(), base::Seconds(100));
+        uint8_t* data[3] = {};
+        data[0] = const_cast<uint8_t*>(region.mapping.GetMemoryAs<uint8_t>());
+        for (size_t i = 1; i < strides.size(); ++i)
+          data[i] = data[i - 1] + sizes[i];
 
-    ASSERT_EQ(frame->storage_type(), VideoFrame::STORAGE_MOJO_SHARED_BUFFER);
-    MojoSharedBufferVideoFrame* mojo_shared_buffer_frame =
-        static_cast<MojoSharedBufferVideoFrame*>(frame.get());
-    EXPECT_TRUE(mojo_shared_buffer_frame->shmem_region().IsValid());
+        strides.resize(3, 0);
+        frame = media::VideoFrame::WrapExternalYuvData(
+            format, kCodedSize, kVisibleRect, kNaturalSize, strides[0],
+            strides[1], strides[2], data[0], data[1], data[2], kTimestamp);
+        if (storage_type == VideoFrame::STORAGE_SHMEM)
+          frame->BackWithSharedMemory(&region.region);
+      }
+
+      ASSERT_TRUE(frame);
+      frame->metadata().frame_rate = kFrameRate;
+      ASSERT_EQ(frame->storage_type(), storage_type);
+      ASSERT_TRUE(RoundTrip(&frame));
+      ASSERT_TRUE(frame);
+      EXPECT_FALSE(frame->metadata().end_of_stream);
+      EXPECT_EQ(frame->format(), format);
+      EXPECT_EQ(*frame->metadata().frame_rate, kFrameRate);
+      EXPECT_EQ(frame->coded_size(), kCodedSize);
+      EXPECT_EQ(frame->visible_rect(), kVisibleRect);
+      EXPECT_EQ(frame->natural_size(), kNaturalSize);
+      EXPECT_EQ(frame->timestamp(), kTimestamp);
+      ASSERT_EQ(frame->storage_type(), VideoFrame::STORAGE_SHMEM);
+      EXPECT_TRUE(frame->shm_region()->IsValid());
+    }
   }
 }
 
 TEST_F(VideoFrameStructTraitsTest, MailboxVideoFrame) {
-  gpu::Mailbox mailbox = gpu::Mailbox::Generate();
+  gpu::Mailbox mailbox = gpu::Mailbox::GenerateForSharedImage();
   gpu::MailboxHolder mailbox_holder[VideoFrame::kMaxPlanes];
   mailbox_holder[0] = gpu::MailboxHolder(mailbox, gpu::SyncToken(), 0);
   scoped_refptr<VideoFrame> frame = VideoFrame::WrapNativeTextures(
@@ -121,10 +161,10 @@ TEST_F(VideoFrameStructTraitsTest, MailboxVideoFrame) {
 
 // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) because
 // media::FakeGpuMemoryBuffer supports NativePixmapHandle backed
-// GpuMemoryBufferHandle only. !defined(USE_OZONE) so as to force
+// GpuMemoryBufferHandle only. !BUILDFLAG(IS_OZONE) so as to force
 // GpuMemoryBufferSupport to select gfx::ClientNativePixmapFactoryDmabuf for
 // gfx::ClientNativePixmapFactory.
-#if (BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)) && !defined(USE_OZONE)
+#if (BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)) && !BUILDFLAG(IS_OZONE)
 TEST_F(VideoFrameStructTraitsTest, GpuMemoryBufferVideoFrame) {
   gfx::Size coded_size = gfx::Size(256, 256);
   gfx::Rect visible_rect(coded_size);
@@ -135,8 +175,10 @@ TEST_F(VideoFrameStructTraitsTest, GpuMemoryBufferVideoFrame) {
   gfx::BufferFormat expected_gmb_format = gmb->GetFormat();
   gfx::Size expected_gmb_size = gmb->GetSize();
   gpu::MailboxHolder mailbox_holders[media::VideoFrame::kMaxPlanes] = {
-      gpu::MailboxHolder(gpu::Mailbox::Generate(), gpu::SyncToken(), 5),
-      gpu::MailboxHolder(gpu::Mailbox::Generate(), gpu::SyncToken(), 10)};
+      gpu::MailboxHolder(gpu::Mailbox::GenerateForSharedImage(),
+                         gpu::SyncToken(), 5),
+      gpu::MailboxHolder(gpu::Mailbox::GenerateForSharedImage(),
+                         gpu::SyncToken(), 10)};
   auto frame = VideoFrame::WrapExternalGpuMemoryBuffer(
       visible_rect, visible_rect.size(), std::move(gmb), mailbox_holders,
       base::NullCallback(), timestamp);
@@ -157,5 +199,5 @@ TEST_F(VideoFrameStructTraitsTest, GpuMemoryBufferVideoFrame) {
   EXPECT_EQ(frame->GetGpuMemoryBuffer()->GetSize(), expected_gmb_size);
 }
 #endif  // (BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)) &&
-        // !defined(USE_OZONE)
+        // !BUILDFLAG(IS_OZONE)
 }  // namespace media

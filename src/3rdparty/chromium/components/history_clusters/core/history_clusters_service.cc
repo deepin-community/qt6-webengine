@@ -1,169 +1,50 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/history_clusters/core/history_clusters_service.h"
 
 #include <algorithm>
-#include <iterator>
 #include <memory>
-#include <numeric>
 #include <string>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/containers/flat_map.h"
-#include "base/feature_list.h"
+#include "base/functional/bind.h"
 #include "base/i18n/case_conversion.h"
-#include "base/json/json_writer.h"
 #include "base/metrics/histogram_functions.h"
-#include "base/observer_list.h"
-#include "base/strings/string_number_conversions.h"
-#include "base/strings/stringprintf.h"
+#include "base/ranges/algorithm.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/system/sys_info.h"
 #include "base/time/time.h"
-#include "base/time/time_to_iso8601.h"
 #include "base/timer/elapsed_timer.h"
-#include "base/values.h"
+#include "base/timer/timer.h"
 #include "components/history/core/browser/history_backend.h"
 #include "components/history/core/browser/history_database.h"
 #include "components/history/core/browser/history_db_task.h"
 #include "components/history/core/browser/history_types.h"
 #include "components/history_clusters/core/config.h"
-#include "components/history_clusters/core/features.h"
-#include "components/history_clusters/core/history_clusters_buildflags.h"
-#include "components/history_clusters/core/history_clusters_db_tasks.h"
+#include "components/history_clusters/core/file_clustering_backend.h"
+#include "components/history_clusters/core/history_clusters_debug_jsons.h"
+#include "components/history_clusters/core/history_clusters_prefs.h"
+#include "components/history_clusters/core/history_clusters_service_task_get_most_recent_clusters.h"
+#include "components/history_clusters/core/history_clusters_service_task_get_most_recent_clusters_for_ui.h"
+#include "components/history_clusters/core/history_clusters_service_task_update_cluster_triggerability.h"
+#include "components/history_clusters/core/history_clusters_service_task_update_clusters.h"
 #include "components/history_clusters/core/history_clusters_types.h"
 #include "components/history_clusters/core/history_clusters_util.h"
-#include "components/optimization_guide/core/entity_metadata_provider.h"
-#include "components/site_engagement/core/site_engagement_score_provider.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
-#include "ui/base/l10n/time_format.h"
-
-#if BUILDFLAG(BUILD_WITH_ON_DEVICE_CLUSTERING_BACKEND)
 #include "components/history_clusters/core/on_device_clustering_backend.h"
-#endif
+#include "components/optimization_guide/core/entity_metadata_provider.h"
+#include "components/optimization_guide/core/new_optimization_guide_decider.h"
+#include "components/prefs/pref_service.h"
+#include "components/site_engagement/core/site_engagement_score_provider.h"
 
 namespace history_clusters {
 
 namespace {
 
-// Gets a loggable JSON representation of `visits`.
-std::string GetDebugJSONForVisits(
-    const std::vector<history::AnnotatedVisit>& visits) {
-  base::ListValue debug_visits_list;
-  for (auto& visit : visits) {
-    base::DictionaryValue debug_visit;
-    debug_visit.SetIntKey("visitId", visit.visit_row.visit_id);
-    debug_visit.SetStringKey("url", visit.url_row.url().spec());
-    debug_visit.SetStringKey("title", visit.url_row.title());
-    debug_visit.SetIntKey("foreground_time_secs",
-                          visit.visit_row.visit_duration.InSeconds());
-    debug_visit.SetIntKey(
-        "navigationTimeMs",
-        visit.visit_row.visit_time.ToDeltaSinceWindowsEpoch().InMilliseconds());
-    debug_visit.SetIntKey("pageEndReason",
-                          visit.context_annotations.page_end_reason);
-    debug_visit.SetIntKey("pageTransition",
-                          static_cast<int>(visit.visit_row.transition));
-    debug_visit.SetIntKey("referringVisitId",
-                          visit.referring_visit_of_redirect_chain_start);
-    debug_visit.SetIntKey("openerVisitId",
-                          visit.opener_visit_of_redirect_chain_start);
-    debug_visits_list.Append(std::move(debug_visit));
-  }
-
-  base::DictionaryValue debug_value;
-  debug_value.SetKey("visits", std::move(debug_visits_list));
-  std::string debug_string;
-  if (!base::JSONWriter::WriteWithOptions(
-          debug_value, base::JSONWriter::OPTIONS_PRETTY_PRINT, &debug_string)) {
-    debug_string = "Error: Could not write visits to JSON.";
-  }
-  return debug_string;
-}
-
-// Gets a loggable JSON representation of `clusters`.
-std::string GetDebugJSONForClusters(
-    const std::vector<history::Cluster>& clusters) {
-  // TODO(manukh): `ListValue` is deprecated; replace with `std::vector`.
-  base::ListValue debug_clusters_list;
-  for (const auto& cluster : clusters) {
-    base::DictionaryValue debug_cluster;
-
-    debug_cluster.SetStringKey("label", cluster.label.value_or(u""));
-    base::ListValue debug_keywords;
-    for (const auto& keyword : cluster.keywords) {
-      debug_keywords.Append(keyword);
-    }
-    debug_cluster.SetKey("keywords", std::move(debug_keywords));
-    debug_cluster.SetBoolKey("should_show_on_prominent_ui_surfaces",
-                             cluster.should_show_on_prominent_ui_surfaces);
-
-    base::ListValue debug_visits;
-    for (const auto& visit : cluster.visits) {
-      base::DictionaryValue debug_visit;
-      debug_visit.SetIntKey("visit_id",
-                            visit.annotated_visit.visit_row.visit_id);
-      debug_visit.SetDoubleKey("score", visit.score);
-      base::ListValue debug_categories;
-      for (const auto& category : visit.annotated_visit.content_annotations
-                                      .model_annotations.categories) {
-        base::DictionaryValue debug_category;
-        debug_category.SetStringKey("name", category.id);
-        debug_category.SetIntKey("value", category.weight);
-        debug_categories.Append(std::move(debug_category));
-      }
-      debug_visit.SetKey("categories", std::move(debug_categories));
-      base::ListValue debug_entities;
-      for (const auto& entity : visit.annotated_visit.content_annotations
-                                    .model_annotations.entities) {
-        base::DictionaryValue debug_entity;
-        debug_entity.SetStringKey("name", entity.id);
-        debug_entity.SetIntKey("value", entity.weight);
-        debug_entities.Append(std::move(debug_entity));
-      }
-      debug_visit.SetKey("entities", std::move(debug_entities));
-      debug_visit.SetDoubleKey("site_engagement_score", visit.engagement_score);
-
-      base::ListValue debug_duplicate_visits;
-      for (const auto& duplicate_visit : visit.duplicate_visits) {
-        debug_duplicate_visits.Append(static_cast<int>(
-            duplicate_visit.annotated_visit.visit_row.visit_id));
-      }
-      debug_visit.SetKey("duplicate_visits", std::move(debug_duplicate_visits));
-
-      debug_visits.Append(std::move(debug_visit));
-    }
-    debug_cluster.SetKey("visits", std::move(debug_visits));
-
-    debug_clusters_list.Append(std::move(debug_cluster));
-  }
-
-  std::string debug_string;
-  if (!base::JSONWriter::WriteWithOptions(
-          debug_clusters_list, base::JSONWriter::OPTIONS_PRETTY_PRINT,
-          &debug_string)) {
-    debug_string = "Error: Could not write clusters to JSON.";
-  }
-  return debug_string;
-}
-
-std::string GetDebugJSONForKeywordSet(
-    const HistoryClustersService::KeywordSet& keyword_set) {
-  std::vector<base::Value> keyword_list;
-  for (const auto& keyword : keyword_set) {
-    keyword_list.emplace_back(keyword);
-  }
-
-  std::string debug_string;
-  if (!base::JSONWriter::WriteWithOptions(
-          base::Value(keyword_list), base::JSONWriter::OPTIONS_PRETTY_PRINT,
-          &debug_string)) {
-    debug_string = "Error: Could not write keywords list to JSON.";
-  }
-  return debug_string;
+void RecordUpdateClustersLatencyHistogram(const std::string& histogram_name,
+                                          base::ElapsedTimer elapsed_timer) {
+  base::UmaHistogramMediumTimes(histogram_name, elapsed_timer.Elapsed());
 }
 
 }  // namespace
@@ -191,20 +72,38 @@ HistoryClustersService::HistoryClustersService(
     history::HistoryService* history_service,
     optimization_guide::EntityMetadataProvider* entity_metadata_provider,
     scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
-    site_engagement::SiteEngagementScoreProvider* engagement_score_provider)
+    site_engagement::SiteEngagementScoreProvider* engagement_score_provider,
+    TemplateURLService* template_url_service,
+    optimization_guide::NewOptimizationGuideDecider* optimization_guide_decider,
+    PrefService* prefs)
     : is_journeys_enabled_(
           GetConfig().is_journeys_enabled_no_locale_check &&
           IsApplicationLocaleSupportedByJourneys(application_locale)),
       history_service_(history_service),
-      visit_deletion_observer_(this) {
-  DCHECK(history_service_);
+      visit_deletion_observer_(this),
+      context_clusterer_observer_(history_service,
+                                  template_url_service,
+                                  optimization_guide_decider,
+                                  engagement_score_provider) {
+  if (prefs && is_journeys_enabled_) {
+    // Log whether the user has Journeys enabled if they are eligible for it.
+    base::UmaHistogramBoolean(
+        "History.Clusters.JourneysEligibleAndEnabledAtSessionStart",
+        prefs->GetBoolean(prefs::kVisible));
+  }
 
-  visit_deletion_observer_.AttachToHistoryService(history_service);
+  if (history_service_) {
+    visit_deletion_observer_.AttachToHistoryService(history_service);
+  }
 
-#if BUILDFLAG(BUILD_WITH_ON_DEVICE_CLUSTERING_BACKEND)
-  backend_ = std::make_unique<OnDeviceClusteringBackend>(
-      entity_metadata_provider, engagement_score_provider);
-#endif
+  backend_ = FileClusteringBackend::CreateIfEnabled();
+  if (!backend_) {
+    backend_ = std::make_unique<OnDeviceClusteringBackend>(
+        entity_metadata_provider, engagement_score_provider,
+        optimization_guide_decider, JourneysMidBlocklist());
+  }
+
+  RepeatedlyUpdateClusters();
 }
 
 HistoryClustersService::~HistoryClustersService() = default;
@@ -217,6 +116,11 @@ void HistoryClustersService::Shutdown() {}
 
 bool HistoryClustersService::IsJourneysEnabled() const {
   return is_journeys_enabled_;
+}
+
+// static
+bool HistoryClustersService::IsJourneysImagesEnabled() {
+  return GetConfig().images;
 }
 
 void HistoryClustersService::AddObserver(Observer* obs) {
@@ -272,7 +176,7 @@ void HistoryClustersService::CompleteVisitContextAnnotationsIfReady(
     // And if the persist-only switch is enabled, we also want to persist them.
     if (IsJourneysEnabled() ||
         GetConfig().persist_context_annotations_in_history_db) {
-      history_service_->AddContextAnnotationsForVisit(
+      history_service_->SetOnCloseContextAnnotationsForVisit(
           visit_context_annotations.visit_row.visit_id,
           visit_context_annotations.context_annotations);
     }
@@ -280,72 +184,146 @@ void HistoryClustersService::CompleteVisitContextAnnotationsIfReady(
   }
 }
 
-void HistoryClustersService::QueryClusters(
+std::unique_ptr<HistoryClustersServiceTask>
+HistoryClustersService::QueryClusters(
     ClusteringRequestSource clustering_request_source,
+    QueryClustersFilterParams filter_params,
     base::Time begin_time,
-    base::Time end_time,
-    QueryClustersCallback callback,
-    base::CancelableTaskTracker* task_tracker) {
+    QueryClustersContinuationParams continuation_params,
+    bool recluster,
+    QueryClustersCallback callback) {
   if (ShouldNotifyDebugMessage()) {
     NotifyDebugMessage("HistoryClustersService::QueryClusters()");
-    NotifyDebugMessage(
-        "  begin_time = " +
-        (begin_time.is_null() ? "null" : base::TimeToISO8601(begin_time)));
-    NotifyDebugMessage("  end_time = " + (end_time.is_null()
-                                              ? "null"
-                                              : base::TimeToISO8601(end_time)));
-  }
-
-  if (!backend_) {
-    NotifyDebugMessage(
-        "HistoryClustersService::QueryClusters Error: ClusteringBackend is "
-        "nullptr. Returning empty cluster vector.");
-    std::move(callback).Run({}, base::Time());
-    return;
+    NotifyDebugMessage("  begin_time = " + GetDebugTime(begin_time));
+    NotifyDebugMessage("  end_time = " +
+                       GetDebugTime(continuation_params.continuation_time));
   }
 
   DCHECK(history_service_);
-  history_service_->ScheduleDBTask(
+  if (ShouldUseNavigationContextClustersFromPersistence() &&
+      IsUIRequestSource(clustering_request_source) && !recluster) {
+    return std::make_unique<
+        HistoryClustersServiceTaskGetMostRecentClustersForUI>(
+        weak_ptr_factory_.GetWeakPtr(), backend_.get(), history_service_,
+        clustering_request_source, std::move(filter_params), begin_time,
+        continuation_params, std::move(callback));
+  }
+  return std::make_unique<HistoryClustersServiceTaskGetMostRecentClusters>(
+      weak_ptr_factory_.GetWeakPtr(), incomplete_visit_context_annotations_,
+      backend_.get(), history_service_, clustering_request_source, begin_time,
+      continuation_params, recluster, std::move(callback));
+}
+
+void HistoryClustersService::RepeatedlyUpdateClusters() {
+  // If `persist_on_query` is enabled, clusters are updated on query and not on
+  // a timer.
+  if (!GetConfig().persist_clusters_in_history_db ||
+      GetConfig().persist_on_query) {
+    return;
+  }
+
+  // Update clusters, both periodically and once after startup because:
+  // 1) To avoid having very stale (up to 90 days) clusters for the initial
+  //    period after startup.
+  // 2) Likewise, to avoid having very stale keywords.
+  // 3) Some users might not keep chrome running for the period.
+  update_clusters_after_startup_delay_timer_.Start(
       FROM_HERE,
-      std::make_unique<GetAnnotatedVisitsToCluster>(
-          incomplete_visit_context_annotations_, begin_time, end_time,
-          base::BindOnce(&HistoryClustersService::OnGotHistoryVisits,
-                         weak_ptr_factory_.GetWeakPtr(),
-                         clustering_request_source, base::TimeTicks::Now(),
-                         std::move(callback))),
-      task_tracker);
+      base::Minutes(
+          GetConfig()
+              .persist_clusters_in_history_db_after_startup_delay_minutes),
+      this, &HistoryClustersService::UpdateClusters);
+  update_clusters_period_timer_.Start(
+      FROM_HERE,
+      base::Minutes(GetConfig().persist_clusters_in_history_db_period_minutes),
+      this, &HistoryClustersService::UpdateClusters);
 }
 
-void HistoryClustersService::RemoveVisits(
-    const std::vector<history::ExpireHistoryArgs>& expire_list,
-    base::OnceClosure closure,
-    base::CancelableTaskTracker* task_tracker) {
-  // We expect HistoryService to internally delete any associated annotations
-  // and cluster rows. In the future we may remove this indirection entirely.
-  history_service_->ExpireHistory(expire_list, std::move(closure),
-                                  task_tracker);
+void HistoryClustersService::UpdateClusters() {
+  DCHECK(history_service_);
+
+  // TODO(manukh): This logic (if task not done, if time since < period) is
+  //  repeated for both keyword caches and here. Should probably share it in
+  //  some kind of base task that all 3 inherit from.
+
+  if (update_clusters_task_ && !update_clusters_task_->Done())
+    return;
+
+  // Make sure clusters aren't updated too frequently. If `persist_on_query` is
+  // false, this is already ensured by `update_clusters_period_timer_`. If
+  // update_clusters_task_ is null, this is the 1st request which shouldn't be
+  // delayed.
+  if (GetConfig().persist_on_query &&
+      update_clusters_timer_.Elapsed() <=
+          base::Minutes(
+              GetConfig().persist_clusters_in_history_db_period_minutes) &&
+      update_clusters_task_) {
+    return;
+  }
+
+  // Using custom histogram as this occurs too infrequently to be captured by
+  // the built in histograms. `persist_clusters_in_history_db_period_minutes`
+  // ranges from 1 to 12 hours while the built in timing histograms go up to 1
+  // hr.
+  base::UmaHistogramCustomTimes(
+      "History.Clusters.UpdateClusters.TimeBetweenTasks",
+      update_clusters_timer_.Elapsed(), base::Minutes(60), base::Hours(48),
+      100);
+
+  // Reset the timer.
+  update_clusters_timer_ = {};
+
+  if (GetConfig().use_navigation_context_clusters) {
+    update_clusters_task_ =
+        std::make_unique<HistoryClustersServiceTaskUpdateClusterTriggerability>(
+            weak_ptr_factory_.GetWeakPtr(), backend_.get(), history_service_,
+            base::BindOnce(
+                &RecordUpdateClustersLatencyHistogram,
+                "History.Clusters.Backend.UpdateClusterTriggerability.Total",
+                base::ElapsedTimer()));
+  } else {
+    update_clusters_task_ =
+        std::make_unique<HistoryClustersServiceTaskUpdateClusters>(
+            weak_ptr_factory_.GetWeakPtr(),
+            incomplete_visit_context_annotations_, backend_.get(),
+            history_service_,
+            base::BindOnce(&RecordUpdateClustersLatencyHistogram,
+                           "History.Clusters.Backend.UpdateClusters.Total",
+                           base::ElapsedTimer()));
+  }
 }
 
-bool HistoryClustersService::DoesQueryMatchAnyCluster(
-    const std::string& query) {
+absl::optional<history::ClusterKeywordData>
+HistoryClustersService::DoesQueryMatchAnyCluster(const std::string& query) {
   if (!IsJourneysEnabled())
-    return false;
+    return absl::nullopt;
 
   // We don't want any omnibox jank for low-end devices.
   if (base::SysInfo::IsLowEndDevice())
-    return false;
+    return absl::nullopt;
 
   StartKeywordCacheRefresh();
+  if (GetConfig().persist_on_query)
+    UpdateClusters();
 
   // Early exit for single-character queries, even if it's an exact match.
   // We still want to allow for two-character exact matches like "uk".
   if (query.length() <= 1)
-    return false;
+    return absl::nullopt;
 
   auto query_lower = base::i18n::ToLower(base::UTF8ToUTF16(query));
 
-  return short_keyword_cache_.find(query_lower) != short_keyword_cache_.end() ||
-         all_keywords_cache_.find(query_lower) != all_keywords_cache_.end();
+  auto short_it = short_keyword_cache_.find(query_lower);
+  if (short_it != short_keyword_cache_.end()) {
+    return short_it->second;
+  }
+
+  auto it = all_keywords_cache_.find(query_lower);
+  if (it != all_keywords_cache_.end()) {
+    return it->second;
+  }
+
+  return absl::nullopt;
 }
 
 bool HistoryClustersService::DoesURLMatchAnyCluster(
@@ -358,6 +336,8 @@ bool HistoryClustersService::DoesURLMatchAnyCluster(
     return false;
 
   StartKeywordCacheRefresh();
+  if (GetConfig().persist_on_query)
+    UpdateClusters();
 
   return short_url_keywords_cache_.find(url_keyword) !=
              short_url_keywords_cache_.end() ||
@@ -372,7 +352,23 @@ void HistoryClustersService::ClearKeywordCache() {
   all_url_keywords_cache_.clear();
   short_keyword_cache_.clear();
   short_keyword_cache_.clear();
-  cache_query_task_tracker_.TryCancelAll();
+  cache_keyword_query_task_.reset();
+}
+
+void HistoryClustersService::PrintKeywordBagStateToLogMessage() const {
+  NotifyDebugMessage("-- Printing Short-Time Keyword Bag --");
+  NotifyDebugMessage("Timestamp: " +
+                     GetDebugTime(short_keyword_cache_timestamp_));
+  NotifyDebugMessage(GetDebugJSONForKeywordMap(short_keyword_cache_));
+  NotifyDebugMessage(GetDebugJSONForUrlKeywordSet(short_url_keywords_cache_));
+
+  NotifyDebugMessage("-- Printing All-Time Keyword Bag --");
+  NotifyDebugMessage("Timestamp: " +
+                     GetDebugTime(all_keywords_cache_timestamp_));
+  NotifyDebugMessage(GetDebugJSONForKeywordMap(all_keywords_cache_));
+  NotifyDebugMessage(GetDebugJSONForUrlKeywordSet(all_url_keywords_cache_));
+
+  NotifyDebugMessage("-- Printing Keyword Bags Done --");
 }
 
 void HistoryClustersService::StartKeywordCacheRefresh() {
@@ -380,27 +376,39 @@ void HistoryClustersService::StartKeywordCacheRefresh() {
   // of all clusters. Otherwise, update `short_keyword_cache_` with the
   // keywords of only the clusters not represented in all_keywords_cache_.
 
+  // Don't make new queries if there's a pending query.
+  if (cache_keyword_query_task_ && !cache_keyword_query_task_->Done())
+    return;
+
+  QueryClustersContinuationParams continuation_params;
+  if (ShouldUseNavigationContextClustersFromPersistence()) {
+    // Overwrite this so that queries for unclustered visits are not made.
+    // In the old path, the `GetAnnotatedVisitsToCluster` task would set
+    // the continuation time when it exhausted all unclustered visits, so it
+    // needs to be set here.
+    continuation_params.exhausted_unclustered_visits = true;
+    continuation_params.continuation_time = base::Time::Now();
+  }
+
   // 2 hour threshold chosen arbitrarily for cache refresh time.
-  if ((base::Time::Now() - all_keywords_cache_timestamp_) > base::Hours(2) &&
-      !cache_query_task_tracker_.HasTrackedTasks()) {
+  if ((base::Time::Now() - all_keywords_cache_timestamp_) > base::Hours(2)) {
     // Update the timestamp right away, to prevent this from running again.
     // (The cache_query_task_tracker_ should also do this.)
     all_keywords_cache_timestamp_ = base::Time::Now();
 
     NotifyDebugMessage("Starting all_keywords_cache_ generation.");
-    QueryClusters(
-        ClusteringRequestSource::kKeywordCacheGeneration,
-        /*begin_time=*/base::Time(),
-        /*end_time=*/base::Time(),
+    cache_keyword_query_task_ = QueryClusters(
+        ClusteringRequestSource::kAllKeywordCacheRefresh,
+        QueryClustersFilterParams(),
+        /*begin_time=*/base::Time::Min(), continuation_params,
+        /*recluster=*/false,
         base::BindOnce(&HistoryClustersService::PopulateClusterKeywordCache,
                        weak_ptr_factory_.GetWeakPtr(), base::ElapsedTimer(),
                        /*begin_time=*/base::Time(),
-                       std::make_unique<KeywordSet>(),
+                       std::make_unique<KeywordMap>(),
                        std::make_unique<URLKeywordSet>(), &all_keywords_cache_,
-                       &all_url_keywords_cache_),
-        &cache_query_task_tracker_);
-  } else if (!cache_query_task_tracker_.HasTrackedTasks() &&
-             (base::Time::Now() - all_keywords_cache_timestamp_).InSeconds() >
+                       &all_url_keywords_cache_));
+  } else if ((base::Time::Now() - all_keywords_cache_timestamp_).InSeconds() >
                  10 &&
              (base::Time::Now() - short_keyword_cache_timestamp_).InSeconds() >
                  10) {
@@ -408,48 +416,68 @@ void HistoryClustersService::StartKeywordCacheRefresh() {
     short_keyword_cache_timestamp_ = base::Time::Now();
 
     NotifyDebugMessage("Starting short_keywords_cache_ generation.");
-    QueryClusters(
-        ClusteringRequestSource::kKeywordCacheGeneration,
-        /*begin_time=*/all_keywords_cache_timestamp_, /*end_time=*/base::Time(),
+    cache_keyword_query_task_ = QueryClusters(
+        ClusteringRequestSource::kShortKeywordCacheRefresh,
+        QueryClustersFilterParams(),
+        /*begin_time=*/all_keywords_cache_timestamp_, continuation_params,
+        /*recluster=*/false,
         base::BindOnce(&HistoryClustersService::PopulateClusterKeywordCache,
                        weak_ptr_factory_.GetWeakPtr(), base::ElapsedTimer(),
                        all_keywords_cache_timestamp_,
-                       std::make_unique<KeywordSet>(),
+                       std::make_unique<KeywordMap>(),
                        std::make_unique<URLKeywordSet>(), &short_keyword_cache_,
-                       &short_url_keywords_cache_),
-        &cache_query_task_tracker_);
+                       &short_url_keywords_cache_));
   }
 }
 
 void HistoryClustersService::PopulateClusterKeywordCache(
     base::ElapsedTimer total_latency_timer,
     base::Time begin_time,
-    std::unique_ptr<KeywordSet> keyword_accumulator,
+    std::unique_ptr<KeywordMap> keyword_accumulator,
     std::unique_ptr<URLKeywordSet> url_keyword_accumulator,
-    KeywordSet* cache,
+    KeywordMap* cache,
     URLKeywordSet* url_cache,
     std::vector<history::Cluster> clusters,
-    base::Time continuation_end_time) {
+    QueryClustersContinuationParams continuation_params) {
   base::ElapsedThreadTimer populate_keywords_thread_timer;
   const size_t max_keyword_phrases = GetConfig().max_keyword_phrases;
 
-  // Copy keywords from every cluster into a the accumulator set.
+  // Copy keywords from every cluster into the accumulator set.
   for (auto& cluster : clusters) {
     if (!cluster.should_show_on_prominent_ui_surfaces) {
       // `clusters` doesn't have any post-processing, so we need to skip
       // sensitive clusters here.
       continue;
     }
-    if (cluster.visits.size() < 2) {
+    const size_t visible_visits = base::ranges::count_if(
+        cluster.visits,
+        [](const auto& cluster_visit) { return cluster_visit.score > 0; });
+    if (visible_visits < 2) {
       // Only accept keywords from clusters with at least two visits. This is a
       // simple first-pass technique to avoid overtriggering the omnibox action.
       continue;
     }
+    if (!GetConfig().include_synced_visits &&
+        !cluster.originator_cache_guid.empty()) {
+      // Skip over remote clusters if remote visits do not intend to get
+      // incorporated.
+      continue;
+    }
     // Lowercase the keywords for case insensitive matching while adding to the
     // accumulator.
+    // Keep the keyword data with the highest score if found in multiple
+    // clusters.
     if (keyword_accumulator->size() < max_keyword_phrases) {
-      for (auto& keyword : cluster.keywords) {
-        keyword_accumulator->insert(base::i18n::ToLower(keyword));
+      for (const auto& keyword_data_p : cluster.keyword_to_data_map) {
+        auto keyword = base::i18n::ToLower(keyword_data_p.first);
+        auto it = keyword_accumulator->find(keyword);
+        if (it == keyword_accumulator->end()) {
+          keyword_accumulator->insert(
+              std::make_pair(keyword, keyword_data_p.second));
+        } else if (it->second.score < keyword_data_p.second.score) {
+          // Update keyword data to the one with a higher score.
+          it->second = keyword_data_p.second;
+        }
       }
     }
 
@@ -479,19 +507,23 @@ void HistoryClustersService::PopulateClusterKeywordCache(
   // haven't reached the soft cap `max_keyword_phrases` (or there is no cap).
   constexpr char kKeywordCacheThreadTimeUmaName[] =
       "History.Clusters.KeywordCache.ThreadTime";
-  if (!continuation_end_time.is_null() &&
+  if (!continuation_params.exhausted_all_visits &&
       (keyword_accumulator->size() < max_keyword_phrases ||
        url_keyword_accumulator->size() < max_keyword_phrases)) {
-    QueryClusters(
-        ClusteringRequestSource::kKeywordCacheGeneration, begin_time,
-        continuation_end_time,
+    const ClusteringRequestSource clustering_request_source =
+        cache == &all_keywords_cache_
+            ? ClusteringRequestSource::kAllKeywordCacheRefresh
+            : ClusteringRequestSource::kShortKeywordCacheRefresh;
+    cache_keyword_query_task_ = QueryClusters(
+        clustering_request_source, QueryClustersFilterParams(), begin_time,
+        continuation_params,
+        /*recluster=*/false,
         base::BindOnce(&HistoryClustersService::PopulateClusterKeywordCache,
                        weak_ptr_factory_.GetWeakPtr(),
                        std::move(total_latency_timer), begin_time,
                        // Pass on the accumulator sets to the next callback.
                        std::move(keyword_accumulator),
-                       std::move(url_keyword_accumulator), cache, url_cache),
-        &cache_query_task_tracker_);
+                       std::move(url_keyword_accumulator), cache, url_cache));
     // Log this even if we go back for more clusters.
     base::UmaHistogramTimes(kKeywordCacheThreadTimeUmaName,
                             populate_keywords_thread_timer.Elapsed());
@@ -504,8 +536,10 @@ void HistoryClustersService::PopulateClusterKeywordCache(
   *cache = std::move(*keyword_accumulator);
   *url_cache = std::move(*url_keyword_accumulator);
   if (ShouldNotifyDebugMessage()) {
-    NotifyDebugMessage("Cache construction complete:");
-    NotifyDebugMessage(GetDebugJSONForKeywordSet(*cache));
+    NotifyDebugMessage("Cache construction complete; keyword cache:");
+    NotifyDebugMessage(GetDebugJSONForKeywordMap(*cache));
+    NotifyDebugMessage("Url cache:");
+    NotifyDebugMessage(GetDebugJSONForUrlKeywordSet(*url_cache));
   }
 
   // Record keyword phrase & keyword counts for the appropriate cache.
@@ -523,67 +557,6 @@ void HistoryClustersService::PopulateClusterKeywordCache(
                           populate_keywords_thread_timer.Elapsed());
   base::UmaHistogramMediumTimes("History.Clusters.KeywordCache.Latency",
                                 total_latency_timer.Elapsed());
-}
-
-void HistoryClustersService::OnGotHistoryVisits(
-    ClusteringRequestSource clustering_request_source,
-    base::TimeTicks query_visits_start,
-    QueryClustersCallback callback,
-    std::vector<history::AnnotatedVisit> annotated_visits,
-    base::Time continuation_end_time) const {
-  if (ShouldNotifyDebugMessage()) {
-    NotifyDebugMessage("HistoryClustersService::OnGotHistoryVisits()");
-    NotifyDebugMessage(base::StringPrintf("  annotated_visits.size() = %zu",
-                                          annotated_visits.size()));
-    NotifyDebugMessage("  continuation_end_time = " +
-                       (continuation_end_time.is_null()
-                            ? "null (i.e. exhausted history)"
-                            : base::TimeToISO8601(continuation_end_time)));
-  }
-
-  base::UmaHistogramTimes(
-      "Histogram.Clusters.Backend.QueryAnnotatedVisitsLatency",
-      base::TimeTicks::Now() - query_visits_start);
-
-  if (annotated_visits.empty()) {
-    // Early exit without calling backend if there's no annotated visits.
-    std::move(callback).Run({}, continuation_end_time);
-    return;
-  }
-
-  if (ShouldNotifyDebugMessage()) {
-    NotifyDebugMessage("  Visits JSON follows:");
-    NotifyDebugMessage(GetDebugJSONForVisits(annotated_visits));
-    NotifyDebugMessage("Calling backend_->GetClusters()");
-  }
-  base::UmaHistogramCounts1000("History.Clusters.Backend.NumVisitsToCluster",
-                               static_cast<int>(annotated_visits.size()));
-
-  backend_->GetClusters(
-      clustering_request_source,
-      base::BindOnce(&HistoryClustersService::OnGotRawClusters,
-                     weak_ptr_factory_.GetWeakPtr(), continuation_end_time,
-                     base::TimeTicks::Now(), std::move(callback)),
-      std::move(annotated_visits));
-}
-
-void HistoryClustersService::OnGotRawClusters(
-    base::Time continuation_end_time,
-    base::TimeTicks cluster_start_time,
-    QueryClustersCallback callback,
-    std::vector<history::Cluster> clusters) const {
-  base::UmaHistogramTimes("History.Clusters.Backend.GetClustersLatency",
-                          base::TimeTicks::Now() - cluster_start_time);
-  base::UmaHistogramCounts1000("History.Clusters.Backend.NumClustersReturned",
-                               clusters.size());
-
-  if (ShouldNotifyDebugMessage()) {
-    NotifyDebugMessage("HistoryClustersService::OnGotRawClusters()");
-    NotifyDebugMessage("  Raw Clusters from Backend JSON follows:");
-    NotifyDebugMessage(GetDebugJSONForClusters(clusters));
-  }
-
-  std::move(callback).Run(clusters, continuation_end_time);
 }
 
 }  // namespace history_clusters

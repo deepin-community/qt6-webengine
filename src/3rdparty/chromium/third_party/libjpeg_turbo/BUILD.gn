@@ -5,16 +5,13 @@
 # Do not use the targets in this file unless you need a certain libjpeg
 # implementation. Use the meta target //third_party:jpeg instead.
 
-import("//build/config/sanitizers/sanitizers.gni")
 import("//build/config/features.gni")
-
+import("//build/config/sanitizers/sanitizers.gni")
 if (current_cpu == "arm" || current_cpu == "arm64") {
   import("//build/config/arm.gni")
 }
 
-if (!use_qt) {
-assert(!is_ios, "This is not used on iOS, don't drag it in unintentionally")
-}
+# assert(use_blink, "This is not used on if blink is not enabled, don't drag it in unintentionally")
 
 source_set("libjpeg_headers") {
   sources = [
@@ -187,7 +184,7 @@ static_library("simd") {
     sources = [ "jsimd_none.c" ]
   }
 
-  if (is_win) {
+  if (is_win && !is_mingw) {
     cflags = [ "/wd4245" ]
   }
 }

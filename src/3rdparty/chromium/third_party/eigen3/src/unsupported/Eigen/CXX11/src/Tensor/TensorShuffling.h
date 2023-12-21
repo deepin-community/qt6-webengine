@@ -30,9 +30,9 @@ struct traits<TensorShufflingOp<Shuffle, XprType> > : public traits<XprType>
   typedef typename XprTraits::StorageKind StorageKind;
   typedef typename XprTraits::Index Index;
   typedef typename XprType::Nested Nested;
-  typedef typename remove_reference<Nested>::type Nested_;
-  static const int NumDimensions = XprTraits::NumDimensions;
-  static const int Layout = XprTraits::Layout;
+  typedef std::remove_reference_t<Nested> Nested_;
+  static constexpr int NumDimensions = XprTraits::NumDimensions;
+  static constexpr int Layout = XprTraits::Layout;
   typedef typename XprTraits::PointerType PointerType;
 };
 
@@ -71,7 +71,7 @@ class TensorShufflingOp : public TensorBase<TensorShufflingOp<Shuffle, XprType> 
     const Shuffle& shufflePermutation() const { return m_shuffle; }
 
     EIGEN_DEVICE_FUNC
-    const typename internal::remove_all<typename XprType::Nested>::type&
+    const internal::remove_all_t<typename XprType::Nested>&
     expression() const { return m_xpr; }
 
     EIGEN_TENSOR_INHERIT_ASSIGNMENT_OPERATORS(TensorShufflingOp)
@@ -90,26 +90,26 @@ struct TensorEvaluator<const TensorShufflingOp<Shuffle, ArgType>, Device>
   typedef TensorEvaluator<const TensorShufflingOp<Shuffle, ArgType>, Device> Self;
   typedef TensorShufflingOp<Shuffle, ArgType> XprType;
   typedef typename XprType::Index Index;
-  static const int NumDims = internal::array_size<typename TensorEvaluator<ArgType, Device>::Dimensions>::value;
+  static constexpr int NumDims = internal::array_size<typename TensorEvaluator<ArgType, Device>::Dimensions>::value;
   typedef DSizes<Index, NumDims> Dimensions;
   typedef typename XprType::Scalar Scalar;
   typedef typename XprType::CoeffReturnType CoeffReturnType;
   typedef typename PacketType<CoeffReturnType, Device>::type PacketReturnType;
-  static const int PacketSize = PacketType<CoeffReturnType, Device>::size;
+  static constexpr int PacketSize = PacketType<CoeffReturnType, Device>::size;
   typedef StorageMemory<CoeffReturnType, Device> Storage;
   typedef typename Storage::Type EvaluatorPointerType;
 
+  static constexpr int Layout = TensorEvaluator<ArgType, Device>::Layout;
   enum {
     IsAligned         = false,
     PacketAccess      = (PacketType<CoeffReturnType, Device>::size > 1),
     BlockAccess       = TensorEvaluator<ArgType, Device>::RawAccess,
     PreferBlockAccess = true,
-    Layout            = TensorEvaluator<ArgType, Device>::Layout,
     CoordAccess       = false,  // to be implemented
     RawAccess         = false
   };
 
-  typedef typename internal::remove_const<Scalar>::type ScalarNoConst;
+  typedef std::remove_const_t<Scalar> ScalarNoConst;
 
   //===- Tensor block evaluation strategy (see TensorBlock.h) -------------===//
   typedef internal::TensorBlockDescriptor<NumDims, Index> TensorBlockDesc;
@@ -196,7 +196,7 @@ struct TensorEvaluator<const TensorShufflingOp<Shuffle, ArgType>, Device>
   struct PacketLoader {
     EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE
     static PacketReturnType Run(const Self& self, Index index) {
-      EIGEN_ALIGN_MAX typename internal::remove_const<CoeffReturnType>::type values[PacketSize];
+      EIGEN_ALIGN_MAX std::remove_const_t<CoeffReturnType> values[PacketSize];
       EIGEN_UNROLL_LOOP
       for (int i = 0; i < PacketSize; ++i) {
         values[i] = self.coeff(index + i);
@@ -213,7 +213,7 @@ struct TensorEvaluator<const TensorShufflingOp<Shuffle, ArgType>, Device>
       if (self.m_is_identity) {
         return self.m_impl.template packet<LoadMode>(index);
       } else {
-        EIGEN_ALIGN_MAX typename internal::remove_const<CoeffReturnType>::type values[PacketSize];
+        EIGEN_ALIGN_MAX std::remove_const_t<CoeffReturnType> values[PacketSize];
         EIGEN_UNROLL_LOOP
         for (int i = 0; i < PacketSize; ++i) {
           values[i] = self.coeff(index + i);
@@ -256,7 +256,7 @@ struct TensorEvaluator<const TensorShufflingOp<Shuffle, ArgType>, Device>
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE TensorBlock
   block(TensorBlockDesc& desc, TensorBlockScratch& scratch,
           bool root_of_expr_ast = false) const {
-    assert(m_impl.data() != NULL);
+    eigen_assert(m_impl.data() != NULL);
 
     typedef internal::TensorBlockIO<ScalarNoConst, Index, NumDims, Layout>
         TensorBlockIO;
@@ -364,23 +364,23 @@ struct TensorEvaluator<TensorShufflingOp<Shuffle, ArgType>, Device>
 
   typedef TensorShufflingOp<Shuffle, ArgType> XprType;
   typedef typename XprType::Index Index;
-  static const int NumDims = internal::array_size<typename TensorEvaluator<ArgType, Device>::Dimensions>::value;
+  static constexpr int NumDims = internal::array_size<typename TensorEvaluator<ArgType, Device>::Dimensions>::value;
   typedef DSizes<Index, NumDims> Dimensions;
   typedef typename XprType::Scalar Scalar;
   typedef typename XprType::CoeffReturnType CoeffReturnType;
   typedef typename PacketType<CoeffReturnType, Device>::type PacketReturnType;
-  static const int PacketSize = PacketType<CoeffReturnType, Device>::size;
+  static constexpr int PacketSize = PacketType<CoeffReturnType, Device>::size;
+  static constexpr int Layout = TensorEvaluator<ArgType, Device>::Layout;
 
   enum {
     IsAligned         = false,
     PacketAccess      = (PacketType<CoeffReturnType, Device>::size > 1),
     BlockAccess       = TensorEvaluator<ArgType, Device>::RawAccess,
     PreferBlockAccess = true,
-    Layout            = TensorEvaluator<ArgType, Device>::Layout,
     RawAccess         = false
   };
 
-  typedef typename internal::remove_const<Scalar>::type ScalarNoConst;
+  typedef std::remove_const_t<Scalar> ScalarNoConst;
 
   //===- Tensor block evaluation strategy (see TensorBlock.h) -------------===//
   typedef internal::TensorBlockDescriptor<NumDims, Index> TensorBlockDesc;
@@ -390,15 +390,15 @@ struct TensorEvaluator<TensorShufflingOp<Shuffle, ArgType>, Device>
       : Base(op, device)
   { }
 
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE CoeffReturnType& coeffRef(Index index)
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE CoeffReturnType& coeffRef(Index index) const
   {
     return this->m_impl.coeffRef(this->srcCoeff(index));
   }
 
   template <int StoreMode> EIGEN_STRONG_INLINE
-  void writePacket(Index index, const PacketReturnType& x)
+  void writePacket(Index index, const PacketReturnType& x) const
   {
-    EIGEN_ALIGN_MAX typename internal::remove_const<CoeffReturnType>::type values[PacketSize];
+    EIGEN_ALIGN_MAX std::remove_const_t<CoeffReturnType> values[PacketSize];
     internal::pstore<CoeffReturnType, PacketReturnType>(values, x);
     EIGEN_UNROLL_LOOP
     for (int i = 0; i < PacketSize; ++i) {

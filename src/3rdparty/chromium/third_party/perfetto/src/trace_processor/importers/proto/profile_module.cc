@@ -15,10 +15,14 @@
  */
 
 #include "src/trace_processor/importers/proto/profile_module.h"
+#include <string>
 
 #include "perfetto/base/logging.h"
+#include "perfetto/ext/base/flat_hash_map.h"
 #include "perfetto/ext/base/string_utils.h"
+#include "src/trace_processor/importers/common/args_translation_table.h"
 #include "src/trace_processor/importers/common/clock_tracker.h"
+#include "src/trace_processor/importers/common/deobfuscation_mapping_table.h"
 #include "src/trace_processor/importers/common/event_tracker.h"
 #include "src/trace_processor/importers/common/process_tracker.h"
 #include "src/trace_processor/importers/proto/heap_profile_tracker.h"
@@ -27,11 +31,12 @@
 #include "src/trace_processor/importers/proto/profile_packet_utils.h"
 #include "src/trace_processor/importers/proto/profiler_util.h"
 #include "src/trace_processor/importers/proto/stack_profile_tracker.h"
+#include "src/trace_processor/sorter/trace_sorter.h"
+#include "src/trace_processor/storage/stats.h"
 #include "src/trace_processor/storage/trace_storage.h"
 #include "src/trace_processor/tables/profiler_tables.h"
-#include "src/trace_processor/timestamped_trace_piece.h"
-#include "src/trace_processor/trace_sorter.h"
 #include "src/trace_processor/types/trace_processor_context.h"
+#include "src/trace_processor/util/stack_traces_util.h"
 
 #include "protos/perfetto/common/builtin_clock.pbzero.h"
 #include "protos/perfetto/common/perf_events.pbzero.h"
@@ -72,41 +77,34 @@ ModuleResult ProfileModule::TokenizePacket(const TracePacket::Decoder& decoder,
   return ModuleResult::Ignored();
 }
 
-void ProfileModule::ParsePacket(const TracePacket::Decoder& decoder,
-                                const TimestampedTracePiece& ttp,
-                                uint32_t field_id) {
+void ProfileModule::ParseTracePacketData(
+    const protos::pbzero::TracePacket::Decoder& decoder,
+    int64_t ts,
+    const TracePacketData& data,
+    uint32_t field_id) {
   switch (field_id) {
     case TracePacket::kStreamingProfilePacketFieldNumber:
-      PERFETTO_DCHECK(ttp.type == TimestampedTracePiece::Type::kTracePacket);
-      ParseStreamingProfilePacket(ttp.timestamp,
-                                  ttp.packet_data.sequence_state.get(),
+      ParseStreamingProfilePacket(ts, data.sequence_state.get(),
                                   decoder.streaming_profile_packet());
       return;
     case TracePacket::kPerfSampleFieldNumber:
-      PERFETTO_DCHECK(ttp.type == TimestampedTracePiece::Type::kTracePacket);
-      ParsePerfSample(ttp.timestamp, ttp.packet_data.sequence_state.get(),
-                      decoder);
+      ParsePerfSample(ts, data.sequence_state.get(), decoder);
       return;
     case TracePacket::kProfilePacketFieldNumber:
-      PERFETTO_DCHECK(ttp.type == TimestampedTracePiece::Type::kTracePacket);
-      ParseProfilePacket(ttp.timestamp, ttp.packet_data.sequence_state.get(),
+      ParseProfilePacket(ts, data.sequence_state.get(),
                          decoder.trusted_packet_sequence_id(),
                          decoder.profile_packet());
       return;
     case TracePacket::kModuleSymbolsFieldNumber:
-      PERFETTO_DCHECK(ttp.type == TimestampedTracePiece::Type::kTracePacket);
       ParseModuleSymbols(decoder.module_symbols());
       return;
     case TracePacket::kDeobfuscationMappingFieldNumber:
-      PERFETTO_DCHECK(ttp.type == TimestampedTracePiece::Type::kTracePacket);
-      ParseDeobfuscationMapping(ttp.timestamp,
-                                ttp.packet_data.sequence_state.get(),
+      ParseDeobfuscationMapping(ts, data.sequence_state.get(),
                                 decoder.trusted_packet_sequence_id(),
                                 decoder.deobfuscation_mapping());
       return;
     case TracePacket::kSmapsPacketFieldNumber:
-      PERFETTO_DCHECK(ttp.type == TimestampedTracePiece::Type::kTracePacket);
-      ParseSmapsPacket(ttp.timestamp, decoder.smaps_packet());
+      ParseSmapsPacket(ts, decoder.smaps_packet());
       return;
   }
 }
@@ -140,8 +138,8 @@ ModuleResult ProfileModule::TokenizeStreamingProfilePacket(
     sequence_state->IncrementAndGetTrackEventTimeNs(*timestamp_it * 1000);
   }
 
-  context_->sorter->PushTracePacket(packet_ts, sequence_state,
-                                    std::move(*packet));
+  context_->sorter->PushTracePacket(
+      packet_ts, sequence_state->current_generation(), std::move(*packet));
   return ModuleResult::Handled();
 }
 
@@ -445,7 +443,7 @@ void ProfileModule::ParseModuleSymbols(ConstBytes blob) {
   StringId build_id;
   // TODO(b/148109467): Remove workaround once all active Chrome versions
   // write raw bytes instead of a string as build_id.
-  if (module_symbols.build_id().size == 33) {
+  if (util::IsHexModuleId(module_symbols.build_id())) {
     build_id = context_->storage->InternString(module_symbols.build_id());
   } else {
     build_id = context_->storage->InternString(base::StringView(base::ToHex(
@@ -464,12 +462,17 @@ void ProfileModule::ParseModuleSymbols(ConstBytes blob) {
     uint32_t symbol_set_id = context_->storage->symbol_table().row_count();
 
     bool has_lines = false;
+    // Taking the last (i.e. the least interned) location if there're several.
+    ArgsTranslationTable::SourceLocation last_location;
     for (auto line_it = address_symbols.lines(); line_it; ++line_it) {
       protos::pbzero::Line::Decoder line(*line_it);
       context_->storage->mutable_symbol_table()->Insert(
           {symbol_set_id, context_->storage->InternString(line.function_name()),
            context_->storage->InternString(line.source_file_name()),
            line.line_number()});
+      last_location = ArgsTranslationTable::SourceLocation{
+          line.source_file_name().ToStdString(),
+          line.function_name().ToStdString(), line.line_number()};
       has_lines = true;
     }
     if (!has_lines) {
@@ -477,6 +480,8 @@ void ProfileModule::ParseModuleSymbols(ConstBytes blob) {
     }
     bool frame_found = false;
     for (MappingId mapping_id : mapping_ids) {
+      context_->args_translation_table->AddNativeSymbolTranslationRule(
+          mapping_id, address_symbols.address(), last_location);
       std::vector<FrameId> frame_ids =
           context_->global_stack_profile_tracker->FindFrameIds(
               mapping_id, address_symbols.address());
@@ -500,6 +505,7 @@ void ProfileModule::ParseDeobfuscationMapping(int64_t,
                                               PacketSequenceStateGeneration*,
                                               uint32_t /* seq_id */,
                                               ConstBytes blob) {
+  DeobfuscationMappingTable deobfuscation_mapping_table;
   protos::pbzero::DeobfuscationMapping::Decoder deobfuscation_mapping(
       blob.data, blob.size);
   if (deobfuscation_mapping.package_name().size == 0)
@@ -514,6 +520,7 @@ void ProfileModule::ParseDeobfuscationMapping(int64_t,
   for (auto class_it = deobfuscation_mapping.obfuscated_classes(); class_it;
        ++class_it) {
     protos::pbzero::ObfuscatedClass::Decoder cls(*class_it);
+    base::FlatHashMap<StringId, StringId> obfuscated_to_deobfuscated_members;
     for (auto member_it = cls.obfuscated_methods(); member_it; ++member_it) {
       protos::pbzero::ObfuscatedMember::Decoder member(*member_it);
       std::string merged_obfuscated = cls.obfuscated_name().ToStdString() +
@@ -553,8 +560,21 @@ void ProfileModule::ParseDeobfuscationMapping(int64_t,
             context_->storage->InternString(
                 base::StringView(merged_deobfuscated)));
       }
+      obfuscated_to_deobfuscated_members[context_->storage->InternString(
+          member.obfuscated_name())] =
+          context_->storage->InternString(member.deobfuscated_name());
     }
+    // Members can contain a class name (e.g "ClassA.FunctionF")
+    deobfuscation_mapping_table.AddClassTranslation(
+        DeobfuscationMappingTable::PackageId{
+            deobfuscation_mapping.package_name().ToStdString(),
+            deobfuscation_mapping.version_code()},
+        context_->storage->InternString(cls.obfuscated_name()),
+        context_->storage->InternString(cls.deobfuscated_name()),
+        std::move(obfuscated_to_deobfuscated_members));
   }
+  context_->args_translation_table->AddDeobfuscationMappingTable(
+      std::move(deobfuscation_mapping_table));
 }
 
 void ProfileModule::ParseSmapsPacket(int64_t ts, ConstBytes blob) {
@@ -579,6 +599,19 @@ void ProfileModule::ParseSmapsPacket(int64_t ts, ConstBytes blob) {
          static_cast<int64_t>(e.shared_clean_resident_kb()),
          static_cast<int64_t>(e.locked_kb()),
          static_cast<int64_t>(e.proportional_resident_kb())});
+  }
+}
+
+void ProfileModule::NotifyEndOfFile() {
+  for (auto it = context_->storage->stack_profile_mapping_table().IterateRows();
+       it; ++it) {
+    NullTermStringView path = context_->storage->GetString(it.name());
+    NullTermStringView build_id = context_->storage->GetString(it.build_id());
+
+    if (path.StartsWith("/data/local/tmp/") && build_id.empty()) {
+      context_->storage->IncrementStats(
+          stats::symbolization_tmp_build_id_not_found);
+    }
   }
 }
 

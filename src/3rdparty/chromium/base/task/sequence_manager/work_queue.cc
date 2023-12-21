@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,6 +6,7 @@
 
 #include "base/containers/stack_container.h"
 #include "base/debug/alias.h"
+#include "base/metrics/field_trial_params.h"
 #include "base/task/sequence_manager/fence.h"
 #include "base/task/sequence_manager/sequence_manager_impl.h"
 #include "base/task/sequence_manager/task_order.h"
@@ -22,8 +23,8 @@ WorkQueue::WorkQueue(TaskQueueImpl* task_queue,
                      QueueType queue_type)
     : task_queue_(task_queue), name_(name), queue_type_(queue_type) {}
 
-Value WorkQueue::AsValue(TimeTicks now) const {
-  Value state(Value::Type::LIST);
+Value::List WorkQueue::AsValue(TimeTicks now) const {
+  Value::List state;
   for (const Task& task : tasks_)
     state.Append(TaskQueueImpl::TaskAsValue(task, now));
   return state;
@@ -220,8 +221,9 @@ Task WorkQueue::TakeTaskFromWorkQueue() {
 }
 
 bool WorkQueue::RemoveAllCanceledTasksFromFront() {
-  if (!work_queue_sets_)
+  if (!work_queue_sets_) {
     return false;
+  }
 
   // Since task destructors could have a side-effect of deleting this task queue
   // we move cancelled tasks into a temporary container which can be emptied

@@ -14,9 +14,26 @@
 
 #include "connections/payload.h"
 
-namespace location {
+#include <algorithm>
+#include <string>
+
 namespace nearby {
 namespace connections {
+
+namespace {
+
+std::string getFileName(const std::string& s) {
+  std::string s_copy(s);
+  std::replace(s_copy.begin(), s_copy.end(), '\\',
+               '/');  // replace all '\\' to '/'
+
+  size_t lastForwardSepIndex = s_copy.rfind('/', s.length());
+
+  return s_copy.substr(lastForwardSepIndex + 1,
+                       s_copy.length() - lastForwardSepIndex);
+}
+
+}  // namespace
 
 // Payload is default-constructible, and moveable, but not copyable container
 // that holds at most one instance of one of:
@@ -38,11 +55,15 @@ Payload::Payload(const ByteArray& bytes)
 
 Payload::Payload(InputFile input_file)
     : id_(std::hash<std::string>()(input_file.GetFilePath())),
+      file_name_(getFileName(input_file.GetFilePath())),
       type_(PayloadType::kFile),
       content_(std::move(input_file)) {}
 
 Payload::Payload(Id id, InputFile input_file)
-    : id_(id), type_(PayloadType::kFile), content_(std::move(input_file)) {}
+    : id_(id),
+      file_name_(getFileName(input_file.GetFilePath())),
+      type_(PayloadType::kFile),
+      content_(std::move(input_file)) {}
 
 Payload::Payload(std::string parent_folder, std::string file_name,
                  InputFile input_file)
@@ -78,10 +99,6 @@ const ByteArray& Payload::AsBytes() const& {
   static const ByteArray empty;  // NOLINT: function-level static is OK.
   auto* result = absl::get_if<ByteArray>(&content_);
   return result ? *result : empty;
-}
-ByteArray&& Payload::AsBytes() && {
-  auto* result = absl::get_if<ByteArray>(&content_);
-  return result ? std::move(*result) : std::move(ByteArray());
 }
 // Returns InputStream* payload, if it has been defined, or nullptr.
 InputStream* Payload::AsStream() {
@@ -122,4 +139,3 @@ const std::string& Payload::GetFileName() const { return file_name_; }
 
 }  // namespace connections
 }  // namespace nearby
-}  // namespace location

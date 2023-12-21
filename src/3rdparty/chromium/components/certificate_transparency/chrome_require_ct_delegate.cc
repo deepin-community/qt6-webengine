@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,16 +12,15 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
-#include "base/callback.h"
 #include "base/containers/contains.h"
 #include "base/containers/cxx20_erase.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/memory/ref_counted.h"
 #include "base/strings/string_util.h"
 #include "base/task/sequenced_task_runner.h"
-#include "base/threading/sequenced_task_runner_handle.h"
 #include "base/values.h"
 #include "components/url_formatter/url_fixer.h"
 #include "components/url_matcher/url_matcher.h"
@@ -29,10 +28,10 @@
 #include "net/base/hash_value.h"
 #include "net/base/host_port_pair.h"
 #include "net/cert/asn1_util.h"
-#include "net/cert/internal/name_constraints.h"
-#include "net/cert/internal/parse_name.h"
-#include "net/cert/internal/parsed_certificate.h"
 #include "net/cert/known_roots.h"
+#include "net/cert/pki/name_constraints.h"
+#include "net/cert/pki/parse_name.h"
+#include "net/cert/pki/parsed_certificate.h"
 #include "net/cert/x509_certificate.h"
 #include "net/cert/x509_util.h"
 
@@ -114,7 +113,7 @@ bool ParseOrganizationBoundName(net::der::Input dn_without_sequence,
 // |org_cert|.
 bool AreCertsSameOrganization(const net::RDNSequence& leaf_rdn_sequence,
                               CRYPTO_BUFFER* org_cert) {
-  scoped_refptr<net::ParsedCertificate> parsed_org =
+  std::shared_ptr<const net::ParsedCertificate> parsed_org =
       net::ParsedCertificate::Create(bssl::UpRef(org_cert),
                                      net::ParseCertificateOptions(), nullptr);
   if (!parsed_org)
@@ -229,7 +228,7 @@ bool ChromeRequireCTDelegate::MatchHostname(const std::string& hostname,
   // Scheme and port are ignored by the policy, so it's OK to construct a
   // new GURL here. However, |hostname| is in network form, not URL form,
   // so it's necessary to wrap IPv6 addresses in brackets.
-  std::set<url_matcher::URLMatcherConditionSet::ID> matching_ids =
+  std::set<base::MatcherStringPattern::ID> matching_ids =
       url_matcher_->MatchURL(
           GURL("https://" + net::HostPortPair(hostname, 443).HostForURL()));
   if (matching_ids.empty())
@@ -313,7 +312,7 @@ bool ChromeRequireCTDelegate::MatchSPKI(const net::X509Certificate* chain,
   if (candidates.empty())
     return false;
 
-  scoped_refptr<net::ParsedCertificate> parsed_leaf =
+  std::shared_ptr<const net::ParsedCertificate> parsed_leaf =
       net::ParsedCertificate::Create(bssl::UpRef(leaf_cert),
                                      net::ParseCertificateOptions(), nullptr);
   if (!parsed_leaf)
@@ -347,7 +346,7 @@ void ChromeRequireCTDelegate::AddFilters(
     // the URL.
     url::Parsed parsed;
     std::string ignored_scheme = url_formatter::SegmentURL(pattern, &parsed);
-    if (!parsed.host.is_nonempty())
+    if (parsed.host.is_empty())
       continue;  // If there is no host to match, can't apply the filter.
 
     std::string lc_host = base::ToLowerASCII(

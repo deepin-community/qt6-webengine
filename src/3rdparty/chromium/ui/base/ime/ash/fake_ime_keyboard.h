@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -41,12 +41,5 @@ class COMPONENT_EXPORT(UI_BASE_IME_ASH) FakeImeKeyboard : public ImeKeyboard {
 
 }  // namespace input_method
 }  // namespace ash
-
-// TODO(https://crbug.com/1164001): remove when the migration is finished.
-namespace chromeos {
-namespace input_method {
-using ::ash::input_method::FakeImeKeyboard;
-}
-}  // namespace chromeos
 
 #endif  // UI_BASE_IME_ASH_FAKE_IME_KEYBOARD_H_

@@ -31,7 +31,7 @@ We prefer searching like this to having sheriffs compose status email at the
 end of their week.
 
 In addition to the waterfall, make sure
-[dry run attempts at updating clang](https://chromium-review.googlesource.com/q/owner:thakis%2540chromium.org+%2522roll+clang%2522)
+[dry run attempts at updating clang](https://chromium-review.googlesource.com/q/path:tools/clang/scripts/update.py+is:wip)
 are green. As part of the Clang release process we run upstream LLVM tests.
 Ideally these tests are covered by upstream LLVM bots and breakages are
 quickly noticed and fixed by the original author of a breaking commit,
@@ -359,11 +359,11 @@ The possible flags are:
 
 In other cases, it may be interesting to take a closer look at the
 code generation for a single file. This can be done using LLD's
-support for distributed ThinLTO. The linker takes a `-thinlto-index-only`
+support for distributed ThinLTO. The linker takes a `--thinlto-index-only`
 option that does whole program analysis and writes index files:
 
 ```sh
-$ clang++ -fuse-ld=lld -Wl,-thinlto-index-only -o ./base_unittests @base_unittests.expanded.rsp
+$ clang++ -fuse-ld=lld -Wl,--thinlto-index-only -o ./base_unittests @base_unittests.expanded.rsp
 ```
 
 This creates `.thinlto.bc` files next to object files used by the link (e.g.

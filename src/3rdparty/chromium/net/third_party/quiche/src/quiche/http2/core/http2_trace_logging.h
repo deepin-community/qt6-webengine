@@ -29,8 +29,7 @@ namespace http2 {
 // Note any new methods in SpdyFramerVisitorInterface MUST be overridden here to
 // properly forward the event. This could be ensured by making every event in
 // SpdyFramerVisitorInterface a pure virtual.
-class QUICHE_EXPORT_PRIVATE Http2TraceLogger
-    : public spdy::SpdyFramerVisitorInterface {
+class QUICHE_EXPORT Http2TraceLogger : public spdy::SpdyFramerVisitorInterface {
  public:
   typedef spdy::SpdyAltSvcWireFormat SpdyAltSvcWireFormat;
   typedef spdy::SpdyErrorCode SpdyErrorCode;
@@ -71,13 +70,14 @@ class QUICHE_EXPORT_PRIVATE Http2TraceLogger
   void OnGoAway(SpdyStreamId last_accepted_stream_id,
                 SpdyErrorCode error_code) override;
   bool OnGoAwayFrameData(const char* goaway_data, size_t len) override;
-  void OnHeaders(SpdyStreamId stream_id, bool has_priority, int weight,
-                 SpdyStreamId parent_stream_id, bool exclusive, bool fin,
-                 bool end) override;
+  void OnHeaders(SpdyStreamId stream_id, size_t payload_length,
+                 bool has_priority, int weight, SpdyStreamId parent_stream_id,
+                 bool exclusive, bool fin, bool end) override;
   void OnWindowUpdate(SpdyStreamId stream_id, int delta_window_size) override;
   void OnPushPromise(SpdyStreamId stream_id, SpdyStreamId promised_stream_id,
                      bool end) override;
-  void OnContinuation(SpdyStreamId stream_id, bool end) override;
+  void OnContinuation(SpdyStreamId stream_id, size_t payload_length,
+                      bool end) override;
   void OnAltSvc(SpdyStreamId stream_id, absl::string_view origin,
                 const SpdyAltSvcWireFormat::AlternativeServiceVector&
                     altsvc_vector) override;
@@ -86,6 +86,10 @@ class QUICHE_EXPORT_PRIVATE Http2TraceLogger
   void OnPriorityUpdate(SpdyStreamId prioritized_stream_id,
                         absl::string_view priority_field_value) override;
   bool OnUnknownFrame(SpdyStreamId stream_id, uint8_t frame_type) override;
+  void OnUnknownFrameStart(SpdyStreamId stream_id, size_t length, uint8_t type,
+                           uint8_t flags) override;
+  void OnUnknownFramePayload(SpdyStreamId stream_id,
+                             absl::string_view payload) override;
 
  private:
   void LogReceivedHeaders() const;
@@ -99,7 +103,7 @@ class QUICHE_EXPORT_PRIVATE Http2TraceLogger
 };
 
 // Visitor to log control frames that have been written.
-class QUICHE_EXPORT_PRIVATE Http2FrameLogger : public spdy::SpdyFrameVisitor {
+class QUICHE_EXPORT Http2FrameLogger : public spdy::SpdyFrameVisitor {
  public:
   // This class will preface all of its log messages with the value of
   // |connection_id| in hexadecimal.

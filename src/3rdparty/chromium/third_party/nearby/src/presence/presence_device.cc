@@ -12,20 +12,42 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/nearby/presence/presence_device.h"
+#include "presence/presence_device.h"
+
+#include <string>
+#include <vector>
+
+#include "internal/crypto/random.h"
+#include "internal/platform/ble_connection_info.h"
+#include "internal/platform/implementation/system_clock.h"
+#include "presence/device_motion.h"
 
 namespace nearby {
 namespace presence {
 
-PresenceDevice::PresenceDevice(PresenceDevice::MotionType type,
-                               float confidence) noexcept
-    : motion_type_(type), confidence_(confidence) {}
+namespace {
+std::string GenerateRandomEndpointId() {
+  return crypto::RandBytes(kEndpointIdLength);
+}
+}  // namespace
 
-PresenceDevice::MotionType PresenceDevice::GetMotionType() const {
-  return motion_type_;
+PresenceDevice::PresenceDevice(Metadata metadata) noexcept
+    : discovery_timestamp_(nearby::SystemClock::ElapsedRealtime()),
+      device_motion_(DeviceMotion()),
+      metadata_(metadata) {
+  endpoint_id_ = GenerateRandomEndpointId();
+}
+PresenceDevice::PresenceDevice(DeviceMotion device_motion,
+                               Metadata metadata) noexcept
+    : discovery_timestamp_(nearby::SystemClock::ElapsedRealtime()),
+      device_motion_(device_motion),
+      metadata_(metadata) {
+  endpoint_id_ = GenerateRandomEndpointId();
 }
 
-float PresenceDevice::GetConfidence() const { return confidence_; }
-
+std::vector<nearby::ConnectionInfoVariant> PresenceDevice::GetConnectionInfos()
+    const {
+  return {nearby::BleConnectionInfo(metadata_.bluetooth_mac_address())};
+}
 }  // namespace presence
 }  // namespace nearby

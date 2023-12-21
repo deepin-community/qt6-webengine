@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,27 +6,28 @@
 
 #include <memory>
 
-#include "base/bind.h"
-#include "base/callback.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
 #include "base/location.h"
 #include "base/memory/raw_ptr.h"
 #include "base/message_loop/message_pump.h"
 #include "base/message_loop/message_pump_type.h"
 #include "base/run_loop.h"
 #include "base/task/current_thread.h"
-#include "base/task/sequence_manager/sequence_manager_impl.h"
+#include "base/task/sequence_manager/sequence_manager.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/task/sequenced_task_runner_helpers.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/mock_callback.h"
 #include "base/test/task_environment.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "content/browser/browser_process_io_thread.h"
 #include "content/browser/browser_thread_impl.h"
 #include "content/browser/scheduler/browser_io_thread_delegate.h"
 #include "content/browser/scheduler/browser_task_executor.h"
+#include "content/browser/scheduler/browser_task_priority.h"
 #include "content/browser/scheduler/browser_ui_thread_scheduler.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -41,9 +42,10 @@ using ::testing::Invoke;
 class SequenceManagerThreadDelegate : public base::Thread::Delegate {
  public:
   SequenceManagerThreadDelegate() {
-    ui_sequence_manager_ =
-        base::sequence_manager::internal::SequenceManagerImpl::CreateUnbound(
-            base::sequence_manager::SequenceManager::Settings());
+    ui_sequence_manager_ = base::sequence_manager::CreateUnboundSequenceManager(
+        base::sequence_manager::SequenceManager::Settings::Builder()
+            .SetPrioritySettings(internal::CreateBrowserTaskPrioritySettings())
+            .Build());
     auto browser_ui_thread_scheduler =
         BrowserUIThreadScheduler::CreateForTesting(ui_sequence_manager_.get());
 
@@ -162,7 +164,8 @@ class UIThreadDestructionObserver
  public:
   explicit UIThreadDestructionObserver(bool* did_shutdown,
                                        base::OnceClosure callback)
-      : callback_task_runner_(base::ThreadTaskRunnerHandle::Get()),
+      : callback_task_runner_(
+            base::SingleThreadTaskRunner::GetCurrentDefault()),
         ui_task_runner_(GetUIThreadTaskRunner({})),
         callback_(std::move(callback)),
         did_shutdown_(did_shutdown) {
@@ -274,7 +277,9 @@ class BrowserThreadWithCustomSchedulerTest : public testing::Test {
       : public base::test::TaskEnvironment {
    public:
     TaskEnvironmentWithCustomScheduler()
-        : base::test::TaskEnvironment(SubclassCreatesDefaultTaskRunner{}) {
+        : base::test::TaskEnvironment(
+              internal::CreateBrowserTaskPrioritySettings(),
+              SubclassCreatesDefaultTaskRunner{}) {
       std::unique_ptr<BrowserUIThreadScheduler> browser_ui_thread_scheduler =
           BrowserUIThreadScheduler::CreateForTesting(sequence_manager());
       DeferredInitFromSubclass(

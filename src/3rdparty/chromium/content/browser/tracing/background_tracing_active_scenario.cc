@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,7 @@
 #include <set>
 #include <utility>
 
-#include "base/callback_helpers.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/metrics/histogram_macros.h"
@@ -15,6 +15,7 @@
 #include "base/strings/string_tokenizer.h"
 #include "base/timer/timer.h"
 #include "build/build_config.h"
+#include "components/variations/hashing.h"
 #include "content/browser/tracing/background_tracing_config_impl.h"
 #include "content/browser/tracing/background_tracing_manager_impl.h"
 #include "content/browser/tracing/background_tracing_rule.h"
@@ -72,10 +73,12 @@ class BackgroundTracingActiveScenario::TracingSession {
                  bool use_local_output)
       : parent_scenario_(parent_scenario),
         use_local_output_(use_local_output) {
-#if !BUILDFLAG(IS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
     // TODO(crbug.com/941318): Re-enable startup tracing for Android once all
     // Perfetto-related deadlocks are resolved and we also handle concurrent
     // system tracing for startup tracing.
+    // TODO(khokhlov): Re-enable startup tracing in SDK build. Make sure that
+    // startup tracing config exactly matches non-startup tracing config.
     if (!TracingControllerImpl::GetInstance()->IsTracing()) {
       tracing::EnableStartupTracingForProcess(
           chrome_config, config->requires_anonymized_data());
@@ -97,14 +100,12 @@ class BackgroundTracingActiveScenario::TracingSession {
         perfetto::Tracing::NewTrace(perfetto::BackendType::kCustomBackend);
     tracing_session_->Setup(perfetto_config);
 
-    auto category_preset = parent_scenario->GetConfig()->category_preset();
-    tracing_session_->SetOnStartCallback([category_preset] {
+    tracing_session_->SetOnStartCallback([] {
       GetUIThreadTaskRunner({})->PostTask(
           FROM_HERE,
           base::BindOnce(
               &BackgroundTracingManagerImpl::OnStartTracingDone,
-              base::Unretained(BackgroundTracingManagerImpl::GetInstance()),
-              category_preset));
+              base::Unretained(&BackgroundTracingManagerImpl::GetInstance())));
     });
     tracing_session_->Start();
     // We check IsEnabled() before creating the LegacyTracingSession,
@@ -125,7 +126,7 @@ class BackgroundTracingActiveScenario::TracingSession {
       return;
     }
 
-    if (!BackgroundTracingManagerImpl::GetInstance()->IsAllowedFinalization(
+    if (!BackgroundTracingManagerImpl::GetInstance().IsAllowedFinalization(
             is_crash_scenario)) {
       auto on_failure_cb =
           base::MakeRefCounted<base::RefCountedData<base::OnceClosure>>(
@@ -246,12 +247,14 @@ void BackgroundTracingActiveScenario::SetState(State new_state) {
     // we abort tracing here.
     DCHECK_NE(config_->tracing_mode(), BackgroundTracingConfigImpl::SYSTEM);
     base::trace_event::TraceLog::GetInstance()->SetDisabled(
-        base::trace_event::TraceLog::GetInstance()->enabled_modes());
+        base::trace_event::TraceLog::RECORDING_MODE);
   }
 
   if (scenario_state_ == State::kAborted) {
     DCHECK_NE(config_->tracing_mode(), BackgroundTracingConfigImpl::SYSTEM);
     tracing_session_.reset();
+    tracing_timer_.reset();
+
     std::move(on_aborted_callback_).Run();
   }
 }
@@ -357,14 +360,14 @@ void BackgroundTracingActiveScenario::BeginFinalizing(
 void BackgroundTracingActiveScenario::OnProtoDataComplete(
     std::unique_ptr<std::string> proto_trace) {
   BackgroundTracingManagerImpl::RecordMetric(Metrics::FINALIZATION_STARTED);
-  UMA_HISTOGRAM_MEMORY_KB("Tracing.Background.FinalizingTraceSizeInKB",
-                          proto_trace->size() / 1024);
+  UMA_HISTOGRAM_COUNTS_100000("Tracing.Background.FinalizingTraceSizeInKB2",
+                              proto_trace->size() / 1024);
 
   // Store the trace to be uploaded through UMA.
   // BackgroundTracingMetricsProvider::ProvideIndependentMetrics will call
   // OnFinalizeComplete once the upload is done.
   DCHECK(receive_callback_.is_null());
-  BackgroundTracingManagerImpl::GetInstance()->SetTraceToUpload(
+  BackgroundTracingManagerImpl::GetInstance().SetTraceToUpload(
       std::move(proto_trace));
 
   if (started_finalizing_closure_) {
@@ -429,7 +432,7 @@ void BackgroundTracingActiveScenario::TriggerNamedEvent(
     BackgroundTracingManager::TriggerHandle handle,
     BackgroundTracingManager::StartedFinalizingCallback callback) {
   std::string trigger_name =
-      BackgroundTracingManagerImpl::GetInstance()->GetTriggerNameFromHandle(
+      BackgroundTracingManagerImpl::GetInstance().GetTriggerNameFromHandle(
           handle);
   auto* triggered_rule = GetRuleAbleToTriggerTracing(trigger_name);
   if (!triggered_rule) {
@@ -491,17 +494,10 @@ void BackgroundTracingActiveScenario::OnRuleTriggered(
           return;
         }
       } else {
-        // Some reactive configs that trigger again while tracing should just
-        // end right away (to not capture multiple navigations, for example).
-        // For others we just want to ignore the repeated trigger.
-        if (triggered_rule->stop_tracing_on_repeated_reactive()) {
-          trace_delay = -1;
-        } else {
-          if (!callback.is_null()) {
-            std::move(callback).Run(false);
-          }
-          return;
+        if (!callback.is_null()) {
+          std::move(callback).Run(false);
         }
+        return;
       }
       break;
     case BackgroundTracingConfigImpl::SYSTEM:
@@ -559,13 +555,13 @@ BackgroundTracingActiveScenario::GetRuleAbleToTriggerTracing(
   return nullptr;
 }
 
-base::Value BackgroundTracingActiveScenario::GenerateMetadataDict() {
-  base::Value metadata_dict(base::Value::Type::DICTIONARY);
-  metadata_dict.SetKey("config", config_->ToDict());
-  metadata_dict.SetStringKey("scenario_name", config_->scenario_name());
+base::Value::Dict BackgroundTracingActiveScenario::GenerateMetadataDict() {
+  base::Value::Dict metadata_dict;
+  metadata_dict.Set("config", config_->ToDict());
+  metadata_dict.Set("scenario_name", config_->scenario_name());
 
   if (last_triggered_rule_) {
-    metadata_dict.SetKey("last_triggered_rule", last_triggered_rule_->ToDict());
+    metadata_dict.Set("last_triggered_rule", last_triggered_rule_->ToDict());
   }
 
   return metadata_dict;
@@ -576,8 +572,14 @@ void BackgroundTracingActiveScenario::GenerateMetadataProto(
   if (!last_triggered_rule_) {
     return;
   }
-  auto* triggered_rule =
-      metadata->set_background_tracing_metadata()->set_triggered_rule();
+
+  auto* background_tracing_metadata =
+      metadata->set_background_tracing_metadata();
+
+  uint32_t scenario_name_hash = variations::HashName(config_->scenario_name());
+  background_tracing_metadata->set_scenario_name_hash(scenario_name_hash);
+
+  auto* triggered_rule = background_tracing_metadata->set_triggered_rule();
   last_triggered_rule_->GenerateMetadataProto(triggered_rule);
 }
 

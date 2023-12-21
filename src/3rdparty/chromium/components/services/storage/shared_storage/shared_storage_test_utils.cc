@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,8 +16,9 @@
 #include "base/path_service.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/task/sequenced_task_runner.h"
 #include "components/services/storage/public/mojom/storage_usage_info.mojom.h"
 #include "sql/database.h"
 #include "sql/test/test_helpers.h"
@@ -30,13 +31,16 @@ TestDatabaseOperationReceiver::DBOperation::DBOperation(Type type)
     : type(type) {
   DCHECK(type == Type::DB_IS_OPEN || type == Type::DB_STATUS ||
          type == Type::DB_DESTROY || type == Type::DB_TRIM_MEMORY ||
-         type == Type::DB_FETCH_ORIGINS || type == Type::DB_PURGE_STALE);
+         type == Type::DB_GET_TOTAL_NUM_BUDGET ||
+         type == Type::DB_PURGE_STALE || type == Type::DB_FETCH_ORIGINS);
 }
 
 TestDatabaseOperationReceiver::DBOperation::DBOperation(Type type,
                                                         url::Origin origin)
     : type(type), origin(std::move(origin)) {
-  DCHECK(type == Type::DB_LENGTH || type == Type::DB_CLEAR);
+  DCHECK(type == Type::DB_LENGTH || type == Type::DB_CLEAR ||
+         type == Type::DB_GET_REMAINING_BUDGET ||
+         type == Type::DB_GET_NUM_BUDGET || type == Type::DB_GET_CREATION_TIME);
 }
 
 TestDatabaseOperationReceiver::DBOperation::DBOperation(
@@ -47,7 +51,9 @@ TestDatabaseOperationReceiver::DBOperation::DBOperation(
   DCHECK(type == Type::DB_GET || type == Type::DB_SET ||
          type == Type::DB_APPEND || type == Type::DB_DELETE ||
          type == Type::DB_KEYS || type == Type::DB_ENTRIES ||
-         type == Type::DB_OVERRIDE_TIME);
+         type == Type::DB_MAKE_BUDGET_WITHDRAWAL ||
+         type == Type::DB_OVERRIDE_TIME_ORIGIN ||
+         type == Type::DB_OVERRIDE_TIME_ENTRY);
 }
 
 TestDatabaseOperationReceiver::DBOperation::DBOperation(
@@ -55,7 +61,7 @@ TestDatabaseOperationReceiver::DBOperation::DBOperation(
     std::vector<std::u16string> params)
     : type(type), params(std::move(params)) {
   DCHECK(type == Type::DB_ON_MEMORY_PRESSURE ||
-         type == Type::DB_PURGE_MATCHING || type == Type::DB_PURGE_STALE);
+         type == Type::DB_PURGE_MATCHING);
 }
 
 TestDatabaseOperationReceiver::DBOperation::~DBOperation() = default;
@@ -156,6 +162,45 @@ TestDatabaseOperationReceiver::MakeGetResultCallback(
     const DBOperation& current_operation,
     GetResult* out_result) {
   return base::BindOnce(&TestDatabaseOperationReceiver::GetResultCallbackBase,
+                        base::Unretained(this), current_operation, out_result);
+}
+
+void TestDatabaseOperationReceiver::BudgetResultCallbackBase(
+    const DBOperation& current_operation,
+    BudgetResult* out_result,
+    BudgetResult result) {
+  DCHECK(out_result);
+  *out_result = std::move(result);
+
+  if (ExpectationsMet(current_operation) && loop_.running())
+    Finish();
+}
+
+base::OnceCallback<void(BudgetResult)>
+TestDatabaseOperationReceiver::MakeBudgetResultCallback(
+    const DBOperation& current_operation,
+    BudgetResult* out_result) {
+  return base::BindOnce(
+      &TestDatabaseOperationReceiver::BudgetResultCallbackBase,
+      base::Unretained(this), current_operation, out_result);
+}
+
+void TestDatabaseOperationReceiver::TimeResultCallbackBase(
+    const DBOperation& current_operation,
+    TimeResult* out_result,
+    TimeResult result) {
+  DCHECK(out_result);
+  *out_result = std::move(result);
+
+  if (ExpectationsMet(current_operation) && loop_.running())
+    Finish();
+}
+
+base::OnceCallback<void(TimeResult)>
+TestDatabaseOperationReceiver::MakeTimeResultCallback(
+    const DBOperation& current_operation,
+    TimeResult* out_result) {
+  return base::BindOnce(&TestDatabaseOperationReceiver::TimeResultCallbackBase,
                         base::Unretained(this), current_operation, out_result);
 }
 
@@ -307,20 +352,24 @@ void TestDatabaseOperationReceiver::Finish() {
   loop_.Quit();
 }
 
-OriginMatcherFunctionUtility::OriginMatcherFunctionUtility() = default;
-OriginMatcherFunctionUtility::~OriginMatcherFunctionUtility() = default;
+StorageKeyPolicyMatcherFunctionUtility::
+    StorageKeyPolicyMatcherFunctionUtility() = default;
+StorageKeyPolicyMatcherFunctionUtility::
+    ~StorageKeyPolicyMatcherFunctionUtility() = default;
 
-OriginMatcherFunction OriginMatcherFunctionUtility::MakeMatcherFunction(
+StorageKeyPolicyMatcherFunction
+StorageKeyPolicyMatcherFunctionUtility::MakeMatcherFunction(
     std::vector<url::Origin> origins_to_match) {
   return base::BindRepeating(
-      [](std::vector<url::Origin> origins_to_match, const url::Origin& origin,
-         SpecialStoragePolicy* policy) {
-        return base::Contains(origins_to_match, origin);
+      [](std::vector<url::Origin> origins_to_match,
+         const blink::StorageKey& storage_key, SpecialStoragePolicy* policy) {
+        return base::Contains(origins_to_match, storage_key.origin());
       },
       origins_to_match);
 }
 
-OriginMatcherFunction OriginMatcherFunctionUtility::MakeMatcherFunction(
+StorageKeyPolicyMatcherFunction
+StorageKeyPolicyMatcherFunctionUtility::MakeMatcherFunction(
     std::vector<std::string> origin_strs_to_match) {
   std::vector<url::Origin> origins_to_match;
   for (const auto& str : origin_strs_to_match)
@@ -328,14 +377,14 @@ OriginMatcherFunction OriginMatcherFunctionUtility::MakeMatcherFunction(
   return MakeMatcherFunction(origins_to_match);
 }
 
-size_t OriginMatcherFunctionUtility::RegisterMatcherFunction(
+size_t StorageKeyPolicyMatcherFunctionUtility::RegisterMatcherFunction(
     std::vector<url::Origin> origins_to_match) {
   matcher_table_.emplace_back(MakeMatcherFunction(origins_to_match));
   return matcher_table_.size() - 1;
 }
 
-OriginMatcherFunction OriginMatcherFunctionUtility::TakeMatcherFunctionForId(
-    size_t id) {
+StorageKeyPolicyMatcherFunction
+StorageKeyPolicyMatcherFunctionUtility::TakeMatcherFunctionForId(size_t id) {
   DCHECK_LT(id, matcher_table_.size());
   return std::move(matcher_table_[id]);
 }
@@ -351,7 +400,8 @@ void TestSharedStorageEntriesListener::DidReadEntries(
     const std::string& error_message,
     std::vector<shared_storage_worklet::mojom::SharedStorageKeyAndOrValuePtr>
         entries,
-    bool has_more_entries) {
+    bool has_more_entries,
+    int total_queued_to_send) {
   if (!success) {
     error_message_ = error_message;
     return;
@@ -481,20 +531,25 @@ std::string PrintToString(const PurgeMatchingOriginsParams& p) {
 }
 
 void VerifySharedStorageTablesAndColumns(sql::Database& db) {
-  // `meta`, `values_mapping`, and `per_origin_mapping`.
-  EXPECT_EQ(3u, sql::test::CountSQLTables(&db));
+  // `meta`, `values_mapping`, `per_origin_mapping`, and budget_mapping.
+  EXPECT_EQ(4u, sql::test::CountSQLTables(&db));
 
-  // Implicit index on `meta` and `per_origin_mapping_last_used_time_idx`.
-  EXPECT_EQ(2u, sql::test::CountSQLIndices(&db));
+  // Implicit index on `meta`, `values_mapping_last_used_time_idx`,
+  // `per_origin_mapping_creation_time_idx`, and
+  // budget_mapping_origin_time_stamp_idx.
+  EXPECT_EQ(4u, sql::test::CountSQLIndices(&db));
 
   // `key` and `value`.
   EXPECT_EQ(2u, sql::test::CountTableColumns(&db, "meta"));
 
-  // `context_origin`, `script_key`, and `script_value`.
-  EXPECT_EQ(3u, sql::test::CountTableColumns(&db, "values_mapping"));
+  // `context_origin`, `key`, `value`, and `last_used_time`.
+  EXPECT_EQ(4u, sql::test::CountTableColumns(&db, "values_mapping"));
 
-  // `context_origin`, `last_used_time`, and `length`.
+  // `context_origin`, `creation_time`, and `length`.
   EXPECT_EQ(3u, sql::test::CountTableColumns(&db, "per_origin_mapping"));
+
+  // `id`, `context_origin`, `time_stamp`, and `bits_debit`.
+  EXPECT_EQ(4u, sql::test::CountTableColumns(&db, "budget_mapping"));
 }
 
 bool GetTestDataSharedStorageDir(base::FilePath* dir) {
@@ -508,11 +563,35 @@ bool GetTestDataSharedStorageDir(base::FilePath* dir) {
 }
 
 bool CreateDatabaseFromSQL(const base::FilePath& db_path,
-                           const char* ascii_path) {
+                           std::string ascii_path) {
   base::FilePath dir;
   if (!GetTestDataSharedStorageDir(&dir))
     return false;
   return sql::test::CreateDatabaseFromSQL(db_path, dir.AppendASCII(ascii_path));
+}
+
+std::string TimeDeltaToString(base::TimeDelta delta) {
+  return base::StrCat({base::NumberToString(delta.InMilliseconds()), "ms"});
+}
+
+BudgetResult MakeBudgetResultForSqlError() {
+  return BudgetResult(0.0, OperationResult::kSqlError);
+}
+
+std::string GetTestFileNameForVersion(int version_number) {
+  // Should be safe cross platform because StringPrintf has overloads for wide
+  // strings.
+  return base::StringPrintf("shared_storage.v%d.sql", version_number);
+}
+
+std::string GetTestFileNameForCurrentVersion() {
+  return GetTestFileNameForVersion(
+      SharedStorageDatabase::kCurrentVersionNumber);
+}
+
+std::string GetTestFileNameForLatestDeprecatedVersion() {
+  return GetTestFileNameForVersion(
+      SharedStorageDatabase::kDeprecatedVersionNumber);
 }
 
 }  // namespace storage

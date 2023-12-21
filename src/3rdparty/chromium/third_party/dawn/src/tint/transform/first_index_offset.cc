@@ -18,6 +18,7 @@
 #include <unordered_map>
 #include <utility>
 
+#include "src/tint/builtin/builtin_value.h"
 #include "src/tint/program_builder.h"
 #include "src/tint/sem/function.h"
 #include "src/tint/sem/member_accessor_expression.h"
@@ -35,152 +36,134 @@ namespace {
 constexpr char kFirstVertexName[] = "first_vertex_index";
 constexpr char kFirstInstanceName[] = "first_instance_index";
 
+bool ShouldRun(const Program* program) {
+    for (auto* fn : program->AST().Functions()) {
+        if (fn->PipelineStage() == ast::PipelineStage::kVertex) {
+            return true;
+        }
+    }
+    return false;
+}
+
 }  // namespace
 
 FirstIndexOffset::BindingPoint::BindingPoint() = default;
-FirstIndexOffset::BindingPoint::BindingPoint(uint32_t b, uint32_t g)
-    : binding(b), group(g) {}
+FirstIndexOffset::BindingPoint::BindingPoint(uint32_t b, uint32_t g) : binding(b), group(g) {}
 FirstIndexOffset::BindingPoint::~BindingPoint() = default;
 
-FirstIndexOffset::Data::Data(bool has_vtx_index,
-                             bool has_inst_index,
-                             uint32_t first_vtx_offset,
-                             uint32_t first_inst_offset)
-    : has_vertex_index(has_vtx_index),
-      has_instance_index(has_inst_index),
-      first_vertex_offset(first_vtx_offset),
-      first_instance_offset(first_inst_offset) {}
+FirstIndexOffset::Data::Data(bool has_vtx_or_inst_index)
+    : has_vertex_or_instance_index(has_vtx_or_inst_index) {}
 FirstIndexOffset::Data::Data(const Data&) = default;
 FirstIndexOffset::Data::~Data() = default;
 
 FirstIndexOffset::FirstIndexOffset() = default;
 FirstIndexOffset::~FirstIndexOffset() = default;
 
-bool FirstIndexOffset::ShouldRun(const Program* program, const DataMap&) const {
-  for (auto* fn : program->AST().Functions()) {
-    if (fn->PipelineStage() == ast::PipelineStage::kVertex) {
-      return true;
+Transform::ApplyResult FirstIndexOffset::Apply(const Program* src,
+                                               const DataMap& inputs,
+                                               DataMap& outputs) const {
+    if (!ShouldRun(src)) {
+        return SkipTransform;
     }
-  }
-  return false;
-}
 
-void FirstIndexOffset::Run(CloneContext& ctx,
-                           const DataMap& inputs,
-                           DataMap& outputs) const {
-  // Get the uniform buffer binding point
-  uint32_t ub_binding = binding_;
-  uint32_t ub_group = group_;
-  if (auto* binding_point = inputs.Get<BindingPoint>()) {
-    ub_binding = binding_point->binding;
-    ub_group = binding_point->group;
-  }
+    ProgramBuilder b;
+    CloneContext ctx{&b, src, /* auto_clone_symbols */ true};
 
-  // Map of builtin usages
-  std::unordered_map<const sem::Variable*, const char*> builtin_vars;
-  std::unordered_map<const sem::StructMember*, const char*> builtin_members;
+    // Get the uniform buffer binding point
+    uint32_t ub_binding = binding_;
+    uint32_t ub_group = group_;
+    if (auto* binding_point = inputs.Get<BindingPoint>()) {
+        ub_binding = binding_point->binding;
+        ub_group = binding_point->group;
+    }
 
-  bool has_vertex_index = false;
-  bool has_instance_index = false;
+    // Map of builtin usages
+    std::unordered_map<const sem::Variable*, const char*> builtin_vars;
+    std::unordered_map<const sem::StructMember*, const char*> builtin_members;
 
-  // Traverse the AST scanning for builtin accesses via variables (includes
-  // parameters) or structure member accesses.
-  for (auto* node : ctx.src->ASTNodes().Objects()) {
-    if (auto* var = node->As<ast::Variable>()) {
-      for (auto* attr : var->attributes) {
-        if (auto* builtin_attr = attr->As<ast::BuiltinAttribute>()) {
-          ast::Builtin builtin = builtin_attr->builtin;
-          if (builtin == ast::Builtin::kVertexIndex) {
-            auto* sem_var = ctx.src->Sem().Get(var);
-            builtin_vars.emplace(sem_var, kFirstVertexName);
-            has_vertex_index = true;
-          }
-          if (builtin == ast::Builtin::kInstanceIndex) {
-            auto* sem_var = ctx.src->Sem().Get(var);
-            builtin_vars.emplace(sem_var, kFirstInstanceName);
-            has_instance_index = true;
-          }
+    bool has_vertex_or_instance_index = false;
+
+    // Traverse the AST scanning for builtin accesses via variables (includes
+    // parameters) or structure member accesses.
+    for (auto* node : ctx.src->ASTNodes().Objects()) {
+        if (auto* var = node->As<ast::Variable>()) {
+            for (auto* attr : var->attributes) {
+                if (auto* builtin_attr = attr->As<ast::BuiltinAttribute>()) {
+                    builtin::BuiltinValue builtin = src->Sem().Get(builtin_attr)->Value();
+                    if (builtin == builtin::BuiltinValue::kVertexIndex) {
+                        auto* sem_var = ctx.src->Sem().Get(var);
+                        builtin_vars.emplace(sem_var, kFirstVertexName);
+                        has_vertex_or_instance_index = true;
+                    }
+                    if (builtin == builtin::BuiltinValue::kInstanceIndex) {
+                        auto* sem_var = ctx.src->Sem().Get(var);
+                        builtin_vars.emplace(sem_var, kFirstInstanceName);
+                        has_vertex_or_instance_index = true;
+                    }
+                }
+            }
         }
-      }
-    }
-    if (auto* member = node->As<ast::StructMember>()) {
-      for (auto* attr : member->attributes) {
-        if (auto* builtin_attr = attr->As<ast::BuiltinAttribute>()) {
-          ast::Builtin builtin = builtin_attr->builtin;
-          if (builtin == ast::Builtin::kVertexIndex) {
-            auto* sem_mem = ctx.src->Sem().Get(member);
-            builtin_members.emplace(sem_mem, kFirstVertexName);
-            has_vertex_index = true;
-          }
-          if (builtin == ast::Builtin::kInstanceIndex) {
-            auto* sem_mem = ctx.src->Sem().Get(member);
-            builtin_members.emplace(sem_mem, kFirstInstanceName);
-            has_instance_index = true;
-          }
+        if (auto* member = node->As<ast::StructMember>()) {
+            for (auto* attr : member->attributes) {
+                if (auto* builtin_attr = attr->As<ast::BuiltinAttribute>()) {
+                    builtin::BuiltinValue builtin = src->Sem().Get(builtin_attr)->Value();
+                    if (builtin == builtin::BuiltinValue::kVertexIndex) {
+                        auto* sem_mem = ctx.src->Sem().Get(member);
+                        builtin_members.emplace(sem_mem, kFirstVertexName);
+                        has_vertex_or_instance_index = true;
+                    }
+                    if (builtin == builtin::BuiltinValue::kInstanceIndex) {
+                        auto* sem_mem = ctx.src->Sem().Get(member);
+                        builtin_members.emplace(sem_mem, kFirstInstanceName);
+                        has_vertex_or_instance_index = true;
+                    }
+                }
+            }
         }
-      }
     }
-  }
 
-  // Byte offsets on the uniform buffer
-  uint32_t vertex_index_offset = 0;
-  uint32_t instance_index_offset = 0;
+    if (has_vertex_or_instance_index) {
+        // Add uniform buffer members and calculate byte offsets
+        utils::Vector<const ast::StructMember*, 8> members;
+        members.Push(b.Member(kFirstVertexName, b.ty.u32()));
+        members.Push(b.Member(kFirstInstanceName, b.ty.u32()));
+        auto* struct_ = b.Structure(b.Sym(), std::move(members));
 
-  if (has_vertex_index || has_instance_index) {
-    // Add uniform buffer members and calculate byte offsets
-    uint32_t offset = 0;
-    ast::StructMemberList members;
-    if (has_vertex_index) {
-      members.push_back(ctx.dst->Member(kFirstVertexName, ctx.dst->ty.u32()));
-      vertex_index_offset = offset;
-      offset += 4;
-    }
-    if (has_instance_index) {
-      members.push_back(ctx.dst->Member(kFirstInstanceName, ctx.dst->ty.u32()));
-      instance_index_offset = offset;
-      offset += 4;
-    }
-    auto* struct_ = ctx.dst->Structure(ctx.dst->Sym(), std::move(members));
-
-    // Create a global to hold the uniform buffer
-    Symbol buffer_name = ctx.dst->Sym();
-    ctx.dst->Global(buffer_name, ctx.dst->ty.Of(struct_),
-                    ast::StorageClass::kUniform, nullptr,
-                    ast::AttributeList{
-                        ctx.dst->create<ast::BindingAttribute>(ub_binding),
-                        ctx.dst->create<ast::GroupAttribute>(ub_group),
+        // Create a global to hold the uniform buffer
+        Symbol buffer_name = b.Sym();
+        b.GlobalVar(buffer_name, b.ty.Of(struct_), builtin::AddressSpace::kUniform,
+                    utils::Vector{
+                        b.Binding(AInt(ub_binding)),
+                        b.Group(AInt(ub_group)),
                     });
 
-    // Fix up all references to the builtins with the offsets
-    ctx.ReplaceAll(
-        [=, &ctx](const ast::Expression* expr) -> const ast::Expression* {
-          if (auto* sem = ctx.src->Sem().Get(expr)) {
-            if (auto* user = sem->As<sem::VariableUser>()) {
-              auto it = builtin_vars.find(user->Variable());
-              if (it != builtin_vars.end()) {
-                return ctx.dst->Add(
-                    ctx.CloneWithoutTransform(expr),
-                    ctx.dst->MemberAccessor(buffer_name, it->second));
-              }
+        // Fix up all references to the builtins with the offsets
+        ctx.ReplaceAll([=, &ctx](const ast::Expression* expr) -> const ast::Expression* {
+            if (auto* sem = ctx.src->Sem().GetVal(expr)) {
+                if (auto* user = sem->UnwrapLoad()->As<sem::VariableUser>()) {
+                    auto it = builtin_vars.find(user->Variable());
+                    if (it != builtin_vars.end()) {
+                        return ctx.dst->Add(ctx.CloneWithoutTransform(expr),
+                                            ctx.dst->MemberAccessor(buffer_name, it->second));
+                    }
+                }
+                if (auto* access = sem->As<sem::StructMemberAccess>()) {
+                    auto it = builtin_members.find(access->Member());
+                    if (it != builtin_members.end()) {
+                        return ctx.dst->Add(ctx.CloneWithoutTransform(expr),
+                                            ctx.dst->MemberAccessor(buffer_name, it->second));
+                    }
+                }
             }
-            if (auto* access = sem->As<sem::StructMemberAccess>()) {
-              auto it = builtin_members.find(access->Member());
-              if (it != builtin_members.end()) {
-                return ctx.dst->Add(
-                    ctx.CloneWithoutTransform(expr),
-                    ctx.dst->MemberAccessor(buffer_name, it->second));
-              }
-            }
-          }
-          // Not interested in this experssion. Just clone.
-          return nullptr;
+            // Not interested in this expression. Just clone.
+            return nullptr;
         });
-  }
+    }
 
-  ctx.Clone();
+    outputs.Add<Data>(has_vertex_or_instance_index);
 
-  outputs.Add<Data>(has_vertex_index, has_instance_index, vertex_index_offset,
-                    instance_index_offset);
+    ctx.Clone();
+    return Program(std::move(b));
 }
 
 }  // namespace tint::transform

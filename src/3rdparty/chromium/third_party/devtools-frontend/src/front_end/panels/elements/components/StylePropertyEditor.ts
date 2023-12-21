@@ -8,21 +8,20 @@ import * as IconButton from '../../../ui/components/icon_button/icon_button.js';
 import * as LitHtml from '../../../ui/lit-html/lit-html.js';
 import stylePropertyEditorStyles from './stylePropertyEditor.css.js';
 
-import type {IconInfo} from './CSSPropertyIconResolver.js';
-import {findFlexContainerIcon, findGridContainerIcon} from './CSSPropertyIconResolver.js';
+import {findFlexContainerIcon, findGridContainerIcon, type IconInfo} from './CSSPropertyIconResolver.js';
 
 const UIStrings = {
   /**
-    * @description Title of the button that selects a flex property.
-    * @example {flex-direction} propertyName
-    * @example {column} propertyValue
-    */
+   * @description Title of the button that selects a flex property.
+   * @example {flex-direction} propertyName
+   * @example {column} propertyValue
+   */
   selectButton: 'Add {propertyName}: {propertyValue}',
   /**
-    * @description Title of the button that deselects a flex property.
-    * @example {flex-direction} propertyName
-    * @example {row} propertyValue
-    */
+   * @description Title of the button that deselects a flex property.
+   * @example {flex-direction} propertyName
+   * @example {row} propertyValue
+   */
   deselectButton: 'Remove {propertyName}: {propertyValue}',
 };
 const str_ = i18n.i18n.registerUIStrings('panels/elements/components/StylePropertyEditor.ts', UIStrings);

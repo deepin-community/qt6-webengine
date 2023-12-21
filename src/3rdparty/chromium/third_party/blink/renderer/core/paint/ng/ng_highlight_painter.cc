@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -27,6 +27,7 @@
 #include "third_party/blink/renderer/core/paint/ng/ng_text_painter.h"
 #include "third_party/blink/renderer/core/paint/paint_auto_dark_mode.h"
 #include "third_party/blink/renderer/core/paint/paint_info.h"
+#include "third_party/blink/renderer/platform/graphics/graphics_context_state_saver.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 
 namespace blink {
@@ -38,13 +39,10 @@ using HighlightLayer = NGHighlightOverlay::HighlightLayer;
 using HighlightEdge = NGHighlightOverlay::HighlightEdge;
 using HighlightPart = NGHighlightOverlay::HighlightPart;
 
-DocumentMarkerVector ComputeMarkersToPaint(Node* node, bool is_ellipsis) {
+DocumentMarkerVector ComputeMarkersToPaint(Node* node) {
   // TODO(yoichio): Handle first-letter
   auto* text_node = DynamicTo<Text>(node);
   if (!text_node)
-    return DocumentMarkerVector();
-  // We don't paint any marker on ellipsis.
-  if (is_ellipsis)
     return DocumentMarkerVector();
 
   DocumentMarkerController& document_marker_controller =
@@ -52,13 +50,10 @@ DocumentMarkerVector ComputeMarkersToPaint(Node* node, bool is_ellipsis) {
   return document_marker_controller.ComputeMarkersToPaint(*text_node);
 }
 
-DocumentMarkerVector MarkersFor(Node* node,
-                                bool is_ellipsis,
-                                DocumentMarker::MarkerType type) {
-  // TODO(yoichio): Handle first-letter
+DocumentMarkerVector MarkersFor(Node* node, DocumentMarker::MarkerType type) {
+  // TODO(crbug.com/17528) handle ::first-letter
   const auto* text_node = DynamicTo<Text>(node);
-  // We don't paint any marker on ellipsis.
-  if (!text_node || is_ellipsis)
+  if (!text_node)
     return DocumentMarkerVector();
 
   DocumentMarkerController& controller = node->GetDocument().Markers();
@@ -145,8 +140,10 @@ Color SelectionBackgroundColor(const Document& document,
   // If the text color ends up being the same as the selection background,
   // invert the selection background.
   if (text_color == color) {
-    UseCounter::Count(node->GetDocument(),
-                      WebFeature::kSelectionBackgroundColorInversion);
+    if (node) {
+      UseCounter::Count(node->GetDocument(),
+                        WebFeature::kSelectionBackgroundColorInversion);
+    }
     return Color(0xff - color.Red(), 0xff - color.Green(), 0xff - color.Blue());
   }
   return color;
@@ -194,6 +191,159 @@ const DocumentMarkerVector* SelectMarkers(const HighlightLayer& layer,
   return nullptr;
 }
 
+// Returns true if the styles for the given spelling or grammar pseudo require
+// the full overlay painting algorithm.
+bool HasNonTrivialSpellingGrammarStyles(const NGFragmentItem& fragment_item,
+                                        Node* node,
+                                        const ComputedStyle& originating_style,
+                                        PseudoId pseudo) {
+  DCHECK(pseudo == kPseudoIdSpellingError || pseudo == kPseudoIdGrammarError);
+  if (scoped_refptr<const ComputedStyle> pseudo_style =
+          HighlightPaintingUtils::HighlightPseudoStyle(node, originating_style,
+                                                       pseudo)) {
+    const Document& document = node->GetDocument();
+    // If the ‘color’, ‘-webkit-text-fill-color’, ‘-webkit-text-stroke-color’,
+    // or ‘-webkit-text-stroke-width’ differs from the originating style.
+    Color pseudo_color = HighlightPaintingUtils::ResolveColor(
+        document, originating_style, pseudo_style.get(), pseudo,
+        GetCSSPropertyColor(), {});
+    if (pseudo_color !=
+        originating_style.VisitedDependentColor(GetCSSPropertyColor())) {
+      return true;
+    }
+    if (HighlightPaintingUtils::ResolveColor(
+            document, originating_style, pseudo_style.get(), pseudo,
+            GetCSSPropertyWebkitTextFillColor(), {}) !=
+        originating_style.VisitedDependentColor(
+            GetCSSPropertyWebkitTextFillColor())) {
+      return true;
+    }
+    if (HighlightPaintingUtils::ResolveColor(
+            document, originating_style, pseudo_style.get(), pseudo,
+            GetCSSPropertyWebkitTextStrokeColor(), {}) !=
+        originating_style.VisitedDependentColor(
+            GetCSSPropertyWebkitTextStrokeColor())) {
+      return true;
+    }
+    if (pseudo_style->TextStrokeWidth() != originating_style.TextStrokeWidth())
+      return true;
+    // If there is a background color.
+    if (HighlightPaintingUtils::ResolveColor(
+            document, originating_style, pseudo_style.get(), pseudo,
+            GetCSSPropertyBackgroundColor(), {})
+            .Alpha() > 0) {
+      return true;
+    }
+    // If the ‘text-shadow’ is not ‘none’.
+    if (pseudo_style->TextShadow())
+      return true;
+    // If the ‘text-decoration-line’ is not ‘spelling-error’ or ‘grammar-error’,
+    // depending on the pseudo. ‘text-decoration-color’ can vary without hurting
+    // the optimisation, and for these line types, we ignore ‘-thickness’ and
+    // ‘-style’ and ‘text-decoration-skip-ink’ anyway.
+    if (pseudo_style->TextDecorationsInEffect() !=
+        (pseudo == kPseudoIdSpellingError
+             ? TextDecorationLine::kSpellingError
+             : TextDecorationLine::kGrammarError)) {
+      return true;
+    }
+    // If any of the originating line decorations would need to be recolored.
+    for (const AppliedTextDecoration& decoration :
+         originating_style.AppliedTextDecorations()) {
+      if (decoration.GetColor() != pseudo_color) {
+        return true;
+      }
+    }
+    // ‘text-emphasis-color’ should be meaningless for highlight pseudos, but
+    // in our current impl, it sets the color of originating emphasis marks.
+    // This means we can only use kFastSpellingGrammar if the color is the same
+    // as in the originating style, or there are no emphasis marks.
+    // TODO(crbug.com/1147859) clean up when spec issue is resolved again
+    // https://github.com/w3c/csswg-drafts/issues/7101
+    if (originating_style.GetTextEmphasisMark() != TextEmphasisMark::kNone &&
+        HighlightPaintingUtils::ResolveColor(
+            document, originating_style, pseudo_style.get(), pseudo,
+            GetCSSPropertyTextEmphasisColor(), {}) !=
+            originating_style.VisitedDependentColor(
+                GetCSSPropertyTextEmphasisColor())) {
+      return true;
+    }
+    // If the SVG-only fill- and stroke-related properties differ from their
+    // values in the originating style. These checks must be skipped outside of
+    // SVG content, because the initial ‘fill’ is ‘black’, not ‘currentColor’.
+    if (fragment_item.Type() == NGFragmentItem::kSvgText) {
+      // If the ‘fill’ is ‘currentColor’, assume that it differs from the
+      // originating style, even if the current color actually happens to
+      // match. This simplifies the logic until we know it performs poorly.
+      if (pseudo_style->FillPaint().HasCurrentColor())
+        return true;
+      // If the ‘fill’ differs from the originating style.
+      if (pseudo_style->FillPaint() != originating_style.FillPaint())
+        return true;
+      // If the ‘stroke’ is ‘currentColor’, assume that it differs from the
+      // originating style, even if the current color actually happens to
+      // match. This simplifies the logic until we know it performs poorly.
+      if (pseudo_style->StrokePaint().HasCurrentColor())
+        return true;
+      // If the ‘stroke’ differs from the originating style.
+      if (pseudo_style->StrokePaint() != originating_style.StrokePaint())
+        return true;
+      // If the ‘stroke-width’ differs from the originating style.
+      if (pseudo_style->StrokeWidth() != originating_style.StrokeWidth())
+        return true;
+    }
+  }
+  return false;
+}
+
+PseudoId PseudoFor(DocumentMarker::MarkerType type) {
+  switch (type) {
+    case DocumentMarker::kSpelling:
+      return kPseudoIdSpellingError;
+    case DocumentMarker::kGrammar:
+      return kPseudoIdGrammarError;
+    default:
+      NOTREACHED();
+      return {};
+  }
+}
+
+HighlightLayerType LayerFor(DocumentMarker::MarkerType type) {
+  switch (type) {
+    case DocumentMarker::kSpelling:
+      return HighlightLayerType::kSpelling;
+    case DocumentMarker::kGrammar:
+      return HighlightLayerType::kGrammar;
+    default:
+      NOTREACHED();
+      return {};
+  }
+}
+
+TextDecorationLine LineFor(DocumentMarker::MarkerType type) {
+  switch (type) {
+    case DocumentMarker::kSpelling:
+      return TextDecorationLine::kSpellingError;
+    case DocumentMarker::kGrammar:
+      return TextDecorationLine::kGrammarError;
+    default:
+      NOTREACHED();
+      return {};
+  }
+}
+
+Color ColorFor(DocumentMarker::MarkerType type) {
+  switch (type) {
+    case DocumentMarker::kSpelling:
+      return LayoutTheme::GetTheme().PlatformSpellingMarkerUnderlineColor();
+    case DocumentMarker::kGrammar:
+      return LayoutTheme::GetTheme().PlatformGrammarMarkerUnderlineColor();
+    default:
+      NOTREACHED();
+      return {};
+  }
+}
+
 }  // namespace
 
 NGHighlightPainter::SelectionPaintState::SelectionPaintState(
@@ -215,7 +365,7 @@ NGHighlightPainter::SelectionPaintState::SelectionPaintState(
     const FrameSelection& frame_selection)
     : selection_status_(
           frame_selection.ComputeLayoutSelectionStatus(containing_block)),
-      state_(frame_selection.ComputeLayoutSelectionStateForCursor(
+      state_(frame_selection.ComputePaintingSelectionStateForCursor(
           containing_block.Current())),
       containing_block_(containing_block),
       box_offset_(box_offset),
@@ -269,10 +419,10 @@ void NGHighlightPainter::SelectionPaintState::PaintSelectionBackground(
     const ComputedStyle& style,
     const absl::optional<AffineTransform>& rotation) {
   const Color color = SelectionBackgroundColor(document, style, node,
-                                               selection_style_.fill_color);
+                                               selection_style_.current_color);
 
   AutoDarkMode auto_dark_mode(
-      PaintAutoDarkMode(style, DarkModeFilter::ElementRole::kBackground));
+      PaintAutoDarkMode(style, DarkModeFilter::ElementRole::kSelection));
 
   if (!rotation) {
     PaintRect(context, RectInPhysicalSpace(), color, auto_dark_mode);
@@ -292,13 +442,15 @@ void NGHighlightPainter::SelectionPaintState::PaintSelectionBackground(
 // Paint the selected text only.
 void NGHighlightPainter::SelectionPaintState::PaintSelectedText(
     NGTextPainter& text_painter,
+    const NGTextFragmentPaintInfo& fragment_paint_info,
     unsigned length,
     const TextPaintStyle& text_style,
     DOMNodeId node_id,
     const AutoDarkMode& auto_dark_mode) {
-  text_painter.PaintSelectedText(
-      selection_status_.start, selection_status_.end, length, text_style,
-      selection_style_, RectInWritingModeSpace(), node_id, auto_dark_mode);
+  text_painter.PaintSelectedText(fragment_paint_info, selection_status_.start,
+                                 selection_status_.end, length, text_style,
+                                 selection_style_, RectInWritingModeSpace(),
+                                 node_id, auto_dark_mode);
 }
 
 // Paint the given text range in the given style, suppressing the text proper
@@ -306,28 +458,28 @@ void NGHighlightPainter::SelectionPaintState::PaintSelectedText(
 void NGHighlightPainter::SelectionPaintState::
     PaintSuppressingTextProperWhereSelected(
         NGTextPainter& text_painter,
-        unsigned start_offset,
-        unsigned end_offset,
+        const NGTextFragmentPaintInfo& fragment_paint_info,
         unsigned length,
         const TextPaintStyle& text_style,
         DOMNodeId node_id,
         const AutoDarkMode& auto_dark_mode) {
   // First paint the shadows for the whole range.
   if (text_style.shadow) {
-    text_painter.Paint(start_offset, end_offset, length, text_style, node_id,
+    text_painter.Paint(fragment_paint_info, length, text_style, node_id,
                        auto_dark_mode, NGTextPainter::kShadowsOnly);
   }
 
   // Then paint the text proper for any unselected parts in storage order, so
   // that they’re always on top of the shadows.
-  if (start_offset < selection_status_.start) {
-    text_painter.Paint(start_offset, selection_status_.start, length,
-                       text_style, node_id, auto_dark_mode,
-                       NGTextPainter::kTextProperOnly);
+  if (fragment_paint_info.from < selection_status_.start) {
+    text_painter.Paint(
+        fragment_paint_info.WithEndOffset(selection_status_.start), length,
+        text_style, node_id, auto_dark_mode, NGTextPainter::kTextProperOnly);
   }
-  if (selection_status_.end < end_offset) {
-    text_painter.Paint(selection_status_.end, end_offset, length, text_style,
-                       node_id, auto_dark_mode, NGTextPainter::kTextProperOnly);
+  if (selection_status_.end < fragment_paint_info.to) {
+    text_painter.Paint(
+        fragment_paint_info.WithStartOffset(selection_status_.end), length,
+        text_style, node_id, auto_dark_mode, NGTextPainter::kTextProperOnly);
   }
 }
 
@@ -338,8 +490,11 @@ NGHighlightPainter::NGHighlightPainter(
     const PaintInfo& paint_info,
     const NGInlineCursor& cursor,
     const NGFragmentItem& fragment_item,
+    const absl::optional<AffineTransform> writing_mode_rotation,
+    const PhysicalRect& decoration_rect,
     const PhysicalOffset& box_origin,
     const ComputedStyle& style,
+    const TextPaintStyle& text_style,
     SelectionPaintState* selection,
     bool is_printing)
     : fragment_paint_info_(fragment_paint_info),
@@ -348,33 +503,99 @@ NGHighlightPainter::NGHighlightPainter(
       paint_info_(paint_info),
       cursor_(cursor),
       fragment_item_(fragment_item),
+      writing_mode_rotation_(writing_mode_rotation),
+      decoration_rect_(decoration_rect),
       box_origin_(box_origin),
-      style_(style),
+      originating_style_(style),
+      originating_text_style_(text_style),
       selection_(selection),
       layout_object_(fragment_item_.GetLayoutObject()),
       node_(layout_object_->GetNode()),
-      markers_(ComputeMarkersToPaint(node_, fragment_item_.IsEllipsis())),
+      foreground_auto_dark_mode_(
+          PaintAutoDarkMode(originating_style_,
+                            DarkModeFilter::ElementRole::kForeground)),
+      background_auto_dark_mode_(
+          PaintAutoDarkMode(originating_style_,
+                            DarkModeFilter::ElementRole::kBackground)),
       skip_backgrounds_(is_printing ||
                         paint_info.phase == PaintPhase::kTextClip ||
                         paint_info.phase == PaintPhase::kSelectionDragImage) {
-  if (RuntimeEnabledFeatures::HighlightOverlayPaintingEnabled()) {
-    bool is_ellipsis = fragment_item_.IsEllipsis();
-    target_ = MarkersFor(node_, is_ellipsis, DocumentMarker::kTextFragment);
-    spelling_ = MarkersFor(node_, is_ellipsis, DocumentMarker::kSpelling);
-    grammar_ = MarkersFor(node_, is_ellipsis, DocumentMarker::kGrammar);
-    custom_ = MarkersFor(node_, is_ellipsis, DocumentMarker::kCustomHighlight);
-    layers_ = NGHighlightOverlay::ComputeLayers(
-        GetHighlightRegistry(node_), fragment_paint_info_,
-        GetSelectionStatus(selection_), custom_, grammar_, spelling_, target_);
+  // Custom highlights and marker-based highlights are defined in terms of
+  // DOM ranges in a Text node. Generated text either has no Text node or does
+  // not derive its content from the Text node (e.g. ellipsis, soft hyphens).
+  // TODO(crbug.com/17528) handle ::first-letter
+  if (!fragment_item_.IsGeneratedText()) {
+    markers_ = ComputeMarkersToPaint(node_);
+    if (RuntimeEnabledFeatures::HighlightOverlayPaintingEnabled()) {
+      target_ = MarkersFor(node_, DocumentMarker::kTextFragment);
+      spelling_ = MarkersFor(node_, DocumentMarker::kSpelling);
+      grammar_ = MarkersFor(node_, DocumentMarker::kGrammar);
+      custom_ = MarkersFor(node_, DocumentMarker::kCustomHighlight);
+    }
+  }
+
+  paint_case_ = ComputePaintCase();
+
+  // |layers_| and |parts_| are only needed when using the full overlay painting
+  // algorithm, otherwise we can leave them empty.
+  if (paint_case_ == kOverlay) {
+    Vector<HighlightLayer> layers = NGHighlightOverlay::ComputeLayers(
+        GetHighlightRegistry(node_), GetSelectionStatus(selection_), custom_,
+        grammar_, spelling_, target_);
     Vector<HighlightEdge> edges = NGHighlightOverlay::ComputeEdges(
-        node_, GetHighlightRegistry(node_), fragment_paint_info_,
-        GetSelectionStatus(selection_), custom_, grammar_, spelling_, target_);
-    parts_ = NGHighlightOverlay::ComputeParts(layers_, edges);
+        node_, GetHighlightRegistry(node_), fragment_item_.IsGeneratedText(),
+        fragment_paint_info_, GetSelectionStatus(selection_), custom_, grammar_,
+        spelling_, target_);
+    parts_ =
+        NGHighlightOverlay::ComputeParts(fragment_paint_info_, layers, edges);
+
+    const Document& document = layout_object_->GetDocument();
+    for (wtf_size_t i = 0; i < layers.size(); i++) {
+      if (layers[i].type == HighlightLayerType::kOriginating) {
+        layers_.push_back(LayerPaintState{
+            layers[i],
+            &originating_style_,
+            originating_text_style_,
+        });
+      } else {
+        layers_.push_back(LayerPaintState{
+            layers[i],
+            HighlightPaintingUtils::HighlightPseudoStyle(
+                node_, originating_style_, layers[i].PseudoId(),
+                layers[i].PseudoArgument())
+                .get(),
+            HighlightPaintingUtils::HighlightPaintingStyle(
+                document, originating_style_, node_, layers[i].PseudoId(),
+                layers_[i - 1].text_style, paint_info_,
+                layers[i].PseudoArgument()),
+        });
+      }
+      if (layers_[i].decorations_in_effect != TextDecorationLine::kNone) {
+        // Cache the TextDecorationInfo for up to two highlight layers that have
+        // line decorations, e.g. originating content might have a line-through
+        // and underline, and spelling error might have a spelling decoration.
+        //
+        // Since highlights can break text into many parts that are painted in
+        // overlay order, and within each part the decorations are ordered by
+        // type *then* by overlay, computing TextDecorationInfo on the fly can
+        // be very wasteful.
+        for (CachedDecorationInfo& cached_decorations : decoration_cache_) {
+          if (!cached_decorations.id.has_value()) {
+            cached_decorations.id = layers_[i].id;
+            decoration_painter_.UpdateDecorationInfo(cached_decorations.info,
+                                                     *layers_[i].style,
+                                                     layers_[i].text_style);
+            DCHECK(cached_decorations.info);
+            break;
+          }
+        }
+      }
+    }
   }
 }
 
 void NGHighlightPainter::Paint(Phase phase) {
-  if (markers_.IsEmpty())
+  if (markers_.empty())
     return;
 
   if (skip_backgrounds_ && phase == kBackground)
@@ -383,11 +604,6 @@ void NGHighlightPainter::Paint(Phase phase) {
   DCHECK(fragment_item_.GetNode());
   const auto& text_node = To<Text>(*fragment_item_.GetNode());
   const StringView text = cursor_.CurrentText();
-
-  AutoDarkMode foreground_auto_dark_mode(
-      PaintAutoDarkMode(style_, DarkModeFilter::ElementRole::kForeground));
-  AutoDarkMode background_auto_dark_mode(
-      PaintAutoDarkMode(style_, DarkModeFilter::ElementRole::kBackground));
 
   for (const DocumentMarker* marker : markers_) {
     const unsigned marker_start_offset =
@@ -408,22 +624,12 @@ void NGHighlightPainter::Paint(Phase phase) {
 
     switch (marker->GetType()) {
       case DocumentMarker::kSpelling:
-      case DocumentMarker::kGrammar: {
-        if (fragment_item_.GetNode()->GetDocument().Printing())
-          break;
-        if (phase == kBackground)
-          continue;
-
-        DocumentMarkerPainter::PaintDocumentMarker(
-            paint_info_, box_origin_, style_, marker->GetType(),
-            MarkerRectForForeground(fragment_item_, text, paint_start_offset,
-                                    paint_end_offset),
-            HighlightPaintingUtils::HighlightTextDecorationColor(
-                style_, node_,
-                marker->GetType() == DocumentMarker::kSpelling
-                    ? kPseudoIdSpellingError
-                    : kPseudoIdGrammarError));
-      } break;
+      case DocumentMarker::kGrammar:
+        if (phase == kForeground) {
+          PaintOneSpellingGrammarDecoration(
+              marker->GetType(), text, paint_start_offset, paint_end_offset);
+        }
+        break;
 
       case DocumentMarker::kTextMatch: {
         const Document& document = node_->GetDocument();
@@ -433,34 +639,38 @@ void NGHighlightPainter::Paint(Phase phase) {
         if (phase == kBackground) {
           Color color =
               LayoutTheme::GetTheme().PlatformTextSearchHighlightColor(
-                  text_match_marker.IsActiveMatch(), style_.UsedColorScheme());
+                  text_match_marker.IsActiveMatch(),
+                  originating_style_.UsedColorScheme());
           PaintRect(paint_info_.context, PhysicalOffset(box_origin_),
                     fragment_item_.LocalRect(text, paint_start_offset,
                                              paint_end_offset),
-                    color, background_auto_dark_mode);
+                    color, background_auto_dark_mode_);
           break;
         }
 
         TextPaintStyle text_style;
         if (fragment_item_->Type() != NGFragmentItem::kSvgText) {
           text_style = DocumentMarkerPainter::ComputeTextPaintStyleFrom(
-              document, node_, style_, text_match_marker, paint_info_);
+              document, node_, originating_style_, text_match_marker,
+              paint_info_);
         } else {
           // DocumentMarkerPainter::ComputeTextPaintStyleFrom() doesn't work
           // well with SVG <text>, which doesn't apply 'color' CSS property.
           const Color platform_matched_color =
               LayoutTheme::GetTheme().PlatformTextSearchColor(
-                  text_match_marker.IsActiveMatch(), style_.UsedColorScheme());
+                  text_match_marker.IsActiveMatch(),
+                  originating_style_.UsedColorScheme());
           text_painter_.SetSvgState(
               *To<LayoutSVGInlineText>(fragment_item_->GetLayoutObject()),
-              style_, platform_matched_color);
+              originating_style_, platform_matched_color);
           text_style.current_color = platform_matched_color;
-          text_style.stroke_width = style_.TextStrokeWidth();
-          text_style.color_scheme = style_.UsedColorScheme();
+          text_style.stroke_width = originating_style_.TextStrokeWidth();
+          text_style.color_scheme = originating_style_.UsedColorScheme();
         }
-        text_painter_.Paint(paint_start_offset, paint_end_offset,
-                            paint_end_offset - paint_start_offset, text_style,
-                            kInvalidDOMNodeId, foreground_auto_dark_mode);
+        text_painter_.Paint(
+            fragment_paint_info_.Slice(paint_start_offset, paint_end_offset),
+            paint_end_offset - paint_start_offset, text_style,
+            kInvalidDOMNodeId, foreground_auto_dark_mode_);
       } break;
 
       case DocumentMarker::kComposition:
@@ -472,15 +682,16 @@ void NGHighlightPainter::Paint(Phase phase) {
                     fragment_item_.LocalRect(text, paint_start_offset,
                                              paint_end_offset),
                     styleable_marker.BackgroundColor(),
-                    background_auto_dark_mode);
+                    background_auto_dark_mode_);
           break;
         }
         if (DocumentMarkerPainter::ShouldPaintMarkerUnderline(
                 styleable_marker)) {
-          const SimpleFontData* font_data = style_.GetFont().PrimaryFont();
+          const SimpleFontData* font_data =
+              originating_style_.GetFont().PrimaryFont();
           DocumentMarkerPainter::PaintStyleableMarkerUnderline(
-              paint_info_.context, box_origin_, styleable_marker, style_,
-              node_->GetDocument(),
+              paint_info_.context, box_origin_, styleable_marker,
+              originating_style_, node_->GetDocument(),
               gfx::RectF(MarkerRectForForeground(
                   fragment_item_, text, paint_start_offset, paint_end_offset)),
               LayoutUnit(font_data->GetFontMetrics().Height()),
@@ -498,53 +709,56 @@ void NGHighlightPainter::Paint(Phase phase) {
         if (phase == kBackground) {
           Color background_color =
               HighlightPaintingUtils::HighlightBackgroundColor(
-                  document, style_, node_, absl::nullopt,
+                  document, originating_style_, node_, absl::nullopt,
                   highlight_pseudo_marker.GetPseudoId(),
                   highlight_pseudo_marker.GetPseudoArgument());
 
           PaintRect(paint_info_.context, PhysicalOffset(box_origin_),
                     fragment_item_.LocalRect(text, paint_start_offset,
                                              paint_end_offset),
-                    background_color, background_auto_dark_mode);
+                    background_color, background_auto_dark_mode_);
           break;
         }
 
         DCHECK_EQ(phase, kForeground);
-        Color text_color = style_.VisitedDependentColor(GetCSSPropertyColor());
+        Color text_color =
+            originating_style_.VisitedDependentColor(GetCSSPropertyColor());
 
         TextPaintStyle text_style;
         text_style.current_color = text_style.fill_color =
             text_style.stroke_color = text_style.emphasis_mark_color =
                 text_color;
-        text_style.stroke_width = style_.TextStrokeWidth();
-        text_style.color_scheme = style_.UsedColorScheme();
+        text_style.stroke_width = originating_style_.TextStrokeWidth();
+        text_style.color_scheme = originating_style_.UsedColorScheme();
         text_style.shadow = nullptr;
 
         const TextPaintStyle final_text_style =
             HighlightPaintingUtils::HighlightPaintingStyle(
-                document, style_, node_, highlight_pseudo_marker.GetPseudoId(),
-                text_style, paint_info_,
+                document, originating_style_, node_,
+                highlight_pseudo_marker.GetPseudoId(), text_style, paint_info_,
                 highlight_pseudo_marker.GetPseudoArgument());
 
         scoped_refptr<const ComputedStyle> pseudo_style =
             HighlightPaintingUtils::HighlightPseudoStyle(
-                node_, style_, highlight_pseudo_marker.GetPseudoId(),
+                node_, originating_style_,
+                highlight_pseudo_marker.GetPseudoId(),
                 highlight_pseudo_marker.GetPseudoArgument());
         PhysicalRect decoration_rect = fragment_item_.LocalRect(
             text, paint_start_offset, paint_end_offset);
         decoration_rect.Move(PhysicalOffset(box_origin_));
         NGTextDecorationPainter decoration_painter(
             text_painter_, fragment_item_, paint_info_,
-            pseudo_style ? *pseudo_style : style_, final_text_style,
+            pseudo_style ? *pseudo_style : originating_style_, final_text_style,
             decoration_rect, selection_);
 
         decoration_painter.Begin(NGTextDecorationPainter::kOriginating);
-        decoration_painter.PaintExceptLineThrough();
+        decoration_painter.PaintExceptLineThrough(
+            fragment_paint_info_.Slice(paint_start_offset, paint_end_offset));
 
-        text_painter_.Paint(paint_start_offset, paint_end_offset,
-                            paint_end_offset - paint_start_offset,
-                            final_text_style, kInvalidDOMNodeId,
-                            foreground_auto_dark_mode);
+        text_painter_.Paint(
+            fragment_paint_info_.Slice(paint_start_offset, paint_end_offset),
+            paint_end_offset - paint_start_offset, final_text_style,
+            kInvalidDOMNodeId, foreground_auto_dark_mode_);
 
         decoration_painter.PaintOnlyLineThrough();
       } break;
@@ -556,39 +770,201 @@ void NGHighlightPainter::Paint(Phase phase) {
   }
 }
 
-void NGHighlightPainter::PaintOriginatingText(
+NGHighlightPainter::Case NGHighlightPainter::PaintCase() const {
+  return paint_case_;
+}
+
+NGHighlightPainter::Case NGHighlightPainter::ComputePaintCase() const {
+  if (selection_ && selection_->ShouldPaintSelectedTextOnly())
+    return kSelectionOnly;
+  if (!RuntimeEnabledFeatures::HighlightOverlayPaintingEnabled())
+    return selection_ ? kOldSelection : kNoHighlights;
+
+  // This can yield false positives (weakening the optimisations below) if all
+  // non-spelling/grammar/selection highlights are outside the text fragment.
+  if (!target_.empty() || !custom_.empty())
+    return kOverlay;
+
+  if (selection_ && spelling_.empty() && grammar_.empty()) {
+    scoped_refptr<const ComputedStyle> pseudo_style =
+        HighlightPaintingUtils::HighlightPseudoStyle(node_, originating_style_,
+                                                     kPseudoIdSelection);
+
+    // If we only have a selection, and there are no selection or originating
+    // decorations, we don’t need the expense of overlay painting.
+    return !originating_style_.HasAppliedTextDecorations() &&
+                   (!pseudo_style || !pseudo_style->HasAppliedTextDecorations())
+               ? kFastSelection
+               : kOverlay;
+  }
+
+  if (!spelling_.empty() || !grammar_.empty()) {
+    // If there is a selection too, we must use the overlay painting algorithm.
+    if (selection_)
+      return kOverlay;
+
+    // If there are only spelling and/or grammar highlights, and they use the
+    // default style that only adds decorations without adding a background or
+    // changing the text color, we don’t need the expense of overlay painting.
+    bool spelling_ok =
+        spelling_.empty() ||
+        !HasNonTrivialSpellingGrammarStyles(
+            fragment_item_, node_, originating_style_, kPseudoIdSpellingError);
+    bool grammar_ok =
+        grammar_.empty() ||
+        !HasNonTrivialSpellingGrammarStyles(
+            fragment_item_, node_, originating_style_, kPseudoIdGrammarError);
+    return spelling_ok && grammar_ok ? kFastSpellingGrammar : kOverlay;
+  }
+
+  DCHECK(!selection_ && target_.empty() && spelling_.empty() &&
+         grammar_.empty() && custom_.empty());
+  return kNoHighlights;
+}
+
+void NGHighlightPainter::FastPaintSpellingGrammarDecorations() {
+  DCHECK_EQ(paint_case_, kFastSpellingGrammar);
+  DCHECK(fragment_item_.GetNode());
+  const auto& text_node = To<Text>(*fragment_item_.GetNode());
+  const StringView text = cursor_.CurrentText();
+
+  // ::spelling-error overlay is drawn on top of ::grammar-error overlay.
+  // https://drafts.csswg.org/css-pseudo-4/#highlight-backgrounds
+  FastPaintSpellingGrammarDecorations(text_node, text, grammar_);
+  FastPaintSpellingGrammarDecorations(text_node, text, spelling_);
+}
+
+void NGHighlightPainter::FastPaintSpellingGrammarDecorations(
+    const Text& text_node,
+    const StringView& text,
+    const DocumentMarkerVector& markers) {
+  for (const DocumentMarker* marker : markers) {
+    const unsigned marker_start_offset =
+        GetTextContentOffset2(text_node, marker->StartOffset());
+    const unsigned marker_end_offset =
+        GetTextContentOffset2(text_node, marker->EndOffset());
+    const unsigned paint_start_offset =
+        ClampOffset(marker_start_offset, fragment_item_);
+    const unsigned paint_end_offset =
+        ClampOffset(marker_end_offset, fragment_item_);
+    if (paint_start_offset == paint_end_offset)
+      continue;
+    PaintOneSpellingGrammarDecoration(marker->GetType(), text,
+                                      paint_start_offset, paint_end_offset);
+  }
+}
+
+void NGHighlightPainter::PaintOneSpellingGrammarDecoration(
+    DocumentMarker::MarkerType type,
+    const StringView& text,
+    unsigned paint_start_offset,
+    unsigned paint_end_offset) {
+  if (fragment_item_.GetNode()->GetDocument().Printing())
+    return;
+
+  // If the new ::spelling-error and ::grammar-error pseudos are not enabled,
+  // use the old marker-based decorations for now.
+  if (!RuntimeEnabledFeatures::CSSSpellingGrammarErrorsEnabled() &&
+      !RuntimeEnabledFeatures::CSSPaintingForSpellingGrammarErrorsEnabled()) {
+    return DocumentMarkerPainter::PaintDocumentMarker(
+        paint_info_, box_origin_, originating_style_, type,
+        MarkerRectForForeground(fragment_item_, text, paint_start_offset,
+                                paint_end_offset),
+        HighlightPaintingUtils::HighlightTextDecorationColor(
+            layout_object_->GetDocument(), originating_style_, node_,
+            originating_text_style_.current_color, PseudoFor(type)));
+  }
+
+  if (!text_painter_.GetSvgState()) {
+    if (auto pseudo_style = HighlightPaintingUtils::HighlightPseudoStyle(
+            node_, originating_style_, PseudoFor(type))) {
+      const TextPaintStyle text_style =
+          HighlightPaintingUtils::HighlightPaintingStyle(
+              node_->GetDocument(), originating_style_, node_, PseudoFor(type),
+              originating_text_style_, paint_info_);
+      PaintOneSpellingGrammarDecoration(type, text, paint_start_offset,
+                                        paint_end_offset, *pseudo_style,
+                                        text_style, nullptr);
+      return;
+    }
+  }
+
+  // If they are not yet implemented (as is the case for SVG), or they have no
+  // styles (as there can be for non-HTML content or for HTML content with the
+  // wrong root), use the originating style with the decorations override set
+  // to a synthesised AppliedTextDecoration.
+  //
+  // For the synthesised decoration, just like with our real spelling/grammar
+  // decorations, the ‘text-decoration-style’, ‘text-decoration-thickness’, and
+  // ‘text-underline-offset’ are irrelevant.
+  //
+  // SVG painting currently ignores ::selection styles, and will malfunction
+  // or crash if asked to paint decorations introduced by highlight pseudos.
+  // TODO(crbug.com/1147859) is SVG spec ready for highlight decorations?
+  // TODO(crbug.com/1147859) https://github.com/w3c/svgwg/issues/894
+  const AppliedTextDecoration synthesised{
+      LineFor(type), {}, ColorFor(type), {}, {}};
+  PaintOneSpellingGrammarDecoration(type, text, paint_start_offset,
+                                    paint_end_offset, originating_style_,
+                                    originating_text_style_, &synthesised);
+}
+
+void NGHighlightPainter::PaintOneSpellingGrammarDecoration(
+    DocumentMarker::MarkerType marker_type,
+    const StringView& text,
+    unsigned paint_start_offset,
+    unsigned paint_end_offset,
+    const ComputedStyle& style,
     const TextPaintStyle& text_style,
-    DOMNodeId node_id,
-    const AutoDarkMode& auto_dark_mode) {
-  DCHECK(RuntimeEnabledFeatures::HighlightOverlayPaintingEnabled());
+    const AppliedTextDecoration* decoration_override) {
+  absl::optional<TextDecorationInfo> decoration_info{};
+  decoration_painter_.UpdateDecorationInfo(decoration_info, style, text_style,
+                                           decoration_override);
+
+  GraphicsContextStateSaver saver{paint_info_.context};
+  ClipToPartDecorations({HighlightLayer{LayerFor(marker_type)},
+                         paint_start_offset, paint_end_offset});
+
+  text_painter_.PaintDecorationsExceptLineThrough(
+      fragment_paint_info_.Slice(paint_start_offset, paint_end_offset),
+      fragment_item_, paint_info_, style, text_style, *decoration_info,
+      LineFor(marker_type), decoration_rect_);
+}
+
+void NGHighlightPainter::PaintOriginatingText(const TextPaintStyle& text_style,
+                                              DOMNodeId node_id) {
+  DCHECK_EQ(paint_case_, kOverlay);
 
   // First paint the shadows for the whole range.
   if (text_style.shadow) {
-    text_painter_.Paint(fragment_paint_info_.from, fragment_paint_info_.to,
+    text_painter_.Paint(fragment_paint_info_,
                         fragment_paint_info_.to - fragment_paint_info_.from,
-                        text_style, node_id, auto_dark_mode,
+                        text_style, node_id, foreground_auto_dark_mode_,
                         NGTextPainter::kShadowsOnly);
   }
 
   // Then paint the text proper for any unhighlighted parts in storage order,
   // so that they’re always on top of the shadows.
-  for (const HighlightPart& part : Parts()) {
+  for (const HighlightPart& part : parts_) {
     if (part.layer.type != HighlightLayerType::kOriginating)
       continue;
 
-    text_painter_.Paint(part.from, part.to, part.to - part.from, text_style,
-                        node_id, auto_dark_mode,
+    PaintDecorationsExceptLineThrough(part);
+    text_painter_.Paint(fragment_paint_info_.Slice(part.from, part.to),
+                        part.to - part.from, text_style, node_id,
+                        foreground_auto_dark_mode_,
                         NGTextPainter::kTextProperOnly);
+    PaintDecorationsOnlyLineThrough(part);
+    PaintSpellingGrammarDecorations(part);
   }
 }
 
 void NGHighlightPainter::PaintHighlightOverlays(
     const TextPaintStyle& originating_text_style,
     DOMNodeId node_id,
-    const AutoDarkMode& auto_dark_mode,
     bool paint_marker_backgrounds,
     absl::optional<AffineTransform> rotation) {
-  DCHECK(RuntimeEnabledFeatures::HighlightOverlayPaintingEnabled());
+  DCHECK_EQ(paint_case_, kOverlay);
 
   // |node| might not be a Text node (e.g. <br>), or it might be nullptr (e.g.
   // ::first-letter). In both cases, we should still try to paint kOriginating
@@ -600,24 +976,19 @@ void NGHighlightPainter::PaintHighlightOverlays(
 
   // For each overlay, paint its backgrounds and shadows over every highlighted
   // range in full.
-  TextPaintStyle previous_layer_text_style = originating_text_style;
-  for (const HighlightLayer& layer : layers_) {
-    if (layer.type == HighlightLayerType::kOriginating ||
-        layer.type == HighlightLayerType::kSelection)
+  for (const LayerPaintState& layer : layers_) {
+    if (layer.id.type == HighlightLayerType::kOriginating ||
+        layer.id.type == HighlightLayerType::kSelection)
       continue;
 
     const DocumentMarkerVector* markers =
-        SelectMarkers(layer, custom_, grammar_, spelling_, target_);
-    TextPaintStyle text_style = HighlightPaintingUtils::HighlightPaintingStyle(
-        document, style_, node_, layer.PseudoId(), previous_layer_text_style,
-        paint_info_, layer.PseudoArgument());
-    previous_layer_text_style = text_style;
+        SelectMarkers(layer.id, custom_, grammar_, spelling_, target_);
 
     for (const auto& marker : *markers) {
-      if (layer.type == HighlightLayerType::kCustom) {
+      if (layer.id.type == HighlightLayerType::kCustom) {
         // Filter custom highlight markers to one highlight at a time.
         auto* custom = To<CustomHighlightMarker>(marker.Get());
-        if (custom->GetHighlightName() != layer.PseudoArgument())
+        if (custom->GetHighlightName() != layer.id.PseudoArgument())
           continue;
       }
 
@@ -633,18 +1004,23 @@ void NGHighlightPainter::PaintHighlightOverlays(
 
       const StringView text = cursor_.CurrentText();
       Color background_color = HighlightPaintingUtils::HighlightBackgroundColor(
-          document, style_, node_, text_style.fill_color, layer.PseudoId(),
-          layer.PseudoArgument());
+          document, originating_style_, node_, layer.text_style.current_color,
+          layer.id.PseudoId(), layer.id.PseudoArgument());
 
       // TODO(dazabani@igalia.com) paint rects pixel-snapped in physical space,
       // not writing-mode space (SelectionPaintState::PaintSelectionBackground)
       PaintRect(paint_info_.context, PhysicalOffset(box_origin_),
                 fragment_item_.LocalRect(text, clamped_start, clamped_end),
-                background_color, auto_dark_mode);
+                background_color,
+                PaintAutoDarkMode(originating_style_,
+                                  DarkModeFilter::ElementRole::kSelection));
 
-      text_painter_.Paint(clamped_start, clamped_end, length, text_style,
-                          node_id, auto_dark_mode,
-                          TextPainterBase::kShadowsOnly);
+      if (layer.text_style.shadow) {
+        text_painter_.Paint(
+            fragment_paint_info_.Slice(clamped_start, clamped_end), length,
+            layer.text_style, node_id, foreground_auto_dark_mode_,
+            TextPainterBase::kShadowsOnly);
+      }
     }
   }
 
@@ -654,37 +1030,31 @@ void NGHighlightPainter::PaintHighlightOverlays(
   if (UNLIKELY(selection_)) {
     if (paint_marker_backgrounds) {
       selection_->PaintSelectionBackground(paint_info_.context, node_, document,
-                                           style_, rotation);
+                                           originating_style_, rotation);
     }
   }
 
   // For each overlay, paint the text proper over every highlighted range,
   // except any parts for which we’re not the topmost active highlight.
-  previous_layer_text_style = originating_text_style;
-  for (const HighlightLayer& layer : layers_) {
-    if (layer.type == HighlightLayerType::kOriginating ||
-        layer.type == HighlightLayerType::kSelection)
+  for (const LayerPaintState& layer : layers_) {
+    if (layer.id.type == HighlightLayerType::kOriginating ||
+        layer.id.type == HighlightLayerType::kSelection)
       continue;
 
-    TextPaintStyle text_style = HighlightPaintingUtils::HighlightPaintingStyle(
-        document, style_, node_, layer.PseudoId(), previous_layer_text_style,
-        paint_info_, layer.PseudoArgument());
-    previous_layer_text_style = text_style;
-
-    for (const HighlightPart& part : Parts()) {
-      if (part.layer != layer)
+    for (const HighlightPart& part : parts_) {
+      if (part.layer != layer.id)
         continue;
 
-      const unsigned clamped_start = ClampOffset(part.from, fragment_item_);
-      const unsigned clamped_end = ClampOffset(part.to, fragment_item_);
-
-      // TODO(crbug.com/1147859) paint originating decorations, as well as
-      // decorations added by each highlight
       // TODO(dazabani@igalia.com) expand range to include partial glyphs, then
       // paint with clipping (NGTextPainter::PaintSelectedText)
-      text_painter_.Paint(clamped_start, clamped_end,
-                          clamped_end - clamped_start, text_style, node_id,
-                          auto_dark_mode, TextPainterBase::kTextProperOnly);
+
+      PaintDecorationsExceptLineThrough(part);
+      text_painter_.Paint(fragment_paint_info_.Slice(part.from, part.to),
+                          part.to - part.from, layer.text_style, node_id,
+                          foreground_auto_dark_mode_,
+                          TextPainterBase::kTextProperOnly);
+      PaintDecorationsOnlyLineThrough(part);
+      PaintSpellingGrammarDecorations(part);
     }
   }
 
@@ -692,13 +1062,253 @@ void NGHighlightPainter::PaintHighlightOverlays(
   // TODO(dazabani@igalia.com) generalise ::selection painting logic to support
   // all highlights, then merge this branch into the loop above
   if (UNLIKELY(selection_)) {
-    unsigned length = fragment_paint_info_.to - fragment_paint_info_.from;
-    decoration_painter_.Begin(NGTextDecorationPainter::kSelection);
-    decoration_painter_.PaintExceptLineThrough();
-    selection_->PaintSelectedText(text_painter_, length, originating_text_style,
-                                  node_id, auto_dark_mode);
-    decoration_painter_.PaintOnlyLineThrough();
+    for (const HighlightPart& part : parts_) {
+      if (part.layer.type == HighlightLayerType::kSelection)
+        PaintDecorationsExceptLineThrough(part);
+    }
+
+    selection_->PaintSelectedText(
+        text_painter_, fragment_paint_info_, fragment_paint_info_.Length(),
+        originating_text_style, node_id, foreground_auto_dark_mode_);
+
+    for (const HighlightPart& part : parts_) {
+      if (part.layer.type == HighlightLayerType::kSelection) {
+        PaintDecorationsOnlyLineThrough(part);
+        PaintSpellingGrammarDecorations(part);
+      }
+    }
   }
+}
+
+void NGHighlightPainter::ClipToPartDecorations(const HighlightPart& part) {
+  const StringView text = cursor_.CurrentText();
+  PhysicalRect local_rect = fragment_item_.LocalRect(text, part.from, part.to);
+  PhysicalRect part_rect{box_origin_ + local_rect.offset, local_rect.size};
+  gfx::RectF clip_rect{part_rect};
+
+  if (writing_mode_rotation_)
+    clip_rect = writing_mode_rotation_->Inverse().MapRect(clip_rect);
+
+  // Whether it’s best to clip to selection rect on both axes or only inline
+  // depends on the situation, but the latter can improve the appearance of
+  // decorations. For example, we often paint overlines entirely past the
+  // top edge of selection rect, and wavy underlines have similar problems.
+  //
+  // Sadly there’s no way to clip to a rect of infinite height, so for now,
+  // let’s clip to selection rect plus its height both above and below. This
+  // should be enough to avoid clipping most decorations in the wild.
+  //
+  // TODO(dazabani@igalia.com): take text-underline-offset and other
+  // text-decoration properties into account?
+  clip_rect.set_y(clip_rect.y() - clip_rect.height());
+  clip_rect.set_height(3.0 * clip_rect.height());
+  paint_info_.context.Clip(clip_rect);
+}
+
+void NGHighlightPainter::PaintDecorationsExceptLineThrough(
+    const HighlightPart& part) {
+  // Line decorations in highlight pseudos are ordered first by the kind of line
+  // (underlines before overlines), then by the highlight layer they came from.
+  // https://github.com/w3c/csswg-drafts/issues/6022
+  PaintDecorationsExceptLineThrough(part, TextDecorationLine::kUnderline);
+  PaintDecorationsExceptLineThrough(part, TextDecorationLine::kOverline);
+  PaintDecorationsExceptLineThrough(
+      part,
+      TextDecorationLine::kSpellingError | TextDecorationLine::kGrammarError);
+}
+
+void NGHighlightPainter::PaintDecorationsExceptLineThrough(
+    const HighlightPart& part,
+    TextDecorationLine lines_to_paint) {
+  GraphicsContextStateSaver state_saver(paint_info_.context, false);
+
+  for (const HighlightLayer& decoration_layer_id : part.decorations) {
+    wtf_size_t decoration_layer_index = layers_.Find(decoration_layer_id);
+    DCHECK_NE(decoration_layer_index, kNotFound);
+
+    LayerPaintState& decoration_layer = layers_[decoration_layer_index];
+
+    // Clipping the canvas unnecessarily is expensive, so avoid doing it if
+    // there are no decorations of the given |lines_to_paint|.
+    if (!EnumHasFlags(decoration_layer.decorations_in_effect, lines_to_paint)) {
+      continue;
+    }
+
+    // SVG painting currently ignores ::selection styles, and will malfunction
+    // or crash if asked to paint decorations introduced by highlight pseudos.
+    // TODO(crbug.com/1147859) is SVG spec ready for highlight decorations?
+    // TODO(crbug.com/1147859) https://github.com/w3c/svgwg/issues/894
+    if (text_painter_.GetSvgState() &&
+        decoration_layer_id.type != HighlightLayerType::kOriginating) {
+      continue;
+    }
+
+    absl::optional<TextDecorationInfo> decoration_info_if_cache_miss{};
+    TextDecorationInfo& decoration_info =
+        DecorationInfoForLayer(decoration_layer, decoration_info_if_cache_miss);
+
+    if (!state_saver.Saved()) {
+      state_saver.Save();
+      ClipToPartDecorations(part);
+    }
+
+    if (part.layer.type != HighlightLayerType::kOriginating) {
+      if (decoration_layer_id.type == HighlightLayerType::kOriginating) {
+        wtf_size_t part_layer_index = layers_.Find(part.layer);
+        decoration_info.SetHighlightOverrideColor(
+            layers_[part_layer_index].text_style.current_color);
+      } else {
+        decoration_info.SetHighlightOverrideColor(
+            HighlightPaintingUtils::ResolveColor(
+                layout_object_->GetDocument(), originating_style_,
+                decoration_layer.style, decoration_layer.id.PseudoId(),
+                GetCSSPropertyTextDecorationColor(),
+                layers_[decoration_layer_index - 1].text_style.current_color));
+      }
+    }
+
+    text_painter_.PaintDecorationsExceptLineThrough(
+        fragment_paint_info_.Slice(part.from, part.to), fragment_item_,
+        paint_info_, *decoration_layer.style, decoration_layer.text_style,
+        decoration_info, lines_to_paint, decoration_rect_);
+  }
+}
+
+void NGHighlightPainter::PaintDecorationsOnlyLineThrough(
+    const HighlightPart& part) {
+  GraphicsContextStateSaver state_saver(paint_info_.context, false);
+
+  for (const HighlightLayer& decoration_layer_id : part.decorations) {
+    wtf_size_t decoration_layer_index = layers_.Find(decoration_layer_id);
+    DCHECK_NE(decoration_layer_index, kNotFound);
+
+    LayerPaintState& decoration_layer = layers_[decoration_layer_index];
+
+    // Clipping the canvas unnecessarily is expensive, so avoid doing it if
+    // there are no ‘line-through’ decorations.
+    if (!EnumHasFlags(decoration_layer.decorations_in_effect,
+                      TextDecorationLine::kLineThrough)) {
+      continue;
+    }
+
+    // SVG painting currently ignores ::selection styles, and will malfunction
+    // or crash if asked to paint decorations introduced by highlight pseudos.
+    // TODO(crbug.com/1147859) is SVG spec ready for highlight decorations?
+    // TODO(crbug.com/1147859) https://github.com/w3c/svgwg/issues/894
+    if (text_painter_.GetSvgState() &&
+        decoration_layer_id.type != HighlightLayerType::kOriginating) {
+      continue;
+    }
+
+    absl::optional<TextDecorationInfo> decoration_info_if_cache_miss{};
+    TextDecorationInfo& decoration_info =
+        DecorationInfoForLayer(decoration_layer, decoration_info_if_cache_miss);
+
+    if (!state_saver.Saved()) {
+      state_saver.Save();
+      ClipToPartDecorations(part);
+    }
+
+    if (part.layer.type != HighlightLayerType::kOriginating) {
+      if (decoration_layer_id.type == HighlightLayerType::kOriginating) {
+        wtf_size_t part_layer_index = layers_.Find(part.layer);
+        decoration_info.SetHighlightOverrideColor(
+            layers_[part_layer_index].text_style.current_color);
+      } else {
+        decoration_info.SetHighlightOverrideColor(
+            HighlightPaintingUtils::ResolveColor(
+                layout_object_->GetDocument(), originating_style_,
+                decoration_layer.style, decoration_layer.id.PseudoId(),
+                GetCSSPropertyTextDecorationColor(),
+                layers_[decoration_layer_index - 1].text_style.current_color));
+      }
+    }
+
+    text_painter_.PaintDecorationsOnlyLineThrough(
+        fragment_item_, paint_info_, *decoration_layer.style,
+        decoration_layer.text_style, decoration_info, decoration_rect_);
+  }
+}
+
+void NGHighlightPainter::PaintSpellingGrammarDecorations(
+    const HighlightPart& part) {
+  if (RuntimeEnabledFeatures::CSSSpellingGrammarErrorsEnabled())
+    return;
+
+  const StringView text = cursor_.CurrentText();
+  absl::optional<PhysicalRect> marker_rect{};
+
+  for (const HighlightLayer& decoration_layer_id : part.decorations) {
+    switch (decoration_layer_id.type) {
+      case HighlightLayerType::kSpelling:
+      case HighlightLayerType::kGrammar: {
+        wtf_size_t i = layers_.Find(decoration_layer_id);
+        DCHECK_NE(i, kNotFound);
+        const LayerPaintState& decoration_layer = layers_[i];
+
+        // TODO(crbug.com/1163436): remove once UA stylesheet sets ::spelling
+        // and ::grammar to text-decoration-line:{spelling,grammar}-error
+        if (decoration_layer.style &&
+            decoration_layer.style->HasAppliedTextDecorations()) {
+          break;
+        }
+
+        if (!marker_rect) {
+          marker_rect =
+              MarkerRectForForeground(fragment_item_, text, part.from, part.to);
+        }
+
+        DocumentMarkerPainter::PaintDocumentMarker(
+            paint_info_, box_origin_, originating_style_,
+            decoration_layer_id.type == HighlightLayerType::kSpelling
+                ? DocumentMarker::kSpelling
+                : DocumentMarker::kGrammar,
+            *marker_rect,
+            HighlightPaintingUtils::HighlightTextDecorationColor(
+                layout_object_->GetDocument(), originating_style_, node_,
+                layers_[i - 1].text_style.current_color,
+                decoration_layer_id.type == HighlightLayerType::kSpelling
+                    ? kPseudoIdSpellingError
+                    : kPseudoIdGrammarError));
+      } break;
+
+      default:
+        break;
+    }
+  }
+}
+
+TextDecorationInfo& NGHighlightPainter::DecorationInfoForLayer(
+    const LayerPaintState& layer,
+    absl::optional<TextDecorationInfo>& result_if_cache_miss) {
+  for (CachedDecorationInfo& cached_decorations : decoration_cache_) {
+    if (cached_decorations.id == layer.id) {
+      return cached_decorations.info.value();
+    }
+  }
+  decoration_painter_.UpdateDecorationInfo(result_if_cache_miss, *layer.style,
+                                           layer.text_style);
+  return result_if_cache_miss.value();
+}
+
+NGHighlightPainter::LayerPaintState::LayerPaintState(
+    NGHighlightOverlay::HighlightLayer id,
+    const ComputedStyle* style,
+    TextPaintStyle text_style)
+    : id(id),
+      style(style),
+      text_style(text_style),
+      decorations_in_effect(style ? style->TextDecorationsInEffect()
+                                  : TextDecorationLine::kNone) {}
+
+bool NGHighlightPainter::LayerPaintState::operator==(
+    const HighlightLayer& other) const {
+  return id == other;
+}
+
+bool NGHighlightPainter::LayerPaintState::operator!=(
+    const HighlightLayer& other) const {
+  return !operator==(other);
 }
 
 }  // namespace blink

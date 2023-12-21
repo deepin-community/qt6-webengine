@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,37 +11,74 @@
 
 namespace media::hls {
 
-SourceString SourceString::Create(base::PassKey<SourceLineIterator>,
-                                  size_t line,
-                                  base::StringPiece str) {
-  return SourceString(line, 1, str);
+namespace subtle {
+// static
+template <typename Self>
+Self SourceStringBase<Self>::CreateForTesting(base::StringPiece str) {
+  return Self(1, 1, str);
 }
 
-SourceString SourceString::CreateForTesting(base::StringPiece str) {
-  return SourceString::CreateForTesting(1, 1, str);
+// static
+template <typename Self>
+Self SourceStringBase<Self>::CreateForTesting(size_t line,
+                                              size_t column,
+                                              base::StringPiece str) {
+  return Self(line, column, str);
 }
 
-SourceString SourceString::CreateForTesting(size_t line,
-                                            size_t column,
-                                            base::StringPiece str) {
-  return SourceString(line, column, str);
+template <typename Self>
+Self SourceStringBase<Self>::Substr(size_t pos, size_t count) const {
+  Self result = static_cast<const Self&>(*this);
+  result.column_ = column_ + pos;
+  result.str_ = str_.substr(pos, count);
+  return result;
 }
 
-SourceString::SourceString(size_t line, size_t column, base::StringPiece str)
-    : line_(line), column_(column), str_(str) {}
-
-SourceString SourceString::Substr(size_t pos, size_t count) const {
-  const auto column = column_ + pos;
-  return SourceString(line_, column, str_.substr(pos, count));
-}
-
-SourceString SourceString::Consume(size_t count) {
+template <typename Self>
+Self SourceStringBase<Self>::Consume(size_t count) {
   count = std::min(count, str_.size());
 
   auto consumed = Substr(0, count);
-  *this = Substr(count);
+  static_cast<Self&>(*this) = Substr(count);
 
   return consumed;
+}
+
+template <typename Self>
+Self SourceStringBase<Self>::ConsumeDelimiter(char c) {
+  const auto index = Str().find_first_of(c);
+  const auto prefix = Consume(index);
+  Consume(1);
+  return prefix;
+}
+
+template <typename Self>
+void SourceStringBase<Self>::TrimStart() {
+  auto start = Str().find_first_not_of(" \t");
+  Consume(start);
+}
+
+template <typename Self>
+SourceStringBase<Self>::SourceStringBase(size_t line,
+                                         size_t column,
+                                         base::StringPiece str)
+    : line_(line), column_(column), str_(str) {}
+
+}  // namespace subtle
+
+SourceString::SourceString(size_t line, size_t column, base::StringPiece str)
+    : SourceStringBase(line, column, str) {}
+
+ResolvedSourceString::ResolvedSourceString(size_t line,
+                                           size_t column,
+                                           base::StringPiece str,
+                                           SubstitutionState substitution_state)
+    : SourceStringBase(line, column, str),
+      substitution_state_(substitution_state) {}
+
+ResolvedSourceString SourceString::SkipVariableSubstitution() const {
+  return ResolvedSourceString::Create(base::PassKey<SourceString>(), Line(),
+                                      Column(), Str());
 }
 
 SourceLineIterator::SourceLineIterator(base::StringPiece source)
@@ -74,5 +111,13 @@ ParseStatus::Or<SourceString> SourceLineIterator::Next() {
 
   return SourceString::Create({}, line_number, line_content);
 }
+
+// These forward declarations tell the compiler that we will use
+// `SourceStringBase` with these arguments, allowing us to keep these
+// definitions in our .cc without causing linker errors. This also means if
+// anyone tries to instantiate a `SourceStringBase` with anything but these
+// two specializations they'll most likely get linker errors.
+template class MEDIA_EXPORT subtle::SourceStringBase<SourceString>;
+template class MEDIA_EXPORT subtle::SourceStringBase<ResolvedSourceString>;
 
 }  // namespace media::hls

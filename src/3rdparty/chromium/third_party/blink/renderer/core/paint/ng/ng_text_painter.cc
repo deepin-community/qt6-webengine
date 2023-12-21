@@ -1,13 +1,14 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/core/paint/ng/ng_text_painter.h"
 
 #include "base/auto_reset.h"
-#include "base/stl_util.h"
+#include "base/types/optional_util.h"
 #include "cc/paint/paint_flags.h"
 #include "third_party/blink/renderer/core/css/css_property_names.h"
+#include "third_party/blink/renderer/core/css/properties/longhands.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
 #include "third_party/blink/renderer/core/layout/layout_object_inlines.h"
 #include "third_party/blink/renderer/core/layout/ng/inline/ng_fragment_item.h"
@@ -19,12 +20,13 @@
 #include "third_party/blink/renderer/core/paint/applied_decoration_painter.h"
 #include "third_party/blink/renderer/core/paint/box_painter.h"
 #include "third_party/blink/renderer/core/paint/paint_info.h"
-#include "third_party/blink/renderer/core/paint/paint_timing_detector.h"
 #include "third_party/blink/renderer/core/paint/svg_object_painter.h"
+#include "third_party/blink/renderer/core/paint/timing/paint_timing_detector.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
 #include "third_party/blink/renderer/core/style/shadow_list.h"
 #include "third_party/blink/renderer/core/svg/svg_element.h"
 #include "third_party/blink/renderer/platform/fonts/font.h"
+#include "third_party/blink/renderer/platform/fonts/ng_text_fragment_paint_info.h"
 #include "third_party/blink/renderer/platform/fonts/shaping/shape_result_view.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_context.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_context_state_saver.h"
@@ -61,15 +63,13 @@ SelectionStyleScope::SelectionStyleScope(const LayoutObject& layout_object,
   if (styles_are_equal_)
     return;
   DCHECK(!layout_object.IsSVGInlineText());
-  auto& element = To<SVGElement>(*layout_object_.GetNode());
-  SVGResources::UpdatePaints(element, nullptr, selection_style_);
+  SVGResources::UpdatePaints(layout_object_, nullptr, selection_style_);
 }
 
 SelectionStyleScope::~SelectionStyleScope() {
   if (styles_are_equal_)
     return;
-  auto& element = To<SVGElement>(*layout_object_.GetNode());
-  SVGResources::ClearPaints(element, &selection_style_);
+  SVGResources::ClearPaints(layout_object_, &selection_style_);
 }
 
 enum class SvgPaintMode { kText, kTextDecoration };
@@ -122,7 +122,7 @@ bool SetupPaintForSvgText(const NGTextPainter::SvgTextPaintState& state,
                                           ? *state.InlineText().Parent()
                                           : state.TextDecorationObject();
   if (!SVGObjectPainter(layout_parent)
-           .PreparePaint(context, state.IsRenderingClipPathAsMaskImage(), style,
+           .PreparePaint(state.IsRenderingClipPathAsMaskImage(), style,
                          resource_mode, flags, state.GetShaderTransform())) {
     return false;
   }
@@ -130,6 +130,9 @@ bool SetupPaintForSvgText(const NGTextPainter::SvgTextPaintState& state,
   flags.setAntiAlias(true);
 
   if (style.TextShadow() &&
+      // Text shadows are disabled for clip-paths, because they are not
+      // geometry.
+      !state.IsRenderingClipPathAsMaskImage() &&
       // Text shadows are disabled when printing. http://crbug.com/258321
       !layout_parent.GetDocument().Printing()) {
     flags.setLooper(TextPainterBase::CreateDrawLooper(
@@ -170,8 +173,7 @@ bool SetupPaintForSvgText(const NGTextPainter::SvgTextPaintState& state,
 
 }  // namespace
 
-void NGTextPainter::Paint(unsigned start_offset,
-                          unsigned end_offset,
+void NGTextPainter::Paint(const NGTextFragmentPaintInfo& fragment_paint_info,
                           unsigned length,
                           const TextPaintStyle& text_style,
                           DOMNodeId node_id,
@@ -181,13 +183,13 @@ void NGTextPainter::Paint(unsigned start_offset,
   UpdateGraphicsContext(graphics_context_, text_style, state_saver,
                         shadow_mode);
   // TODO(layout-dev): Handle combine text here or elsewhere.
-  PaintInternal<kPaintText>(start_offset, end_offset, length, node_id,
+  PaintInternal<kPaintText>(fragment_paint_info, length, node_id,
                             auto_dark_mode);
 
-  if (!emphasis_mark_.IsEmpty()) {
+  if (!emphasis_mark_.empty()) {
     if (text_style.emphasis_mark_color != text_style.fill_color)
       graphics_context_.SetFillColor(text_style.emphasis_mark_color);
-    PaintInternal<kPaintEmphasisMark>(start_offset, end_offset, length, node_id,
+    PaintInternal<kPaintEmphasisMark>(fragment_paint_info, length, node_id,
                                       auto_dark_mode);
   }
 }
@@ -196,15 +198,17 @@ void NGTextPainter::Paint(unsigned start_offset,
 // 1. Paint glyphs inside of |selection_rect| using |selection_style|, and
 //    outside using |text_style|.
 // 2. Paint parts of a ligature glyph.
-void NGTextPainter::PaintSelectedText(unsigned start_offset,
-                                      unsigned end_offset,
-                                      unsigned length,
-                                      const TextPaintStyle& text_style,
-                                      const TextPaintStyle& selection_style,
-                                      const PhysicalRect& selection_rect,
-                                      DOMNodeId node_id,
-                                      const AutoDarkMode& auto_dark_mode) {
-  if (!fragment_paint_info_.shape_result)
+void NGTextPainter::PaintSelectedText(
+    const NGTextFragmentPaintInfo& fragment_paint_info,
+    unsigned selection_start,
+    unsigned selection_end,
+    unsigned length,
+    const TextPaintStyle& text_style,
+    const TextPaintStyle& selection_style,
+    const PhysicalRect& selection_rect,
+    DOMNodeId node_id,
+    const AutoDarkMode& auto_dark_mode) {
+  if (!fragment_paint_info.shape_result)
     return;
 
   // Use fast path if all glyphs fit in |selection_rect|. |visual_rect_| is the
@@ -219,21 +223,21 @@ void NGTextPainter::PaintSelectedText(unsigned start_offset,
   // selection_rect is in the scaled coordinate system and visual_rect_ is
   // in the unscaled coordinate system. Checks text offsets too.
   if (snapped_selection_rect.Contains(visual_rect_) ||
-      (start_offset == fragment_paint_info_.from &&
-       end_offset == fragment_paint_info_.to)) {
+      (selection_start == fragment_paint_info.from &&
+       selection_end == fragment_paint_info.to)) {
     absl::optional<base::AutoReset<bool>> is_painting_selection_reset;
     if (NGTextPainter::SvgTextPaintState* state = GetSvgState())
       is_painting_selection_reset.emplace(&state->is_painting_selection_, true);
-    Paint(start_offset, end_offset, length, selection_style, node_id,
-          auto_dark_mode);
+    Paint(fragment_paint_info.Slice(selection_start, selection_end), length,
+          selection_style, node_id, auto_dark_mode);
     return;
   }
 
   // Adjust start/end offset when they are in the middle of a ligature. e.g.,
   // when |start_offset| is between a ligature of "fi", it needs to be adjusted
   // to before "f".
-  fragment_paint_info_.shape_result->ExpandRangeToIncludePartialGlyphs(
-      &start_offset, &end_offset);
+  fragment_paint_info.shape_result->ExpandRangeToIncludePartialGlyphs(
+      &selection_start, &selection_end);
 
   // Because only a part of the text glyph can be selected, we need to draw
   // the selection twice. First, draw the glyphs outside the selection area,
@@ -242,8 +246,8 @@ void NGTextPainter::PaintSelectedText(unsigned start_offset,
   {
     GraphicsContextStateSaver state_saver(graphics_context_);
     graphics_context_.ClipOut(float_selection_rect);
-    Paint(start_offset, end_offset, length, text_style, node_id, auto_dark_mode,
-          kTextProperOnly);
+    Paint(fragment_paint_info.Slice(selection_start, selection_end), length,
+          text_style, node_id, auto_dark_mode, kTextProperOnly);
   }
   // Then draw the glyphs inside the selection area, with the selection style.
   {
@@ -252,40 +256,42 @@ void NGTextPainter::PaintSelectedText(unsigned start_offset,
       is_painting_selection_reset.emplace(&state->is_painting_selection_, true);
     GraphicsContextStateSaver state_saver(graphics_context_);
     graphics_context_.Clip(float_selection_rect);
-    Paint(start_offset, end_offset, length, selection_style, node_id,
-          auto_dark_mode);
+    Paint(fragment_paint_info.Slice(selection_start, selection_end), length,
+          selection_style, node_id, auto_dark_mode);
   }
 }
 
 void NGTextPainter::PaintDecorationsExceptLineThrough(
+    const NGTextFragmentPaintInfo& fragment_paint_info,
     const NGFragmentItem& text_item,
     const PaintInfo& paint_info,
     const ComputedStyle& style,
     const TextPaintStyle& text_style,
     TextDecorationInfo& decoration_info,
-    const PhysicalRect& decoration_rect,
-    bool* has_line_through_decoration) {
-  *has_line_through_decoration = false;
+    TextDecorationLine lines_to_paint,
+    const PhysicalRect& decoration_rect) {
+  if (!decoration_info.HasAnyLine(lines_to_paint &
+                                  ~TextDecorationLine::kLineThrough))
+    return;
 
-  const NGTextDecorationOffset decoration_offset(decoration_info.Style(),
-                                                 text_item.Style(), nullptr);
+  const NGTextDecorationOffset decoration_offset(decoration_info.TargetStyle(),
+                                                 text_item.Style());
 
-  if (svg_text_paint_state_.has_value()) {
+  if (svg_text_paint_state_.has_value() &&
+      !decoration_info.HasDecorationOverride()) {
     GraphicsContextStateSaver state_saver(paint_info.context, false);
     if (paint_info.IsRenderingResourceSubtree()) {
       state_saver.SaveIfNeeded();
       paint_info.context.Scale(
           1, text_item.SvgScalingFactor() / decoration_info.ScalingFactor());
     }
-    PaintSvgDecorationsExceptLineThrough(
-        decoration_offset, decoration_info, paint_info,
-        style.AppliedTextDecorations(), text_style,
-        has_line_through_decoration);
+    PaintSvgDecorationsExceptLineThrough(fragment_paint_info, decoration_offset,
+                                         decoration_info, lines_to_paint,
+                                         paint_info, text_style);
   } else {
-    TextPainterBase::PaintDecorationsExceptLineThrough(
-        decoration_offset, decoration_info, paint_info,
-        style.AppliedTextDecorations(), text_style,
-        has_line_through_decoration);
+    NGTextPainterBase::PaintUnderOrOverLineDecorations(
+        fragment_paint_info, decoration_offset, decoration_info, lines_to_paint,
+        paint_info, text_style, nullptr);
   }
 }
 
@@ -296,37 +302,35 @@ void NGTextPainter::PaintDecorationsOnlyLineThrough(
     const TextPaintStyle& text_style,
     TextDecorationInfo& decoration_info,
     const PhysicalRect& decoration_rect) {
-  if (svg_text_paint_state_.has_value()) {
+  if (!decoration_info.HasAnyLine(TextDecorationLine::kLineThrough))
+    return;
+
+  if (svg_text_paint_state_.has_value() &&
+      !decoration_info.HasDecorationOverride()) {
     GraphicsContextStateSaver state_saver(paint_info.context, false);
     if (paint_info.IsRenderingResourceSubtree()) {
       state_saver.SaveIfNeeded();
       paint_info.context.Scale(
           1, text_item.SvgScalingFactor() / decoration_info.ScalingFactor());
     }
-    PaintSvgDecorationsOnlyLineThrough(decoration_info, paint_info,
-                                       style.AppliedTextDecorations(),
-                                       text_style);
+    PaintSvgDecorationsOnlyLineThrough(decoration_info, paint_info, text_style);
   } else {
-    TextPainterBase::PaintDecorationsOnlyLineThrough(
-        decoration_info, paint_info, style.AppliedTextDecorations(),
-        text_style);
+    TextPainterBase::PaintDecorationsOnlyLineThrough(decoration_info,
+                                                     paint_info, text_style);
   }
 }
 
 template <NGTextPainter::PaintInternalStep step>
-void NGTextPainter::PaintInternalFragment(unsigned from,
-                                          unsigned to,
-                                          DOMNodeId node_id,
-                                          const AutoDarkMode& auto_dark_mode) {
-  DCHECK(from <= fragment_paint_info_.text.length());
-  DCHECK(to <= fragment_paint_info_.text.length());
-
-  fragment_paint_info_.from = from;
-  fragment_paint_info_.to = to;
+void NGTextPainter::PaintInternalFragment(
+    const NGTextFragmentPaintInfo& fragment_paint_info,
+    DOMNodeId node_id,
+    const AutoDarkMode& auto_dark_mode) {
+  DCHECK(fragment_paint_info.from <= fragment_paint_info.text.length());
+  DCHECK(fragment_paint_info.to <= fragment_paint_info.text.length());
 
   if (step == kPaintEmphasisMark) {
     graphics_context_.DrawEmphasisMarks(
-        font_, fragment_paint_info_, emphasis_mark_,
+        font_, fragment_paint_info, emphasis_mark_,
         gfx::PointF(text_origin_) + gfx::Vector2dF(0, emphasis_mark_offset_),
         auto_dark_mode);
   } else {
@@ -334,15 +338,21 @@ void NGTextPainter::PaintInternalFragment(unsigned from,
     if (svg_text_paint_state_.has_value()) {
       AutoDarkMode svg_text_auto_dark_mode(DarkModeFilter::ElementRole::kSVG,
                                            auto_dark_mode.enabled);
-      PaintSvgTextFragment(node_id, svg_text_auto_dark_mode);
+      PaintSvgTextFragment(fragment_paint_info, node_id,
+                           svg_text_auto_dark_mode);
     } else {
-      graphics_context_.DrawText(font_, fragment_paint_info_,
+      graphics_context_.DrawText(font_, fragment_paint_info,
                                  gfx::PointF(text_origin_), node_id,
                                  auto_dark_mode);
     }
-    // TODO(npm): Check that there are non-whitespace characters. See
-    // crbug.com/788444.
-    graphics_context_.GetPaintController().SetTextPainted();
+
+    // TODO(sohom): SubstringContainsOnlyWhitespaceOrEmpty() does not check
+    // for all whitespace characters as defined in the spec definition of
+    // whitespace. See https://w3c.github.io/paint-timing/#non-empty
+    // In particular 0xb and 0xc are not checked.
+    if (!fragment_paint_info.text.SubstringContainsOnlyWhitespaceOrEmpty(
+            fragment_paint_info.from, fragment_paint_info.to))
+      graphics_context_.GetPaintController().SetTextPainted();
 
     if (!font_.ShouldSkipDrawing())
       PaintTimingDetector::NotifyTextPaint(visual_rect_);
@@ -350,48 +360,52 @@ void NGTextPainter::PaintInternalFragment(unsigned from,
 }
 
 template <NGTextPainter::PaintInternalStep Step>
-void NGTextPainter::PaintInternal(unsigned start_offset,
-                                  unsigned end_offset,
-                                  unsigned truncation_point,
-                                  DOMNodeId node_id,
-                                  const AutoDarkMode& auto_dark_mode) {
+void NGTextPainter::PaintInternal(
+    const NGTextFragmentPaintInfo& fragment_paint_info,
+    unsigned truncation_point,
+    DOMNodeId node_id,
+    const AutoDarkMode& auto_dark_mode) {
   // TODO(layout-dev): We shouldn't be creating text fragments without text.
-  if (!fragment_paint_info_.shape_result)
+  if (!fragment_paint_info.shape_result)
     return;
 
-  if (start_offset <= end_offset) {
-    PaintInternalFragment<Step>(start_offset, end_offset, node_id,
-                                auto_dark_mode);
+  if (fragment_paint_info.from <= fragment_paint_info.to) {
+    PaintInternalFragment<Step>(fragment_paint_info, node_id, auto_dark_mode);
   } else {
-    if (end_offset > 0) {
-      PaintInternalFragment<Step>(ellipsis_offset_, end_offset, node_id,
-                                  auto_dark_mode);
+    if (fragment_paint_info.to > 0) {
+      PaintInternalFragment<Step>(
+          fragment_paint_info.WithStartOffset(ellipsis_offset_), node_id,
+          auto_dark_mode);
     }
-    if (start_offset < truncation_point) {
-      PaintInternalFragment<Step>(start_offset, truncation_point, node_id,
-                                  auto_dark_mode);
+    if (fragment_paint_info.from < truncation_point) {
+      PaintInternalFragment<Step>(
+          fragment_paint_info.WithEndOffset(truncation_point), node_id,
+          auto_dark_mode);
     }
   }
 }
 
-void NGTextPainter::ClipDecorationsStripe(float upper,
-                                          float stripe_width,
-                                          float dilation) {
-  if (fragment_paint_info_.from >= fragment_paint_info_.to ||
-      !fragment_paint_info_.shape_result)
+void NGTextPainter::ClipDecorationsStripe(
+    const NGTextFragmentPaintInfo& fragment_paint_info,
+    float upper,
+    float stripe_width,
+    float dilation) {
+  if (fragment_paint_info.from >= fragment_paint_info.to ||
+      !fragment_paint_info.shape_result)
     return;
 
   Vector<Font::TextIntercept> text_intercepts;
-  font_.GetTextIntercepts(
-      fragment_paint_info_, graphics_context_.DeviceScaleFactor(),
-      graphics_context_.FillFlags(),
-      std::make_tuple(upper, upper + stripe_width), text_intercepts);
+  font_.GetTextIntercepts(fragment_paint_info, graphics_context_.FillFlags(),
+                          std::make_tuple(upper, upper + stripe_width),
+                          text_intercepts);
 
   DecorationsStripeIntercepts(upper, stripe_width, dilation, text_intercepts);
 }
 
-void NGTextPainter::PaintSvgTextFragment(DOMNodeId node_id,
-                                         const AutoDarkMode& auto_dark_mode) {
+void NGTextPainter::PaintSvgTextFragment(
+    const NGTextFragmentPaintInfo& fragment_paint_info,
+    DOMNodeId node_id,
+    const AutoDarkMode& auto_dark_mode) {
   const NGTextPainter::SvgTextPaintState& state = svg_text_paint_state_.value();
   if (state.IsPaintingTextMatch()) {
     cc::PaintFlags fill_flags;
@@ -407,11 +421,11 @@ void NGTextPainter::PaintSvgTextFragment(DOMNodeId node_id,
       stroke_flags.setLooper(nullptr);
       stroke_flags.setColor(state.TextMatchColor().Rgb());
     }
-    graphics_context_.DrawText(font_, fragment_paint_info_,
+    graphics_context_.DrawText(font_, fragment_paint_info,
                                gfx::PointF(text_origin_), fill_flags, node_id,
                                auto_dark_mode);
     if (should_paint_stroke) {
-      graphics_context_.DrawText(font_, fragment_paint_info_,
+      graphics_context_.DrawText(font_, fragment_paint_info,
                                  gfx::PointF(text_origin_), stroke_flags,
                                  node_id, auto_dark_mode);
     }
@@ -449,7 +463,7 @@ void NGTextPainter::PaintSvgTextFragment(DOMNodeId node_id,
       cc::PaintFlags flags;
       if (SetupPaintForSvgText(state, graphics_context_, style_to_paint,
                                SvgPaintMode::kText, *resource_mode, flags)) {
-        graphics_context_.DrawText(font_, fragment_paint_info_,
+        graphics_context_.DrawText(font_, fragment_paint_info,
                                    gfx::PointF(text_origin_), flags, node_id,
                                    auto_dark_mode);
       }
@@ -458,12 +472,12 @@ void NGTextPainter::PaintSvgTextFragment(DOMNodeId node_id,
 }
 
 void NGTextPainter::PaintSvgDecorationsExceptLineThrough(
+    const NGTextFragmentPaintInfo& fragment_paint_info,
     const TextDecorationOffsetBase& decoration_offset,
     TextDecorationInfo& decoration_info,
+    TextDecorationLine lines_to_paint,
     const PaintInfo& paint_info,
-    const Vector<AppliedTextDecoration>& decorations,
-    const TextPaintStyle& text_style,
-    bool* has_line_through_decoration) {
+    const TextPaintStyle& text_style) {
   const NGTextPainter::SvgTextPaintState& state = svg_text_paint_state_.value();
   absl::optional<SelectionStyleScope> selection_style_scope;
   bool has_fill = false;
@@ -497,9 +511,9 @@ void NGTextPainter::PaintSvgDecorationsExceptLineThrough(
       if (SetupPaintForSvgText(state, graphics_context_, style_to_paint,
                                SvgPaintMode::kTextDecoration, *resource_mode,
                                flags)) {
-        TextPainterBase::PaintDecorationsExceptLineThrough(
-            decoration_offset, decoration_info, paint_info, decorations,
-            text_style, has_line_through_decoration, &flags);
+        NGTextPainterBase::PaintUnderOrOverLineDecorations(
+            fragment_paint_info, decoration_offset, decoration_info,
+            lines_to_paint, paint_info, text_style, &flags);
       }
     }
   }
@@ -508,7 +522,6 @@ void NGTextPainter::PaintSvgDecorationsExceptLineThrough(
 void NGTextPainter::PaintSvgDecorationsOnlyLineThrough(
     TextDecorationInfo& decoration_info,
     const PaintInfo& paint_info,
-    const Vector<AppliedTextDecoration>& decorations,
     const TextPaintStyle& text_style) {
   const NGTextPainter::SvgTextPaintState& state = svg_text_paint_state_.value();
   absl::optional<SelectionStyleScope> selection_style_scope;
@@ -544,7 +557,7 @@ void NGTextPainter::PaintSvgDecorationsOnlyLineThrough(
                                SvgPaintMode::kTextDecoration, *resource_mode,
                                flags)) {
         TextPainterBase::PaintDecorationsOnlyLineThrough(
-            decoration_info, paint_info, decorations, text_style, &flags);
+            decoration_info, paint_info, text_style, &flags);
       }
     }
   }
@@ -568,7 +581,7 @@ NGTextPainter::SvgTextPaintState& NGTextPainter::SetSvgState(
 }
 
 NGTextPainter::SvgTextPaintState* NGTextPainter::GetSvgState() {
-  return base::OptionalOrNullptr(svg_text_paint_state_);
+  return base::OptionalToPtr(svg_text_paint_state_);
 }
 
 NGTextPainter::SvgTextPaintState::SvgTextPaintState(
@@ -646,7 +659,7 @@ AffineTransform& NGTextPainter::SvgTextPaintState::EnsureShaderTransform() {
 
 const AffineTransform* NGTextPainter::SvgTextPaintState::GetShaderTransform()
     const {
-  return base::OptionalOrNullptr(shader_transform_);
+  return base::OptionalToPtr(shader_transform_);
 }
 
 }  // namespace blink

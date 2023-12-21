@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -26,9 +26,10 @@ base::AtomicSequenceNumber g_user_script_id_generator;
 
 bool UrlMatchesGlobs(const std::vector<std::string>* globs,
                      const GURL& url) {
-  for (auto glob = globs->cbegin(); glob != globs->cend(); ++glob) {
-    if (base::MatchPattern(url.spec(), *glob))
+  for (const auto& glob : *globs) {
+    if (base::MatchPattern(url.spec(), glob)) {
       return true;
+    }
   }
 
   return false;
@@ -91,7 +92,7 @@ UserScript::File::File(const base::FilePath& extension_root,
       url_(url) {
 }
 
-UserScript::File::File() {}
+UserScript::File::File() = default;
 
 // File content is not copied.
 UserScript::File::File(const File& other)
@@ -99,7 +100,7 @@ UserScript::File::File(const File& other)
       relative_path_(other.relative_path_),
       url_(other.url_) {}
 
-UserScript::File::~File() {}
+UserScript::File::~File() = default;
 
 UserScript::UserScript() = default;
 UserScript::~UserScript() = default;

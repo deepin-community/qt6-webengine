@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -69,7 +69,6 @@ public class WebLayerNotificationChannels extends ChannelDefinitions {
     }
 
     // Map defined in static inner class so it's only initialized lazily.
-    @RequiresApi(Build.VERSION_CODES.N) // for NotificationManager.IMPORTANCE_* constants
     private static class PredefinedChannels {
         static final Map<String, PredefinedChannel> MAP;
 

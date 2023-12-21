@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -139,6 +139,7 @@ class NGInlineItemsBuilderTemplate {
 
   OffsetMappingBuilder& GetOffsetMappingBuilder() { return mapping_builder_; }
 
+  void SetHasInititialLetterBox();
   void SetIsSymbolMarker();
 
   bool ShouldAbort() const { return false; }
@@ -177,9 +178,9 @@ class NGInlineItemsBuilderTemplate {
   struct BoxInfo {
     DISALLOW_NEW();
 
+    const ComputedStyle& style;
     unsigned item_index;
     bool should_create_box_fragment;
-    bool may_have_margin_;
     FontHeight text_metrics;
 
     BoxInfo(unsigned item_index, const NGInlineItem& item);
@@ -194,6 +195,7 @@ class NGInlineItemsBuilderTemplate {
 
   const bool is_text_combine_;
   bool has_bidi_controls_ = false;
+  bool has_initial_letter_box_ = false;
   bool has_ruby_ = false;
   bool is_block_level_ = true;
   bool has_unicode_bidi_plain_text_ = false;

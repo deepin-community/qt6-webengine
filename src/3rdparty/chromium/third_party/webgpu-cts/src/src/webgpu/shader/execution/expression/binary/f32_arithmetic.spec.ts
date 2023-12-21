@@ -4,89 +4,106 @@ Execution Tests for the f32 arithmetic binary expression operations
 
 import { makeTestGroup } from '../../../../../common/framework/test_group.js';
 import { GPUTest } from '../../../../gpu_test.js';
-import { anyOf, correctlyRoundedThreshold, ulpThreshold } from '../../../../util/compare.js';
-import { kValue } from '../../../../util/constants.js';
-import { f32, Scalar, TypeF32 } from '../../../../util/conversion.js';
+import { TypeF32 } from '../../../../util/conversion.js';
 import {
-  biasedRange,
-  isSubnormalNumber,
-  linearRange,
-  quantizeToF32,
-} from '../../../../util/math.js';
-import { Case, Config, run } from '../expression.js';
+  additionInterval,
+  divisionInterval,
+  multiplicationInterval,
+  remainderInterval,
+  subtractionInterval,
+} from '../../../../util/f32_interval.js';
+import { fullF32Range } from '../../../../util/math.js';
+import { makeCaseCache } from '../case_cache.js';
+import { allInputSources, generateBinaryToF32IntervalCases, run } from '../expression.js';
 
 import { binary } from './binary.js';
 
 export const g = makeTestGroup(GPUTest);
 
-/* Generates an array of numbers spread over the entire range of 32-bit floats */
-function fullNumericRange(): Array<number> {
-  return [
-    ...biasedRange(kValue.f32.negative.max, kValue.f32.negative.min, 50),
-    ...linearRange(kValue.f32.subnormal.negative.min, kValue.f32.subnormal.negative.max, 10),
-    0.0,
-    ...linearRange(kValue.f32.subnormal.positive.min, kValue.f32.subnormal.positive.max, 10),
-    ...biasedRange(kValue.f32.positive.min, kValue.f32.positive.max, 50),
-  ];
-}
-
-/**
- * Produces all of the results for a binary op and a specific pair of params, accounting for if subnormal results can be
- * flushed to zero.
- * Does not account for the inputs being flushed.
- * @param lhs the left hand side to pass into the binary operation
- * @param rhs the rhs hand side to pass into the binary operation
- * @param op callback that implements the truth function for the binary operation
- */
-function calculateResults(
-  lhs: number,
-  rhs: number,
-  op: (l: number, r: number) => number
-): Array<Scalar> {
-  const results: Array<Scalar> = [];
-  const value = op(lhs, rhs);
-  results.push(f32(value));
-  if (isSubnormalNumber(value)) {
-    results.push(f32(0.0));
-  }
-  return results;
-}
-
-/**
- * Generates a Case for the params and binary op provide.
- * @param lhs the left hand side to pass into the binary operation
- * @param rhs the rhs hand side to pass into the binary operation
- * @param op callback that implements the truth function for the binary operation
- * @param skip_rhs_zero_flush should the builder skip cases where the rhs would be flushed to 0, this is primarily for
- *                            avoid doing division by 0. The caller is responsible for making sure the initial rhs isn't
- *                            0.
- */
-function makeCaseImpl(
-  lhs: number,
-  rhs: number,
-  op: (l: number, r: number) => number,
-  skip_rhs_zero_flush: boolean = false
-): Case {
-  const f32_lhs = quantizeToF32(lhs);
-  const f32_rhs = quantizeToF32(rhs);
-  const is_lhs_subnormal = isSubnormalNumber(f32_lhs);
-  const is_rhs_subnormal = isSubnormalNumber(f32_rhs);
-  const expected = calculateResults(f32_lhs, f32_rhs, op);
-  if (is_lhs_subnormal) {
-    expected.push(...calculateResults(0.0, f32_rhs, op));
-  }
-  if (!skip_rhs_zero_flush && is_rhs_subnormal) {
-    expected.push(...calculateResults(f32_lhs, 0.0, op));
-  }
-  if (!skip_rhs_zero_flush && is_lhs_subnormal && is_rhs_subnormal) {
-    expected.push(...calculateResults(0.0, 0.0, op));
-  }
-
-  return { input: [f32(lhs), f32(rhs)], expected: anyOf(...expected) };
-}
+export const d = makeCaseCache('binary/f32_arithmetic', {
+  addition_const: () => {
+    return generateBinaryToF32IntervalCases(
+      fullF32Range(),
+      fullF32Range(),
+      'f32-only',
+      additionInterval
+    );
+  },
+  addition_non_const: () => {
+    return generateBinaryToF32IntervalCases(
+      fullF32Range(),
+      fullF32Range(),
+      'unfiltered',
+      additionInterval
+    );
+  },
+  subtraction_const: () => {
+    return generateBinaryToF32IntervalCases(
+      fullF32Range(),
+      fullF32Range(),
+      'f32-only',
+      subtractionInterval
+    );
+  },
+  subtraction_non_const: () => {
+    return generateBinaryToF32IntervalCases(
+      fullF32Range(),
+      fullF32Range(),
+      'unfiltered',
+      subtractionInterval
+    );
+  },
+  multiplication_const: () => {
+    return generateBinaryToF32IntervalCases(
+      fullF32Range(),
+      fullF32Range(),
+      'f32-only',
+      multiplicationInterval
+    );
+  },
+  multiplication_non_const: () => {
+    return generateBinaryToF32IntervalCases(
+      fullF32Range(),
+      fullF32Range(),
+      'unfiltered',
+      multiplicationInterval
+    );
+  },
+  division_const: () => {
+    return generateBinaryToF32IntervalCases(
+      fullF32Range(),
+      fullF32Range(),
+      'f32-only',
+      divisionInterval
+    );
+  },
+  division_non_const: () => {
+    return generateBinaryToF32IntervalCases(
+      fullF32Range(),
+      fullF32Range(),
+      'unfiltered',
+      divisionInterval
+    );
+  },
+  remainder_const: () => {
+    return generateBinaryToF32IntervalCases(
+      fullF32Range(),
+      fullF32Range(),
+      'f32-only',
+      remainderInterval
+    );
+  },
+  remainder_non_const: () => {
+    return generateBinaryToF32IntervalCases(
+      fullF32Range(),
+      fullF32Range(),
+      'unfiltered',
+      remainderInterval
+    );
+  },
+});
 
 g.test('addition')
-  .uniqueId('xxxxxxxxx')
   .specURL('https://www.w3.org/TR/WGSL/#floating-point-evaluation')
   .desc(
     `
@@ -95,33 +112,16 @@ Accuracy: Correctly rounded
 `
   )
   .params(u =>
-    u
-      .combine('storageClass', ['uniform', 'storage_r', 'storage_rw'] as const)
-      .combine('vectorize', [undefined, 2, 3, 4] as const)
+    u.combine('inputSource', allInputSources).combine('vectorize', [undefined, 2, 3, 4] as const)
   )
   .fn(async t => {
-    const cfg: Config = t.params;
-    cfg.cmpFloats = correctlyRoundedThreshold();
-
-    const makeCase = (lhs: number, rhs: number): Case => {
-      return makeCaseImpl(lhs, rhs, (l: number, r: number): number => {
-        return l + r;
-      });
-    };
-
-    const cases: Array<Case> = [];
-    const numeric_range = fullNumericRange();
-    numeric_range.forEach(lhs => {
-      numeric_range.forEach(rhs => {
-        cases.push(makeCase(lhs, rhs));
-      });
-    });
-
-    run(t, binary('+'), [TypeF32, TypeF32], TypeF32, cfg, cases);
+    const cases = await d.get(
+      t.params.inputSource === 'const' ? 'addition_const' : 'addition_non_const'
+    );
+    await run(t, binary('+'), [TypeF32, TypeF32], TypeF32, t.params, cases);
   });
 
 g.test('subtraction')
-  .uniqueId('xxxxxxxxx')
   .specURL('https://www.w3.org/TR/WGSL/#floating-point-evaluation')
   .desc(
     `
@@ -130,33 +130,16 @@ Accuracy: Correctly rounded
 `
   )
   .params(u =>
-    u
-      .combine('storageClass', ['uniform', 'storage_r', 'storage_rw'] as const)
-      .combine('vectorize', [undefined, 2, 3, 4] as const)
+    u.combine('inputSource', allInputSources).combine('vectorize', [undefined, 2, 3, 4] as const)
   )
   .fn(async t => {
-    const cfg: Config = t.params;
-    cfg.cmpFloats = correctlyRoundedThreshold();
-
-    const makeCase = (lhs: number, rhs: number): Case => {
-      return makeCaseImpl(lhs, rhs, (l: number, r: number): number => {
-        return l - r;
-      });
-    };
-
-    const cases: Array<Case> = [];
-    const numeric_range = fullNumericRange();
-    numeric_range.forEach(lhs => {
-      numeric_range.forEach(rhs => {
-        cases.push(makeCase(lhs, rhs));
-      });
-    });
-
-    run(t, binary('-'), [TypeF32, TypeF32], TypeF32, cfg, cases);
+    const cases = await d.get(
+      t.params.inputSource === 'const' ? 'subtraction_const' : 'subtraction_non_const'
+    );
+    await run(t, binary('-'), [TypeF32, TypeF32], TypeF32, t.params, cases);
   });
 
 g.test('multiplication')
-  .uniqueId('xxxxxxxxx')
   .specURL('https://www.w3.org/TR/WGSL/#floating-point-evaluation')
   .desc(
     `
@@ -165,33 +148,16 @@ Accuracy: Correctly rounded
 `
   )
   .params(u =>
-    u
-      .combine('storageClass', ['uniform', 'storage_r', 'storage_rw'] as const)
-      .combine('vectorize', [undefined, 2, 3, 4] as const)
+    u.combine('inputSource', allInputSources).combine('vectorize', [undefined, 2, 3, 4] as const)
   )
   .fn(async t => {
-    const cfg: Config = t.params;
-    cfg.cmpFloats = correctlyRoundedThreshold();
-
-    const makeCase = (lhs: number, rhs: number): Case => {
-      return makeCaseImpl(lhs, rhs, (l: number, r: number): number => {
-        return l * r;
-      });
-    };
-
-    const cases: Array<Case> = [];
-    const numeric_range = fullNumericRange();
-    numeric_range.forEach(lhs => {
-      numeric_range.forEach(rhs => {
-        cases.push(makeCase(lhs, rhs));
-      });
-    });
-
-    run(t, binary('*'), [TypeF32, TypeF32], TypeF32, cfg, cases);
+    const cases = await d.get(
+      t.params.inputSource === 'const' ? 'multiplication_const' : 'multiplication_non_const'
+    );
+    await run(t, binary('*'), [TypeF32, TypeF32], TypeF32, t.params, cases);
   });
 
 g.test('division')
-  .uniqueId('xxxxxxxxx')
   .specURL('https://www.w3.org/TR/WGSL/#floating-point-evaluation')
   .desc(
     `
@@ -200,42 +166,16 @@ Accuracy: 2.5 ULP for |y| in the range [2^-126, 2^126]
 `
   )
   .params(u =>
-    u
-      .combine('storageClass', ['uniform', 'storage_r', 'storage_rw'] as const)
-      .combine('vectorize', [undefined, 2, 3, 4] as const)
+    u.combine('inputSource', allInputSources).combine('vectorize', [undefined, 2, 3, 4] as const)
   )
   .fn(async t => {
-    const cfg: Config = t.params;
-    cfg.cmpFloats = ulpThreshold(2.5);
-
-    const makeCase = (lhs: number, rhs: number): Case => {
-      return makeCaseImpl(
-        lhs,
-        rhs,
-        (l: number, r: number): number => {
-          return l / r;
-        },
-        true
-      );
-    };
-
-    const cases: Array<Case> = [];
-    const lhs_numeric_range = fullNumericRange();
-    const rhs_numeric_range = biasedRange(2 ** -126, 2 ** 126, 200).filter(value => {
-      return value !== 0.0;
-    });
-    lhs_numeric_range.forEach(lhs => {
-      rhs_numeric_range.forEach(rhs => {
-        cases.push(makeCase(lhs, rhs));
-      });
-    });
-
-    run(t, binary('/'), [TypeF32, TypeF32], TypeF32, cfg, cases);
+    const cases = await d.get(
+      t.params.inputSource === 'const' ? 'division_const' : 'division_non_const'
+    );
+    await run(t, binary('/'), [TypeF32, TypeF32], TypeF32, t.params, cases);
   });
 
-// Will be implemented as part larger derived accuracy task
-g.test('modulus')
-  .uniqueId('xxxxxxxxx')
+g.test('remainder')
   .specURL('https://www.w3.org/TR/WGSL/#floating-point-evaluation')
   .desc(
     `
@@ -243,5 +183,12 @@ Expression: x % y
 Accuracy: Derived from x - y * trunc(x/y)
 `
   )
-  .params(u => u.combine('placeHolder1', ['placeHolder2', 'placeHolder3']))
-  .unimplemented();
+  .params(u =>
+    u.combine('inputSource', allInputSources).combine('vectorize', [undefined, 2, 3, 4] as const)
+  )
+  .fn(async t => {
+    const cases = await d.get(
+      t.params.inputSource === 'const' ? 'remainder_const' : 'remainder_non_const'
+    );
+    await run(t, binary('%'), [TypeF32, TypeF32], TypeF32, t.params, cases);
+  });

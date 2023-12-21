@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -39,8 +39,8 @@ FrameNavigationState::~FrameNavigationState() = default;
 
 // static
 bool FrameNavigationState::IsValidUrl(const GURL& url) {
-  for (unsigned i = 0; i < std::size(kValidSchemes); ++i) {
-    if (url.scheme() == kValidSchemes[i])
+  for (const auto* valid_scheme : kValidSchemes) {
+    if (url.scheme() == valid_scheme)
       return true;
   }
   // Allow about:blank and about:srcdoc.

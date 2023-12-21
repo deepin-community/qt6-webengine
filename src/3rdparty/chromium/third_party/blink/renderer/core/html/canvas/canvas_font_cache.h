@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -67,7 +67,7 @@ class CORE_EXPORT CanvasFontCache final
   LinkedHashSet<String> font_lru_list_;
   std::unique_ptr<FontCachePurgePreventer> main_cache_purge_preventer_;
   Member<Document> document_;
-  scoped_refptr<ComputedStyle> default_font_style_;
+  scoped_refptr<const ComputedStyle> default_font_style_;
   bool pruning_scheduled_;
 };
 

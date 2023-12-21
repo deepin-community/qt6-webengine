@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,15 +8,14 @@
 #include <string>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/files/file_path.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/run_loop.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/null_task_runner.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "content/browser/blob_storage/chrome_blob_storage_context.h"
 #include "content/browser/cache_storage/scoped_writable_entry.h"
 #include "content/public/browser/browser_context.h"
@@ -120,14 +119,15 @@ class CacheStorageBlobToDiskCacheTest : public testing::Test {
   }
 
   void InitCache() {
-    int rv = CreateCacheBackend(
+    disk_cache::BackendResult backend_result = CreateCacheBackend(
         net::MEMORY_CACHE, net::CACHE_BACKEND_DEFAULT,
         /*file_operations=*/nullptr, base::FilePath(),
         (CacheStorageBlobToDiskCache::kBufferSize * 100) /* max bytes */,
         disk_cache::ResetHandling::kNeverReset, nullptr /* net log */,
-        &cache_backend_, base::DoNothing());
+        base::DoNothing());
     // The memory cache runs synchronously.
-    EXPECT_EQ(net::OK, rv);
+    EXPECT_EQ(net::OK, backend_result.net_error);
+    cache_backend_ = std::move(backend_result.backend);
     EXPECT_TRUE(cache_backend_);
 
     disk_cache::EntryResult result =
@@ -140,10 +140,11 @@ class CacheStorageBlobToDiskCacheTest : public testing::Test {
     EXPECT_TRUE(base_.CreateUniqueTempDir());
     base::FilePath base_dir = base_.GetPath().AppendASCII("filesystem");
     quota_manager_ = base::MakeRefCounted<storage::MockQuotaManager>(
-        false /* is_incognito */, base_dir, base::ThreadTaskRunnerHandle::Get(),
+        false /* is_incognito */, base_dir,
+        base::SingleThreadTaskRunner::GetCurrentDefault(),
         special_storage_policy_);
     quota_manager_proxy_ = base::MakeRefCounted<storage::MockQuotaManagerProxy>(
-        quota_manager(), base::ThreadTaskRunnerHandle::Get());
+        quota_manager(), base::SingleThreadTaskRunner::GetCurrentDefault());
   }
 
   std::string ReadCacheContent() {

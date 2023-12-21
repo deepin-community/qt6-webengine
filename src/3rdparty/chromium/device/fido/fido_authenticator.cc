@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,7 +6,7 @@
 
 #include <utility>
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/notreached.h"
 #include "device/fido/ctap_make_credential_request.h"
 #include "device/fido/fido_constants.h"
@@ -21,8 +21,10 @@ void FidoAuthenticator::ExcludeAppIdCredentialsBeforeMakeCredential(
   std::move(callback).Run(CtapDeviceResponseCode::kSuccess, absl::nullopt);
 }
 
-void FidoAuthenticator::GetNextAssertion(
-    FidoAuthenticator::GetAssertionCallback callback) {
+void FidoAuthenticator::GetPlatformCredentialInfoForRequest(
+    const CtapGetAssertionRequest& request,
+    const CtapGetAssertionOptions& options,
+    GetPlatformCredentialInfoForRequestCallback callback) {
   NOTREACHED();
 }
 
@@ -165,18 +167,9 @@ void FidoAuthenticator::BioEnrollDelete(const pin::TokenResponse&,
   NOTREACHED();
 }
 
-void FidoAuthenticator::WriteLargeBlob(
-    const std::vector<uint8_t>& large_blob,
-    const LargeBlobKey& large_blob_key,
-    const absl::optional<pin::TokenResponse> pin_uv_auth_token,
+void FidoAuthenticator::GarbageCollectLargeBlob(
+    const pin::TokenResponse& pin_uv_auth_token,
     base::OnceCallback<void(CtapDeviceResponseCode)> callback) {
-  NOTREACHED();
-}
-
-void FidoAuthenticator::ReadLargeBlob(
-    const std::vector<LargeBlobKey>& large_blob_keys,
-    const absl::optional<pin::TokenResponse> pin_uv_auth_token,
-    LargeBlobReadCallback callback) {
   NOTREACHED();
 }
 
@@ -203,22 +196,6 @@ std::string FidoAuthenticator::GetDisplayName() const {
 
 ProtocolVersion FidoAuthenticator::SupportedProtocol() const {
   return ProtocolVersion::kUnknown;
-}
-
-bool FidoAuthenticator::SupportsCredProtectExtension() const {
-  return Options() && Options()->supports_cred_protect;
-}
-
-bool FidoAuthenticator::SupportsHMACSecretExtension() const {
-  return false;
-}
-
-bool FidoAuthenticator::SupportsEnterpriseAttestation() const {
-  return false;
-}
-
-bool FidoAuthenticator::SupportsCredBlobOfSize(size_t num_bytes) const {
-  return false;
 }
 
 }  // namespace device

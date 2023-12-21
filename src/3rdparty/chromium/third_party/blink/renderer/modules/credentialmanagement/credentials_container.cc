@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,48 +7,47 @@
 #include <memory>
 #include <utility>
 
-#include "base/metrics/histogram_macros.h"
 #include "base/notreached.h"
-#include "base/numerics/safe_conversions.h"
-#include "base/rand_util.h"
 #include "build/build_config.h"
 #include "services/network/public/cpp/is_potentially_trustworthy.h"
 #include "third_party/blink/public/common/sms/webotp_constants.h"
-#include "third_party/blink/public/common/sms/webotp_service_outcome.h"
 #include "third_party/blink/public/mojom/credentialmanagement/credential_manager.mojom-blink.h"
 #include "third_party/blink/public/mojom/payments/payment_credential.mojom-blink.h"
-#include "third_party/blink/public/mojom/permissions_policy/permissions_policy.mojom-blink.h"
 #include "third_party/blink/public/mojom/sms/webotp_service.mojom-blink.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_union_arraybuffer_arraybufferview.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_authentication_extensions_client_inputs.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_authentication_extensions_client_outputs.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_authentication_extensions_device_public_key_inputs.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_authentication_extensions_device_public_key_outputs.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_authentication_extensions_large_blob_inputs.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_authentication_extensions_large_blob_outputs.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_authentication_extensions_payment_inputs.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_authentication_extensions_prf_inputs.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_authentication_extensions_prf_outputs.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_authentication_extensions_prf_values.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_authenticator_selection_criteria.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_credential_creation_options.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_credential_properties_output.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_credential_request_options.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_federated_credential_request_options.h"
-#include "third_party/blink/renderer/bindings/modules/v8/v8_federated_identity_provider.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_identity_credential_request_options.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_identity_provider_config.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_otp_credential_request_options.h"
-#include "third_party/blink/renderer/bindings/modules/v8/v8_payment_credential_instrument.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_public_key_credential_creation_options.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_public_key_credential_descriptor.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_public_key_credential_parameters.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_public_key_credential_request_options.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_public_key_credential_rp_entity.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_public_key_credential_user_entity.h"
-#include "third_party/blink/renderer/bindings/modules/v8/v8_union_federatedidentityprovider_string.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_union_htmlformelement_passwordcredentialdata.h"
 #include "third_party/blink/renderer/core/dom/abort_signal.h"
-#include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
+#include "third_party/blink/renderer/core/dom/scoped_abort_state.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/frame/csp/content_security_policy.h"
 #include "third_party/blink/renderer/core/frame/frame.h"
-#include "third_party/blink/renderer/core/frame/frame_console.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/navigator.h"
 #include "third_party/blink/renderer/core/frame/web_feature.h"
@@ -59,20 +58,22 @@
 #include "third_party/blink/renderer/modules/credentialmanagement/authenticator_attestation_response.h"
 #include "third_party/blink/renderer/modules/credentialmanagement/credential.h"
 #include "third_party/blink/renderer/modules/credentialmanagement/credential_manager_proxy.h"
-#include "third_party/blink/renderer/modules/credentialmanagement/credential_manager_type_converters.h"
+#include "third_party/blink/renderer/modules/credentialmanagement/credential_manager_type_converters.h"  // IWYU pragma: keep
 #include "third_party/blink/renderer/modules/credentialmanagement/federated_credential.h"
+#include "third_party/blink/renderer/modules/credentialmanagement/identity_credential.h"
 #include "third_party/blink/renderer/modules/credentialmanagement/otp_credential.h"
 #include "third_party/blink/renderer/modules/credentialmanagement/password_credential.h"
 #include "third_party/blink/renderer/modules/credentialmanagement/public_key_credential.h"
 #include "third_party/blink/renderer/modules/credentialmanagement/scoped_promise_resolver.h"
+#include "third_party/blink/renderer/modules/credentialmanagement/web_identity_requester.h"
 #include "third_party/blink/renderer/platform/bindings/exception_code.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
-#include "third_party/blink/renderer/platform/weborigin/origin_access_entry.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
+#include "third_party/blink/renderer/platform/wtf/text/base64.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 #include "third_party/blink/renderer/platform/wtf/wtf_size_t.h"
 
@@ -84,6 +85,8 @@ namespace blink {
 
 namespace {
 
+using mojom::blink::AttestationConveyancePreference;
+using mojom::blink::AuthenticatorAttachment;
 using mojom::blink::AuthenticatorStatus;
 using mojom::blink::CredentialInfo;
 using mojom::blink::CredentialInfoPtr;
@@ -97,11 +100,8 @@ using mojom::blink::MakeCredentialAuthenticatorResponsePtr;
 using MojoPublicKeyCredentialRequestOptions =
     mojom::blink::PublicKeyCredentialRequestOptions;
 using mojom::blink::GetAssertionAuthenticatorResponsePtr;
-using mojom::blink::RequestIdTokenStatus;
+using mojom::blink::RequestTokenStatus;
 using payments::mojom::blink::PaymentCredentialStorageStatus;
-
-constexpr char kCryptotokenOrigin[] =
-    "chrome-extension://kmendfapggjehodndflmmgagdbamhnfd";
 
 // RequiredOriginType enumerates the requirements on the environment to perform
 // an operation.
@@ -121,6 +121,9 @@ enum class RequiredOriginType {
   kSecureAndPermittedByWebAuthGetAssertionPermissionsPolicy,
   // Similar to the enum above, checks the "otp-credentials" permissions policy.
   kSecureAndPermittedByWebOTPAssertionPermissionsPolicy,
+  // Similar to the enum above, checks the "identity-credentials-get"
+  // permissions policy.
+  kSecureAndPermittedByFederatedPermissionsPolicy,
   // Must be a secure origin with allowed payment permission policy.
   kSecureWithPaymentPermissionPolicy,
 };
@@ -139,35 +142,37 @@ bool IsSameOriginWithAncestors(const Frame* frame) {
   return true;
 }
 
-// An ancestor chain is valid iff there are at most 2 unique origins on the
-// chain (current origin included), the unique origins must be consecutive.
-// e.g. the following are valid:
-// A.com (calls WebOTP API)
-// A.com -> A.com (calls WebOTP API)
-// A.com -> A.com -> B.com (calls WebOTP API)
-// A.com -> B.com -> B.com (calls WebOTP API)
-// while the following are invalid:
-// A.com -> B.com -> A.com (calls WebOTP API)
-// A.com -> B.com -> C.com (calls WebOTP API)
-// Note that there is additional requirement on feature permission being granted
-// upon crossing origins but that is not verified by this function.
-bool IsAncestorChainValidForWebOTP(const Frame* frame) {
+// Returns whether the number of unique origins in the ancestor chain, including
+// the current origin are less or equal to |max_unique_origins|.
+//
+// Examples:
+// A.com = 1 unique origin
+// A.com -> A.com = 1 unique origin
+// A.com -> A.com -> B.com = 2 unique origins
+// A.com -> B.com -> B.com = 2 unique origins
+// A.com -> B.com -> A.com = 3 unique origins
+bool AreUniqueOriginsLessOrEqualTo(const Frame* frame, int max_unique_origins) {
   const SecurityOrigin* current_origin =
       frame->GetSecurityContext()->GetSecurityOrigin();
-  int number_of_unique_origin = 1;
+  int num_unique_origins = 1;
 
   const Frame* parent = frame->Tree().Parent();
   while (parent) {
     auto* parent_origin = parent->GetSecurityContext()->GetSecurityOrigin();
     if (!parent_origin->IsSameOriginWith(current_origin)) {
-      ++number_of_unique_origin;
+      ++num_unique_origins;
       current_origin = parent_origin;
     }
-    if (number_of_unique_origin > kMaxUniqueOriginInAncestorChainForWebOTP)
+    if (num_unique_origins > max_unique_origins)
       return false;
     parent = parent->Tree().Parent();
   }
   return true;
+}
+
+bool IsAncestorChainValidForWebOTP(const Frame* frame) {
+  return AreUniqueOriginsLessOrEqualTo(
+      frame, kMaxUniqueOriginInAncestorChainForWebOTP);
 }
 
 bool CheckSecurityRequirementsBeforeRequest(
@@ -250,6 +255,17 @@ bool CheckSecurityRequirementsBeforeRequest(
         return false;
       }
       break;
+    case RequiredOriginType::kSecureAndPermittedByFederatedPermissionsPolicy:
+      if (!resolver->GetExecutionContext()->IsFeatureEnabled(
+              mojom::blink::PermissionsPolicyFeature::
+                  kIdentityCredentialsGet)) {
+        resolver->Reject(MakeGarbageCollected<DOMException>(
+            DOMExceptionCode::kNotAllowedError,
+            "The 'identity-credentials-get` feature is not enabled in this "
+            "document."));
+        return false;
+      }
+      break;
 
     case RequiredOriginType::kSecureWithPaymentPermissionPolicy:
       if (!resolver->GetExecutionContext()->IsFeatureEnabled(
@@ -303,6 +319,11 @@ void AssertSecurityRequirementsBeforeResponse(
           IsAncestorChainValidForWebOTP(resolver->DomWindow()->GetFrame()));
       break;
 
+    case RequiredOriginType::kSecureAndPermittedByFederatedPermissionsPolicy:
+      SECURITY_CHECK(resolver->GetExecutionContext()->IsFeatureEnabled(
+          mojom::blink::PermissionsPolicyFeature::kIdentityCredentialsGet));
+      break;
+
     case RequiredOriginType::kSecureWithPaymentPermissionPolicy:
       SECURITY_CHECK(resolver->GetExecutionContext()->IsFeatureEnabled(
           mojom::blink::PermissionsPolicyFeature::kPayment));
@@ -319,7 +340,7 @@ bool IsIconURLNullOrSecure(const KURL& url) {
   if (!url.IsValid())
     return false;
 
-  return network::IsUrlPotentiallyTrustworthy(url);
+  return network::IsUrlPotentiallyTrustworthy(GURL(url));
 }
 
 // Checks if the size of the supplied ArrayBuffer or ArrayBufferView is at most
@@ -391,9 +412,6 @@ DOMException* AuthenticatorStatusToDOMException(
     case AuthenticatorStatus::INVALID_DOMAIN:
       return MakeGarbageCollected<DOMException>(
           DOMExceptionCode::kSecurityError, "This is an invalid domain.");
-    case AuthenticatorStatus::INVALID_ICON_URL:
-      return MakeGarbageCollected<DOMException>(
-          DOMExceptionCode::kSecurityError, "The icon should be a secure URL");
     case AuthenticatorStatus::CREDENTIAL_EXCLUDED:
       return MakeGarbageCollected<DOMException>(
           DOMExceptionCode::kInvalidStateError,
@@ -453,8 +471,11 @@ DOMException* AuthenticatorStatusToDOMException(
     case AuthenticatorStatus::INVALID_PROTOCOL:
       return MakeGarbageCollected<DOMException>(
           DOMExceptionCode::kSecurityError,
-          "Public-key credentials are only available to HTTPS origin or HTTP "
-          "origins that fall under 'localhost'. See https://crbug.com/824383");
+          "Public-key credentials are only available to HTTPS origins with "
+          "valid certificates, HTTP origins that fall under 'localhost', or "
+          "pages served from an extension. See "
+          "https://chromium.googlesource.com/chromium/src/+/main/content/"
+          "browser/webauth/origins.md for details");
     case AuthenticatorStatus::BAD_RELYING_PARTY_ID:
       return MakeGarbageCollected<DOMException>(
           DOMExceptionCode::kSecurityError,
@@ -476,10 +497,23 @@ DOMException* AuthenticatorStatusToDOMException(
           DOMExceptionCode::kNotReadableError,
           "Failed to save the credential identifier for the 'payment' "
           "extension.");
+    case AuthenticatorStatus::REMOTE_DESKTOP_CLIENT_OVERRIDE_NOT_AUTHORIZED:
+      return MakeGarbageCollected<DOMException>(
+          DOMExceptionCode::kNotAllowedError,
+          "This origin is not permitted to use the "
+          "'remoteDesktopClientOverride' extension.");
+    case AuthenticatorStatus::CERTIFICATE_ERROR:
+      return MakeGarbageCollected<DOMException>(
+          DOMExceptionCode::kNotAllowedError,
+          "WebAuthn is not supported on sites with TLS certificate errors.");
     case AuthenticatorStatus::ERROR_WITH_DOM_EXCEPTION_DETAILS:
       return DOMException::Create(
           /*message=*/dom_exception_details->message,
           /*name=*/dom_exception_details->name);
+    case AuthenticatorStatus::DEVICE_PUBLIC_KEY_ATTESTATION_REJECTED:
+      return MakeGarbageCollected<DOMException>(
+          DOMExceptionCode::kNotAllowedError,
+          "The authenticator responded with an invalid message");
     case AuthenticatorStatus::UNKNOWN_ERROR:
       return MakeGarbageCollected<DOMException>(
           DOMExceptionCode::kNotReadableError,
@@ -489,24 +523,49 @@ DOMException* AuthenticatorStatusToDOMException(
   return nullptr;
 }
 
-// Abort an ongoing PublicKeyCredential create() or get() operation.
-void AbortPublicKeyRequest(ScriptState* script_state) {
+// Abort an ongoing FederatedCredential login() operation.
+void AbortIdentityCredentialRequest(ScriptState* script_state) {
   if (!script_state->ContextIsValid())
     return;
 
-  auto* authenticator =
-      CredentialManagerProxy::From(script_state)->Authenticator();
-  authenticator->Cancel();
+  auto* auth_request =
+      CredentialManagerProxy::From(script_state)->FederatedAuthRequest();
+  auth_request->CancelTokenRequest();
 }
 
-// Abort an ongoing OtpCredential get() operation.
-void AbortOtpRequest(ScriptState* script_state) {
-  if (!script_state->ContextIsValid())
-    return;
-
-  auto* webotp_service =
-      CredentialManagerProxy::From(script_state)->WebOTPService();
-  webotp_service->Abort();
+void OnRequestToken(ScriptPromiseResolver* resolver,
+                    std::unique_ptr<ScopedAbortState> scoped_abort_state,
+                    const CredentialRequestOptions* options,
+                    RequestTokenStatus status,
+                    const absl::optional<KURL>& selected_idp_config_url,
+                    const WTF::String& token) {
+  switch (status) {
+    case RequestTokenStatus::kErrorTooManyRequests: {
+      resolver->Reject(MakeGarbageCollected<DOMException>(
+          DOMExceptionCode::kAbortError,
+          "Only one navigator.credentials.get request may be outstanding at "
+          "one time."));
+      return;
+    }
+    case RequestTokenStatus::kErrorCanceled: {
+      resolver->Reject(MakeGarbageCollected<DOMException>(
+          DOMExceptionCode::kAbortError, "The request has been aborted."));
+      return;
+    }
+    case RequestTokenStatus::kError: {
+      resolver->Reject(MakeGarbageCollected<DOMException>(
+          DOMExceptionCode::kNetworkError, "Error retrieving a token."));
+      return;
+    }
+    case RequestTokenStatus::kSuccess: {
+      IdentityCredential* credential = IdentityCredential::Create(token);
+      resolver->Resolve(credential);
+      return;
+    }
+    default: {
+      NOTREACHED();
+    }
+  }
 }
 
 void OnStoreComplete(std::unique_ptr<ScopedPromiseResolver> scoped_resolver) {
@@ -564,7 +623,9 @@ Vector<Vector<uint32_t>> UvmEntryToArray(
 
 void OnMakePublicKeyCredentialComplete(
     std::unique_ptr<ScopedPromiseResolver> scoped_resolver,
+    std::unique_ptr<ScopedAbortState> scoped_abort_state,
     RequiredOriginType required_origin_type,
+    bool is_rk_required,
     AuthenticatorStatus status,
     MakeCredentialAuthenticatorResponsePtr credential,
     WebAuthnDOMExceptionDetailsPtr dom_exception_details) {
@@ -572,16 +633,28 @@ void OnMakePublicKeyCredentialComplete(
   AssertSecurityRequirementsBeforeResponse(resolver, required_origin_type);
   if (status != AuthenticatorStatus::SUCCESS) {
     DCHECK(!credential);
-    resolver->Reject(
-        AuthenticatorStatusToDOMException(status, dom_exception_details));
+    AbortSignal* signal =
+        scoped_abort_state ? scoped_abort_state->Signal() : nullptr;
+    if (signal && signal->aborted()) {
+      auto* script_state = resolver->GetScriptState();
+      ScriptState::Scope script_state_scope(script_state);
+      resolver->Reject(signal->reason(script_state));
+    } else {
+      resolver->Reject(
+          AuthenticatorStatusToDOMException(status, dom_exception_details));
+    }
     return;
   }
   DCHECK(credential);
-  DCHECK(!credential->info->client_data_json.IsEmpty());
-  DCHECK(!credential->attestation_object.IsEmpty());
+  DCHECK(!credential->info->client_data_json.empty());
+  DCHECK(!credential->attestation_object.empty());
   UseCounter::Count(
       resolver->GetExecutionContext(),
       WebFeature::kCredentialManagerMakePublicKeyCredentialSuccess);
+  if (is_rk_required) {
+    UseCounter::Count(resolver->GetExecutionContext(),
+                      WebFeature::kWebAuthnRkRequiredCreationSuccess);
+  }
   DOMArrayBuffer* client_data_buffer =
       VectorToDOMArrayBuffer_CC(std::move(credential->info->client_data_json));
   DOMArrayBuffer* raw_id =
@@ -624,10 +697,25 @@ void OnMakePublicKeyCredentialComplete(
     large_blob_outputs->setSupported(credential->supports_large_blob);
     extension_outputs->setLargeBlob(large_blob_outputs);
   }
+  if (credential->device_public_key) {
+    AuthenticationExtensionsDevicePublicKeyOutputs* device_public_key_outputs =
+        AuthenticationExtensionsDevicePublicKeyOutputs::Create();
+    device_public_key_outputs->setAuthenticatorOutput(VectorToDOMArrayBuffer_CC(
+        std::move(credential->device_public_key->authenticator_output)));
+    device_public_key_outputs->setSignature(VectorToDOMArrayBuffer_CC(
+        std::move(credential->device_public_key->signature)));
+    extension_outputs->setDevicePubKey(device_public_key_outputs);
+  }
+  if (credential->echo_prf) {
+    auto* prf_outputs = AuthenticationExtensionsPRFOutputs::Create();
+    prf_outputs->setEnabled(credential->prf);
+    extension_outputs->setPrf(prf_outputs);
+  }
   resolver->Resolve(MakeGarbageCollected<PublicKeyCredential>(
       credential->info->id, raw_id, authenticator_response,
       credential->authenticator_attachment, extension_outputs));
 }
+
 bool IsForPayment(const CredentialCreationOptions* options,
                   ExecutionContext* context) {
   return RuntimeEnabledFeatures::SecurePaymentConfirmationEnabled(context) &&
@@ -639,6 +727,7 @@ bool IsForPayment(const CredentialCreationOptions* options,
 
 void OnSaveCredentialIdForPaymentExtension(
     std::unique_ptr<ScopedPromiseResolver> scoped_resolver,
+    std::unique_ptr<ScopedAbortState> scoped_abort_state,
     MakeCredentialAuthenticatorResponsePtr credential,
     PaymentCredentialStorageStatus storage_status) {
   auto status = AuthenticatorStatus::SUCCESS;
@@ -648,13 +737,15 @@ void OnSaveCredentialIdForPaymentExtension(
     credential = nullptr;
   }
   OnMakePublicKeyCredentialComplete(
-      std::move(scoped_resolver),
-      RequiredOriginType::kSecureWithPaymentPermissionPolicy, status,
-      std::move(credential), /*dom_exception_details=*/nullptr);
+      std::move(scoped_resolver), std::move(scoped_abort_state),
+      RequiredOriginType::kSecureWithPaymentPermissionPolicy,
+      /*is_rk_required=*/false, status, std::move(credential),
+      /*dom_exception_details=*/nullptr);
 }
 
 void OnMakePublicKeyCredentialWithPaymentExtensionComplete(
     std::unique_ptr<ScopedPromiseResolver> scoped_resolver,
+    std::unique_ptr<ScopedAbortState> scoped_abort_state,
     const String& rp_id_for_payment_extension,
     const WTF::Vector<uint8_t>& user_id_for_payment_extension,
     AuthenticatorStatus status,
@@ -667,8 +758,16 @@ void OnMakePublicKeyCredentialWithPaymentExtensionComplete(
   AssertSecurityRequirementsBeforeResponse(resolver, required_origin_type);
   if (status != AuthenticatorStatus::SUCCESS) {
     DCHECK(!credential);
-    resolver->Reject(
-        AuthenticatorStatusToDOMException(status, dom_exception_details));
+    AbortSignal* signal =
+        scoped_abort_state ? scoped_abort_state->Signal() : nullptr;
+    if (signal && signal->aborted()) {
+      auto* script_state = resolver->GetScriptState();
+      ScriptState::Scope script_state_scope(script_state);
+      resolver->Reject(signal->reason(script_state));
+    } else {
+      resolver->Reject(
+          AuthenticatorStatusToDOMException(status, dom_exception_details));
+    }
     return;
   }
 
@@ -679,13 +778,15 @@ void OnMakePublicKeyCredentialWithPaymentExtensionComplete(
   payment_credential_remote->StorePaymentCredential(
       std::move(credential_id), rp_id_for_payment_extension,
       std::move(user_id_for_payment_extension),
-      WTF::Bind(&OnSaveCredentialIdForPaymentExtension,
-                std::make_unique<ScopedPromiseResolver>(resolver),
-                std::move(credential)));
+      WTF::BindOnce(&OnSaveCredentialIdForPaymentExtension,
+                    std::make_unique<ScopedPromiseResolver>(resolver),
+                    std::move(scoped_abort_state), std::move(credential)));
 }
 
 void OnGetAssertionComplete(
     std::unique_ptr<ScopedPromiseResolver> scoped_resolver,
+    std::unique_ptr<ScopedAbortState> scoped_abort_state,
+    bool is_conditional_ui_request,
     AuthenticatorStatus status,
     GetAssertionAuthenticatorResponsePtr credential,
     WebAuthnDOMExceptionDetailsPtr dom_exception_details) {
@@ -695,11 +796,17 @@ void OnGetAssertionComplete(
   AssertSecurityRequirementsBeforeResponse(resolver, required_origin_type);
   if (status == AuthenticatorStatus::SUCCESS) {
     DCHECK(credential);
-    DCHECK(!credential->signature.IsEmpty());
-    DCHECK(!credential->info->authenticator_data.IsEmpty());
+    DCHECK(!credential->signature.empty());
+    DCHECK(!credential->info->authenticator_data.empty());
     UseCounter::Count(
         resolver->GetExecutionContext(),
         WebFeature::kCredentialManagerGetPublicKeyCredentialSuccess);
+
+    if (is_conditional_ui_request) {
+      UseCounter::Count(resolver->GetExecutionContext(),
+                        WebFeature::kWebAuthnConditionalUiGetSuccess);
+    }
+
     auto* authenticator_response =
         MakeGarbageCollected<AuthenticatorAssertionResponse>(
             std::move(credential->info->client_data_json),
@@ -733,13 +840,37 @@ void OnGetAssertionComplete(
       }
       extension_outputs->setLargeBlob(large_blob_outputs);
     }
-    if (credential->echo_get_cred_blob) {
-      if (credential->get_cred_blob) {
-        extension_outputs->setGetCredBlob(
-            VectorToDOMArrayBuffer_CC(std::move(*credential->get_cred_blob)));
-      } else {
-        extension_outputs->setGetCredBlob(nullptr);
+    if (credential->get_cred_blob) {
+      extension_outputs->setGetCredBlob(
+          VectorToDOMArrayBuffer_CC(std::move(*credential->get_cred_blob)));
+    }
+    if (credential->device_public_key) {
+      AuthenticationExtensionsDevicePublicKeyOutputs*
+          device_public_key_outputs =
+              AuthenticationExtensionsDevicePublicKeyOutputs::Create();
+      device_public_key_outputs->setAuthenticatorOutput(VectorToDOMArrayBuffer_CC(
+          std::move(credential->device_public_key->authenticator_output)));
+      device_public_key_outputs->setSignature(VectorToDOMArrayBuffer_CC(
+          std::move(credential->device_public_key->signature)));
+      extension_outputs->setDevicePubKey(device_public_key_outputs);
+    }
+    if (credential->echo_prf) {
+      auto* prf_outputs = AuthenticationExtensionsPRFOutputs::Create();
+      if (credential->prf_results) {
+        auto* values = AuthenticationExtensionsPRFValues::Create();
+        values->setFirst(
+            MakeGarbageCollected<V8UnionArrayBufferOrArrayBufferView>(
+                VectorToDOMArrayBuffer_CC(
+                    std::move(credential->prf_results->first))));
+        if (credential->prf_results->second) {
+          values->setSecond(
+              MakeGarbageCollected<V8UnionArrayBufferOrArrayBufferView>(
+                  VectorToDOMArrayBuffer_CC(
+                      std::move(credential->prf_results->second.value()))));
+        }
+        prf_outputs->setResults(values);
       }
+      extension_outputs->setPrf(prf_outputs);
     }
     resolver->Resolve(MakeGarbageCollected<PublicKeyCredential>(
         credential->info->id,
@@ -749,11 +880,20 @@ void OnGetAssertionComplete(
     return;
   }
   DCHECK(!credential);
-  resolver->Reject(
-      AuthenticatorStatusToDOMException(status, dom_exception_details));
+  AbortSignal* signal =
+      scoped_abort_state ? scoped_abort_state->Signal() : nullptr;
+  if (signal && signal->aborted()) {
+    auto* script_state = resolver->GetScriptState();
+    ScriptState::Scope script_state_scope(script_state);
+    resolver->Reject(signal->reason(script_state));
+  } else {
+    resolver->Reject(
+        AuthenticatorStatusToDOMException(status, dom_exception_details));
+  }
 }
 
 void OnSmsReceive(ScriptPromiseResolver* resolver,
+                  std::unique_ptr<ScopedAbortState> scoped_abort_state,
                   base::TimeTicks start_time,
                   mojom::blink::SmsStatus status,
                   const String& otp) {
@@ -770,8 +910,16 @@ void OnSmsReceive(ScriptPromiseResolver* resolver,
     return;
   }
   if (status == mojom::blink::SmsStatus::kAborted) {
-    resolver->Reject(MakeGarbageCollected<DOMException>(
-        DOMExceptionCode::kAbortError, "OTP retrieval was aborted."));
+    AbortSignal* signal =
+        scoped_abort_state ? scoped_abort_state->Signal() : nullptr;
+    if (signal && signal->aborted()) {
+      auto* script_state = resolver->GetScriptState();
+      ScriptState::Scope script_state_scope(script_state);
+      resolver->Reject(signal->reason(script_state));
+    } else {
+      resolver->Reject(MakeGarbageCollected<DOMException>(
+          DOMExceptionCode::kAbortError, "OTP retrieval was aborted."));
+    }
     return;
   }
   if (status == mojom::blink::SmsStatus::kCancelled) {
@@ -800,6 +948,19 @@ bool IsPaymentExtensionValid(const CredentialCreationOptions* options,
   if (!payment->hasIsPayment() || !payment->isPayment())
     return true;
 
+  if (!IsSameOriginWithAncestors(resolver->DomWindow()->GetFrame())) {
+    bool has_user_activation = LocalFrame::ConsumeTransientUserActivation(
+        resolver->DomWindow()->GetFrame(),
+        UserActivationUpdateSource::kRenderer);
+    if (!has_user_activation) {
+      resolver->Reject(MakeGarbageCollected<DOMException>(
+          DOMExceptionCode::kSecurityError,
+          "A user activation is required to create a credential in a "
+          "cross-origin iframe."));
+      return false;
+    }
+  }
+
   const auto* context = resolver->GetExecutionContext();
   DCHECK(RuntimeEnabledFeatures::SecurePaymentConfirmationEnabled(context));
 
@@ -823,17 +984,41 @@ bool IsPaymentExtensionValid(const CredentialCreationOptions* options,
     return false;
   }
 
-  if ((!authenticator->hasResidentKey() &&
-       !authenticator->hasRequireResidentKey()) ||
-      (authenticator->hasResidentKey() &&
-       authenticator->residentKey() != "required") ||
-      (!authenticator->hasResidentKey() &&
-       authenticator->hasRequireResidentKey() &&
-       !authenticator->requireResidentKey())) {
-    resolver->Reject(MakeGarbageCollected<DOMException>(
-        DOMExceptionCode::kNotSupportedError,
-        "A resident key is required for 'payment' extension."));
-    return false;
+  if (RuntimeEnabledFeatures::
+          AllowDiscoverableCredentialsForSecurePaymentConfirmationEnabled()) {
+    if ((!authenticator->hasResidentKey() &&
+         !authenticator->hasRequireResidentKey()) ||
+        (authenticator->hasResidentKey() &&
+         authenticator->residentKey() == "discouraged") ||
+        (!authenticator->hasResidentKey() &&
+         authenticator->hasRequireResidentKey() &&
+         !authenticator->requireResidentKey())) {
+      resolver->Reject(MakeGarbageCollected<DOMException>(
+          DOMExceptionCode::kNotSupportedError,
+          "A resident key must be 'preferred' or 'required' for 'payment' "
+          "extension."));
+      return false;
+    }
+  } else {
+    // Currently discoverable credentials on Android do not support the payment
+    // extension. As such, we only allow residentKey=preferred, and later
+    // internally map it to discouraged to receive a non-discoverable
+    // credential.
+    //
+    // We do not allow developers to directly specify residentKey=discouraged
+    // for Android, in order to align behavior with desktop platforms.
+    //
+    // TODO(crbug.com/1393662): Remove Android-specific code once OS-level
+    // support is available.
+    if (!authenticator->hasResidentKey() ||
+        authenticator->residentKey() != "preferred") {
+      resolver->Reject(MakeGarbageCollected<DOMException>(
+          DOMExceptionCode::kNotSupportedError,
+          "A resident key must be 'preferred' for 'payment' extension "
+          "('required' is not supported on Android at this time: "
+          "https://crbug.com/1393662)."));
+      return false;
+    }
   }
 
   if (!authenticator->hasAuthenticatorAttachment() ||
@@ -847,9 +1032,80 @@ bool IsPaymentExtensionValid(const CredentialCreationOptions* options,
   return true;
 }
 
+const char* validateGetPublicKeyCredentialPRFExtension(
+    const AuthenticationExtensionsPRFInputs& prf) {
+  if (prf.hasEvalByCredential()) {
+    for (const auto& pair : prf.evalByCredential()) {
+      Vector<char> cred_id;
+      if (!pair.first.Is8Bit() ||
+          !WTF::Base64UnpaddedURLDecode(pair.first, cred_id)) {
+        return "'prf' extension contains invalid base64url data in "
+               "'evalByCredential'";
+      }
+      if (cred_id.empty()) {
+        return "'prf' extension contains an empty credential ID in "
+               "'evalByCredential'";
+      }
+    }
+  }
+  return nullptr;
+}
+
 }  // namespace
 
 const char CredentialsContainer::kSupplementName[] = "CredentialsContainer";
+
+class CredentialsContainer::OtpRequestAbortAlgorithm final
+    : public AbortSignal::Algorithm {
+ public:
+  explicit OtpRequestAbortAlgorithm(ScriptState* script_state)
+      : script_state_(script_state) {}
+  ~OtpRequestAbortAlgorithm() override = default;
+
+  // Abort an ongoing OtpCredential get() operation.
+  void Run() override {
+    if (!script_state_->ContextIsValid())
+      return;
+
+    auto* webotp_service =
+        CredentialManagerProxy::From(script_state_)->WebOTPService();
+    webotp_service->Abort();
+  }
+
+  void Trace(Visitor* visitor) const override {
+    visitor->Trace(script_state_);
+    Algorithm::Trace(visitor);
+  }
+
+ private:
+  Member<ScriptState> script_state_;
+};
+
+class CredentialsContainer::PublicKeyRequestAbortAlgorithm final
+    : public AbortSignal::Algorithm {
+ public:
+  explicit PublicKeyRequestAbortAlgorithm(ScriptState* script_state)
+      : script_state_(script_state) {}
+  ~PublicKeyRequestAbortAlgorithm() override = default;
+
+  // Abort an ongoing PublicKeyCredential create() or get() operation.
+  void Run() override {
+    if (!script_state_->ContextIsValid())
+      return;
+
+    auto* authenticator =
+        CredentialManagerProxy::From(script_state_)->Authenticator();
+    authenticator->Cancel();
+  }
+
+  void Trace(Visitor* visitor) const override {
+    visitor->Trace(script_state_);
+    Algorithm::Trace(visitor);
+  }
+
+ private:
+  Member<ScriptState> script_state_;
+};
 
 CredentialsContainer* CredentialsContainer::credentials(Navigator& navigator) {
   CredentialsContainer* credentials =
@@ -864,9 +1120,9 @@ CredentialsContainer* CredentialsContainer::credentials(Navigator& navigator) {
 CredentialsContainer::CredentialsContainer(Navigator& navigator)
     : Supplement<Navigator>(navigator) {}
 
-ScriptPromise CredentialsContainer::get(
-    ScriptState* script_state,
-    const CredentialRequestOptions* options) {
+ScriptPromise CredentialsContainer::get(ScriptState* script_state,
+                                        const CredentialRequestOptions* options,
+                                        ExceptionState& exception_state) {
   auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
   ScriptPromise promise = resolver->Promise();
   ExecutionContext* context = ExecutionContext::From(script_state);
@@ -880,18 +1136,22 @@ ScriptPromise CredentialsContainer::get(
              RuntimeEnabledFeatures::WebOTPAssertionFeaturePolicyEnabled()) {
     required_origin_type = RequiredOriginType::
         kSecureAndPermittedByWebOTPAssertionPermissionsPolicy;
+  } else if (options->hasIdentity() && options->identity()->hasProviders() &&
+             options->identity()->providers().size() == 1 &&
+             RuntimeEnabledFeatures::FedCmIframeSupportEnabled(context)) {
+    required_origin_type =
+        RequiredOriginType::kSecureAndPermittedByFederatedPermissionsPolicy;
   }
   if (!CheckSecurityRequirementsBeforeRequest(resolver, required_origin_type)) {
     return promise;
   }
 
-  // |kCredentialManagerGetFederatedCredential| was introduced to measure the
-  // use of |FederatedCredential|. FedCM API reuses |FederatedCredential| with a
-  // non-string type |provider|. Therefore, we need to update the use counter to
-  // consistently measure the string type of |provider| usage.
-  if (options->hasFederated() && !options->federated()->hasProviders()) {
-    UseCounter::Count(context,
-                      WebFeature::kCredentialManagerGetFederatedCredential);
+  // TODO(cbiesinger): Consider removing the hasIdentity() check after FedCM
+  // ships. Before then, it is useful for RPs to pass both identity and
+  // federated while transitioning from the older to the new API.
+  if (options->hasFederated() && !options->hasIdentity()) {
+    UseCounter::Count(
+        context, WebFeature::kCredentialManagerGetLegacyFederatedCredential);
   }
   if (!options->hasFederated() && options->hasPassword()) {
     UseCounter::Count(context,
@@ -899,13 +1159,8 @@ ScriptPromise CredentialsContainer::get(
   }
 
   if (options->hasPublicKey()) {
-    auto cryptotoken_origin = SecurityOrigin::Create(KURL(kCryptotokenOrigin));
-    if (!cryptotoken_origin->IsSameOriginWith(context->GetSecurityOrigin())) {
-      // Cryptotoken requests are recorded as kU2FCryptotokenSign from within
-      // the extension.
-      UseCounter::Count(context,
-                        WebFeature::kCredentialManagerGetPublicKeyCredential);
-    }
+    UseCounter::Count(context,
+                      WebFeature::kCredentialManagerGetPublicKeyCredential);
 
 #if BUILDFLAG(IS_ANDROID)
     if (options->publicKey()->hasExtensions() &&
@@ -933,7 +1188,7 @@ ScriptPromise CredentialsContainer::get(
     if (options->publicKey()->hasExtensions()) {
       if (options->publicKey()->extensions()->hasAppid()) {
         const auto& appid = options->publicKey()->extensions()->appid();
-        if (!appid.IsEmpty()) {
+        if (!appid.empty()) {
           KURL appid_url(appid);
           if (!appid_url.IsValid()) {
             resolver->Reject(MakeGarbageCollected<DOMException>(
@@ -969,12 +1224,25 @@ ScriptPromise CredentialsContainer::get(
           return promise;
         }
       }
-      if (options->publicKey()->extensions()->hasGoogleLegacyAppidSupport()) {
-        resolver->Reject(MakeGarbageCollected<DOMException>(
-            DOMExceptionCode::kNotSupportedError,
-            "The 'googleLegacyAppidSupport' extension is only valid when "
-            "creating a credential"));
-        return promise;
+      if (options->publicKey()->extensions()->hasPrf()) {
+        const char* error = validateGetPublicKeyCredentialPRFExtension(
+            *options->publicKey()->extensions()->prf());
+        if (error != nullptr) {
+          resolver->Reject(MakeGarbageCollected<DOMException>(
+              DOMExceptionCode::kSyntaxError, error));
+          return promise;
+        }
+
+        if (options->publicKey()->extensions()->prf()->hasEvalByCredential() &&
+            options->publicKey()->allowCredentials().empty()) {
+          resolver->Reject(MakeGarbageCollected<DOMException>(
+              DOMExceptionCode::kNotSupportedError,
+              "'prf' extension has 'evalByCredential' with an empty allow "
+              "list"));
+          return promise;
+        }
+        // Prohibiting uv=preferred is omitted. See
+        // https://github.com/w3c/webauthn/pull/1836.
       }
       if (RuntimeEnabledFeatures::SecurePaymentConfirmationEnabled(context) &&
           options->publicKey()->extensions()->hasPayment()) {
@@ -986,40 +1254,34 @@ ScriptPromise CredentialsContainer::get(
       }
     }
 
-    if (!options->publicKey()->hasUserVerification()) {
+    if (options->publicKey()->hasUserVerification() &&
+        !mojo::ConvertTo<
+            absl::optional<mojom::blink::UserVerificationRequirement>>(
+            options->publicKey()->userVerification())) {
       resolver->DomWindow()->AddConsoleMessage(
           MakeGarbageCollected<ConsoleMessage>(
               mojom::blink::ConsoleMessageSource::kJavaScript,
               mojom::blink::ConsoleMessageLevel::kWarning,
-              "publicKey.userVerification was not set to any value in Web "
-              "Authentication navigator.credentials.get() call. This defaults "
-              "to "
-              "'preferred', which is probably not what you want. If in doubt, "
-              "set "
-              "to 'discouraged'. See "
-              "https://chromium.googlesource.com/chromium/src/+/master/content/"
-              "browser/webauth/uv_preferred.md for details."));
+              "Ignoring unknown publicKey.userVerification value"));
     }
 
-    if (options->hasSignal()) {
-      if (options->signal()->aborted()) {
-        resolver->Reject(MakeGarbageCollected<DOMException>(
-            DOMExceptionCode::kAbortError, "Request has been aborted."));
+    std::unique_ptr<ScopedAbortState> scoped_abort_state = nullptr;
+    if (auto* signal = options->getSignalOr(nullptr)) {
+      if (signal->aborted()) {
+        resolver->Reject(signal->reason(script_state));
         return promise;
       }
-      options->signal()->AddAlgorithm(
-          WTF::Bind(&AbortPublicKeyRequest, WrapPersistent(script_state)));
+      auto* handle = signal->AddAlgorithm(
+          MakeGarbageCollected<PublicKeyRequestAbortAlgorithm>(script_state));
+      scoped_abort_state = std::make_unique<ScopedAbortState>(signal, handle);
     }
 
-    bool is_conditional_ui_request = conditionalMediationSupported() &&
-                                     options->mediation() == "conditional";
-    if (is_conditional_ui_request &&
-        options->publicKey()->hasAllowCredentials() &&
-        !options->publicKey()->allowCredentials().IsEmpty()) {
-      resolver->Reject(MakeGarbageCollected<DOMException>(
-          DOMExceptionCode::kNotAllowedError,
-          "allowCredentials is not supported for conditionalPublicKey"));
-      return promise;
+    bool is_conditional_ui_request =
+        RuntimeEnabledFeatures::WebAuthenticationConditionalUIEnabled() &&
+        options->mediation() == "conditional";
+
+    if (is_conditional_ui_request) {
+      UseCounter::Count(context, WebFeature::kWebAuthnConditionalUiGet);
     }
 
     auto mojo_options =
@@ -1033,8 +1295,10 @@ ScriptPromise CredentialsContainer::get(
           CredentialManagerProxy::From(script_state)->Authenticator();
       authenticator->GetAssertion(
           std::move(mojo_options),
-          WTF::Bind(&OnGetAssertionComplete,
-                    std::make_unique<ScopedPromiseResolver>(resolver)));
+          WTF::BindOnce(&OnGetAssertionComplete,
+                        std::make_unique<ScopedPromiseResolver>(resolver),
+                        std::move(scoped_abort_state),
+                        is_conditional_ui_request));
     } else {
       resolver->Reject(MakeGarbageCollected<DOMException>(
           DOMExceptionCode::kNotSupportedError,
@@ -1051,82 +1315,165 @@ ScriptPromise CredentialsContainer::get(
       return promise;
     }
 
-    if (options->hasSignal()) {
-      if (options->signal()->aborted()) {
-        resolver->Reject(MakeGarbageCollected<DOMException>(
-            DOMExceptionCode::kAbortError, "Request has been aborted."));
+    std::unique_ptr<ScopedAbortState> scoped_abort_state = nullptr;
+    if (auto* signal = options->getSignalOr(nullptr)) {
+      if (signal->aborted()) {
+        resolver->Reject(signal->reason(script_state));
         return promise;
       }
-      options->signal()->AddAlgorithm(
-          WTF::Bind(&AbortOtpRequest, WrapPersistent(script_state)));
+      auto* handle = signal->AddAlgorithm(
+          MakeGarbageCollected<OtpRequestAbortAlgorithm>(script_state));
+      scoped_abort_state = std::make_unique<ScopedAbortState>(signal, handle);
     }
 
     auto* webotp_service =
         CredentialManagerProxy::From(script_state)->WebOTPService();
-    webotp_service->Receive(WTF::Bind(&OnSmsReceive, WrapPersistent(resolver),
-                                      base::TimeTicks::Now()));
-    UMA_HISTOGRAM_ENUMERATION("Blink.UseCounter.Features", WebFeature::kWebOTP);
+    webotp_service->Receive(
+        WTF::BindOnce(&OnSmsReceive, WrapPersistent(resolver),
+                      std::move(scoped_abort_state), base::TimeTicks::Now()));
+
+    UseCounter::Count(context, WebFeature::kWebOTP);
+    return promise;
+  }
+
+  if (options->hasIdentity() && options->identity()->hasProviders()) {
+    // TODO(yigu): Ideally the logic should be handled in CredentialManager
+    // via Get. However currently it's only for password management and we
+    // should refactor the logic to make it generic.
+    if (!RuntimeEnabledFeatures::FedCmEnabled(context)) {
+      resolver->Reject(MakeGarbageCollected<DOMException>(
+          DOMExceptionCode::kNotSupportedError, "FedCM is not supported"));
+      return promise;
+    }
+
+    ContentSecurityPolicy* policy =
+        resolver->GetExecutionContext()
+            ->GetContentSecurityPolicyForCurrentWorld();
+    if (options->identity()->providers().size() == 0) {
+      exception_state.ThrowTypeError("Need at least one identity provider.");
+      resolver->Detach();
+      return ScriptPromise();
+    }
+    if (!RuntimeEnabledFeatures::FedCmMultipleIdentityProvidersEnabled(
+            context) &&
+        options->identity()->providers().size() > 1) {
+      exception_state.ThrowTypeError(
+          "Multiple providers specified but FedCmMultipleIdentityProviders "
+          "flag is disabled.");
+      resolver->Detach();
+      return ScriptPromise();
+    }
+
+    // Log the UseCounter only when the WebID flag is enabled.
+    UseCounter::Count(context, WebFeature::kFedCm);
+    if (!resolver->DomWindow()->GetFrame()->IsMainFrame()) {
+      UseCounter::Count(resolver->GetExecutionContext(),
+                        WebFeature::kFedCmIframe);
+    }
+
+    int provider_index = 0;
+    Vector<mojom::blink::IdentityProviderConfigPtr> identity_provider_ptrs;
+    for (const auto& provider : options->identity()->providers()) {
+      // TODO(kenrb): Add some renderer-side validation here, such as
+      // validating |provider|, and making sure the calling context is legal.
+      // Some of this has not been spec'd yet.
+      KURL provider_url(provider->configURL());
+      String client_id = provider->clientId();
+
+      ++provider_index;
+      if (!provider_url.IsValid() || client_id == "") {
+        resolver->Reject(MakeGarbageCollected<DOMException>(
+            DOMExceptionCode::kInvalidStateError,
+            String::Format("Provider %i information is incomplete.",
+                           provider_index)));
+        return promise;
+      }
+      // We disallow redirects (in idp_network_request_manager.cc), so it is
+      // enough to check the initial URL here.
+      if (IdentityCredential::IsRejectingPromiseDueToCSP(policy, resolver,
+                                                         provider_url)) {
+        return promise;
+      }
+
+      mojom::blink::IdentityProviderConfigPtr identity_provider =
+          blink::mojom::blink::IdentityProviderConfig::From(*provider);
+      identity_provider_ptrs.push_back(std::move(identity_provider));
+    }
+
+    // |autoReauthn| is default to false and can only be set when the feature
+    // is enabled.
+    DCHECK(RuntimeEnabledFeatures::FedCmAutoReauthnEnabled(context) ||
+           !options->identity()->autoReauthn());
+    std::unique_ptr<ScopedAbortState> scoped_abort_state = nullptr;
+    if (auto* signal = options->getSignalOr(nullptr)) {
+      if (signal->aborted()) {
+        resolver->Reject(MakeGarbageCollected<DOMException>(
+            DOMExceptionCode::kAbortError, "Request has been aborted."));
+        return promise;
+      }
+      auto* handle = signal->AddAlgorithm(WTF::BindOnce(
+          &AbortIdentityCredentialRequest, WrapPersistent(script_state)));
+      scoped_abort_state = std::make_unique<ScopedAbortState>(signal, handle);
+    }
+
+    bool auto_reauthn = options->identity()->autoReauthn();
+
+    mojom::blink::RpContext rp_context = mojom::blink::RpContext::kSignIn;
+    if (RuntimeEnabledFeatures::FedCmRpContextEnabled() &&
+        options->identity()->hasContext()) {
+      rp_context = mojo::ConvertTo<mojom::blink::RpContext>(
+          options->identity()->context());
+    }
+
+    if (!web_identity_requester_) {
+      web_identity_requester_ =
+          MakeGarbageCollected<WebIdentityRequester>(WrapPersistent(context));
+    }
+
+    if (!RuntimeEnabledFeatures::FedCmMultipleIdentityProvidersEnabled(
+            context)) {
+      Vector<mojom::blink::IdentityProviderGetParametersPtr> idp_get_params;
+      mojom::blink::IdentityProviderGetParametersPtr get_params =
+          mojom::blink::IdentityProviderGetParameters::New(
+              std::move(identity_provider_ptrs), auto_reauthn, rp_context);
+      idp_get_params.push_back(std::move(get_params));
+
+      auto* auth_request =
+          CredentialManagerProxy::From(script_state)->FederatedAuthRequest();
+      auth_request->RequestToken(
+          std::move(idp_get_params),
+          WTF::BindOnce(&OnRequestToken, WrapPersistent(resolver),
+                        std::move(scoped_abort_state),
+                        WrapPersistent(options)));
+
+      // Start recording the duration from when RequestToken is called directly
+      // to when RequestToken would be called if invoked through
+      // web_identity_requester_.
+      web_identity_requester_->StartDelayTimer(WrapPersistent(resolver));
+
+      return promise;
+    }
+
+    if (scoped_abort_state) {
+      web_identity_requester_->InsertScopedAbortState(
+          std::move(scoped_abort_state));
+    }
+
+    web_identity_requester_->AppendGetCall(WrapPersistent(resolver),
+                                           options->identity()->providers(),
+                                           auto_reauthn, rp_context);
+
     return promise;
   }
 
   Vector<KURL> providers;
   if (options->hasFederated() && options->federated()->hasProviders()) {
-    ContentSecurityPolicy* policy =
-        resolver->GetExecutionContext()
-            ->GetContentSecurityPolicyForCurrentWorld();
     for (const auto& provider : options->federated()->providers()) {
-      if (provider->IsString()) {
-        UseCounter::Count(context,
-                          WebFeature::kCredentialManagerGetFederatedCredential);
-        KURL url = KURL(NullURL(), provider->GetAsString());
-        if (url.IsValid())
-          providers.push_back(std::move(url));
-      } else if (provider->IsFederatedIdentityProvider()) {
-        // TODO(yigu): Ideally the logic should be handled in CredentialManager
-        // via Get. However currently it's only for password management and we
-        // should refactor the logic to make it generic.
-        if (!RuntimeEnabledFeatures::FedCmEnabled(context)) {
-          resolver->Reject(MakeGarbageCollected<DOMException>(
-              DOMExceptionCode::kNotSupportedError, "FedCM is not supported"));
-          return promise;
-        }
-        // Log the UseCounter only when the WebID flag is enabled.
-        UseCounter::Count(context, WebFeature::kFederatedCredentialManagement);
-        // TODO(kenrb): Add some renderer-side validation here, such as
-        // validating |provider|, and making sure the calling context is legal.
-        // Some of this has not been spec'd yet.
-        FederatedIdentityProvider* federated_identity_provider =
-            provider->GetAsFederatedIdentityProvider();
-        KURL provider_url(federated_identity_provider->url());
-        String client_id = federated_identity_provider->clientId();
-
-        if (!provider_url.IsValid() || client_id == "") {
-          resolver->Reject(MakeGarbageCollected<DOMException>(
-              DOMExceptionCode::kInvalidStateError,
-              "Provider information is incomplete."));
-          return promise;
-        }
-        // We disallow redirects (in idp_network_request_manager.cc), so it is
-        // enough to check the initial URL here.
-        if (!policy->AllowConnectToSource(provider_url, provider_url,
-                                          RedirectStatus::kNoRedirect)) {
-          WTF::String error =
-              "Refused to connect to '" + provider_url.ElidedString() +
-              "' because it violates the document's Content Security Policy.";
-          resolver->Reject(MakeGarbageCollected<DOMException>(
-              DOMExceptionCode::kNetworkError, error));
-          return promise;
-        }
-
-        FederatedCredential* credential = FederatedCredential::Create(
-            provider_url, client_id, federated_identity_provider->getHintOr(""),
-            options);
-        resolver->Resolve(credential);
-        return promise;
-      }
+      KURL url = KURL(NullURL(), provider);
+      if (url.IsValid())
+        providers.push_back(std::move(url));
     }
   }
-
   CredentialMediationRequirement requirement;
   if (options->mediation() == "conditional") {
     resolver->Reject(MakeGarbageCollected<DOMException>(
@@ -1153,9 +1500,9 @@ ScriptPromise CredentialsContainer::get(
       CredentialManagerProxy::From(script_state)->CredentialManager();
   credential_manager->Get(
       requirement, options->password(), std::move(providers),
-      WTF::Bind(&OnGetComplete,
-                std::make_unique<ScopedPromiseResolver>(resolver),
-                required_origin_type));
+      WTF::BindOnce(&OnGetComplete,
+                    std::make_unique<ScopedPromiseResolver>(resolver),
+                    required_origin_type));
 
   return promise;
 }
@@ -1204,8 +1551,8 @@ ScriptPromise CredentialsContainer::store(ScriptState* script_state,
 
   credential_manager->Store(
       CredentialInfo::From(credential),
-      WTF::Bind(&OnStoreComplete,
-                std::make_unique<ScopedPromiseResolver>(resolver)));
+      WTF::BindOnce(&OnStoreComplete,
+                    std::make_unique<ScopedPromiseResolver>(resolver)));
 
   return promise;
 }
@@ -1261,14 +1608,8 @@ ScriptPromise CredentialsContainer::create(
     return promise;
   }
   DCHECK(options->hasPublicKey());
-  auto cryptotoken_origin = SecurityOrigin::Create(KURL(kCryptotokenOrigin));
-  if (!cryptotoken_origin->IsSameOriginWith(
-          resolver->GetExecutionContext()->GetSecurityOrigin())) {
-    // Cryptotoken requests are recorded as kU2FCryptotokenRegister from
-    // within the extension.
-    UseCounter::Count(resolver->GetExecutionContext(),
-                      WebFeature::kCredentialManagerCreatePublicKeyCredential);
-  }
+  UseCounter::Count(resolver->GetExecutionContext(),
+                    WebFeature::kCredentialManagerCreatePublicKeyCredential);
 
   if (!IsArrayBufferOrViewBelowSizeLimit(options->publicKey()->challenge())) {
     resolver->Reject(DOMException::Create(
@@ -1315,7 +1656,7 @@ ScriptPromise CredentialsContainer::create(
     if (options->publicKey()->extensions()->hasAppidExclude()) {
       const auto& appid_exclude =
           options->publicKey()->extensions()->appidExclude();
-      if (!appid_exclude.IsEmpty()) {
+      if (!appid_exclude.empty()) {
         KURL appid_exclude_url(appid_exclude);
         if (!appid_exclude_url.IsValid()) {
           resolver->Reject(MakeGarbageCollected<DOMException>(
@@ -1349,61 +1690,111 @@ ScriptPromise CredentialsContainer::create(
         return promise;
       }
     }
-    if (options->publicKey()->extensions()->hasGoogleLegacyAppidSupport()) {
-      const auto& rp_id =
-          options->publicKey()->rp()->id()
-              ? options->publicKey()->rp()->id()
-              : resolver->GetExecutionContext()->GetSecurityOrigin()->Domain();
-      if (rp_id != "google.com") {
-        resolver->DomWindow()->AddConsoleMessage(
-            MakeGarbageCollected<ConsoleMessage>(
-                mojom::blink::ConsoleMessageSource::kJavaScript,
-                mojom::blink::ConsoleMessageLevel::kWarning,
-                "The 'googleLegacyAppidSupport' extension is ignored for "
-                "requests with an 'rp.id' not equal to 'google.com'"));
-      }
-    }
     if (options->publicKey()->extensions()->hasPayment() &&
         !IsPaymentExtensionValid(options, resolver)) {
       return promise;
     }
+    if (options->publicKey()->extensions()->hasPrf()) {
+      const auto& prf = *options->publicKey()->extensions()->prf();
+      if (prf.hasEvalByCredential()) {
+        resolver->Reject(MakeGarbageCollected<DOMException>(
+            DOMExceptionCode::kNotSupportedError,
+            "The 'evalByCredential' field cannot be set when creating a "
+            "credential."));
+        return promise;
+      }
+    }
   }
 
-  if (options->hasSignal()) {
-    if (options->signal()->aborted()) {
-      resolver->Reject(MakeGarbageCollected<DOMException>(
-          DOMExceptionCode::kAbortError, "Request has been aborted."));
+  std::unique_ptr<ScopedAbortState> scoped_abort_state = nullptr;
+  if (auto* signal = options->getSignalOr(nullptr)) {
+    if (signal->aborted()) {
+      resolver->Reject(signal->reason(script_state));
       return promise;
     }
-    options->signal()->AddAlgorithm(
-        WTF::Bind(&AbortPublicKeyRequest, WrapPersistent(script_state)));
+    auto* handle = signal->AddAlgorithm(
+        MakeGarbageCollected<PublicKeyRequestAbortAlgorithm>(script_state));
+    scoped_abort_state = std::make_unique<ScopedAbortState>(signal, handle);
+  }
+
+  if (options->publicKey()->hasAttestation() &&
+      !mojo::ConvertTo<absl::optional<AttestationConveyancePreference>>(
+          options->publicKey()->attestation())) {
+    resolver->DomWindow()->AddConsoleMessage(
+        MakeGarbageCollected<ConsoleMessage>(
+            mojom::blink::ConsoleMessageSource::kJavaScript,
+            mojom::blink::ConsoleMessageLevel::kWarning,
+            "Ignoring unknown publicKey.attestation value"));
   }
 
   if (options->publicKey()->hasAuthenticatorSelection() &&
-      !options->publicKey()->authenticatorSelection()->hasUserVerification()) {
-    resolver->DomWindow()->AddConsoleMessage(
-        MakeGarbageCollected<ConsoleMessage>(
-            mojom::blink::ConsoleMessageSource::kJavaScript,
-            mojom::blink::ConsoleMessageLevel::kWarning,
-            "publicKey.authenticatorSelection.userVerification was not set "
-            "to "
-            "any value in Web Authentication navigator.credentials.create() "
-            "call. This defaults to 'preferred', which is probably not what "
-            "you "
-            "want. If in doubt, set to 'discouraged'. See "
-            "https://chromium.googlesource.com/chromium/src/+/master/content/"
-            "browser/webauth/uv_preferred.md for details"));
+      options->publicKey()
+          ->authenticatorSelection()
+          ->hasAuthenticatorAttachment()) {
+    absl::optional<String> attachment = options->publicKey()
+                                            ->authenticatorSelection()
+                                            ->authenticatorAttachment();
+    if (!mojo::ConvertTo<absl::optional<AuthenticatorAttachment>>(attachment)) {
+      resolver->DomWindow()->AddConsoleMessage(
+          MakeGarbageCollected<ConsoleMessage>(
+              mojom::blink::ConsoleMessageSource::kJavaScript,
+              mojom::blink::ConsoleMessageLevel::kWarning,
+              "Ignoring unknown "
+              "publicKey.authenticatorSelection.authnticatorAttachment value"));
+    }
   }
+
   if (options->publicKey()->hasAuthenticatorSelection() &&
-      options->publicKey()->authenticatorSelection()->hasResidentKey() &&
-      !mojo::ConvertTo<absl::optional<mojom::blink::ResidentKeyRequirement>>(
-          options->publicKey()->authenticatorSelection()->residentKey())) {
+      options->publicKey()->authenticatorSelection()->hasUserVerification() &&
+      !mojo::ConvertTo<
+          absl::optional<mojom::blink::UserVerificationRequirement>>(
+          options->publicKey()->authenticatorSelection()->userVerification())) {
     resolver->DomWindow()->AddConsoleMessage(
         MakeGarbageCollected<ConsoleMessage>(
             mojom::blink::ConsoleMessageSource::kJavaScript,
             mojom::blink::ConsoleMessageLevel::kWarning,
-            "Ignoring unknown publicKey.authenticatorSelection.residentKey "
-            "value"));
+            "Ignoring unknown "
+            "publicKey.authenticatorSelection.userVerification value"));
+  }
+
+  bool is_rk_required = false;
+  if (options->publicKey()->hasAuthenticatorSelection() &&
+      options->publicKey()->authenticatorSelection()->hasResidentKey()) {
+    auto rk_requirement =
+        mojo::ConvertTo<absl::optional<mojom::blink::ResidentKeyRequirement>>(
+            options->publicKey()->authenticatorSelection()->residentKey());
+    if (!rk_requirement) {
+      resolver->DomWindow()->AddConsoleMessage(
+          MakeGarbageCollected<ConsoleMessage>(
+              mojom::blink::ConsoleMessageSource::kJavaScript,
+              mojom::blink::ConsoleMessageLevel::kWarning,
+              "Ignoring unknown publicKey.authenticatorSelection.residentKey "
+              "value"));
+    } else {
+      is_rk_required =
+          (rk_requirement == mojom::blink::ResidentKeyRequirement::REQUIRED);
+    }
+  }
+  // An empty list uses default algorithm identifiers.
+  if (options->publicKey()->pubKeyCredParams().size() != 0) {
+    WTF::HashSet<int16_t> algorithm_set;
+    for (const auto& param : options->publicKey()->pubKeyCredParams()) {
+      // 0 and -1 are special values that cannot be inserted into the HashSet.
+      if (param->alg() != 0 && param->alg() != -1)
+        algorithm_set.insert(param->alg());
+    }
+    if (!algorithm_set.Contains(-7) || !algorithm_set.Contains(-257)) {
+      resolver->DomWindow()->AddConsoleMessage(
+          MakeGarbageCollected<ConsoleMessage>(
+              mojom::blink::ConsoleMessageSource::kJavaScript,
+              mojom::blink::ConsoleMessageLevel::kWarning,
+              "publicKey.pubKeyCredParams is missing at least one of the "
+              "default algorithm identifiers: ES256 and RS256. This can "
+              "result in registration failures on incompatible "
+              "authenticators. See "
+              "https://chromium.googlesource.com/chromium/src/+/main/"
+              "content/browser/webauth/pub_key_cred_params.md for details"));
+    }
   }
 
   auto mojo_options =
@@ -1423,24 +1814,6 @@ ScriptPromise CredentialsContainer::create(
           resolver->GetExecutionContext()->GetSecurityOrigin()->Domain();
     }
 
-    if (mojo_options->relying_party->icon) {
-      if (!IsIconURLNullOrSecure(mojo_options->relying_party->icon.value())) {
-        resolver->Reject(MakeGarbageCollected<DOMException>(
-            DOMExceptionCode::kSecurityError,
-            "'rp.icon' should be a secure URL"));
-        return promise;
-      }
-    }
-
-    if (mojo_options->user->icon) {
-      if (!IsIconURLNullOrSecure(mojo_options->user->icon.value())) {
-        resolver->Reject(MakeGarbageCollected<DOMException>(
-            DOMExceptionCode::kSecurityError,
-            "'user.icon' should be a secure URL"));
-        return promise;
-      }
-    }
-
     auto* authenticator =
         CredentialManagerProxy::From(script_state)->Authenticator();
     if (mojo_options->is_payment_credential_creation) {
@@ -1449,16 +1822,18 @@ ScriptPromise CredentialsContainer::create(
           mojo_options->user->id;
       authenticator->MakeCredential(
           std::move(mojo_options),
-          WTF::Bind(&OnMakePublicKeyCredentialWithPaymentExtensionComplete,
-                    std::make_unique<ScopedPromiseResolver>(resolver),
-                    rp_id_for_payment_extension,
-                    std::move(user_id_for_payment_extension)));
+          WTF::BindOnce(&OnMakePublicKeyCredentialWithPaymentExtensionComplete,
+                        std::make_unique<ScopedPromiseResolver>(resolver),
+                        std::move(scoped_abort_state),
+                        rp_id_for_payment_extension,
+                        std::move(user_id_for_payment_extension)));
     } else {
       authenticator->MakeCredential(
           std::move(mojo_options),
-          WTF::Bind(&OnMakePublicKeyCredentialComplete,
-                    std::make_unique<ScopedPromiseResolver>(resolver),
-                    required_origin_type));
+          WTF::BindOnce(&OnMakePublicKeyCredentialComplete,
+                        std::make_unique<ScopedPromiseResolver>(resolver),
+                        std::move(scoped_abort_state), required_origin_type,
+                        is_rk_required));
     }
   }
 
@@ -1477,17 +1852,14 @@ ScriptPromise CredentialsContainer::preventSilentAccess(
   auto* credential_manager =
       CredentialManagerProxy::From(script_state)->CredentialManager();
   credential_manager->PreventSilentAccess(
-      WTF::Bind(&OnPreventSilentAccessComplete,
-                std::make_unique<ScopedPromiseResolver>(resolver)));
+      WTF::BindOnce(&OnPreventSilentAccessComplete,
+                    std::make_unique<ScopedPromiseResolver>(resolver)));
 
   return promise;
 }
 
-bool CredentialsContainer::conditionalMediationSupported() {
-  return RuntimeEnabledFeatures::WebAuthenticationConditionalUIEnabled();
-}
-
 void CredentialsContainer::Trace(Visitor* visitor) const {
+  visitor->Trace(web_identity_requester_);
   ScriptWrappable::Trace(visitor);
   Supplement<Navigator>::Trace(visitor);
 }

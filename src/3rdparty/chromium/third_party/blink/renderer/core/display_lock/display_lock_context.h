@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,6 +9,7 @@
 
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/css/style_recalc_change.h"
+#include "third_party/blink/renderer/core/dom/element_rare_data_field.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/scroll/scroll_types.h"
 #include "third_party/blink/renderer/core/style/computed_style_base_constants.h"
@@ -41,6 +42,9 @@ enum class DisplayLockActivationReason {
   kUserFocus = 1 << 7,
   // Intersection observer activation
   kViewportIntersection = 1 << 8,
+  // NOTE: We don't need an activation reason for CSS toggles, since toggle
+  // state changes trigger restyles that update the context through a call to
+  // SetRequestedState().
 
   // Shorthands
   kViewport = static_cast<uint16_t>(kSelection) |
@@ -55,7 +59,24 @@ enum class DisplayLockActivationReason {
          static_cast<uint16_t>(kSelection) |
          static_cast<uint16_t>(kSimulatedClick) |
          static_cast<uint16_t>(kUserFocus) |
-         static_cast<uint16_t>(kViewportIntersection)
+         static_cast<uint16_t>(kViewportIntersection),
+  kAuto = kAny,
+
+  // The css-toggles specification says that toggle-visibility works like
+  // content-visibility, except it's not activated by being on-screen.
+  //
+  // TODO(https://crbug.com/1250716): Conceptually I *think* we might want to
+  // omit kUserFocus from kToggleVisibility.  However, omitting kUserFocus but
+  // retaining kScriptFocus doesn't appear to work in practice.  (Is this
+  // because kUserFocus affects Element::IsFocusableStyle?)
+  //
+  // TODO(https://github.com/tabatkins/css-toggle/issues/42): While this
+  // doesn't match the current specification draft, we also exclude kSelection
+  // because the presence of a selection shouldn't prevent other user actions
+  // from changing the toggle and making the element skip its contents.
+  kToggleVisibility = static_cast<uint16_t>(kAny) &
+                      ~(static_cast<uint16_t>(kViewportIntersection) |
+                        static_cast<uint16_t>(kSelection)),
 };
 
 // Instead of specifying an underlying type, which would propagate throughout
@@ -67,19 +88,27 @@ static_assert(static_cast<uint32_t>(DisplayLockActivationReason::kAny) <
 
 class CORE_EXPORT DisplayLockContext final
     : public GarbageCollected<DisplayLockContext>,
-      public LocalFrameView::LifecycleNotificationObserver {
+      public LocalFrameView::LifecycleNotificationObserver,
+      public ElementRareDataField {
  public:
   // Note the order of the phases matters. Each phase implies all previous ones
   // as well.
-  enum class ForcedPhase { kStyleAndLayoutTree, kLayout, kPrePaint };
+  enum class ForcedPhase { kNone, kStyleAndLayoutTree, kLayout, kPrePaint };
 
   explicit DisplayLockContext(Element*);
   ~DisplayLockContext() = default;
 
-  // Called by style to update the current state of content-visibility.
-  void SetRequestedState(EContentVisibility state);
+  // Called by style to update the current state of content-visibility and
+  // toggle-visibility.
+  // toggle_visibility should be non-null when toggle-visibility is set
+  // to a toggle *and* the toggle is currently inactive (meaning the
+  // element should be hidden due to the toggle).  Otherwise it should
+  // be g_null_atom.
+  void SetRequestedState(EContentVisibility state,
+                         const AtomicString& toggle_visibility);
   // Called by style to adjust the element's style based on the current state.
-  void AdjustElementStyle(ComputedStyle* style) const;
+  scoped_refptr<const ComputedStyle> AdjustElementStyle(
+      const ComputedStyle*) const;
 
   // Is called by the intersection observer callback to inform us of the
   // intersection state.
@@ -177,6 +206,7 @@ class CORE_EXPORT DisplayLockContext final
     if (IsLocked() && IsActivatable(DisplayLockActivationReason::kAny)) {
       MarkForStyleRecalcIfNeeded();
       MarkForLayoutIfNeeded();
+      MarkAncestorsForPrePaintIfNeeded();
     }
   }
 
@@ -190,7 +220,13 @@ class CORE_EXPORT DisplayLockContext final
   // Debugging functions.
   String RenderAffectingStateToString() const;
 
-  bool IsAuto() const { return state_ == EContentVisibility::kAuto; }
+  bool IsAlwaysVisible() const {
+    return state_ == EContentVisibility::kVisible && toggle_name_.IsNull();
+  }
+
+  bool IsAuto() const {
+    return state_ == EContentVisibility::kAuto && toggle_name_.IsNull();
+  }
   bool HadLifecycleUpdateSinceLastUnlock() const {
     return had_lifecycle_update_since_last_unlock_;
   }
@@ -214,6 +250,10 @@ class CORE_EXPORT DisplayLockContext final
 
   void ScheduleTopLayerCheck();
 
+  // State control for view transition element render affecting state.
+  void ResetDescendantIsViewTransitionElement();
+  void SetDescendantIsViewTransitionElement();
+
  private:
   // Give access to |NotifyForcedUpdateScopeStarted()| and
   // |NotifyForcedUpdateScopeEnded()|.
@@ -232,8 +272,13 @@ class CORE_EXPORT DisplayLockContext final
   void RequestUnlock();
 
   // Called in |DisplayLockUtilities| to notify the state of scope.
-  void NotifyForcedUpdateScopeStarted(ForcedPhase phase);
+  void NotifyForcedUpdateScopeStarted(ForcedPhase phase, bool emit_warnings) {
+    UpgradeForcedScope(ForcedPhase::kNone, phase, emit_warnings);
+  }
   void NotifyForcedUpdateScopeEnded(ForcedPhase phase);
+  void UpgradeForcedScope(ForcedPhase old_phase,
+                          ForcedPhase new_phase,
+                          bool emit_warnings);
 
   // Records the locked context counts on the document as well as context that
   // block all activation.
@@ -313,6 +358,10 @@ class CORE_EXPORT DisplayLockContext final
   // top layer node up the ancestor chain looking for `element_`.
   void DetermineIfSubtreeHasTopLayerElement();
 
+  // Determines if there are view transition elements in the subtree of this
+  // element.
+  void DetermineIfDescendantIsViewTransitionElement();
+
   // Detaching the layout tree from the top layers nested under this lock.
   void DetachDescendantTopLayerElements();
 
@@ -337,14 +386,21 @@ class CORE_EXPORT DisplayLockContext final
 
   bool SubtreeHasTopLayerElement() const;
 
+  void ScheduleStateChangeEventIfNeeded();
+  void DispatchStateChangeEventIfNeeded();
+
   WeakMember<Element> element_;
   WeakMember<Document> document_;
   EContentVisibility state_ = EContentVisibility::kVisible;
+  AtomicString toggle_name_;
 
   // A struct to keep track of forced unlocks, and reasons for it.
   struct UpdateForcedInfo {
     bool is_forced(ForcedPhase phase) const {
       switch (phase) {
+        case ForcedPhase::kNone:
+          NOTREACHED();
+          return false;
         case ForcedPhase::kStyleAndLayoutTree:
           return style_update_forced_ || layout_update_forced_ ||
                  prepaint_update_forced_;
@@ -357,6 +413,8 @@ class CORE_EXPORT DisplayLockContext final
 
     void start(ForcedPhase phase) {
       switch (phase) {
+        case ForcedPhase::kNone:
+          break;
         case ForcedPhase::kStyleAndLayoutTree:
           ++style_update_forced_;
           break;
@@ -370,6 +428,8 @@ class CORE_EXPORT DisplayLockContext final
 
     void end(ForcedPhase phase) {
       switch (phase) {
+        case ForcedPhase::kNone:
+          break;
         case ForcedPhase::kStyleAndLayoutTree:
           DCHECK(style_update_forced_);
           --style_update_forced_;
@@ -445,6 +505,7 @@ class CORE_EXPORT DisplayLockContext final
     kAutoStateUnlockedUntilLifecycle,
     kAutoUnlockedForPrint,
     kSubtreeHasTopLayerElement,
+    kDescendantIsViewTransitionElement,
     kNumRenderAffectingStates
   };
   void SetRenderAffectingState(RenderAffectingState state, bool flag);
@@ -483,9 +544,17 @@ class CORE_EXPORT DisplayLockContext final
   // the next frame.
   bool has_pending_clear_has_top_layer_ = false;
 
-  // If ture, we need to check if this subtree has any top layer elements at the
+  // If true, we need to check if this subtree has any top layer elements at the
   // start of the next frame.
   bool has_pending_top_layer_check_ = false;
+
+  // This is set to the last value for which ContentVisibilityAutoStateChange
+  // event has been dispatched (if any).
+  absl::optional<bool> last_notified_skipped_state_;
+
+  // If true, there is a pending task that will dispatch a state change event if
+  // needed.
+  bool state_change_task_pending_ = false;
 };
 
 }  // namespace blink

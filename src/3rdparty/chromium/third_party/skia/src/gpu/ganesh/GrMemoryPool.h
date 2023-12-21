@@ -8,10 +8,15 @@
 #ifndef GrMemoryPool_DEFINED
 #define GrMemoryPool_DEFINED
 
-#include "src/core/SkBlockAllocator.h"
+#include "src/base/SkBlockAllocator.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <type_traits>
 
 #ifdef SK_DEBUG
-#include "include/private/SkTHash.h"
+#include "src/core/SkTHash.h"
 #endif
 
 /**
@@ -113,7 +118,7 @@ private:
         int fID;       // ID that can be used to track down leaks by clients.
 #endif
 #if defined(SK_DEBUG) || defined(SK_SANITIZE_ADDRESS)
-        int fSentinel; // set to a known value to check for memory stomping; poisoned in ASAN mode
+        uint32_t fSentinel; // set to a known value to check for memory stomping; poisoned in ASAN mode
 #endif
     };
 

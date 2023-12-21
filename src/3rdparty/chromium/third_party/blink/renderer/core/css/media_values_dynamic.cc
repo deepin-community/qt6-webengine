@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -21,8 +21,9 @@ MediaValues* MediaValuesDynamic::Create(Document& document) {
 
 MediaValues* MediaValuesDynamic::Create(LocalFrame* frame) {
   if (!frame || !frame->View() || !frame->GetDocument() ||
-      !frame->GetDocument()->GetLayoutView())
+      !frame->GetDocument()->GetLayoutView()) {
     return MakeGarbageCollected<MediaValuesCached>();
+  }
   return MakeGarbageCollected<MediaValuesDynamic>(frame);
 }
 
@@ -45,15 +46,72 @@ MediaValuesDynamic::MediaValuesDynamic(LocalFrame* frame,
   DCHECK(frame_);
 }
 
+float MediaValuesDynamic::EmFontSize(float zoom) const {
+  DCHECK_EQ(1.0f, zoom);
+  return CalculateEmSize(frame_);
+}
+
+float MediaValuesDynamic::RemFontSize(float zoom) const {
+  DCHECK_EQ(1.0f, zoom);
+  // For media queries rem and em units are both based on the initial font.
+  return CalculateEmSize(frame_);
+}
+
+float MediaValuesDynamic::ExFontSize(float zoom) const {
+  DCHECK_EQ(1.0f, zoom);
+  return CalculateExSize(frame_);
+}
+
+float MediaValuesDynamic::RexFontSize(float zoom) const {
+  DCHECK_EQ(1.0f, zoom);
+  // For media queries rex and ex units are both based on the initial font.
+  return CalculateExSize(frame_);
+}
+
+float MediaValuesDynamic::ChFontSize(float zoom) const {
+  DCHECK_EQ(1.0f, zoom);
+  return CalculateChSize(frame_);
+}
+
+float MediaValuesDynamic::RchFontSize(float zoom) const {
+  DCHECK_EQ(1.0f, zoom);
+  // For media queries rch and ch units are both based on the initial font.
+  return CalculateChSize(frame_);
+}
+
+float MediaValuesDynamic::IcFontSize(float zoom) const {
+  DCHECK_EQ(1.0f, zoom);
+  return CalculateIcSize(frame_);
+}
+
+float MediaValuesDynamic::RicFontSize(float zoom) const {
+  DCHECK_EQ(1.0f, zoom);
+  // For media queries ric and ic units are both based on the initial font.
+  return CalculateIcSize(frame_);
+}
+
+float MediaValuesDynamic::LineHeight(float zoom) const {
+  DCHECK_EQ(1.0f, zoom);
+  return CalculateLineHeight(frame_);
+}
+
+float MediaValuesDynamic::RootLineHeight(float zoom) const {
+  DCHECK_EQ(1.0f, zoom);
+  // For media queries rlh and lh units are both based on the initial font.
+  return CalculateLineHeight(frame_);
+}
+
 double MediaValuesDynamic::ViewportWidth() const {
-  if (viewport_dimensions_overridden_)
+  if (viewport_dimensions_overridden_) {
     return viewport_width_override_;
+  }
   return CalculateViewportWidth(frame_);
 }
 
 double MediaValuesDynamic::ViewportHeight() const {
-  if (viewport_dimensions_overridden_)
+  if (viewport_dimensions_overridden_) {
     return viewport_height_override_;
+  }
   return CalculateViewportHeight(frame_);
 }
 
@@ -81,21 +139,12 @@ double MediaValuesDynamic::DynamicViewportHeight() const {
   return CalculateDynamicViewportHeight(frame_);
 }
 
-float MediaValuesDynamic::EmSize() const {
-  return CalculateEmSize(frame_);
+double MediaValuesDynamic::ContainerWidth() const {
+  return SmallViewportWidth();
 }
 
-float MediaValuesDynamic::RemSize() const {
-  // For media queries rem and em units are both based on the initial font.
-  return CalculateEmSize(frame_);
-}
-
-float MediaValuesDynamic::ExSize() const {
-  return CalculateExSize(frame_);
-}
-
-float MediaValuesDynamic::ChSize() const {
-  return CalculateChSize(frame_);
+double MediaValuesDynamic::ContainerHeight() const {
+  return SmallViewportHeight();
 }
 
 int MediaValuesDynamic::DeviceWidth() const {
@@ -140,10 +189,6 @@ int MediaValuesDynamic::AvailableHoverTypes() const {
 
 bool MediaValuesDynamic::ThreeDEnabled() const {
   return CalculateThreeDEnabled(frame_);
-}
-
-bool MediaValuesDynamic::InImmersiveMode() const {
-  return CalculateInImmersiveMode(frame_);
 }
 
 const String MediaValuesDynamic::MediaType() const {

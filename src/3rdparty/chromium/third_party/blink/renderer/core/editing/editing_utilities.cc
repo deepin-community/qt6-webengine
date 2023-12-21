@@ -161,165 +161,6 @@ bool IsAtomicNodeInFlatTree(const Node* node) {
                   EditingIgnoresContent(*node));
 }
 
-template <typename Traversal>
-static int16_t ComparePositions(const Node* container_a,
-                                int offset_a,
-                                const Node* container_b,
-                                int offset_b,
-                                bool* disconnected) {
-  DCHECK(container_a);
-  DCHECK(container_b);
-
-  if (disconnected)
-    *disconnected = false;
-
-  if (!container_a)
-    return -1;
-  if (!container_b)
-    return 1;
-
-  // see DOM2 traversal & range section 2.5
-
-  // case 1: both points have the same container
-  if (container_a == container_b) {
-    if (offset_a == offset_b)
-      return 0;  // A is equal to B
-    if (offset_a < offset_b)
-      return -1;  // A is before B
-    return 1;     // A is after B
-  }
-
-  // case 2: node C (container B or an ancestor) is a child node of A
-  const Node* c = container_b;
-  while (c && Traversal::Parent(*c) != container_a)
-    c = Traversal::Parent(*c);
-  if (c) {
-    int offset_c = 0;
-    Node* n = Traversal::FirstChild(*container_a);
-    while (n != c && offset_c < offset_a) {
-      offset_c++;
-      n = Traversal::NextSibling(*n);
-    }
-
-    if (offset_a <= offset_c)
-      return -1;  // A is before B
-    return 1;     // A is after B
-  }
-
-  // case 3: node C (container A or an ancestor) is a child node of B
-  c = container_a;
-  while (c && Traversal::Parent(*c) != container_b)
-    c = Traversal::Parent(*c);
-  if (c) {
-    int offset_c = 0;
-    Node* n = Traversal::FirstChild(*container_b);
-    while (n != c && offset_c < offset_b) {
-      offset_c++;
-      n = Traversal::NextSibling(*n);
-    }
-
-    if (offset_c < offset_b)
-      return -1;  // A is before B
-    return 1;     // A is after B
-  }
-
-  // case 4: containers A & B are siblings, or children of siblings
-  // ### we need to do a traversal here instead
-  Node* common_ancestor = Traversal::CommonAncestor(*container_a, *container_b);
-  if (!common_ancestor) {
-    if (disconnected)
-      *disconnected = true;
-    return 0;
-  }
-  const Node* child_a = container_a;
-  while (child_a && Traversal::Parent(*child_a) != common_ancestor)
-    child_a = Traversal::Parent(*child_a);
-  if (!child_a)
-    child_a = common_ancestor;
-  const Node* child_b = container_b;
-  while (child_b && Traversal::Parent(*child_b) != common_ancestor)
-    child_b = Traversal::Parent(*child_b);
-  if (!child_b)
-    child_b = common_ancestor;
-
-  if (child_a == child_b)
-    return 0;  // A is equal to B
-
-  Node* n = Traversal::FirstChild(*common_ancestor);
-  while (n) {
-    if (n == child_a)
-      return -1;  // A is before B
-    if (n == child_b)
-      return 1;  // A is after B
-    n = Traversal::NextSibling(*n);
-  }
-
-  // Should never reach this point.
-  NOTREACHED();
-  return 0;
-}
-
-int16_t ComparePositionsInDOMTree(const Node* container_a,
-                                  int offset_a,
-                                  const Node* container_b,
-                                  int offset_b,
-                                  bool* disconnected) {
-  return ComparePositions<NodeTraversal>(container_a, offset_a, container_b,
-                                         offset_b, disconnected);
-}
-
-int16_t ComparePositionsInFlatTree(const Node* container_a,
-                                   int offset_a,
-                                   const Node* container_b,
-                                   int offset_b,
-                                   bool* disconnected) {
-  return ComparePositions<FlatTreeTraversal>(container_a, offset_a, container_b,
-                                             offset_b, disconnected);
-}
-
-// Compare two positions, taking into account the possibility that one or both
-// could be inside a shadow tree. Only works for non-null values.
-int16_t ComparePositions(const Position& a, const Position& b) {
-  DCHECK(a.IsNotNull());
-  DCHECK(b.IsNotNull());
-  const TreeScope* common_scope = Position::CommonAncestorTreeScope(a, b);
-
-  DCHECK(common_scope);
-  if (!common_scope)
-    return 0;
-
-  Node* node_a = common_scope->AncestorInThisScope(a.ComputeContainerNode());
-  DCHECK(node_a);
-  bool has_descendent_a = node_a != a.ComputeContainerNode();
-  int offset_a = has_descendent_a ? 0 : a.ComputeOffsetInContainerNode();
-
-  Node* node_b = common_scope->AncestorInThisScope(b.ComputeContainerNode());
-  DCHECK(node_b);
-  bool has_descendent_b = node_b != b.ComputeContainerNode();
-  int offset_b = has_descendent_b ? 0 : b.ComputeOffsetInContainerNode();
-
-  int16_t bias = 0;
-  if (node_a == node_b) {
-    if (has_descendent_a)
-      bias = 1;
-    else if (has_descendent_b)
-      bias = -1;
-  }
-
-  int16_t result =
-      ComparePositionsInDOMTree(node_a, offset_a, node_b, offset_b);
-  return result ? result : bias;
-}
-
-int16_t ComparePositions(const PositionWithAffinity& a,
-                         const PositionWithAffinity& b) {
-  return ComparePositions(a.GetPosition(), b.GetPosition());
-}
-
-int16_t ComparePositions(const VisiblePosition& a, const VisiblePosition& b) {
-  return ComparePositions(a.DeepEquivalent(), b.DeepEquivalent());
-}
-
 bool IsNodeFullyContained(const EphemeralRange& range, const Node& node) {
   if (range.IsNull())
     return false;
@@ -354,6 +195,12 @@ static bool HasEditableLevel(const Node& node, EditableLevel editable_level) {
   for (const Node& ancestor : NodeTraversal::InclusiveAncestorsOf(node)) {
     if (!(ancestor.IsHTMLElement() || ancestor.IsDocumentNode()))
       continue;
+
+    if (auto* element = DynamicTo<Element>(&ancestor)) {
+      if (element->editContext())
+          return true;
+    }
+
     const ComputedStyle* style = ancestor.GetComputedStyle();
     if (!style)
       continue;
@@ -370,7 +217,7 @@ static bool HasEditableLevel(const Node& node, EditableLevel editable_level) {
   return false;
 }
 
-bool HasEditableStyle(const Node& node) {
+bool IsEditable(const Node& node) {
   // TODO(editing-dev): We shouldn't check editable style in inactive documents.
   // We should hoist this check in the call stack, replace it by a DCHECK of
   // active document and ultimately cleanup the code paths with inactive
@@ -381,7 +228,7 @@ bool HasEditableStyle(const Node& node) {
   return HasEditableLevel(node, kEditable);
 }
 
-bool HasRichlyEditableStyle(const Node& node) {
+bool IsRichlyEditable(const Node& node) {
   // TODO(editing-dev): We shouldn't check editable style in inactive documents.
   // We should hoist this check in the call stack, replace it by a DCHECK of
   // active document and ultimately cleanup the code paths with inactive
@@ -392,36 +239,16 @@ bool HasRichlyEditableStyle(const Node& node) {
   return HasEditableLevel(node, kRichlyEditable);
 }
 
-// This method is copied from WebElement::IsEditable.
-// TODO(dglazkov): Remove. Consumers of this code should use
-// Node:hasEditableStyle.  http://crbug.com/612560
-bool IsEditableElement(const Node& node) {
-  if (HasEditableStyle(node))
-    return true;
-
-  if (auto* text_control = ToTextControlOrNull(&node)) {
-    if (!text_control->IsDisabledOrReadOnly())
-      return true;
-  }
-
-  if (auto* element = DynamicTo<Element>(&node)) {
-    return EqualIgnoringASCIICase(
-        element->FastGetAttribute(html_names::kRoleAttr), "textbox");
-  }
-
-  return false;
-}
-
 bool IsRootEditableElement(const Node& node) {
-  return HasEditableStyle(node) && node.IsElementNode() &&
-         (!node.parentNode() || !HasEditableStyle(*node.parentNode()) ||
+  return IsEditable(node) && node.IsElementNode() &&
+         (!node.parentNode() || !IsEditable(*node.parentNode()) ||
           !node.parentNode()->IsElementNode() ||
           &node == node.GetDocument().body());
 }
 
 Element* RootEditableElement(const Node& node) {
   const Element* result = nullptr;
-  for (const Node* n = &node; n && HasEditableStyle(*n); n = n->parentNode()) {
+  for (const Node* n = &node; n && IsEditable(*n); n = n->parentNode()) {
     if (auto* element = DynamicTo<Element>(n))
       result = element;
     if (node.GetDocument().body() == n)
@@ -443,7 +270,7 @@ ContainerNode* HighestEditableRoot(const Position& position) {
 
   ContainerNode* node = highest_root->parentNode();
   while (node) {
-    if (HasEditableStyle(*node))
+    if (IsEditable(*node))
       highest_root = node;
     if (IsA<HTMLBodyElement>(*node))
       break;
@@ -476,7 +303,7 @@ bool IsEditablePosition(const Position& position) {
 
   if (node->IsDocumentNode())
     return false;
-  return HasEditableStyle(*node);
+  return IsEditable(*node);
 }
 
 bool IsEditablePosition(const PositionInFlatTree& p) {
@@ -491,7 +318,7 @@ bool IsRichlyEditablePosition(const Position& p) {
   if (IsDisplayInsideTable(node))
     node = node->parentNode();
 
-  return HasRichlyEditableStyle(*node);
+  return IsRichlyEditable(*node);
 }
 
 Element* RootEditableElementOf(const Position& p) {
@@ -652,7 +479,7 @@ PositionTemplate<Strategy> FirstEditablePositionAfterPositionInRootAlgorithm(
   // position falls before highestRoot.
   if (position.CompareTo(PositionTemplate<Strategy>::FirstPositionInNode(
           highest_root)) == -1 &&
-      HasEditableStyle(highest_root))
+      IsEditable(highest_root))
     return PositionTemplate<Strategy>::FirstPositionInNode(highest_root);
 
   PositionTemplate<Strategy> editable_position = position;
@@ -1181,7 +1008,7 @@ Element* EnclosingElementWithTag(const Position& p,
     auto* ancestor = DynamicTo<Element>(runner);
     if (!ancestor)
       continue;
-    if (root && !HasEditableStyle(*ancestor))
+    if (root && !IsEditable(*ancestor))
       continue;
     if (ancestor->HasTagName(tag_name))
       return ancestor;
@@ -1209,7 +1036,7 @@ static Node* EnclosingNodeOfTypeAlgorithm(const PositionTemplate<Strategy>& p,
     // Don't return a non-editable node if the input position was editable,
     // since the callers from editing will no doubt want to perform editing
     // inside the returned node.
-    if (root && !HasEditableStyle(*n))
+    if (root && !IsEditable(*n))
       continue;
     if (node_is_of_type(n))
       return n;
@@ -1243,7 +1070,7 @@ Node* HighestEnclosingNodeOfType(const Position& p,
       rule == kCannotCrossEditingBoundary ? HighestEditableRoot(p) : nullptr;
   for (Node* n = p.ComputeContainerNode(); n && n != stay_within;
        n = n->parentNode()) {
-    if (root && !HasEditableStyle(*n))
+    if (root && !IsEditable(*n))
       continue;
     if (node_is_of_type(n))
       highest = n;
@@ -1405,23 +1232,23 @@ PositionWithAffinity AdjustForEditingBoundary(
     return position_with_affinity;
   const Position& position = position_with_affinity.GetPosition();
   const Node& node = *position.ComputeContainerNode();
-  if (HasEditableStyle(node))
+  if (IsEditable(node))
     return position_with_affinity;
   // TODO(yosin): Once we fix |MostBackwardCaretPosition()| to handle
   // positions other than |kOffsetInAnchor|, we don't need to use
   // |adjusted_position|, e.g. <outer><inner contenteditable> with position
   // before <inner> vs. outer@0[1].
   // [1] editing/selection/click-outside-editable-div.html
-  const Position& adjusted_position = HasEditableStyle(*position.AnchorNode())
+  const Position& adjusted_position = IsEditable(*position.AnchorNode())
                                           ? position.ToOffsetInAnchor()
                                           : position;
   const Position& forward =
       MostForwardCaretPosition(adjusted_position, kCanCrossEditingBoundary);
-  if (HasEditableStyle(*forward.ComputeContainerNode()))
+  if (IsEditable(*forward.ComputeContainerNode()))
     return PositionWithAffinity(forward);
   const Position& backward =
       MostBackwardCaretPosition(adjusted_position, kCanCrossEditingBoundary);
-  if (HasEditableStyle(*backward.ComputeContainerNode()))
+  if (IsEditable(*backward.ComputeContainerNode()))
     return PositionWithAffinity(backward);
   return PositionWithAffinity(adjusted_position,
                               position_with_affinity.Affinity());
@@ -1704,7 +1531,7 @@ const StaticRangeVector* TargetRangesForInputEvent(const Node& node) {
   // TODO(editing-dev): The use of UpdateStyleAndLayout
   // needs to be audited. see http://crbug.com/590369 for more details.
   node.GetDocument().UpdateStyleAndLayout(DocumentUpdateReason::kEditing);
-  if (!HasRichlyEditableStyle(node))
+  if (!IsRichlyEditable(node))
     return nullptr;
   const EphemeralRange& range =
       FirstEphemeralRangeOf(node.GetDocument()
@@ -1759,7 +1586,7 @@ DispatchEventResult DispatchBeforeInputDataTransfer(
 
   InputEvent* before_input_event;
 
-  if (HasRichlyEditableStyle(*target) || !data_transfer) {
+  if (IsRichlyEditable(*target) || !data_transfer) {
     before_input_event = InputEvent::CreateBeforeInput(
         input_type, data_transfer, InputTypeIsCancelable(input_type),
         InputEvent::EventIsComposing::kNotComposing,
@@ -1789,8 +1616,8 @@ static bool IsEmptyNonEditableNodeInEditable(const Node& node) {
   // Flat Tree:
   //   <host><div ce><span1>unedittable</span></div></host>
   // e.g. editing/shadow/breaking-editing-boundaries.html
-  return !NodeTraversal::HasChildren(node) && !HasEditableStyle(node) &&
-         node.parentNode() && HasEditableStyle(*node.parentNode());
+  return !NodeTraversal::HasChildren(node) && !IsEditable(node) &&
+         node.parentNode() && IsEditable(*node.parentNode());
 }
 
 // TODO(yosin): We should not use |IsEmptyNonEditableNodeInEditable()| in

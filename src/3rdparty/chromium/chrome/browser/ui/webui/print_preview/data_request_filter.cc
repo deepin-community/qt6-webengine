@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,11 +8,11 @@
 #include <utility>
 
 #include "base/base_paths.h"
-#include "base/bind.h"
-#include "base/callback.h"
 #include "base/check.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/path_service.h"
@@ -54,7 +54,8 @@ void HandleRequestCallback(const std::string& path,
 
     CHECK(base::ReadFileToString(pdf_path, &test_pdf_content));
     scoped_refptr<base::RefCountedString> response =
-        base::RefCountedString::TakeString(&test_pdf_content);
+        base::MakeRefCounted<base::RefCountedString>(
+            std::move(test_pdf_content));
     std::move(callback).Run(response.get());
     return;
   }

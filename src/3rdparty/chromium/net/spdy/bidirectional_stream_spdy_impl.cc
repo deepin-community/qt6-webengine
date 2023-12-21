@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,17 +6,17 @@
 
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "net/http/bidirectional_stream_request_info.h"
 #include "net/spdy/spdy_buffer.h"
 #include "net/spdy/spdy_http_utils.h"
 #include "net/spdy/spdy_stream.h"
-#include "net/third_party/quiche/src/quiche/spdy/core/spdy_header_block.h"
+#include "net/third_party/quiche/src/quiche/spdy/core/http2_header_block.h"
 
 namespace net {
 
@@ -32,20 +32,7 @@ const int kBufferTimeMs = 1;
 BidirectionalStreamSpdyImpl::BidirectionalStreamSpdyImpl(
     const base::WeakPtr<SpdySession>& spdy_session,
     NetLogSource source_dependency)
-    : spdy_session_(spdy_session),
-      request_info_(nullptr),
-      delegate_(nullptr),
-      source_dependency_(source_dependency),
-      negotiated_protocol_(kProtoUnknown),
-      more_read_data_pending_(false),
-      read_buffer_len_(0),
-      written_end_of_stream_(false),
-      write_pending_(false),
-      stream_closed_(false),
-      closed_stream_status_(ERR_FAILED),
-      closed_stream_received_bytes_(0),
-      closed_stream_sent_bytes_(0),
-      closed_has_load_timing_info_(false) {}
+    : spdy_session_(spdy_session), source_dependency_(source_dependency) {}
 
 BidirectionalStreamSpdyImpl::~BidirectionalStreamSpdyImpl() {
   // Sends a RST to the remote if the stream is destroyed before it completes.
@@ -66,7 +53,7 @@ void BidirectionalStreamSpdyImpl::Start(
   timer_ = std::move(timer);
 
   if (!spdy_session_) {
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE,
         base::BindOnce(&BidirectionalStreamSpdyImpl::NotifyError,
                        weak_factory_.GetWeakPtr(), ERR_CONNECTION_CLOSED));
@@ -122,7 +109,7 @@ void BidirectionalStreamSpdyImpl::SendvData(
 
   if (written_end_of_stream_) {
     LOG(ERROR) << "Writing after end of stream is written.";
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(&BidirectionalStreamSpdyImpl::NotifyError,
                                   weak_factory_.GetWeakPtr(), ERR_UNEXPECTED));
     return;
@@ -407,13 +394,13 @@ bool BidirectionalStreamSpdyImpl::MaybeHandleStreamClosedInSendData() {
   // If |stream_| is closed without an error before client half closes,
   // blackhole any pending write data. crbug.com/650438.
   if (stream_closed_ && closed_stream_status_ == OK) {
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(&BidirectionalStreamSpdyImpl::OnDataSent,
                                   weak_factory_.GetWeakPtr()));
     return true;
   }
   LOG(ERROR) << "Trying to send data after stream has been destroyed.";
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(&BidirectionalStreamSpdyImpl::NotifyError,
                                 weak_factory_.GetWeakPtr(), ERR_UNEXPECTED));
   return true;

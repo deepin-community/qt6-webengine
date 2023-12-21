@@ -1,4 +1,4 @@
-// Copyright 2016 PDFium Authors. All rights reserved.
+// Copyright 2016 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -21,8 +21,8 @@ class CPDF_Font;
 class CPVT_FontMap final : public IPVT_FontMap {
  public:
   CPVT_FontMap(CPDF_Document* pDoc,
-               CPDF_Dictionary* pResDict,
-               const RetainPtr<CPDF_Font>& pDefFont,
+               RetainPtr<CPDF_Dictionary> pResDict,
+               RetainPtr<CPDF_Font> pDefFont,
                const ByteString& sDefFontAlias);
   ~CPVT_FontMap() override;
 

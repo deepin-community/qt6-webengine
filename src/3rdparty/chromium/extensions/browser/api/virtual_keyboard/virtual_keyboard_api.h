@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,7 +12,7 @@ namespace extensions {
 
 class VirtualKeyboardRestrictFeaturesFunction : public ExtensionFunction {
  public:
-  VirtualKeyboardRestrictFeaturesFunction();
+  VirtualKeyboardRestrictFeaturesFunction() = default;
 
   VirtualKeyboardRestrictFeaturesFunction(
       const VirtualKeyboardRestrictFeaturesFunction&) = delete;
@@ -26,6 +26,9 @@ class VirtualKeyboardRestrictFeaturesFunction : public ExtensionFunction {
   ~VirtualKeyboardRestrictFeaturesFunction() override = default;
   // ExtensionFunction override:
   ResponseAction Run() override;
+
+ private:
+  void OnRestrictFeatures(api::virtual_keyboard::FeatureRestrictions update);
 };
 
 }  // namespace extensions

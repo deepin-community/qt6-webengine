@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -70,6 +70,10 @@ class AppBannerSettingsHelper {
     // not shown for sites which were added, and to determine if sites were
     // launched recently.
     APP_BANNER_EVENT_DID_ADD_TO_HOMESCREEN,
+    // Records when a site met the conditions to show an ambient badge.
+    // Used to suppress the ambient badge from being shown too often.
+    APP_BANNER_EVENT_COULD_SHOW_AMBIENT_BADGE,
+
     APP_BANNER_EVENT_NUM_EVENTS,
   };
 

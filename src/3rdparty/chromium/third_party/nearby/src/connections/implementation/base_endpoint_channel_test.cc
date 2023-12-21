@@ -38,7 +38,6 @@
 #include "internal/platform/single_thread_executor.h"
 #include "proto/connections_enums.pb.h"
 
-namespace location {
 namespace nearby {
 namespace connections {
 namespace {
@@ -50,7 +49,7 @@ using EncryptionContext = BaseEndpointChannel::EncryptionContext;
 class TestEndpointChannel : public BaseEndpointChannel {
  public:
   explicit TestEndpointChannel(InputStream* input, OutputStream* output)
-      : BaseEndpointChannel("channel", input, output) {}
+      : BaseEndpointChannel("service_id", "channel", input, output) {}
 
   MOCK_METHOD(Medium, GetMedium, (), (const override));
   MOCK_METHOD(void, CloseImpl, (), (override));
@@ -407,4 +406,3 @@ TEST(BaseEndpointChannelTest, ReadUnencryptedFrameOnEncryptedChannel) {
 }  // namespace
 }  // namespace connections
 }  // namespace nearby
-}  // namespace location

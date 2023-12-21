@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,6 @@ import "components/media_router/common/mojom/media_controller.mojom";
 import "components/media_router/common/mojom/media_route_provider_id.mojom";
 import "components/media_router/common/mojom/media_status.mojom";
 import "components/media_router/common/mojom/route_request_result_code.mojom";
-import "components/mirroring/mojom/mirroring_service_host.mojom";
 import "mojo/public/mojom/base/time.mojom";
 import "services/network/public/mojom/ip_address.mojom";
 import "services/network/public/mojom/ip_endpoint.mojom";
@@ -32,15 +31,6 @@ struct MediaSink {
   string sink_id;
   // The human-readable name, e.g. "Janet's Chromecast".
   string name;
-  // Optional description of the sink.
-  //
-  // DEPRECATED.  This is currently used in the Media Router UX to relay a
-  // Hangouts meeting name.  It should not be used for other purposes.
-  // TODO(crbug.com/786208): Remove this at a future date when Hangouts names
-  // are no longer required.
-  string? description;
-  // Optional domain of the sink if this sink is associated with an identity.
-  string? domain;
   // The type of icon to show in the UI for this media sink.
   SinkIconType icon_type;
   // The ID of the MediaRouteProvider that this sink belongs to.
@@ -86,11 +76,10 @@ struct CastMediaSink {
   int32 cast_channel_id;
 };
 
-// TODO(crbug.com/993437): Replace the use of this enum with a boolean field.
 enum RouteControllerType {
-  kNone,
-  kGeneric,
-  kMirroring
+  kNone,      // No route controller.
+  kGeneric,   // Route controller for sessions with media controls (apps).
+  kMirroring  // Route controller for Cast mirroring and remoting sessions.
 };
 
 // MediaRoute objects contain the status and metadata of a routing
@@ -110,9 +99,6 @@ struct MediaRoute {
   string media_sink_name;
   // Human readable description of the casting activity.  Examples:
   // "Mirroring tab (www.example.com)", "Casting media", "Casting YouTube"
-  //
-  // TODO(crbug.com/786208): Localize this properly by passing it in a way that
-  // permits use of template strings and placeholders.
   string description;
   // Specifies that the route is requested locally.
   bool is_local;
@@ -128,29 +114,10 @@ struct MediaRoute {
   bool is_connecting;
 };
 
-// Notifications or an actionable events to be shown to the user.
-// When is_blocking is true, media router UI shows issue only:
-//
-//       Title
-//       Message
-//       default_action_button secondary_action_button
-//
-// When is_blocking is false, media router UI uses banner:
-//
-//       Title default_action_link secondary_action_link
-//
-// above receiver list if route_id is not provided; otherwise it is
-// above route detail and controls.
 struct Issue {
   enum Severity {
-    FATAL,
     WARNING,
     NOTIFICATION
-  };
-
-  enum ActionType {
-    DISMISS,
-    LEARN_MORE
   };
 
   // If set, the ID of the route to which this issue pertains.
@@ -159,14 +126,9 @@ struct Issue {
 
   // The ID of the sink associated with this issue.
   // If this is an empty string (default), then this is a global issue.
-  // TODO(https://crbug.com/554646): Associate all issues with sinks.
   string sink_id;
 
   Severity severity;
-
-  // When true, the issue must be presented to the user and resolved
-  // before other actions are allowed.
-  bool is_blocking;
 
   // Short description about the issue.
   string title;
@@ -174,13 +136,6 @@ struct Issue {
   // Message about issue detail or how to handle issue.
   // Messages should be suitable for end users to decide which actions to take.
   string? message;
-
-  ActionType default_action;
-
-  array<ActionType> secondary_actions;
-
-  // The ID of the help page to be opened if users select learn_more.
-  int32 help_page_id;
 };
 
 struct RouteMessage {
@@ -253,9 +208,9 @@ interface MediaRouteProvider {
   // may be overridden by a provider implementation. The presentation ID will
   // be used by the presentation API to refer to the created route.
   //
-  // |origin| and |tab_id| may be passed in for enforcing same-origin and/or
-  // same-tab scopes. Use -1 as |tab_id| in cases where the request is not
-  // made on behalf of a tab.
+  // |origin| and |frame_tree_node_id| may be passed in for enforcing
+  // same-origin and/or same-tab scopes. Use -1 as |frame_tree_node_id| in
+  // cases where the request is not made on behalf of a tab.
   //
   // If |timeout| is positive, it will be used in place of the default timeout
   // defined by Media Route Provider Manager.
@@ -270,12 +225,13 @@ interface MediaRouteProvider {
   //
   // |result_code| will be set to OK if successful, or an error code if an error
   // occurred.
-  // TODO(btolsch): Consolidate result params into struct.
+  // TODO(crbug.com/1346066): Consolidate parameters into a struct.
+  // TODO(crbug.com/1351184): Make |frame_tree_node_id| optional.
   CreateRoute(string media_source,
               string sink_id,
               string original_presentation_id,
               url.mojom.Origin origin,
-              int32 tab_id,
+              int32 frame_tree_node_id,
               mojo_base.mojom.TimeDelta timeout,
               bool off_the_record) =>
                   (MediaRoute? route,
@@ -286,8 +242,8 @@ interface MediaRouteProvider {
   // Requests a connection to an established route for |media_source| given
   // by |presentation_id|.
   //
-  // |origin| and |tab_id| are used for validating same-origin/tab scopes;
-  // see CreateRoute for additional documentation.
+  // |origin| and |frame_tree_node_id| are used for validating same-origin/tab
+  // scopes; see CreateRoute for additional documentation.
   //
   // If |timeout| is positive, it will be used in place of the default timeout
   // defined by Media Route Provider Manager.
@@ -302,10 +258,12 @@ interface MediaRouteProvider {
   //
   // |result_code| will be set to OK if successful, or an error code if an error
   // occurred.
+  // TODO(crbug.com/1346066): Consolidate parameters into a struct.
+  // TODO(crbug.com/1351184): Make |frame_tree_node_id| optional.
   JoinRoute(string media_source,
             string presentation_id,
             url.mojom.Origin origin,
-            int32 tab_id,
+            int32 frame_tree_node_id,
             mojo_base.mojom.TimeDelta timeout,
             bool off_the_record) =>
                 (MediaRoute? route,
@@ -359,14 +317,10 @@ interface MediaRouteProvider {
   // already a firewall rule for mDNS.
   EnableMdnsDiscovery();
 
-  // Requests the MediaRouteProvider to update the list of media sinks capable
-  // of displaying |media_source|. This call is made when a user gesture is
-  // detected, so MediaRouteProvider may treat this as a signal to take actions
-  // to become more responsive, e.g., initiate a one-off round of device
-  // discovery.
-  // TODO(https://crbug.com/698940): Rename this to OnUserGesture and remove the
-  // |media_source| parameter.
-  UpdateMediaSinks(string media_source);
+  // Requests the MediaRouteProvider to update its list of media sinks.
+  // This is called when a user gesture occurs, and the MRP is expected to
+  // initiate discovery of media sinks in response.
+  DiscoverSinksNow();
 
   // Creates a controller for the media route with given |route_id| and binds it
   // to |media_controller| for receiving media commands. This method returns
@@ -378,8 +332,6 @@ interface MediaRouteProvider {
   // method can be called again with the same |route_id|. This method also sets
   // |observer| to be notified whenever there is a change in the status of the
   // media route.
-  // TODO(takumif): Consider returning an enum instead of a bool to distinguish
-  // between error conditions for metrics/debugging.
   CreateMediaRouteController(string route_id,
                              pending_receiver<MediaController> media_controller,
                              pending_remote<MediaStatusObserver> observer) =>
@@ -410,6 +362,9 @@ interface MediaRouter {
 
   // Called when issues are reported for media routes.
   OnIssue(Issue issue);
+
+  // Clears the top Issue if it belongs to the given sink_id.
+  ClearTopIssueForSink(string sink_id);
 
   // Called when list of routes for a MediaRouteProvider has been updated.
   OnRoutesUpdated(MediaRouteProviderId provider_id,
@@ -445,16 +400,4 @@ interface MediaRouter {
   // called under limited circumstances, such as when the user is submitting a
   // feedback report.
   GetLogsAsString() => (string logs);
-
-  // Called to get a mirroring.mojom.MirroringServiceHost.
-  GetMirroringServiceHostForTab(int32 target_tab_id,
-      pending_receiver<mirroring.mojom.MirroringServiceHost> receiver);
-  GetMirroringServiceHostForDesktop(
-      int32 initiator_tab_id,  // The tab used to register the stream.
-      string desktop_stream_id,
-      pending_receiver<mirroring.mojom.MirroringServiceHost> receiver);
-  GetMirroringServiceHostForOffscreenTab(
-      url.mojom.Url presentation_url,
-      string presentation_id,
-      pending_receiver<mirroring.mojom.MirroringServiceHost> receiver);
 };

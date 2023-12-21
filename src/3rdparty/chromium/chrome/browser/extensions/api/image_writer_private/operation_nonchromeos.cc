@@ -1,13 +1,13 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include <stdint.h>
 #include <utility>
 
-#include "base/bind.h"
 #include "base/files/file_util.h"
-#include "chrome/browser/extensions/api/image_writer_private/error_messages.h"
+#include "base/functional/bind.h"
+#include "chrome/browser/extensions/api/image_writer_private/error_constants.h"
 #include "chrome/browser/extensions/api/image_writer_private/operation.h"
 #include "chrome/browser/extensions/api/image_writer_private/operation_manager.h"
 #include "content/public/browser/browser_thread.h"

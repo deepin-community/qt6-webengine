@@ -23,7 +23,7 @@
 #include "include/gpu/GrRecordingContext.h"
 #include "include/private/SkColorData.h"
 #include "include/private/gpu/ganesh/GrTypesPriv.h"
-#include "include/utils/SkRandom.h"
+#include "src/base/SkRandom.h"
 #include "src/core/SkCanvasPriv.h"
 #include "src/core/SkGeometry.h"
 #include "src/core/SkPointPriv.h"
@@ -39,6 +39,7 @@
 #include "src/gpu/ganesh/GrProgramInfo.h"
 #include "src/gpu/ganesh/GrRecordingContextPriv.h"
 #include "src/gpu/ganesh/GrUserStencilSettings.h"
+#include "src/gpu/ganesh/SurfaceDrawContext.h"
 #include "src/gpu/ganesh/effects/GrBezierEffect.h"
 #include "src/gpu/ganesh/effects/GrPorterDuffXferProcessor.h"
 #include "src/gpu/ganesh/geometry/GrPathUtils.h"
@@ -46,7 +47,6 @@
 #include "src/gpu/ganesh/ops/GrMeshDrawOp.h"
 #include "src/gpu/ganesh/ops/GrOp.h"
 #include "src/gpu/ganesh/ops/GrSimpleMeshDrawOpHelper.h"
-#include "src/gpu/ganesh/v1/SurfaceDrawContext_v1.h"
 
 #include <memory>
 #include <utility>

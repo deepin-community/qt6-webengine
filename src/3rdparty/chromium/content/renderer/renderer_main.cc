@@ -1,20 +1,23 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include <stddef.h>
 #include <utility>
 
+#include "base/allocator/partition_alloc_support.h"
 #include "base/base_switches.h"
 #include "base/command_line.h"
 #include "base/debug/debugger.h"
 #include "base/debug/leak_annotations.h"
+#include "base/feature_list.h"
 #include "base/i18n/rtl.h"
 #include "base/message_loop/message_pump.h"
 #include "base/message_loop/message_pump_type.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/pending_task.h"
+#include "base/process/current_process.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/system/sys_info.h"
@@ -26,8 +29,8 @@
 #include "build/chromeos_buildflags.h"
 #include "content/common/content_constants_internal.h"
 #include "content/common/content_switches_internal.h"
-#include "content/common/partition_alloc_support.h"
 #include "content/common/skia_utils.h"
+#include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/main_function_params.h"
 #include "content/public/renderer/content_renderer_client.h"
@@ -63,7 +66,7 @@
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
 #if defined(ARCH_CPU_X86_64)
-#include "chromeos/memory/userspace_swap/userspace_swap_renderer_initialization_impl.h"
+#include "chromeos/ash/components/memory/userspace_swap/userspace_swap_renderer_initialization_impl.h"
 #endif  // defined(X86_64)
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
@@ -71,7 +74,11 @@
 #include "chromeos/system/core_scheduling.h"
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
-#if BUILDFLAG(ENABLE_PLUGINS)
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+#include "content/renderer/renderer_thread_type_handler.h"
+#endif
+
+#if BUILDFLAG(ENABLE_PPAPI)
 #include "content/renderer/pepper/pepper_plugin_registry.h"
 #endif
 
@@ -136,7 +143,8 @@ int RendererMain(MainFunctionParams parameters) {
   // expect synchronous events around the main loop of a thread.
   TRACE_EVENT_INSTANT0("startup", "RendererMain", TRACE_EVENT_SCOPE_THREAD);
 
-  base::trace_event::TraceLog::GetInstance()->set_process_name("Renderer");
+  base::CurrentProcess::GetInstance().SetProcessType(
+      base::CurrentProcessType::PROCESS_RENDERER);
   base::trace_event::TraceLog::GetInstance()->SetProcessSortIndex(
       kTraceEventRendererProcessSortIndex);
 
@@ -167,7 +175,7 @@ int RendererMain(MainFunctionParams parameters) {
 #if BUILDFLAG(IS_CHROMEOS_ASH)
 #if defined(ARCH_CPU_X86_64)
   using UserspaceSwapInit =
-      chromeos::memory::userspace_swap::UserspaceSwapRendererInitializationImpl;
+      ash::memory::userspace_swap::UserspaceSwapRendererInitializationImpl;
   absl::optional<UserspaceSwapInit> swap_init;
   if (UserspaceSwapInit::UserspaceSwapSupportedAndEnabled()) {
     swap_init.emplace();
@@ -208,7 +216,7 @@ int RendererMain(MainFunctionParams parameters) {
 
   platform.PlatformInitialize();
 
-#if BUILDFLAG(ENABLE_PLUGINS)
+#if BUILDFLAG(ENABLE_PPAPI)
   // Load pepper plugins before engaging the sandbox.
   PepperPluginRegistry::GetInstance();
 #endif
@@ -221,9 +229,17 @@ int RendererMain(MainFunctionParams parameters) {
 #endif
 
   {
+    content::ContentRendererClient* client = GetContentClient()->renderer();
     bool should_run_loop = true;
     bool need_sandbox =
         !command_line.HasSwitch(sandbox::policy::switches::kNoSandbox);
+
+    if (!need_sandbox) {
+      // The post-sandbox actions still need to happen at some point.
+      if (client) {
+        client->PostSandboxInitialized();
+      }
+    }
 
 #if !BUILDFLAG(IS_WIN) && !BUILDFLAG(IS_MAC)
     // Sandbox is enabled before RenderProcess initialization on all platforms,
@@ -232,6 +248,35 @@ int RendererMain(MainFunctionParams parameters) {
     if (need_sandbox) {
       should_run_loop = platform.EnableSandbox();
       need_sandbox = false;
+      if (client) {
+        client->PostSandboxInitialized();
+      }
+    }
+#endif
+
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+    // Thread type delegate of the process should be registered before
+    // first thread type change in ChildProcess constructor.
+    if (base::FeatureList::IsEnabled(
+            features::kHandleRendererThreadTypeChangesInBrowser)) {
+      RendererThreadTypeHandler::Create();
+
+      // Change the main thread type. On Linux and ChromeOS this needs to be
+      // done only if kHandleRendererThreadTypeChangesInBrowser is enabled to
+      // avoid child threads inheriting the main thread settings.
+      if (base::FeatureList::IsEnabled(
+              features::kMainThreadCompositingPriority)) {
+        base::PlatformThread::SetCurrentThreadType(
+            base::ThreadType::kCompositing);
+      }
+    }
+#else
+    if (base::FeatureList::IsEnabled(
+            features::kMainThreadCompositingPriority)) {
+      base::PlatformThread::SetCurrentThreadType(
+          base::ThreadType::kCompositing);
+    } else {
+      base::PlatformThread::SetCurrentThreadType(base::ThreadType::kDefault);
     }
 #endif
 
@@ -258,27 +303,28 @@ int RendererMain(MainFunctionParams parameters) {
     }
 #endif
 
-#if BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_MAC)
-    // Startup tracing is usually enabled earlier, but if we forked from a
-    // zygote, we can only enable it after mojo IPC support is brought up
-    // initialized by RenderThreadImpl, because the mojo broker has to create
-    // the tracing SMB on our behalf due to the zygote sandbox.
-    if (parameters.zygote_child) {
+    // Mojo IPC support is brought up by RenderThreadImpl, so startup tracing
+    // is enabled here if it needs to start after mojo init (normally so the
+    // mojo broker can bypass the sandbox to allocate startup tracing's SMB).
+    if (parameters.needs_startup_tracing_after_mojo_init) {
       tracing::EnableStartupTracingIfNeeded();
       TRACE_EVENT_INSTANT1("startup", "RendererMain", TRACE_EVENT_SCOPE_THREAD,
-                           "zygote_child", true);
+                           "needs_startup_tracing_after_mojo_init", true);
     }
-#endif
 
-    if (need_sandbox)
+    if (need_sandbox) {
       should_run_loop = platform.EnableSandbox();
+      if (client) {
+        client->PostSandboxInitialized();
+      }
+    }
 
 #if BUILDFLAG(MOJO_RANDOM_DELAYS_ENABLED)
     mojo::BeginRandomMojoDelays();
 #endif
 
-    internal::PartitionAllocSupport::Get()->ReconfigureAfterTaskRunnerInit(
-        switches::kRendererProcess);
+    base::allocator::PartitionAllocSupport::Get()
+        ->ReconfigureAfterTaskRunnerInit(switches::kRendererProcess);
 
     base::HighResolutionTimerManager hi_res_timer_manager;
 

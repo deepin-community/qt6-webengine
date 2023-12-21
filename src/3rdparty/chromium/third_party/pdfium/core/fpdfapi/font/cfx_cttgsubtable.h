@@ -1,4 +1,4 @@
-// Copyright 2014 PDFium Authors. All rights reserved.
+// Copyright 2014 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,8 +13,8 @@
 #include <set>
 #include <vector>
 
-#include "core/fxcrt/fx_memory_wrappers.h"
-#include "core/fxge/fx_freetype.h"
+#include "core/fxcrt/data_vector.h"
+#include "core/fxge/freetype/fx_freetype.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 
 class CFX_CTTGSUBTable {
@@ -32,7 +32,7 @@ class CFX_CTTGSUBTable {
     uint32_t LangSysTag = 0;
     uint16_t LookupOrder = 0;
     uint16_t ReqFeatureIndex = 0;
-    std::vector<uint16_t, FxAllocAllocator<uint16_t>> FeatureIndices;
+    DataVector<uint16_t> FeatureIndices;
   };
 
   struct TScriptRecord {
@@ -50,7 +50,7 @@ class CFX_CTTGSUBTable {
 
     uint32_t FeatureTag = 0;
     uint16_t FeatureParams = 0;
-    std::vector<uint16_t, FxAllocAllocator<uint16_t>> LookupListIndices;
+    DataVector<uint16_t> LookupListIndices;
   };
 
   struct TRangeRecord {
@@ -72,7 +72,7 @@ class CFX_CTTGSUBTable {
     explicit TCoverageFormat1(size_t initial_size);
     ~TCoverageFormat1() override;
 
-    std::vector<uint16_t, FxAllocAllocator<uint16_t>> GlyphArray;
+    DataVector<uint16_t> GlyphArray;
   };
 
   struct TCoverageFormat2 final : public TCoverageFormatBase {
@@ -102,14 +102,14 @@ class CFX_CTTGSUBTable {
     TSubTable1();
     ~TSubTable1() override;
 
-    int16_t DeltaGlyphID;
+    int16_t DeltaGlyphID = 0;
   };
 
   struct TSubTable2 final : public TSubTableBase {
     TSubTable2();
     ~TSubTable2() override;
 
-    std::vector<uint16_t, FxAllocAllocator<uint16_t>> Substitutes;
+    DataVector<uint16_t> Substitutes;
   };
 
   struct TLookup {

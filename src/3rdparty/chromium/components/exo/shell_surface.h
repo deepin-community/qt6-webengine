@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -50,7 +50,8 @@ class ShellSurface : public ShellSurfaceBase, public ash::WindowStateObserver {
                                        chromeos::WindowStateType state_type,
                                        bool resizing,
                                        bool activated,
-                                       const gfx::Vector2d& origin_offset)>;
+                                       const gfx::Vector2d& origin_offset,
+                                       float raster_scale)>;
   using OriginChangeCallback =
       base::RepeatingCallback<void(const gfx::Point& origin)>;
 
@@ -107,18 +108,21 @@ class ShellSurface : public ShellSurfaceBase, public ash::WindowStateObserver {
   void RemoveObserver(ShellSurfaceObserver* observer);
 
   // Overridden from SurfaceDelegate:
+  void OnSetFrame(SurfaceFrameType type) override;
   void OnSetParent(Surface* parent, const gfx::Point& position) override;
 
   // Overridden from ShellSurfaceBase:
   void InitializeWindowState(ash::WindowState* window_state) override;
   absl::optional<gfx::Rect> GetWidgetBounds() const override;
   gfx::Point GetSurfaceOrigin() const override;
+  void SetUseImmersiveForFullscreen(bool value) override;
 
   // Overridden from aura::WindowObserver:
   void OnWindowBoundsChanged(aura::Window* window,
                              const gfx::Rect& old_bounds,
                              const gfx::Rect& new_bounds,
                              ui::PropertyChangeReason reason) override;
+  void OnWindowAddedToRootWindow(aura::Window* window) override;
 
   // Overridden from ash::WindowStateObserver:
   void OnPreWindowStateTypeChange(ash::WindowState* window_state,
@@ -132,10 +136,16 @@ class ShellSurface : public ShellSurfaceBase, public ash::WindowStateObserver {
                          aura::Window* lost_active) override;
 
   // Overridden from ShellSurfaceBase:
-  void SetWidgetBounds(const gfx::Rect& bounds) override;
+  gfx::Rect ComputeAdjustedBounds(const gfx::Rect& bounds) const override;
+  void SetWidgetBounds(const gfx::Rect& bounds,
+                       bool adjusted_by_server) override;
   bool OnPreWidgetCommit() override;
   std::unique_ptr<views::NonClientFrameView> CreateNonClientFrameView(
       views::Widget* widget) override;
+
+  void EndDrag();
+
+  int resize_component_for_test() const { return resize_component_; }
 
  private:
   struct Config;
@@ -178,8 +188,6 @@ class ShellSurface : public ShellSurfaceBase, public ash::WindowStateObserver {
 
   void AttemptToStartDrag(int component);
 
-  void EndDrag();
-
   std::unique_ptr<ash::ScopedAnimationDisabler> animations_disabler_;
 
   std::unique_ptr<ui::CompositorLock> configure_compositor_lock_;
@@ -188,13 +196,23 @@ class ShellSurface : public ShellSurfaceBase, public ash::WindowStateObserver {
   ScopedConfigure* scoped_configure_ = nullptr;
   base::circular_deque<std::unique_ptr<Config>> pending_configs_;
 
+  // Window resizing is an asynchronous operation. See
+  // https://crbug.com/1336706#c22 for a more detailed explanation.
+  // |origin_offset_| is typically (0,0). During an asynchronous resizing
+  // |origin_offset_| is set to a non-zero value such that it appears as though
+  // the ExoShellSurfaceHost has not moved even though ExoShellSurface has
+  // already been moved and resized to the new position.
   gfx::Vector2d origin_offset_;
   gfx::Vector2d pending_origin_offset_;
   gfx::Vector2d pending_origin_offset_accumulator_;
+  gfx::Rect old_screen_bounds_for_pending_move_;
+
   int resize_component_ = HTCAPTION;  // HT constant (see ui/base/hit_test.h)
   int pending_resize_component_ = HTCAPTION;
   ui::WindowShowState initial_show_state_ = ui::SHOW_STATE_DEFAULT;
-  bool ignore_window_bounds_changes_ = false;
+  bool notify_bounds_changes_ = true;
+  bool window_state_is_changing_ = false;
+  float pending_raster_scale_ = 1.0;
 
   base::ObserverList<ShellSurfaceObserver> observers_;
 };

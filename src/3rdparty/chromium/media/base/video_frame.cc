@@ -1,21 +1,26 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "media/base/video_frame.h"
 
+#include <GLES2/gl2.h>
+#include <GLES2/gl2ext.h>
+
 #include <algorithm>
+#include <atomic>
 #include <climits>
 #include <numeric>
 #include <utility>
 
-#include "base/atomic_sequence_num.h"
-#include "base/bind.h"
 #include "base/bits.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/logging.h"
 #include "base/process/memory.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/stringprintf.h"
+#include "base/synchronization/lock.h"
 #include "build/build_config.h"
 #include "media/base/color_plane_layout.h"
 #include "media/base/format_utils.h"
@@ -33,7 +38,13 @@ namespace media {
 
 namespace {
 
-// Helper to privide gfx::Rect::Intersect() as an expression.
+VideoFrame::ID GetNextID() {
+  static std::atomic_uint64_t counter(1u);
+  return VideoFrame::ID::FromUnsafeValue(
+      counter.fetch_add(1u, std::memory_order_relaxed));
+}
+
+// Helper to provide gfx::Rect::Intersect() as an expression.
 gfx::Rect Intersection(gfx::Rect a, const gfx::Rect& b) {
   a.Intersect(b);
   return a;
@@ -55,9 +66,6 @@ VideoFrame::ReleaseMailboxAndGpuMemoryBufferCB WrapReleaseMailboxCB(
 
 }  // namespace
 
-// Static constexpr class for generating unique identifiers for each VideoFrame.
-static base::AtomicSequenceNumber g_unique_id_generator;
-
 // static
 std::string VideoFrame::StorageTypeToString(
     const VideoFrame::StorageType storage_type) {
@@ -76,8 +84,6 @@ std::string VideoFrame::StorageTypeToString(
     case VideoFrame::STORAGE_DMABUFS:
       return "DMABUFS";
 #endif
-    case VideoFrame::STORAGE_MOJO_SHARED_BUFFER:
-      return "MOJO_SHARED_BUFFER";
     case VideoFrame::STORAGE_GPU_MEMORY_BUFFER:
       return "GPU_MEMORY_BUFFER";
   }
@@ -100,8 +106,7 @@ bool VideoFrame::IsStorageTypeMappable(VideoFrame::StorageType storage_type) {
       // GetGpuMemoryBuffer() and call gfx::GpuMemoryBuffer::Map().
       (storage_type == VideoFrame::STORAGE_UNOWNED_MEMORY ||
        storage_type == VideoFrame::STORAGE_OWNED_MEMORY ||
-       storage_type == VideoFrame::STORAGE_SHMEM ||
-       storage_type == VideoFrame::STORAGE_MOJO_SHARED_BUFFER);
+       storage_type == VideoFrame::STORAGE_SHMEM);
 }
 
 // static
@@ -120,7 +125,7 @@ gfx::Size VideoFrame::SampleSize(VideoPixelFormat format, size_t plane) {
       return gfx::Size(1, 1);
 
     case kUPlane:  // and kUVPlane:
-    case kVPlane:
+    case kVPlane:  // and kAPlaneTriPlanar:
       switch (format) {
         case PIXEL_FORMAT_I444:
         case PIXEL_FORMAT_YUV444P9:
@@ -150,6 +155,9 @@ gfx::Size VideoFrame::SampleSize(VideoPixelFormat format, size_t plane) {
         case PIXEL_FORMAT_P016LE:
         case PIXEL_FORMAT_YUV420AP10:
           return gfx::Size(2, 2);
+
+        case PIXEL_FORMAT_NV12A:
+          return plane == kUVPlane ? gfx::Size(2, 2) : gfx::Size(1, 1);
 
         case PIXEL_FORMAT_UYVY:
         case PIXEL_FORMAT_UNKNOWN:
@@ -199,6 +207,7 @@ static bool RequiresEvenSizeAllocation(VideoPixelFormat format) {
     case PIXEL_FORMAT_RGBAF16:
       return false;
     case PIXEL_FORMAT_NV12:
+    case PIXEL_FORMAT_NV12A:
     case PIXEL_FORMAT_NV21:
     case PIXEL_FORMAT_I420:
     case PIXEL_FORMAT_MJPEG:
@@ -272,6 +281,19 @@ static absl::optional<VideoFrameLayout> GetDefaultLayout(
       planes = std::vector<ColorPlaneLayout>{
           ColorPlaneLayout(coded_size.width(), 0, coded_size.GetArea()),
           ColorPlaneLayout(uv_stride, coded_size.GetArea(), uv_size),
+      };
+      break;
+    }
+
+    case PIXEL_FORMAT_NV12A: {
+      int uv_width = (coded_size.width() + 1) / 2;
+      int uv_height = (coded_size.height() + 1) / 2;
+      int uv_stride = uv_width * 2;
+      int uv_size = uv_stride * uv_height;
+      planes = std::vector<ColorPlaneLayout>{
+          ColorPlaneLayout(coded_size.width(), 0, coded_size.GetArea()),
+          ColorPlaneLayout(uv_stride, coded_size.GetArea(), uv_size),
+          ColorPlaneLayout(coded_size.width(), 0, coded_size.GetArea()),
       };
       break;
     }
@@ -363,10 +385,11 @@ scoped_refptr<VideoFrame> VideoFrame::WrapNativeTextures(
     const gfx::Size& natural_size,
     base::TimeDelta timestamp) {
   if (format != PIXEL_FORMAT_ARGB && format != PIXEL_FORMAT_XRGB &&
-      format != PIXEL_FORMAT_NV12 && format != PIXEL_FORMAT_I420 &&
-      format != PIXEL_FORMAT_ABGR && format != PIXEL_FORMAT_XBGR &&
-      format != PIXEL_FORMAT_XR30 && format != PIXEL_FORMAT_XB30 &&
-      format != PIXEL_FORMAT_P016LE && format != PIXEL_FORMAT_RGBAF16) {
+      format != PIXEL_FORMAT_NV12 && format != PIXEL_FORMAT_NV12A &&
+      format != PIXEL_FORMAT_I420 && format != PIXEL_FORMAT_ABGR &&
+      format != PIXEL_FORMAT_XBGR && format != PIXEL_FORMAT_XR30 &&
+      format != PIXEL_FORMAT_XB30 && format != PIXEL_FORMAT_P016LE &&
+      format != PIXEL_FORMAT_RGBAF16 && format != PIXEL_FORMAT_YV12) {
     DLOG(ERROR) << "Unsupported pixel format: "
                 << VideoPixelFormatToString(format);
     return nullptr;
@@ -426,20 +449,9 @@ scoped_refptr<VideoFrame> VideoFrame::WrapExternalDataWithLayout(
   StorageType storage_type = STORAGE_UNOWNED_MEMORY;
 
   if (!IsValidConfig(layout.format(), storage_type, layout.coded_size(),
-                     visible_rect, natural_size)) {
-    DLOG(ERROR) << __func__ << " Invalid config."
-                << ConfigToString(layout.format(), storage_type,
-                                  layout.coded_size(), visible_rect,
-                                  natural_size);
-    return nullptr;
-  }
-
-  const auto& last_plane = layout.planes()[layout.planes().size() - 1];
-  const size_t required_size = last_plane.offset + last_plane.size;
-  if (data_size < required_size) {
-    DLOG(ERROR) << __func__ << " Provided data size is too small. Provided "
-                << data_size << " bytes, but " << required_size
-                << " bytes are required."
+                     visible_rect, natural_size) ||
+      !layout.FitsInContiguousBufferOfSize(data_size)) {
+    DLOG(ERROR) << "Invalid config: "
                 << ConfigToString(layout.format(), storage_type,
                                   layout.coded_size(), visible_rect,
                                   natural_size);
@@ -793,10 +805,11 @@ scoped_refptr<VideoFrame> VideoFrame::WrapCVPixelBuffer(
     format = PIXEL_FORMAT_I420;
   } else if (cv_format == kCVPixelFormatType_444YpCbCr8) {
     format = PIXEL_FORMAT_I444;
-  } else if (cv_format == '420v') {
-    // TODO(jfroy): Use kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange when the
-    // minimum OS X and iOS SDKs permits it.
+  } else if (cv_format == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange) {
     format = PIXEL_FORMAT_NV12;
+  } else if (cv_format ==
+             kCVPixelFormatType_420YpCbCr8VideoRange_8A_TriPlanar) {
+    format = PIXEL_FORMAT_NV12A;
   } else {
     DLOG(ERROR) << "CVPixelBuffer format not supported: " << cv_format;
     return nullptr;
@@ -835,13 +848,6 @@ scoped_refptr<VideoFrame> VideoFrame::WrapVideoFrame(
     const gfx::Rect& visible_rect,
     const gfx::Size& natural_size) {
   DCHECK(frame->visible_rect().Contains(visible_rect));
-
-  // The following storage type should not be wrapped as the shared region
-  // cannot be owned by both the wrapped frame and the wrapping frame.
-  //
-  // TODO: We can support this now since we have a reference to the wrapped
-  // frame through |wrapped_frame_|.
-  DCHECK(frame->storage_type() != STORAGE_MOJO_SHARED_BUFFER);
 
   if (!AreValidPixelFormatsForWrap(frame->format(), format)) {
     DLOG(ERROR) << __func__ << " Invalid format conversion."
@@ -887,6 +893,8 @@ scoped_refptr<VideoFrame> VideoFrame::WrapVideoFrame(
 
   // Copy all metadata to the wrapped frame->
   wrapping_frame->metadata().MergeMetadataFrom(frame->metadata());
+  wrapping_frame->set_color_space(frame->ColorSpace());
+  wrapping_frame->set_hdr_metadata(frame->hdr_metadata());
 
   if (frame->IsMappable()) {
     for (size_t i = 0; i < new_plane_count; ++i) {
@@ -912,8 +920,7 @@ scoped_refptr<VideoFrame> VideoFrame::WrapVideoFrame(
   // observers which signal that the underlying resource is okay to reuse. E.g.,
   // VideoFramePool.
   if (frame->wrapped_frame_) {
-    wrapping_frame->AddDestructionObserver(
-        base::BindOnce([](scoped_refptr<VideoFrame>) {}, frame));
+    wrapping_frame->AddDestructionObserver(base::DoNothingWithBoundArgs(frame));
     frame = frame->wrapped_frame_;
   }
 
@@ -1077,6 +1084,11 @@ int VideoFrame::BytesPerElement(VideoPixelFormat format, size_t plane) {
       DCHECK_LT(plane, std::size(bytes_per_element));
       return bytes_per_element[plane];
     }
+    case PIXEL_FORMAT_NV12A: {
+      static const int bytes_per_element[] = {1, 2, 1};
+      DCHECK_LT(plane, std::size(bytes_per_element));
+      return bytes_per_element[plane];
+    }
     case PIXEL_FORMAT_P016LE: {
       static const int bytes_per_element[] = {1, 2};
       DCHECK_LT(plane, std::size(bytes_per_element));
@@ -1144,12 +1156,12 @@ void VideoFrame::HashFrameForTesting(base::MD5Context* context,
 }
 
 void VideoFrame::BackWithSharedMemory(
-    const base::UnsafeSharedMemoryRegion* region) {
+    const base::ReadOnlySharedMemoryRegion* region) {
   DCHECK(!shm_region_);
   DCHECK(!owned_shm_region_.IsValid());
   // Either we should be backing a frame created with WrapExternal*, or we are
-  // wrapping an existing STORAGE_SHMEM, in which case the storage
-  // type has already been set to STORAGE_SHMEM.
+  // wrapping an existing STORAGE_SHMEM, in which case the storage type has
+  // already been set to STORAGE_SHMEM.
   DCHECK(storage_type_ == STORAGE_UNOWNED_MEMORY ||
          storage_type_ == STORAGE_SHMEM);
   DCHECK(region && region->IsValid());
@@ -1158,8 +1170,8 @@ void VideoFrame::BackWithSharedMemory(
 }
 
 void VideoFrame::BackWithOwnedSharedMemory(
-    base::UnsafeSharedMemoryRegion region,
-    base::WritableSharedMemoryMapping mapping) {
+    base::ReadOnlySharedMemoryRegion region,
+    base::ReadOnlySharedMemoryMapping mapping) {
   DCHECK(!shm_region_);
   DCHECK(!owned_shm_region_.IsValid());
   // We should be backing a frame created with WrapExternal*. We cannot be
@@ -1221,6 +1233,24 @@ gfx::ColorSpace VideoFrame::ColorSpace() const {
   return color_space_;
 }
 
+bool VideoFrame::RequiresExternalSampler() const {
+  // With SharedImageFormats NumTextures() is always 1. Use
+  // SharedImageFormatType to check for NumTextures for legacy formats and
+  // kSharedImageFormatExternalSampler for SharedImageFormats
+  const bool result =
+      (format() == PIXEL_FORMAT_NV12 || format() == PIXEL_FORMAT_YV12 ||
+       format() == PIXEL_FORMAT_P016LE) &&
+      ((NumTextures() == 1 &&
+        shared_image_format_type() == SharedImageFormatType::kLegacy) ||
+       shared_image_format_type() ==
+           SharedImageFormatType::kSharedImageFormatExternalSampler);
+  // The texture target can be 0 for Fuchsia.
+  DCHECK(!result ||
+         (mailbox_holder(0).texture_target == GL_TEXTURE_EXTERNAL_OES ||
+          mailbox_holder(0).texture_target == 0u));
+  return result;
+}
+
 int VideoFrame::row_bytes(size_t plane) const {
   return RowBytes(plane, format(), coded_size().width());
 }
@@ -1233,9 +1263,13 @@ int VideoFrame::columns(size_t plane) const {
   return Columns(plane, format(), coded_size().width());
 }
 
-const uint8_t* VideoFrame::visible_data(size_t plane) const {
+template <typename T>
+T VideoFrame::GetVisibleDataInternal(T data, size_t plane) const {
   DCHECK(IsValidPlane(format(), plane));
   DCHECK(IsMappable());
+  if (UNLIKELY(!data)) {
+    return nullptr;
+  }
 
   // Calculate an offset that is properly aligned for all planes.
   const gfx::Size alignment = CommonAlignment(format());
@@ -1246,15 +1280,18 @@ const uint8_t* VideoFrame::visible_data(size_t plane) const {
   const gfx::Size subsample = SampleSize(format(), plane);
   DCHECK(offset.x() % subsample.width() == 0);
   DCHECK(offset.y() % subsample.height() == 0);
-  return data(plane) +
+  return data +
          stride(plane) * (offset.y() / subsample.height()) +  // Row offset.
          BytesPerElement(format(), plane) *                   // Column offset.
              (offset.x() / subsample.width());
 }
 
-uint8_t* VideoFrame::visible_data(size_t plane) {
-  return const_cast<uint8_t*>(
-      static_cast<const VideoFrame*>(this)->visible_data(plane));
+const uint8_t* VideoFrame::visible_data(size_t plane) const {
+  return GetVisibleDataInternal<const uint8_t*>(data(plane), plane);
+}
+
+uint8_t* VideoFrame::GetWritableVisibleData(size_t plane) {
+  return GetVisibleDataInternal<uint8_t*>(writable_data(plane), plane);
 }
 
 const gpu::MailboxHolder& VideoFrame::mailbox_holder(
@@ -1316,6 +1353,7 @@ bool VideoFrame::HasReleaseMailboxCB() const {
 
 void VideoFrame::AddDestructionObserver(base::OnceClosure callback) {
   DCHECK(!callback.is_null());
+  base::AutoLock lock(done_callbacks_lock_);
   done_callbacks_.push_back(std::move(callback));
 }
 
@@ -1381,7 +1419,7 @@ VideoFrame::VideoFrame(const VideoFrameLayout& layout,
       dmabuf_fds_(base::MakeRefCounted<DmabufHolder>()),
 #endif
       timestamp_(timestamp),
-      unique_id_(g_unique_id_generator.GetNext()) {
+      unique_id_(GetNextID()) {
   DCHECK(IsValidConfigInternal(format(), frame_control_type, coded_size(),
                                visible_rect_, natural_size_));
   DCHECK(visible_rect_ == visible_rect)
@@ -1404,7 +1442,12 @@ VideoFrame::~VideoFrame() {
         .Run(release_sync_token, std::move(gpu_memory_buffer_));
   }
 
-  for (auto& callback : done_callbacks_)
+  std::vector<base::OnceClosure> done_callbacks;
+  {
+    base::AutoLock lock(done_callbacks_lock_);
+    done_callbacks = std::move(done_callbacks_);
+  }
+  for (auto& callback : done_callbacks)
     std::move(callback).Run();
 }
 
@@ -1604,8 +1647,8 @@ std::vector<size_t> VideoFrame::CalculatePlaneSize() const {
     // These values were chosen to mirror ffmpeg's get_video_buffer().
     // TODO(dalecurtis): This should be configurable; eventually ffmpeg wants
     // us to use av_cpu_max_align(), but... for now, they just hard-code 32.
-    const size_t height =
-        base::bits::AlignUp(rows(plane), kFrameAddressAlignment);
+    const size_t height = base::bits::AlignUp(static_cast<size_t>(rows(plane)),
+                                              kFrameAddressAlignment);
     const size_t width = std::abs(stride(plane));
     plane_size[plane] = width * height;
   }

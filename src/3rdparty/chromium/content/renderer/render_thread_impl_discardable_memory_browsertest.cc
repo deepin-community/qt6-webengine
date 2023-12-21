@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,9 +11,9 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/command_line.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/discardable_memory.h"
 #include "base/memory/discardable_memory_allocator.h"
 #include "base/memory/madv_free_discardable_memory_allocator_posix.h"
@@ -120,7 +120,8 @@ IN_PROC_BROWSER_TEST_F(RenderThreadImplDiscardableMemoryBrowserTest,
 // See http://crbug.com/667837 for detail.
 #if !(BUILDFLAG(IS_ANDROID) && defined(ADDRESS_SANITIZER))
 IN_PROC_BROWSER_TEST_F(RenderThreadImplDiscardableMemoryBrowserTest,
-                       DiscardableMemoryAddressSpace) {
+                       // TODO(crbug.com/1065493): Re-enable this test
+                       DISABLED_DiscardableMemoryAddressSpace) {
   const size_t kLargeSize = 4 * 1024 * 1024;   // 4MiB.
   const size_t kNumberOfInstances = 1024 + 1;  // >4GiB total.
 

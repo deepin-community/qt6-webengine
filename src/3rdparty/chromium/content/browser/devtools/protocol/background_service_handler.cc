@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -89,6 +89,7 @@ ToBackgroundServiceEvent(const devtools::proto::BackgroundServiceEvent& event) {
       .SetEventName(event.event_name())
       .SetInstanceId(event.instance_id())
       .SetEventMetadata(ProtoMapToArray(event.event_metadata()))
+      .SetStorageKey(event.storage_key())
       .Build();
 }
 
@@ -211,8 +212,6 @@ Response BackgroundServiceHandler::SetRecording(bool should_record,
 
   if (should_record) {
     devtools_context_->StartRecording(service_enum);
-    base::UmaHistogramEnumeration("DevTools.BackgroundService.StartRecording",
-                                  service_enum, devtools::proto::COUNT);
   } else {
     devtools_context_->StopRecording(service_enum);
   }

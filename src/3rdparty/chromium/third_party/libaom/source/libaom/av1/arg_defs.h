@@ -21,6 +21,7 @@ extern "C" {
 #include "common/webmenc.h"
 #endif
 #include "aom/aomcx.h"
+#include "aom_dsp/flow_estimation/flow_estimation.h"
 
 enum TestDecodeFatality {
   TEST_DECODE_OFF,
@@ -121,9 +122,7 @@ typedef struct av1_codec_arg_definitions {
 #if CONFIG_AV1_ENCODER
   arg_def_t cpu_used_av1;
   arg_def_t rowmtarg;
-#if CONFIG_FRAME_PARALLEL_ENCODE
   arg_def_t fpmtarg;
-#endif
   arg_def_t tile_cols;
   arg_def_t tile_rows;
   arg_def_t enable_tpl_model;
@@ -187,6 +186,8 @@ typedef struct av1_codec_arg_definitions {
   arg_def_t vmaf_model_path;
 #endif
   arg_def_t partition_info_path;
+  arg_def_t enable_rate_guide_deltaq;
+  arg_def_t rate_distribution_info;
   arg_def_t film_grain_test;
   arg_def_t film_grain_table;
 #if CONFIG_DENOISE
@@ -233,6 +234,9 @@ typedef struct av1_codec_arg_definitions {
   arg_def_t second_pass_log;
   arg_def_t auto_intra_tools_off;
   arg_def_t strict_level_conformance;
+  arg_def_t kf_max_pyr_height;
+  arg_def_t sb_qp_sweep;
+  arg_def_t global_motion_method;
 #endif  // CONFIG_AV1_ENCODER
 } av1_codec_arg_definitions_t;
 

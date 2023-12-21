@@ -26,8 +26,8 @@ private:
     const char* name() const override { return "Disable Color"; }
     bool onIsEqual(const GrXferProcessor& xpBase) const override { return true; }
     void onAddToKey(const GrShaderCaps&, skgpu::KeyBuilder*) const override {}
-    void onGetBlendInfo(GrXferProcessor::BlendInfo* blendInfo) const override {
-        blendInfo->fWriteColor = false;
+    void onGetBlendInfo(skgpu::BlendInfo* blendInfo) const override {
+        blendInfo->fWritesColor = false;
     }
     std::unique_ptr<ProgramImpl> makeProgramImpl() const override;
 
@@ -38,7 +38,7 @@ std::unique_ptr<GrXferProcessor::ProgramImpl> DisableColorXP::makeProgramImpl() 
     class Impl : public ProgramImpl {
     private:
         void emitOutputsForBlendState(const EmitArgs& args) override {
-            if (args.fShaderCaps->mustWriteToFragColor()) {
+            if (args.fShaderCaps->fMustWriteToFragColor) {
                 // This emit code should be empty. However, on the nexus 6 there is a driver bug
                 // where if you do not give gl_FragColor a value, the gl context is lost and we end
                 // up drawing nothing. So this fix just sets the gl_FragColor arbitrarily to 0.
@@ -64,7 +64,7 @@ sk_sp<const GrXferProcessor> GrDisableColorXPFactory::MakeXferProcessor() {
     return sk_make_sp<DisableColorXP>();
 }
 
-GR_DEFINE_XP_FACTORY_TEST(GrDisableColorXPFactory);
+GR_DEFINE_XP_FACTORY_TEST(GrDisableColorXPFactory)
 
 #if GR_TEST_UTILS
 const GrXPFactory* GrDisableColorXPFactory::TestGet(GrProcessorTestData*) {

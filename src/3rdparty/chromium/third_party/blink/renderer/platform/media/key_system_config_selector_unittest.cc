@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/strings/pattern.h"
 #include "build/build_config.h"
 #include "media/base/cdm_config.h"
@@ -15,7 +15,9 @@
 #include "media/base/key_systems.h"
 #include "media/base/media_permission.h"
 #include "media/base/mime_util.h"
+#include "media/cdm/clear_key_cdm_common.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/platform/web_content_settings_client.h"
 #include "third_party/blink/public/platform/web_encrypted_media_types.h"
 #include "third_party/blink/public/platform/web_media_key_system_configuration.h"
@@ -24,18 +26,17 @@
 namespace blink {
 namespace {
 
-using ::media::EmeConfigRule;
+using ::media::EmeConfig;
+using ::media::EmeConfigRuleState;
 using ::media::EmeFeatureSupport;
 using ::media::EmeInitDataType;
 using ::media::EmeMediaType;
-using ::media::EmeSessionTypeSupport;
 using MediaKeysRequirement = WebMediaKeySystemConfiguration::Requirement;
 using EncryptionScheme = WebMediaKeySystemMediaCapability::EncryptionScheme;
 
 // Key system strings. Clear Key support is hardcoded in KeySystemConfigSelector
-// so kClearKeyKeySystem is the real key system string. The rest key system
-// strings are for testing purpose only.
-const char kClearKeyKeySystem[] = "org.w3.clearkey";
+// so media::kClearKeyKeySystem is the real key system string. The rest key
+// system strings are for testing purpose only.
 const char kSupportedKeySystem[] = "keysystem.test.supported";
 const char kSupportedSubKeySystem[] = "keysystem.test.supported.sub";
 const char kUnsupportedKeySystem[] = "keysystem.test.unsupported";
@@ -212,7 +213,7 @@ class FakeKeySystems : public media::KeySystems {
 
   bool IsSupportedKeySystem(const std::string& key_system) const override {
     // Based on EME spec, Clear Key key system is always supported.
-    return key_system == kClearKeyKeySystem ||
+    return key_system == media::kClearKeyKeySystem ||
            key_system == kSupportedKeySystem ||
            key_system == kSupportedSubKeySystem;
   }
@@ -223,7 +224,7 @@ class FakeKeySystems : public media::KeySystems {
   }
 
   bool CanUseAesDecryptor(const std::string& key_system) const override {
-    return key_system == kClearKeyKeySystem;
+    return key_system == media::kClearKeyKeySystem;
   }
 
   // TODO(sandersd): Move implementation into KeySystemConfigSelector?
@@ -243,32 +244,33 @@ class FakeKeySystems : public media::KeySystems {
     return false;
   }
 
-  EmeConfigRule GetEncryptionSchemeConfigRule(
+  EmeConfig::Rule GetEncryptionSchemeConfigRule(
       const std::string& key_system,
       media::EncryptionScheme encryption_scheme) const override {
     if (encryption_scheme ==
         ConvertEncryptionScheme(kSupportedEncryptionScheme)) {
-      return EmeConfigRule::SUPPORTED;
+      return EmeConfig::SupportedRule();
     }
 
     if (encryption_scheme ==
         ConvertEncryptionScheme(kDisallowHwSecureCodecEncryptionScheme)) {
-      return EmeConfigRule::HW_SECURE_CODECS_NOT_ALLOWED;
+      return EmeConfig{.hw_secure_codecs = EmeConfigRuleState::kNotAllowed};
     }
 
-    return EmeConfigRule::NOT_SUPPORTED;
+    return EmeConfig::UnsupportedRule();
   }
 
-  EmeConfigRule GetContentTypeConfigRule(
+  EmeConfig::Rule GetContentTypeConfigRule(
       const std::string& key_system,
       EmeMediaType media_type,
       const std::string& container_mime_type,
       const std::vector<std::string>& codecs) const override {
     DCHECK(IsValidContainerMimeType(container_mime_type))
         << "Invalid container mime type should not be passed in";
+
     if (container_mime_type == kUnsupportedContainer ||
         !IsCompatibleWithEmeMediaType(media_type, container_mime_type)) {
-      return EmeConfigRule::NOT_SUPPORTED;
+      return EmeConfig::UnsupportedRule();
     }
 
     bool hw_secure_codec_required_ = false;
@@ -279,7 +281,7 @@ class FakeKeySystems : public media::KeySystems {
 
       if (codec == kUnsupportedCodec ||
           !IsCompatibleWithEmeMediaType(media_type, codec)) {
-        return EmeConfigRule::NOT_SUPPORTED;
+        return EmeConfig::UnsupportedRule();
       } else if (codec == kRequireHwSecureCodec) {
         hw_secure_codec_required_ = true;
       } else if (codec == kDisallowHwSecureCodec) {
@@ -288,19 +290,21 @@ class FakeKeySystems : public media::KeySystems {
     }
 
     if (hw_secure_codec_required_) {
-      if (hw_secure_codec_not_allowed_)
-        return EmeConfigRule::NOT_SUPPORTED;
-      else
-        return EmeConfigRule::HW_SECURE_CODECS_REQUIRED;
+      if (hw_secure_codec_not_allowed_) {
+        return EmeConfig::UnsupportedRule();
+      } else {
+        return EmeConfig{.hw_secure_codecs = EmeConfigRuleState::kRequired};
+      }
     }
 
-    if (hw_secure_codec_not_allowed_)
-      return EmeConfigRule::HW_SECURE_CODECS_NOT_ALLOWED;
+    if (hw_secure_codec_not_allowed_) {
+      return EmeConfig{.hw_secure_codecs = EmeConfigRuleState::kNotAllowed};
+    }
 
-    return EmeConfigRule::SUPPORTED;
+    return EmeConfig::SupportedRule();
   }
 
-  EmeConfigRule GetRobustnessConfigRule(
+  EmeConfig::Rule GetRobustnessConfigRule(
       const std::string& key_system,
       EmeMediaType media_type,
       const std::string& requested_robustness,
@@ -310,35 +314,43 @@ class FakeKeySystems : public media::KeySystems {
     // done. We are only testing the explicit thing it is fixing here.
     if (hw_secure_requirement && *hw_secure_requirement &&
         distinctive_identifier == EmeFeatureSupport::NOT_SUPPORTED) {
-      return EmeConfigRule::NOT_SUPPORTED;
+      return EmeConfig::UnsupportedRule();
     }
-    if (requested_robustness.empty())
-      return EmeConfigRule::SUPPORTED;
-    if (requested_robustness == kSupportedRobustness)
-      return EmeConfigRule::SUPPORTED;
-    if (requested_robustness == kRequireIdentifierRobustness)
-      return EmeConfigRule::IDENTIFIER_REQUIRED;
-    if (requested_robustness == kRecommendIdentifierRobustness)
-      return EmeConfigRule::IDENTIFIER_RECOMMENDED;
-    if (requested_robustness == kDisallowHwSecureCodecRobustness)
-      return EmeConfigRule::HW_SECURE_CODECS_NOT_ALLOWED;
-    if (requested_robustness == kRequireHwSecureCodecRobustness)
-      return EmeConfigRule::HW_SECURE_CODECS_REQUIRED;
-    if (requested_robustness == kRequireIdentifierAndHwSecureCodecRobustness)
-      return EmeConfigRule::IDENTIFIER_AND_HW_SECURE_CODECS_REQUIRED;
+    if (requested_robustness.empty() ||
+        requested_robustness == kSupportedRobustness) {
+      return EmeConfig::SupportedRule();
+    }
+    if (requested_robustness == kRequireIdentifierRobustness) {
+      return EmeConfig{.identifier = EmeConfigRuleState::kRequired};
+    }
+    if (requested_robustness == kRecommendIdentifierRobustness) {
+      return EmeConfig{.identifier = EmeConfigRuleState::kRecommended};
+    }
+    if (requested_robustness == kDisallowHwSecureCodecRobustness) {
+      return EmeConfig{.hw_secure_codecs = EmeConfigRuleState::kNotAllowed};
+    }
+    if (requested_robustness == kRequireHwSecureCodecRobustness) {
+      return EmeConfig{.hw_secure_codecs = EmeConfigRuleState::kRequired};
+    }
+    if (requested_robustness == kRequireIdentifierAndHwSecureCodecRobustness) {
+      return EmeConfig{.identifier = EmeConfigRuleState::kRequired,
+                       .hw_secure_codecs = EmeConfigRuleState::kRequired};
+    }
     if (requested_robustness ==
         kRequireIdentifierPersistenceAndHwSecureCodecRobustness) {
-      return EmeConfigRule::
-          IDENTIFIER_PERSISTENCE_AND_HW_SECURE_CODECS_REQUIRED;
+      return EmeConfig{.identifier = EmeConfigRuleState::kRequired,
+                       .persistence = EmeConfigRuleState::kRequired,
+                       .hw_secure_codecs = EmeConfigRuleState::kRequired};
     }
-    if (requested_robustness == kUnsupportedRobustness)
-      return EmeConfigRule::NOT_SUPPORTED;
+    if (requested_robustness == kUnsupportedRobustness) {
+      return EmeConfig::UnsupportedRule();
+    }
 
     NOTREACHED();
-    return EmeConfigRule::NOT_SUPPORTED;
+    return EmeConfig::UnsupportedRule();
   }
 
-  EmeSessionTypeSupport GetPersistentLicenseSessionSupport(
+  EmeConfig::Rule GetPersistentLicenseSessionSupport(
       const std::string& key_system) const override {
     return persistent_license;
   }
@@ -357,8 +369,7 @@ class FakeKeySystems : public media::KeySystems {
   bool init_data_type_cenc_supported_ = false;
   bool init_data_type_keyids_supported_ = false;
 
-  // INVALID so that they must be set in any test that needs them.
-  EmeSessionTypeSupport persistent_license = EmeSessionTypeSupport::INVALID;
+  EmeConfig::Rule persistent_license = EmeConfig::UnsupportedRule();
 
   // Every test implicitly requires these, so they must be set. They are set to
   // values that are likely to cause tests to fail if they are accidentally
@@ -591,10 +602,10 @@ TEST_F(KeySystemConfigSelectorTest, KeySystem_Unsupported) {
 }
 
 TEST_F(KeySystemConfigSelectorTest, KeySystem_ClearKey) {
-  key_system_ = kClearKeyKeySystem;
+  key_system_ = media::kClearKeyKeySystem;
   configs_.push_back(UsableConfiguration());
   SelectConfigReturnsConfig();
-  DCHECK_EQ(cdm_config_.key_system, kClearKeyKeySystem);
+  DCHECK_EQ(cdm_config_.key_system, media::kClearKeyKeySystem);
 }
 
 TEST_F(KeySystemConfigSelectorTest, KeySystem_SubKeySystem) {
@@ -610,7 +621,7 @@ TEST_F(KeySystemConfigSelectorTest, EncryptedMediaDisabled_ClearKey) {
   media_permission_->is_encrypted_media_enabled = false;
 
   // Clear Key key system is always supported.
-  key_system_ = kClearKeyKeySystem;
+  key_system_ = media::kClearKeyKeySystem;
   configs_.push_back(UsableConfiguration());
   SelectConfigReturnsConfig();
 }
@@ -877,7 +888,7 @@ TEST_F(KeySystemConfigSelectorTest, SessionTypes_Empty) {
 TEST_F(KeySystemConfigSelectorTest, SessionTypes_SubsetSupported) {
   // Allow persistent state, as it would be required to be successful.
   key_systems_->persistent_state = EmeFeatureSupport::REQUESTABLE;
-  key_systems_->persistent_license = EmeSessionTypeSupport::NOT_SUPPORTED;
+  key_systems_->persistent_license = EmeConfig::UnsupportedRule();
 
   std::vector<WebEncryptedMediaSessionType> session_types;
   session_types.push_back(WebEncryptedMediaSessionType::kTemporary);
@@ -893,7 +904,7 @@ TEST_F(KeySystemConfigSelectorTest, SessionTypes_SubsetSupported) {
 TEST_F(KeySystemConfigSelectorTest, SessionTypes_AllSupported) {
   // Allow persistent state, and expect it to be required.
   key_systems_->persistent_state = EmeFeatureSupport::REQUESTABLE;
-  key_systems_->persistent_license = EmeSessionTypeSupport::SUPPORTED;
+  key_systems_->persistent_license = EmeConfig::SupportedRule();
 
   std::vector<WebEncryptedMediaSessionType> session_types;
   session_types.push_back(WebEncryptedMediaSessionType::kTemporary);
@@ -917,7 +928,8 @@ TEST_F(KeySystemConfigSelectorTest, SessionTypes_PermissionCanBeRequired) {
   key_systems_->distinctive_identifier = EmeFeatureSupport::REQUESTABLE;
   key_systems_->persistent_state = EmeFeatureSupport::REQUESTABLE;
   key_systems_->persistent_license =
-      EmeSessionTypeSupport::SUPPORTED_WITH_IDENTIFIER;
+      EmeConfig{.identifier = EmeConfigRuleState::kRequired,
+                .persistence = EmeConfigRuleState::kRequired};
 
   std::vector<WebEncryptedMediaSessionType> session_types;
   session_types.push_back(WebEncryptedMediaSessionType::kPersistentLicense);
@@ -1034,7 +1046,7 @@ TEST_F(KeySystemConfigSelectorTest, VideoCapabilities_IncompatibleCodec) {
 
 TEST_F(KeySystemConfigSelectorTest,
        VideoCapabilities_UnsupportedByAesDecryptorCodec_ClearKey) {
-  key_system_ = kClearKeyKeySystem;
+  key_system_ = media::kClearKeyKeySystem;
 
   std::vector<WebMediaKeySystemMediaCapability> video_capabilities(1);
   video_capabilities[0].content_type = "a";

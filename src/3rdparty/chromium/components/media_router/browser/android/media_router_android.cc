@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,15 +8,15 @@
 #include <string>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/containers/cxx20_erase.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/guid.h"
 #include "base/logging.h"
 #include "components/media_router/browser/media_router_metrics.h"
 #include "components/media_router/browser/media_routes_observer.h"
 #include "components/media_router/browser/media_sinks_observer.h"
-#include "components/media_router/browser/route_message_observer.h"
+#include "components/media_router/browser/presentation_connection_message_observer.h"
 #include "components/media_router/browser/route_message_util.h"
 #include "components/media_router/common/route_request_result.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
@@ -214,13 +214,13 @@ void MediaRouterAndroid::UnregisterMediaRoutesObserver(
   routes_observers_.RemoveObserver(observer);
 }
 
-void MediaRouterAndroid::RegisterRouteMessageObserver(
-    RouteMessageObserver* observer) {
+void MediaRouterAndroid::RegisterPresentationConnectionMessageObserver(
+    PresentationConnectionMessageObserver* observer) {
   NOTREACHED();
 }
 
-void MediaRouterAndroid::UnregisterRouteMessageObserver(
-    RouteMessageObserver* observer) {
+void MediaRouterAndroid::UnregisterPresentationConnectionMessageObserver(
+    PresentationConnectionMessageObserver* observer) {
   NOTREACHED();
 }
 
@@ -296,7 +296,8 @@ void MediaRouterAndroid::OnRouteTerminated(const MediaRoute::Id& route_id) {
     }
   }
   MediaRouterMetrics::RecordMediaRouteProviderTerminateRoute(
-      RouteRequestResult::OK, mojom::MediaRouteProviderId::ANDROID_CAF);
+      mojom::RouteRequestResultCode::OK,
+      mojom::MediaRouteProviderId::ANDROID_CAF);
   RemoveRoute(route_id);
 }
 
@@ -360,7 +361,7 @@ void MediaRouterAndroid::OnPresentationConnectionError(
 void MediaRouterAndroid::OnRouteRequestError(
     const std::string& error_text,
     int route_request_id,
-    base::OnceCallback<void(RouteRequestResult::ResultCode,
+    base::OnceCallback<void(mojom::RouteRequestResultCode,
                             absl::optional<mojom::MediaRouteProviderId>)>
         callback) {
   MediaRouteRequest* request = route_requests_.Lookup(route_request_id);
@@ -369,7 +370,7 @@ void MediaRouterAndroid::OnRouteRequestError(
 
   // TODO: Provide a more specific result code.
   std::unique_ptr<RouteRequestResult> result = RouteRequestResult::FromError(
-      error_text, RouteRequestResult::UNKNOWN_ERROR);
+      error_text, mojom::RouteRequestResultCode::UNKNOWN_ERROR);
   std::move(request->callback).Run(nullptr, *result);
 
   route_requests_.Remove(route_request_id);

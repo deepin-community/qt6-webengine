@@ -1,22 +1,30 @@
 # Chromium docs
 
-This directory contains chromium project documentation in
-[Gitiles-flavored Markdown].  It is automatically [rendered by Gitiles].
+This directory contains [chromium project](https://www.chromium.org/Home/)
+documentation in [Gitiles-flavored Markdown]. It is automatically
+[rendered by Gitiles].
 
 [Gitiles-flavored Markdown]: https://gerrit.googlesource.com/gitiles/+/master/Documentation/markdown.md
 [rendered by Gitiles]: https://chromium.googlesource.com/chromium/src/+/main/docs/
 
-If you add new documents, please also add a link to them in the Document Index
-below.
+**If you add new documents, please also add a link to them in the Document Index
+below.**
 
 [TOC]
 
 ## Creating Documentation
 
-Markdown documents must follow the
-[style guide](https://github.com/google/styleguide/tree/gh-pages/docguide).
+### Guidelines
 
-### Preview local changes using [md_browser](../tools/md_browser/)
+*   See the [Chromium Documentation Guidelines](documentation_guidelines.md)
+    and the
+    [Chromium Documentation Best Practices](documentation_best_practices.md).
+*   Markdown documents must follow the
+    [style guide](https://github.com/google/styleguide/tree/gh-pages/docguide).
+
+### Previewing changes
+
+#### Locally using [md_browser](../tools/md_browser/)
 
 ```bash
 # in chromium checkout
@@ -25,7 +33,7 @@ Markdown documents must follow the
 
 This is only an estimate. The **gitiles** view may differ.
 
-### Review changes online with gerrit's links to gitiles
+#### Online with Gerrit's links to gitiles
 
 1.  Upload a patch to gerrit, or receive a review request.
     e.g. https://chromium-review.googlesource.com/c/3362532
@@ -33,12 +41,12 @@ This is only an estimate. The **gitiles** view may differ.
     e.g. https://chromium-review.googlesource.com/c/3362532/2/docs/README.md
 3.  You will see something like <br>
     Base
-    [browse](https://chromium.googlesource.com/chromium/src/+/ad44f6081ccc6b92479b12f1eb7e9482f474859d/docs/README.md)
+    [preview](https://chromium.googlesource.com/chromium/src/+/ad44f6081ccc6b92479b12f1eb7e9482f474859d/docs/README.md)
     -> Patchset 3
-    [browse](https://chromium.googlesource.com/chromium/src/+/refs/changes/32/3362532/3/docs/README.md)
+    [preview](https://chromium.googlesource.com/chromium/src/+/refs/changes/32/3362532/3/docs/README.md)
     | DOWNLOAD <br>
-    at the top left of the page. Click on the second 
-    "[browse](https://chromium.googlesource.com/chromium/src/+/refs/changes/32/3362532/3/docs/README.md)"
+    at the top left of the page. Click on the second
+    "[preview](https://chromium.googlesource.com/chromium/src/+/refs/changes/32/3362532/3/docs/README.md)"
     link to open the preview for the current patch set.
 
 This **gitiles** view is the authoritative view, exactly the same as will be
@@ -61,6 +69,7 @@ used when committed.
 *   [iOS Build Instructions](ios/build_instructions.md) - iOS target (on a MacOS
     host)
 *   [Chrome OS Build Instructions](chromeos_build_instructions.md) - Chrome OS
+*   [Lacros Build Instructions](lacros/build_instructions.md) - Lacros
 *   [Linux Chromium ARM Recipes](linux/chromium_arm.md) - Recipes for building
     Chromium for ARM on Linux.
 *   [Chrome Component Build](component_build.md) - Faster builds using more
@@ -142,6 +151,9 @@ used when committed.
     Visualizing view trees during debugging
 *   [Bitmap Pipeline](bitmap_pipeline.md) - How bitmaps are moved from the
     renderer to the screen.
+*   [Flag Guarding Guidelines](flag_guarding_guidelines.md) - When to use
+    server controlled kill switches and A/B experiments to safely roll out
+    changes.
 *   [Using the Origin Trials Framework](origin_trials_integration.md) - A
     framework for conditionally enabling experimental APIs for testing.
 *   [Chrome Sync](https://source.chromium.org/chromium/chromium/src/+/main:docs/website/site/developers/design-documents/sync) -
@@ -149,10 +161,7 @@ used when committed.
 *   [Ozone Overview](ozone_overview.md) - Ozone is an abstraction layer between
     the window system and low level input and graphics.
 *   [Optimizing Chrome Web UIs](optimizing_web_uis.md) - Notes on making webuis
-    more performant
-*   [Adding a new feature flag in chrome://flags](how_to_add_your_feature_flag.md) - Quick
-    guide to add a new feature flag to experiment your feature.
-*   [Guidelines for considering branch dates in project planning](release_branch_guidance.md) -
+    more performant*   [Guidelines for considering branch dates in project planning](release_branch_guidance.md) -
     What to do (and not to do) around branch dates when scheduling your project
     work.
 *   [WebUI Explainer](webui_explainer.md) - An explanation of C++ and JavaScript
@@ -165,6 +174,8 @@ used when committed.
 *   [API Keys](api_keys.md) - When you need access to Google APIs for a custom
     build, fork, integration of stock Chromium, or are building ChromiumOS (for
     login).
+*   [User Education](../components/user_education/README.md) - Create
+    in-product help (IPH) and tutorials to call out Chromium features
 
 ### Testing
 *   [Running and Debugging Web Tests](testing/web_tests.md)
@@ -194,6 +205,14 @@ used when committed.
 *   [Code Coverage](testing/code_coverage.md) - Code coverage for Chromium.
 *   [Code Coverage in Gerrit](testing/code_coverage_in_gerrit.md) - Per-CL code
     coverage in Gerrit to assist code reviews.
+
+### Configuration Docs
+
+*   [Configuration: Prefs, Settings, Features, Switches & Flags](configuration.md) - Explains different ways to gate a new feature.
+*   [Adding a new feature flag in chrome://flags](how_to_add_your_feature_flag.md) - Quick guide to add a new feature flag to experiment your feature.
+*   [Runtime Enabled Features](https://chromium.googlesource.com/chromium/src/+/main/third_party/blink/renderer/platform/RuntimeEnabledFeatures.md)
+*   [Initialization of Blink runtime features in content layer](initialize_blink_features.md)
+*   [Integrating a feature with the origin trials framework](origin_trials_integration.md)
 
 ### GPU-related docs
 *   [GPU Pixel Wrangling](gpu/pixel_wrangling.md) - Instructions for GPU
@@ -311,6 +330,7 @@ used when committed.
 *   [Debugging UI in OOBE/login/lock](login/ui_debugging.md)
 *   [Chrome Logging on Chrome OS](chrome_os_logging.md)
 *   [Debugging tips](testing/chromeos_debugging_tips.md)
+*   [What is Lacros](lacros.md)
 
 ### Misc WebUI-Specific Docs
 *   [Creating WebUI Interfaces in components/](webui_in_components.md) How to
@@ -406,7 +426,10 @@ used when committed.
 
 ### Speed
 *   [Chrome Speed](speed/README.md) - Documentation for performance measurements and regressions in Chrome.
-*   [Chrome Speed Metrics](speed_metrics/README.md) - Documentation about user experience metrics in the web and their JavaScript APIs.
+*   [Chrome Speed Metrics](speed_metrics/README.md) - Documentation about user experience metrics on the web and their JavaScript APIs.
+
+### UI
+*   [Chromium UI Platform](ui/index.md) - All things user interface
 
 ### Probably Obsolete
 *   [TPM Quick Reference](tpm_quick_ref.md) - Trusted Platform Module notes.

@@ -214,10 +214,7 @@ std::string TransmissionTypeToString(TransmissionType transmission_type) {
     RETURN_STRING_LITERAL(HANDSHAKE_RETRANSMISSION);
     RETURN_STRING_LITERAL(ALL_ZERO_RTT_RETRANSMISSION);
     RETURN_STRING_LITERAL(LOSS_RETRANSMISSION);
-    RETURN_STRING_LITERAL(RTO_RETRANSMISSION);
-    RETURN_STRING_LITERAL(TLP_RETRANSMISSION);
     RETURN_STRING_LITERAL(PTO_RETRANSMISSION);
-    RETURN_STRING_LITERAL(PROBING_RETRANSMISSION);
     RETURN_STRING_LITERAL(PATH_RETRANSMISSION);
     RETURN_STRING_LITERAL(ALL_INITIAL_RETRANSMISSION);
     default:
@@ -300,7 +297,6 @@ std::string SerializedPacketFateToString(SerializedPacketFate fate) {
     RETURN_STRING_LITERAL(COALESCE);
     RETURN_STRING_LITERAL(BUFFER);
     RETURN_STRING_LITERAL(SEND_TO_WRITER);
-    RETURN_STRING_LITERAL(LEGACY_VERSION_ENCAPSULATE);
   }
   return absl::StrCat("Unknown(", static_cast<int>(fate), ")");
 }
@@ -308,6 +304,24 @@ std::string SerializedPacketFateToString(SerializedPacketFate fate) {
 std::ostream& operator<<(std::ostream& os, SerializedPacketFate fate) {
   os << SerializedPacketFateToString(fate);
   return os;
+}
+
+std::string CongestionControlTypeToString(CongestionControlType cc_type) {
+  switch (cc_type) {
+    case kCubicBytes:
+      return "CUBIC_BYTES";
+    case kRenoBytes:
+      return "RENO_BYTES";
+    case kBBR:
+      return "BBR";
+    case kBBRv2:
+      return "BBRv2";
+    case kPCC:
+      return "PCC";
+    case kGoogCC:
+      return "GoogCC";
+  }
+  return absl::StrCat("Unknown(", static_cast<int>(cc_type), ")");
 }
 
 std::string EncryptionLevelToString(EncryptionLevel level) {
@@ -404,8 +418,6 @@ std::ostream& operator<<(std::ostream& os, const KeyUpdateReason reason) {
 
 bool operator==(const ParsedClientHello& a, const ParsedClientHello& b) {
   return a.sni == b.sni && a.uaid == b.uaid && a.alpns == b.alpns &&
-         a.legacy_version_encapsulation_inner_packet ==
-             b.legacy_version_encapsulation_inner_packet &&
          a.retry_token == b.retry_token &&
          a.resumption_attempted == b.resumption_attempted &&
          a.early_data_attempted == b.early_data_attempted;
@@ -415,9 +427,7 @@ std::ostream& operator<<(std::ostream& os,
                          const ParsedClientHello& parsed_chlo) {
   os << "{ sni:" << parsed_chlo.sni << ", uaid:" << parsed_chlo.uaid
      << ", alpns:" << quiche::PrintElements(parsed_chlo.alpns)
-     << ", len(retry_token):" << parsed_chlo.retry_token.size()
-     << ", len(inner_packet):"
-     << parsed_chlo.legacy_version_encapsulation_inner_packet.size() << " }";
+     << ", len(retry_token):" << parsed_chlo.retry_token.size() << " }";
   return os;
 }
 

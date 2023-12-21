@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -53,12 +53,15 @@ class FakeAXTreeSource : public AXTreeSource<const FakeAXNode*> {
 
   AXNodeID GetId(const FakeAXNode* node) const override { return node->id; }
 
-  void GetChildren(
-      const FakeAXNode* node,
-      std::vector<const FakeAXNode*>* out_children) const override {
-    for (size_t i = 0; i < node->child_ids.size(); ++i)
-      out_children->push_back(GetFromId(node->child_ids[i]));
+  void CacheChildrenIfNeeded(const FakeAXNode*) override {}
+  size_t GetChildCount(const FakeAXNode* node) const override {
+    return node->child_ids.size();
   }
+  const FakeAXNode* ChildAt(const FakeAXNode* node,
+                            size_t index) const override {
+    return GetFromId(node->child_ids[index]);
+  }
+  void ClearChildCache(const FakeAXNode*) override {}
 
   const FakeAXNode* GetParent(const FakeAXNode* node) const override {
     return GetFromId(node->parent_id);

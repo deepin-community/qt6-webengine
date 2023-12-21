@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -31,7 +31,7 @@ namespace storage {
 //   virtual_path() returns 'foo/bar',
 //   type() returns the same value as mount_type(),
 //   path() returns the same value as virtual_path(),
-//   bucket() returns an empty string unless explicitly set with SetBucket(),
+//   bucket() returns nullopt unless explicitly set with SetBucket(),
 //
 // All other accessors return empty or invalid value.
 //
@@ -141,6 +141,10 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) FileSystemURL {
   // bucket will be used.
   const absl::optional<BucketLocator>& bucket() const { return bucket_; }
   void SetBucket(const BucketLocator& bucket) { bucket_ = bucket; }
+
+  // Returns either `bucket_` or a BucketLocator corresponding to the default
+  // bucket for `storage_key_`.
+  BucketLocator GetBucket() const;
 
   // Returns the formatted URL of this instance.
   GURL ToGURL() const;

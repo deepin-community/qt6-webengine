@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -29,7 +29,7 @@ Feature::Availability ManifestFeature::IsAvailableToContextImpl(
 
   // We know we can skip manifest()->GetKey() here because we just did the same
   // validation it would do above.
-  if (extension && !extension->manifest()->value()->FindKey(name()))
+  if (extension && !extension->manifest()->value()->contains(name()))
     return CreateAvailability(NOT_PRESENT, extension->GetType());
 
   return CreateAvailability(IS_AVAILABLE);

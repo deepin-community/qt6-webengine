@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,10 +14,15 @@ interface AutofillAgent {
   // a subframe and it is not known which form is its parent.
   TriggerReparse();
 
+  // Triggers a reparse of the new forms and notifies the caller when it's done.
+  // If `success == false`, reparse-with-response was triggered while another
+  // reparse-with-response was ongoing.
+  TriggerReparseWithResponse() => (bool success);
+
   // Instructs the renderer to fill or preview the active form with the given
-  // form data. Refer to AutofillDriver.AskForValuesToFill for comments
-  // about the |id|.
-  FillOrPreviewForm(int32 id, FormData form, RendererFormDataAction action);
+  // form data.
+  FillOrPreviewForm(FormData form,
+                    RendererFormDataAction action);
 
   // Sends the heuristic and server field type predictions to the renderer.
   FieldTypePredictionsAvailable(array<FormDataPredictions> forms);
@@ -56,6 +61,9 @@ interface AutofillAgent {
   PreviewPasswordSuggestion(mojo_base.mojom.String16 username,
                             mojo_base.mojom.String16 password);
 
+  // Tells the renderer to preview the generated password.
+  PreviewPasswordGenerationSuggestion(mojo_base.mojom.String16 password);
+
   // Configures the render to require, or not, a user gesture before notifying
   // the autofill agent of a field change. The default is true. Bypassing the
   // user gesture check should only used for Android Webview, which needs to
@@ -75,17 +83,6 @@ interface AutofillAgent {
   // Configures whether AutofillAgent will query password field autofill suggestions. The default is false.
   SetQueryPasswordSuggestion(bool query);
 
-  // Get form element's form and field data. The form field is given by a
-  // stable devtools node identifier in the backend node id.
-  // https://chromedevtools.github.io/devtools-protocol/tot/DOM/#type-BackendNodeId
-  // The corresponding entity in the renderer is the DOMNodeIds.
-  GetElementFormAndFieldDataForDevToolsNodeId(int32 backend_node_id) => (
-      autofill.mojom.FormData form, autofill.mojom.FormFieldData field);
-
-  // Set whether or not the Autofill Assistant currently wants to suppress the
-  // keyboard from showing.
-  SetAssistantKeyboardSuppressState(bool suppress);
-
   // Allows heavy scraping of form data (e.g., button titles for
   // unowned forms).
   EnableHeavyFormDataScraping();
@@ -97,17 +94,23 @@ interface AutofillAgent {
 // There is one instance of this interface per render frame in the render
 // process.
 interface PasswordAutofillAgent {
-  // Fills a password form and prepare field autocomplete for multiple
-  // matching logins. Lets the renderer know if it should disable the popup
-  // because the browser process will own the popup UI.
-  FillPasswordForm(PasswordFormFillData form_data);
+  // Provides fill information for a password form, which can fill the form and
+  // prepare field autocomplete for multiple matching logins. Lets the renderer
+  // know if it should disable the popup because the browser process will own
+  // the popup UI.
+  SetPasswordFillData(PasswordFormFillData form_data);
 
   // Lets the renderer know that there are no saved credentials for filling.
-  // This is the "no results" equivalent of FillPasswordForm.
+  // This is the "no results" equivalent of SetPasswordFillData.
   InformNoSavedCredentials(bool should_show_popup_without_passwords);
 
   // Fills the given |credential| into the last focused text input.
   FillIntoFocusedField(bool is_password, mojo_base.mojom.String16 credential);
+
+  // Sends the renderer a render id of a password field that has
+  // no associated username.
+  PasswordFieldHasNoAssociatedUsername(
+    FieldRendererId password_element_renderer_id);
 
   // Notification to start (|active| == true) or stop (|active| == false)
   // logging the decisions made about saving the password.

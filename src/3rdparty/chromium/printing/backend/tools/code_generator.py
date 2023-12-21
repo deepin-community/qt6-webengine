@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Copyright 2019 The Chromium Authors. All rights reserved.
+# Copyright 2019 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 '''python %(prog)s [options]
@@ -41,7 +41,7 @@ HANDLER_HEADER = """// DO NOT MODIFY
 
 #include "printing/backend/ipp_handler_map.h"
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "printing/backend/ipp_handlers.h"
 
 namespace printing {

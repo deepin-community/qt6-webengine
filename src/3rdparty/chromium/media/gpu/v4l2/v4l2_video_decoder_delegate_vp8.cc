@@ -1,11 +1,15 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "v4l2_video_decoder_delegate_vp8.h"
 
+// ChromeOS specific header; does not exist upstream
+#if BUILDFLAG(IS_CHROMEOS)
 #define __LINUX_MEDIA_VP8_CTRLS_LEGACY_H
 #include <linux/media/vp8-ctrls-upstream.h>
+#endif
+
 #include <linux/videodev2.h>
 
 #include <type_traits>
@@ -33,12 +37,9 @@ void FillV4L2SegmentationHeader(const Vp8SegmentationHeader& vp8_sgmnt_hdr,
                              V4L2_VP8_SEGMENT_FLAG_UPDATE_MAP);
   SET_V4L2_SGMNT_HDR_FLAG_IF(update_segment_feature_data,
                              V4L2_VP8_SEGMENT_FLAG_UPDATE_FEATURE_DATA);
-  // TODO not sure about this one?
   SET_V4L2_SGMNT_HDR_FLAG_IF(
       segment_feature_mode == Vp8SegmentationHeader::FEATURE_MODE_DELTA,
       V4L2_VP8_SEGMENT_FLAG_DELTA_VALUE_MODE);
-  SET_V4L2_SGMNT_HDR_FLAG_IF(segment_feature_mode,
-                             V4L2_VP8_SEGMENT_FLAG_UPDATE_FEATURE_DATA);
 #undef SET_V4L2_SGMNT_HDR_FLAG_IF
 
   SafeArrayMemcpy(v4l2_sgmnt_hdr->quant_update,

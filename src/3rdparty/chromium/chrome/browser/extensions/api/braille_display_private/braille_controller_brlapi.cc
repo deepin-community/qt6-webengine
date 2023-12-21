@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,16 +14,19 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/command_line.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/logging.h"
 #include "base/task/thread_pool.h"
 #include "base/threading/scoped_blocking_call.h"
 #include "base/time/time.h"
 #include "chrome/browser/extensions/api/braille_display_private/brlapi_connection.h"
 #include "chrome/browser/extensions/api/braille_display_private/brlapi_keycode_map.h"
+#include "chrome/browser/extensions/api/braille_display_private/stub_braille_controller.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/common/content_switches.h"
 
 namespace extensions {
 using content::BrowserThread;
@@ -44,7 +47,14 @@ constexpr base::TimeDelta kConnectRetryTimeout = base::Seconds(20);
 
 // static
 BrailleController* BrailleController::GetInstance() {
-  return BrailleControllerImpl::GetInstance();
+  BrailleControllerImpl* instance = BrailleControllerImpl::GetInstance();
+  if (!instance->use_self_in_tests()) {
+    base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
+    if (command_line->HasSwitch(::switches::kTestType)) {
+      return api::braille_display_private::StubBrailleController::GetInstance();
+    }
+  }
+  return instance;
 }
 
 // static
@@ -88,12 +98,12 @@ std::unique_ptr<DisplayState> BrailleControllerImpl::GetDisplayState() {
     } else if (rows * columns > 0) {
       // rows * columns == 0 means no display present.
       display_state->available = true;
-      display_state->text_column_count = std::make_unique<int>(columns);
-      display_state->text_row_count = std::make_unique<int>(rows);
+      display_state->text_column_count = columns;
+      display_state->text_row_count = rows;
 
       unsigned int cell_size = 0;
       connection_->GetCellSize(&cell_size);
-      display_state->cell_size = std::make_unique<int>(cell_size);
+      display_state->cell_size = cell_size;
     }
   }
   return display_state;
@@ -317,7 +327,7 @@ void BrailleControllerImpl::DispatchKeyEvent(std::unique_ptr<KeyEvent> event) {
                                   base::Unretained(this), std::move(event)));
     return;
   }
-  VLOG(1) << "Dispatching key event: " << *event->ToValue();
+  VLOG(1) << "Dispatching key event: " << event->ToValue();
   for (auto& observer : observers_)
     observer.OnBrailleKeyEvent(*event);
 }

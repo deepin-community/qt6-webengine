@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,9 +14,9 @@
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
 #include "base/android/scoped_java_ref.h"
-#include "base/bind.h"
-#include "base/callback.h"
 #include "base/containers/contains.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/lazy_instance.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/notreached.h"
@@ -418,6 +418,11 @@ void ClipboardMap::UpdateFromAndroidClipboard() {
 // static
 Clipboard* Clipboard::Create() {
   return new ClipboardAndroid;
+}
+
+// Static method for testing.
+void JNI_Clipboard_CleanupForTesting(JNIEnv* env) {
+  Clipboard::DestroyClipboardForCurrentThread();
 }
 
 // ClipboardAndroid implementation.

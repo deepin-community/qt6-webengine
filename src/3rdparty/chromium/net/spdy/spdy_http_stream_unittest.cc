@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,10 +9,10 @@
 #include <set>
 #include <string>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/task/single_thread_task_runner.h"
 #include "crypto/ec_private_key.h"
 #include "crypto/ec_signature_creator.h"
 #include "crypto/signature_creator.h"
@@ -38,9 +38,7 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-namespace net {
-
-namespace test {
+namespace net::test {
 
 namespace {
 
@@ -91,7 +89,7 @@ class ReadErrorUploadDataStream : public UploadDataStream {
 
   int ReadInternal(IOBuffer* buf, int buf_len) override {
     if (async_ == FailureMode::ASYNC) {
-      base::ThreadTaskRunnerHandle::Get()->PostTask(
+      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
           FROM_HERE, base::BindOnce(&ReadErrorUploadDataStream::CompleteRead,
                                     weak_factory_.GetWeakPtr()));
       return ERR_IO_PENDING;
@@ -136,7 +134,7 @@ class SpdyHttpStreamTest : public TestWithTaskEnvironment {
              PRIVACY_MODE_DISABLED,
              SpdySessionKey::IsProxySession::kFalse,
              SocketTag(),
-             NetworkIsolationKey(),
+             NetworkAnonymizationKey(),
              SecureDnsPolicy::kAllow),
         ssl_(SYNCHRONOUS, OK) {
     session_deps_.net_log = NetLog::Get();
@@ -1265,6 +1263,4 @@ TEST_F(SpdyHttpStreamTest, DownloadWithEmptyDataFrame) {
 // TODO(willchan): Write a longer test for SpdyStream that exercises all
 // methods.
 
-}  // namespace test
-
-}  // namespace net
+}  // namespace net::test

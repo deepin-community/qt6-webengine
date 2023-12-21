@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,15 +8,11 @@
 #include "base/callback_list.h"
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observation.h"
-#include "chrome/browser/supervised_user/supervised_user_error_page/supervised_user_error_page.h"
 #include "chrome/browser/supervised_user/supervised_user_service.h"
 #include "chrome/browser/supervised_user/supervised_user_service_observer.h"
 #include "chrome/browser/supervised_user/supervised_user_url_filter.h"
+#include "components/supervised_user/core/browser/supervised_user_error_page.h"
 #include "content/public/browser/web_ui_message_handler.h"
-
-namespace base {
-class ListValue;
-}  // namespace base
 
 // The implementation for the chrome://family-link-user-internals page.
 class FamilyLinkUserInternalsMessageHandler
@@ -43,24 +39,23 @@ class FamilyLinkUserInternalsMessageHandler
 
   SupervisedUserService* GetSupervisedUserService();
 
-  void HandleRegisterForEvents(const base::ListValue* args);
-  void HandleGetBasicInfo(const base::ListValue* args);
-  void HandleTryURL(const base::ListValue* args);
+  void HandleRegisterForEvents(const base::Value::List& args);
+  void HandleGetBasicInfo(const base::Value::List& args);
+  void HandleTryURL(const base::Value::List& args);
 
   void SendBasicInfo();
-  void SendFamilyLinkUserSettings(const base::DictionaryValue* settings);
+  void SendFamilyLinkUserSettings(const base::Value::Dict& settings);
 
-  void OnTryURLResult(
-      const std::string& callback_id,
-      SupervisedUserURLFilter::FilteringBehavior behavior,
-      supervised_user_error_page::FilteringBehaviorReason reason,
-      bool uncertain);
+  void OnTryURLResult(const std::string& callback_id,
+                      SupervisedUserURLFilter::FilteringBehavior behavior,
+                      supervised_user::FilteringBehaviorReason reason,
+                      bool uncertain);
 
   // SupervisedUserURLFilter::Observer:
   void OnSiteListUpdated() override;
   void OnURLChecked(const GURL& url,
                     SupervisedUserURLFilter::FilteringBehavior behavior,
-                    supervised_user_error_page::FilteringBehaviorReason reason,
+                    supervised_user::FilteringBehaviorReason reason,
                     bool uncertain) override;
 
   base::CallbackListSubscription user_settings_subscription_;

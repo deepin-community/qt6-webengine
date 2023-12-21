@@ -4,7 +4,6 @@
 #include "url_request_custom_job_delegate.h"
 #include "url_request_custom_job_proxy.h"
 
-#include "base/task/post_task.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "net/base/net_errors.h"
@@ -52,13 +51,20 @@ QMap<QByteArray, QByteArray> URLRequestCustomJobDelegate::requestHeaders() const
     return m_requestHeaders;
 }
 
+void URLRequestCustomJobDelegate::setAdditionalResponseHeaders(
+        const QMultiMap<QByteArray, QByteArray> &additionalResponseHeaders)
+{
+    m_additionalResponseHeaders = additionalResponseHeaders;
+}
+
 void URLRequestCustomJobDelegate::reply(const QByteArray &contentType, QIODevice *device)
 {
     if (device)
         QObject::connect(device, &QIODevice::readyRead, this, &URLRequestCustomJobDelegate::slotReadyRead);
     m_proxy->m_ioTaskRunner->PostTask(FROM_HERE,
-                                      base::BindOnce(&URLRequestCustomJobProxy::reply,
-                                                     m_proxy, contentType.toStdString(),device));
+                                      base::BindOnce(&URLRequestCustomJobProxy::reply, m_proxy,
+                                                     contentType.toStdString(), device,
+                                                     std::move(m_additionalResponseHeaders)));
 }
 
 void URLRequestCustomJobDelegate::slotReadyRead()

@@ -91,8 +91,18 @@
   padding-top: 4px;
   font-size: 12px;
   color: var(--color-text-primary);
-  text-transform: uppercase;
   letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.block-title.color-text {
+  text-transform: none;
+  max-width: 65px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: text;
+  user-select: text;
+  overflow: hidden;
 }
 
 .results-section {
@@ -331,6 +341,10 @@
   height: 20px;
 }
 
+.nodeId-column .monospace {
+  overflow: hidden;
+}
+
 .show-element {
   margin: 0 0 0 8px;
   padding: 0;
@@ -353,4 +367,8 @@
 .nodeId-column:focus-within .show-element,
 .nodeId-column:hover .show-element {
   display: inline-block;
+}
+
+.results-section.colors {
+  forced-color-adjust: none; /* show colors in high contrast theme */
 }

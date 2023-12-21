@@ -19,12 +19,13 @@
  * along with this library; see the file COPYING.LIB.  If not, write to
  * the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
  * Boston, MA 02110-1301, USA.
-*/
+ */
 
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_CSS_STYLE_PROPERTY_SERIALIZER_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_CSS_STYLE_PROPERTY_SERIALIZER_H_
 
 #include <bitset>
+#include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/css/css_property_value_set.h"
 #include "third_party/blink/renderer/core/css/css_value_list.h"
 
@@ -43,6 +44,9 @@ class CORE_EXPORT StylePropertySerializer {
   String AsText() const;
   String SerializeShorthand(CSSPropertyID) const;
 
+  static bool IsValidToggleShorthand(const CSSValue* toggle_root,
+                                     const CSSValue* toggle_trigger);
+
  private:
   String GetCommonValue(const StylePropertyShorthand&) const;
   String BorderPropertyValue(const StylePropertyShorthand&,
@@ -56,9 +60,15 @@ class CORE_EXPORT StylePropertySerializer {
   String PageBreakPropertyValue(const StylePropertyShorthand&) const;
   String GetShorthandValue(const StylePropertyShorthand&,
                            String separator = " ") const;
+  String GetShorthandValueForColumns(const StylePropertyShorthand&) const;
   String GetShorthandValueForGrid(const StylePropertyShorthand&) const;
   String GetShorthandValueForGridTemplate(const StylePropertyShorthand&) const;
   String ContainerValue() const;
+  String TimelineValue(const StylePropertyShorthand&) const;
+  String ScrollTimelineValue() const;
+  String ViewTimelineValue() const;
+  String AnimationDelayShorthandValue() const;
+  String AnimationRangeShorthandValue() const;
   String FontValue() const;
   String FontSynthesisValue() const;
   String FontVariantValue() const;

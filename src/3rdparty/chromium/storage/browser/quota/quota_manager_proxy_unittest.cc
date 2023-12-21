@@ -1,4 +1,4 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,9 +6,9 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/test/task_environment.h"
 #include "base/test/test_future.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "components/services/storage/public/cpp/buckets/bucket_info.h"
 #include "components/services/storage/public/cpp/constants.h"
 #include "components/services/storage/public/cpp/quota_error_or.h"
@@ -25,11 +25,16 @@ class QuotaManagerProxyTest : public testing::Test {
     EXPECT_TRUE(profile_path_.CreateUniqueTempDir());
     quota_manager_ = base::MakeRefCounted<QuotaManagerImpl>(
         /*is_incognito*/ false, profile_path_.GetPath(),
-        base::ThreadTaskRunnerHandle::Get().get(),
+        base::SingleThreadTaskRunner::GetCurrentDefault().get(),
         /*quota_change_callback=*/base::DoNothing(),
-        /*storage_policy=*/nullptr, GetQuotaSettingsFunc());
+        /*storage_policy=*/nullptr,
+        base::BindRepeating([](OptionalQuotaSettingsCallback callback) {
+          QuotaSettings settings;
+          settings.per_storage_key_quota = 200 * 1024 * 1024;
+          std::move(callback).Run(settings);
+        }));
     quota_manager_proxy_ = base::MakeRefCounted<QuotaManagerProxy>(
-        quota_manager_.get(), base::ThreadTaskRunnerHandle::Get(),
+        quota_manager_.get(), base::SingleThreadTaskRunner::GetCurrentDefault(),
         profile_path_.GetPath());
   }
 
@@ -48,9 +53,11 @@ class QuotaManagerProxyTest : public testing::Test {
 
 TEST_F(QuotaManagerProxyTest, GetBucketPath) {
   base::test::TestFuture<storage::QuotaErrorOr<storage::BucketInfo>> future;
-  quota_manager_proxy_->GetOrCreateBucket(
+  BucketInitParams params(
       blink::StorageKey::CreateFromStringForTesting("http://example.com"),
-      "draft_bucket", base::ThreadTaskRunnerHandle::Get(),
+      "draft_bucket");
+  quota_manager_proxy_->UpdateOrCreateBucket(
+      params, base::SingleThreadTaskRunner::GetCurrentDefault(),
       future.GetCallback());
   auto bucket = future.Take();
   EXPECT_TRUE(bucket.ok());
@@ -65,9 +72,11 @@ TEST_F(QuotaManagerProxyTest, GetBucketPath) {
 
 TEST_F(QuotaManagerProxyTest, GetClientBucketPath) {
   base::test::TestFuture<storage::QuotaErrorOr<storage::BucketInfo>> future;
-  quota_manager_proxy_->GetOrCreateBucket(
+  BucketInitParams params(
       blink::StorageKey::CreateFromStringForTesting("http://example.com"),
-      "draft_bucket", base::ThreadTaskRunnerHandle::Get(),
+      "draft_bucket");
+  quota_manager_proxy_->UpdateOrCreateBucket(
+      params, base::SingleThreadTaskRunner::GetCurrentDefault(),
       future.GetCallback());
   auto bucket = future.Take();
   EXPECT_TRUE(bucket.ok());
@@ -89,11 +98,14 @@ TEST_F(QuotaManagerProxyTest, GetClientBucketPath) {
                 bucket->ToBucketLocator(), QuotaClientType::kIndexedDatabase),
             expected_path);
 
-  // BackgroundFetch/CacheStorage
-  expected_path = bucket_path.AppendASCII("CacheStorage");
+  // BackgroundFetch
+  expected_path = bucket_path.AppendASCII("BackgroundFetch");
   EXPECT_EQ(quota_manager_proxy_->GetClientBucketPath(
                 bucket->ToBucketLocator(), QuotaClientType::kBackgroundFetch),
             expected_path);
+
+  // CacheStorage
+  expected_path = bucket_path.AppendASCII("CacheStorage");
   EXPECT_EQ(
       quota_manager_proxy_->GetClientBucketPath(
           bucket->ToBucketLocator(), QuotaClientType::kServiceWorkerCache),

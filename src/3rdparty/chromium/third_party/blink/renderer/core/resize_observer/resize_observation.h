@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -29,7 +29,7 @@ class CORE_EXPORT ResizeObservation final
   // True if observationSize differs from target's current size.
   bool ObservationSizeOutOfSync();
   void SetObservationSize(const LayoutSize&);
-  ResizeObserverBoxOptions observedBox() const { return observed_box_; }
+  ResizeObserverBoxOptions ObservedBox() const { return observed_box_; }
 
   LayoutSize ComputeTargetSize() const;
 

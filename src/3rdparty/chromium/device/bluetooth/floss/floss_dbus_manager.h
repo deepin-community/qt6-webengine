@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,8 +8,9 @@
 #include <memory>
 #include <string>
 
-#include "base/callback.h"
-#include "base/memory/ref_counted.h"
+#include "base/functional/callback.h"
+#include "base/memory/raw_ptr.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "device/bluetooth/bluetooth_export.h"
 
@@ -26,9 +27,19 @@ class ErrorResponse;
 namespace floss {
 
 class FlossAdapterClient;
-class FlossManagerClient;
+class FlossAdvertiserClient;
+class FlossBatteryManagerClient;
 class FlossClientBundle;
 class FlossDBusManagerSetter;
+class FlossGattManagerClient;
+class FlossLEScanClient;
+class FlossLoggingClient;
+class FlossManagerClient;
+class FlossSocketManager;
+
+#if BUILDFLAG(IS_CHROMEOS)
+class FlossAdminClient;
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 // FlossDBusManager manages the lifetimes of D-Bus connections and clients. It
 // ensures the proper ordering of shutdowns for the D-Bus thread, connections
@@ -92,13 +103,26 @@ class DEVICE_BLUETOOTH_EXPORT FlossDBusManager {
   // Checks whether an adapter is currently enabled and being used.
   bool HasActiveAdapter() const;
 
+  // Get the active adapter.
+  int GetActiveAdapter() const;
+
   // Returns system bus pointer (owned by FlossDBusThreadManager).
   dbus::Bus* GetSystemBus() const { return bus_; }
 
   // All returned objects are owned by FlossDBusManager. Do not use these
   // pointers after FlossDBusManager has been shut down.
-  FlossManagerClient* GetManagerClient();
   FlossAdapterClient* GetAdapterClient();
+  FlossAdvertiserClient* GetAdvertiserClient();
+  FlossBatteryManagerClient* GetBatteryManagerClient();
+  FlossGattManagerClient* GetGattManagerClient();
+  FlossLEScanClient* GetLEScanClient();
+  FlossLoggingClient* GetLoggingClient();
+  FlossManagerClient* GetManagerClient();
+  FlossSocketManager* GetSocketManager();
+
+#if BUILDFLAG(IS_CHROMEOS)
+  FlossAdminClient* GetAdminClient();
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
  private:
   friend class FlossDBusManagerSetter;
@@ -121,7 +145,7 @@ class DEVICE_BLUETOOTH_EXPORT FlossDBusManager {
   void InitializeAdapterClients(int adapter);
 
   // System bus instance (owned by FlossDBusThreadManager).
-  dbus::Bus* bus_;
+  raw_ptr<dbus::Bus> bus_;
 
   // Bundle together all Floss clients to be initialized and shutdown in
   // a specified order.
@@ -143,8 +167,19 @@ class DEVICE_BLUETOOTH_EXPORT FlossDBusManager {
 
 class DEVICE_BLUETOOTH_EXPORT FlossDBusManagerSetter {
  public:
-  void SetFlossManagerClient(std::unique_ptr<FlossManagerClient> client);
   void SetFlossAdapterClient(std::unique_ptr<FlossAdapterClient> client);
+  void SetFlossAdvertiserClient(std::unique_ptr<FlossAdvertiserClient> client);
+  void SetFlossBatteryManagerClient(
+      std::unique_ptr<FlossBatteryManagerClient> client);
+  void SetFlossGattManagerClient(
+      std::unique_ptr<FlossGattManagerClient> client);
+  void SetFlossLEScanClient(std::unique_ptr<FlossLEScanClient> client);
+  void SetFlossLoggingClient(std::unique_ptr<FlossLoggingClient> client);
+  void SetFlossManagerClient(std::unique_ptr<FlossManagerClient> client);
+  void SetFlossSocketManager(std::unique_ptr<FlossSocketManager> manager);
+#if BUILDFLAG(IS_CHROMEOS)
+  void SetFlossAdminClient(std::unique_ptr<FlossAdminClient> client);
+#endif  // BUILDFLAG(IS_CHROMEOS)
 };
 
 // FlossDBusThreadManager manages the D-Bus thread, the thread dedicated to
@@ -191,6 +226,27 @@ class DEVICE_BLUETOOTH_EXPORT FlossClientBundle {
 
   FlossAdapterClient* adapter_client() { return adapter_client_.get(); }
 
+  FlossGattManagerClient* gatt_manager_client() {
+    return gatt_manager_client_.get();
+  }
+
+  FlossSocketManager* socket_manager() { return socket_manager_.get(); }
+
+  FlossLEScanClient* lescan_client() { return lescan_client_.get(); }
+
+  FlossLoggingClient* logging_client() { return logging_client_.get(); }
+
+  FlossAdvertiserClient* advertiser_client() {
+    return advertiser_client_.get();
+  }
+#if BUILDFLAG(IS_CHROMEOS)
+  FlossAdminClient* admin_client() { return admin_client_.get(); }
+#endif  // BUILDFLAG(IS_CHROMEOS)
+
+  FlossBatteryManagerClient* battery_manager_client() {
+    return battery_manager_client_.get();
+  }
+
  private:
   friend FlossDBusManagerSetter;
   friend FlossDBusManager;
@@ -200,6 +256,15 @@ class DEVICE_BLUETOOTH_EXPORT FlossClientBundle {
   bool use_stubs_;
   std::unique_ptr<FlossManagerClient> manager_client_;
   std::unique_ptr<FlossAdapterClient> adapter_client_;
+  std::unique_ptr<FlossGattManagerClient> gatt_manager_client_;
+  std::unique_ptr<FlossSocketManager> socket_manager_;
+  std::unique_ptr<FlossLEScanClient> lescan_client_;
+  std::unique_ptr<FlossLoggingClient> logging_client_;
+  std::unique_ptr<FlossAdvertiserClient> advertiser_client_;
+  std::unique_ptr<FlossBatteryManagerClient> battery_manager_client_;
+#if BUILDFLAG(IS_CHROMEOS)
+  std::unique_ptr<FlossAdminClient> admin_client_;
+#endif  // BUILDFLAG(IS_CHROMEOS)
 };
 
 }  // namespace floss

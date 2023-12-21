@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,14 +9,14 @@
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
+#include "third_party/blink/renderer/core/frame/picture_in_picture_controller.h"
 #include "third_party/blink/renderer/core/html/media/html_video_element.h"
-#include "third_party/blink/renderer/modules/picture_in_picture/picture_in_picture_controller_impl.h"
 #include "third_party/blink/renderer/modules/picture_in_picture/picture_in_picture_window.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 
 namespace blink {
 
-using Status = PictureInPictureControllerImpl::Status;
+using Status = PictureInPictureController::Status;
 
 namespace {
 
@@ -35,6 +35,8 @@ const char kUserGestureRequired[] =
     "Picture-in-Picture.";
 const char kDisablePictureInPicturePresent[] =
     "\"disablePictureInPicture\" attribute is present.";
+const char kAutoPipAndroid[] = "The video is currently in auto-pip mode.";
+const char kDocumentPip[] = "The video is currently in document pip mode.";
 
 }  // namespace
 
@@ -50,7 +52,7 @@ ScriptPromise HTMLVideoElementPictureInPicture::requestPictureInPicture(
   auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
   auto promise = resolver->Promise();
 
-  PictureInPictureControllerImpl::From(element.GetDocument())
+  PictureInPictureController::From(element.GetDocument())
       .EnterPictureInPicture(&element, resolver);
 
   return promise;
@@ -60,8 +62,7 @@ ScriptPromise HTMLVideoElementPictureInPicture::requestPictureInPicture(
 bool HTMLVideoElementPictureInPicture::FastHasAttribute(
     const HTMLVideoElement& element,
     const QualifiedName& name) {
-  DCHECK(name == html_names::kDisablepictureinpictureAttr ||
-         name == html_names::kAutopictureinpictureAttr);
+  DCHECK(name == html_names::kDisablepictureinpictureAttr);
   return element.FastHasAttribute(name);
 }
 
@@ -70,14 +71,13 @@ void HTMLVideoElementPictureInPicture::SetBooleanAttribute(
     HTMLVideoElement& element,
     const QualifiedName& name,
     bool value) {
-  DCHECK(name == html_names::kDisablepictureinpictureAttr ||
-         name == html_names::kAutopictureinpictureAttr);
+  DCHECK(name == html_names::kDisablepictureinpictureAttr);
   element.SetBooleanAttribute(name, value);
 
   Document& document = element.GetDocument();
   TreeScope& scope = element.GetTreeScope();
-  PictureInPictureControllerImpl& controller =
-      PictureInPictureControllerImpl::From(document);
+  PictureInPictureController& controller =
+      PictureInPictureController::From(document);
 
   if (name == html_names::kDisablepictureinpictureAttr && value &&
       controller.PictureInPictureElement(scope) == &element) {
@@ -90,8 +90,8 @@ void HTMLVideoElementPictureInPicture::CheckIfPictureInPictureIsAllowed(
     HTMLVideoElement& element,
     ExceptionState& exception_state) {
   Document& document = element.GetDocument();
-  PictureInPictureControllerImpl& controller =
-      PictureInPictureControllerImpl::From(document);
+  PictureInPictureController& controller =
+      PictureInPictureController::From(document);
 
   switch (controller.IsElementAllowed(element, /*report_failure=*/true)) {
     case Status::kFrameDetached:
@@ -116,6 +116,14 @@ void HTMLVideoElementPictureInPicture::CheckIfPictureInPictureIsAllowed(
     case Status::kDisabledBySystem:
       exception_state.ThrowDOMException(DOMExceptionCode::kNotSupportedError,
                                         kNotAvailable);
+      return;
+    case Status::kAutoPipAndroid:
+      exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
+                                        kAutoPipAndroid);
+      return;
+    case Status::kDocumentPip:
+      exception_state.ThrowDOMException(DOMExceptionCode::kNotSupportedError,
+                                        kDocumentPip);
       return;
     case Status::kEnabled:
       break;

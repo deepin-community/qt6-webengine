@@ -9,6 +9,7 @@
 
 #include "cast/streaming/constants.h"
 #include "cast/streaming/packet_util.h"
+#include "platform/base/span.h"
 #include "util/chrono_helpers.h"
 #include "util/osp_logging.h"
 #include "util/saturate_cast.h"
@@ -16,6 +17,8 @@
 
 namespace openscreen {
 namespace cast {
+
+using clock_operators::operator<<;
 
 SenderPacketRouter::SenderPacketRouter(Environment* environment,
                                        int max_burst_bitrate)
@@ -187,7 +190,7 @@ int SenderPacketRouter::SendJustTheRtcpPackets(Clock::time_point send_time) {
             send_time,
             absl::Span<uint8_t>(packet_buffer_.get(), packet_buffer_size_));
     if (!packet.empty()) {
-      environment_->SendPacket(packet);
+      environment_->SendPacket(ByteView(packet.data(), packet.size()));
       entry.next_rtcp_send_time = send_time + kRtcpReportInterval;
       ++num_sent;
     }
@@ -215,7 +218,7 @@ int SenderPacketRouter::SendJustTheRtpPackets(Clock::time_point send_time,
       if (packet.empty()) {
         break;
       }
-      environment_->SendPacket(packet);
+      environment_->SendPacket(ByteView(packet.data(), packet.size()));
     }
     entry.next_rtp_send_time = entry.sender->GetRtpResumeTime();
   }

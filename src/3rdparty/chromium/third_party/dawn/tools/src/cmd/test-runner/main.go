@@ -17,6 +17,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -39,22 +41,24 @@ import (
 type outputFormat string
 
 const (
-	testTimeout = 30 * time.Second
+	testTimeout = 2 * time.Minute
 
-	glsl   = outputFormat("glsl")
-	hlsl   = outputFormat("hlsl")
-	msl    = outputFormat("msl")
-	spvasm = outputFormat("spvasm")
-	wgsl   = outputFormat("wgsl")
+	glsl    = outputFormat("glsl")
+	hlslFXC = outputFormat("hlsl-fxc")
+	hlslDXC = outputFormat("hlsl-dxc")
+	msl     = outputFormat("msl")
+	spvasm  = outputFormat("spvasm")
+	wgsl    = outputFormat("wgsl")
 )
 
 // Directories we don't generate expected PASS result files for.
 // These directories contain large corpora of tests for which the generated code
 // is uninteresting.
+// These paths use unix-style slashes and do not contain the '/test/tint' prefix.
 var dirsWithNoPassExpectations = []string{
-	"/test/tint/benchmark/",
-	"/test/tint/unittest/",
-	"/test/tint/vk-gl-cts/",
+	"benchmark/",
+	"unittest/",
+	"vk-gl-cts/",
 }
 
 func main() {
@@ -81,16 +85,15 @@ optional flags:`)
 }
 
 func run() error {
-	var formatList, filter, dxcPath, xcrunPath string
+	var formatList, filter, dxcPath, fxcPath, xcrunPath string
 	var maxFilenameColumnWidth int
 	numCPU := runtime.NumCPU()
-	fxc, fxcAndDxc, verbose, generateExpected, generateSkip := false, false, false, false, false
-	flag.StringVar(&formatList, "format", "all", "comma separated list of formats to emit. Possible values are: all, wgsl, spvasm, msl, hlsl, glsl")
+	verbose, generateExpected, generateSkip := false, false, false
+	flag.StringVar(&formatList, "format", "all", "comma separated list of formats to emit. Possible values are: all, wgsl, spvasm, msl, hlsl, hlsl-dxc, hlsl-fxc, glsl")
 	flag.StringVar(&filter, "filter", "**.wgsl, **.spvasm, **.spv", "comma separated list of glob patterns for test files")
 	flag.StringVar(&dxcPath, "dxc", "", "path to DXC executable for validating HLSL output")
+	flag.StringVar(&fxcPath, "fxc", "", "path to FXC DLL for validating HLSL output")
 	flag.StringVar(&xcrunPath, "xcrun", "", "path to xcrun executable for validating MSL output")
-	flag.BoolVar(&fxc, "fxc", false, "validate with FXC instead of DXC")
-	flag.BoolVar(&fxcAndDxc, "fxc-and-dxc", false, "validate with both FXC and DXC")
 	flag.BoolVar(&verbose, "verbose", false, "print all run tests, including rows that all pass")
 	flag.BoolVar(&generateExpected, "generate-expected", false, "create or update all expected outputs")
 	flag.BoolVar(&generateSkip, "generate-skip", false, "create or update all expected outputs that fail with SKIP")
@@ -102,10 +105,6 @@ func run() error {
 	args := flag.Args()
 	if len(args) == 0 {
 		showUsage()
-	}
-
-	if fxcAndDxc {
-		fxc = true
 	}
 
 	// executable path is the first argument
@@ -147,7 +146,8 @@ func run() error {
 					"**.expected.wgsl",
 					"**.expected.spvasm",
 					"**.expected.msl",
-					"**.expected.hlsl",
+					"**.expected.fxc.hlsl",
+					"**.expected.dxc.hlsl",
 					"**.expected.glsl"
 				]
 			}
@@ -163,7 +163,7 @@ func run() error {
 	// Parse --format into a list of outputFormat
 	formats := []outputFormat{}
 	if formatList == "all" {
-		formats = []outputFormat{wgsl, spvasm, msl, hlsl, glsl}
+		formats = []outputFormat{wgsl, spvasm, msl, hlslDXC, hlslFXC, glsl}
 	} else {
 		for _, f := range strings.Split(formatList, ",") {
 			switch strings.TrimSpace(f) {
@@ -174,7 +174,11 @@ func run() error {
 			case "msl":
 				formats = append(formats, msl)
 			case "hlsl":
-				formats = append(formats, hlsl)
+				formats = append(formats, hlslDXC, hlslFXC)
+			case "hlsl-dxc":
+				formats = append(formats, hlslDXC)
+			case "hlsl-fxc":
+				formats = append(formats, hlslFXC)
 			case "glsl":
 				formats = append(formats, glsl)
 			default:
@@ -188,6 +192,8 @@ func run() error {
 		defaultMSLExe = "metal.exe"
 	}
 
+	toolchainHash := sha256.New()
+
 	// If explicit verification compilers have been specified, check they exist.
 	// Otherwise, look on PATH for them, but don't error if they cannot be found.
 	for _, tool := range []struct {
@@ -195,7 +201,8 @@ func run() error {
 		lang string
 		path *string
 	}{
-		{"dxc", "hlsl", &dxcPath},
+		{"dxc", "hlsl-dxc", &dxcPath},
+		{"d3dcompiler_47.dll", "hlsl-fxc", &fxcPath},
 		{defaultMSLExe, "msl", &xcrunPath},
 	} {
 		if *tool.path == "" {
@@ -208,28 +215,28 @@ func run() error {
 		}
 
 		color.Set(color.FgCyan)
-		fmt.Printf("%-4s", tool.lang)
+		fmt.Printf("%-8s", tool.lang)
 		color.Unset()
 		fmt.Printf(" validation ")
-		if *tool.path != "" || (fxc && tool.lang == "hlsl") {
-			color.Set(color.FgGreen)
-			tool_path := *tool.path
-			if fxc && tool.lang == "hlsl" {
-				if fxcAndDxc {
-					tool_path += " AND Tint will use FXC dll in PATH"
-				} else {
-					tool_path = "Tint will use FXC dll in PATH"
-				}
-			}
-			fmt.Printf("ENABLED (" + tool_path + ")")
+		if *tool.path != "" {
+			fmt.Printf("ENABLED (" + *tool.path + ")")
 		} else {
 			color.Set(color.FgRed)
 			fmt.Printf("DISABLED")
 		}
 		color.Unset()
 		fmt.Println()
+
+		toolchainHash.Write([]byte(tool.name))
+		if s, err := os.Stat(*tool.path); err == nil {
+			toolchainHash.Write([]byte(s.ModTime().String()))
+			toolchainHash.Write([]byte(fmt.Sprint(s.Size())))
+		}
 	}
 	fmt.Println()
+
+	validationCache := loadValidationCache(fmt.Sprintf("%x", toolchainHash.Sum(nil)))
+	defer saveValidationCache(validationCache)
 
 	// Build the list of results.
 	// These hold the chans used to report the job results.
@@ -245,10 +252,20 @@ func run() error {
 	pendingJobs := make(chan job, 256)
 
 	// Spawn numCPU job runners...
+	runCfg := runConfig{
+		wd:               dir,
+		exe:              exe,
+		dxcPath:          dxcPath,
+		fxcPath:          fxcPath,
+		xcrunPath:        xcrunPath,
+		generateExpected: generateExpected,
+		generateSkip:     generateSkip,
+		validationCache:  validationCache,
+	}
 	for cpu := 0; cpu < numCPU; cpu++ {
 		go func() {
 			for job := range pendingJobs {
-				job.run(dir, exe, fxc, fxcAndDxc, dxcPath, xcrunPath, generateExpected, generateSkip)
+				job.run(runCfg)
 			}
 		}()
 	}
@@ -323,6 +340,8 @@ func run() error {
 	printFormatsHeader()
 	printHorizontalLine()
 
+	newKnownGood := knownGoodHashes{}
+
 	for i, file := range files {
 		results := results[i]
 
@@ -340,6 +359,11 @@ func run() error {
 		for _, format := range formats {
 			columnWidth := formatWidth(format)
 			result := <-results[format]
+
+			// Update the known-good hashes
+			newKnownGood[fileAndFormat{file, format}] = result.passHashes
+
+			// Update stats
 			stats := statsByFmt[format]
 			stats.numTests++
 			stats.timeTaken += result.timeTaken
@@ -348,6 +372,7 @@ func run() error {
 					file: file, format: format, err: err,
 				})
 			}
+
 			switch result.code {
 			case pass:
 				green.Fprintf(row, alignCenter("PASS", columnWidth))
@@ -369,6 +394,17 @@ func run() error {
 
 		if verbose || !rowAllPassed {
 			fmt.Fprintln(color.Output, row)
+		}
+	}
+
+	// Update the validation cache known-good hashes.
+	// This has to be done after all the results have been collected to avoid
+	// concurrent access on the map.
+	for ff, hashes := range newKnownGood {
+		if len(newKnownGood) > 0 {
+			validationCache.knownGood[ff] = hashes
+		} else {
+			delete(validationCache.knownGood, ff)
 		}
 	}
 
@@ -494,9 +530,10 @@ const (
 )
 
 type status struct {
-	code      statusCode
-	err       error
-	timeTaken time.Duration
+	code       statusCode
+	err        error
+	timeTaken  time.Duration
+	passHashes []string
 }
 
 type job struct {
@@ -506,10 +543,29 @@ type job struct {
 	result chan status
 }
 
-func (j job) run(wd, exe string, fxc, fxcAndDxc bool, dxcPath, xcrunPath string, generateExpected, generateSkip bool) {
+type runConfig struct {
+	wd               string
+	exe              string
+	dxcPath          string
+	fxcPath          string
+	xcrunPath        string
+	generateExpected bool
+	generateSkip     bool
+	validationCache  validationCache
+}
+
+func (j job) run(cfg runConfig) {
 	j.result <- func() status {
 		// expectedFilePath is the path to the expected output file for the given test
-		expectedFilePath := j.file + ".expected." + string(j.format)
+		expectedFilePath := j.file + ".expected."
+		switch j.format {
+		case hlslDXC:
+			expectedFilePath += "dxc.hlsl"
+		case hlslFXC:
+			expectedFilePath += "fxc.hlsl"
+		default:
+			expectedFilePath += string(j.format)
+		}
 
 		// Is there an expected output file? If so, load it.
 		expected, expectedFileExists := "", false
@@ -525,7 +581,7 @@ func (j job) run(wd, exe string, fxc, fxcAndDxc bool, dxcPath, xcrunPath string,
 
 		expected = strings.ReplaceAll(expected, "\r\n", "\n")
 
-		file, err := filepath.Rel(wd, j.file)
+		file, err := filepath.Rel(cfg.wd, j.file)
 		if err != nil {
 			file = j.file
 		}
@@ -536,63 +592,61 @@ func (j job) run(wd, exe string, fxc, fxcAndDxc bool, dxcPath, xcrunPath string,
 
 		args := []string{
 			file,
-			"--format", string(j.format),
+			"--format", strings.Split(string(j.format), "-")[0], // 'hlsl-fxc' -> 'hlsl', etc.
+			"--print-hash",
+		}
+
+		// Append any skip-hashes, if they're found.
+		if j.format != "wgsl" { // Don't skip 'wgsl' as this 'toolchain' is ever changing.
+			if skipHashes := cfg.validationCache.knownGood[fileAndFormat{file, j.format}]; len(skipHashes) > 0 {
+				args = append(args, "--skip-hash", strings.Join(skipHashes, ","))
+			}
 		}
 
 		// Can we validate?
 		validate := false
 		switch j.format {
 		case wgsl:
+			args = append(args, "--validate") // wgsl validation uses Tint, so is always available
 			validate = true
 		case spvasm, glsl:
 			args = append(args, "--validate") // spirv-val and glslang are statically linked, always available
 			validate = true
-		case hlsl:
-			// Handled below
-		case msl:
-			if xcrunPath != "" {
-				args = append(args, "--xcrun", xcrunPath)
+		case hlslDXC:
+			if cfg.dxcPath != "" {
+				args = append(args, "--dxc", cfg.dxcPath)
 				validate = true
 			}
+		case hlslFXC:
+			if cfg.fxcPath != "" {
+				args = append(args, "--fxc", cfg.fxcPath)
+				validate = true
+			}
+		case msl:
+			if cfg.xcrunPath != "" {
+				args = append(args, "--xcrun", cfg.xcrunPath)
+				validate = true
+			}
+		default:
+			panic("unknown format: " + j.format)
 		}
 
 		// Invoke the compiler...
 		ok := false
 		var out string
+		args = append(args, j.flags...)
+
 		start := time.Now()
-		if j.format == hlsl {
-			// If fxcAndDxc is set, run FXC first as it's more likely to fail, then DXC iff FXC succeeded.
-			if fxc || fxcAndDxc {
-				validate = true
-				args_fxc := append(args, "--fxc")
-				args_fxc = append(args_fxc, j.flags...)
-				ok, out = invoke(wd, exe, args_fxc...)
-			}
-
-			if dxcPath != "" && (!fxc || (fxcAndDxc && ok)) {
-				validate = true
-				args_dxc := append(args, "--dxc", dxcPath)
-				args_dxc = append(args_dxc, j.flags...)
-				ok, out = invoke(wd, exe, args_dxc...)
-			}
-
-			// If we didn't run either fxc or dxc validation, run as usual
-			if !validate {
-				args = append(args, j.flags...)
-				ok, out = invoke(wd, exe, args...)
-			}
-
-		} else {
-			args = append(args, j.flags...)
-			ok, out = invoke(wd, exe, args...)
-		}
+		ok, out = invoke(cfg.wd, cfg.exe, args...)
 		timeTaken := time.Since(start)
+
 		out = strings.ReplaceAll(out, "\r\n", "\n")
+		out, hashes := extractValidationHashes(out)
 		matched := expected == "" || expected == out
 
 		canEmitPassExpectationFile := true
 		for _, noPass := range dirsWithNoPassExpectations {
-			if strings.Contains(j.file, filepath.FromSlash(noPass)) {
+			if strings.HasPrefix(file, noPass) {
 				canEmitPassExpectationFile = false
 				break
 			}
@@ -602,7 +656,7 @@ func (j job) run(wd, exe string, fxc, fxcAndDxc bool, dxcPath, xcrunPath string,
 			return ioutil.WriteFile(path, []byte(content), 0666)
 		}
 
-		if ok && generateExpected && (validate || !skipped) {
+		if ok && cfg.generateExpected && (validate || !skipped) {
 			// User requested to update PASS expectations, and test passed.
 			if canEmitPassExpectationFile {
 				saveExpectedFile(expectedFilePath, out)
@@ -618,19 +672,19 @@ func (j job) run(wd, exe string, fxc, fxcAndDxc bool, dxcPath, xcrunPath string,
 		switch {
 		case ok && matched:
 			// Test passed
-			return status{code: pass, timeTaken: timeTaken}
+			return status{code: pass, timeTaken: timeTaken, passHashes: hashes}
 
 			//       --- Below this point the test has failed ---
 
 		case skipped:
-			if generateSkip {
+			if cfg.generateSkip {
 				saveExpectedFile(expectedFilePath, "SKIP: FAILED\n\n"+out)
 			}
 			return status{code: skip, timeTaken: timeTaken}
 
 		case !ok:
 			// Compiler returned non-zero exit code
-			if generateSkip {
+			if cfg.generateSkip {
 				saveExpectedFile(expectedFilePath, "SKIP: FAILED\n\n"+out)
 			}
 			err := fmt.Errorf("%s", out)
@@ -638,7 +692,7 @@ func (j job) run(wd, exe string, fxc, fxcAndDxc bool, dxcPath, xcrunPath string,
 
 		default:
 			// Compiler returned zero exit code, or output was not as expected
-			if generateSkip {
+			if cfg.generateSkip {
 				saveExpectedFile(expectedFilePath, "SKIP: FAILED\n\n"+out)
 			}
 
@@ -665,6 +719,24 @@ func (j job) run(wd, exe string, fxc, fxcAndDxc bool, dxcPath, xcrunPath string,
 			return status{code: fail, err: err, timeTaken: timeTaken}
 		}
 	}()
+}
+
+var reValidationHash = regexp.MustCompile(`<<HASH: ([^>]*)>>\n`)
+
+// Parses and returns the validation hashes emitted by tint, or an empty string
+// if the hash wasn't found, along with the input string with the validation
+// hashes removed.
+func extractValidationHashes(in string) (out string, hashes []string) {
+	matches := reValidationHash.FindAllStringSubmatch(in, -1)
+	if matches == nil {
+		return in, nil
+	}
+	out = in
+	for _, match := range matches {
+		out = strings.ReplaceAll(out, match[0], "")
+		hashes = append(hashes, match[1])
+	}
+	return out, hashes
 }
 
 // indent returns the string 's' indented with 'n' whitespace characters
@@ -758,7 +830,7 @@ func invoke(wd, exe string, args ...string) (ok bool, output string) {
 	return true, str
 }
 
-var reFlags = regexp.MustCompile(` *\/\/ *flags:(.*)\n`)
+var reFlags = regexp.MustCompile(`^ *(?:\/\/|;) *flags:(.*) *\n`)
 
 // parseFlags looks for a `// flags:` header at the start of the file with the
 // given path, returning each of the space delimited tokens that follow for the
@@ -793,4 +865,110 @@ func printDuration(d time.Duration) string {
 		fmt.Fprintf(sb, "%ds", sec)
 	}
 	return sb.String()
+}
+
+// fileAndFormat is a pair of test file path and output format.
+type fileAndFormat struct {
+	file   string
+	format outputFormat
+}
+
+// Used to optimize end-to-end testing of tint
+type validationCache struct {
+	// A hash of all the validation toolchains in use.
+	toolchainHash string
+	// A map of fileAndFormat to known-good (validated) output hashes.
+	knownGood knownGoodHashes
+}
+
+// A map of fileAndFormat to known-good (validated) output hashes.
+type knownGoodHashes map[fileAndFormat][]string
+
+// The serialized form of a known-good validation.cache file
+type ValidationCacheFile struct {
+	ToolchainHash string
+	KnownGood     []ValidationCacheFileKnownGood
+}
+
+type ValidationCacheFileKnownGood struct {
+	File   string
+	Format outputFormat
+	Hashes []string
+}
+
+func validationCachePath() string {
+	return filepath.Join(fileutils.DawnRoot(), "test", "tint", "validation.cache")
+}
+
+// loadValidationCache attempts to load the validation cache.
+// Returns an empty cache if the file could not be loaded, or if toolchains have changed.
+func loadValidationCache(toolchainHash string) validationCache {
+	out := validationCache{
+		toolchainHash: toolchainHash,
+		knownGood:     knownGoodHashes{},
+	}
+
+	file, err := os.Open(validationCachePath())
+	if err != nil {
+		return out
+	}
+	defer file.Close()
+
+	content := ValidationCacheFile{}
+	if err := json.NewDecoder(file).Decode(&content); err != nil {
+		return out
+	}
+
+	if content.ToolchainHash != toolchainHash {
+		color.Set(color.FgYellow)
+		fmt.Println("Toolchains have changed - clearing validation cache")
+		color.Unset()
+		return out
+	}
+
+	for _, knownGood := range content.KnownGood {
+		out.knownGood[fileAndFormat{knownGood.File, knownGood.Format}] = knownGood.Hashes
+	}
+
+	return out
+}
+
+// saveValidationCache saves the validation cache file.
+func saveValidationCache(vc validationCache) error {
+	out := ValidationCacheFile{
+		ToolchainHash: vc.toolchainHash,
+		KnownGood:     make([]ValidationCacheFileKnownGood, 0, len(vc.knownGood)),
+	}
+
+	for ff, hashes := range vc.knownGood {
+		out.KnownGood = append(out.KnownGood, ValidationCacheFileKnownGood{
+			File:   ff.file,
+			Format: ff.format,
+			Hashes: hashes,
+		})
+	}
+
+	sort.Slice(out.KnownGood, func(i, j int) bool {
+		switch {
+		case out.KnownGood[i].File < out.KnownGood[j].File:
+			return true
+		case out.KnownGood[i].File > out.KnownGood[j].File:
+			return false
+		case out.KnownGood[i].Format < out.KnownGood[j].Format:
+			return true
+		case out.KnownGood[i].Format > out.KnownGood[j].Format:
+			return false
+		}
+		return false
+	})
+
+	file, err := os.Create(validationCachePath())
+	if err != nil {
+		return fmt.Errorf("failed to save the validation cache file: %w", err)
+	}
+	defer file.Close()
+
+	enc := json.NewEncoder(file)
+	enc.SetIndent("", "  ")
+	return enc.Encode(&out)
 }

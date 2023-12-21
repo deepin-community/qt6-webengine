@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,6 +7,7 @@ package org.chromium.components.messages;
 import static org.chromium.components.browser_ui.widget.gesture.SwipeGestureListener.ScrollDirection.DOWN;
 import static org.chromium.components.browser_ui.widget.gesture.SwipeGestureListener.ScrollDirection.UP;
 import static org.chromium.components.messages.MessageBannerProperties.ALPHA;
+import static org.chromium.components.messages.MessageBannerProperties.MARGIN_TOP;
 import static org.chromium.components.messages.MessageBannerProperties.TRANSLATION_X;
 import static org.chromium.components.messages.MessageBannerProperties.TRANSLATION_Y;
 
@@ -19,13 +20,13 @@ import android.view.MotionEvent;
 import androidx.annotation.IntDef;
 import androidx.annotation.VisibleForTesting;
 
-import org.chromium.base.Callback;
 import org.chromium.base.MathUtils;
 import org.chromium.base.supplier.Supplier;
 import org.chromium.components.browser_ui.widget.animation.CancelAwareAnimatorListener;
 import org.chromium.components.browser_ui.widget.animation.Interpolators;
 import org.chromium.components.browser_ui.widget.gesture.SwipeGestureListener.ScrollDirection;
 import org.chromium.components.browser_ui.widget.gesture.SwipeGestureListener.SwipeHandler;
+import org.chromium.components.messages.MessageStateHandler.Position;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.modelutil.PropertyModel.WritableFloatPropertyKey;
 import org.chromium.ui.modelutil.PropertyModelAnimatorFactory;
@@ -70,7 +71,9 @@ class MessageBannerMediator implements SwipeHandler {
     private final float mHorizontalHideThresholdPx;
     private final Supplier<Float> mMaxHorizontalTranslationPx;
     private final Runnable mMessageDismissed;
-    private final Callback<Animator> mAnimatorStartCallback;
+    private final SwipeAnimationHandler mSwipeAnimationHandler;
+    private final int mPeekingMarginTop;
+    private final int mDefaultMarginTop;
 
     private Animator mAnimation;
     @State
@@ -85,7 +88,7 @@ class MessageBannerMediator implements SwipeHandler {
      */
     MessageBannerMediator(PropertyModel model, Supplier<Integer> maxTranslationSupplier,
             Resources resources, Runnable messageDismissed,
-            Callback<Animator> animatorStartCallback) {
+            SwipeAnimationHandler swipeAnimationHandler) {
         mModel = model;
         mMaxTranslationYSupplier = maxTranslationSupplier;
         mVerticalHideThresholdPx =
@@ -99,41 +102,64 @@ class MessageBannerMediator implements SwipeHandler {
                     screenWidth / 2);
         };
         mMessageDismissed = messageDismissed;
-        mAnimatorStartCallback = animatorStartCallback;
+        mSwipeAnimationHandler = swipeAnimationHandler;
+        mDefaultMarginTop = resources.getDimensionPixelSize(R.dimen.message_shadow_top_margin);
+        mPeekingMarginTop = resources.getDimensionPixelSize(R.dimen.message_peeking_layer_height)
+                + mDefaultMarginTop;
     }
 
     /**
      * Shows the message banner with an animation.
+     *
+     * @param fromIndex The initial position.
+     * @param toIndex The target position the message is moving to.
+     * @param verticalOffset Extra offset the message is supposed to move down besides the default
+     *                       marginTop value.
      * @param messageShown The {@link Runnable} that will run once the message banner is shown.
+     * @return The animator to show the message.
      */
-    void show(Runnable messageShown) {
+    Animator show(@Position int fromIndex, @Position int toIndex, int verticalOffset,
+            Runnable messageShown) {
         if (mCurrentState == State.HIDDEN) {
-            mModel.set(TRANSLATION_Y, -mMaxTranslationYSupplier.get());
+            mModel.set(TRANSLATION_Y,
+                    fromIndex == Position.FRONT ? 0 : -mMaxTranslationYSupplier.get());
+            mModel.set(MARGIN_TOP, mDefaultMarginTop);
+        } else if (mCurrentState == State.IDLE && toIndex == Position.FRONT) {
+            // Animating marginTop is expensive. Use translationY to simulate the effect of
+            // marginTop.
+            assert fromIndex == Position.BACK;
+            mModel.set(TRANSLATION_Y, mModel.get(MARGIN_TOP) - mDefaultMarginTop);
+            mModel.set(MARGIN_TOP, mDefaultMarginTop);
         }
         cancelAnyAnimations();
-        startAnimation(true, 0, false, messageShown);
+        return startAnimation(true, true, 0, false,
+                toIndex == Position.BACK ? mPeekingMarginTop + verticalOffset : mDefaultMarginTop,
+                messageShown);
     }
 
     /**
      * Hides the message banner with an animation.
+     * @param fromIndex The initial position.
+     * @param toIndex The target position the message is moving to.
      * @param animate Whether to hide with an animation.
      * @param messageHidden The {@link Runnable} that will run once the message banner is hidden.
+     * @return The animator to hide the message.
      */
-    void hide(boolean animate, Runnable messageHidden) {
+    Animator hide(@Position int fromIndex, @Position int toIndex, boolean animate,
+            Runnable messageHidden) {
         cancelAnyAnimations();
-
+        float translateTo = toIndex == Position.FRONT ? 0 : -mMaxTranslationYSupplier.get();
         if (!animate) {
             mModel.set(ALPHA, 0.f);
-            mModel.set(TRANSLATION_Y, -mMaxTranslationYSupplier.get());
+            mModel.set(TRANSLATION_Y, translateTo);
             mCurrentState = State.HIDDEN;
         }
 
         if (mCurrentState == State.HIDDEN) {
             messageHidden.run();
-            return;
+            return null;
         }
-
-        startAnimation(true, -mMaxTranslationYSupplier.get(), false, messageHidden);
+        return startAnimation(true, false, translateTo, false, mDefaultMarginTop, messageHidden);
     }
 
     void setOnTouchRunnable(Runnable runnable) {
@@ -150,6 +176,7 @@ class MessageBannerMediator implements SwipeHandler {
         mSwipeStartTranslation =
                 isVertical(mSwipeDirection) ? mModel.get(TRANSLATION_Y) : mModel.get(TRANSLATION_X);
         mDidFling = false;
+        mSwipeAnimationHandler.onSwipeStart();
     }
 
     @Override
@@ -179,6 +206,7 @@ class MessageBannerMediator implements SwipeHandler {
         // No need to animate if the message banner is in resting position.
         if (isResting()) {
             mCurrentState = State.IDLE;
+            mSwipeAnimationHandler.onSwipeEnd(null);
             return;
         }
 
@@ -199,8 +227,9 @@ class MessageBannerMediator implements SwipeHandler {
                     ? 0
                     : MathUtils.flipSignIf(mMaxHorizontalTranslationPx.get(), translationX < 0);
         }
-        startAnimation(
-                isVertical, translateTo, false, translateTo != 0 ? mMessageDismissed : () -> {});
+        boolean isShow = translateTo == 0;
+        mSwipeAnimationHandler.onSwipeEnd(startAnimation(isVertical, isShow, translateTo, false,
+                mDefaultMarginTop, isShow ? () -> {} : mMessageDismissed));
     }
 
     @Override
@@ -228,13 +257,16 @@ class MessageBannerMediator implements SwipeHandler {
 
         // TODO(crbug.com/1157213): See if we can use velocity to change the animation
         // speed/duration.
-        startAnimation(isVertical(mSwipeDirection), translateTo, velocity != 0,
-                translateTo != 0 ? mMessageDismissed : () -> {});
+        boolean isShow = translateTo == 0;
+        mSwipeAnimationHandler.onSwipeEnd(
+                startAnimation(isVertical(mSwipeDirection), isShow, translateTo, velocity != 0,
+                        mDefaultMarginTop, isShow ? () -> {} : mMessageDismissed));
     }
 
     @Override
     public boolean isSwipeEnabled(@ScrollDirection int direction) {
-        return direction != ScrollDirection.UNKNOWN && mCurrentState == State.IDLE;
+        return direction != ScrollDirection.UNKNOWN && mCurrentState == State.IDLE
+                && mSwipeAnimationHandler.isSwipeEnabled();
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -242,16 +274,19 @@ class MessageBannerMediator implements SwipeHandler {
 
     /**
      * Create and start an animation.
+     *
      * @param vertical Whether the message is being animated vertically.
+     * @param isShow Whether the message is going to be shown.
      * @param translateTo Target translation value for the animation.
      * @param didFling Whether the animation is the result of a fling gesture.
+     * @param marginTo The marginTop value the view should move to.
      * @param onEndCallback Callback that will be called after the animation.
+     * @return The animator which can trigger the animation.
      */
-    private void startAnimation(
-            boolean vertical, float translateTo, boolean didFling, Runnable onEndCallback) {
-        final long duration = translateTo == 0 ? ENTER_DURATION_MS : EXIT_DURATION_MS;
+    private AnimatorSet startAnimation(boolean vertical, boolean isShow, float translateTo,
+            boolean didFling, int marginTo, Runnable onEndCallback) {
+        final long duration = isShow ? ENTER_DURATION_MS : EXIT_DURATION_MS;
 
-        final boolean isShow = translateTo == 0;
         final float alphaTo = isShow ? 1.f : 0.f;
         final Animator alphaAnimation =
                 PropertyModelAnimatorFactory.ofFloat(mModel, ALPHA, alphaTo);
@@ -260,8 +295,10 @@ class MessageBannerMediator implements SwipeHandler {
 
         final WritableFloatPropertyKey translationProperty =
                 vertical ? TRANSLATION_Y : TRANSLATION_X;
-        final Animator translationAnimation =
-                PropertyModelAnimatorFactory.ofFloat(mModel, translationProperty, translateTo);
+        // Animating marginTop is expensive. Animating translateY here and then set real marginTop
+        // value and reset translateY in the end of animation.
+        final Animator translationAnimation = PropertyModelAnimatorFactory.ofFloat(
+                mModel, translationProperty, translateTo + marginTo - mDefaultMarginTop);
         translationAnimation.setInterpolator(
                 isShow ? TRANSLATION_ENTER_INTERPOLATOR : EXIT_INTERPOLATOR);
         translationAnimation.setDuration(duration);
@@ -284,6 +321,10 @@ class MessageBannerMediator implements SwipeHandler {
 
             @Override
             public void onEnd(Animator animator) {
+                if (isShow) {
+                    mModel.set(MARGIN_TOP, marginTo);
+                    mModel.set(TRANSLATION_Y, 0);
+                }
                 mCurrentState = isShow ? State.IDLE : State.HIDDEN;
                 onEndCallback.run();
                 mAnimation = null;
@@ -291,7 +332,7 @@ class MessageBannerMediator implements SwipeHandler {
         });
 
         mAnimation = animatorSet;
-        mAnimatorStartCallback.onResult(mAnimation);
+        return animatorSet;
     }
 
     private void cancelAnyAnimations() {

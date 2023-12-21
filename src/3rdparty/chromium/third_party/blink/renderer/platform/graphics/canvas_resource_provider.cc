@@ -1,13 +1,14 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/platform/graphics/canvas_resource_provider.h"
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/observer_list.h"
 #include "base/strings/stringprintf.h"
+#include "base/trace_event/memory_allocator_dump.h"
 #include "base/trace_event/memory_dump_manager.h"
 #include "base/trace_event/process_memory_dump.h"
 #include "build/build_config.h"
@@ -18,11 +19,11 @@
 #include "gpu/GLES2/gl2extchromium.h"
 #include "gpu/command_buffer/client/raster_interface.h"
 #include "gpu/command_buffer/common/capabilities.h"
+#include "gpu/command_buffer/common/shared_image_trace_utils.h"
 #include "gpu/config/gpu_driver_bug_workaround_type.h"
 #include "gpu/config/gpu_feature_info.h"
 #include "skia/buildflags.h"
 #include "skia/ext/legacy_display_globals.h"
-#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/platform/graphics/accelerated_static_bitmap_image.h"
 #include "third_party/blink/renderer/platform/graphics/canvas_color_params.h"
@@ -30,6 +31,7 @@
 #include "third_party/blink/renderer/platform/graphics/memory_managed_paint_recorder.h"
 #include "third_party/blink/renderer/platform/graphics/unaccelerated_static_bitmap_image.h"
 #include "third_party/blink/renderer/platform/instrumentation/canvas_memory_dump_provider.h"
+#include "third_party/blink/renderer/platform/scheduler/public/thread_scheduler.h"
 #include "third_party/skia/include/core/SkSurface.h"
 #include "third_party/skia/include/gpu/GrDirectContext.h"
 
@@ -216,15 +218,13 @@ class CanvasResourceProviderSharedImage : public CanvasResourceProvider {
           context_provider_wrapper,
       bool is_origin_top_left,
       bool is_accelerated,
-      bool skia_use_dawn,
       uint32_t shared_image_usage_flags)
-      : CanvasResourceProvider(
-            skia_use_dawn ? kSkiaDawnSharedImage : kSharedImage,
-            info,
-            filter_quality,
-            is_origin_top_left,
-            std::move(context_provider_wrapper),
-            nullptr /* resource_dispatcher */),
+      : CanvasResourceProvider(kSharedImage,
+                               info,
+                               filter_quality,
+                               is_origin_top_left,
+                               std::move(context_provider_wrapper),
+                               nullptr /* resource_dispatcher */),
         is_accelerated_(is_accelerated),
         shared_image_usage_flags_(shared_image_usage_flags),
         use_oop_rasterization_(is_accelerated && ContextProviderWrapper()
@@ -297,6 +297,14 @@ class CanvasResourceProviderSharedImage : public CanvasResourceProvider {
         GetBackingMailboxForOverwrite(kOrderingBarrier), x, y,
         GetBackingTextureTarget(), base::checked_cast<GLuint>(row_bytes),
         orig_info, pixels);
+
+    // If the overdraw optimization kicked in, we need to indicate that the
+    // pixels do not need to be cleared, otherwise the subsequent
+    // rasterizations will clobber canvas contents.
+    if (x <= 0 && y <= 0 && orig_info.width() >= Size().width() &&
+        orig_info.height() >= Size().height())
+      is_cleared_ = true;
+
     return true;
   }
 
@@ -304,14 +312,6 @@ class CanvasResourceProviderSharedImage : public CanvasResourceProvider {
     TRACE_EVENT0("blink", "CanvasResourceProviderSharedImage::CreateResource");
     if (IsGpuContextLost())
       return nullptr;
-
-#if BUILDFLAG(SKIA_USE_DAWN)
-    if (type_ == kSkiaDawnSharedImage) {
-      return CanvasResourceSkiaDawnSharedImage::Create(
-          GetSkImageInfo(), ContextProviderWrapper(), CreateWeakPtr(),
-          FilterQuality(), IsOriginTopLeft(), shared_image_usage_flags_);
-    }
-#endif
 
     return CanvasResourceRasterSharedImage::Create(
         GetSkImageInfo(), ContextProviderWrapper(), CreateWeakPtr(),
@@ -445,7 +445,7 @@ class CanvasResourceProviderSharedImage : public CanvasResourceProvider {
               kOrderingBarrier);
           auto mailbox = resource()->GetOrCreateGpuMailbox(kOrderingBarrier);
 
-          raster_interface->CopySubTexture(
+          raster_interface->CopySharedImage(
               old_mailbox, mailbox, GetBackingTextureTarget(), 0, 0, 0, 0,
               Size().width(), Size().height(), false /* unpack_flip_y */,
               false /* unpack_premultiply_alpha */);
@@ -458,8 +458,10 @@ class CanvasResourceProviderSharedImage : public CanvasResourceProvider {
         // In non-OOPR mode we need to update the client side SkSurface with the
         // copied texture. Recreating SkSurface here matches the GPU process
         // behaviour that will happen in OOPR mode.
-        if (!use_oop_rasterization_)
+        if (!use_oop_rasterization_) {
+          EnsureWriteAccess();
           GetSkSurface();
+        }
       } else {
         EnsureWriteAccess();
         if (surface_) {
@@ -489,19 +491,16 @@ class CanvasResourceProviderSharedImage : public CanvasResourceProvider {
 
   void WillDraw() override { WillDrawInternal(true); }
 
-  void RasterRecord(sk_sp<cc::PaintRecord> last_recording,
-                    bool preserve_recording) override {
+  void RasterRecord(cc::PaintRecord last_recording) override {
     if (!use_oop_rasterization_) {
-      CanvasResourceProvider::RasterRecord(std::move(last_recording),
-                                           preserve_recording);
+      CanvasResourceProvider::RasterRecord(std::move(last_recording));
       return;
     }
     WillDrawInternal(true);
     const bool needs_clear = !is_cleared_;
     is_cleared_ = true;
-    RasterRecordOOP(last_recording, needs_clear,
-                    resource()->GetOrCreateGpuMailbox(kUnverifiedSyncToken),
-                    preserve_recording);
+    RasterRecordOOP(std::move(last_recording), needs_clear,
+                    resource()->GetOrCreateGpuMailbox(kUnverifiedSyncToken));
   }
 
   bool ShouldReplaceTargetBuffer(
@@ -660,6 +659,11 @@ class CanvasResourceProviderSharedImage : public CanvasResourceProvider {
   }
 
  private:
+  void OnMemoryDump(base::trace_event::ProcessMemoryDump* pmd) override {
+    CanvasResourceProvider::OnMemoryDump(pmd);
+    resource()->OnMemoryDump(pmd, GetSkImageInfo().bytesPerPixel());
+  }
+
   const bool is_accelerated_;
   const uint32_t shared_image_usage_flags_;
   bool current_resource_has_write_access_ = false;
@@ -827,17 +831,15 @@ class CanvasResourceProviderSwapChain final : public CanvasResourceProvider {
         GetSkImageInfo().refColorSpace(), &props);
   }
 
-  void RasterRecord(sk_sp<cc::PaintRecord> last_recording,
-                    bool preserve_recording) override {
+  void RasterRecord(cc::PaintRecord last_recording) override {
     TRACE_EVENT0("blink", "CanvasResourceProviderSwapChain::RasterRecord");
     if (!use_oop_rasterization_) {
-      CanvasResourceProvider::RasterRecord(std::move(last_recording),
-                                           preserve_recording);
+      CanvasResourceProvider::RasterRecord(std::move(last_recording));
       return;
     }
     WillDraw();
     RasterRecordOOP(last_recording, initial_needs_clear_,
-                    resource_->GetBackBufferMailbox(), preserve_recording);
+                    resource_->GetBackBufferMailbox());
     initial_needs_clear_ = false;
   }
 
@@ -948,14 +950,9 @@ CanvasResourceProvider::CreateSharedImageProvider(
 
   const auto& capabilities =
       context_provider_wrapper->ContextProvider()->GetCapabilities();
-  bool skia_use_dawn =
-      raster_mode == RasterMode::kGPU &&
-      base::FeatureList::IsEnabled(blink::features::kDawn2dCanvas);
-  // TODO(senorblanco): once Dawn reports maximum texture size, Dawn Canvas
-  // should respect it.  http://crbug.com/1082760
-  if (!skia_use_dawn && (info.width() < 1 || info.height() < 1 ||
-                         info.width() > capabilities.max_texture_size ||
-                         info.height() > capabilities.max_texture_size)) {
+  if ((info.width() < 1 || info.height() < 1 ||
+       info.width() > capabilities.max_texture_size ||
+       info.height() > capabilities.max_texture_size)) {
     return nullptr;
   }
 
@@ -982,11 +979,8 @@ CanvasResourceProvider::CreateSharedImageProvider(
 
   // If we cannot use overlay, we have to remove the scanout flag and the
   // concurrent read write flag.
-  // TODO(junov, vasilyt): capabilities.texture_storage_image is being used
-  // as a proxy for determining whether SHARED_IMAGE_USAGE_SCANOUT is supported.
-  // it would be preferable to have a dedicated capability bit for this.
   if (!is_gpu_memory_buffer_image_allowed ||
-      (is_accelerated && !capabilities.texture_storage_image)) {
+      (is_accelerated && !capabilities.supports_scanout_shared_images)) {
     shared_image_usage_flags &= ~gpu::SHARED_IMAGE_USAGE_CONCURRENT_READ_WRITE;
     shared_image_usage_flags &= ~gpu::SHARED_IMAGE_USAGE_SCANOUT;
   }
@@ -1002,8 +996,7 @@ CanvasResourceProvider::CreateSharedImageProvider(
 
   auto provider = std::make_unique<CanvasResourceProviderSharedImage>(
       adjusted_info, filter_quality, context_provider_wrapper,
-      is_origin_top_left, is_accelerated, skia_use_dawn,
-      shared_image_usage_flags);
+      is_origin_top_left, is_accelerated, shared_image_usage_flags);
   if (provider->IsValid()) {
     if (should_initialize ==
         CanvasResourceProvider::ShouldInitialize::kCallClear)
@@ -1115,6 +1108,7 @@ CanvasResourceProvider::CanvasImageProvider::CanvasImageProvider(
 
   cc::TargetColorParams target_color_params;
   target_color_params.color_space = target_color_space;
+  target_color_params.enable_tone_mapping = false;
   playback_image_provider_n32_.emplace(cache_n32, target_color_params,
                                        std::move(settings));
   // If the image provider may require to decode to half float instead of
@@ -1183,7 +1177,7 @@ void CanvasResourceProvider::CanvasImageProvider::CanUnlockImage(
   // post a cleanup task to run after javascript is done running.
   if (!cleanup_task_pending_) {
     cleanup_task_pending_ = true;
-    Thread::Current()->GetTaskRunner()->PostTask(
+    ThreadScheduler::Current()->CleanupTaskRunner()->PostTask(
         FROM_HERE, base::BindOnce(&CanvasImageProvider::CleanupLockedImages,
                                   weak_factory_.GetWeakPtr()));
   }
@@ -1222,6 +1216,7 @@ CanvasResourceProvider::CanvasResourceProvider(
     oopr_uses_dmsaa_ = !caps.msaa_is_slow && !caps.avoid_stencil_buffers;
   }
   CanvasMemoryDumpProvider::Instance()->RegisterClient(this);
+  recorder_.beginRecording(Size());
 }
 
 CanvasResourceProvider::~CanvasResourceProvider() {
@@ -1299,14 +1294,7 @@ cc::PaintCanvas* CanvasResourceProvider::Canvas(bool needs_will_draw) {
   if (needs_will_draw)
     WillDrawIfNeeded();
 
-  if (!recorder_) {
-    // A raw pointer is safe here because the callback is only used by the
-    // |recorder_|.
-    recorder_ = std::make_unique<MemoryManagedPaintRecorder>(this);
-
-    return recorder_->beginRecording(Size().width(), Size().height());
-  }
-  return recorder_->getRecordingCanvas();
+  return recorder_.getRecordingCanvas();
 }
 
 void CanvasResourceProvider::OnContextDestroyed() {
@@ -1385,7 +1373,7 @@ void CanvasResourceProvider::FlushCanvas() {
   FlushCanvasInternal(false);
 }
 
-sk_sp<cc::PaintRecord>
+absl::optional<cc::PaintRecord>
 CanvasResourceProvider::FlushCanvasAndMaybePreserveRecording(bool printing) {
   return FlushCanvasInternal((printing || IsPrinting()) && clear_frame_);
 }
@@ -1406,45 +1394,42 @@ gfx::ColorSpace CanvasResourceProvider::GetColorSpace() const {
                      : gfx::ColorSpace::CreateSRGB();
 }
 
-sk_sp<cc::PaintRecord> CanvasResourceProvider::FlushCanvasInternal(
+absl::optional<cc::PaintRecord> CanvasResourceProvider::FlushCanvasInternal(
     bool preserve_recording) {
-  if (!HasRecordedDrawOps())
-    return nullptr;
+  if (!HasRecordedDrawOps()) {
+    return absl::nullopt;
+  }
   clear_frame_ = false;
-  sk_sp<cc::PaintRecord> last_recording = recorder_->finishRecordingAsPicture();
-  RasterRecord(last_recording, preserve_recording);
+  cc::PaintRecord last_recording = recorder_.finishRecordingAsPicture();
+  RasterRecord(preserve_recording ? last_recording : std::move(last_recording));
   total_pinned_image_bytes_ = 0;
-  cc::PaintCanvas* canvas =
-      recorder_->beginRecording(Size().width(), Size().height());
+  cc::PaintCanvas* canvas = recorder_.beginRecording(Size());
   if (restore_clip_stack_callback_)
     restore_clip_stack_callback_.Run(canvas);
-  if (!preserve_recording)
-    return nullptr;
+  if (!preserve_recording) {
+    return absl::nullopt;
+  }
   return last_recording;
 }
 
-void CanvasResourceProvider::RasterRecord(sk_sp<cc::PaintRecord> last_recording,
-                                          bool) {
+void CanvasResourceProvider::RasterRecord(cc::PaintRecord last_recording) {
   EnsureSkiaCanvas();
   skia_canvas_->drawPicture(std::move(last_recording));
   GetSkSurface()->flushAndSubmit();
 }
 
-void CanvasResourceProvider::RasterRecordOOP(
-    sk_sp<cc::PaintRecord> last_recording,
-    bool needs_clear,
-    gpu::Mailbox mailbox,
-    bool preserve_recording) {
+void CanvasResourceProvider::RasterRecordOOP(cc::PaintRecord last_recording,
+                                             bool needs_clear,
+                                             gpu::Mailbox mailbox) {
   if (IsGpuContextLost())
     return;
   gpu::raster::RasterInterface* ri = RasterInterface();
-  SkColor background_color = GetSkImageInfo().alphaType() == kOpaque_SkAlphaType
-                                 ? SK_ColorBLACK
-                                 : SK_ColorTRANSPARENT;
+  SkColor4f background_color =
+      GetSkImageInfo().alphaType() == kOpaque_SkAlphaType
+          ? SkColors::kBlack
+          : SkColors::kTransparent;
 
-  auto list = base::MakeRefCounted<cc::DisplayItemList>(
-      cc::DisplayItemList::kTopLevelDisplayItemList);
-
+  auto list = base::MakeRefCounted<cc::DisplayItemList>();
   list->StartPaint();
   list->push<cc::DrawRecordOp>(std::move(last_recording));
   list->EndPaintOfUnpaired(gfx::Rect(Size().width(), Size().height()));
@@ -1468,16 +1453,12 @@ void CanvasResourceProvider::RasterRecordOOP(
 
   ri->RasterCHROMIUM(list.get(), GetOrCreateCanvasImageProvider(), size,
                      full_raster_rect, playback_rect, post_translate,
-                     post_scale, false /* requires_clear */, &max_op_size_hint,
-                     preserve_recording);
+                     post_scale, false /* requires_clear */, &max_op_size_hint);
 
   ri->EndRasterCHROMIUM();
 }
 
 bool CanvasResourceProvider::IsGpuContextLost() const {
-  if (type_ == kSkiaDawnSharedImage) {
-    return false;
-  }
   auto* raster_interface = RasterInterface();
   return !raster_interface ||
          raster_interface->GetGraphicsResetStatusKHR() != GL_NO_ERROR;
@@ -1508,9 +1489,9 @@ void CanvasResourceProvider::Clear() {
   // printing operations. See crbug.com/1003114
   DCHECK(IsValid());
   if (info_.alphaType() == kOpaque_SkAlphaType)
-    Canvas()->clear(SK_ColorBLACK);
+    Canvas()->clear(SkColors::kBlack);
   else
-    Canvas()->clear(SK_ColorTRANSPARENT);
+    Canvas()->clear(SkColors::kTransparent);
 
   FlushCanvas();
   ClearFrame();
@@ -1544,7 +1525,7 @@ cc::ImageDecodeCache* CanvasResourceProvider::ImageDecodeCacheF16() {
 }
 
 void CanvasResourceProvider::RecycleResource(
-    scoped_refptr<CanvasResource> resource) {
+    scoped_refptr<CanvasResource>&& resource) {
   // We don't want to keep an arbitrary large number of canvases.
   if (canvas_resources_.size() >
       static_cast<unsigned int>(kMaxRecycledCanvasResources))
@@ -1573,7 +1554,7 @@ void CanvasResourceProvider::OnDestroyResource() {
 }
 
 scoped_refptr<CanvasResource> CanvasResourceProvider::NewOrRecycledResource() {
-  if (canvas_resources_.IsEmpty()) {
+  if (canvas_resources_.empty()) {
     canvas_resources_.push_back(CreateResource());
     ++num_inflight_resources_;
     if (num_inflight_resources_ > max_inflight_resources_)
@@ -1598,7 +1579,7 @@ void CanvasResourceProvider::TryEnableSingleBuffering() {
 }
 
 bool CanvasResourceProvider::ImportResource(
-    scoped_refptr<CanvasResource> resource) {
+    scoped_refptr<CanvasResource>&& resource) {
   if (!IsSingleBuffered() || !SupportsSingleBuffering())
     return false;
   canvas_resources_.clear();
@@ -1611,7 +1592,7 @@ scoped_refptr<CanvasResource> CanvasResourceProvider::GetImportedResource()
   if (!IsSingleBuffered() || !SupportsSingleBuffering())
     return nullptr;
   DCHECK_LE(canvas_resources_.size(), 1u);
-  if (canvas_resources_.IsEmpty())
+  if (canvas_resources_.empty())
     return nullptr;
   return canvas_resources_.back();
 }
@@ -1623,9 +1604,8 @@ void CanvasResourceProvider::SkipQueuedDrawCommands() {
   ClearFrame();
   if (!HasRecordedDrawOps())
     return;
-  recorder_->finishRecordingAsPicture();
-  cc::PaintCanvas* canvas =
-      recorder_->beginRecording(Size().width(), Size().height());
+  recorder_.finishRecordingAsPicture();
+  cc::PaintCanvas* canvas = recorder_.beginRecording(Size());
   total_pinned_image_bytes_ = 0;
   if (restore_clip_stack_callback_)
     restore_clip_stack_callback_.Run(canvas);
@@ -1651,7 +1631,7 @@ void CanvasResourceProvider::RestoreBackBuffer(const cc::PaintImage& image) {
 }
 
 bool CanvasResourceProvider::HasRecordedDrawOps() const {
-  return recorder_ && recorder_->ListHasDrawOps();
+  return recorder_.HasRecordedDrawOps();
 }
 
 void CanvasResourceProvider::TearDownSkSurface() {

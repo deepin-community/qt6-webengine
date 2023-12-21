@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,8 @@
 
 #include <string>
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
+#include "content/common/content_export.h"
 #include "net/url_request/redirect_info.h"
 #include "services/network/public/mojom/url_loader_factory.mojom-forward.h"
 #include "services/network/public/mojom/url_response_head.mojom.h"
@@ -22,7 +23,7 @@ namespace shared_storage_worklet {
 
 // Download utility for worklet module script. Creates requests and blocks
 // responses.
-class ModuleScriptDownloader {
+class CONTENT_EXPORT ModuleScriptDownloader {
  public:
   // Passes in nullptr on failure. Always invoked asynchronously.
   using ModuleScriptDownloaderCallback =
@@ -45,7 +46,8 @@ class ModuleScriptDownloader {
  private:
   void OnBodyReceived(std::unique_ptr<std::string> body);
 
-  void OnRedirect(const net::RedirectInfo& redirect_info,
+  void OnRedirect(const GURL& url_before_redirect,
+                  const net::RedirectInfo& redirect_info,
                   const network::mojom::URLResponseHead& response_head,
                   std::vector<std::string>* removed_headers);
 

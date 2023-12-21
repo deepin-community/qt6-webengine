@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,10 +7,6 @@
 #include "third_party/blink/renderer/core/css/rule_set.h"
 
 namespace blink {
-
-const unsigned CascadeLayerMap::kImplicitOuterLayerOrder =
-    std::numeric_limits<unsigned>::max();
-
 namespace {
 
 using CanonicalLayerMap =
@@ -33,8 +29,9 @@ void AddLayers(CascadeLayer* canonical_layer,
 }
 
 void ComputeLayerOrder(CascadeLayer& layer, unsigned& next) {
-  for (const auto& sub_layer : layer.GetDirectSubLayers())
+  for (const auto& sub_layer : layer.GetDirectSubLayers()) {
     ComputeLayerOrder(*sub_layer, next);
+  }
   layer.SetOrder(next++);
 }
 
@@ -66,8 +63,9 @@ CascadeLayerMap::CascadeLayerMap(const ActiveStyleSheetVector& sheets) {
 
 #if DCHECK_IS_ON()
     // The implicit outer layer is placed above all explicit layers.
-    if (canonical_layer != canonical_root_layer_)
+    if (canonical_layer != canonical_root_layer_) {
       DCHECK_LT(layer_order, kImplicitOuterLayerOrder);
+    }
 #endif
   }
 }

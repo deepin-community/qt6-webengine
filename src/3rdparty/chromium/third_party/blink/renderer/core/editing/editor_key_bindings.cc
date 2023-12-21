@@ -27,6 +27,7 @@
 #include "third_party/blink/renderer/core/editing/editor.h"
 
 #include "third_party/blink/public/common/input/web_input_event.h"
+#include "third_party/blink/renderer/core/editing/commands/editing_command_filter.h"
 #include "third_party/blink/renderer/core/editing/commands/editor_command.h"
 #include "third_party/blink/renderer/core/editing/editing_behavior.h"
 #include "third_party/blink/renderer/core/editing/editing_utilities.h"
@@ -45,6 +46,10 @@ bool Editor::HandleEditingKeyboardEvent(KeyboardEvent* evt) {
     return false;
 
   String command_name = Behavior().InterpretKeyEvent(*evt);
+  if (IsCommandFilteredOut(command_name)) {
+    return false;
+  }
+
   const EditorCommand command = CreateCommand(command_name);
 
   if (key_event->GetType() == WebInputEvent::Type::kRawKeyDown) {
@@ -53,7 +58,7 @@ bool Editor::HandleEditingKeyboardEvent(KeyboardEvent* evt) {
     // so we leave it upon WebCore to either handle them immediately
     // (e.g. Tab that changes focus) or let a keypress event be generated
     // (e.g. Tab that inserts a Tab character, or Enter).
-    if (command.IsTextInsertion() || command_name.IsEmpty())
+    if (command.IsTextInsertion() || command_name.empty())
       return false;
     return command.Execute(evt);
   }

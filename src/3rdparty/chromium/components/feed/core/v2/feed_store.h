@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,8 +9,8 @@
 #include <string>
 #include <vector>
 
-#include "base/callback_forward.h"
 #include "base/containers/flat_set.h"
+#include "base/functional/callback_forward.h"
 #include "base/memory/weak_ptr.h"
 #include "base/task/sequenced_task_runner.h"
 #include "components/feed/core/proto/v2/store.pb.h"
@@ -94,6 +94,8 @@ class FeedStore {
   void ClearStreamData(const StreamType& stream_type,
                        base::OnceCallback<void(bool)> callback);
 
+  void ClearAllStreamData(StreamKind stream_kind,
+                          base::OnceCallback<void(bool)> callback);
   void WriteOperations(const StreamType& stream_type,
                        int32_t sequence_number,
                        std::vector<feedstore::DataOperation> operations);

@@ -35,6 +35,7 @@
 #include "third_party/blink/public/mojom/timing/performance_mark_or_measure.mojom-blink-forward.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/dom/dom_high_res_time_stamp.h"
+#include "third_party/blink/renderer/core/frame/dom_window.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/wtf/hash_set.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
@@ -47,6 +48,8 @@ class V8ObjectBuilder;
 
 using PerformanceEntryType = unsigned;
 using PerformanceEntryTypeMask = unsigned;
+
+constexpr uint32_t kNavigationIdDefaultValue = 1;
 
 class CORE_EXPORT PerformanceEntry : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
@@ -69,12 +72,17 @@ class CORE_EXPORT PerformanceEntry : public ScriptWrappable {
     kLayoutShift = 1 << 10,
     kLargestContentfulPaint = 1 << 11,
     kVisibilityState = 1 << 12,
+    kBackForwardCacheRestoration = 1 << 13,
+    kSoftNavigation = 1 << 14,
   };
 
   const AtomicString& name() const { return name_; }
   DOMHighResTimeStamp startTime() const;
   uint32_t navigationId() const;
-  virtual AtomicString entryType() const = 0;
+  // source() will return null if the PerformanceEntry did not originate from a
+  // Window context.
+  DOMWindow* source() const;
+  virtual const AtomicString& entryType() const = 0;
   virtual PerformanceEntryType EntryTypeEnum() const = 0;
   // PerformanceNavigationTiming will override this due to
   // the nature of reporting it early, which means not having a
@@ -107,10 +115,10 @@ class CORE_EXPORT PerformanceEntry : public ScriptWrappable {
     if (entry_type == kInvalid) {
       return true;
     }
-    DEFINE_THREAD_SAFE_STATIC_LOCAL(HashSet<PerformanceEntryType>,
-                                    valid_timeline_entry_types,
-                                    ({kNavigation, kMark, kMeasure, kResource,
-                                      kTaskAttribution, kPaint, kFirstInput}));
+    DEFINE_THREAD_SAFE_STATIC_LOCAL(
+        HashSet<PerformanceEntryType>, valid_timeline_entry_types,
+        ({kNavigation, kMark, kMeasure, kResource, kTaskAttribution, kPaint,
+          kFirstInput, kBackForwardCacheRestoration, kSoftNavigation}));
     return valid_timeline_entry_types.Contains(entry_type);
   }
 
@@ -123,15 +131,23 @@ class CORE_EXPORT PerformanceEntry : public ScriptWrappable {
   virtual mojom::blink::PerformanceMarkOrMeasurePtr
   ToMojoPerformanceMarkOrMeasure();
 
+  bool IsTriggeredBySoftNavigation() const {
+    return is_triggered_by_soft_navigation_;
+  }
+
+  void Trace(Visitor*) const override;
+
  protected:
   PerformanceEntry(const AtomicString& name,
                    double start_time,
                    double finish_time,
-                   uint32_t navigation_id = 1);
+                   DOMWindow* source,
+                   bool is_triggered_by_soft_navigation = false);
   PerformanceEntry(double duration,
                    const AtomicString& name,
                    double start_time,
-                   uint32_t navigation_id = 1);
+                   DOMWindow* source,
+                   bool is_triggered_by_soft_navigation = false);
 
   virtual void BuildJSONValue(V8ObjectBuilder&) const;
 
@@ -143,6 +159,10 @@ class CORE_EXPORT PerformanceEntry : public ScriptWrappable {
   const double start_time_;
   const int index_;
   const uint32_t navigation_id_;
+  // source_ will be null if the PerformanceEntry did not originate from a
+  // Window context.
+  const Member<DOMWindow> source_;
+  const bool is_triggered_by_soft_navigation_;
 };
 
 }  // namespace blink

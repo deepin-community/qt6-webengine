@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium OS Authors. All rights reserved.
+// Copyright 2019 The ChromiumOS Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -55,8 +55,8 @@ message IPv4Subnet {
   uint32 prefix_len = 2;
 }
 
-// Represents a network device (physical or virtual) managed by the networking
-// daemon.
+// Represents a virtual network device created and managed by patchpanel and
+// used for one of the hosted guest platforms.
 message NetworkDevice {
   // Identifies the guest for which the virtual device is used.
   enum GuestType {
@@ -67,15 +67,23 @@ message NetworkDevice {
     PLUGIN_VM = 4;
   };
 
-  // The name of the host device interface.
+  // The name of the main virtual interface created by patchpanel for carrying
+  // packets out of the guest environment and onto the host routing setup. For
+  // ARC this corresponds to the virtual bridge used for that virtual device.
+  // For other crosvm guests (Termina, Crostini, PluginVM, etc) this corresponds
+  // to the tap device used by crosvm virtio net stack.
   string ifname = 1;
 
   // The name of the physical interface to which the virtual device is mapped.
-  // Only valid for virtual devices and will be empty for those tracking default
-  // logical or physical networks.
+  // This corresponds to the interface name used by the shill Network class and
+  // may be different from the shill "Interface" property of the DBus Device
+  // object associated with this physical interface, e.g., Cellular multiplexed
+  // PDN connections. Only valid for ARC virtual devices and otherwise empty for
+  // virtual devices tracking the default logical or physical networks.
   string phys_ifname = 5;
 
-  // The name of the interface inside the guest.
+  // The name of the interface inside the guest. Only available for ARC virtual
+  // devices, and otherwise empty for other crosvm guests.
   string guest_ifname = 7;
 
   // The IPv4 address assigned to the guest, in network order.
@@ -86,11 +94,18 @@ message NetworkDevice {
   // used for the default IPv4 route of the guest.
   uint32 host_ipv4_addr = 6;
 
-  // The IPv4 subnet allocated for this device.
+  // The IPv4 subnet allocated for this virtual device.
   IPv4Subnet ipv4_subnet = 3;
 
-  // The guest to which the device is bound, if applicable.
+  // The type of guest to which the device is bound.
   GuestType guest_type = 4;
+
+  // The IPv4 and IPv6 addresses of the DNS proxy instance tied to the guest
+  // virtual device. Only available for ARC virtual devices with the GetDevices
+  // DBus method call. The addresses are represented in network order as a byte
+  // array of size 4 and 16 respectively for IPv4 and IPv6.
+  bytes dns_proxy_ipv4_addr = 8;
+  bytes dns_proxy_ipv6_addr = 9;
 }
 
 // Request to obtain the list of virtual network devices that patchpanel
@@ -157,6 +172,7 @@ message PluginVmStartupRequest {
 
   // The 1-based index of the desired subnet to allocate for use.
   // Optional.
+  // TODO(b/236092161) Migrate to uint32.
   int32 subnet_index = 2;
 }
 
@@ -368,6 +384,7 @@ message ModifyPortRuleRequest {
   string input_dst_ip = 5;
 
   // A port value in-between 1 and 65535. This is required for all rule types.
+  // TODO(b/236092161) Migrate to uint16.
   uint32 input_dst_port = 6;
 
   // An IPv4 address, or empty if unspecified. This is required for FORWARDING,
@@ -376,6 +393,7 @@ message ModifyPortRuleRequest {
 
   // A port value between 1 and 65535. This is required for FORWARDING, and is
   // ignored for other rule types.
+  // TODO(b/236092161) Migrate to uint16.
   uint32 dst_port = 8;
 }
 
@@ -462,6 +480,9 @@ message SetDnsRedirectionRuleRequest {
     ARC = 2;
     // Rule for traffic associated with user traffic (e.g. chronos, cups).
     USER = 3;
+    // Rules to exclude traffic that is not using the underlying network's
+    // name server. This is only used for user traffic.
+    EXCLUDE_DESTINATION = 4;
   }
 
   RuleType type = 1;
@@ -476,9 +497,15 @@ message SetDnsRedirectionRuleRequest {
 
   // Nameservers are only necessary for Chrome redirect (USER type).
   repeated string nameservers = 4;
+
+  // Name of the "local" veth interface visible in the host namespace.
+  string host_ifname = 5;
 }
 
 // Response to a SetDnsRedirectionRuleRequest.
 message SetDnsRedirectionRuleResponse {
   bool success = 1;
 }
+
+// Signal that is emitted when a network configuration change happens.
+message NetworkConfigurationChangedSignal {}

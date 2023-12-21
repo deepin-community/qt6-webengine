@@ -14,12 +14,20 @@
 
 import {createEmptyRecordConfig} from '../controller/record_config_types';
 import {
+  Aggregation,
+} from '../frontend/pivot_table_redux_types';
+import {
   autosaveConfigStore,
-  recordTargetStore
+  recordTargetStore,
 } from '../frontend/record_config';
 
 import {featureFlags} from './feature_flags';
-import {defaultTraceTime, State, STATE_VERSION} from './state';
+import {
+  defaultTraceTime,
+  NonSerializableState,
+  State,
+  STATE_VERSION,
+} from './state';
 
 const AUTOLOAD_STARTED_CONFIG_FLAG = featureFlags.register({
   id: 'autoloadStartedConfig',
@@ -29,17 +37,57 @@ const AUTOLOAD_STARTED_CONFIG_FLAG = featureFlags.register({
   defaultValue: true,
 });
 
+export function keyedMap<T>(
+    keyFn: (key: T) => string, ...values: T[]): Map<string, T> {
+  const result = new Map<string, T>();
+
+  for (const value of values) {
+    result.set(keyFn(value), value);
+  }
+
+  return result;
+}
+
+export const COUNT_AGGREGATION: Aggregation = {
+  aggregationFunction: 'COUNT',
+  // Exact column is ignored for count aggregation because it does not matter
+  // what to count, use empty strings.
+  column: {kind: 'regular', table: '', column: ''},
+};
+
+export function createEmptyNonSerializableState(): NonSerializableState {
+  return {
+    pivotTableRedux: {
+      queryResult: null,
+      selectedPivots: [{kind: 'regular', table: 'slice', column: 'name'}],
+      selectedAggregations: [
+        {
+          aggregationFunction: 'SUM',
+          column: {kind: 'regular', table: 'slice', column: 'dur'},
+          sortDirection: 'DESC',
+        },
+        {
+          aggregationFunction: 'SUM',
+          column: {kind: 'regular', table: 'slice', column: 'thread_dur'},
+        },
+        COUNT_AGGREGATION,
+      ],
+      constrainToArea: true,
+      queryRequested: false,
+      argumentNames: [],
+    },
+  };
+}
+
 export function createEmptyState(): State {
   return {
     version: STATE_VERSION,
-    nextId: 0,
-    nextNoteId: 1,  // 0 is reserved for ephemeral area marking.
-    nextAreaId: 0,
+    nextId: '-1',
     newEngineMode: 'USE_HTTP_RPC_IF_AVAILABLE',
-    engines: {},
     traceTime: {...defaultTraceTime},
     tracks: {},
     uiTrackIdByTraceTrackId: {},
+    utidToThreadSortKey: {},
     aggregatePreferences: {},
     trackGroups: {},
     visibleTracks: [],
@@ -50,8 +98,7 @@ export function createEmptyState(): State {
     metrics: {},
     permalink: {},
     notes: {},
-    pivotTableConfig: {},
-    pivotTable: {},
+    visualisedArgs: [],
 
     recordConfig: AUTOLOAD_STARTED_CONFIG_FLAG.get() ?
         autosaveConfigStore.get() :
@@ -60,17 +107,16 @@ export function createEmptyState(): State {
     lastLoadedConfig: {type: 'NONE'},
 
     frontendLocalState: {
-      omniboxState: {
-        lastUpdate: 0,
-        omnibox: '',
-        mode: 'SEARCH',
-      },
-
       visibleState: {
         ...defaultTraceTime,
         lastUpdate: 0,
         resolution: 0,
       },
+    },
+
+    omniboxState: {
+      omnibox: '',
+      mode: 'SEARCH',
     },
 
     logsPagination: {
@@ -103,7 +149,14 @@ export function createEmptyState(): State {
 
     fetchChromeCategories: false,
     chromeCategories: undefined,
-    pivotTableRedux:
-        {selectionArea: null, query: null, queryId: 0, queryResult: null},
+    nonSerializableState: createEmptyNonSerializableState(),
+
+    logFilteringCriteria: {
+      // The first two log priorities are ignored.
+      minimumLevel: 2,
+      tags: [],
+      textEntry: '',
+      hideNonMatching: true,
+    },
   };
 }

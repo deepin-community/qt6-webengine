@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,7 +10,7 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/lazy_instance.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/values.h"
@@ -88,13 +88,13 @@ void ActivityLogAPI::StartOrStopListeningForExtensionActivities() {
 }
 
 void ActivityLogAPI::OnExtensionActivity(scoped_refptr<Action> activity) {
-  std::unique_ptr<base::ListValue> value(new base::ListValue());
+  base::Value::List value;
   ExtensionActivity activity_arg = activity->ConvertToExtensionActivity();
-  value->Append(activity_arg.ToValue());
+  value.Append(activity_arg.ToValue());
   auto event = std::make_unique<Event>(
       events::ACTIVITY_LOG_PRIVATE_ON_EXTENSION_ACTIVITY,
-      activity_log_private::OnExtensionActivity::kEventName,
-      std::move(*value).TakeListDeprecated(), browser_context_);
+      activity_log_private::OnExtensionActivity::kEventName, std::move(value),
+      browser_context_);
   EventRouter::Get(browser_context_)->BroadcastEvent(std::move(event));
 }
 
@@ -175,8 +175,8 @@ ActivityLogPrivateDeleteActivitiesFunction::Run() {
   // Put the arguments in the right format.
   std::vector<int64_t> action_ids;
   int64_t value;
-  for (size_t i = 0; i < params->activity_ids.size(); i++) {
-    if (base::StringToInt64(params->activity_ids[i], &value))
+  for (const auto& activity_id : params->activity_ids) {
+    if (base::StringToInt64(activity_id, &value))
       action_ids.push_back(value);
   }
 

@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,13 +8,13 @@
 
 #include "base/memory/raw_ptr.h"
 #include "base/strings/strcat.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "net/base/schemeful_site.h"
 #include "net/cert/mock_cert_verifier.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/proxy_resolution/configured_proxy_resolution_service.h"
 #include "net/quic/crypto/proof_source_chromium.h"
+#include "net/quic/quic_context.h"
 #include "net/test/test_data_directory.h"
 #include "net/test/test_with_task_environment.h"
 #include "net/third_party/quiche/src/quiche/quic/test_tools/crypto_test_utils.h"
@@ -28,8 +28,7 @@
 #include "url/gurl.h"
 #include "url/origin.h"
 
-namespace net {
-namespace test {
+namespace net::test {
 namespace {
 
 using ::quic::test::MemSliceFromString;
@@ -99,8 +98,8 @@ class DedicatedWebTransportHttp3Test : public TestWithTaskEnvironment {
   DedicatedWebTransportHttp3Test() {
     quic::QuicEnableVersion(quic::ParsedQuicVersion::RFCv1());
     origin_ = url::Origin::Create(GURL{"https://example.org"});
-    isolation_key_ =
-        NetworkIsolationKey(SchemefulSite(origin_), SchemefulSite(origin_));
+    anonymization_key_ =
+        NetworkAnonymizationKey(SchemefulSite(origin_), SchemefulSite(origin_));
 
     URLRequestContextBuilder builder;
     builder.set_proxy_resolution_service(
@@ -159,7 +158,7 @@ class DedicatedWebTransportHttp3Test : public TestWithTaskEnvironment {
     server_ = std::make_unique<QuicSimpleServer>(
         std::move(proof_source), quic::QuicConfig(),
         quic::QuicCryptoServerConfig::ConfigOptions(),
-        quic::AllSupportedVersions(), &backend_);
+        AllSupportedQuicVersions(), &backend_);
     ASSERT_TRUE(server_->CreateUDPSocketAndListen(
         quic::QuicSocketAddress(quic::QuicIpAddress::Any6(), /*port=*/0)));
     port_ = server_->server_address().port();
@@ -175,7 +174,7 @@ class DedicatedWebTransportHttp3Test : public TestWithTaskEnvironment {
   }
 
  protected:
-  QuicFlagSaver flags_;  // Save/restore all QUIC flag values.
+  quic::test::QuicFlagSaver flags_;  // Save/restore all QUIC flag values.
   std::unique_ptr<URLRequestContext> context_;
   std::unique_ptr<DedicatedWebTransportHttp3Client> client_;
   raw_ptr<TestConnectionHelper> helper_;  // Owned by |context_|.
@@ -186,13 +185,13 @@ class DedicatedWebTransportHttp3Test : public TestWithTaskEnvironment {
 
   int port_ = 0;
   url::Origin origin_;
-  NetworkIsolationKey isolation_key_;
+  NetworkAnonymizationKey anonymization_key_;
 };
 
 TEST_F(DedicatedWebTransportHttp3Test, Connect) {
   StartServer();
   client_ = std::make_unique<DedicatedWebTransportHttp3Client>(
-      GetURL("/echo"), origin_, &visitor_, isolation_key_, context_.get(),
+      GetURL("/echo"), origin_, &visitor_, anonymization_key_, context_.get(),
       WebTransportParameters());
 
   EXPECT_CALL(visitor_, OnConnected(_)).WillOnce(StopRunning());
@@ -205,8 +204,8 @@ TEST_F(DedicatedWebTransportHttp3Test, Connect) {
   Run();
 }
 
-// TODO(https://crbug.com/1288036): The test is flaky on Mac.
-#if BUILDFLAG(IS_MAC)
+// TODO(https://crbug.com/1288036): The test is flaky on Mac and iOS.
+#if BUILDFLAG(IS_IOS) || BUILDFLAG(IS_MAC)
 #define MAYBE_CloseTimeout DISABLED_CloseTimeout
 #else
 #define MAYBE_CloseTimeout CloseTimeout
@@ -214,7 +213,7 @@ TEST_F(DedicatedWebTransportHttp3Test, Connect) {
 TEST_F(DedicatedWebTransportHttp3Test, MAYBE_CloseTimeout) {
   StartServer();
   client_ = std::make_unique<DedicatedWebTransportHttp3Client>(
-      GetURL("/echo"), origin_, &visitor_, isolation_key_, context_.get(),
+      GetURL("/echo"), origin_, &visitor_, anonymization_key_, context_.get(),
       WebTransportParameters());
 
   EXPECT_CALL(visitor_, OnConnected(_)).WillOnce(StopRunning());
@@ -240,7 +239,7 @@ TEST_F(DedicatedWebTransportHttp3Test, MAYBE_CloseTimeout) {
 TEST_F(DedicatedWebTransportHttp3Test, CloseReason) {
   StartServer();
   client_ = std::make_unique<DedicatedWebTransportHttp3Client>(
-      GetURL("/session-close"), origin_, &visitor_, isolation_key_,
+      GetURL("/session-close"), origin_, &visitor_, anonymization_key_,
       context_.get(), WebTransportParameters());
 
   EXPECT_CALL(visitor_, OnConnected(_)).WillOnce(StopRunning());
@@ -263,5 +262,4 @@ TEST_F(DedicatedWebTransportHttp3Test, CloseReason) {
 }
 
 }  // namespace
-}  // namespace test
-}  // namespace net
+}  // namespace net::test

@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,9 +6,10 @@
 
 #include <memory>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/profiles/delete_profile_helper.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/profiles/profile_metrics.h"
 #include "chrome/browser/profiles/profile_window.h"
@@ -33,7 +34,7 @@ void OpenNewWindowForProfile(Profile* profile) {
 
     g_browser_process->profile_manager()->CreateProfileAsync(
         ProfileManager::GetSystemProfilePath(),
-        ProfileManager::CreateCallback());
+        base::OnceCallback<void(Profile*)>());
     return;
   }
 
@@ -53,8 +54,10 @@ void DeleteProfileAtPath(base::FilePath file_path,
                          ProfileMetrics::ProfileDelete deletion_source) {
   if (!profiles::IsMultipleProfilesEnabled())
     return;
-  g_browser_process->profile_manager()->MaybeScheduleProfileForDeletion(
-      file_path, base::BindOnce(&OpenNewWindowForProfile), deletion_source);
+  g_browser_process->profile_manager()
+      ->GetDeleteProfileHelper()
+      .MaybeScheduleProfileForDeletion(
+          file_path, base::BindOnce(&OpenNewWindowForProfile), deletion_source);
 }
 
 }  // namespace webui

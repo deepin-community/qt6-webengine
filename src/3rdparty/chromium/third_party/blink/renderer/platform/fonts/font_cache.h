@@ -73,7 +73,6 @@ namespace base {
 namespace trace_event {
 class ProcessMemoryDump;
 }  // namespace trace_event
-struct Feature;
 }  // namespace base
 
 namespace blink {
@@ -87,8 +86,6 @@ class FontPlatformDataCache;
 class SimpleFontData;
 class WebFontPrewarmer;
 
-PLATFORM_EXPORT extern const base::Feature kAsyncFontAccess;
-
 enum class AlternateFontName {
   kAllowAlternate,
   kNoAlternate,
@@ -98,7 +95,6 @@ enum class AlternateFontName {
 
 typedef HashMap<FallbackListCompositeKey,
                 std::unique_ptr<ShapeCache>,
-                FallbackListCompositeKeyHash,
                 FallbackListCompositeKeyTraits>
     FallbackListShaperCache;
 
@@ -197,6 +193,7 @@ class PLATFORM_EXPORT FontCache final {
   static const AtomicString& SystemFontFamily();
 #else
   static const AtomicString& LegacySystemFontFamily();
+  static void InvalidateFromAnyThread();
 #endif
 
 #if !BUILDFLAG(IS_MAC)
@@ -372,7 +369,8 @@ class PLATFORM_EXPORT FontCache final {
   static WebFontPrewarmer* prewarmer_;
   static bool antialiased_text_enabled_;
   static bool lcd_text_enabled_;
-  static HashMap<String, sk_sp<SkTypeface>, CaseFoldingHash>* sideloaded_fonts_;
+  static HashMap<String, sk_sp<SkTypeface>, CaseFoldingHashTraits<String>>*
+      sideloaded_fonts_;
   // The system font metrics cache.
   static AtomicString* menu_font_family_name_;
   static int32_t menu_font_height_;
@@ -398,7 +396,8 @@ class PLATFORM_EXPORT FontCache final {
   Persistent<HeapHashSet<WeakMember<FontCacheClient>>> font_cache_clients_;
   std::unique_ptr<FontPlatformDataCache> font_platform_data_cache_;
   FallbackListShaperCache fallback_list_shaper_cache_;
-  FontDataCache font_data_cache_;
+
+  std::unique_ptr<FontDataCache> font_data_cache_;
 
   Persistent<FontFallbackMap> font_fallback_map_;
 

@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,23 +8,23 @@
 #include <utility>
 
 #include "base/base64.h"
-#include "base/bind.h"
+#include "base/command_line.h"
 #include "base/containers/span.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/functional/bind.h"
 #include "base/json/json_file_value_serializer.h"
 #include "base/path_service.h"
 #include "base/ranges/algorithm.h"
 #include "base/run_loop.h"
+#include "base/strings/escape.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/bind.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
-#include "net/base/escape.h"
 #include "net/base/ip_address.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/mock_network_change_notifier.h"
@@ -85,7 +85,7 @@ GURL AddQuery(const GURL& url,
               const std::string& key,
               const std::string& value) {
   return GURL(url.spec() + (url.has_query() ? "&" : "?") + key + "=" +
-              net::EscapeQueryParamValue(value, false));
+              base::EscapeQueryParamValue(value, false));
 }
 
 mojom::NetworkContextParamsPtr CreateContextParams() {
@@ -529,7 +529,7 @@ TEST_F(NetworkServiceTest, AuthEnableNegotiatePort) {
 TEST_F(NetworkServiceTest, DnsClientEnableDisable) {
   // Create valid DnsConfig.
   net::DnsConfig config;
-  config.nameservers.push_back(net::IPEndPoint());
+  config.nameservers.emplace_back();
   auto dns_client = std::make_unique<net::MockDnsClient>(
       std::move(config), net::MockDnsClientRuleList());
   dns_client->set_ignore_system_config_changes(true);
@@ -601,7 +601,7 @@ TEST_F(NetworkServiceTest, DnsOverHttpsEnableDisable) {
 
   // Create valid DnsConfig.
   net::DnsConfig config;
-  config.nameservers.push_back(net::IPEndPoint());
+  config.nameservers.emplace_back();
   auto dns_client = std::make_unique<net::MockDnsClient>(
       std::move(config), net::MockDnsClientRuleList());
   dns_client->set_ignore_system_config_changes(true);
@@ -631,7 +631,8 @@ TEST_F(NetworkServiceTest, DnsOverHttpsEnableDisable) {
 }
 
 TEST_F(NetworkServiceTest, DisableDohUpgradeProviders) {
-  auto FindProviderFeature = [](base::StringPiece provider) -> base::Feature {
+  auto FindProviderFeature =
+      [](base::StringPiece provider) -> base::test::FeatureRef {
     const auto it =
         base::ranges::find(net::DohProviderEntry::GetList(), provider,
                            &net::DohProviderEntry::provider);
@@ -692,7 +693,7 @@ TEST_F(NetworkServiceTest, DohProbe) {
                                   std::move(context_params));
 
   net::DnsConfig config;
-  config.nameservers.push_back(net::IPEndPoint());
+  config.nameservers.emplace_back();
   config.doh_config =
       *net::DnsOverHttpsConfig::FromString("https://example.com/");
   auto dns_client = std::make_unique<net::MockDnsClient>(
@@ -715,7 +716,7 @@ TEST_F(NetworkServiceTest, DohProbe_MultipleContexts) {
                                   std::move(context_params1));
 
   net::DnsConfig config;
-  config.nameservers.push_back(net::IPEndPoint());
+  config.nameservers.emplace_back();
   config.doh_config =
       *net::DnsOverHttpsConfig::FromString("https://example.com/");
   auto dns_client = std::make_unique<net::MockDnsClient>(
@@ -735,17 +736,17 @@ TEST_F(NetworkServiceTest, DohProbe_MultipleContexts) {
   EXPECT_TRUE(dns_client_ptr->factory()->doh_probes_running());
 
   network_context2.reset();
-  task_environment()->FastForwardUntilNoTasksRemain();
+  task_environment()->RunUntilIdle();
   EXPECT_TRUE(dns_client_ptr->factory()->doh_probes_running());
 
   network_context1.reset();
-  task_environment()->FastForwardUntilNoTasksRemain();
+  task_environment()->RunUntilIdle();
   EXPECT_FALSE(dns_client_ptr->factory()->doh_probes_running());
 }
 
 TEST_F(NetworkServiceTest, DohProbe_ContextAddedBeforeTimeout) {
   net::DnsConfig config;
-  config.nameservers.push_back(net::IPEndPoint());
+  config.nameservers.emplace_back();
   config.doh_config =
       *net::DnsOverHttpsConfig::FromString("https://example.com/");
   auto dns_client = std::make_unique<net::MockDnsClient>(
@@ -770,7 +771,7 @@ TEST_F(NetworkServiceTest, DohProbe_ContextAddedBeforeTimeout) {
 
 TEST_F(NetworkServiceTest, DohProbe_ContextAddedAfterTimeout) {
   net::DnsConfig config;
-  config.nameservers.push_back(net::IPEndPoint());
+  config.nameservers.emplace_back();
   config.doh_config =
       *net::DnsOverHttpsConfig::FromString("https://example.com/");
   auto dns_client = std::make_unique<net::MockDnsClient>(
@@ -800,7 +801,7 @@ TEST_F(NetworkServiceTest, DohProbe_ContextRemovedBeforeTimeout) {
                                   std::move(context_params));
 
   net::DnsConfig config;
-  config.nameservers.push_back(net::IPEndPoint());
+  config.nameservers.emplace_back();
   config.doh_config =
       *net::DnsOverHttpsConfig::FromString("https://example.com/");
   auto dns_client = std::make_unique<net::MockDnsClient>(
@@ -813,7 +814,7 @@ TEST_F(NetworkServiceTest, DohProbe_ContextRemovedBeforeTimeout) {
   EXPECT_FALSE(dns_client_ptr->factory()->doh_probes_running());
 
   network_context.reset();
-  task_environment()->FastForwardUntilNoTasksRemain();
+  task_environment()->RunUntilIdle();
   EXPECT_FALSE(dns_client_ptr->factory()->doh_probes_running());
 
   task_environment()->FastForwardBy(NetworkService::kInitialDohProbeTimeout);
@@ -827,7 +828,7 @@ TEST_F(NetworkServiceTest, DohProbe_ContextRemovedAfterTimeout) {
                                   std::move(context_params));
 
   net::DnsConfig config;
-  config.nameservers.push_back(net::IPEndPoint());
+  config.nameservers.emplace_back();
   config.doh_config =
       *net::DnsOverHttpsConfig::FromString("https://example.com/");
   auto dns_client = std::make_unique<net::MockDnsClient>(
@@ -843,7 +844,7 @@ TEST_F(NetworkServiceTest, DohProbe_ContextRemovedAfterTimeout) {
   EXPECT_TRUE(dns_client_ptr->factory()->doh_probes_running());
 
   network_context.reset();
-  task_environment()->FastForwardUntilNoTasksRemain();
+  task_environment()->RunUntilIdle();
   EXPECT_FALSE(dns_client_ptr->factory()->doh_probes_running());
 }
 
@@ -1080,8 +1081,8 @@ TEST_F(NetworkServiceTestWithService, StartsNetLog) {
   base::FilePath log_dir = temp_dir.GetPath();
   base::FilePath log_path = log_dir.Append(FILE_PATH_LITERAL("test_log.json"));
 
-  base::DictionaryValue dict;
-  dict.SetString("amiatest", "iamatest");
+  base::Value::Dict dict;
+  dict.Set("amiatest", "iamatest");
 
   base::File log_file(log_path,
                       base::File::FLAG_CREATE_ALWAYS | base::File::FLAG_WRITE);
@@ -1101,7 +1102,8 @@ TEST_F(NetworkServiceTestWithService, StartsNetLog) {
   std::unique_ptr<base::Value> log_dict =
       deserializer.Deserialize(nullptr, nullptr);
   ASSERT_TRUE(log_dict);
-  ASSERT_EQ(log_dict->FindKey("constants")->FindKey("amiatest")->GetString(),
+  ASSERT_TRUE(log_dict->is_dict());
+  ASSERT_EQ(*log_dict->GetDict().FindStringByDottedPath("constants.amiatest"),
             "iamatest");
 }
 
@@ -1469,7 +1471,7 @@ class NetworkServiceNetworkDelegateTest : public NetworkServiceTest {
 
 class ClearSiteDataAuthCertObserver : public TestURLLoaderNetworkObserver {
  public:
-  explicit ClearSiteDataAuthCertObserver() = default;
+  ClearSiteDataAuthCertObserver() = default;
   ~ClearSiteDataAuthCertObserver() override = default;
 
   void OnClearSiteData(

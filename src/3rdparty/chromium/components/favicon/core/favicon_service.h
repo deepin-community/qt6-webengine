@@ -1,12 +1,11 @@
-// Copyright (c) 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef COMPONENTS_FAVICON_CORE_FAVICON_SERVICE_H_
 #define COMPONENTS_FAVICON_CORE_FAVICON_SERVICE_H_
 
-
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/task/cancelable_task_tracker.h"
 #include "components/favicon/core/core_favicon_service.h"
 #include "components/favicon/core/large_favicon_provider.h"

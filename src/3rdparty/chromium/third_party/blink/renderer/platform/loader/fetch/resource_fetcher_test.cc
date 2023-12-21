@@ -32,6 +32,7 @@
 
 #include <memory>
 
+#include "base/task/single_thread_task_runner.h"
 #include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
 #include "services/network/public/mojom/ip_address_space.mojom-blink.h"
@@ -42,8 +43,6 @@
 #include "third_party/blink/public/mojom/loader/request_context_frame_type.mojom-blink.h"
 #include "third_party/blink/public/mojom/security_context/insecure_request_policy.mojom-blink.h"
 #include "third_party/blink/public/platform/platform.h"
-#include "third_party/blink/public/platform/web_url_loader.h"
-#include "third_party/blink/public/platform/web_url_loader_mock_factory.h"
 #include "third_party/blink/public/platform/web_url_response.h"
 #include "third_party/blink/renderer/platform/exported/wrapped_resource_response.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
@@ -59,8 +58,9 @@
 #include "third_party/blink/renderer/platform/loader/fetch/resource_loader.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_loader_options.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_request.h"
-#include "third_party/blink/renderer/platform/loader/fetch/resource_timing_info.h"
+#include "third_party/blink/renderer/platform/loader/fetch/resource_timing_utils.h"
 #include "third_party/blink/renderer/platform/loader/fetch/unique_identifier.h"
+#include "third_party/blink/renderer/platform/loader/fetch/url_loader/url_loader.h"
 #include "third_party/blink/renderer/platform/loader/testing/fetch_testing_platform_support.h"
 #include "third_party/blink/renderer/platform/loader/testing/mock_fetch_context.h"
 #include "third_party/blink/renderer/platform/loader/testing/mock_resource.h"
@@ -73,9 +73,10 @@
 #include "third_party/blink/renderer/platform/testing/scoped_mocked_url.h"
 #include "third_party/blink/renderer/platform/testing/testing_platform_support.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
+#include "third_party/blink/renderer/platform/testing/url_loader_mock.h"
+#include "third_party/blink/renderer/platform/testing/url_loader_mock_factory.h"
+#include "third_party/blink/renderer/platform/testing/url_loader_mock_factory_impl.h"
 #include "third_party/blink/renderer/platform/testing/url_test_helpers.h"
-#include "third_party/blink/renderer/platform/testing/weburl_loader_mock.h"
-#include "third_party/blink/renderer/platform/testing/weburl_loader_mock_factory_impl.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
@@ -105,10 +106,16 @@ class PartialResourceRequest {
 
 class ResourceFetcherTest : public testing::Test {
  public:
-  ResourceFetcherTest() = default;
+  ResourceFetcherTest() {
+    Resource::SetClockForTesting(platform_->test_task_runner()->GetMockClock());
+  }
+  ~ResourceFetcherTest() override {
+    MemoryCache::Get()->EvictResources();
+    Resource::SetClockForTesting(nullptr);
+  }
+
   ResourceFetcherTest(const ResourceFetcherTest&) = delete;
   ResourceFetcherTest& operator=(const ResourceFetcherTest&) = delete;
-  ~ResourceFetcherTest() override { GetMemoryCache()->EvictResources(); }
 
   class TestResourceLoadObserver final : public ResourceLoadObserver {
    public:
@@ -118,7 +125,8 @@ class ResourceFetcherTest : public testing::Test {
                          const ResourceResponse& redirect_response,
                          ResourceType,
                          const ResourceLoaderOptions&,
-                         RenderBlockingBehavior) override {
+                         RenderBlockingBehavior,
+                         const Resource*) override {
       request_ = PartialResourceRequest(request);
     }
     void DidChangePriority(uint64_t identifier,
@@ -183,7 +191,7 @@ class ResourceFetcherTest : public testing::Test {
   }
 
   void AddResourceToMemoryCache(Resource* resource) {
-    GetMemoryCache()->Add(resource);
+    MemoryCache::Get()->Add(resource);
   }
 
   void RegisterMockedURLLoad(const KURL& url) {
@@ -193,6 +201,9 @@ class ResourceFetcherTest : public testing::Test {
   }
 
   ScopedTestingPlatformSupport<FetchTestingPlatformSupport> platform_;
+
+ private:
+  base::test::SingleThreadTaskEnvironment task_environment_;
 };
 
 TEST_F(ResourceFetcherTest, StartLoadAfterFrameDetach) {
@@ -210,7 +221,7 @@ TEST_F(ResourceFetcherTest, StartLoadAfterFrameDetach) {
   ASSERT_TRUE(resource);
   EXPECT_TRUE(resource->ErrorOccurred());
   EXPECT_TRUE(resource->GetResourceError().IsAccessCheck());
-  EXPECT_FALSE(GetMemoryCache()->ResourceForURL(secure_url));
+  EXPECT_FALSE(MemoryCache::Get()->ResourceForURL(secure_url));
 
   // Start by calling StartLoad() directly, rather than via RequestResource().
   // This shouldn't crash. Setting the resource type to image, as StartLoad with
@@ -237,7 +248,7 @@ TEST_F(ResourceFetcherTest, UseExistingResource) {
   ASSERT_TRUE(resource);
   platform_->GetURLLoaderMockFactory()->ServeAsynchronousRequests();
   EXPECT_TRUE(resource->IsLoaded());
-  EXPECT_TRUE(GetMemoryCache()->Contains(resource));
+  EXPECT_TRUE(MemoryCache::Get()->Contains(resource));
 
   Resource* new_resource = MockResource::Fetch(fetch_params, fetcher, nullptr);
   EXPECT_EQ(resource, new_resource);
@@ -289,7 +300,7 @@ TEST_F(ResourceFetcherTest, MemoryCachePerContextUseExistingResource) {
   ASSERT_TRUE(resource_a);
   platform_->GetURLLoaderMockFactory()->ServeAsynchronousRequests();
   EXPECT_TRUE(resource_a->IsLoaded());
-  EXPECT_TRUE(GetMemoryCache()->Contains(resource_a));
+  EXPECT_TRUE(MemoryCache::Get()->Contains(resource_a));
 
   Resource* resource_a1 = MockResource::Fetch(fetch_params, fetcher_a, nullptr);
   ASSERT_TRUE(resource_a1);
@@ -312,7 +323,7 @@ TEST_F(ResourceFetcherTest, MemoryCachePerContextUseExistingResource) {
   ASSERT_TRUE(resource_b);
   platform_->GetURLLoaderMockFactory()->ServeAsynchronousRequests();
   EXPECT_TRUE(resource_b->IsLoaded());
-  EXPECT_TRUE(GetMemoryCache()->Contains(resource_b));
+  EXPECT_TRUE(MemoryCache::Get()->Contains(resource_b));
   histogram_tester.ExpectTotalCount("Blink.MemoryCache.RevalidationPolicy.Mock",
                                     3);
   histogram_tester.ExpectBucketCount(
@@ -360,7 +371,7 @@ TEST_F(ResourceFetcherTest, MetricsPerTopFrameSite) {
   ASSERT_TRUE(resource_1);
   platform_->GetURLLoaderMockFactory()->ServeAsynchronousRequests();
   EXPECT_TRUE(resource_1->IsLoaded());
-  EXPECT_TRUE(GetMemoryCache()->Contains(resource_1));
+  EXPECT_TRUE(MemoryCache::Get()->Contains(resource_1));
 
   auto* fetcher_2 = CreateFetcher();
   ResourceRequestHead request_head_2(url);
@@ -438,7 +449,7 @@ TEST_F(ResourceFetcherTest, MetricsPerTopFrameSiteOpaqueOrigins) {
   ASSERT_TRUE(resource_1);
   platform_->GetURLLoaderMockFactory()->ServeAsynchronousRequests();
   EXPECT_TRUE(resource_1->IsLoaded());
-  EXPECT_TRUE(GetMemoryCache()->Contains(resource_1));
+  EXPECT_TRUE(MemoryCache::Get()->Contains(resource_1));
 
   // Create a 2nd opaque top-level origin.
   auto* fetcher_2 = CreateFetcher();
@@ -618,11 +629,10 @@ class RequestSameResourceOnComplete
     : public GarbageCollected<RequestSameResourceOnComplete>,
       public RawResourceClient {
  public:
-  RequestSameResourceOnComplete(WebURLLoaderMockFactory* mock_factory,
+  RequestSameResourceOnComplete(URLLoaderMockFactory* mock_factory,
                                 FetchParameters& params,
                                 ResourceFetcher* fetcher)
       : mock_factory_(mock_factory),
-        notify_finished_called_(false),
         source_origin_(fetcher->GetProperties()
                            .GetFetchClientSettingsObject()
                            .GetSecurityOrigin()) {
@@ -659,8 +669,8 @@ class RequestSameResourceOnComplete
   String DebugName() const override { return "RequestSameResourceOnComplete"; }
 
  private:
-  WebURLLoaderMockFactory* mock_factory_;
-  bool notify_finished_called_;
+  URLLoaderMockFactory* mock_factory_;
+  bool notify_finished_called_ = false;
   scoped_refptr<const SecurityOrigin> source_origin_;
 };
 
@@ -713,7 +723,7 @@ class ServeRequestsOnCompleteClient final
     : public GarbageCollected<ServeRequestsOnCompleteClient>,
       public RawResourceClient {
  public:
-  explicit ServeRequestsOnCompleteClient(WebURLLoaderMockFactory* mock_factory)
+  explicit ServeRequestsOnCompleteClient(URLLoaderMockFactory* mock_factory)
       : mock_factory_(mock_factory) {}
 
   void NotifyFinished(Resource*) override {
@@ -748,14 +758,14 @@ class ServeRequestsOnCompleteClient final
   String DebugName() const override { return "ServeRequestsOnCompleteClient"; }
 
  private:
-  WebURLLoaderMockFactory* mock_factory_;
+  URLLoaderMockFactory* mock_factory_;
 };
 
 // Regression test for http://crbug.com/594072.
 // This emulates a modal dialog triggering a nested run loop inside
 // ResourceLoader::Cancel(). If the ResourceLoader doesn't promptly cancel its
-// WebURLLoader before notifying its clients, a nested run loop  may send a
-// network response, leading to an invalid state transition in ResourceLoader.
+// URLLoader before notifying its clients, a nested run loop  may send a network
+// response, leading to an invalid state transition in ResourceLoader.
 TEST_F(ResourceFetcherTest, ResponseOnCancel) {
   KURL url("http://127.0.0.1:8000/foo.png");
   RegisterMockedURLLoad(url);
@@ -778,7 +788,7 @@ class ScopedMockRedirectRequester {
 
  public:
   ScopedMockRedirectRequester(
-      WebURLLoaderMockFactory* mock_factory,
+      URLLoaderMockFactory* mock_factory,
       MockFetchContext* context,
       scoped_refptr<base::SingleThreadTaskRunner> task_runner)
       : mock_factory_(mock_factory),
@@ -823,7 +833,7 @@ class ScopedMockRedirectRequester {
   }
 
  private:
-  WebURLLoaderMockFactory* mock_factory_;
+  URLLoaderMockFactory* mock_factory_;
   MockFetchContext* context_;
   const scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
 };
@@ -884,7 +894,7 @@ TEST_F(ResourceFetcherTest, PreloadResourceTwice) {
 
   fetcher->ClearPreloads(ResourceFetcher::kClearAllPreloads);
   EXPECT_FALSE(fetcher->ContainsAsPreload(resource));
-  EXPECT_FALSE(GetMemoryCache()->Contains(resource));
+  EXPECT_FALSE(MemoryCache::Get()->Contains(resource));
   EXPECT_TRUE(resource->IsUnusedPreload());
 }
 
@@ -923,7 +933,7 @@ TEST_F(ResourceFetcherTest, LinkPreloadResourceAndUse) {
 
   // DCL reached
   fetcher->ClearPreloads(ResourceFetcher::kClearSpeculativeMarkupPreloads);
-  EXPECT_TRUE(GetMemoryCache()->Contains(resource));
+  EXPECT_TRUE(MemoryCache::Get()->Contains(resource));
   EXPECT_FALSE(resource->IsUnusedPreload());
 }
 
@@ -1217,7 +1227,7 @@ TEST_F(ResourceFetcherTest, StaleWhileRevalidate) {
 
   platform_->GetURLLoaderMockFactory()->ServeAsynchronousRequests();
   EXPECT_TRUE(resource->IsLoaded());
-  EXPECT_TRUE(GetMemoryCache()->Contains(resource));
+  EXPECT_TRUE(MemoryCache::Get()->Contains(resource));
 
   ResourceRequest resource_request(url);
   resource_request.SetRequestContext(
@@ -1240,7 +1250,7 @@ TEST_F(ResourceFetcherTest, StaleWhileRevalidate) {
       test::PlatformTestDataPath(kTestResourceFilename));
   new_resource = MockResource::Fetch(fetch_params2, fetcher, nullptr);
   EXPECT_EQ(resource, new_resource);
-  EXPECT_TRUE(GetMemoryCache()->Contains(resource));
+  EXPECT_TRUE(MemoryCache::Get()->Contains(resource));
   static_cast<scheduler::FakeTaskRunner*>(fetcher->GetTaskRunner().get())
       ->RunUntilIdle();
   absl::optional<PartialResourceRequest> swr_request =
@@ -1248,7 +1258,7 @@ TEST_F(ResourceFetcherTest, StaleWhileRevalidate) {
   ASSERT_TRUE(swr_request.has_value());
   EXPECT_EQ(ResourceLoadPriority::kVeryLow, swr_request->Priority());
   platform_->GetURLLoaderMockFactory()->ServeAsynchronousRequests();
-  EXPECT_FALSE(GetMemoryCache()->Contains(resource));
+  EXPECT_FALSE(MemoryCache::Get()->Contains(resource));
 }
 
 TEST_F(ResourceFetcherTest, CachedResourceShouldNotCrashByNullURL) {
@@ -1277,74 +1287,101 @@ TEST_F(ResourceFetcherTest, DeprioritizeSubframe) {
 
   {
     // Subframe deprioritization is disabled (main frame case).
-    properties.SetIsMainFrame(true);
+    properties.SetIsOutermostMainFrame(true);
     properties.SetIsSubframeDeprioritizationEnabled(false);
     const auto priority = fetcher->ComputeLoadPriorityForTesting(
         ResourceType::kScript, request, ResourcePriority::kNotVisible,
         FetchParameters::DeferOption::kNoDefer,
         FetchParameters::SpeculativePreloadType::kNotSpeculative,
-        false /* is_link_preload */);
+        RenderBlockingBehavior::kNonBlocking, false /* is_link_preload */);
     EXPECT_EQ(priority, ResourceLoadPriority::kHigh);
   }
 
   {
     // Subframe deprioritization is disabled (nested frame case).
-    properties.SetIsMainFrame(false);
+    properties.SetIsOutermostMainFrame(false);
     properties.SetIsSubframeDeprioritizationEnabled(false);
     const auto priority = fetcher->ComputeLoadPriorityForTesting(
         ResourceType::kScript, request, ResourcePriority::kNotVisible,
         FetchParameters::DeferOption::kNoDefer,
         FetchParameters::SpeculativePreloadType::kNotSpeculative,
-        false /* is_link_preload */);
+        RenderBlockingBehavior::kNonBlocking, false /* is_link_preload */);
     EXPECT_EQ(priority, ResourceLoadPriority::kHigh);
   }
 
   {
     // Subframe deprioritization is enabled (main frame case), kHigh.
-    properties.SetIsMainFrame(true);
+    properties.SetIsOutermostMainFrame(true);
     properties.SetIsSubframeDeprioritizationEnabled(true);
     const auto priority = fetcher->ComputeLoadPriorityForTesting(
         ResourceType::kScript, request, ResourcePriority::kNotVisible,
         FetchParameters::DeferOption::kNoDefer,
         FetchParameters::SpeculativePreloadType::kNotSpeculative,
-        false /* is_link_preload */);
+        RenderBlockingBehavior::kNonBlocking, false /* is_link_preload */);
     EXPECT_EQ(priority, ResourceLoadPriority::kHigh);
   }
 
   {
     // Subframe deprioritization is enabled (nested frame case), kHigh => kLow.
-    properties.SetIsMainFrame(false);
+    properties.SetIsOutermostMainFrame(false);
     properties.SetIsSubframeDeprioritizationEnabled(true);
     const auto priority = fetcher->ComputeLoadPriorityForTesting(
         ResourceType::kScript, request, ResourcePriority::kNotVisible,
         FetchParameters::DeferOption::kNoDefer,
         FetchParameters::SpeculativePreloadType::kNotSpeculative,
-        false /* is_link_preload */);
+        RenderBlockingBehavior::kNonBlocking, false /* is_link_preload */);
     EXPECT_EQ(priority, ResourceLoadPriority::kLow);
   }
   {
     // Subframe deprioritization is enabled (main frame case), kMedium.
-    properties.SetIsMainFrame(true);
+    properties.SetIsOutermostMainFrame(true);
     properties.SetIsSubframeDeprioritizationEnabled(true);
     const auto priority = fetcher->ComputeLoadPriorityForTesting(
         ResourceType::kMock, request, ResourcePriority::kNotVisible,
         FetchParameters::DeferOption::kNoDefer,
         FetchParameters::SpeculativePreloadType::kNotSpeculative,
-        false /* is_link_preload */);
+        RenderBlockingBehavior::kNonBlocking, false /* is_link_preload */);
     EXPECT_EQ(priority, ResourceLoadPriority::kMedium);
   }
 
   {
     // Subframe deprioritization is enabled (nested frame case), kMedium =>
     // kLowest.
-    properties.SetIsMainFrame(false);
+    properties.SetIsOutermostMainFrame(false);
     properties.SetIsSubframeDeprioritizationEnabled(true);
     const auto priority = fetcher->ComputeLoadPriorityForTesting(
         ResourceType::kMock, request, ResourcePriority::kNotVisible,
         FetchParameters::DeferOption::kNoDefer,
         FetchParameters::SpeculativePreloadType::kNotSpeculative,
-        false /* is_link_preload */);
+        RenderBlockingBehavior::kNonBlocking, false /* is_link_preload */);
     EXPECT_EQ(priority, ResourceLoadPriority::kLowest);
+  }
+}
+
+TEST_F(ResourceFetcherTest, PriorityIncremental) {
+  auto& properties = *MakeGarbageCollected<TestResourceFetcherProperties>();
+  auto* fetcher = CreateFetcher(properties);
+
+  // Check all of the resource types that are NOT supposed to be loaded
+  // incrementally
+  ResourceType res_not_incremental[] = {
+      ResourceType::kCSSStyleSheet, ResourceType::kScript, ResourceType::kFont,
+      ResourceType::kXSLStyleSheet, ResourceType::kManifest};
+  for (auto& res_type : res_not_incremental) {
+    const bool incremental = fetcher->ShouldLoadIncrementalForTesting(res_type);
+    EXPECT_EQ(incremental, false);
+  }
+
+  // Check all of the resource types that ARE supposed to be loaded
+  // incrementally
+  ResourceType res_incremental[] = {
+      ResourceType::kImage,       ResourceType::kRaw,
+      ResourceType::kSVGDocument, ResourceType::kLinkPrefetch,
+      ResourceType::kTextTrack,   ResourceType::kAudio,
+      ResourceType::kVideo,       ResourceType::kSpeculationRules};
+  for (auto& res_type : res_incremental) {
+    const bool incremental = fetcher->ShouldLoadIncrementalForTesting(res_type);
+    EXPECT_EQ(incremental, true);
   }
 }
 

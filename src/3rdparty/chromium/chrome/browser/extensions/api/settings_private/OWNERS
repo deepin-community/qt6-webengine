@@ -1,3 +1,4 @@
-michaelpg@chromium.org
-
 file://chrome/browser/resources/settings/OWNERS
+
+# For ChromeOS Settings changes
+file://chrome/browser/resources/settings/chromeos/OWNERS

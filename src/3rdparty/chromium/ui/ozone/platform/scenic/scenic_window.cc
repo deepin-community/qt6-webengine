@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -17,6 +17,7 @@
 #include "base/fuchsia/process_context.h"
 #include "base/memory/scoped_refptr.h"
 #include "ui/base/cursor/platform_cursor.h"
+#include "ui/display/types/display_constants.h"
 #include "ui/events/event.h"
 #include "ui/events/event_constants.h"
 #include "ui/events/keycodes/keyboard_code_conversion.h"
@@ -53,37 +54,70 @@ ScenicWindow::ScenicWindow(ScenicWindowManager* window_manager,
       window_id_(manager_->AddWindow(this)),
       view_ref_(std::move(properties.view_ref_pair.view_ref)),
       view_controller_(std::move(properties.view_controller)),
-      event_dispatcher_(this),
-      scenic_session_(manager_->GetScenic()),
-      safe_presenter_(&scenic_session_),
-      view_(&scenic_session_,
-            std::move(std::move(properties.view_token)),
-            std::move(properties.view_ref_pair.control_ref),
-            CloneViewRef(),
-            "chromium window"),
-      node_(&scenic_session_),
-      input_node_(&scenic_session_),
-      render_node_(&scenic_session_),
-      bounds_(properties.bounds) {
+      bounds_(delegate_->ConvertRectToPixels(properties.bounds)) {
+  {
+    // Send graphics and input endpoints to Scenic. The endpoints are dormant
+    // until the Session's Present call, at the bottom of this block.
+    fuchsia::ui::scenic::SessionEndpoints endpoints;
+    fuchsia::ui::scenic::SessionPtr session_ptr;
+    endpoints.set_session(session_ptr.NewRequest());
+    fuchsia::ui::scenic::SessionListenerHandle listener_handle;
+    auto listener_request = listener_handle.NewRequest();
+    endpoints.set_session_listener(std::move(listener_handle));
+    fuchsia::ui::pointer::TouchSourceHandle touch_source;
+    endpoints.set_touch_source(touch_source.NewRequest());
+    fuchsia::ui::pointer::MouseSourceHandle mouse_source;
+    endpoints.set_mouse_source(mouse_source.NewRequest());
+    endpoints.set_view_ref_focused(view_ref_focused_.NewRequest());
+    manager_->GetScenic()->CreateSessionT(std::move(endpoints), [] {});
+
+    // Set up pointer and focus event processors.
+    pointer_handler_.emplace(std::move(touch_source), std::move(mouse_source));
+    pointer_handler_->StartWatching(base::BindRepeating(
+        &ScenicWindow::DispatchEvent,
+        // This is safe since |pointer_handler_| is a class member.
+        base::Unretained(this)));
+
+    view_ref_focused_->Watch(
+        fit::bind_member(this, &ScenicWindow::OnViewRefFocusedWatchResult));
+    view_ref_focused_.set_error_handler([](zx_status_t status) {
+      ZX_LOG(ERROR, status) << "Focus listener disconnected.";
+    });
+
+    // Set up GFX Session and scene resources.
+    scenic_session_.emplace(std::move(session_ptr),
+                            std::move(listener_request));
+    scenic_session_->set_error_handler(
+        fit::bind_member(this, &ScenicWindow::OnScenicError));
+    scenic_session_->set_event_handler(
+        fit::bind_member(this, &ScenicWindow::OnScenicEvents));
+    scenic_session_->SetDebugName("Chromium ScenicWindow");
+
+    view_.emplace(&scenic_session_.value(),
+                  std::move(std::move(properties.view_token)),
+                  std::move(properties.view_ref_pair.control_ref),
+                  CloneViewRef(), "chromium window");
+
+    node_.emplace(&scenic_session_.value());
+
+    // Subscribe to metrics events from the node. Metrics events provide the
+    // device pixel ratio for the screen.
+    node_->SetEventMask(fuchsia::ui::gfx::kMetricsEventMask);
+
+    // To receive metrics events on this node, attach it to the scene graph.
+    view_->AddChild(*node_);
+
+    input_node_.emplace(&scenic_session_.value());
+    render_node_.emplace(&scenic_session_.value());
+
+    safe_presenter_.emplace(&scenic_session_.value());
+    safe_presenter_->QueuePresent();
+  }
+
   if (view_controller_) {
     view_controller_.set_error_handler(
         fit::bind_member(this, &ScenicWindow::OnViewControllerDisconnected));
   }
-
-  scenic_session_.set_error_handler(
-      fit::bind_member(this, &ScenicWindow::OnScenicError));
-  scenic_session_.set_event_handler(
-      fit::bind_member(this, &ScenicWindow::OnScenicEvents));
-  scenic_session_.SetDebugName("Chromium ScenicWindow");
-
-  // Subscribe to metrics events from the node. These events are used to
-  // get the device pixel ratio for the screen.
-  node_.SetEventMask(fuchsia::ui::gfx::kMetricsEventMask);
-
-  // Add input shape.
-  node_.AddChild(input_node_);
-
-  node_.AddChild(render_node_);
 
   delegate_->OnAcceleratedWidgetAvailable(window_id_);
 
@@ -114,13 +148,22 @@ fuchsia::ui::views::ViewRef ScenicWindow::CloneViewRef() {
   return dup;
 }
 
-gfx::Rect ScenicWindow::GetBounds() const {
+gfx::Rect ScenicWindow::GetBoundsInPixels() const {
   return bounds_;
 }
 
-void ScenicWindow::SetBounds(const gfx::Rect& bounds) {
+void ScenicWindow::SetBoundsInPixels(const gfx::Rect& bounds) {
   // This path should only be reached in tests.
   bounds_ = bounds;
+}
+
+gfx::Rect ScenicWindow::GetBoundsInDIP() const {
+  return delegate_->ConvertRectToDIP(bounds_);
+}
+
+void ScenicWindow::SetBoundsInDIP(const gfx::Rect& bounds) {
+  // This path should only be reached in tests.
+  bounds_ = delegate_->ConvertRectToPixels(bounds);
 }
 
 void ScenicWindow::SetTitle(const std::u16string& title) {
@@ -137,7 +180,7 @@ void ScenicWindow::Show(bool inactive) {
 
   // Call Present2() to ensure that the scenic session commands are processed,
   // which is necessary to receive metrics event from Scenic.
-  safe_presenter_.QueuePresent();
+  safe_presenter_->QueuePresent();
 }
 
 void ScenicWindow::Hide() {
@@ -184,9 +227,10 @@ bool ScenicWindow::HasCapture() const {
   return has_capture_;
 }
 
-void ScenicWindow::ToggleFullscreen() {
+void ScenicWindow::SetFullscreen(bool fullscreen, int64_t target_display_id) {
   NOTIMPLEMENTED_LOG_ONCE();
-  is_fullscreen_ = !is_fullscreen_;
+  DCHECK_EQ(target_display_id, display::kInvalidDisplayId);
+  is_fullscreen_ = fullscreen;
 }
 
 void ScenicWindow::Maximize() {
@@ -202,7 +246,6 @@ void ScenicWindow::Restore() {
 }
 
 PlatformWindowState ScenicWindow::GetPlatformWindowState() const {
-  NOTIMPLEMENTED_LOG_ONCE();
   if (is_fullscreen_)
     return PlatformWindowState::kFullScreen;
   if (!is_view_attached_)
@@ -241,11 +284,11 @@ void ScenicWindow::ConfineCursorToBounds(const gfx::Rect& bounds) {
   NOTIMPLEMENTED_LOG_ONCE();
 }
 
-void ScenicWindow::SetRestoredBoundsInPixels(const gfx::Rect& bounds) {
+void ScenicWindow::SetRestoredBoundsInDIP(const gfx::Rect& bounds) {
   NOTIMPLEMENTED_LOG_ONCE();
 }
 
-gfx::Rect ScenicWindow::GetRestoredBoundsInPixels() const {
+gfx::Rect ScenicWindow::GetRestoredBoundsInDIP() const {
   NOTIMPLEMENTED_LOG_ONCE();
   return gfx::Rect();
 }
@@ -262,7 +305,7 @@ void ScenicWindow::SizeConstraintsChanged() {
 void ScenicWindow::AttachSurfaceView(
     fuchsia::ui::views::ViewHolderToken token) {
   surface_view_holder_ = std::make_unique<scenic::ViewHolder>(
-      &scenic_session_, std::move(token), "chromium window surface");
+      &scenic_session_.value(), std::move(token), "chromium window surface");
 
   // Configure the ViewHolder not to be focusable, or hit-testable, to ensure
   // that it cannot receive input.
@@ -273,10 +316,10 @@ void ScenicWindow::AttachSurfaceView(
   surface_view_holder_->SetHitTestBehavior(
       fuchsia::ui::gfx::HitTestBehavior::kSuppress);
 
-  render_node_.DetachChildren();
-  render_node_.AddChild(*surface_view_holder_);
+  render_node_->DetachChildren();
+  render_node_->AddChild(*surface_view_holder_);
 
-  safe_presenter_.QueuePresent();
+  safe_presenter_->QueuePresent();
 }
 
 void ScenicWindow::DispatchEvent(ui::Event* event) {
@@ -300,31 +343,31 @@ void ScenicWindow::OnScenicEvents(
     if (event.is_gfx()) {
       switch (event.gfx().Which()) {
         case fuchsia::ui::gfx::Event::kMetrics: {
-          if (event.gfx().metrics().node_id != node_.id())
+          if (event.gfx().metrics().node_id != node_->id())
             continue;
           OnViewMetrics(event.gfx().metrics().metrics);
           break;
         }
         case fuchsia::ui::gfx::Event::kViewPropertiesChanged: {
-          DCHECK(event.gfx().view_properties_changed().view_id == view_.id());
+          DCHECK(event.gfx().view_properties_changed().view_id == view_->id());
           OnViewProperties(event.gfx().view_properties_changed().properties);
           break;
         }
         case fuchsia::ui::gfx::Event::kViewAttachedToScene: {
-          DCHECK(event.gfx().view_attached_to_scene().view_id == view_.id());
+          DCHECK(event.gfx().view_attached_to_scene().view_id == view_->id());
           OnViewAttachedChanged(true);
           break;
         }
         case fuchsia::ui::gfx::Event::kViewDetachedFromScene: {
-          DCHECK(event.gfx().view_detached_from_scene().view_id == view_.id());
+          DCHECK(event.gfx().view_detached_from_scene().view_id == view_->id());
           OnViewAttachedChanged(false);
 
           // Detach the surface view. This is necessary to ensure that the
           // current content doesn't become visible when the view is attached
           // again.
-          render_node_.DetachChildren();
+          render_node_->DetachChildren();
           surface_view_holder_.reset();
-          safe_presenter_.QueuePresent();
+          safe_presenter_->QueuePresent();
 
           // Destroy and recreate AcceleratedWidget. This will force the
           // compositor drop the current LayerTreeFrameSink together with the
@@ -338,8 +381,6 @@ void ScenicWindow::OnScenicEvents(
         default:
           break;
       }
-    } else if (event.is_input()) {
-      OnInputEvent(event.input());
     }
   }
 }
@@ -369,14 +410,12 @@ void ScenicWindow::OnViewProperties(
     UpdateSize();
 }
 
-void ScenicWindow::OnInputEvent(const fuchsia::ui::input::InputEvent& event) {
-  if (event.is_focus()) {
-    delegate_->OnActivationChanged(event.focus().focused);
-  } else {
-    // Scenic doesn't care if the input event was handled, so ignore the
-    // "handled" status.
-    std::ignore = event_dispatcher_.ProcessEvent(event);
-  }
+void ScenicWindow::OnViewRefFocusedWatchResult(
+    fuchsia::ui::views::FocusState focus_state) {
+  delegate_->OnActivationChanged(focus_state.focused());
+
+  view_ref_focused_->Watch(
+      fit::bind_member(this, &ScenicWindow::OnViewRefFocusedWatchResult));
 }
 
 void ScenicWindow::UpdateSize() {
@@ -388,6 +427,7 @@ void ScenicWindow::UpdateSize() {
   const float height = view_properties_->bounding_box.max.y -
                        view_properties_->bounding_box.min.y;
 
+  const gfx::Point old_origin = bounds_.origin();
   bounds_ = gfx::Rect(ceilf(width * device_pixel_ratio_),
                       ceilf(height * device_pixel_ratio_));
 
@@ -398,21 +438,20 @@ void ScenicWindow::UpdateSize() {
 
   // Translate the node by half of the view dimensions to put it in the center
   // of the view.
-  node_.SetTranslation(width / 2.0, height / 2.0, 0.f);
+  node_->SetTranslation(width / 2.0, height / 2.0, 0.f);
 
   // Scale the render node so that surface rect can always be 1x1.
-  render_node_.SetScale(width, height, 1.f);
+  render_node_->SetScale(width, height, 1.f);
 
   // Resize input node to cover the whole surface.
-  scenic::Rectangle window_rect(&scenic_session_, width, height);
-  input_node_.SetShape(window_rect);
+  scenic::Rectangle window_rect(&scenic_session_.value(), width, height);
+  input_node_->SetShape(window_rect);
 
   // This is necessary when using vulkan because ImagePipes are presented
   // separately and we need to make sure our sizes change is committed.
-  safe_presenter_.QueuePresent();
+  safe_presenter_->QueuePresent();
 
-  PlatformWindowDelegate::BoundsChange bounds;
-  bounds.bounds = bounds_;
+  PlatformWindowDelegate::BoundsChange bounds(old_origin != bounds_.origin());
   bounds.system_ui_overlap =
       ConvertInsets(device_pixel_ratio_, *view_properties_);
   delegate_->OnBoundsChanged(bounds);
@@ -422,10 +461,13 @@ bool ScenicWindow::UpdateRootNodeVisibility() {
   bool should_show_root_node = is_visible_ && !is_zero_sized();
   if (should_show_root_node != is_root_node_shown_) {
     is_root_node_shown_ = should_show_root_node;
-    if (should_show_root_node)
-      view_.AddChild(node_);
-    else
-      node_.Detach();
+    if (should_show_root_node) {
+      // Attach nodes to render content and receive input.
+      node_->AddChild(*input_node_);
+      node_->AddChild(*render_node_);
+    } else {
+      node_->DetachChildren();
+    }
   }
   return is_root_node_shown_;
 }

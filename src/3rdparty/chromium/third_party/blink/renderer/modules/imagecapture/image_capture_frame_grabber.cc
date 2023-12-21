@@ -1,9 +1,10 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/modules/imagecapture/image_capture_frame_grabber.h"
 
+#include "base/task/single_thread_task_runner.h"
 #include "cc/paint/skia_paint_canvas.h"
 #include "media/base/bind_to_current_loop.h"
 #include "media/base/video_frame.h"
@@ -193,14 +194,15 @@ void ImageCaptureFrameGrabber::SingleShotFrameHandler::ConvertAndDeliverFrame(
           media::PIXEL_FORMAT_I420, original_size, gfx::Rect(original_size),
           original_size, base::TimeDelta());
 
-      libyuv::NV12ToI420(y_plane, y_stride, uv_plane, uv_stride,
-                         i420_frame->visible_data(media::VideoFrame::kYPlane),
-                         i420_frame->stride(media::VideoFrame::kYPlane),
-                         i420_frame->visible_data(media::VideoFrame::kUPlane),
-                         i420_frame->stride(media::VideoFrame::kUPlane),
-                         i420_frame->visible_data(media::VideoFrame::kVPlane),
-                         i420_frame->stride(media::VideoFrame::kVPlane),
-                         original_size.width(), original_size.height());
+      libyuv::NV12ToI420(
+          y_plane, y_stride, uv_plane, uv_stride,
+          i420_frame->GetWritableVisibleData(media::VideoFrame::kYPlane),
+          i420_frame->stride(media::VideoFrame::kYPlane),
+          i420_frame->GetWritableVisibleData(media::VideoFrame::kUPlane),
+          i420_frame->stride(media::VideoFrame::kUPlane),
+          i420_frame->GetWritableVisibleData(media::VideoFrame::kVPlane),
+          i420_frame->stride(media::VideoFrame::kVPlane), original_size.width(),
+          original_size.height());
     } else {
       switch (destination_pixel_format) {
         case libyuv::FOURCC_ABGR:
@@ -252,11 +254,11 @@ void ImageCaptureFrameGrabber::SingleShotFrameHandler::ConvertAndDeliverFrame(
           i420_frame->stride(media::VideoFrame::kUPlane),
           i420_frame->visible_data(media::VideoFrame::kVPlane),
           i420_frame->stride(media::VideoFrame::kVPlane),
-          rotated_frame->visible_data(media::VideoFrame::kYPlane),
+          rotated_frame->GetWritableVisibleData(media::VideoFrame::kYPlane),
           rotated_frame->stride(media::VideoFrame::kYPlane),
-          rotated_frame->visible_data(media::VideoFrame::kUPlane),
+          rotated_frame->GetWritableVisibleData(media::VideoFrame::kUPlane),
           rotated_frame->stride(media::VideoFrame::kUPlane),
-          rotated_frame->visible_data(media::VideoFrame::kVPlane),
+          rotated_frame->GetWritableVisibleData(media::VideoFrame::kVPlane),
           rotated_frame->stride(media::VideoFrame::kVPlane),
           original_size.width(), original_size.height(), libyuv_rotate);
       i420_frame = std::move(rotated_frame);
@@ -300,7 +302,7 @@ void ImageCaptureFrameGrabber::GrabFrame(
   DCHECK(!!callbacks);
 
   DCHECK(component && component->GetPlatformTrack());
-  DCHECK_EQ(MediaStreamSource::kTypeVideo, component->Source()->GetType());
+  DCHECK_EQ(MediaStreamSource::kTypeVideo, component->GetSourceType());
 
   if (frame_grab_in_progress_) {
     // Reject grabFrame()s too close back to back.
@@ -308,8 +310,9 @@ void ImageCaptureFrameGrabber::GrabFrame(
     return;
   }
 
-  auto scoped_callbacks =
-      MakeScopedWebCallbacks(std::move(callbacks), WTF::Bind(&OnError));
+  auto scoped_callbacks = MakeScopedWebCallbacks(
+      std::move(callbacks),
+      base::BindPostTask(task_runner, WTF::BindOnce(&OnError)));
 
   // A SingleShotFrameHandler is bound and given to the Track to guarantee that
   // only one VideoFrame is converted and delivered to OnSkImage(), otherwise

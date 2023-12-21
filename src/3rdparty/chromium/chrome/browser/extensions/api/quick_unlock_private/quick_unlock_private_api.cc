@@ -1,18 +1,17 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "chrome/browser/extensions/api/quick_unlock_private/quick_unlock_private_api.h"
 
-#include <algorithm>
 #include <string>
 #include <utility>
 
-#include "ash/components/login/auth/extended_authenticator.h"
-#include "ash/components/login/auth/user_context.h"
+#include "ash/constants/ash_features.h"
 #include "ash/constants/ash_pref_names.h"
-#include "base/bind.h"
 #include "base/containers/contains.h"
+#include "base/functional/bind.h"
+#include "base/ranges/algorithm.h"
 #include "chrome/browser/ash/login/quick_unlock/auth_token.h"
 #include "chrome/browser/ash/login/quick_unlock/pin_backend.h"
 #include "chrome/browser/ash/login/quick_unlock/quick_unlock_factory.h"
@@ -23,6 +22,8 @@
 #include "chrome/browser/extensions/api/quick_unlock_private/quick_unlock_private_ash_utils.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "chromeos/ash/components/login/auth/public/authentication_error.h"
+#include "chromeos/ash/components/login/auth/public/user_context.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
@@ -99,8 +100,8 @@ bool AreModesEqual(const QuickUnlockModeList& a, const QuickUnlockModeList& b) {
 
   // This is a slow comparison algorithm, but the number of entries in |a| and
   // |b| will always be very low (0-3 items) so it doesn't matter.
-  for (size_t i = 0; i < a.size(); ++i) {
-    if (!base::Contains(b, a[i]))
+  for (auto mode : a) {
+    if (!base::Contains(b, mode))
       return false;
   }
 
@@ -108,7 +109,7 @@ bool AreModesEqual(const QuickUnlockModeList& a, const QuickUnlockModeList& b) {
 }
 
 bool IsPinNumeric(const std::string& pin) {
-  return std::all_of(pin.begin(), pin.end(), ::isdigit);
+  return base::ranges::all_of(pin, ::isdigit);
 }
 
 // Reads and sanitizes the pin length policy.
@@ -212,17 +213,7 @@ QuickUnlockPrivateGetAuthTokenFunction::QuickUnlockPrivateGetAuthTokenFunction()
     : chrome_details_(this) {}
 
 QuickUnlockPrivateGetAuthTokenFunction::
-    ~QuickUnlockPrivateGetAuthTokenFunction() {
-  if (extended_authenticator_)
-    extended_authenticator_->SetConsumer(nullptr);
-}
-
-void QuickUnlockPrivateGetAuthTokenFunction::
-    SetAuthenticatorAllocatorForTesting(
-        const QuickUnlockPrivateGetAuthTokenFunction::AuthenticatorAllocator&
-            allocator) {
-  authenticator_allocator_ = allocator;
-}
+    ~QuickUnlockPrivateGetAuthTokenFunction() = default;
 
 ExtensionFunction::ResponseAction
 QuickUnlockPrivateGetAuthTokenFunction::Run() {
@@ -230,45 +221,29 @@ QuickUnlockPrivateGetAuthTokenFunction::Run() {
       quick_unlock_private::GetAuthToken::Params::Create(args());
   EXTENSION_FUNCTION_VALIDATE(params);
 
-  scoped_refptr<QuickUnlockPrivateGetAuthTokenHelper> helper =
-      base::MakeRefCounted<QuickUnlockPrivateGetAuthTokenHelper>(
-          GetActiveProfile(browser_context()));
+  Profile* profile = GetActiveProfile(browser_context());
 
-  // Lazily allocate the authenticator. We do this here, instead of in the ctor,
-  // so that tests can install a fake.
-  DCHECK(!extended_authenticator_);
-  if (authenticator_allocator_) {
-    extended_authenticator_ = authenticator_allocator_.Run(helper.get());
-  } else {
-    extended_authenticator_ = ash::ExtendedAuthenticator::Create(helper.get());
-  }
-
-  // The extension function needs to stay alive while the authenticator runs the
-  // password check via |helper|, so add ref before the authenticator starts,
-  // and remove the ref at the end of OnResult() call
-  AddRef();
-
-  helper->Run(extended_authenticator_.get(), params->account_password,
-              base::BindOnce(&QuickUnlockPrivateGetAuthTokenFunction::OnResult,
-                             base::Unretained(this)));
-
+  DCHECK(!helper_);
+  helper_ = std::make_unique<QuickUnlockPrivateGetAuthTokenHelper>(
+      profile, params->account_password);
+  auto callback = base::BindOnce(
+      &QuickUnlockPrivateGetAuthTokenFunction::OnResult, WrapRefCounted(this));
+  helper_->Run(std::move(callback));
   return RespondLater();
 }
 
 void QuickUnlockPrivateGetAuthTokenFunction::OnResult(
-    bool success,
-    std::unique_ptr<api::quick_unlock_private::TokenInfo> token_info,
-    const std::string& error_message) {
-  if (success) {
-    DCHECK(token_info);
-    Respond(ArgumentList(
-        quick_unlock_private::GetAuthToken::Results::Create(*token_info)));
-  } else {
-    DCHECK(!error_message.empty());
-    Respond(Error(error_message));
+    absl::optional<api::quick_unlock_private::TokenInfo> token_info,
+    absl::optional<ash::AuthenticationError> error) {
+  if (!token_info.has_value()) {
+    DCHECK(error.has_value());
+    Respond(
+        Error(LegacyQuickUnlockPrivateGetAuthTokenHelper::kPasswordIncorrect));
+    return;
   }
 
-  Release();  // Balanced in Run().
+  Respond(ArgumentList(quick_unlock_private::GetAuthToken::Results::Create(
+      std::move(*token_info))));
 }
 
 // quickUnlockPrivate.setLockScreenEnabled
@@ -518,8 +493,8 @@ ExtensionFunction::ResponseAction QuickUnlockPrivateSetModesFunction::Run() {
 
   // Do not allow setting a PIN if it is disabled by policy. It is disabled
   // on the UI, but users can still reach here via dev tools.
-  for (size_t i = 0; i < params_->modes.size(); ++i) {
-    if (params_->modes[i] == QuickUnlockMode::QUICK_UNLOCK_MODE_PIN &&
+  for (auto& mode : params_->modes) {
+    if (mode == QuickUnlockMode::QUICK_UNLOCK_MODE_PIN &&
         ash::quick_unlock::IsPinDisabledByPolicy(
             pref_service, ash::quick_unlock::Purpose::kAny)) {
       return RespondNow(Error(kPinDisabledByPolicy));

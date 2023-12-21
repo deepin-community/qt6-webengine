@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,7 @@
 #include <limits>
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/time/time.h"
 #include "net/base/net_errors.h"
 #include "services/network/throttling/network_conditions.h"
@@ -18,7 +18,7 @@ namespace network {
 
 namespace {
 
-constexpr int64_t kPacketSize = 1500;
+constexpr int kPacketSize = 1500;
 
 base::TimeDelta CalculateTickLength(double throughput) {
   return throughput ? base::Seconds(kPacketSize / throughput)
@@ -288,8 +288,6 @@ void ThrottlingNetworkInterceptor::SetSuspendWhenOffline(bool suspend) {
 }
 
 int ThrottlingNetworkInterceptor::GetReadBufLen(int buf_len) const {
-  constexpr int kPacketSize = 1500;
-
   // Do not reduce read buffer length if download throttling is disabled because
   // it will slow down the download.
   if (!conditions_->download_throughput()) {

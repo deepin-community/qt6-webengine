@@ -1,10 +1,11 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/autofill/core/common/autofill_data_validation.h"
 
 #include "base/ranges/algorithm.h"
+#include "components/autofill/core/common/autofill_constants.h"
 #include "components/autofill/core/common/form_data.h"
 #include "components/autofill/core/common/form_field_data.h"
 #include "components/autofill/core/common/password_form_fill_data.h"
@@ -12,18 +13,12 @@
 
 namespace autofill {
 
-const size_t kMaxDataLength = 1024;
-
-// Allow enough space for all countries (roughly 300 distinct values) and all
-// timezones (roughly 400 distinct values), plus some extra wiggle room.
-const size_t kMaxListSize = 512;
-
 bool IsValidString(const std::string& str) {
-  return str.size() <= kMaxDataLength;
+  return str.size() <= kMaxStringLength;
 }
 
 bool IsValidString16(const std::u16string& str) {
-  return str.size() <= kMaxDataLength;
+  return str.size() <= kMaxStringLength;
 }
 
 bool IsValidGURL(const GURL& url) {
@@ -45,11 +40,10 @@ bool IsValidFormData(const FormData& form) {
 }
 
 bool IsValidPasswordFormFillData(const PasswordFormFillData& form) {
-  return IsValidString16(form.name) && IsValidGURL(form.url) &&
-         IsValidGURL(form.action) &&
-         IsValidFormFieldData(form.username_field) &&
-         IsValidFormFieldData(form.password_field) &&
-         IsValidString(form.preferred_realm) &&
+  return IsValidGURL(form.url) &&
+         IsValidString16(form.preferred_login.username) &&
+         IsValidString16(form.preferred_login.password) &&
+         IsValidString(form.preferred_login.realm) &&
          base::ranges::all_of(form.additional_logins, [](const auto& login) {
            return IsValidString16(login.username) &&
                   IsValidString16(login.password) && IsValidString(login.realm);

@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,6 +6,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_CREDENTIALMANAGEMENT_CREDENTIALS_CONTAINER_H_
 
 #include "third_party/blink/renderer/core/frame/navigator.h"
+#include "third_party/blink/renderer/modules/credentialmanagement/web_identity_requester.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
@@ -31,15 +32,22 @@ class MODULES_EXPORT CredentialsContainer final : public ScriptWrappable,
   explicit CredentialsContainer(Navigator&);
 
   // CredentialsContainer.idl
-  ScriptPromise get(ScriptState*, const CredentialRequestOptions*);
+  ScriptPromise get(ScriptState*,
+                    const CredentialRequestOptions*,
+                    ExceptionState&);
   ScriptPromise store(ScriptState*, Credential* = nullptr);
   ScriptPromise create(ScriptState*,
                        const CredentialCreationOptions*,
                        ExceptionState&);
   ScriptPromise preventSilentAccess(ScriptState*);
-  bool conditionalMediationSupported();
 
   void Trace(Visitor*) const override;
+
+ private:
+  class OtpRequestAbortAlgorithm;
+  class PublicKeyRequestAbortAlgorithm;
+
+  Member<WebIdentityRequester> web_identity_requester_;
 };
 
 }  // namespace blink

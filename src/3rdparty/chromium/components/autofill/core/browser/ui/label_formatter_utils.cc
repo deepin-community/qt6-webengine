@@ -1,15 +1,14 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/autofill/core/browser/ui/label_formatter_utils.h"
 
-#include <algorithm>
 #include <iterator>
 #include <memory>
 
-#include "base/bind.h"
-#include "base/callback.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/ranges/algorithm.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -86,17 +85,11 @@ std::u16string ConstructMobileLabelLine(
 bool IsNonStreetAddressPart(ServerFieldType type) {
   switch (type) {
     case ADDRESS_HOME_CITY:
-    case ADDRESS_BILLING_CITY:
     case ADDRESS_HOME_ZIP:
-    case ADDRESS_BILLING_ZIP:
     case ADDRESS_HOME_STATE:
-    case ADDRESS_BILLING_STATE:
     case ADDRESS_HOME_COUNTRY:
-    case ADDRESS_BILLING_COUNTRY:
     case ADDRESS_HOME_SORTING_CODE:
-    case ADDRESS_BILLING_SORTING_CODE:
     case ADDRESS_HOME_DEPENDENT_LOCALITY:
-    case ADDRESS_BILLING_DEPENDENT_LOCALITY:
       return true;
     default:
       return false;
@@ -108,13 +101,8 @@ bool IsStreetAddressPart(ServerFieldType type) {
     case ADDRESS_HOME_LINE1:
     case ADDRESS_HOME_LINE2:
     case ADDRESS_HOME_APT_NUM:
-    case ADDRESS_BILLING_LINE1:
-    case ADDRESS_BILLING_LINE2:
-    case ADDRESS_BILLING_APT_NUM:
     case ADDRESS_HOME_STREET_ADDRESS:
-    case ADDRESS_BILLING_STREET_ADDRESS:
     case ADDRESS_HOME_LINE3:
-    case ADDRESS_BILLING_LINE3:
       return true;
     default:
       return false;
@@ -141,9 +129,8 @@ std::vector<ServerFieldType> ExtractSpecifiedAddressFieldTypes(
   };
 
   std::vector<ServerFieldType> extracted_address_types;
-  std::copy_if(types.begin(), types.end(),
-               std::back_inserter(extracted_address_types),
-               should_be_extracted);
+  base::ranges::copy_if(types, std::back_inserter(extracted_address_types),
+                        should_be_extracted);
 
   return extracted_address_types;
 }
@@ -152,11 +139,10 @@ std::vector<ServerFieldType> TypesWithoutFocusedField(
     const std::vector<ServerFieldType>& types,
     ServerFieldType field_type_to_remove) {
   std::vector<ServerFieldType> types_without_field;
-  std::copy_if(types.begin(), types.end(),
-               std::back_inserter(types_without_field),
-               [&field_type_to_remove](ServerFieldType type) -> bool {
-                 return type != field_type_to_remove;
-               });
+  base::ranges::copy_if(types, std::back_inserter(types_without_field),
+                        [&field_type_to_remove](ServerFieldType type) {
+                          return type != field_type_to_remove;
+                        });
   return types_without_field;
 }
 
@@ -166,7 +152,8 @@ AutofillProfile MakeTrimmedProfile(const AutofillProfile& profile,
   AutofillProfile trimmed_profile(profile.guid(), profile.origin());
   trimmed_profile.set_language_code(profile.language_code());
 
-  const AutofillType country_code_type(HTML_TYPE_COUNTRY_CODE, HTML_MODE_NONE);
+  const AutofillType country_code_type(HtmlFieldType::kCountryCode,
+                                       HtmlFieldMode::kNone);
   const std::u16string country_code =
       profile.GetInfo(country_code_type, app_locale);
   trimmed_profile.SetInfo(country_code_type, country_code, app_locale);

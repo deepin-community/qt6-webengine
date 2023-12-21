@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,8 +6,8 @@
 #define UI_GFX_SKIA_COLOR_SPACE_UTIL_H_
 
 #include "third_party/skia/include/core/SkColorSpace.h"
-#include "third_party/skia/include/core/SkICC.h"
 #include "third_party/skia/include/core/SkM44.h"
+#include "third_party/skia/modules/skcms/skcms.h"
 #include "ui/gfx/color_space_export.h"
 
 namespace gfx {

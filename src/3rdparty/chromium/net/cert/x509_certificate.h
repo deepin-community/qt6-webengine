@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -18,7 +18,6 @@
 #include "base/time/time.h"
 #include "net/base/hash_value.h"
 #include "net/base/net_export.h"
-#include "net/cert/cert_status_flags.h"
 #include "net/cert/x509_cert_types.h"
 #include "third_party/boringssl/src/include/openssl/base.h"
 
@@ -266,7 +265,7 @@ class NET_EXPORT X509Certificate
   SHA256HashValue CalculateChainFingerprint256() const;
 
   // Returns true if the certificate is self-signed.
-  static bool IsSelfSigned(const CRYPTO_BUFFER* cert_buffer);
+  static bool IsSelfSigned(CRYPTO_BUFFER* cert_buffer);
 
  private:
   friend class base::RefCountedThreadSafe<X509Certificate>;

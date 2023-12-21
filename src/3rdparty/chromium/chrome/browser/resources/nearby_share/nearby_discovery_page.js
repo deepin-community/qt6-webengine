@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,30 +7,27 @@
  * the Nearby Share flow. It shows a list of devices to select from.
  */
 
-import 'chrome://resources/cr_elements/cr_button/cr_button.m.js';
-import 'chrome://resources/cr_elements/cr_lottie/cr_lottie.m.js';
-import 'chrome://resources/mojo/mojo/public/js/mojo_bindings_lite.js';
-import 'chrome://resources/mojo/mojo/public/mojom/base/unguessable_token.mojom-lite.js';
-import 'chrome://resources/mojo/url/mojom/url.mojom-lite.js';
+import 'chrome://resources/cr_elements/cr_button/cr_button.js';
+import 'chrome://resources/cr_elements/cr_lottie/cr_lottie.js';
 import 'chrome://resources/polymer/v3_0/iron-media-query/iron-media-query.js';
 import 'chrome://resources/polymer/v3_0/iron-list/iron-list.js';
 import './shared/nearby_device.js';
-import './mojo/nearby_share_target_types.mojom-lite.js';
-import './mojo/nearby_share_share_type.mojom-lite.js';
-import './mojo/nearby_share.mojom-lite.js';
 import './shared/nearby_page_template.js';
 import './shared/nearby_preview.js';
 import './strings.m.js';
 
-import {assert, assertNotReached} from 'chrome://resources/js/assert.m.js';
-import {I18nBehavior} from 'chrome://resources/js/i18n_behavior.m.js';
-import {html, Polymer} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+import {ConfirmationManagerInterface, DiscoveryObserverInterface, DiscoveryObserverReceiver, PayloadPreview, SelectShareTargetResult, ShareTarget, ShareTargetListenerCallbackRouter, StartDiscoveryResult, TransferUpdateListenerPendingReceiver} from '/mojo/nearby_share.mojom-webui.js';
+import {assert, assertNotReached} from 'chrome://resources/ash/common/assert.js';
+import {I18nBehavior, I18nBehaviorInterface} from 'chrome://resources/ash/common/i18n_behavior.js';
+import {UnguessableToken} from 'chrome://resources/mojo/mojo/public/mojom/base/unguessable_token.mojom-webui.js';
+import {mixinBehaviors, PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {getDiscoveryManager, observeDiscoveryManager} from './discovery_manager.js';
+import {getTemplate} from './nearby_discovery_page.html.js';
 
 /**
  * Converts an unguessable token to a string.
- * @param {!mojoBase.mojom.UnguessableToken} token
+ * @param {!UnguessableToken} token
  * @return {!string}
  */
 function tokenToString(token) {
@@ -39,8 +36,8 @@ function tokenToString(token) {
 
 /**
  * Compares two unguessable tokens.
- * @param {!mojoBase.mojom.UnguessableToken} a
- * @param {!mojoBase.mojom.UnguessableToken} b
+ * @param {!UnguessableToken} a
+ * @param {!UnguessableToken} b
  */
 function tokensEqual(a, b) {
   return a.high === b.high && a.low === b.low;
@@ -57,137 +54,163 @@ const PULSE_ANIMATION_URL_LIGHT = 'nearby_share_pulse_animation_light.json';
  */
 const PULSE_ANIMATION_URL_DARK = 'nearby_share_pulse_animation_dark.json';
 
-Polymer({
-  is: 'nearby-discovery-page',
 
-  behaviors: [I18nBehavior],
+/**
+ * @constructor
+ * @extends {PolymerElement}
+ * @implements {I18nBehaviorInterface}
+ */
+const NearbyDiscoveryPageElementBase =
+    mixinBehaviors([I18nBehavior], PolymerElement);
 
-  _template: html`{__html_template__}`,
+/** @polymer */
+export class NearbyDiscoveryPageElement extends NearbyDiscoveryPageElementBase {
+  static get is() {
+    return 'nearby-discovery-page';
+  }
 
-  properties: {
-    /**
-     * Preview info for the file(s) to be shared.
-     * @type {?nearbyShare.mojom.PayloadPreview}
-     */
-    payloadPreview: {
-      notify: true,
-      type: Object,
-      value: null,
-    },
+  static get template() {
+    return getTemplate();
+  }
 
-    /**
-     * ConfirmationManager interface for the currently selected share target.
-     * @type {?nearbyShare.mojom.ConfirmationManagerInterface}
-     */
-    confirmationManager: {
-      notify: true,
-      type: Object,
-      value: null,
-    },
+  static get properties() {
+    return {
+      /**
+       * Preview info for the file(s) to be shared.
+       * @type {?PayloadPreview}
+       */
+      payloadPreview: {
+        notify: true,
+        type: Object,
+        value: null,
+      },
 
-    /**
-     * TransferUpdateListener interface for the currently selected share target.
-     * @type {?nearbyShare.mojom.TransferUpdateListenerPendingReceiver}
-     */
-    transferUpdateListener: {
-      notify: true,
-      type: Object,
-      value: null,
-    },
+      /**
+       * ConfirmationManager interface for the currently selected share target.
+       * @type {?ConfirmationManagerInterface}
+       */
+      confirmationManager: {
+        notify: true,
+        type: Object,
+        value: null,
+      },
 
-    /**
-     * The currently selected share target.
-     * @type {?nearbyShare.mojom.ShareTarget}
-     */
-    selectedShareTarget: {
-      notify: true,
-      type: Object,
-      value: null,
-    },
+      /**
+       * TransferUpdateListener interface for the currently selected share
+       * target.
+       * @type {?TransferUpdateListenerPendingReceiver}
+       */
+      transferUpdateListener: {
+        notify: true,
+        type: Object,
+        value: null,
+      },
 
-    /**
-     * A list of all discovered nearby share targets.
-     * @private {!Array<!nearbyShare.mojom.ShareTarget>}
-     */
-    shareTargets_: {
-      type: Array,
-      value: [],
-    },
+      /**
+       * The currently selected share target.
+       * @type {?ShareTarget}
+       */
+      selectedShareTarget: {
+        notify: true,
+        type: Object,
+        value: null,
+      },
 
-    /**
-     * Header text for error. The error section is not displayed if this is
-     * falsey.
-     * @private {?string}
-     */
-    errorTitle_: {
-      type: String,
-      value: null,
-    },
+      /**
+       * A list of all discovered nearby share targets.
+       * @private {!Array<!ShareTarget>}
+       */
+      shareTargets_: {
+        type: Array,
+        value: [],
+      },
 
-    /**
-     * Description text for error, displayed under the error title.
-     * @private {?string}
-     */
-    errorDescription_: {
-      type: String,
-      value: null,
-    },
+      /**
+       * Header text for error. The error section is not displayed if this is
+       * falsey.
+       * @private {?string}
+       */
+      errorTitle_: {
+        type: String,
+        value: null,
+      },
 
-    /**
-     * Whether the discovery page is being rendered in dark mode.
-     * @private {boolean}
-     */
-    isDarkModeActive_: {
-      type: Boolean,
-      value: false,
-    },
-  },
+      /**
+       * Description text for error, displayed under the error title.
+       * @private {?string}
+       */
+      errorDescription_: {
+        type: String,
+        value: null,
+      },
 
-  listeners: {
-    'next': 'onNext_',
-    'view-enter-start': 'onViewEnterStart_',
-    'view-exit-finish': 'onViewExitFinish_',
-    'on-click': 'onShareTargetClicked_',
-  },
+      /**
+       * Whether the discovery page is being rendered in dark mode.
+       * @private {boolean}
+       */
+      isDarkModeActive_: {
+        type: Boolean,
+        value: false,
+      },
+    };
+  }
 
-  /** @private {?nearbyShare.mojom.ShareTargetListenerCallbackRouter} */
-  mojoEventTarget_: null,
+  constructor() {
+    super();
 
-  /** @private {Array<number>} */
-  listenerIds_: null,
+    /** @private {?ShareTargetListenerCallbackRouter} */
+    this.mojoEventTarget_ = null;
 
-  /** @private {Map<!string,!nearbyShare.mojom.ShareTarget>} */
-  shareTargetMap_: null,
+    /** @private {Array<number>} */
+    this.listenerIds_ = null;
 
-  /** @private {?nearbyShare.mojom.DiscoveryObserverReceiver} */
-  discoveryObserver_: null,
+    /** @private {Map<!string,!ShareTarget>} */
+    this.shareTargetMap_ = null;
+
+    /** @private {?DiscoveryObserverReceiver} */
+    this.discoveryObserver_ = null;
+  }
 
   /** @override */
-  attached() {
+  connectedCallback() {
+    super.connectedCallback();
+
     this.shareTargetMap_ = new Map();
     this.clearShareTargets_();
     this.discoveryObserver_ = observeDiscoveryManager(
-        /** @type {!nearbyShare.mojom.DiscoveryObserverInterface} */ (this));
-  },
+        /** @type {!DiscoveryObserverInterface} */ (this));
+  }
+
 
   /** @override */
-  detached() {
+  ready() {
+    super.ready();
+
+    this.addEventListener('next', this.onNext_);
+    this.addEventListener('view-enter-start', this.onViewEnterStart_);
+    this.addEventListener('view-exit-finish', this.onViewExitFinish_);
+  }
+
+  /** @override */
+  disconnectedCallback() {
+    super.disconnectedCallback();
+
     this.stopDiscovery_();
     if (this.discoveryObserver_) {
       this.discoveryObserver_.$.close();
     }
-  },
+  }
 
   /**
-   * @return {!Array<!nearbyShare.mojom.ShareTarget>}
+   * @return {!Array<!ShareTarget>}
    * @public
    */
   getShareTargetsForTesting() {
     return this.shareTargets_;
-  },
+  }
 
   /**
-   * @param {nearbyShare.mojom.ShareTarget} shareTarget
+   * @param {ShareTarget} shareTarget
    * @return {boolean} True if share target found
    * @public
    */
@@ -198,17 +221,17 @@ Polymer({
       return true;
     }
     return false;
-  },
+  }
 
   /** @private */
   onViewEnterStart_() {
     this.startDiscovery_();
-  },
+  }
 
   /** @private */
   onViewExitFinish_() {
     this.stopDiscovery_();
-  },
+  }
 
   /** @private */
   startDiscovery_() {
@@ -218,8 +241,7 @@ Polymer({
 
     this.clearShareTargets_();
 
-    this.mojoEventTarget_ =
-        new nearbyShare.mojom.ShareTargetListenerCallbackRouter();
+    this.mojoEventTarget_ = new ShareTargetListenerCallbackRouter();
 
     this.listenerIds_ = [
       this.mojoEventTarget_.onShareTargetDiscovered.addListener(
@@ -236,19 +258,17 @@ Polymer({
         .startDiscovery(this.mojoEventTarget_.$.bindNewPipeAndPassRemote())
         .then(response => {
           switch (response.result) {
-            case nearbyShare.mojom.StartDiscoveryResult.kErrorGeneric:
+            case StartDiscoveryResult.kErrorGeneric:
               this.errorTitle_ = this.i18n('nearbyShareErrorCantShare');
               this.errorDescription_ =
                   this.i18n('nearbyShareErrorSomethingWrong');
               return;
-            case nearbyShare.mojom.StartDiscoveryResult
-                .kErrorInProgressTransferring:
+            case StartDiscoveryResult.kErrorInProgressTransferring:
               this.errorTitle_ = this.i18n('nearbyShareErrorCantShare');
               this.errorDescription_ =
                   this.i18n('nearbyShareErrorTransferInProgress');
               return;
-            case nearbyShare.mojom.StartDiscoveryResult
-                .kNoConnectionMedium:
+            case StartDiscoveryResult.kNoConnectionMedium:
               this.errorTitle_ =
                   this.i18n('nearbyShareErrorNoConnectionMedium');
               this.errorDescription_ =
@@ -256,7 +276,7 @@ Polymer({
               return;
           }
         });
-  },
+  }
 
   /** @private */
   stopDiscovery_() {
@@ -269,7 +289,7 @@ Polymer({
         id => assert(this.mojoEventTarget_.removeListener(id)));
     this.mojoEventTarget_.$.close();
     this.mojoEventTarget_ = null;
-  },
+  }
 
   /**
    * Mojo callback when the Nearby utility process stops.
@@ -280,7 +300,7 @@ Polymer({
       this.errorTitle_ = this.i18n('nearbyShareErrorCantShare');
       this.errorDescription_ = this.i18n('nearbyShareErrorSomethingWrong');
     }
-  },
+  }
 
   /**
    * Mojo callback when discovery is started.
@@ -292,7 +312,7 @@ Polymer({
       this.errorTitle_ = this.i18n('nearbyShareErrorCantShare');
       this.errorDescription_ = this.i18n('nearbyShareErrorSomethingWrong');
     }
-  },
+  }
 
   /** @private */
   clearShareTargets_() {
@@ -300,7 +320,7 @@ Polymer({
       this.shareTargetMap_.clear();
     }
     this.shareTargets_ = [];
-  },
+  }
 
   /**
    * Guides selection process for share target list, which is used by
@@ -330,7 +350,7 @@ Polymer({
         this.selectShareTargetOnUserInput_(currentShareTarget);
         break;
     }
-  },
+  }
 
   /**
    * Focuses the element that corresponds to the share target at |index|.
@@ -338,13 +358,13 @@ Polymer({
    * @private
    */
   focusShareTarget_(index) {
-    const container = this.$$('.device-list-container');
+    const container = this.shadowRoot.querySelector('.device-list-container');
     const nearbyDeviceElements = container.querySelectorAll('nearby-device');
 
     if (index >= 0 && index < nearbyDeviceElements.length) {
       nearbyDeviceElements[index].focus();
     }
-  },
+  }
 
   /**
    * Selects the shareTarget when clicked.
@@ -355,13 +375,13 @@ Polymer({
     event.preventDefault();
     const currentShareTarget = event.currentTarget.shareTarget;
     this.selectShareTargetOnUserInput_(currentShareTarget);
-  },
+  }
 
   /**
    * Selects the shareTarget when selected by the user, either through click
    * or key press.
    * @private
-   * @param {!nearbyShare.mojom.ShareTarget} shareTarget
+   * @param {!ShareTarget} shareTarget
    */
   selectShareTargetOnUserInput_(shareTarget) {
     if (this.isShareTargetSelected_(shareTarget)) {
@@ -369,23 +389,23 @@ Polymer({
     }
 
     this.selectedShareTarget = shareTarget;
-    const selector = this.$$('#selector');
+    const selector = this.shadowRoot.querySelector('#selector');
     selector.select(this.selectedShareTarget);
-  },
+  }
 
   /**
    * @private
-   * @param {!nearbyShare.mojom.ShareTarget} shareTarget
+   * @param {!ShareTarget} shareTarget
    * @return {boolean} True if shareTarget is currently selected
    */
   isShareTargetSelected_(shareTarget) {
     return !!this.selectedShareTarget && !!shareTarget &&
         tokensEqual(this.selectedShareTarget.id, shareTarget.id);
-  },
+  }
 
   /**
    * @private
-   * @param {!nearbyShare.mojom.ShareTarget} shareTarget The discovered device.
+   * @param {!ShareTarget} shareTarget The discovered device.
    */
   onShareTargetDiscovered_(shareTarget) {
     const shareTargetId = tokenToString(shareTarget.id);
@@ -399,11 +419,11 @@ Polymer({
       this.updateSelectedShareTarget_(shareTarget.id, shareTarget);
     }
     this.shareTargetMap_.set(shareTargetId, shareTarget);
-  },
+  }
 
   /**
    * @private
-   * @param {!nearbyShare.mojom.ShareTarget} shareTarget The lost device.
+   * @param {!ShareTarget} shareTarget The lost device.
    */
   onShareTargetLost_(shareTarget) {
     const index = this.shareTargets_.findIndex(
@@ -412,24 +432,24 @@ Polymer({
     this.splice('shareTargets_', index, 1);
     this.shareTargetMap_.delete(tokenToString(shareTarget.id));
     this.updateSelectedShareTarget_(shareTarget.id, /*shareTarget=*/ null);
-  },
+  }
 
   /** @private */
   onNext_() {
     if (this.selectedShareTarget) {
       this.selectShareTarget_(this.selectedShareTarget);
     }
-  },
+  }
 
   /**
    * Select the given share target and proceed to the confirmation page.
-   * @param {!nearbyShare.mojom.ShareTarget} shareTarget
+   * @param {!ShareTarget} shareTarget
    * @private
    */
   selectShareTarget_(shareTarget) {
     getDiscoveryManager().selectShareTarget(shareTarget.id).then(response => {
       const {result, transferUpdateListener, confirmationManager} = response;
-      if (result !== nearbyShare.mojom.SelectShareTargetResult.kOk) {
+      if (result !== SelectShareTargetResult.kOk) {
         this.errorTitle_ = this.i18n('nearbyShareErrorCantShare');
         this.errorDescription_ = this.i18n('nearbyShareErrorSomethingWrong');
         return;
@@ -437,30 +457,32 @@ Polymer({
 
       this.confirmationManager = confirmationManager;
       this.transferUpdateListener = transferUpdateListener;
-      this.fire('change-page', {page: 'confirmation'});
+      this.dispatchEvent(new CustomEvent(
+          'change-page',
+          {bubles: true, composed: true, detail: {page: 'confirmation'}}));
     });
-  },
+  }
 
   /** @private */
   onSelectedShareTargetChanged_() {
-    const deviceList = this.$$('#deviceList');
-    const selector = this.$$('#selector');
+    const deviceList = this.shadowRoot.querySelector('#deviceList');
+    const selector = this.shadowRoot.querySelector('#selector');
     if (!deviceList) {
       // deviceList is in dom-if and may not be found
       return;
     }
 
     this.selectedShareTarget = selector.selectedItem;
-  },
+  }
 
   /**
-   * @param {!nearbyShare.mojom.ShareTarget} shareTarget
+   * @param {!ShareTarget} shareTarget
    * @return {string}
    * @private
    */
   isShareTargetSelectedToString_(shareTarget) {
     return this.isShareTargetSelected_(shareTarget).toString();
-  },
+  }
 
   /**
    * @return {boolean}
@@ -468,30 +490,30 @@ Polymer({
    */
   isShareTargetsEmpty_() {
     return this.shareTargets_.length === 0;
-  },
+  }
 
   /**
    * Updates the selected share target to |shareTarget| if its id matches |id|.
-   * @param {!mojoBase.mojom.UnguessableToken} id
-   * @param {?nearbyShare.mojom.ShareTarget} shareTarget
+   * @param {!UnguessableToken} id
+   * @param {?ShareTarget} shareTarget
    * @private
    */
   updateSelectedShareTarget_(id, shareTarget) {
     if (this.selectedShareTarget &&
         tokensEqual(this.selectedShareTarget.id, id)) {
       this.selectedShareTarget = shareTarget;
-      const selector = this.$$('#selector');
+      const selector = this.shadowRoot.querySelector('#selector');
       selector.select(this.selectedShareTarget);
     }
-  },
+  }
 
-  /*
+  /**
    * If the shareTarget is the first in the list, it's tab index should be 0
    * if there is no current selected share target. Otherwise, the tab index
    * should be 0 if it is the current selected share target. Tab index of 0
    *  allows users to navigate to it with tabs, and others should be -1
    * so users will not navigate to by tab.
-   * @param {?nearbyShare.mojom.ShareTarget} shareTarget
+   * @param {?ShareTarget} shareTarget
    * @return {string}
    * @private
    */
@@ -501,7 +523,7 @@ Polymer({
       return '0';
     }
     return '-1';
-  },
+  }
 
   /**
    * Builds the html for the help text, applying the appropriate aria labels,
@@ -559,7 +581,7 @@ Polymer({
     anchorTag.target = '_blank';
 
     return tempEl.innerHTML;
-  },
+  }
 
   /**
    * Returns the URL for the asset that defines the discovery page's
@@ -569,4 +591,7 @@ Polymer({
     return this.isDarkModeActive_ ? PULSE_ANIMATION_URL_DARK :
                                     PULSE_ANIMATION_URL_LIGHT;
   }
-});
+}
+
+customElements.define(
+    NearbyDiscoveryPageElement.is, NearbyDiscoveryPageElement);

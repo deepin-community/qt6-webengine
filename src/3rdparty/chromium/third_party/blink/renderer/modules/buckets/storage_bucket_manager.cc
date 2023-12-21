@@ -1,8 +1,10 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/modules/buckets/storage_bucket_manager.h"
+
+#include <cstdint>
 
 #include "third_party/blink/public/common/browser_interface_broker_proxy.h"
 #include "third_party/blink/public/platform/task_type.h"
@@ -13,6 +15,7 @@
 #include "third_party/blink/renderer/modules/buckets/storage_bucket.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
+#include "third_party/blink/renderer/platform/bindings/v8_throw_exception.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 #include "third_party/blink/renderer/platform/wtf/text/ascii_ctype.h"
@@ -22,14 +25,17 @@ namespace blink {
 namespace {
 
 bool IsValidName(const String& name) {
-  if (!name.IsLowerASCII())
+  if (!name.IsLowerASCII()) {
     return false;
+  }
 
-  if (!name.ContainsOnlyASCIIOrEmpty())
+  if (!name.ContainsOnlyASCIIOrEmpty()) {
     return false;
+  }
 
-  if (name.IsEmpty() || name.length() >= 64)
+  if (name.empty() || name.length() >= 64) {
     return false;
+  }
 
   // | name | must only contain lowercase latin letters, digits 0-9, or special
   // characters '-' & '_' in the middle of the name, but not at the beginning.
@@ -45,19 +51,29 @@ bool IsValidName(const String& name) {
 mojom::blink::BucketPoliciesPtr ToMojoBucketPolicies(
     const StorageBucketOptions* options) {
   auto policies = mojom::blink::BucketPolicies::New();
-  policies->persisted = options->persisted();
-  policies->quota = options->hasQuotaNonNull()
-                        ? options->quotaNonNull()
-                        : mojom::blink::kNoQuotaPolicyValue;
-
-  if (options->durability() == "strict") {
-    policies->durability = mojom::blink::BucketDurability::kStrict;
-  } else {
-    policies->durability = mojom::blink::BucketDurability::kRelaxed;
+  if (options->hasPersistedNonNull()) {
+    policies->persisted = options->persistedNonNull();
+    policies->has_persisted = true;
   }
 
-  if (options->hasExpiresNonNull())
-    policies->expires = base::Time::FromJavaTime(options->expiresNonNull());
+  if (options->hasQuotaNonNull()) {
+    DCHECK_LE(options->quotaNonNull(),
+              uint64_t{std::numeric_limits<int64_t>::max()});
+    policies->quota = options->quotaNonNull();
+    policies->has_quota = true;
+  }
+
+  if (options->hasDurabilityNonNull()) {
+    policies->durability = options->durabilityNonNull() == "strict"
+                               ? mojom::blink::BucketDurability::kStrict
+                               : mojom::blink::BucketDurability::kRelaxed;
+    policies->has_durability = true;
+  }
+
+  if (options->hasExpiresNonNull()) {
+    policies->expires = base::Time::FromJsTime(options->expiresNonNull());
+  }
+
   return policies;
 }
 
@@ -68,12 +84,11 @@ const char StorageBucketManager::kSupplementName[] = "StorageBucketManager";
 StorageBucketManager::StorageBucketManager(NavigatorBase& navigator)
     : Supplement<NavigatorBase>(navigator),
       ExecutionContextClient(navigator.GetExecutionContext()),
-      manager_remote_(navigator.GetExecutionContext()) {}
+      manager_remote_(navigator.GetExecutionContext()),
+      navigator_base_(navigator) {}
 
 StorageBucketManager* StorageBucketManager::storageBuckets(
-    ScriptState* script_state,
-    NavigatorBase& navigator,
-    ExceptionState& exception_state) {
+    NavigatorBase& navigator) {
   auto* supplement =
       Supplement<NavigatorBase>::From<StorageBucketManager>(navigator);
   if (!supplement) {
@@ -98,18 +113,25 @@ ScriptPromise StorageBucketManager::open(ScriptState* script_state,
   }
 
   if (!IsValidName(name)) {
-    resolver->Reject(MakeGarbageCollected<DOMException>(
-        DOMExceptionCode::kInvalidCharacterError,
+    resolver->Reject(V8ThrowException::CreateTypeError(
+        script_state->GetIsolate(),
         "The bucket name '" + name + "' is not a valid name."));
+    return promise;
+  }
+
+  if (options->hasQuotaNonNull() && options->quotaNonNull() == 0) {
+    resolver->Reject(V8ThrowException::CreateTypeError(
+        script_state->GetIsolate(), "The bucket's quota cannot equal zero."));
     return promise;
   }
 
   mojom::blink::BucketPoliciesPtr bucket_policies =
       ToMojoBucketPolicies(options);
   GetBucketManager(script_state)
-      ->OpenBucket(name, std::move(bucket_policies),
-                   WTF::Bind(&StorageBucketManager::DidOpen,
-                             WrapPersistent(this), WrapPersistent(resolver)));
+      ->OpenBucket(
+          name, std::move(bucket_policies),
+          WTF::BindOnce(&StorageBucketManager::DidOpen, WrapPersistent(this),
+                        WrapPersistent(resolver)));
   return promise;
 }
 
@@ -126,8 +148,8 @@ ScriptPromise StorageBucketManager::keys(ScriptState* script_state,
   }
 
   GetBucketManager(script_state)
-      ->Keys(WTF::Bind(&StorageBucketManager::DidGetKeys, WrapPersistent(this),
-                       WrapPersistent(resolver)));
+      ->Keys(WTF::BindOnce(&StorageBucketManager::DidGetKeys,
+                           WrapPersistent(this), WrapPersistent(resolver)));
   return promise;
 }
 
@@ -145,16 +167,16 @@ ScriptPromise StorageBucketManager::Delete(ScriptState* script_state,
   }
 
   if (!IsValidName(name)) {
-    resolver->Reject(MakeGarbageCollected<DOMException>(
-        DOMExceptionCode::kInvalidCharacterError,
+    resolver->Reject(V8ThrowException::CreateTypeError(
+        script_state->GetIsolate(),
         "The bucket name " + name + " is not a valid name."));
     return promise;
   }
 
   GetBucketManager(script_state)
-      ->DeleteBucket(name,
-                     WTF::Bind(&StorageBucketManager::DidDelete,
-                               WrapPersistent(this), WrapPersistent(resolver)));
+      ->DeleteBucket(
+          name, WTF::BindOnce(&StorageBucketManager::DidDelete,
+                              WrapPersistent(this), WrapPersistent(resolver)));
   return promise;
 }
 
@@ -173,28 +195,44 @@ mojom::blink::BucketManagerHost* StorageBucketManager::GetBucketManager(
 
 void StorageBucketManager::DidOpen(
     ScriptPromiseResolver* resolver,
-    mojo::PendingRemote<mojom::blink::BucketHost> bucket_remote) {
+    mojo::PendingRemote<mojom::blink::BucketHost> bucket_remote,
+    mojom::blink::BucketError error) {
   ScriptState* script_state = resolver->GetScriptState();
-  if (!script_state->ContextIsValid())
+  if (!script_state->ContextIsValid()) {
     return;
+  }
   ScriptState::Scope scope(script_state);
 
   if (!bucket_remote) {
-    resolver->Reject(MakeGarbageCollected<DOMException>(
-        DOMExceptionCode::kUnknownError,
-        "Unknown error occured while creating a bucket."));
-    return;
+    switch (error) {
+      case mojom::blink::BucketError::kUnknown:
+        resolver->Reject(MakeGarbageCollected<DOMException>(
+            DOMExceptionCode::kUnknownError,
+            "Unknown error occured while creating a bucket."));
+        return;
+      case mojom::blink::BucketError::kQuotaExceeded:
+        resolver->Reject(MakeGarbageCollected<DOMException>(
+            DOMExceptionCode::kQuotaExceededError,
+            "Too many buckets created."));
+        return;
+      case mojom::blink::BucketError::kInvalidExpiration:
+        resolver->Reject(V8ThrowException::CreateTypeError(
+            script_state->GetIsolate(), "The bucket expiration is invalid."));
+        return;
+    }
   }
+
   resolver->Resolve(MakeGarbageCollected<StorageBucket>(
-      GetExecutionContext(), std::move(bucket_remote)));
+      navigator_base_, std::move(bucket_remote)));
 }
 
 void StorageBucketManager::DidGetKeys(ScriptPromiseResolver* resolver,
                                       const Vector<String>& keys,
                                       bool success) {
   ScriptState* script_state = resolver->GetScriptState();
-  if (!script_state->ContextIsValid())
+  if (!script_state->ContextIsValid()) {
     return;
+  }
   ScriptState::Scope scope(script_state);
 
   if (!success) {
@@ -209,8 +247,9 @@ void StorageBucketManager::DidGetKeys(ScriptPromiseResolver* resolver,
 void StorageBucketManager::DidDelete(ScriptPromiseResolver* resolver,
                                      bool success) {
   ScriptState* script_state = resolver->GetScriptState();
-  if (!script_state->ContextIsValid())
+  if (!script_state->ContextIsValid()) {
     return;
+  }
   ScriptState::Scope scope(script_state);
 
   if (!success) {
@@ -224,6 +263,7 @@ void StorageBucketManager::DidDelete(ScriptPromiseResolver* resolver,
 
 void StorageBucketManager::Trace(Visitor* visitor) const {
   visitor->Trace(manager_remote_);
+  visitor->Trace(navigator_base_);
   ScriptWrappable::Trace(visitor);
   Supplement<NavigatorBase>::Trace(visitor);
   ExecutionContextClient::Trace(visitor);

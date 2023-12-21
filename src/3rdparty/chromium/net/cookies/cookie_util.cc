@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,20 +6,21 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <string>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback.h"
 #include "base/check.h"
 #include "base/feature_list.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/notreached.h"
-#include "base/stl_util.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_tokenizer.h"
 #include "base/strings/string_util.h"
+#include "base/types/optional_util.h"
 #include "build/build_config.h"
 #include "net/base/features.h"
 #include "net/base/isolation_info.h"
@@ -27,16 +28,16 @@
 #include "net/base/url_util.h"
 #include "net/cookies/cookie_access_delegate.h"
 #include "net/cookies/cookie_constants.h"
+#include "net/cookies/cookie_inclusion_status.h"
 #include "net/cookies/cookie_monster.h"
 #include "net/cookies/cookie_options.h"
-#include "net/cookies/first_party_set_metadata.h"
-#include "net/cookies/same_party_context.h"
+#include "net/first_party_sets/first_party_set_metadata.h"
+#include "net/first_party_sets/same_party_context.h"
 #include "net/http/http_util.h"
 #include "url/gurl.h"
 #include "url/url_constants.h"
 
-namespace net {
-namespace cookie_util {
+namespace net::cookie_util {
 
 namespace {
 
@@ -306,7 +307,18 @@ std::string GetEffectiveDomain(const std::string& scheme,
 
 bool GetCookieDomainWithString(const GURL& url,
                                const std::string& domain_string,
+                               CookieInclusionStatus& status,
                                std::string* result) {
+  // Disallow non-ASCII domain names.
+  if (!base::IsStringASCII(domain_string)) {
+    if (base::FeatureList::IsEnabled(features::kCookieDomainRejectNonASCII)) {
+      status.AddExclusionReason(
+          CookieInclusionStatus::EXCLUDE_DOMAIN_NON_ASCII);
+      return false;
+    }
+    status.AddWarningReason(CookieInclusionStatus::WARN_DOMAIN_NON_ASCII);
+  }
+
   const std::string url_host(url.host());
   // If no domain was specified in the domain string, default to a host cookie.
   // We match IE/Firefox in allowing a domain=IPADDR if it matches (case
@@ -608,12 +620,12 @@ void ParseRequestCookieLine(const std::string& header_value,
 std::string SerializeRequestCookieLine(
     const ParsedRequestCookies& parsed_cookies) {
   std::string buffer;
-  for (auto i = parsed_cookies.begin(); i != parsed_cookies.end(); ++i) {
+  for (const auto& parsed_cookie : parsed_cookies) {
     if (!buffer.empty())
       buffer.append("; ");
-    buffer.append(i->first.begin(), i->first.end());
+    buffer.append(parsed_cookie.first.begin(), parsed_cookie.first.end());
     buffer.push_back('=');
-    buffer.append(i->second.begin(), i->second.end());
+    buffer.append(parsed_cookie.second.begin(), parsed_cookie.second.end());
   }
   return buffer;
 }
@@ -668,6 +680,19 @@ CookieOptions::SameSiteCookieContext ComputeSameSiteContextForRequest(
       result.context_type = ContextType::SAME_SITE_LAX_METHOD_UNSAFE;
     if (schemeful_result.context_type == ContextType::SAME_SITE_LAX)
       schemeful_result.context_type = ContextType::SAME_SITE_LAX_METHOD_UNSAFE;
+  }
+
+  ContextMetadata::HttpMethod http_method_enum =
+      HttpMethodStringToEnum(http_method);
+
+  if (result.metadata.cross_site_redirect_downgrade !=
+      ContextMetadata::ContextDowngradeType::kNoDowngrade) {
+    result.metadata.http_method_bug_1221316 = http_method_enum;
+  }
+
+  if (schemeful_result.metadata.cross_site_redirect_downgrade !=
+      ContextMetadata::ContextDowngradeType::kNoDowngrade) {
+    schemeful_result.metadata.http_method_bug_1221316 = http_method_enum;
   }
 
   return MakeSameSiteCookieContext(result, schemeful_result);
@@ -806,7 +831,7 @@ absl::optional<FirstPartySetMetadata> ComputeFirstPartySetMetadataMaybeAsync(
         request_site,
         force_ignore_top_frame_party
             ? nullptr
-            : base::OptionalOrNullptr(
+            : base::OptionalToPtr(
                   isolation_info.network_isolation_key().GetTopFrameSite()),
         isolation_info.party_context().value(), std::move(callback));
   }
@@ -814,10 +839,37 @@ absl::optional<FirstPartySetMetadata> ComputeFirstPartySetMetadataMaybeAsync(
   return FirstPartySetMetadata();
 }
 
-CookieSamePartyStatus GetSamePartyStatus(const CanonicalCookie& cookie,
-                                         const CookieOptions& options,
-                                         const bool first_party_sets_enabled) {
-  if (!first_party_sets_enabled || !cookie.IsSameParty() ||
+CookieOptions::SameSiteCookieContext::ContextMetadata::HttpMethod
+HttpMethodStringToEnum(const std::string& in) {
+  using HttpMethod =
+      CookieOptions::SameSiteCookieContext::ContextMetadata::HttpMethod;
+  if (in == "GET")
+    return HttpMethod::kGet;
+  if (in == "HEAD")
+    return HttpMethod::kHead;
+  if (in == "POST")
+    return HttpMethod::kPost;
+  if (in == "PUT")
+    return HttpMethod::KPut;
+  if (in == "DELETE")
+    return HttpMethod::kDelete;
+  if (in == "CONNECT")
+    return HttpMethod::kConnect;
+  if (in == "OPTIONS")
+    return HttpMethod::kOptions;
+  if (in == "TRACE")
+    return HttpMethod::kTrace;
+  if (in == "PATCH")
+    return HttpMethod::kPatch;
+
+  return HttpMethod::kUnknown;
+}
+
+CookieSamePartyStatus GetSamePartyStatus(
+    const CanonicalCookie& cookie,
+    const CookieOptions& options,
+    const bool same_party_attribute_enabled) {
+  if (!same_party_attribute_enabled || !cookie.IsSameParty() ||
       !options.is_in_nontrivial_first_party_set()) {
     return CookieSamePartyStatus::kNoSamePartyEnforcement;
   }
@@ -830,15 +882,8 @@ CookieSamePartyStatus GetSamePartyStatus(const CanonicalCookie& cookie,
   };
 }
 
-base::OnceCallback<void(CookieAccessResult)> AdaptCookieAccessResultToBool(
-    base::OnceCallback<void(bool)> callback) {
-  return base::BindOnce(
-      [](base::OnceCallback<void(bool)> inner_callback,
-         const CookieAccessResult access_result) {
-        bool success = access_result.status.IsInclude();
-        std::move(inner_callback).Run(success);
-      },
-      std::move(callback));
+bool IsCookieAccessResultInclude(CookieAccessResult cookie_access_result) {
+  return cookie_access_result.status.IsInclude();
 }
 
 CookieList StripAccessResults(
@@ -885,5 +930,4 @@ NET_EXPORT void DCheckIncludedAndExcludedCookieLists(
       base::ranges::is_sorted(included_cookies, CookieWithAccessResultSorter));
 }
 
-}  // namespace cookie_util
-}  // namespace net
+}  // namespace net::cookie_util

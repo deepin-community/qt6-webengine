@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -35,7 +35,8 @@ enum DevToolsExecutionContextType {
 // navigation-related interface, since we should reattach sessions before
 // the navigation commits in the frame.
 //
-// This interface is implemented in renderer hosting entity under debug.
+// This interface is implemented in renderer hosting entity under debug,
+// and is used by the browser-side DevToolsSession and agent hosts.
 // Note that this interface just provides a mean to start a debugging session,
 // so the presence of it does not mean the entity is under debug just yet.
 interface DevToolsAgent {
@@ -80,16 +81,28 @@ interface DevToolsAgent {
   // notifications) sent from this session should use binary (CBOR)
   // encoding as opposed to JSON encoding.
   //
+  // |client_is_trusted| indicates that the client is considered to be
+  // in the same trust domain from security perspective. For example browser
+  // automation tool using remote debugging interface is trusted but Chrome
+  // Extension using chrome.debugger API is not. Therefore the former will have
+  // access to the Database CDP domain and the latter won't.
+  //
   // |session_id| is a string which, if provided, uniquely identifies the
   // session. The renderer must send this back with each response. The current
   // implementation uses the string serialization of an UnguessableToken, but
   // that is subject to change.
+  //
+  // |session_waits_for_debugger| indicates that the session has been created
+  // in the paused state and the agent should only resume execution when all
+  // such sessions have been resumed by the client.
   AttachDevToolsSession(pending_associated_remote<DevToolsSessionHost> host,
                         pending_associated_receiver<DevToolsSession> session,
                         pending_receiver<DevToolsSession> io_session,
                         DevToolsSessionState? reattach_session_state,
                         bool client_expects_binary_responses,
-                        string session_id);
+                        bool client_is_trusted,
+                        string session_id,
+                        bool session_waits_for_debugger);
 
   // Requests an element at specific position to be inspected in every
   // attached session (or the next attached one if none yet).

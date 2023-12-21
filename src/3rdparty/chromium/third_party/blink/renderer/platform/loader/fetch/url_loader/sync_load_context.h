@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,12 +13,12 @@
 #include "mojo/public/cpp/system/simple_watcher.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
-#include "third_party/blink/public/mojom/blob/blob_registry.mojom.h"
+#include "third_party/blink/public/mojom/blob/blob_registry.mojom-blink.h"
 #include "third_party/blink/public/platform/web_common.h"
 #include "third_party/blink/public/platform/web_request_peer.h"
-#include "third_party/blink/public/platform/web_resource_request_sender.h"
 #include "third_party/blink/public/platform/web_string.h"
 #include "third_party/blink/public/platform/web_vector.h"
+#include "third_party/blink/renderer/platform/loader/fetch/url_loader/resource_request_sender.h"
 
 namespace base {
 class WaitableEvent;
@@ -68,8 +68,8 @@ class BLINK_PLATFORM_EXPORT SyncLoadContext : public WebRequestPeer {
       base::WaitableEvent* completed_event,
       base::WaitableEvent* abort_event,
       base::TimeDelta timeout,
-      mojo::PendingRemote<mojom::BlobRegistry> download_to_blob_registry,
-      const WebVector<WebString>& cors_exempt_header_list,
+      mojo::PendingRemote<mojom::blink::BlobRegistry> download_to_blob_registry,
+      const Vector<String>& cors_exempt_header_list,
       std::unique_ptr<ResourceLoadInfoNotifierWrapper>
           resource_load_info_notifier_wrapper);
 
@@ -92,20 +92,22 @@ class BLINK_PLATFORM_EXPORT SyncLoadContext : public WebRequestPeer {
       base::WaitableEvent* completed_event,
       base::WaitableEvent* abort_event,
       base::TimeDelta timeout,
-      mojo::PendingRemote<mojom::BlobRegistry> download_to_blob_registry,
+      mojo::PendingRemote<mojom::blink::BlobRegistry> download_to_blob_registry,
       scoped_refptr<base::SingleThreadTaskRunner> task_runner);
   // WebRequestPeer implementation:
   void OnUploadProgress(uint64_t position, uint64_t size) override;
   bool OnReceivedRedirect(const net::RedirectInfo& redirect_info,
                           network::mojom::URLResponseHeadPtr head,
                           std::vector<std::string>*) override;
-  void OnReceivedResponse(network::mojom::URLResponseHeadPtr head) override;
+  void OnReceivedResponse(
+      network::mojom::URLResponseHeadPtr head,
+      base::TimeTicks response_arrival_at_renderer) override;
   void OnStartLoadingResponseBody(
       mojo::ScopedDataPipeConsumerHandle body) override;
   void OnTransferSizeUpdated(int transfer_size_diff) override;
   void OnCompletedRequest(
       const network::URLLoaderCompletionStatus& status) override;
-  void OnFinishCreatingBlob(mojom::SerializedBlobPtr blob);
+  void OnFinishCreatingBlob(const scoped_refptr<BlobDataHandle>& blob);
 
   void OnBodyReadable(MojoResult, const mojo::HandleSignalsState&);
 
@@ -135,13 +137,18 @@ class BLINK_PLATFORM_EXPORT SyncLoadContext : public WebRequestPeer {
 
   // State necessary to run a request on an independent thread.
   scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory_;
-  std::unique_ptr<WebResourceRequestSender> resource_request_sender_;
+  std::unique_ptr<ResourceRequestSender> resource_request_sender_;
 
   // State for downloading to a blob.
-  mojo::Remote<mojom::BlobRegistry> download_to_blob_registry_;
+  mojo::Remote<mojom::blink::BlobRegistry> download_to_blob_registry_;
   bool blob_response_started_ = false;
   bool blob_finished_ = false;
   bool request_completed_ = false;
+
+  // True when the request contains Authorization header.
+  // TODO(https://crbug.com/1393520): Remove this field once we get enough
+  // stats to make a decision.
+  bool has_authorization_header_ = false;
 
   scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
 

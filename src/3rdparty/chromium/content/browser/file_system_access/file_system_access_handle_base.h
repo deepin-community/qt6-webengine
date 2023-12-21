@@ -1,21 +1,19 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef CONTENT_BROWSER_FILE_SYSTEM_ACCESS_FILE_SYSTEM_ACCESS_HANDLE_BASE_H_
 #define CONTENT_BROWSER_FILE_SYSTEM_ACCESS_FILE_SYSTEM_ACCESS_HANDLE_BASE_H_
 
-#include "base/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/sequence_checker.h"
-#include "base/threading/sequence_bound.h"
+#include "base/thread_annotations.h"
 #include "content/browser/file_system_access/file_system_access_manager_impl.h"
 #include "content/browser/file_system_access/file_system_access_transfer_token_impl.h"
 #include "content/browser/file_system_access/file_system_access_write_lock_manager.h"
 #include "content/common/content_export.h"
 #include "storage/browser/file_system/file_system_url.h"
-#include "storage/browser/file_system/isolated_context.h"
 #include "third_party/blink/public/mojom/file_system_access/file_system_access_error.mojom.h"
 #include "third_party/blink/public/mojom/permissions/permission_status.mojom.h"
 
@@ -26,6 +24,7 @@ class FileSystemContext;
 namespace content {
 
 class WebContents;
+class FileSystemAccessSafeMoveHelper;
 
 // Base class for File and Directory handle implementations. Holds data that is
 // common to both and (will) deal with functionality that is common as well,
@@ -134,17 +133,43 @@ class CONTENT_EXPORT FileSystemAccessHandleBase {
       bool has_transient_user_activation,
       base::OnceCallback<void(blink::mojom::FileSystemAccessErrorPtr)>
           callback);
+  // Only called if the move operation is not allowed to overwrite the target.
+  void ConfirmMoveWillNotOverwriteDestination(
+      const bool has_write_access,
+      const storage::FileSystemURL& destination_url,
+      std::vector<scoped_refptr<FileSystemAccessWriteLockManager::WriteLock>>
+          locks,
+      bool has_transient_user_activation,
+      base::OnceCallback<void(blink::mojom::FileSystemAccessErrorPtr)> callback,
+      base::File::Error result);
+  void DoPerformMoveOperation(
+      const storage::FileSystemURL& destination_url,
+      std::vector<scoped_refptr<FileSystemAccessWriteLockManager::WriteLock>>
+          locks,
+      bool has_transient_user_activation,
+      base::OnceCallback<void(blink::mojom::FileSystemAccessErrorPtr)>
+          callback);
 
-  bool ShouldTrackUsage() const {
-    return url_.type() != storage::kFileSystemTypeTemporary &&
-           url_.type() != storage::kFileSystemTypeTest;
+  void DidMove(
+      storage::FileSystemURL destination_url,
+      std::vector<scoped_refptr<FileSystemAccessWriteLockManager::WriteLock>>
+          write_locks,
+      std::unique_ptr<FileSystemAccessSafeMoveHelper> move_helper,
+      base::OnceCallback<void(blink::mojom::FileSystemAccessErrorPtr)> callback,
+      blink::mojom::FileSystemAccessErrorPtr result);
+
+  bool ShouldTrackUsage(const storage::FileSystemURL& url) const {
+    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+    return url.type() != storage::kFileSystemTypeTemporary &&
+           url.type() != storage::kFileSystemTypeTest;
   }
 
   // The FileSystemAccessManagerImpl that owns this instance.
   const raw_ptr<FileSystemAccessManagerImpl> manager_;
-  base::WeakPtr<WebContents> web_contents_;
+  base::WeakPtr<WebContents> web_contents_
+      GUARDED_BY_CONTEXT(sequence_checker_);
   const BindingContext context_;
-  storage::FileSystemURL url_;
+  storage::FileSystemURL url_ GUARDED_BY_CONTEXT(sequence_checker_);
   const SharedHandleState handle_state_;
 };
 

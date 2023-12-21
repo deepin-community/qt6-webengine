@@ -1,18 +1,21 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/permissions/permission_actions_history.h"
 
 #include <vector>
+
 #include "base/containers/adapters.h"
 #include "base/json/json_reader.h"
+#include "base/ranges/algorithm.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/time/time.h"
 #include "components/content_settings/core/common/pref_names.h"
 #include "components/permissions/permission_request_enums.h"
 #include "components/permissions/permission_uma_util.h"
+#include "components/permissions/permission_util.h"
 #include "components/permissions/permissions_client.h"
 #include "components/permissions/pref_names.h"
 #include "components/permissions/request_type.h"
@@ -158,10 +161,9 @@ TEST_F(PermissionActionHistoryTest, GetHistorySortedOrder) {
       base::Time::Now() - base::Days(1),
       PermissionActionsHistory::EntryFilter::WANT_ALL_PROMPTS);
 
-  EXPECT_TRUE(std::equal(entries_1_day.begin(), entries_1_day.end(),
-                         std::vector<PermissionActionsHistory::Entry>(
-                             all_entries.begin() + 5, all_entries.end())
-                             .begin()));
+  EXPECT_TRUE(base::ranges::equal(
+      entries_1_day, std::vector<PermissionActionsHistory::Entry>(
+                         all_entries.begin() + 5, all_entries.end())));
 }
 
 TEST_F(PermissionActionHistoryTest, NotificationRecordAction) {

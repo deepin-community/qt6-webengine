@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,7 @@
 
 #include <memory>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/synchronization/waitable_event.h"
 #include "cc/cc_export.h"
@@ -75,7 +75,7 @@ class CC_EXPORT SurfaceLayerImpl : public LayerImpl {
   SurfaceLayerImpl(LayerTreeImpl* tree_impl, int id, UpdateSubmissionStateCB);
 
  private:
-  void GetDebugBorderProperties(SkColor* color, float* width) const override;
+  void GetDebugBorderProperties(SkColor4f* color, float* width) const override;
   void AppendRainbowDebugBorder(viz::CompositorRenderPass* render_pass);
   void AsValueInto(base::trace_event::TracedValue* dict) const override;
   const char* LayerTypeAsString() const override;

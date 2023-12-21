@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,16 +9,16 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ptr_exclusion.h"
 #include "base/run_loop.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/gmock_callback_support.h"
 #include "base/test/simple_test_tick_clock.h"
 #include "base/test/task_environment.h"
 #include "base/threading/simple_thread.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/clock.h"
 #include "base/time/time.h"
 #include "media/base/fake_text_track_stream.h"
@@ -59,7 +59,7 @@ ACTION_P(Stop, pipeline) {
 }
 
 ACTION_P(PostStop, pipeline) {
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(&Pipeline::Stop, base::Unretained(pipeline)));
 }
 
@@ -74,7 +74,7 @@ ACTION_P3(SetBufferingState, renderer_client, buffering_state, reason) {
 ACTION_TEMPLATE(PostCallback,
                 HAS_1_TEMPLATE_PARAMS(int, k),
                 AND_1_VALUE_PARAMS(p0)) {
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(std::move(std::get<k>(args)), p0));
 }
 
@@ -363,13 +363,17 @@ class PipelineImplTest : public ::testing::Test {
   NiceMock<MockCdmContext> cdm_context_;
 
   std::unique_ptr<StrictMock<MockDemuxer>> demuxer_;
-  DemuxerHost* demuxer_host_;
+  // This field is not a raw_ptr<> because it was filtered by the rewriter for:
+  // #addr-of
+  RAW_PTR_EXCLUSION DemuxerHost* demuxer_host_;
   std::unique_ptr<StrictMock<MockRenderer>> scoped_renderer_;
   raw_ptr<StrictMock<MockRenderer>> renderer_;
   std::unique_ptr<StrictMock<MockDemuxerStream>> audio_stream_;
   std::unique_ptr<StrictMock<MockDemuxerStream>> video_stream_;
   std::vector<DemuxerStream*> streams_;
-  RendererClient* renderer_client_;
+  // This field is not a raw_ptr<> because it was filtered by the rewriter for:
+  // #addr-of
+  RAW_PTR_EXCLUSION RendererClient* renderer_client_;
   VideoDecoderConfig video_decoder_config_;
   PipelineMetadata metadata_;
   base::TimeDelta start_time_;

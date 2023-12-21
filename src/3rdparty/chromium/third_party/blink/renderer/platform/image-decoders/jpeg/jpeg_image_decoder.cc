@@ -44,11 +44,10 @@
 #include "base/numerics/checked_math.h"
 #include "build/build_config.h"
 #include "third_party/blink/renderer/platform/graphics/bitmap_image_metrics.h"
+#include "third_party/blink/renderer/platform/image-decoders/exif_reader.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/skia/include/core/SkColorSpace.h"
-#include "ui/gfx/geometry/size_conversions.h"
-#include "ui/gfx/geometry/size_f.h"
 
 #if defined(OS_WIN)
 #include <basetsd.h>  // Included before jpeglib.h because of INT32 clash
@@ -87,7 +86,8 @@ inline J_COLOR_SPACE rgbOutputColorSpace() {
 
 namespace {
 
-const int exifMarker = JPEG_APP0 + 1;
+constexpr int kExifMarker = JPEG_APP0 + 1;
+constexpr unsigned kExifAPP1SignatureSize = 6;
 
 // JPEG only supports a denominator of 8.
 const unsigned g_scale_denominator = 8;
@@ -161,7 +161,6 @@ blink::BitmapImageMetrics::JpegColorSpace ExtractUMAJpegColorSpace(
         case cc::YUVSubsampling::kUnknown:
           return blink::BitmapImageMetrics::JpegColorSpace::kYCbCrOther;
       }
-      NOTREACHED();
     default:
       return blink::BitmapImageMetrics::JpegColorSpace::kUnknown;
   }
@@ -217,210 +216,17 @@ void term_source(j_decompress_ptr jd);
 void error_exit(j_common_ptr cinfo);
 void emit_message(j_common_ptr cinfo, int msg_level);
 
-static unsigned ReadUint16(JOCTET* data, bool is_big_endian) {
-  if (is_big_endian)
-    return (GETJOCTET(data[0]) << 8) | GETJOCTET(data[1]);
-  return (GETJOCTET(data[1]) << 8) | GETJOCTET(data[0]);
-}
-
-static unsigned ReadUint32(JOCTET* data, bool is_big_endian) {
-  if (is_big_endian)
-    return (GETJOCTET(data[0]) << 24) | (GETJOCTET(data[1]) << 16) |
-           (GETJOCTET(data[2]) << 8) | GETJOCTET(data[3]);
-  return (GETJOCTET(data[3]) << 24) | (GETJOCTET(data[2]) << 16) |
-         (GETJOCTET(data[1]) << 8) | GETJOCTET(data[0]);
-}
-
-static JOCTET* ReadPointerOffset(JOCTET* data,
-                                 JOCTET* start,
-                                 JOCTET* end,
-                                 bool is_big_endian) {
-  unsigned max_offset = base::checked_cast<unsigned>(end - start);
-  unsigned offset = ReadUint32(data, is_big_endian);
-  if (offset > max_offset)
-    return nullptr;
-
-  return start + offset;
-}
-
-static float ReadUnsignedRational(JOCTET* data, bool is_big_endian) {
-  unsigned nom = ReadUint32(data, is_big_endian);
-  unsigned denom = ReadUint32(data + 4, is_big_endian);
-  if (!denom)
-    return 0;
-  return float(nom) / float(denom);
-}
-
-static bool CheckExifHeader(jpeg_saved_marker_ptr marker,
-                            bool& is_big_endian,
-                            unsigned& ifd_offset) {
-  // For exif data, the APP1 block is followed by 'E', 'x', 'i', 'f', '\0',
-  // then a fill byte, and then a tiff file that contains the metadata.
-  // A tiff file starts with 'I', 'I' (intel / little endian byte order) or
-  // 'M', 'M' (motorola / big endian byte order), followed by (uint16_t)42,
-  // followed by an uint32_t with the offset to the tag block, relative to the
-  // tiff file start.
-  const unsigned kExifHeaderSize = 14;
-  if (!(marker->marker == exifMarker &&
-        marker->data_length >= kExifHeaderSize && marker->data[0] == 'E' &&
-        marker->data[1] == 'x' && marker->data[2] == 'i' &&
-        marker->data[3] == 'f' &&
-        marker->data[4] == '\0'
-        // data[5] is a fill byte
-        && ((marker->data[6] == 'I' && marker->data[7] == 'I') ||
-            (marker->data[6] == 'M' && marker->data[7] == 'M'))))
+static bool IsExifData(jpeg_saved_marker_ptr marker) {
+  // For EXIF data, the APP1 block is followed by 'E', 'x', 'i', 'f', '\0',
+  // then a fill byte, and then a TIFF file that contains the metadata.
+  if (marker->marker != kExifMarker)
     return false;
-
-  is_big_endian = marker->data[6] == 'M';
-  if (ReadUint16(marker->data + 8, is_big_endian) != 42)
+  if (marker->data_length < kExifAPP1SignatureSize)
     return false;
-
-  ifd_offset = ReadUint32(marker->data + 10, is_big_endian);
+  const uint8_t kExifAPP1Signature[5] = {'E', 'x', 'i', 'f', '\0'};
+  if (memcmp(marker->data, kExifAPP1Signature, sizeof(kExifAPP1Signature)) != 0)
+    return false;
   return true;
-}
-
-struct DecodedImageMetaData {
-  ImageOrientation orientation;
-  gfx::SizeF resolution;
-  gfx::Size size;
-  unsigned resolution_unit { 0 };
-};
-
-static gfx::Size ExtractDensityCorrectedSize(
-    const DecodedImageMetaData& metadata,
-    const gfx::Size& physical_size) {
-  const unsigned kDefaultResolution = 72;
-  const unsigned kresolution_unitDPI = 2;
-
-  if (metadata.resolution_unit != kresolution_unitDPI || metadata.resolution.IsEmpty() || metadata.size.IsEmpty())
-    return physical_size;
-
-  CHECK(metadata.resolution.width());
-  CHECK(metadata.resolution.height());
-
-  // Division by zero is not possible since we check for empty resolution earlier.
-  gfx::SizeF size_from_resolution(
-      physical_size.width() * kDefaultResolution / metadata.resolution.width(),
-      physical_size.height() * kDefaultResolution /
-          metadata.resolution.height());
-
-  if (gfx::ToRoundedSize(size_from_resolution) == metadata.size)
-    return metadata.size;
-
-  return physical_size;
-}
-
-static void ReadExifDirectory(JOCTET* dir_start,
-                              JOCTET* tiff_start,
-                              JOCTET* root_dir_start,
-                              JOCTET* data_end,
-                              bool is_big_endian,
-                              DecodedImageMetaData& metadata,
-                              bool is_root = true) {
-  const unsigned kUnsignedShortType = 3;
-  const unsigned kUnsignedLongType = 4;
-  const unsigned kUnsignedRationalType = 5;
-
-  enum ExifTags {
-    kOrientationTag = 0x112,
-    kResolutionXTag = 0x11a,
-    kResolutionYTag = 0x11b,
-    kResolutionUnitTag = 0x128,
-    kPixelXDimensionTag = 0xa002,
-    kPixelYDimensionTag = 0xa003,
-    kExifOffsetTag = 0x8769
-  };
-
-  if (data_end - dir_start < 2)
-    return;
-
-  unsigned tag_count = ReadUint16(dir_start, is_big_endian);
-  JOCTET* ifd = dir_start + 2;  // Skip over the uint16 that was just read.
-
-  // Every ifd entry is 2 bytes of tag, 2 bytes of contents datatype,
-  // 4 bytes of number-of-elements, and 4 bytes of either offset to the
-  // tag data, or if the data is small enough, the inlined data itself.
-  const int kIfdEntrySize = 12;
-  for (unsigned i = 0; i < tag_count && data_end - ifd >= kIfdEntrySize;
-        ++i, ifd += kIfdEntrySize) {
-    unsigned tag = ReadUint16(ifd, is_big_endian);
-    unsigned type = ReadUint16(ifd + 2, is_big_endian);
-    unsigned count = ReadUint32(ifd + 4, is_big_endian);
-    JOCTET* value_ptr = ifd + 8;
-
-    // EXIF stores the value with an offset if it's bigger than 4 bytes, e.g. for rational values.
-    if (type == kUnsignedRationalType) {
-      value_ptr =
-          ReadPointerOffset(value_ptr, tiff_start, data_end, is_big_endian);
-      // Make sure offset points to a valid location.
-      if (!value_ptr || value_ptr < ifd || value_ptr > data_end - 16)
-        continue;
-    }
-
-    switch (tag) {
-      case ExifTags::kOrientationTag:
-        if (type == kUnsignedShortType && count == 1)
-          metadata.orientation = ImageOrientation::FromEXIFValue(ReadUint16(value_ptr, is_big_endian));
-        break;
-
-      case ExifTags::kResolutionUnitTag:
-        if (type == kUnsignedShortType && count == 1)
-          metadata.resolution_unit = ReadUint16(value_ptr, is_big_endian);
-        break;
-
-      case ExifTags::kResolutionXTag:
-        if (type == kUnsignedRationalType && count == 1) {
-          metadata.resolution.set_width(
-              ReadUnsignedRational(value_ptr, is_big_endian));
-        }
-        break;
-
-      case ExifTags::kResolutionYTag:
-        if (type == kUnsignedRationalType && count == 1) {
-          metadata.resolution.set_height(
-              ReadUnsignedRational(value_ptr, is_big_endian));
-        }
-        break;
-
-      case ExifTags::kPixelXDimensionTag:
-        if (count != 1)
-          break;
-        switch (type) {
-          case kUnsignedShortType:
-            metadata.size.set_width(ReadUint16(value_ptr, is_big_endian));
-            break;
-          case kUnsignedLongType:
-            metadata.size.set_width(ReadUint32(value_ptr, is_big_endian));
-            break;
-        }
-        break;
-
-      case ExifTags::kPixelYDimensionTag:
-        if (count != 1)
-          break;
-        switch (type) {
-          case kUnsignedShortType:
-            metadata.size.set_height(ReadUint16(value_ptr, is_big_endian));
-            break;
-          case kUnsignedLongType:
-            metadata.size.set_height(ReadUint32(value_ptr, is_big_endian));
-            break;
-        }
-        break;
-
-      case ExifTags::kExifOffsetTag:
-        if (type == kUnsignedLongType && count == 1 && is_root) {
-          JOCTET* subdir = ReadPointerOffset(value_ptr, root_dir_start,
-                                             data_end, is_big_endian);
-
-          if (subdir) {
-            ReadExifDirectory(subdir, tiff_start, root_dir_start, data_end,
-                              is_big_endian, metadata, false);
-          }
-        }
-        break;
-    }
-  }
 }
 
 static void ReadImageMetaData(jpeg_decompress_struct* info, DecodedImageMetaData& metadata) {
@@ -428,27 +234,12 @@ static void ReadImageMetaData(jpeg_decompress_struct* info, DecodedImageMetaData
   // FIXME: Possibly implement XMP and IPTC support.
   for (jpeg_saved_marker_ptr marker = info->marker_list; marker;
        marker = marker->next) {
-    bool is_big_endian;
-    unsigned ifd_offset;
-    if (!CheckExifHeader(marker, is_big_endian, ifd_offset))
+    if (!IsExifData(marker))
       continue;
-    const unsigned kOffsetToTiffData =
-        6;  // Account for 'Exif\0<fill byte>' header.
-    if (marker->data_length < kOffsetToTiffData ||
-        ifd_offset >= marker->data_length - kOffsetToTiffData)
-      continue;
-
-    // The jpeg exif container format contains a tiff block for metadata.
-    // A tiff image file directory (ifd) consists of a uint16_t describing
-    // the number of ifd entries, followed by that many entries.
-    // When touching this code, it's useful to look at the tiff spec:
-    // http://partners.adobe.com/public/developer/en/tiff/TIFF6.pdf
-    JOCTET* data_end = marker->data + marker->data_length;
-    JOCTET* root_start = marker->data + kOffsetToTiffData;
-    JOCTET* tiff_start = marker->data + ifd_offset - 2;
-    JOCTET* ifd0 = root_start + ifd_offset;
-
-    ReadExifDirectory(ifd0, tiff_start, root_start, data_end, is_big_endian, metadata);
+    base::span<const uint8_t> exif_data(
+        marker->data + kExifAPP1SignatureSize,
+        marker->data_length - kExifAPP1SignatureSize);
+    ReadExif(exif_data, metadata);
   }
 }
 
@@ -515,7 +306,7 @@ class JPEGImageReader final {
     setup_read_icc_profile(&info_);
 
     // Keep APP1 blocks, for obtaining exif data.
-    jpeg_save_markers(&info_, exifMarker, 0xFFFF);
+    jpeg_save_markers(&info_, kExifMarker, 0xFFFF);
   }
 
   JPEGImageReader(const JPEGImageReader&) = delete;
@@ -696,7 +487,7 @@ class JPEGImageReader final {
             sizes.push_back(
                 SkISize::Make(info_.image_width, info_.image_height));
           } else {
-            sizes.ReserveCapacity(max_numerator);
+            sizes.reserve(max_numerator);
             for (int numerator = 1; numerator <= max_numerator; ++numerator) {
               info_.scale_num = numerator;
               jpeg_calc_output_dimensions(&info_);
@@ -713,9 +504,8 @@ class JPEGImageReader final {
 
         DecodedImageMetaData metadata;
         ReadImageMetaData(Info(), metadata);
-        decoder_->SetOrientation(metadata.orientation);
-        decoder_->SetDensityCorrectedSize(ExtractDensityCorrectedSize(
-            metadata, gfx::Size(info_.output_width, info_.output_height)));
+        decoder_->ApplyMetadata(
+            metadata, gfx::Size(info_.output_width, info_.output_height));
 
         // Allow color management of the decoded RGBA pixels if possible.
         if (!decoder_->IgnoresColorSpace()) {
@@ -1048,6 +838,11 @@ JPEGImageDecoder::JPEGImageDecoder(AlphaOption alpha_option,
 
 JPEGImageDecoder::~JPEGImageDecoder() = default;
 
+const AtomicString& JPEGImageDecoder::MimeType() const {
+  DEFINE_STATIC_LOCAL(const AtomicString, jpeg_mime_type, ("image/jpeg"));
+  return jpeg_mime_type;
+}
+
 bool JPEGImageDecoder::SetSize(unsigned width, unsigned height) {
   if (!ImageDecoder::SetSize(width, height))
     return false;
@@ -1139,7 +934,7 @@ unsigned JPEGImageDecoder::DesiredScaleNumerator(wtf_size_t max_decoded_bytes,
 }
 
 bool JPEGImageDecoder::ShouldGenerateAllSizes() const {
-  return supported_decode_sizes_.IsEmpty();
+  return supported_decode_sizes_.empty();
 }
 
 void JPEGImageDecoder::DecodeToYUV() {
@@ -1337,7 +1132,7 @@ bool JPEGImageDecoder::OutputScanlines() {
   if (HasImagePlanes())
     return OutputRawData(reader_.get(), image_planes_.get());
 
-  if (frame_buffer_cache_.IsEmpty())
+  if (frame_buffer_cache_.empty())
     return false;
 
   jpeg_decompress_struct* info = reader_->Info();
@@ -1400,7 +1195,7 @@ bool JPEGImageDecoder::OutputScanlines() {
 }
 
 void JPEGImageDecoder::Complete() {
-  if (frame_buffer_cache_.IsEmpty())
+  if (frame_buffer_cache_.empty())
     return;
 
   frame_buffer_cache_[0].SetHasAlpha(false);

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -47,8 +47,8 @@ ObservableWebView::~ObservableWebView() = default;
 void ObservableWebView::DidFinishLoad(
     content::RenderFrameHost* render_frame_host,
     const GURL& validated_url) {
-  // Only listen to the main frame.
-  if (render_frame_host->GetParent())
+  // Only listen to the primary main frame.
+  if (!render_frame_host->IsInPrimaryMainFrame())
     return;
 
   if (delegate_)
@@ -230,8 +230,7 @@ std::unique_ptr<NonClientFrameView> WebDialogView::CreateNonClientFrameView(
     case WebDialogDelegate::FrameKind::kDialog:
       return DialogDelegate::CreateDialogFrameView(widget);
     default:
-      NOTREACHED() << "Unknown frame kind type enum specified.";
-      return std::unique_ptr<NonClientFrameView>{};
+      NOTREACHED_NORETURN() << "Unknown frame kind type enum specified.";
   }
 }
 
@@ -402,11 +401,11 @@ void WebDialogView::AddNewContents(
     std::unique_ptr<content::WebContents> new_contents,
     const GURL& target_url,
     WindowOpenDisposition disposition,
-    const gfx::Rect& initial_rect,
+    const blink::mojom::WindowFeatures& window_features,
     bool user_gesture,
     bool* was_blocked) {
   WebDialogWebContentsDelegate::AddNewContents(
-      source, std::move(new_contents), target_url, disposition, initial_rect,
+      source, std::move(new_contents), target_url, disposition, window_features,
       user_gesture, was_blocked);
 }
 

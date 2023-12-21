@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,6 +6,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_BREAKOUT_BOX_MEDIA_STREAM_AUDIO_TRACK_UNDERLYING_SOURCE_H_
 
 #include "base/sequence_checker.h"
+#include "base/task/sequenced_task_runner.h"
 #include "media/base/audio_parameters.h"
 #include "third_party/blink/public/platform/modules/mediastream/web_media_stream_audio_sink.h"
 #include "third_party/blink/renderer/modules/breakout_box/frame_queue_underlying_source.h"

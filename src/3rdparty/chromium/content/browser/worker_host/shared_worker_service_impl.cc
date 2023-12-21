@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,14 +10,15 @@
 #include <iterator>
 #include <string>
 
-#include "base/bind.h"
-#include "base/callback.h"
-#include "base/callback_helpers.h"
 #include "base/check_op.h"
 #include "base/feature_list.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
 #include "base/observer_list.h"
 #include "content/browser/devtools/shared_worker_devtools_agent_host.h"
 #include "content/browser/loader/file_url_loader_factory.h"
+#include "content/browser/renderer_host/private_network_access_util.h"
 #include "content/browser/service_worker/service_worker_main_resource_handle.h"
 #include "content/browser/storage_partition_impl.h"
 #include "content/browser/url_loader_factory_getter.h"
@@ -103,6 +104,7 @@ bool SharedWorkerServiceImpl::TerminateWorker(
 
 void SharedWorkerServiceImpl::Shutdown() {
   worker_hosts_.clear();
+  shared_worker_hosts_.clear();
 }
 
 void SharedWorkerServiceImpl::SetURLLoaderFactoryForTesting(
@@ -191,8 +193,7 @@ void SharedWorkerServiceImpl::ConnectToWorker(
   auto partition_domain = site_instance->GetPartitionDomain(storage_partition_);
   SharedWorkerInstance instance(info->url, info->options->type,
                                 info->options->credentials, info->options->name,
-                                storage_key, info->creation_address_space,
-                                creation_context_type);
+                                storage_key, creation_context_type);
   host = CreateWorker(
       *render_frame_host, instance, std::move(info->content_security_policies),
       std::move(info->outside_fetch_client_settings_object), partition_domain,
@@ -205,9 +206,19 @@ void SharedWorkerServiceImpl::ConnectToWorker(
                   client_ukm_source_id);
 }
 
+SharedWorkerHost* SharedWorkerServiceImpl::GetSharedWorkerHostFromToken(
+    const blink::SharedWorkerToken& worker_token) const {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  auto it = shared_worker_hosts_.find(worker_token);
+  if (it == shared_worker_hosts_.end())
+    return nullptr;
+  return it->second;
+}
+
 void SharedWorkerServiceImpl::DestroyHost(SharedWorkerHost* host) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   DCHECK(host);
+  shared_worker_hosts_.erase(host->token());
   worker_hosts_.erase(worker_hosts_.find(host));
 }
 
@@ -295,7 +306,8 @@ SharedWorkerHost* SharedWorkerServiceImpl::CreateWorker(
                     .WithStoragePartitionConfig(partition->GetConfig())
                     .WithWebExposedIsolationInfo(
                         WebExposedIsolationInfo::CreateNonIsolated())),
-        partition->is_guest());
+        partition->is_guest(),
+        creator.GetSiteInstance()->GetIsolationContext().is_fenced());
   }
 
   RenderProcessHost* worker_process_host = site_instance->GetProcess();
@@ -315,9 +327,10 @@ SharedWorkerHost* SharedWorkerServiceImpl::CreateWorker(
       worker_hosts_.insert(std::make_unique<SharedWorkerHost>(
           this, instance, std::move(site_instance),
           std::move(content_security_policies),
-          creator.BuildClientSecurityState()));
+          creator.policy_container_host()->Clone()));
   DCHECK(insertion_result.second);
   SharedWorkerHost* host = insertion_result.first->get();
+  shared_worker_hosts_[host->token()] = host;
 
   auto service_worker_handle =
       std::make_unique<ServiceWorkerMainResourceHandle>(
@@ -342,11 +355,11 @@ SharedWorkerHost* SharedWorkerServiceImpl::CreateWorker(
   auto cloned_outside_fetch_client_settings_object =
       outside_fetch_client_settings_object.Clone();
 
-  // TODO(mmenke): The site-for-cookies and NetworkIsolationKey arguments leak
-  // data across NetworkIsolationKeys and allow same-site cookies to be sent in
-  // cross-site contexts. Fix this.
-  // Also, we should probably use `host->instance().storage_key().origin()`
-  // instead of `worker_origin`, see following DCHECK.
+  // TODO(mmenke): The site-for-cookies and NetworkAnonymizationKey arguments
+  // leak data across NetworkIsolationKeys and allow same-site cookies to be
+  // sent in cross-site contexts. Fix this. Also, we should probably use
+  // `host->instance().storage_key().origin()` instead of `worker_origin`, see
+  // following DCHECK.
   DCHECK(host->instance().url().SchemeIs(url::kDataScheme) ||
          GetContentClient()->browser()->DoesSchemeAllowCrossOriginSharedWorker(
              host->instance().storage_key().origin().scheme()) ||
@@ -364,7 +377,7 @@ SharedWorkerHost* SharedWorkerServiceImpl::CreateWorker(
           host->instance().storage_key().nonce().has_value()
               ? &host->instance().storage_key().nonce().value()
               : nullptr),
-      creator.BuildClientSecurityState(), credentials_mode,
+      creator.BuildClientSecurityStateForWorkers(), credentials_mode,
       std::move(outside_fetch_client_settings_object),
       network::mojom::RequestDestination::kSharedWorker,
       service_worker_context_, service_worker_handle_raw,

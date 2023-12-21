@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -17,12 +17,13 @@
 #include <string>
 
 #include "base/base_export.h"
-#include "base/callback_forward.h"
 #include "base/containers/span.h"
 #include "base/files/file.h"
 #include "base/files/file_path.h"
 #include "base/files/scoped_file.h"
+#include "base/functional/callback.h"
 #include "build/build_config.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 #if BUILDFLAG(IS_WIN)
 #include "base/win/windows_types.h"
@@ -75,15 +76,26 @@ BASE_EXPORT bool DeleteFile(const FilePath& path);
 // WARNING: USING THIS EQUIVALENT TO "rm -rf", SO USE WITH CAUTION.
 BASE_EXPORT bool DeletePathRecursively(const FilePath& path);
 
-// Simplified way to get a callback to do DeleteFile(path) and ignore the
-// DeleteFile() result. On Windows, this will retry the delete via delayed tasks
-// for up to 2 seconds before giving up, to deal with AV S/W locking the file.
-BASE_EXPORT OnceCallback<void(const FilePath&)> GetDeleteFileCallback();
-
-// Simplified way to get a callback to do DeletePathRecursively(path) and ignore
-// the DeletePathRecursively() result.
-BASE_EXPORT OnceCallback<void(const FilePath&)>
-GetDeletePathRecursivelyCallback();
+// Returns a closure that, when run on any sequence that allows blocking calls,
+// will kick off a potentially asynchronous operation to delete `path`, whose
+// behavior is similar to `DeleteFile()` and `DeletePathRecursively()`
+// respectively.
+//
+// In contrast to `DeleteFile()` and `DeletePathRecursively()`, the thread pool
+// may be used in case retries are needed. On Windows, in particular, retries
+// will be attempted for some time to allow other programs (e.g., anti-virus
+// scanners or malware) to close any open handles to `path` or its contents. If
+// `reply_callback` is not null, it will be posted to the caller's sequence with
+// true if `path` was fully deleted or false otherwise.
+//
+// WARNING: It is NOT safe to use `path` until `reply_callback` is run, as the
+// retry task may still be actively trying to delete it.
+BASE_EXPORT OnceClosure
+GetDeleteFileCallback(const FilePath& path,
+                      OnceCallback<void(bool)> reply_callback = {});
+BASE_EXPORT OnceClosure
+GetDeletePathRecursivelyCallback(const FilePath& path,
+                                 OnceCallback<void(bool)> reply_callback = {});
 
 #if BUILDFLAG(IS_WIN)
 // Schedules to delete the given path, whether it's a file or a directory, until
@@ -92,7 +104,18 @@ GetDeletePathRecursivelyCallback();
 // 1) The file/directory to be deleted should exist in a temp folder.
 // 2) The directory to be deleted must be empty.
 BASE_EXPORT bool DeleteFileAfterReboot(const FilePath& path);
-#endif
+
+// Prevents opening the file at `path` with EXECUTE access by adding a deny ACE
+// on the filesystem. This allows the file handle to be safely passed to an
+// untrusted process. See also `File::FLAG_WIN_NO_EXECUTE`.
+BASE_EXPORT bool PreventExecuteMapping(const FilePath& path);
+
+// Set `path_key` to the second of two valid paths that support safely marking a
+// file as non-execute. The first allowed path is always PATH_TEMP. This is
+// needed to avoid layering violations, as the user data dir is an embedder
+// concept and only known later at runtime.
+BASE_EXPORT void SetExtraNoExecuteAllowedPath(int path_key);
+#endif  // BUILDFLAG(IS_WIN)
 
 // Moves the given path, whether it's a file or a directory.
 // If a simple rename is not possible, such as in the case where the paths are
@@ -180,6 +203,12 @@ BASE_EXPORT bool ContentsEqual(const FilePath& filename1,
 // otherwise.  This routine treats "\r\n" and "\n" as equivalent.
 BASE_EXPORT bool TextContentsEqual(const FilePath& filename1,
                                    const FilePath& filename2);
+
+// Reads the file at |path| and returns a vector of bytes on success, and
+// nullopt on error. For security reasons, a |path| containing path traversal
+// components ('..') is treated as a read error, returning nullopt.
+BASE_EXPORT absl::optional<std::vector<uint8_t>> ReadFileToBytes(
+    const FilePath& path);
 
 // Reads the file at |path| into |contents| and returns true on success and
 // false on error.  For security reasons, a |path| containing path traversal
@@ -349,6 +378,12 @@ BASE_EXPORT ScopedFILE CreateAndOpenTemporaryStreamInDir(const FilePath& dir,
 // the format of prefixyyyy.
 // NOTE: prefix is ignored in the POSIX implementation.
 // If success, return true and output the full path of the directory created.
+//
+// For Windows, this directory is usually created in a secure location under
+// %ProgramFiles% if the caller is admin. This is because the default %TEMP%
+// folder for Windows is insecure, since low privilege users can get the path of
+// folders under %TEMP% after creation and are able to create subfolders and
+// files within these folders which can lead to privilege escalation.
 BASE_EXPORT bool CreateNewTempDirectory(const FilePath::StringType& prefix,
                                         FilePath* new_temp_path);
 
@@ -507,30 +542,6 @@ BASE_EXPORT FilePath GetUniquePath(const FilePath& path);
 // false.
 BASE_EXPORT bool SetNonBlocking(int fd);
 
-// Possible results of PreReadFile().
-// These values are persisted to logs. Entries should not be renumbered and
-// numeric values should never be reused.
-enum class PrefetchResultCode {
-  kSuccess = 0,
-  kInvalidFile = 1,
-  kSlowSuccess = 2,
-  kSlowFailed = 3,
-  kMemoryMapFailedSlowUsed = 4,
-  kMemoryMapFailedSlowFailed = 5,
-  kFastFailed = 6,
-  kFastFailedSlowUsed = 7,
-  kFastFailedSlowFailed = 8,
-  kMaxValue = kFastFailedSlowFailed
-};
-
-struct PrefetchResult {
-  bool succeeded() const {
-    return code_ == PrefetchResultCode::kSuccess ||
-           code_ == PrefetchResultCode::kSlowSuccess;
-  }
-  const PrefetchResultCode code_;
-};
-
 // Hints the OS to prefetch the first |max_bytes| of |file_path| into its cache.
 //
 // If called at the appropriate time, this can reduce the latency incurred by
@@ -544,18 +555,17 @@ struct PrefetchResult {
 // executable code or as data. Windows treats the file backed pages in RAM
 // differently, and specifying the wrong value results in two copies in RAM.
 //
-// Returns a PrefetchResult indicating whether prefetch succeeded, and the type
-// of failure if it did not. A return value of kSuccess does not guarantee that
-// the entire desired range was prefetched.
+// Returns true if at least part of the requested range was successfully
+// prefetched.
 //
 // Calling this before using ::LoadLibrary() on Windows is more efficient memory
 // wise, but we must be sure no other threads try to LoadLibrary() the file
 // while we are doing the mapping and prefetching, or the process will get a
 // private copy of the DLL via COW.
-BASE_EXPORT PrefetchResult
-PreReadFile(const FilePath& file_path,
-            bool is_executable,
-            int64_t max_bytes = std::numeric_limits<int64_t>::max());
+BASE_EXPORT bool PreReadFile(
+    const FilePath& file_path,
+    bool is_executable,
+    int64_t max_bytes = std::numeric_limits<int64_t>::max());
 
 #if BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
 
@@ -610,26 +620,6 @@ BASE_EXPORT bool VerifyPathControlledByAdmin(const base::FilePath& path);
 // Returns the maximum length of path component on the volume containing
 // the directory |path|, in the number of FilePath::CharType, or -1 on failure.
 BASE_EXPORT int GetMaximumPathComponentLength(const base::FilePath& path);
-
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_AIX)
-// Broad categories of file systems as returned by statfs() on Linux.
-enum FileSystemType {
-  FILE_SYSTEM_UNKNOWN,  // statfs failed.
-  FILE_SYSTEM_0,        // statfs.f_type == 0 means unknown, may indicate AFS.
-  FILE_SYSTEM_ORDINARY,       // on-disk filesystem like ext2
-  FILE_SYSTEM_NFS,
-  FILE_SYSTEM_SMB,
-  FILE_SYSTEM_CODA,
-  FILE_SYSTEM_MEMORY,         // in-memory file system
-  FILE_SYSTEM_CGROUP,         // cgroup control.
-  FILE_SYSTEM_OTHER,          // any other value.
-  FILE_SYSTEM_TYPE_COUNT
-};
-
-// Attempts determine the FileSystemType for |path|.
-// Returns false if |path| doesn't exist.
-BASE_EXPORT bool GetFileSystemType(const FilePath& path, FileSystemType* type);
-#endif
 
 #if BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
 // Get a temporary directory for shared memory files. The directory may depend

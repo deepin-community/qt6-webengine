@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,10 +6,11 @@
 
 #include <memory>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/run_loop.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/test/task_environment.h"
 #include "device/gamepad/hid_writer.h"
 #include "device/gamepad/public/mojom/gamepad.mojom.h"
@@ -98,15 +99,16 @@ class HidHapticGamepadTest : public testing::Test {
       mojom::GamepadHapticsManager::PlayVibrationEffectOnceCallback callback) {
     gamepad_->PlayEffect(
         mojom::GamepadHapticEffectType::GamepadHapticEffectTypeDualRumble,
-        mojom::GamepadEffectParameters::New(kDurationMillis, start_delay,
-                                            strong_magnitude, weak_magnitude),
-        std::move(callback), base::ThreadTaskRunnerHandle::Get());
+        mojom::GamepadEffectParameters::New(
+            kDurationMillis, start_delay, strong_magnitude, weak_magnitude,
+            /*left_trigger=*/0, /*right_trigger=*/0),
+        std::move(callback), base::SingleThreadTaskRunner::GetCurrentDefault());
   }
 
   void PostResetVibration(
       mojom::GamepadHapticsManager::ResetVibrationActuatorCallback callback) {
     gamepad_->ResetVibration(std::move(callback),
-                             base::ThreadTaskRunnerHandle::Get());
+                             base::SingleThreadTaskRunner::GetCurrentDefault());
   }
 
   // Callback for the first PlayEffect or ResetVibration call in a test.

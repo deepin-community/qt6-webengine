@@ -35,17 +35,16 @@ import * as i18n from '../../core/i18n/i18n.js';
 import * as Platform from '../../core/platform/platform.js';
 import * as TextUtils from '../text_utils/text_utils.js';
 
-import type {Project} from './WorkspaceImpl.js';
-import {Events as WorkspaceImplEvents} from './WorkspaceImpl.js';
+import {Events as WorkspaceImplEvents, type Project} from './WorkspaceImpl.js';
 
 const UIStrings = {
   /**
-  *@description Text for the index of something
-  */
+   *@description Text for the index of something
+   */
   index: '(index)',
   /**
-  *@description Text in UISource Code of the DevTools local workspace
-  */
+   *@description Text in UISource Code of the DevTools local workspace
+   */
   thisFileWasChangedExternally: 'This file was changed externally. Would you like to reload it?',
 };
 const str_ = i18n.i18n.registerUIStrings('models/workspace/UISourceCode.ts', UIStrings);
@@ -72,6 +71,8 @@ export class UISourceCode extends Common.ObjectWrapper.ObjectWrapper<EventTypes>
   private workingCopyGetter: (() => string)|null;
   private disableEditInternal: boolean;
   private contentEncodedInternal?: boolean;
+  private isKnownThirdPartyInternal: boolean;
+  private isUnconditionallyIgnoreListedInternal: boolean;
 
   constructor(project: Project, url: Platform.DevToolsPath.UrlString, contentType: Common.ResourceType.ResourceType) {
     super();
@@ -83,9 +84,9 @@ export class UISourceCode extends Common.ObjectWrapper.ObjectWrapper<EventTypes>
       this.originInternal = parsedURL.securityOrigin();
       this.parentURLInternal =
           Common.ParsedURL.ParsedURL.concatenate(this.originInternal, parsedURL.folderPathComponents);
-      if (parsedURL.queryParams) {
-        // in case file name contains query params, it doesn't look like a normal file name anymore
-        // so it can as well remain encoded
+      if (parsedURL.queryParams && !(parsedURL.lastPathComponent && contentType.isFromSourceMap())) {
+        // If there is a query param, display it like a URL. Unless it is from a source map,
+        // in which case the query param is probably a hash that is best left hidden.
         this.nameInternal = parsedURL.lastPathComponent + '?' + parsedURL.queryParams;
       } else {
         // file name looks best decoded
@@ -109,6 +110,8 @@ export class UISourceCode extends Common.ObjectWrapper.ObjectWrapper<EventTypes>
     this.workingCopyInternal = null;
     this.workingCopyGetter = null;
     this.disableEditInternal = false;
+    this.isKnownThirdPartyInternal = false;
+    this.isUnconditionallyIgnoreListedInternal = false;
   }
 
   requestMetadata(): Promise<UISourceCodeMetadata|null> {
@@ -125,6 +128,13 @@ export class UISourceCode extends Common.ObjectWrapper.ObjectWrapper<EventTypes>
 
   url(): Platform.DevToolsPath.UrlString {
     return this.urlInternal;
+  }
+
+  // Identifier used for deduplicating scripts that are considered by the
+  // DevTools UI to be the same script. For now this is just the url but this
+  // is likely to change in the future.
+  canononicalScriptId(): string {
+    return `${this.contentTypeInternal.name()},${this.urlInternal}`;
   }
 
   parentURL(): Platform.DevToolsPath.UrlString {
@@ -199,11 +209,6 @@ export class UISourceCode extends Common.ObjectWrapper.ObjectWrapper<EventTypes>
 
   contentType(): Common.ResourceType.ResourceType {
     return this.contentTypeInternal;
-  }
-
-  async contentEncoded(): Promise<boolean> {
-    await this.requestContent();
-    return this.contentEncodedInternal || false;
   }
 
   project(): Project {
@@ -395,6 +400,29 @@ export class UISourceCode extends Common.ObjectWrapper.ObjectWrapper<EventTypes>
     return this.workingCopyInternal !== null || this.workingCopyGetter !== null;
   }
 
+  isKnownThirdParty(): boolean {
+    return this.isKnownThirdPartyInternal;
+  }
+
+  markKnownThirdParty(): void {
+    this.isKnownThirdPartyInternal = true;
+  }
+
+  /**
+   * {@link markAsUnconditionallyIgnoreListed}
+   */
+  isUnconditionallyIgnoreListed(): boolean {
+    return this.isUnconditionallyIgnoreListedInternal;
+  }
+
+  /**
+   * Unconditionally ignore list this UISourcecode, ignoring any user
+   * setting. We use this to mark breakpoint/logpoint condition scripts for now.
+   */
+  markAsUnconditionallyIgnoreListed(): void {
+    this.isUnconditionallyIgnoreListedInternal = true;
+  }
+
   extension(): string {
     return Common.ParsedURL.ParsedURL.extractExtension(this.nameInternal);
   }
@@ -517,21 +545,27 @@ export class UILocation {
     this.columnNumber = columnNumber;
   }
 
-  linkText(skipTrim?: boolean, showColumnNumber?: boolean): string {
-    let linkText = this.uiSourceCode.displayName(skipTrim);
+  linkText(skipTrim: boolean = false, showColumnNumber: boolean = false): string {
+    const displayName = this.uiSourceCode.displayName(skipTrim);
+    const lineAndColumnText = this.lineAndColumnText(showColumnNumber);
+    return lineAndColumnText ? displayName + ':' + lineAndColumnText : displayName;
+  }
+
+  lineAndColumnText(showColumnNumber: boolean = false): string|undefined {
+    let lineAndColumnText;
     if (this.uiSourceCode.mimeType() === 'application/wasm') {
       // For WebAssembly locations, we follow the conventions described in
       // github.com/WebAssembly/design/blob/master/Web.md#developer-facing-display-conventions
       if (typeof this.columnNumber === 'number') {
-        linkText += `:0x${this.columnNumber.toString(16)}`;
+        lineAndColumnText = `0x${this.columnNumber.toString(16)}`;
       }
     } else {
-      linkText += ':' + (this.lineNumber + 1);
+      lineAndColumnText = `${this.lineNumber + 1}`;
       if (showColumnNumber && typeof this.columnNumber === 'number') {
-        linkText += ':' + (this.columnNumber + 1);
+        lineAndColumnText += ':' + (this.columnNumber + 1);
       }
     }
-    return linkText;
+    return lineAndColumnText;
   }
 
   id(): string {

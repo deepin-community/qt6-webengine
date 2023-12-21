@@ -874,7 +874,7 @@
         "-/ExemplarCharactersPunctuation",
         "-/measurementSystemNames",
         "-/NumberElements/minimalPairs",
-        "-/delimiters"
+        "-/personNames"
       ]
     },
 // Based on filter_display_language_names

@@ -1,14 +1,15 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "weblayer/browser/persistence/browser_persister.h"
 
-#include "base/callback_helpers.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
+#include "base/functional/callback_helpers.h"
 #include "base/guid.h"
 #include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ref.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
 #include "base/test/bind.h"
@@ -76,7 +77,7 @@ class BrowserNavigationObserverImpl : public BrowserRestoreObserver,
 
   // NavigationObserver;
   void NavigationCompleted(Navigation* navigation) override {
-    if (navigation->GetURL() == url_)
+    if (navigation->GetURL() == *url_)
       run_loop_.Quit();
   }
 
@@ -90,7 +91,7 @@ class BrowserNavigationObserverImpl : public BrowserRestoreObserver,
   }
 
   raw_ptr<Browser> browser_;
-  const GURL& url_;
+  const raw_ref<const GURL> url_;
   raw_ptr<Tab> tab_ = nullptr;
   const size_t tab_to_wait_for_;
   std::unique_ptr<TestNavigationObserver> navigation_observer_;

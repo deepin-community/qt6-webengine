@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,12 +8,13 @@
 
 #include <memory>
 
-#include "base/bind.h"
 #include "base/check_op.h"
 #include "base/compiler_specific.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ptr_exclusion.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/rand_util.h"
@@ -22,13 +23,13 @@
 #include "base/strings/string_util.h"
 #include "base/synchronization/lock.h"
 #include "base/task/current_thread.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/threading/sequence_local_storage_slot.h"
 #include "base/trace_event/trace_event.h"
 #include "base/trace_event/typed_macros.h"
 #include "mojo/public/c/system/quota.h"
 #include "mojo/public/cpp/bindings/features.h"
 #include "mojo/public/cpp/bindings/lib/may_auto_lock.h"
-#include "mojo/public/cpp/bindings/lib/message_quota_checker.h"
 #include "mojo/public/cpp/bindings/mojo_buildflags.h"
 #include "mojo/public/cpp/bindings/sync_handle_watcher.h"
 #include "mojo/public/cpp/bindings/tracing_helpers.h"
@@ -78,9 +79,15 @@ class Connector::ActiveDispatchTracker {
 
  private:
   const base::WeakPtr<Connector> connector_;
-  RunLoopNestingObserver* const nesting_observer_;
-  ActiveDispatchTracker* outer_tracker_ = nullptr;
-  ActiveDispatchTracker* inner_tracker_ = nullptr;
+  // This field is not a raw_ptr<> because it was filtered by the rewriter for:
+  // #union
+  RAW_PTR_EXCLUSION RunLoopNestingObserver* const nesting_observer_;
+  // This field is not a raw_ptr<> because it was filtered by the rewriter for:
+  // #union
+  RAW_PTR_EXCLUSION ActiveDispatchTracker* outer_tracker_ = nullptr;
+  // This field is not a raw_ptr<> because it was filtered by the rewriter for:
+  // #union
+  RAW_PTR_EXCLUSION ActiveDispatchTracker* inner_tracker_ = nullptr;
 };
 
 // Watches the MessageLoop on the current thread. Notifies the current chain of
@@ -182,13 +189,6 @@ Connector::Connector(ScopedMessagePipeHandle message_pipe,
 }
 
 Connector::~Connector() {
-  if (quota_checker_) {
-    // Clear the message pipe handle in the checker.
-    quota_checker_->SetMessagePipe(MessagePipeHandle());
-    UMA_HISTOGRAM_COUNTS_1M("Mojo.Connector.MaxUnreadMessageQuotaUsed",
-                            quota_checker_->GetMaxQuotaUsage());
-  }
-
   if (is_receiving_) {
     DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
     CancelWait();
@@ -351,9 +351,6 @@ bool Connector::Accept(Message* message) {
     }
   }
 
-  if (quota_checker_)
-    quota_checker_->BeforeWrite();
-
   MojoResult rv =
       WriteMessageNew(message_pipe_.get(), message->TakeMojoMessage(),
                       MOJO_WRITE_MESSAGE_FLAG_NONE);
@@ -396,14 +393,6 @@ void Connector::AllowWokenUpBySyncWatchOnSameThread() {
 
   EnsureSyncWatcherExists();
   sync_watcher_->AllowWokenUpBySyncWatchOnSameThread();
-}
-
-void Connector::SetMessageQuotaChecker(
-    scoped_refptr<internal::MessageQuotaChecker> checker) {
-  DCHECK(checker && !quota_checker_);
-
-  quota_checker_ = std::move(checker);
-  quota_checker_->SetMessagePipe(message_pipe_.get());
 }
 
 // static

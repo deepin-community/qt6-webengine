@@ -105,6 +105,11 @@ DesktopFrameWithCursor::DesktopFrameWithCursor(
 
   if (!previous_cursor_rect.equals(cursor_rect_)) {
     mutable_updated_region()->AddRect(cursor_rect_);
+    // TODO(crbug:1323241) Update this code to properly handle the case where
+    // |previous_cursor_rect| is outside of the boundaries of |frame|.
+    // Any boundary check has to take into account the fact that
+    // |previous_cursor_rect| can be in DPI or in pixels, based on the platform
+    // we're running on.
     mutable_updated_region()->AddRect(previous_cursor_rect);
   } else if (cursor_changed) {
     mutable_updated_region()->AddRect(cursor_rect_);
@@ -172,6 +177,10 @@ void DesktopAndCursorComposer::Start(DesktopCapturer::Callback* callback) {
   desktop_capturer_->Start(this);
 }
 
+void DesktopAndCursorComposer::SetMaxFrameRate(uint32_t max_frame_rate) {
+  desktop_capturer_->SetMaxFrameRate(max_frame_rate);
+}
+
 void DesktopAndCursorComposer::SetSharedMemoryFactory(
     std::unique_ptr<SharedMemoryFactory> shared_memory_factory) {
   desktop_capturer_->SetSharedMemoryFactory(std::move(shared_memory_factory));
@@ -209,6 +218,10 @@ DesktopCaptureMetadata DesktopAndCursorComposer::GetMetadata() {
 }
 #endif  // defined(WEBRTC_USE_GIO)
 
+void DesktopAndCursorComposer::OnFrameCaptureStart() {
+  callback_->OnFrameCaptureStart();
+}
+
 void DesktopAndCursorComposer::OnCaptureResult(
     DesktopCapturer::Result result,
     std::unique_ptr<DesktopFrame> frame) {
@@ -218,7 +231,7 @@ void DesktopAndCursorComposer::OnCaptureResult(
         !desktop_capturer_->IsOccluded(cursor_position_)) {
       DesktopVector relative_position =
           cursor_position_.subtract(frame->top_left());
-#if defined(WEBRTC_MAC)
+#if defined(WEBRTC_MAC) || defined(CHROMEOS)
       // On OSX, the logical(DIP) and physical coordinates are used mixingly.
       // For example, the captured cursor has its size in physical pixels(2x)
       // and location in logical(DIP) pixels on Retina monitor. This will cause

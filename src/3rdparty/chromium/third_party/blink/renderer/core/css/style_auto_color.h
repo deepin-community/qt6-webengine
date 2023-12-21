@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -34,8 +34,9 @@ class StyleAutoColor : public StyleColor {
 };
 
 inline bool operator==(const StyleAutoColor& a, const StyleAutoColor& b) {
-  if (a.IsAutoColor() || b.IsAutoColor())
+  if (a.IsAutoColor() || b.IsAutoColor()) {
     return a.IsAutoColor() && b.IsAutoColor();
+  }
   return a.ToStyleColor() == b.ToStyleColor();
 }
 

@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -99,7 +99,7 @@ ComponentUpdaterCommandLineConfigPolicy::
       GetSwitchArgument(switch_values, kInitialDelay);
   double initial_delay_seconds = 0;
   if (base::StringToDouble(initial_delay, &initial_delay_seconds))
-    initial_delay_ = initial_delay_seconds;
+    initial_delay_ = base::Seconds(initial_delay_seconds);
 }
 
 bool ComponentUpdaterCommandLineConfigPolicy::BackgroundDownloadsEnabled()
@@ -127,7 +127,7 @@ GURL ComponentUpdaterCommandLineConfigPolicy::UrlSourceOverride() const {
   return url_source_override_;
 }
 
-double ComponentUpdaterCommandLineConfigPolicy::InitialDelay() const {
+base::TimeDelta ComponentUpdaterCommandLineConfigPolicy::InitialDelay() const {
   return initial_delay_;
 }
 

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,6 +9,7 @@
 #include <string>
 
 #include "base/memory/raw_ptr.h"
+#include "base/values.h"
 #include "chrome/browser/bitmap_fetcher/bitmap_fetcher_delegate.h"
 #include "chrome/browser/extensions/active_install_data.h"
 #include "chrome/browser/extensions/extension_install_prompt.h"
@@ -17,7 +18,9 @@
 #include "chrome/common/buildflags.h"
 #include "chrome/common/extensions/api/webstore_private.h"
 #include "chrome/common/extensions/webstore_install_result.h"
+#include "components/supervised_user/core/common/buildflags.h"
 #include "extensions/browser/extension_function.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 
 #if BUILDFLAG(ENABLE_SUPERVISED_USERS)
@@ -81,10 +84,9 @@ class WebstorePrivateBeginInstallWithManifest3Function
   ExtensionFunction::ResponseAction Run() override;
 
   // WebstoreInstallHelper::Delegate:
-  void OnWebstoreParseSuccess(
-      const std::string& id,
-      const SkBitmap& icon,
-      std::unique_ptr<base::DictionaryValue> parsed_manifest) override;
+  void OnWebstoreParseSuccess(const std::string& id,
+                              const SkBitmap& icon,
+                              base::Value::Dict parsed_manifest) override;
   void OnWebstoreParseFailure(const std::string& id,
                               InstallHelperResultCode result,
                               const std::string& error_message) override;
@@ -110,7 +112,8 @@ class WebstorePrivateBeginInstallWithManifest3Function
   void OnRequestPromptDone(ExtensionInstallPrompt::DoneCallbackPayload payload);
   void OnBlockByPolicyPromptDone();
 
-  void HandleInstallProceed();
+  // Permissions are granted by default.
+  void HandleInstallProceed(bool withhold_permissions = false);
   void HandleInstallAbort(bool user_initiated);
 
   ExtensionFunction::ResponseValue BuildResponse(
@@ -143,7 +146,7 @@ class WebstorePrivateBeginInstallWithManifest3Function
 
   std::unique_ptr<ScopedActiveInstall> scoped_active_install_;
 
-  std::unique_ptr<base::DictionaryValue> parsed_manifest_;
+  absl::optional<base::Value::Dict> parsed_manifest_;
   SkBitmap icon_;
 
   // A dummy Extension object we create for the purposes of using
@@ -388,24 +391,6 @@ class WebstorePrivateGetExtensionStatusFunction : public ExtensionFunction {
                         data_decoder::DataDecoder::ValueOrError result);
 
   // ExtensionFunction:
-  ExtensionFunction::ResponseAction Run() override;
-};
-
-class WebstorePrivateRequestExtensionFunction : public ExtensionFunction {
- public:
-  DECLARE_EXTENSION_FUNCTION("webstorePrivate.requestExtension",
-                             WEBSTOREPRIVATE_REQUESTEXTENSION)
-  WebstorePrivateRequestExtensionFunction();
-
-  WebstorePrivateRequestExtensionFunction(
-      const WebstorePrivateRequestExtensionFunction&) = delete;
-  WebstorePrivateRequestExtensionFunction& operator=(
-      const WebstorePrivateRequestExtensionFunction&) = delete;
-
- private:
-  ~WebstorePrivateRequestExtensionFunction() override;
-
-  // Extensionfunction:
   ExtensionFunction::ResponseAction Run() override;
 };
 

@@ -102,9 +102,9 @@ class BandMatrixBase : public EigenBase<Derived>
                      : min_size_prefer_dynamic(RowsAtCompileTime, ColsAtCompileTime - ActualIndex))
       };
       typedef Block<CoefficientsType,1, DiagonalSize> BuildType;
-      typedef typename internal::conditional<Conjugate,
+      typedef std::conditional_t<Conjugate,
                  CwiseUnaryOp<internal::scalar_conjugate_op<Scalar>,BuildType >,
-                 BuildType>::type Type;
+                 BuildType> Type;
     };
 
     /** \returns a vector expression of the \a N -th sub or super diagonal */
@@ -273,7 +273,7 @@ class BandMatrixWrapper : public BandMatrixBase<BandMatrixWrapper<CoefficientsTy
         m_rows(rows), m_supers(supers), m_subs(subs)
     {
       EIGEN_UNUSED_VARIABLE(cols);
-      //internal::assert(coeffs.cols()==cols() && (supers()+subs()+1)==coeffs.rows());
+      // eigen_assert(coeffs.cols()==cols() && (supers()+subs()+1)==coeffs.rows());
     }
 
     /** \returns the number of columns */

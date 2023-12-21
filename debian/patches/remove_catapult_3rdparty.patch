@@ -2,35 +2,35 @@ Author: Patrick Franz <deltaone@debian.org>
 Description: Remove dependencies on catapult from src/3rdparty
 Forwarded: not-needed
 
-diff --git a/src/3rdparty/chromium/BUILD.gn b/src/3rdparty/chromium/BUILD.gn
-index 6e0183ce0b7..22370dff563 100644
+diff --git a/chromium/BUILD.gn b/chromium/BUILD.gn
+index 457c83e8158..b0cd3ef2f74 100644
 --- a/src/3rdparty/chromium/BUILD.gn
 +++ b/src/3rdparty/chromium/BUILD.gn
-@@ -243,7 +243,6 @@ group("gn_all") {
+@@ -249,7 +249,6 @@ if (!is_qtwebengine){
      deps += [
        "//google_apis/gcm:mcs_probe",
        "//media/cast:cast_unittests",
 -      "//third_party/catapult/telemetry:bitmaptools($host_toolchain)",
      ]
      if (!is_android) {
-       deps += [ "//chrome/test:telemetry_perf_unittests" ]
-@@ -382,7 +381,6 @@ group("gn_all") {
-       "//net/android:net_junit_tests",
-       "//services:services_junit_tests",
+       if (!is_castos) {
+@@ -381,7 +380,6 @@ if (!is_qtwebengine){
        "//testing/android/junit:junit_unit_tests",
+       "//third_party/android_build_tools/lint:custom_lint_java",
+       "//third_party/androidx_javascriptengine",
 -      "//third_party/catapult/devil",
        "//third_party/r8:custom_d8_java",
        "//tools/android:android_tools",
        "//tools/android:memconsumer",
-@@ -1082,7 +1080,6 @@ if (!is_ios && !use_qt) {
+@@ -1124,7 +1122,6 @@ if (!is_ios && !is_qtwebengine) {
          "//chrome:chrome",
-         "//chrome/test/chromedriver",
+         "//chrome/test/chromedriver:chromedriver_server",
          "//testing:test_scripts_shared",
 -        "//third_party/catapult/third_party/typ",
        ]
        if (is_win) {
          data_deps += [ "//build/win:copy_cdb_to_output" ]
-@@ -1124,7 +1121,6 @@ if (!is_ios && !use_qt) {
+@@ -1177,7 +1174,6 @@ if (!is_ios && !is_qtwebengine) {
        "//third_party/blink/public:blink_devtools_inspector_resources",
        "//third_party/blink/public/mojom:mojom_platform_js_data_deps",
        "//third_party/blink/renderer/core:js_files_for_form_controls_web_tests",
@@ -38,7 +38,7 @@ index 6e0183ce0b7..22370dff563 100644
        "//third_party/hyphenation-patterns:test_data",
        "//third_party/mesa_headers",
        "//tools/imagediff",
-@@ -1191,7 +1187,6 @@ if (!is_ios && !use_qt) {
+@@ -1254,7 +1250,6 @@ if (!is_ios && !is_qtwebengine) {
 
      if (is_android) {
        data += [
@@ -46,31 +46,31 @@ index 6e0183ce0b7..22370dff563 100644
          "//build/android/",
        ]
      }
-@@ -1350,10 +1345,6 @@ if (!is_ios && !use_qt) {
-       "//third_party/blink/web_tests/StaleTestExpectations",
+@@ -1630,10 +1625,6 @@ if (!is_ios && !is_qtwebengine) {
        "//third_party/blink/web_tests/TestExpectations",
        "//third_party/blink/web_tests/VirtualTestSuites",
+       "//third_party/blink/web_tests/W3CImportExpectations",
 -      "//third_party/catapult/common/py_utils/",
 -      "//third_party/catapult/devil/",
 -      "//third_party/catapult/dependency_manager/",
 -      "//third_party/catapult/third_party/typ/",
-       "//third_party/depot_tools/pylint",
        "//third_party/depot_tools/pylint-1.5",
        "//third_party/depot_tools/pylint_main.py",
+       "//third_party/depot_tools/pylintrc",
 diff --git a/src/3rdparty/chromium/chrome/chrome_paks.gni b/src/3rdparty/chromium/chrome/chrome_paks.gni
 index b9dce47a02f..e7e4c5e7be5 100644
 --- a/src/3rdparty/chromium/chrome/chrome_paks.gni
 +++ b/src/3rdparty/chromium/chrome/chrome_paks.gni
-@@ -168,7 +168,6 @@ template("chrome_extra_paks") {
-         "$root_gen_dir/chrome/webid_resources_100_percent.pak",
+@@ -189,7 +189,6 @@ template("chrome_extra_paks") {
+         "$root_gen_dir/chrome/webui_gallery_resources.pak",
          "$root_gen_dir/chrome/whats_new_resources.pak",
          "$root_gen_dir/content/browser/devtools/devtools_resources.pak",
 -        "$root_gen_dir/content/browser/tracing/tracing_resources.pak",
        ]
        deps += [
          "//chrome/browser/resources:component_extension_resources",
-@@ -198,7 +197,6 @@ template("chrome_extra_paks") {
-         "//chrome/browser/resources/tab_search:resources",
+@@ -230,7 +229,6 @@ template("chrome_extra_paks") {
+         "//chrome/browser/resources/webui_gallery:resources",
          "//chrome/browser/resources/whats_new:resources",
          "//content/browser/devtools:devtools_resources",
 -        "//content/browser/tracing:resources",
@@ -81,7 +81,7 @@ diff --git a/src/3rdparty/chromium/chrome/test/BUILD.gn b/src/3rdparty/chromium/
 index a4e85c1e931..03beb728a61 100644
 --- a/src/3rdparty/chromium/chrome/test/BUILD.gn
 +++ b/src/3rdparty/chromium/chrome/test/BUILD.gn
-@@ -9981,8 +9981,6 @@ if (!is_android && !is_fuchsia) {
+@@ -10726,8 +10726,6 @@ if (!is_android && !is_fuchsia) {
        "//chrome/test/data/password/captured_sites/",
        "//chrome/test/data/web_page_replay_go_helper_scripts/automation_helper.js",
        "//components/test/data/autofill/web_page_replay_support_files/",
@@ -90,24 +90,7 @@ index a4e85c1e931..03beb728a61 100644
      ]
 
      if (is_linux || is_chromeos || is_win) {
-@@ -10085,8 +10083,6 @@ if (!is_android) {
-         "//chrome/test/data/enterprise/connectors/file_system/captures/",
-         "//chrome/test/data/enterprise/connectors/file_system/downloads/",
-         "//chrome/test/data/web_page_replay_go_helper_scripts/automation_helper.js",
--        "//third_party/catapult/telemetry/telemetry/bin/",
--        "//third_party/catapult/web_page_replay_go/deterministic.js",
-       ]
-
-       if (is_fuchsia) {
-@@ -10146,7 +10142,6 @@ if (!is_android) {
-         "//skia",
-         "//testing/gmock",
-         "//testing/gtest",
--        "//third_party/catapult:telemetry_chrome_test_support",
-         "//third_party/hunspell",
-         "//third_party/icu",
-         "//third_party/libpng",
-@@ -10197,7 +10192,6 @@ if (!is_android) {
+@@ -10814,7 +10812,6 @@ if (!is_android) {
      deps = [ "//tools/perf/chrome_telemetry_build:telemetry_chrome_test" ]
 
      data = [
@@ -115,71 +98,18 @@ index a4e85c1e931..03beb728a61 100644
        "//tools/perf/run_telemetry_tests",
        "//testing/scripts/run_telemetry_as_googletest.py",
      ]
-@@ -10330,7 +10324,6 @@ if (is_mac || is_win || is_android) {
-       "//chrome/test/data/perf",
-       "//components/variations/service/generate_ui_string_overrider.py",
-       "//testing/scripts",
--      "//third_party/catapult",
-       "//tools/perf",
-     ]
-     data_deps = [ "//testing:test_scripts_shared" ]
 diff --git a/src/3rdparty/chromium/content/browser/BUILD.gn b/src/3rdparty/chromium/content/browser/BUILD.gn
 index 00ba6f9edaf..5922ea17795 100644
 --- a/src/3rdparty/chromium/content/browser/BUILD.gn
 +++ b/src/3rdparty/chromium/content/browser/BUILD.gn
-@@ -2526,7 +2526,6 @@ jumbo_source_set("browser") {
-   if (!is_android) {
+@@ -3230,7 +3230,6 @@ jumbo_source_set("browser") {
      deps += [
        "//components/vector_icons",
+       "//content/browser/devtools:devtools_resources_extern",
 -      "//content/browser/tracing:resources",
      ]
-     sources += [
-       # Non-Android platforms that don't presently support
-diff --git a/src/3rdparty/chromium/content/browser/tracing/BUILD.gn b/src/3rdparty/chromium/content/browser/tracing/BUILD.gn
-deleted file mode 100644
-index 9d744a67cfd..00000000000
---- a/src/3rdparty/chromium/content/browser/tracing/BUILD.gn
-+++ /dev/null
-@@ -1,39 +0,0 @@
--# Copyright 2014 The Chromium Authors. All rights reserved.
--# Use of this source code is governed by a BSD-style license that can be
--# found in the LICENSE file.
--
--import("//tools/grit/grit_rule.gni")
--import("//ui/webui/resources/tools/generate_grd.gni")
--
--assert(!is_android)
--
--# The script just writes filename with no dirs to the .grd, so we always need
--# this file to be in the same directory as the inputs.
--tracing_grd = "$target_gen_dir/tracing_resources.grd"
--
--generate_grd("build_grd") {
--  grd_prefix = "tracing"
--  out_grd = tracing_grd
--  input_files = [
--    "about_tracing.html",
--    "about_tracing.js",
--  ]
--  input_files_base_dir = rebase_path(target_gen_dir, root_build_dir)
--  deps = [ "//third_party/catapult/tracing:generate_about_tracing" ]
--}
--
--grit("resources") {
--  source = tracing_grd
--
--  # Required because the .grd is generated.
--  enable_input_discovery_for_gn_analyze = false
--
--  outputs = [
--    "grit/tracing_resources.h",
--    "grit/tracing_resources_map.cc",
--    "grit/tracing_resources_map.h",
--    "tracing_resources.pak",
--  ]
--
--  deps = [ ":build_grd" ]
--}
+   }
+
 diff --git a/src/3rdparty/chromium/content/browser/tracing/tracing_ui.cc b/src/3rdparty/chromium/content/browser/tracing/tracing_ui.cc
 index dcfee226a6e..66d8bfc26bb 100644
 --- a/src/3rdparty/chromium/content/browser/tracing/tracing_ui.cc
@@ -217,22 +147,22 @@ index bfa01025410..e0cf308394f 100644
    if (shell_use_toolkit_views) {
      deps += [ "//ui/views/resources" ]
      sources +=
-diff --git a/src/3rdparty/chromium/fuchsia/engine/BUILD.gn b/src/3rdparty/chromium/fuchsia/engine/BUILD.gn
-index 745c183dad7..cb8e5542116 100644
---- a/src/3rdparty/chromium/fuchsia/engine/BUILD.gn
-+++ b/src/3rdparty/chromium/fuchsia/engine/BUILD.gn
-@@ -38,7 +38,6 @@ repack("web_engine_pak") {
+diff --git a/chromium/fuchsia_web/webengine/BUILD.gn b/chromium/fuchsia_web/webengine/BUILD.gn
+index 419b36e526d..887573f4695 100644
+--- a/src/3rdparty/chromium/fuchsia_web/webengine/BUILD.gn
++++ b/src/3rdparty/chromium/fuchsia_web/webengine/BUILD.gn
+@@ -128,7 +128,6 @@ source_set("web_engine_export_from_implementation") {
+ repack("web_engine_pak") {
    sources = [
      "$root_gen_dir/components/components_resources.pak",
-     "$root_gen_dir/content/app/resources/content_resources_100_percent.pak",
 -    "$root_gen_dir/content/browser/tracing/tracing_resources.pak",
      "$root_gen_dir/content/content_resources.pak",
      "$root_gen_dir/content/dev_ui_content_resources.pak",
      "$root_gen_dir/mojo/public/js/mojo_bindings_resources.pak",
-@@ -53,7 +52,6 @@ repack("web_engine_pak") {
+@@ -142,7 +141,6 @@ repack("web_engine_pak") {
+     "//components/resources:components_resources",
      "//content:content_resources",
      "//content:dev_ui_content_resources",
-     "//content/app/resources",
 -    "//content/browser/tracing:resources",
      "//gpu/command_buffer/service",
      "//mojo/public/js:resources",
@@ -241,8 +171,8 @@ diff --git a/src/3rdparty/chromium/mojo/public/tools/BUILD.gn b/src/3rdparty/chr
 index eb6391a6540..87e7585aa15 100644
 --- a/src/3rdparty/chromium/mojo/public/tools/BUILD.gn
 +++ b/src/3rdparty/chromium/mojo/public/tools/BUILD.gn
-@@ -13,6 +13,5 @@ group("mojo_python_unittests") {
-   deps = [ "//mojo/public/tools/mojom/mojom:tests" ]
+@@ -17,6 +17,5 @@ group("mojo_python_unittests") {
+   ]
    data_deps = [
      "//testing:test_scripts_shared",
 -    "//third_party/catapult/third_party/typ/",
@@ -320,21 +250,21 @@ index 08f41243caa..c0e1c9e40a9 100644
      "//tools/grit/",
 -    "//third_party/catapult/third_party/typ/",
      "//third_party/node/",
-     "//third_party/six/src/six.py",
    ]
+ }
 diff --git a/src/3rdparty/chromium/tools/gritsettings/resource_ids.spec b/src/3rdparty/chromium/tools/gritsettings/resource_ids.spec
 index 82699203111..12497514e73 100644
 --- a/src/3rdparty/chromium/tools/gritsettings/resource_ids.spec
 +++ b/src/3rdparty/chromium/tools/gritsettings/resource_ids.spec
-@@ -743,12 +743,6 @@
+@@ -918,12 +918,6 @@
    "content/test/web_ui_mojo_test_resources.grd": {
-     "includes": [3860],
+     "includes": [3840],
    },
 -
 -  # This file is generated during the build.
 -  "<(SHARED_INTERMEDIATE_DIR)/content/browser/tracing/tracing_resources.grd": {
 -    "META": {"sizes": {"includes": [20],}},
--    "includes": [3880],
+-    "includes": [3860],
 -  },
    # END content/ section.
 

@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,13 +7,14 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/json/json_writer.h"
 #include "base/run_loop.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/test/bind.h"
+#include "base/test/test_future.h"
 #include "base/threading/platform_thread.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
@@ -70,19 +71,13 @@ namespace {
 // resulting from that call.
 void GetAudioDeviceDescriptions(bool for_input,
                                 AudioDeviceDescriptions* device_descriptions) {
-  base::RunLoop run_loop;
+  base::test::TestFuture<AudioDeviceDescriptions>
+      audio_device_descriptions_future;
   std::unique_ptr<media::AudioSystem> audio_system =
       content::CreateAudioSystemForAudioService();
   audio_system->GetDeviceDescriptions(
-      for_input, base::BindOnce(
-                     [](base::OnceClosure finished_callback,
-                        AudioDeviceDescriptions* result,
-                        AudioDeviceDescriptions received) {
-                       *result = std::move(received);
-                       std::move(finished_callback).Run();
-                     },
-                     run_loop.QuitClosure(), device_descriptions));
-  run_loop.Run();
+      for_input, audio_device_descriptions_future.GetCallback());
+  *device_descriptions = audio_device_descriptions_future.Take();
 }
 
 }  // namespace
@@ -107,8 +102,6 @@ class AudioWaitingExtensionTest : public ExtensionApiTest {
 
 class WebrtcAudioPrivateTest : public AudioWaitingExtensionTest {
  public:
-  WebrtcAudioPrivateTest() {}
-
   void SetUpOnMainThread() override {
     AudioWaitingExtensionTest::SetUpOnMainThread();
     // Needs to happen after chrome's schemes are added.
@@ -116,11 +109,10 @@ class WebrtcAudioPrivateTest : public AudioWaitingExtensionTest {
   }
 
  protected:
-  void AppendTabIdToRequestInfo(base::ListValue* params, int tab_id) {
-    std::unique_ptr<base::DictionaryValue> request_info(
-        new base::DictionaryValue());
-    request_info->SetIntKey("tabId", tab_id);
-    params->Append(std::move(request_info));
+  void AppendTabIdToRequestInfo(base::Value::List* params, int tab_id) {
+    base::Value::Dict request_info;
+    request_info.Set("tabId", tab_id);
+    params->Append(base::Value(std::move(request_info)));
   }
 
   std::unique_ptr<base::Value> InvokeGetSinks() {
@@ -143,25 +135,24 @@ IN_PROC_BROWSER_TEST_F(WebrtcAudioPrivateTest, GetSinks) {
   GetAudioDeviceDescriptions(false, &devices);
 
   std::unique_ptr<base::Value> result = InvokeGetSinks();
-  const base::ListValue& sink_list = base::Value::AsListValue(*result);
+  const base::Value::List& sink_list = result->GetList();
 
   std::string result_string;
   JSONWriter::Write(*result, &result_string);
   VLOG(2) << result_string;
 
-  EXPECT_EQ(devices.size(), sink_list.GetListDeprecated().size());
+  EXPECT_EQ(devices.size(), sink_list.size());
 
   // Iterate through both lists in lockstep and compare. The order
   // should be identical.
   size_t ix = 0;
   AudioDeviceDescriptions::const_iterator it = devices.begin();
-  for (; ix < sink_list.GetListDeprecated().size() && it != devices.end();
-       ++ix, ++it) {
-    const base::Value& value = sink_list.GetListDeprecated()[ix];
+  for (; ix < sink_list.size() && it != devices.end(); ++ix, ++it) {
+    const base::Value& value = sink_list[ix];
     EXPECT_TRUE(value.is_dict());
-    const base::DictionaryValue& dict = base::Value::AsDictionaryValue(value);
-    std::string sink_id;
-    dict.GetString("sinkId", &sink_id);
+    const base::Value::Dict& dict = value.GetDict();
+    const std::string* sink_id = dict.FindString("sinkId");
+    EXPECT_TRUE(sink_id);
 
     std::string expected_id =
         media::AudioDeviceDescription::IsDefaultDevice(it->unique_id)
@@ -171,16 +162,16 @@ IN_PROC_BROWSER_TEST_F(WebrtcAudioPrivateTest, GetSinks) {
                   url::Origin::Create(source_url_.DeprecatedGetOriginAsURL()),
                   it->unique_id);
 
-    EXPECT_EQ(expected_id, sink_id);
-    std::string sink_label;
-    dict.GetString("sinkLabel", &sink_label);
-    EXPECT_EQ(it->device_name, sink_label);
+    EXPECT_EQ(expected_id, *sink_id);
+    const std::string* sink_label = dict.FindString("sinkLabel");
+    EXPECT_TRUE(sink_label);
+    EXPECT_EQ(it->device_name, *sink_label);
 
     // TODO(joi): Verify the contents of these once we start actually
     // filling them in.
-    EXPECT_TRUE(dict.FindKey("isDefault"));
-    EXPECT_TRUE(dict.FindKey("isReady"));
-    EXPECT_TRUE(dict.FindKey("sampleRate"));
+    EXPECT_TRUE(dict.Find("isDefault"));
+    EXPECT_TRUE(dict.Find("isReady"));
+    EXPECT_TRUE(dict.Find("sampleRate"));
   }
 }
 #endif  // BUILDFLAG(IS_MAC)
@@ -205,7 +196,7 @@ IN_PROC_BROWSER_TEST_F(WebrtcAudioPrivateTest, GetAssociatedSink) {
         profile()->GetMediaDeviceIDSalt(), url::Origin::Create(origin),
         raw_device_id);
 
-    base::ListValue parameters;
+    base::Value::List parameters;
     parameters.Append(origin.spec());
     parameters.Append(source_id_in_origin);
     std::string parameter_string;

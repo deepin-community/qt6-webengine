@@ -1,4 +1,4 @@
-// Copyright 2020 PDFium Authors. All rights reserved.
+// Copyright 2020 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,7 @@
 #include <memory>
 
 #include "fxjs/cfx_v8_array_buffer_allocator.h"
-#include "v8/include/v8.h"
+#include "v8/include/v8-isolate.h"
 
 void FXV8UnitTest::V8IsolateDeleter::operator()(v8::Isolate* ptr) const {
   ptr->Dispose();

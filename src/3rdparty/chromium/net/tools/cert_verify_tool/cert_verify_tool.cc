@@ -1,13 +1,13 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include <iostream>
 
 #include "base/at_exit.h"
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/command_line.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/logging.h"
 #include "base/message_loop/message_pump_type.h"
 #include "base/strings/string_split.h"
@@ -21,6 +21,7 @@
 #include "net/cert/cert_verify_proc_builtin.h"
 #include "net/cert/crl_set.h"
 #include "net/cert/internal/system_trust_store.h"
+#include "net/cert/pki/trust_store.h"
 #include "net/cert/x509_util.h"
 #include "net/cert_net/cert_net_fetcher_url_request.h"
 #include "net/tools/cert_verify_tool/cert_verify_tool_util.h"
@@ -33,6 +34,10 @@
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
 #include "net/proxy_resolution/proxy_config.h"
 #include "net/proxy_resolution/proxy_config_service_fixed.h"
+#endif
+
+#if BUILDFLAG(CHROME_ROOT_STORE_SUPPORTED)
+#include "net/cert/internal/trust_store_chrome.h"
 #endif
 
 namespace {
@@ -97,7 +102,8 @@ class CertVerifyImpl {
   virtual bool VerifyCert(const CertInput& target_der_cert,
                           const std::string& hostname,
                           const std::vector<CertInput>& intermediate_der_certs,
-                          const std::vector<CertInput>& root_der_certs,
+                          const std::vector<CertInputWithTrustSetting>&
+                              der_certs_with_trust_settings,
                           base::Time verify_time,
                           net::CRLSet* crl_set,
                           const base::FilePath& dump_prefix_path) = 0;
@@ -115,7 +121,8 @@ class CertVerifyImplUsingProc : public CertVerifyImpl {
   bool VerifyCert(const CertInput& target_der_cert,
                   const std::string& hostname,
                   const std::vector<CertInput>& intermediate_der_certs,
-                  const std::vector<CertInput>& root_der_certs,
+                  const std::vector<CertInputWithTrustSetting>&
+                      der_certs_with_trust_settings,
                   base::Time verify_time,
                   net::CRLSet* crl_set,
                   const base::FilePath& dump_prefix_path) override {
@@ -136,9 +143,9 @@ class CertVerifyImplUsingProc : public CertVerifyImpl {
                       .InsertBeforeExtensionASCII("." + GetName());
     }
 
-    return VerifyUsingCertVerifyProc(proc_.get(), target_der_cert, hostname,
-                                     intermediate_der_certs, root_der_certs,
-                                     crl_set, dump_path);
+    return VerifyUsingCertVerifyProc(
+        proc_.get(), target_der_cert, hostname, intermediate_der_certs,
+        der_certs_with_trust_settings, crl_set, dump_path);
   }
 
  private:
@@ -160,7 +167,8 @@ class CertVerifyImplUsingPathBuilder : public CertVerifyImpl {
   bool VerifyCert(const CertInput& target_der_cert,
                   const std::string& hostname,
                   const std::vector<CertInput>& intermediate_der_certs,
-                  const std::vector<CertInput>& root_der_certs,
+                  const std::vector<CertInputWithTrustSetting>&
+                      der_certs_with_trust_settings,
                   base::Time verify_time,
                   net::CRLSet* crl_set,
                   const base::FilePath& dump_prefix_path) override {
@@ -173,8 +181,9 @@ class CertVerifyImplUsingPathBuilder : public CertVerifyImpl {
     }
 
     return VerifyUsingPathBuilder(target_der_cert, intermediate_der_certs,
-                                  root_der_certs, verify_time, dump_prefix_path,
-                                  cert_net_fetcher_, system_trust_store_.get());
+                                  der_certs_with_trust_settings, verify_time,
+                                  dump_prefix_path, cert_net_fetcher_,
+                                  system_trust_store_.get());
   }
 
  private:
@@ -191,9 +200,16 @@ std::unique_ptr<net::SystemTrustStore> CreateSystemTrustStore(
                 << ": using system roots (--roots are in addition).\n";
       return net::CreateSslSystemTrustStore();
     case RootStoreType::kChrome:
+#if BUILDFLAG(CHROME_ROOT_STORE_SUPPORTED)
       std::cerr << impl_name
                 << ": using Chrome Root Store (--roots are in addition).\n";
-      return net::CreateSslSystemTrustStoreChromeRoot();
+      return net::CreateSslSystemTrustStoreChromeRoot(
+          std::make_unique<net::TrustStoreChrome>());
+#else
+      std::cerr << impl_name << ": not supported.\n";
+      [[fallthrough]];
+#endif
+
     case RootStoreType::kEmpty:
     default:
       std::cerr << impl_name << ": only using --roots specified.\n";
@@ -255,11 +271,13 @@ void PrintInputChain(const CertInput& target,
   std::cout << "\n";
 }
 
-void PrintAdditionalRoots(const std::vector<CertInput>& root_der_certs) {
+void PrintAdditionalRoots(const std::vector<CertInputWithTrustSetting>&
+                              der_certs_with_trust_settings) {
   std::cout << "Additional roots:\n";
-  for (const auto& cert : root_der_certs) {
+  for (const auto& cert : der_certs_with_trust_settings) {
+    std::cout << " " << cert.trust.ToDebugString() << ":\n ";
     PrintCertHashAndSubject(
-        net::x509_util::CreateCryptoBuffer(cert.der_cert).get());
+        net::x509_util::CreateCryptoBuffer(cert.cert_input.der_cert).get());
   }
   std::cout << "\n";
 }
@@ -307,6 +325,14 @@ const char kUsage[] =
     "      as a root. This is useful when providing a <target/chain>\n"
     "      parameter whose final certificate is a trust anchor.\n"
     "\n"
+    " --root-trust=<trust string>\n"
+    "      Roots trusted by --roots and --trust-last-cert will be trusted\n"
+    "      with the specified trust [2].\n"
+    "\n"
+    " --trust-leaf-cert=[trust string]\n"
+    "      The leaf cert will be considered trusted with the specified\n"
+    "      trust [2]. If [trust string] is omitted, defaults to TRUSTED_LEAF.\n"
+    "\n"
     " --time=<time>\n"
     "      Use <time> instead of the current system time. <time> is\n"
     "      interpreted in local time if a timezone is not specified.\n"
@@ -329,7 +355,16 @@ const char kUsage[] =
     "    either be:\n"
     "    * A binary file containing a single DER-encoded RFC 5280 Certificate\n"
     "    * A PEM file containing one or more CERTIFICATE blocks (DER-encoded\n"
-    "      RFC 5280 Certificate)\n";
+    "      RFC 5280 Certificate)\n"
+    "\n"
+    "[2] A \"trust string\" consists of a trust type and zero or more options\n"
+    "    separated by '+' characters. Note that these trust settings are only\n"
+    "    honored by the builtin & pathbuilder impls.\n"
+    "    Trust types: UNSPECIFIED, DISTRUSTED, TRUSTED_ANCHOR,\n"
+    "                 TRUSTED_ANCHOR_OR_LEAF, TRUSTED_LEAF\n"
+    "    Options: enforce_anchor_expiry, enforce_anchor_constraints,\n"
+    "             require_anchor_basic_constraints, require_leaf_selfsigned\n"
+    "    Ex: TRUSTED_ANCHOR+enforce_anchor_expiry+enforce_anchor_constraints\n";
 
 void PrintUsage(const char* argv0) {
   std::cerr << "Usage: " << argv0 << kUsage;
@@ -402,6 +437,7 @@ int main(int argc, char** argv) {
 
   base::FilePath dump_prefix_path = command_line.GetSwitchValuePath("dump");
 
+  std::vector<CertInputWithTrustSetting> der_certs_with_trust_settings;
   std::vector<CertInput> root_der_certs;
   std::vector<CertInput> intermediate_der_certs;
   CertInput target_der_cert;
@@ -434,9 +470,44 @@ int main(int argc, char** argv) {
     intermediate_der_certs.pop_back();
   }
 
+  if (command_line.HasSwitch("trust-leaf-cert")) {
+    net::CertificateTrust trust = net::CertificateTrust::ForTrustedLeaf();
+    std::string trust_str = command_line.GetSwitchValueASCII("trust-leaf-cert");
+    if (!trust_str.empty()) {
+      absl::optional<net::CertificateTrust> parsed_trust =
+          net::CertificateTrust::FromDebugString(trust_str);
+      if (!parsed_trust) {
+        std::cerr << "ERROR: invalid leaf trust string " << trust_str << "\n";
+        return 1;
+      }
+      trust = *parsed_trust;
+    }
+    der_certs_with_trust_settings.push_back({target_der_cert, trust});
+  }
+
+  // TODO(https://crbug.com/1408473): Maybe default to the trust setting that
+  // would be used for locally added anchors on the current platform?
+  net::CertificateTrust root_trust = net::CertificateTrust::ForTrustAnchor();
+
+  if (command_line.HasSwitch("root-trust")) {
+    std::string trust_str = command_line.GetSwitchValueASCII("root-trust");
+    absl::optional<net::CertificateTrust> parsed_trust =
+        net::CertificateTrust::FromDebugString(trust_str);
+    if (!parsed_trust) {
+      std::cerr << "ERROR: invalid root trust string " << trust_str << "\n";
+      return 1;
+    }
+    root_trust = *parsed_trust;
+  }
+
+  for (const auto& cert_input : root_der_certs) {
+    der_certs_with_trust_settings.push_back({cert_input, root_trust});
+  }
+
   PrintInputChain(target_der_cert, intermediate_der_certs);
-  if (!root_der_certs.empty())
-    PrintAdditionalRoots(root_der_certs);
+  if (!der_certs_with_trust_settings.empty()) {
+    PrintAdditionalRoots(der_certs_with_trust_settings);
+  }
 
   // Create a network thread to be used for AIA fetches, and wait for a
   // CertNetFetcher to be constructed on that thread.
@@ -489,8 +560,8 @@ int main(int argc, char** argv) {
 
     std::cout << impls[i]->GetName() << ":\n";
     if (!impls[i]->VerifyCert(target_der_cert, hostname, intermediate_der_certs,
-                              root_der_certs, verify_time, crl_set.get(),
-                              dump_prefix_path)) {
+                              der_certs_with_trust_settings, verify_time,
+                              crl_set.get(), dump_prefix_path)) {
       all_impls_success = false;
     }
   }

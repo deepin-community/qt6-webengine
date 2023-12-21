@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,9 +8,9 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/format_macros.h"
+#include "base/functional/bind.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/metrics/histogram_tester.h"
@@ -35,12 +35,11 @@ namespace declarative_net_request {
 namespace {
 
 api::declarative_net_request::Rule GetAPIRule(const TestRule& rule) {
-  std::unique_ptr<base::DictionaryValue> value = rule.ToValue();
-  EXPECT_TRUE(value);
+  base::Value value(rule.ToValue());
   api::declarative_net_request::Rule result;
   std::u16string error;
   EXPECT_TRUE(
-      api::declarative_net_request::Rule::Populate(*value, &result, &error))
+      api::declarative_net_request::Rule::Populate(value, &result, &error))
       << error;
   EXPECT_TRUE(error.empty()) << error;
   return result;

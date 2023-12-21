@@ -1,4 +1,4 @@
-// Copyright 2016 PDFium Authors. All rights reserved.
+// Copyright 2016 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,6 +7,7 @@
 #include "core/fpdfapi/font/cpdf_truetypefont.h"
 
 #include <algorithm>
+#include <utility>
 
 #include "core/fpdfapi/parser/cpdf_dictionary.h"
 #include "core/fxge/fx_font.h"
@@ -34,8 +35,8 @@ bool IsWinAnsiOrMacRomanEncoding(FontEncoding encoding) {
 }  // namespace
 
 CPDF_TrueTypeFont::CPDF_TrueTypeFont(CPDF_Document* pDocument,
-                                     CPDF_Dictionary* pFontDict)
-    : CPDF_SimpleFont(pDocument, pFontDict) {}
+                                     RetainPtr<CPDF_Dictionary> pFontDict)
+    : CPDF_SimpleFont(pDocument, std::move(pFontDict)) {}
 
 CPDF_TrueTypeFont::~CPDF_TrueTypeFont() = default;
 

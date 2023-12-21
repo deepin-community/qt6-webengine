@@ -36,7 +36,7 @@
 namespace gfx {
 class Point;
 class Rect;
-}
+}  // namespace gfx
 
 namespace blink {
 
@@ -59,6 +59,11 @@ enum class SentenceTrailingSpaceBehavior { kIncludeSpace, kOmitSpace };
 CORE_EXPORT int CaretMinOffset(const Node*);
 CORE_EXPORT int CaretMaxOffset(const Node*);
 
+enum class SnapToClient {
+  kOthers,
+  kLocalCaretRect,
+};
+
 // Position
 // mostForward/BackwardCaretPosition are used for moving back and forth between
 // visually equivalent candidates.
@@ -77,16 +82,20 @@ CORE_EXPORT int CaretMaxOffset(const Node*);
 // endsOfNodeAreVisuallyDistinctPositions(boundary).
 CORE_EXPORT Position MostBackwardCaretPosition(
     const Position&,
-    EditingBoundaryCrossingRule = kCannotCrossEditingBoundary);
+    EditingBoundaryCrossingRule = kCannotCrossEditingBoundary,
+    SnapToClient client = SnapToClient::kOthers);
 CORE_EXPORT PositionInFlatTree MostBackwardCaretPosition(
     const PositionInFlatTree&,
-    EditingBoundaryCrossingRule = kCannotCrossEditingBoundary);
+    EditingBoundaryCrossingRule = kCannotCrossEditingBoundary,
+    SnapToClient client = SnapToClient::kOthers);
 CORE_EXPORT Position MostForwardCaretPosition(
     const Position&,
-    EditingBoundaryCrossingRule = kCannotCrossEditingBoundary);
+    EditingBoundaryCrossingRule = kCannotCrossEditingBoundary,
+    SnapToClient client = SnapToClient::kOthers);
 CORE_EXPORT PositionInFlatTree MostForwardCaretPosition(
     const PositionInFlatTree&,
-    EditingBoundaryCrossingRule = kCannotCrossEditingBoundary);
+    EditingBoundaryCrossingRule = kCannotCrossEditingBoundary,
+    SnapToClient client = SnapToClient::kOthers);
 
 CORE_EXPORT bool IsVisuallyEquivalentCandidate(const Position&);
 CORE_EXPORT bool IsVisuallyEquivalentCandidate(const PositionInFlatTree&);
@@ -126,6 +135,9 @@ CORE_EXPORT Position StartOfWordPosition(const Position&,
 CORE_EXPORT PositionInFlatTree
 StartOfWordPosition(const PositionInFlatTree&,
                     WordSide = kNextWordIfOnBoundary);
+CORE_EXPORT Position MiddleOfWordPosition(const Position&, const Position&);
+CORE_EXPORT PositionInFlatTree MiddleOfWordPosition(const PositionInFlatTree&,
+                                                    const PositionInFlatTree&);
 CORE_EXPORT Position EndOfWordPosition(const Position&,
                                        WordSide = kNextWordIfOnBoundary);
 CORE_EXPORT PositionInFlatTree
@@ -269,7 +281,7 @@ gfx::Rect ComputeTextRect(const EphemeralRangeInFlatTree&);
 gfx::RectF ComputeTextRectF(const EphemeralRange&);
 
 // |FirstRectForRange| requires up-to-date layout.
-gfx::Rect FirstRectForRange(const EphemeralRange&);
+CORE_EXPORT gfx::Rect FirstRectForRange(const EphemeralRange&);
 
 CORE_EXPORT PositionWithAffinity
 AdjustForwardPositionToAvoidCrossingEditingBoundaries(

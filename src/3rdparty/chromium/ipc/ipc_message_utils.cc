@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -24,7 +24,7 @@
 #include "ipc/ipc_message_attachment_set.h"
 #include "ipc/ipc_mojo_param_traits.h"
 
-#if BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_APPLE)
 #include "ipc/mach_port_mac.h"
 #endif
 
@@ -135,7 +135,7 @@ void WriteValue(const base::Value& value, int recursion, base::Pickle* pickle) {
     }
     case base::Value::Type::BINARY: {
       pickle->WriteData(reinterpret_cast<const char*>(value.GetBlob().data()),
-                        base::checked_cast<int>(value.GetBlob().size()));
+                        value.GetBlob().size());
       break;
     }
     case base::Value::Type::DICT: {
@@ -254,7 +254,7 @@ bool ReadValue(const base::Pickle* pickle,
       *value = base::Value(data);
       break;
     }
-    case base::Value::Type::DICTIONARY: {
+    case base::Value::Type::DICT: {
       base::Value::Dict val;
       if (!ReadDictValue(pickle, iter, recursion, &val))
         return false;
@@ -433,7 +433,7 @@ void ParamTraits<std::vector<char>>::Write(base::Pickle* m,
   if (p.empty()) {
     m->WriteData(NULL, 0);
   } else {
-    m->WriteData(&p.front(), base::checked_cast<int>(p.size()));
+    m->WriteData(&p.front(), p.size());
   }
 }
 
@@ -441,8 +441,8 @@ bool ParamTraits<std::vector<char>>::Read(const base::Pickle* m,
                                           base::PickleIterator* iter,
                                           param_type* r) {
   const char *data;
-  int data_size = 0;
-  if (!iter->ReadData(&data, &data_size) || data_size < 0)
+  size_t data_size = 0;
+  if (!iter->ReadData(&data, &data_size))
     return false;
   r->resize(data_size);
   if (data_size)
@@ -459,8 +459,7 @@ void ParamTraits<std::vector<unsigned char>>::Write(base::Pickle* m,
   if (p.empty()) {
     m->WriteData(NULL, 0);
   } else {
-    m->WriteData(reinterpret_cast<const char*>(&p.front()),
-                 base::checked_cast<int>(p.size()));
+    m->WriteData(reinterpret_cast<const char*>(&p.front()), p.size());
   }
 }
 
@@ -468,8 +467,8 @@ bool ParamTraits<std::vector<unsigned char>>::Read(const base::Pickle* m,
                                                    base::PickleIterator* iter,
                                                    param_type* r) {
   const char *data;
-  int data_size = 0;
-  if (!iter->ReadData(&data, &data_size) || data_size < 0)
+  size_t data_size = 0;
+  if (!iter->ReadData(&data, &data_size))
     return false;
   r->resize(data_size);
   if (data_size)
@@ -495,12 +494,11 @@ void ParamTraits<std::vector<bool>>::Write(base::Pickle* m,
 bool ParamTraits<std::vector<bool>>::Read(const base::Pickle* m,
                                           base::PickleIterator* iter,
                                           param_type* r) {
-  int size;
-  // ReadLength() checks for < 0 itself.
+  size_t size;
   if (!iter->ReadLength(&size))
     return false;
   r->resize(size);
-  for (int i = 0; i < size; i++) {
+  for (size_t i = 0; i < size; i++) {
     bool value;
     if (!ReadParam(m, iter, &value))
       return false;
@@ -515,24 +513,6 @@ void ParamTraits<std::vector<bool> >::Log(const param_type& p, std::string* l) {
       l->push_back(' ');
     LogParam(static_cast<bool>(p[i]), l);
   }
-}
-
-void ParamTraits<base::DictionaryValue>::Write(base::Pickle* m,
-                                               const param_type& p) {
-  WriteDictValue(p.GetDict(), 0, m);
-}
-
-bool ParamTraits<base::DictionaryValue>::Read(const base::Pickle* m,
-                                              base::PickleIterator* iter,
-                                              param_type* r) {
-  return ReadDictValue(m, iter, 0, &(r->GetDict()));
-}
-
-void ParamTraits<base::DictionaryValue>::Log(const param_type& p,
-                                             std::string* l) {
-  std::string json;
-  base::JSONWriter::Write(p, &json);
-  l->append(json);
 }
 
 void ParamTraits<base::Value::Dict>::Write(base::Pickle* m,
@@ -963,7 +943,7 @@ void ParamTraits<base::subtle::PlatformSharedMemoryRegion>::Write(
 #elif BUILDFLAG(IS_FUCHSIA)
   zx::vmo vmo = const_cast<param_type&>(p).PassPlatformHandle();
   WriteParam(m, vmo);
-#elif BUILDFLAG(IS_MAC)
+#elif BUILDFLAG(IS_APPLE)
   base::mac::ScopedMachSendRight h =
       const_cast<param_type&>(p).PassPlatformHandle();
   MachPortMac mach_port_mac(h.get());
@@ -1017,7 +997,7 @@ bool ParamTraits<base::subtle::PlatformSharedMemoryRegion>::Read(
     return false;
   *r = base::subtle::PlatformSharedMemoryRegion::Take(std::move(vmo), mode,
                                                       size, guid);
-#elif BUILDFLAG(IS_MAC)
+#elif BUILDFLAG(IS_APPLE)
   MachPortMac mach_port_mac;
   if (!ReadParam(m, iter, &mach_port_mac))
     return false;
@@ -1077,7 +1057,7 @@ void ParamTraits<base::subtle::PlatformSharedMemoryRegion>::Log(
 #elif BUILDFLAG(IS_WIN)
   l->append("Handle: ");
   LogParam(p.GetPlatformHandle(), l);
-#elif BUILDFLAG(IS_MAC)
+#elif BUILDFLAG(IS_APPLE)
   l->append("Mach port: ");
   LogParam(p.GetPlatformHandle(), l);
 #elif BUILDFLAG(IS_ANDROID)
@@ -1175,22 +1155,6 @@ bool ParamTraits<base::FilePath>::Read(const base::Pickle* m,
 
 void ParamTraits<base::FilePath>::Log(const param_type& p, std::string* l) {
   ParamTraits<base::FilePath::StringType>::Log(p.value(), l);
-}
-
-void ParamTraits<base::ListValue>::Write(base::Pickle* m, const param_type& p) {
-  WriteListValue(p.GetList(), 0, m);
-}
-
-bool ParamTraits<base::ListValue>::Read(const base::Pickle* m,
-                                        base::PickleIterator* iter,
-                                        param_type* r) {
-  return ReadListValue(m, iter, 0, &(r->GetList()));
-}
-
-void ParamTraits<base::ListValue>::Log(const param_type& p, std::string* l) {
-  std::string json;
-  base::JSONWriter::Write(p, &json);
-  l->append(json);
 }
 
 void ParamTraits<base::Value::List>::Write(base::Pickle* m,
@@ -1343,11 +1307,16 @@ bool ParamTraits<base::UnguessableToken>::Read(const base::Pickle* m,
       !ParamTraits<uint64_t>::Read(m, iter, &low))
     return false;
 
-  // Receiving a zeroed UnguessableToken is a security issue.
-  if (high == 0 && low == 0)
+  // This is not mapped as nullable_is_same_type, so any UnguessableToken
+  // deserialized by the traits should always yield a non-empty token.
+  // If deserialization results in an empty token, the data is malformed.
+  absl::optional<base::UnguessableToken> token =
+      base::UnguessableToken::Deserialize(high, low);
+  if (!token.has_value()) {
     return false;
+  }
 
-  *r = base::UnguessableToken::Deserialize(high, low);
+  *r = token.value();
   return true;
 }
 
@@ -1437,7 +1406,7 @@ void ParamTraits<Message>::Write(base::Pickle* m, const Message& p) {
   m->WriteUInt32(static_cast<uint32_t>(p.routing_id()));
   m->WriteUInt32(p.type());
   m->WriteUInt32(p.flags());
-  m->WriteData(p.payload(), static_cast<uint32_t>(p.payload_size()));
+  m->WriteData(p.payload(), p.payload_size());
 }
 
 bool ParamTraits<Message>::Read(const base::Pickle* m,
@@ -1449,7 +1418,7 @@ bool ParamTraits<Message>::Read(const base::Pickle* m,
       !iter->ReadUInt32(&flags))
     return false;
 
-  int payload_size;
+  size_t payload_size;
   const char* payload;
   if (!iter->ReadData(&payload, &payload_size))
     return false;
@@ -1492,7 +1461,7 @@ bool ParamTraits<MSG>::Read(const base::Pickle* m,
                             base::PickleIterator* iter,
                             param_type* r) {
   const char *data;
-  int data_size = 0;
+  size_t data_size = 0;
   bool result = iter->ReadData(&data, &data_size);
   if (result && data_size == sizeof(MSG)) {
     memcpy(r, data, sizeof(MSG));

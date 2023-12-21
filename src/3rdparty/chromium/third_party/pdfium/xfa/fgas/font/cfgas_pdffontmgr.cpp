@@ -1,4 +1,4 @@
-// Copyright 2017 PDFium Authors. All rights reserved.
+// Copyright 2017 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,6 +7,8 @@
 #include "xfa/fgas/font/cfgas_pdffontmgr.h"
 
 #include <algorithm>
+#include <iterator>
+#include <utility>
 
 #include "core/fpdfapi/font/cpdf_font.h"
 #include "core/fpdfapi/page/cpdf_docpagedata.h"
@@ -15,7 +17,6 @@
 #include "core/fpdfapi/parser/fpdf_parser_utility.h"
 #include "core/fxge/fx_font.h"
 #include "third_party/base/check.h"
-#include "third_party/base/cxx17_backports.h"
 #include "xfa/fgas/font/cfgas_fontmgr.h"
 #include "xfa/fgas/font/cfgas_gefont.h"
 
@@ -40,7 +41,7 @@ RetainPtr<CFGAS_GEFont> CFGAS_PDFFontMgr::FindFont(const ByteString& strPsName,
                                                    bool bBold,
                                                    bool bItalic,
                                                    bool bStrictMatch) {
-  CPDF_Dictionary* pFontSetDict =
+  RetainPtr<const CPDF_Dictionary> pFontSetDict =
       m_pDoc->GetRoot()->GetDictFor("AcroForm")->GetDictFor("DR");
   if (!pFontSetDict)
     return nullptr;
@@ -52,34 +53,35 @@ RetainPtr<CFGAS_GEFont> CFGAS_PDFFontMgr::FindFont(const ByteString& strPsName,
   ByteString name = strPsName;
   name.Remove(' ');
 
-  auto* pData = CPDF_DocPageData::FromDocument(m_pDoc.Get());
+  auto* pData = CPDF_DocPageData::FromDocument(m_pDoc);
   CPDF_DictionaryLocker locker(pFontSetDict);
   for (const auto& it : locker) {
     const ByteString& key = it.first;
-    CPDF_Object* pObj = it.second.Get();
+    const RetainPtr<CPDF_Object>& pObj = it.second;
     if (!PsNameMatchDRFontName(name.AsStringView(), bBold, bItalic, key,
                                bStrictMatch)) {
       continue;
     }
-    CPDF_Dictionary* pFontDict = ToDictionary(pObj->GetDirect());
-    if (!ValidateDictType(pFontDict, "Font"))
+    RetainPtr<CPDF_Dictionary> pFontDict =
+        ToDictionary(pObj->GetMutableDirect());
+    if (!ValidateDictType(pFontDict.Get(), "Font"))
       return nullptr;
 
     RetainPtr<CPDF_Font> pPDFFont = pData->GetFont(pFontDict);
     if (!pPDFFont || !pPDFFont->IsEmbedded())
       return nullptr;
 
-    return CFGAS_GEFont::LoadFont(pPDFFont);
+    return CFGAS_GEFont::LoadFont(std::move(pPDFFont));
   }
   return nullptr;
 }
 
-RetainPtr<CFGAS_GEFont> CFGAS_PDFFontMgr::GetFont(WideStringView wsFontFamily,
-                                                  uint32_t dwFontStyles,
-                                                  bool bStrictMatch) {
-  uint32_t dwHashCode = FX_HashCode_GetW(wsFontFamily);
-  ByteString strKey = ByteString::Format("%u%u", dwHashCode, dwFontStyles);
-  auto it = m_FontMap.find(strKey);
+RetainPtr<CFGAS_GEFont> CFGAS_PDFFontMgr::GetFont(
+    const WideString& wsFontFamily,
+    uint32_t dwFontStyles,
+    bool bStrictMatch) {
+  auto key = std::make_pair(wsFontFamily, dwFontStyles);
+  auto it = m_FontMap.find(key);
   if (it != m_FontMap.end())
     return it->second;
 
@@ -89,16 +91,17 @@ RetainPtr<CFGAS_GEFont> CFGAS_PDFFontMgr::GetFont(WideStringView wsFontFamily,
   ByteString strFontName = PsNameToFontName(bsPsName, bBold, bItalic);
   RetainPtr<CFGAS_GEFont> pFont =
       FindFont(strFontName, bBold, bItalic, bStrictMatch);
-  if (pFont)
-    m_FontMap[strKey] = pFont;
+  if (!pFont)
+    return nullptr;
 
+  m_FontMap[key] = pFont;
   return pFont;
 }
 
 ByteString CFGAS_PDFFontMgr::PsNameToFontName(const ByteString& strPsName,
                                               bool bBold,
                                               bool bItalic) {
-  for (size_t i = 0; i < pdfium::size(kXFAPDFFontName); ++i) {
+  for (size_t i = 0; i < std::size(kXFAPDFFontName); ++i) {
     if (strPsName == kXFAPDFFontName[i][0]) {
       size_t index = 1;
       if (bBold)

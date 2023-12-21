@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,13 +8,13 @@
 #include <ostream>
 #include <string>
 
-#include "base/callback.h"
+#include "base/component_export.h"
+#include "base/functional/callback.h"
 #include "base/gtest_prod_util.h"
 #include "base/lazy_instance.h"
 #include "base/observer_list.h"
 #include "build/build_config.h"
 #include "ui/accessibility/ax_enums.mojom-forward.h"
-#include "ui/accessibility/ax_export.h"
 #include "ui/accessibility/ax_mode.h"
 #include "ui/accessibility/ax_mode_observer.h"
 #include "ui/gfx/native_widget_types.h"
@@ -28,7 +28,7 @@ class AXPlatformNodeDelegate;
 // An object that wants to be accessible can derive from AXPlatformNodeDelegate
 // and then call AXPlatformNode::Create. The delegate implementation should
 // own the AXPlatformNode instance (or otherwise manage its lifecycle).
-class AX_EXPORT AXPlatformNode {
+class COMPONENT_EXPORT(AX_PLATFORM) AXPlatformNode {
  public:
   using NativeWindowHandlerCallback =
       base::RepeatingCallback<AXPlatformNode*(gfx::NativeWindow)>;
@@ -67,12 +67,8 @@ class AX_EXPORT AXPlatformNode {
 
   // Helper static function to update the AXMode. This is called when flags
   // are removed. It doesn't currently notify global observers.
+  // *** Do not use! Use BrowserAccessibilityStateImpl instead. ***
   static void SetAXMode(AXMode new_mode);
-
-  // Since |ax_mode_| is a static, calling NotifyAddAXModeFlags in a test can
-  // cause downstream tests to be flaky. This helper function puts |ax_mode_|
-  // in the default state.
-  static void ResetAxModeForTesting();
 
   // Return the focused object in any UI popup overlaying content, or null.
   static gfx::NativeViewAccessible GetPopupFocusOverride();
@@ -153,18 +149,6 @@ class AX_EXPORT AXPlatformNode {
 
   bool is_primary_web_contents_for_window_ = false;
 };
-
-namespace testing {
-
-class ScopedAxModeSetter {
- public:
-  explicit ScopedAxModeSetter(AXMode new_mode) {
-    AXPlatformNode::SetAXMode(new_mode);
-  }
-  ~ScopedAxModeSetter() { AXPlatformNode::ResetAxModeForTesting(); }
-};
-
-}  // namespace testing
 
 }  // namespace ui
 

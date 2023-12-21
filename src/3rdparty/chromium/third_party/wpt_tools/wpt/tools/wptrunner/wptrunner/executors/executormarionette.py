@@ -1,3 +1,5 @@
+# mypy: allow-untyped-defs
+
 import json
 import os
 import threading
@@ -451,6 +453,19 @@ class MarionetteCookiesProtocolPart(CookiesProtocolPart):
         self.logger.info("Deleting all cookies")
         return self.marionette.delete_all_cookies()
 
+    def get_all_cookies(self):
+        self.logger.info("Getting all cookies")
+        return self.marionette.get_cookies()
+
+    def get_named_cookie(self, name):
+        self.logger.info("Getting cookie named %s" % name)
+        try:
+            return self.marionette.get_cookie(name)
+        # When errors.NoSuchCookieException is supported,
+        # that should be used here instead.
+        except Exception:
+            return None
+
 
 class MarionetteSendKeysProtocolPart(SendKeysProtocolPart):
     def setup(self):
@@ -478,6 +493,9 @@ class MarionetteActionSequenceProtocolPart(ActionSequenceProtocolPart):
         actions = self.marionette._to_json(actions)
         self.logger.info(actions)
         self.marionette._send_message("WebDriver:PerformActions", actions)
+
+    def release(self):
+        self.marionette._send_message("WebDriver:ReleaseActions", {})
 
 
 class MarionetteTestDriverProtocolPart(TestDriverProtocolPart):
@@ -593,13 +611,11 @@ class MarionetteSetPermissionProtocolPart(SetPermissionProtocolPart):
     def setup(self):
         self.marionette = self.parent.marionette
 
-    def set_permission(self, descriptor, state, one_realm):
+    def set_permission(self, descriptor, state):
         body = {
             "descriptor": descriptor,
             "state": state,
         }
-        if one_realm is not None:
-            body["oneRealm"] = one_realm
         try:
             self.marionette._send_message("WebDriver:SetPermission", body)
         except errors.UnsupportedOperationException:
@@ -663,6 +679,8 @@ class MarionetteDebugProtocolPart(DebugProtocolPart):
 
     def load_devtools(self):
         with self.marionette.using_context(self.marionette.CONTEXT_CHROME):
+            # Once ESR is 107 is released, we can replace the ChromeUtils.import(DevToolsShim.jsm)
+            # with ChromeUtils.importESModule(DevToolsShim.sys.mjs) in this snippet:
             self.parent.base.execute_script("""
 const { DevToolsShim } = ChromeUtils.import(
   "chrome://devtools-startup/content/DevToolsShim.jsm"
@@ -778,6 +796,16 @@ class MarionetteProtocol(Protocol):
             self.executor.original_pref_values[name] = self.prefs.get(name)
             self.prefs.set(name, value)
 
+        pac = new_environment.get("pac", None)
+
+        if pac != old_environment.get("pac", None):
+            if pac is None:
+                self.prefs.clear("network.proxy.type")
+                self.prefs.clear("network.proxy.autoconfig_url")
+            else:
+                self.prefs.set("network.proxy.type", 2)
+                self.prefs.set("network.proxy.autoconfig_url",
+                               urljoin(self.executor.server_url("http"), pac))
 
 class ExecuteAsyncScriptRun(TimedRunner):
     def set_timeout(self):

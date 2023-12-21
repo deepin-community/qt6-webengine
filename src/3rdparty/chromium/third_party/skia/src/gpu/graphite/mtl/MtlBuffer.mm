@@ -7,21 +7,26 @@
 
 #include "src/gpu/graphite/mtl/MtlBuffer.h"
 
-#include "src/gpu/graphite/mtl/MtlGpu.h"
+#include "include/private/base/SkAlign.h"
+#include "src/gpu/graphite/mtl/MtlSharedContext.h"
 
 namespace skgpu::graphite {
 
 #ifdef SK_ENABLE_MTL_DEBUG_INFO
 NSString* kBufferTypeNames[kBufferTypeCount] = {
-    @"Vertex",
-    @"Index",
-    @"Xfer CPU to GPU",
-    @"Xfer GPU to CPU",
-    @"Uniform",
+        @"Vertex",
+        @"Index",
+        @"Xfer CPU to GPU",
+        @"Xfer GPU to CPU",
+        @"Uniform",
+        @"Storage",
+        @"Indirect",
+        @"VertexStorage",
+        @"IndexStorage",
 };
 #endif
 
-sk_sp<Buffer> MtlBuffer::Make(const MtlGpu* gpu,
+sk_sp<Buffer> MtlBuffer::Make(const MtlSharedContext* sharedContext,
                               size_t size,
                               BufferType type,
                               PrioritizeGpuReads prioritizeGpuReads) {
@@ -29,12 +34,11 @@ sk_sp<Buffer> MtlBuffer::Make(const MtlGpu* gpu,
         return nullptr;
     }
 
-    const MtlCaps& mtlCaps = gpu->mtlCaps();
-
     NSUInteger options = 0;
     if (@available(macOS 10.11, iOS 9.0, *)) {
         if (prioritizeGpuReads == PrioritizeGpuReads::kNo) {
 #ifdef SK_BUILD_FOR_MAC
+            const MtlCaps& mtlCaps = sharedContext->mtlCaps();
             if (mtlCaps.isMac()) {
                 options |= MTLResourceStorageModeManaged;
             } else {
@@ -49,21 +53,21 @@ sk_sp<Buffer> MtlBuffer::Make(const MtlGpu* gpu,
         }
     }
 
-    size = SkAlignTo(size, mtlCaps.getMinBufferAlignment());
-    sk_cfp<id<MTLBuffer>> buffer([gpu->device() newBufferWithLength: size options: options]);
+    sk_cfp<id<MTLBuffer>> buffer([sharedContext->device() newBufferWithLength:size
+                                                                      options:options]);
 #ifdef SK_ENABLE_MTL_DEBUG_INFO
     (*buffer).label = kBufferTypeNames[(int)type];
 #endif
 
-    return sk_sp<Buffer>(new MtlBuffer(gpu, size, type, prioritizeGpuReads, std::move(buffer)));
+    return sk_sp<Buffer>(new MtlBuffer(sharedContext,
+                                       size,
+                                       std::move(buffer)));
 }
 
-MtlBuffer::MtlBuffer(const MtlGpu* gpu,
+MtlBuffer::MtlBuffer(const MtlSharedContext* sharedContext,
                      size_t size,
-                     BufferType type,
-                     PrioritizeGpuReads prioritizeGpuReads,
                      sk_cfp<id<MTLBuffer>> buffer)
-        : Buffer(gpu, size, type, prioritizeGpuReads)
+        : Buffer(sharedContext, size)
         , fBuffer(std::move(buffer)) {}
 
 void MtlBuffer::onMap() {
@@ -93,4 +97,3 @@ void MtlBuffer::freeGpuData() {
 }
 
 } // namespace skgpu::graphite
-

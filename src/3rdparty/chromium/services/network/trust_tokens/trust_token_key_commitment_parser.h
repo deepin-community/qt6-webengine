@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -30,18 +30,6 @@ extern const char kTrustTokenKeyCommitmentKeysField[];
 extern const char kTrustTokenKeyCommitmentExpiryField[];
 // Each issuance key's key material:
 extern const char kTrustTokenKeyCommitmentKeyField[];
-
-// The operating systems on which to request issuance via system mediation
-// rather than through a request to the issuer's website:
-extern const char kTrustTokenKeyCommitmentRequestIssuanceLocallyOnField[];
-extern const char kTrustTokenKeyCommitmentOsAndroid[];
-
-// The desired fallback behavior when local issuance isn't available on the
-// requested operating system:
-extern const char
-    kTrustTokenKeyCommitmentUnavailableLocalOperationFallbackField[];
-extern const char kTrustTokenLocalOperationFallbackWebIssuance[];
-extern const char kTrustTokenLocalOperationFallbackReturnWithError[];
 
 // WARNING WARNING WARNING: When updating the parser implementation, please make
 // sure the normative source(s) of the key commitment result data structure's

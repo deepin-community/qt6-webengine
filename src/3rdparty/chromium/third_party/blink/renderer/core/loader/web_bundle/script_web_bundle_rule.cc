@@ -1,10 +1,11 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/core/loader/web_bundle/script_web_bundle_rule.h"
 
 #include "base/containers/contains.h"
+#include "base/metrics/histogram_macros.h"
 #include "third_party/blink/public/mojom/devtools/console_message.mojom-blink.h"
 #include "third_party/blink/renderer/platform/json/json_parser.h"
 #include "third_party/blink/renderer/platform/json/json_values.h"
@@ -53,16 +54,20 @@ absl::variant<ScriptWebBundleRule, ScriptWebBundleError>
 ScriptWebBundleRule::ParseJson(const String& inline_text,
                                const KURL& base_url,
                                ConsoleLogger* logger) {
-  std::unique_ptr<JSONValue> json = ParseJSON(inline_text);
+  // TODO(crbug.com/1264024): Deprecate JSON comments here, if possible.
+  bool has_comments = false;
+  std::unique_ptr<JSONValue> json = ParseJSONWithCommentsDeprecated(
+      inline_text, /*opt_error=*/nullptr, &has_comments);
   if (!json) {
     return ScriptWebBundleError(
-        ScriptWebBundleError::Type::kParseError,
+        ScriptWebBundleError::Type::kSyntaxError,
         "Failed to parse web bundle rule: invalid JSON.");
   }
+  UMA_HISTOGRAM_BOOLEAN("SubresourceWebBundles.HasJSONComments", has_comments);
   std::unique_ptr<JSONObject> json_obj = JSONObject::From(std::move(json));
   if (!json_obj) {
     return ScriptWebBundleError(
-        ScriptWebBundleError::Type::kParseError,
+        ScriptWebBundleError::Type::kTypeError,
         "Failed to parse web bundle rule: not an object.");
   }
 
@@ -81,13 +86,13 @@ ScriptWebBundleRule::ParseJson(const String& inline_text,
 
   String source;
   if (!json_obj->GetString(kSourceKey, &source)) {
-    return ScriptWebBundleError(ScriptWebBundleError::Type::kParseError,
+    return ScriptWebBundleError(ScriptWebBundleError::Type::kTypeError,
                                 "Failed to parse web bundle rule: \"source\" "
                                 "top-level key must be a string.");
   }
   KURL source_url(base_url, source);
   if (!source_url.IsValid()) {
-    return ScriptWebBundleError(ScriptWebBundleError::Type::kParseError,
+    return ScriptWebBundleError(ScriptWebBundleError::Type::kTypeError,
                                 "Failed to parse web bundle rule: \"source\" "
                                 "is not parsable as a URL.");
   }
@@ -104,13 +109,13 @@ ScriptWebBundleRule::ParseJson(const String& inline_text,
   JSONValue* scopes = json_obj->Get(kScopesKey);
   if (scopes && scopes->GetType() != JSONValue::kTypeArray) {
     return ScriptWebBundleError(
-        ScriptWebBundleError::Type::kParseError,
+        ScriptWebBundleError::Type::kTypeError,
         "Failed to parse web bundle rule: \"scopes\" must be an array.");
   }
   JSONValue* resources = json_obj->Get(kResourcesKey);
   if (resources && resources->GetType() != JSONValue::kTypeArray) {
     return ScriptWebBundleError(
-        ScriptWebBundleError::Type::kParseError,
+        ScriptWebBundleError::Type::kTypeError,
         "Failed to parse web bundle rule: \"resources\" must be an array.");
   }
 

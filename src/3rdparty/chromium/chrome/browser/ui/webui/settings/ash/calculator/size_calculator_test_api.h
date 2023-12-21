@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,12 +8,10 @@
 #include <utility>
 
 #include "chrome/browser/ui/webui/settings/ash/calculator/size_calculator.h"
-#include "chrome/browser/ui/webui/settings/chromeos/device_storage_handler.h"
+#include "chrome/browser/ui/webui/settings/ash/device_storage_handler.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 
-namespace chromeos {
-namespace settings {
-namespace calculator {
+namespace ash::settings {
 
 class TotalDiskSpaceTestAPI {
  public:
@@ -47,6 +45,23 @@ class FreeDiskSpaceTestAPI {
 
  private:
   FreeDiskSpaceCalculator free_disk_space_calculator_;
+};
+
+class DriveOfflineSizeTestAPI {
+ public:
+  DriveOfflineSizeTestAPI(StorageHandler* handler, Profile* profile)
+      : drive_offline_size_calculator_(profile) {
+    drive_offline_size_calculator_.AddObserver(handler);
+  }
+
+  void StartCalculation() { drive_offline_size_calculator_.StartCalculation(); }
+
+  void SimulateOnGetOfflineItemsSize(int64_t offline_bytes) {
+    drive_offline_size_calculator_.OnGetOfflineItemsSize(offline_bytes);
+  }
+
+ private:
+  DriveOfflineSizeCalculator drive_offline_size_calculator_;
 };
 
 class MyFilesSizeTestAPI {
@@ -108,6 +123,13 @@ class AppsSizeTestAPI {
     apps_size_calculator_.OnGetAndroidAppsSize(succeeded, std::move(result));
   }
 
+  void SimulateOnGetBorealisAppsSize(
+      bool succeeded,
+      vm_tools::concierge::ListVmDisksResponse response) {
+    response.set_success(succeeded);
+    apps_size_calculator_.OnGetBorealisAppsSize(std::move(response));
+  }
+
  private:
   AppsSizeCalculator apps_size_calculator_;
 };
@@ -121,9 +143,11 @@ class CrostiniSizeTestAPI {
 
   void StartCalculation() { crostini_size_calculator_.StartCalculation(); }
 
-  void SimulateOnGetCrostiniSize(int64_t size) {
-    crostini_size_calculator_.OnGetCrostiniSize(
-        crostini::CrostiniResult::SUCCESS, size);
+  void SimulateOnGetCrostiniSize(
+      bool succeeded,
+      vm_tools::concierge::ListVmDisksResponse response) {
+    response.set_success(succeeded);
+    crostini_size_calculator_.OnGetCrostiniSize(std::move(response));
   }
 
  private:
@@ -156,8 +180,6 @@ class OtherUsersSizeTestAPI {
   OtherUsersSizeCalculator other_users_size_calculator_;
 };
 
-}  // namespace calculator
-}  // namespace settings
-}  // namespace chromeos
+}  // namespace ash::settings
 
 #endif  // CHROME_BROWSER_UI_WEBUI_SETTINGS_ASH_CALCULATOR_SIZE_CALCULATOR_TEST_API_H_

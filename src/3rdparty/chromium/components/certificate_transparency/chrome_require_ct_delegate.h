@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,7 +10,6 @@
 #include <vector>
 
 #include "base/component_export.h"
-#include "base/memory/ref_counted.h"
 #include "components/url_matcher/url_matcher.h"
 #include "net/base/hash_value.h"
 #include "net/http/transport_security_state.h"
@@ -96,8 +95,8 @@ class COMPONENT_EXPORT(CERTIFICATE_TRANSPARENCY) ChromeRequireCTDelegate
   bool FilterTakesPrecedence(const Filter& lhs, const Filter& rhs) const;
 
   std::unique_ptr<url_matcher::URLMatcher> url_matcher_;
-  url_matcher::URLMatcherConditionSet::ID next_id_;
-  std::map<url_matcher::URLMatcherConditionSet::ID, Filter> filters_;
+  base::MatcherStringPattern::ID next_id_;
+  std::map<base::MatcherStringPattern::ID, Filter> filters_;
 
   // Both SPKI lists are sorted.
   net::HashValueVector spkis_;

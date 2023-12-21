@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,6 +6,7 @@
 
 #include "build/build_config.h"
 #include "skia/ext/platform_canvas.h"
+#include "third_party/blink/renderer/platform/graphics/scrollbar_theme_settings.h"
 #include "third_party/blink/renderer/platform/theme/web_theme_engine_conversions.h"
 #include "ui/color/color_provider_utils.h"
 #include "ui/native_theme/native_theme.h"
@@ -137,6 +138,8 @@ static void GetNativeThemeExtraParams(
           extra_params->progress_bar.value_rect_height;
       native_theme_extra_params->progress_bar.zoom =
           extra_params->progress_bar.zoom;
+      native_theme_extra_params->progress_bar.is_horizontal =
+          extra_params->progress_bar.is_horizontal;
       break;
     case WebThemeEngine::kPartScrollbarHorizontalThumb:
     case WebThemeEngine::kPartScrollbarVerticalThumb:
@@ -169,21 +172,23 @@ gfx::Size WebThemeEngineDefault::GetSize(WebThemeEngine::Part part) {
   ui::NativeTheme::ExtraParams extra;
   ui::NativeTheme::Part native_theme_part = NativeThemePart(part);
 #if BUILDFLAG(IS_WIN)
-  switch (native_theme_part) {
-    case ui::NativeTheme::kScrollbarDownArrow:
-    case ui::NativeTheme::kScrollbarLeftArrow:
-    case ui::NativeTheme::kScrollbarRightArrow:
-    case ui::NativeTheme::kScrollbarUpArrow:
-    case ui::NativeTheme::kScrollbarHorizontalThumb:
-    case ui::NativeTheme::kScrollbarVerticalThumb:
-    case ui::NativeTheme::kScrollbarHorizontalTrack:
-    case ui::NativeTheme::kScrollbarVerticalTrack: {
-      return gfx::Size(g_vertical_scroll_bar_width,
-                       g_vertical_scroll_bar_width);
-    }
+  if (!ScrollbarThemeSettings::FluentScrollbarsEnabled()) {
+    switch (native_theme_part) {
+      case ui::NativeTheme::kScrollbarDownArrow:
+      case ui::NativeTheme::kScrollbarLeftArrow:
+      case ui::NativeTheme::kScrollbarRightArrow:
+      case ui::NativeTheme::kScrollbarUpArrow:
+      case ui::NativeTheme::kScrollbarHorizontalThumb:
+      case ui::NativeTheme::kScrollbarVerticalThumb:
+      case ui::NativeTheme::kScrollbarHorizontalTrack:
+      case ui::NativeTheme::kScrollbarVerticalTrack: {
+        return gfx::Size(g_vertical_scroll_bar_width,
+                         g_vertical_scroll_bar_width);
+      }
 
-    default:
-      break;
+      default:
+        break;
+    }
   }
 #endif
   return ui::NativeTheme::GetInstanceForWeb()->GetPartSize(

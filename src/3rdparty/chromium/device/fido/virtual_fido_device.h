@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,13 +16,16 @@
 #include "base/component_export.h"
 #include "base/containers/span.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/observer_list.h"
+#include "base/observer_list_types.h"
+#include "device/fido/ctap_get_assertion_request.h"
 #include "device/fido/fido_constants.h"
 #include "device/fido/fido_device.h"
 #include "device/fido/fido_parsing_utils.h"
+#include "device/fido/large_blob.h"
 #include "device/fido/public_key_credential_descriptor.h"
 #include "device/fido/public_key_credential_rp_entity.h"
 #include "device/fido/public_key_credential_user_entity.h"
-#include "net/cert/x509_util.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/boringssl/src/include/openssl/base.h"
 
@@ -118,8 +121,24 @@ class COMPONENT_EXPORT(DEVICE_FIDO) VirtualFidoDevice : public FidoDevice {
     absl::optional<std::pair<std::array<uint8_t, 32>, std::array<uint8_t, 32>>>
         hmac_key;
 
+    // large_blob stores associated large blob data when the largeBlob extension
+    // is used. It is not pertinent when the largeBlob command and largeBlobKey
+    // extension are used.
+    absl::optional<LargeBlob> large_blob;
     absl::optional<std::array<uint8_t, 32>> large_blob_key;
     absl::optional<std::vector<uint8_t>> cred_blob;
+
+    // device_bound_key contains the optional device-bound key for this
+    // credential, thus simulating a multi-device credential.
+    absl::optional<std::unique_ptr<PrivateKey>> device_key;
+  };
+
+  using Credential = std::pair<base::span<const uint8_t>, RegistrationData*>;
+
+  class COMPONENT_EXPORT(DEVICE_FIDO) Observer : public base::CheckedObserver {
+   public:
+    virtual void OnCredentialCreated(const Credential& credential) = 0;
+    virtual void OnAssertion(const Credential& credential) = 0;
   };
 
   // Stores the state of the device. Since |U2fDevice| objects only persist for
@@ -172,6 +191,13 @@ class COMPONENT_EXPORT(DEVICE_FIDO) VirtualFidoDevice : public FidoDevice {
     // u2f_invalid_public_key causes the public key in a registration response
     // to be invalid. (U2F only.)
     bool u2f_invalid_public_key = false;
+
+    // ctap2_invalid_signature causes a bogus signature to be returned if true.
+    bool ctap2_invalid_signature = false;
+    // If true, UV bit is always set to 0 in the response.
+    bool unset_uv_bit = false;
+    // If true, UP bit is always set to 0 in the response.
+    bool unset_up_bit = false;
 
     // Number of PIN retries remaining.
     int pin_retries = kMaxPinRetries;
@@ -255,6 +281,19 @@ class COMPONENT_EXPORT(DEVICE_FIDO) VirtualFidoDevice : public FidoDevice {
     // response after simulating an unsatisfied touch for CTAP2 authenticators.
     FidoDevice::DeviceCallback transact_callback;
 
+    // device_id_override can be used to inject a return value for `GetId()` in
+    // unit tests where a stable device identifier is required.
+    absl::optional<std::string> device_id_override;
+
+    // Observer methods.
+    void AddObserver(Observer* observer);
+    void RemoveObserver(Observer* observer);
+    void NotifyCredentialCreated(
+        const std::pair<base::span<const uint8_t>, RegistrationData*>&
+            credential);
+    void NotifyAssertion(const std::pair<base::span<const uint8_t>,
+                                         RegistrationData*>& credential);
+
     // Adds a new credential to the authenticator. Returns true on success,
     // false if there already exists a credential with the given ID.
     bool InjectRegistration(base::span<const uint8_t> credential_id,
@@ -297,19 +336,27 @@ class COMPONENT_EXPORT(DEVICE_FIDO) VirtualFidoDevice : public FidoDevice {
                            absl::optional<std::string> user_display_name);
 
     // Returns the large blob associated with the credential, if any.
-    absl::optional<std::vector<uint8_t>> GetLargeBlob(
-        const RegistrationData& credential);
+    absl::optional<LargeBlob> GetLargeBlob(const RegistrationData& credential);
 
     // Injects a large blob for the credential. If the credential already has an
     // associated large blob, replaces it. If the |large_blob| is malformed,
-    // completely replaces its contents.
-    void InjectLargeBlob(RegistrationData* credential,
-                         base::span<const uint8_t> blob);
+    // completely replaces its contents. (If `large_blob_extension_support` is
+    // set then this method shouldn't be called. Just set the `large_blob`
+    // member of `RegistrationData` directly.)
+    void InjectLargeBlob(RegistrationData* credential, LargeBlob blob);
 
-    // Clears all large blobs resetting |large_blob| to its default value.
+    // Injects an opaque large blob. |blob| does not need to conform to the CTAP
+    // large-blob CBOR structure. (If `large_blob_extension_support` is set
+    // then this method shouldn't be called.)
+    void InjectOpaqueLargeBlob(cbor::Value blob);
+
+    // Clears all large blobs resetting |large_blob| to its default value. (If
+    // `large_blob_extension_support` is set then this method shouldn't be
+    // called.)
     void ClearLargeBlobs();
 
    private:
+    base::ObserverList<Observer> observers_;
     friend class base::RefCounted<State>;
     ~State();
   };
@@ -329,6 +376,9 @@ class COMPONENT_EXPORT(DEVICE_FIDO) VirtualFidoDevice : public FidoDevice {
 
   State* mutable_state() const { return state_.get(); }
 
+  // FidoDevice:
+  std::string GetId() const override;
+
  protected:
   static std::vector<uint8_t> GetAttestationKey();
 
@@ -342,7 +392,8 @@ class COMPONENT_EXPORT(DEVICE_FIDO) VirtualFidoDevice : public FidoDevice {
   // attestation statement and FIDO-U2F attestation statement.
   // https://w3c.github.io/webauthn/#defined-attestation-formats
   absl::optional<std::vector<uint8_t>> GenerateAttestationCertificate(
-      bool individual_attestation_requested) const;
+      bool individual_attestation_requested,
+      bool include_transports) const;
 
   void StoreNewKey(base::span<const uint8_t> key_handle,
                    VirtualFidoDevice::RegistrationData registration_data);
@@ -360,7 +411,6 @@ class COMPONENT_EXPORT(DEVICE_FIDO) VirtualFidoDevice : public FidoDevice {
 
   // FidoDevice:
   void TryWink(base::OnceClosure cb) override;
-  std::string GetId() const override;
   FidoTransportProtocol DeviceTransport() const override;
 
  private:

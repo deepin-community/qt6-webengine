@@ -1,4 +1,4 @@
-// Copyright 2014 PDFium Authors. All rights reserved.
+// Copyright 2014 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -18,7 +18,7 @@ CFWL_CaretTP::CFWL_CaretTP() = default;
 CFWL_CaretTP::~CFWL_CaretTP() = default;
 
 void CFWL_CaretTP::DrawBackground(const CFWL_ThemeBackground& pParams) {
-  switch (pParams.m_iPart) {
+  switch (pParams.GetPart()) {
     case CFWL_ThemePart::Part::kBackground: {
       if (!(pParams.m_dwStates & CFWL_PartState::kHightLight))
         return;

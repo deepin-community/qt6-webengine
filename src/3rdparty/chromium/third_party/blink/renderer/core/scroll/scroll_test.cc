@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -32,9 +32,10 @@
 namespace blink {
 
 namespace {
-const double kScrollAnimationDuration =
-    (::features::IsImpulseScrollAnimationEnabled() ? 1.5 : 0.5);
+double ScrollAnimationDuration() {
+  return ::features::IsImpulseScrollAnimationEnabled() ? 1.5 : 0.5;
 }
+}  // namespace
 
 class FractionalScrollSimTest : public SimTest, public PaintTestConfigurations {
  public:
@@ -242,7 +243,7 @@ TEST_P(ScrollAnimatorSimTest, TestRootFrameLayoutViewportUserScrollCallBack) {
   // The callback is executed when the animation finishes at
   // ScrollAnimator::TickAnimation.
   Compositor().BeginFrame();
-  Compositor().BeginFrame(kScrollAnimationDuration);
+  Compositor().BeginFrame(ScrollAnimationDuration());
   ASSERT_TRUE(finished);
 }
 
@@ -286,7 +287,7 @@ TEST_P(ScrollAnimatorSimTest, TestRootFrameVisualViewporUserScrollCallBack) {
   // The callback is executed when the animation finishes at
   // ScrollAnimator::TickAnimation.
   Compositor().BeginFrame();
-  Compositor().BeginFrame(kScrollAnimationDuration);
+  Compositor().BeginFrame(ScrollAnimationDuration());
   ASSERT_TRUE(finished);
 }
 
@@ -330,7 +331,7 @@ TEST_P(ScrollAnimatorSimTest, TestRootFrameBothViewportsUserScrollCallBack) {
   // The callback is executed when the animation finishes at
   // ScrollAnimator::TickAnimation.
   Compositor().BeginFrame();
-  Compositor().BeginFrame(kScrollAnimationDuration);
+  Compositor().BeginFrame(ScrollAnimationDuration());
   ASSERT_TRUE(finished);
 }
 
@@ -380,7 +381,7 @@ TEST_P(ScrollAnimatorSimTest, TestDivUserScrollCallBack) {
 
   // The callback is executed when the animation finishes at
   // ScrollAnimator::TickAnimation.
-  Compositor().BeginFrame(kScrollAnimationDuration);
+  Compositor().BeginFrame(ScrollAnimationDuration());
   ASSERT_TRUE(finished);
 }
 
@@ -577,7 +578,8 @@ struct TestCase {
 };
 
 TEST_P(ScrollInfacesUseCounterSimTest, ScrollTestAll) {
-  v8::HandleScope handle_scope(v8::Isolate::GetCurrent());
+  v8::HandleScope handle_scope(
+      WebView().GetPage()->GetAgentGroupScheduler().Isolate());
   WebView().MainFrameViewWidget()->Resize(gfx::Size(800, 600));
   const Vector<TestCase> test_cases = {
       {"ltr", "horizontal-tb", false, false},

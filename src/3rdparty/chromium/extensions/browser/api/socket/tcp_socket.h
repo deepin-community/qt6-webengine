@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -19,7 +19,6 @@
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "net/base/completion_once_callback.h"
-#include "services/network/public/mojom/network_service.mojom.h"
 #include "services/network/public/mojom/tcp_socket.mojom.h"
 #include "services/network/public/mojom/tls_socket.mojom.h"
 
@@ -140,7 +139,7 @@ class TCPSocket : public Socket {
 
   // |this| doesn't outlive |browser_context_| because |this| is owned by
   // ApiResourceManager which is a BrowserContextKeyedAPI.
-  raw_ptr<content::BrowserContext> browser_context_;
+  raw_ptr<content::BrowserContext, DanglingUntriaged> browser_context_;
 
   SocketMode socket_mode_;
 
@@ -160,7 +159,8 @@ class TCPSocket : public Socket {
   absl::optional<net::IPEndPoint> peer_addr_;
 
   // Only used in tests.
-  raw_ptr<content::StoragePartition> storage_partition_ = nullptr;
+  raw_ptr<content::StoragePartition, DanglingUntriaged> storage_partition_ =
+      nullptr;
 
   // WeakPtr is used when posting tasks to |task_runner_| which might outlive
   // |this|.

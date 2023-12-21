@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,6 +16,11 @@ export enum State {
   CLOSING = 7,
 }
 
+/**
+ * These values are persisted to logs. New entries should replace MAX_BUCKET but
+ * existing entries should not be renumbered and numeric values should never be
+ * reused.
+ */
 export enum Error {
   NONE = 0,
   INVALID_TICKET = 1,
@@ -23,6 +28,7 @@ export enum Error {
   NO_DESTINATIONS = 3,
   PREVIEW_FAILED = 4,
   PRINT_FAILED = 5,
+  MAX_BUCKET = 6,
 }
 
 

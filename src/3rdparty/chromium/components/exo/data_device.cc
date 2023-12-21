@@ -1,17 +1,19 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/exo/data_device.h"
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/run_loop.h"
-#include "build/chromeos_buildflags.h"
+#include "base/task/single_thread_task_runner.h"
+#include "chromeos/ui/base/window_properties.h"
 #include "components/exo/data_device_delegate.h"
 #include "components/exo/data_exchange_delegate.h"
 #include "components/exo/data_offer.h"
 #include "components/exo/data_source.h"
+#include "components/exo/extended_drag_source.h"
 #include "components/exo/seat.h"
 #include "components/exo/shell_surface_util.h"
 #include "components/exo/surface.h"
@@ -22,11 +24,6 @@
 #include "ui/base/dragdrop/drag_drop_types.h"
 #include "ui/base/dragdrop/drop_target_event.h"
 #include "ui/base/dragdrop/mojom/drag_drop_types.mojom.h"
-
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "chromeos/ui/base/window_properties.h"
-#include "components/exo/extended_drag_source.h"
-#endif
 
 namespace exo {
 namespace {
@@ -130,7 +127,6 @@ aura::client::DragUpdateInfo DataDevice::OnDragUpdated(
 
   bool prevent_motion_drag_events = false;
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
   // chromeos::kCanAttachToAnotherWindowKey controls if a drag operation should
   // trigger swallow/unswallow tab.
   if (focused_surface_) {
@@ -144,7 +140,6 @@ aura::client::DragUpdateInfo DataDevice::OnDragUpdated(
         !focused_surface_->get()->window()->GetToplevelWindow()->GetProperty(
             chromeos::kCanAttachToAnotherWindowKey);
   }
-#endif
 
   if (!prevent_motion_drag_events)
     delegate_->OnMotion(event.time_stamp(), event.location_f());
@@ -254,7 +249,7 @@ void DataDevice::PerformDropOrExitDrag(
   // callback to aura::client::DragDropDelegate.
   base::WeakPtr<DataDevice> alive(weak_factory_.GetWeakPtr());
   base::RunLoop run_loop(base::RunLoop::Type::kNestableTasksAllowed);
-  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
       FROM_HERE, run_loop.QuitClosure(), kDataOfferDestructionTimeout);
   quit_closure_ = run_loop.QuitClosure();
   run_loop.Run();

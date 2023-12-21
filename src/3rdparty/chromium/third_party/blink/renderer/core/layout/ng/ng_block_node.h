@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -50,6 +50,41 @@ class CORE_EXPORT NGBlockNode : public NGLayoutInputNode {
   const NGLayoutResult* SimplifiedLayout(
       const NGPhysicalFragment& previous_fragment) const;
 
+  // Lay out a repeatable node during block fragmentation (fixed positioned
+  // element during printing, or table header / footer). To be called once for
+  // each container fragment in which it repeats.
+  //
+  // NGConstraintSpace::ShouldRepeat() will tell whether the node is
+  // (potentially [1]) going to repeat again (in which case an outgoing "repeat"
+  // break token will be created, or if this is the last time.
+  // FinishRepeatableRoot() will be invoked if it's the last time. It is allowed
+  // to call this function with NGConstraintSpace::ShouldRepeat() set to true
+  // every time, but then the calling code needs to call FinishRepeatableRoot()
+  // when it realizes that we're done.
+  //
+  // [1] Depending on the type of content, and depending on the way we implement
+  // it, we may or may not be able to tell up-front whether it's going to repeat
+  // again.
+  //
+  // Note that we only actually lay it out once - when at the first container
+  // fragment. Any subsequent call will just clone the previous result.
+  //
+  // Ideally, there should only be one fragment subtree generated from a
+  // repeated element (which could simply be inserted inside every relevant
+  // container fragment), but due to requirements from pre-paint and paint
+  // (mainly), we need to clone the fragment as many times as it repeats, and we
+  // also need to make sure that the break tokens are reasonably intact -
+  // including the sequence numbers. This is why we need this.
+  const NGLayoutResult* LayoutRepeatableRoot(const NGConstraintSpace&,
+                                             const NGBlockBreakToken*) const;
+
+  // Finalize the cloned layout results of a repeatable root. This will
+  // deep-clone and set the correct break token sequence numbers, and make sure
+  // that the final fragment has no outgoing break token.
+  //
+  // To be called when we're done repeating a node, when at the last fragment.
+  void FinishRepeatableRoot() const;
+
   // This method is just for use within the |NGOutOfFlowLayoutPart|.
   //
   // As OOF-positioned objects have their position, and size computed
@@ -99,10 +134,6 @@ class CORE_EXPORT NGBlockNode : public NGLayoutInputNode {
   NGBlockNode GetRenderedLegend() const;
   NGBlockNode GetFieldsetContent() const;
 
-  // Return true if this is the document root and it is paginated. A paginated
-  // root establishes a fragmentation context.
-  bool IsPaginatedRoot() const;
-
   bool IsNGTableCell() const {
     return box_->IsTableCell() && !box_->IsTableCellLegacy();
   }
@@ -110,7 +141,10 @@ class CORE_EXPORT NGBlockNode : public NGLayoutInputNode {
   bool IsContainingBlockNGGrid() const {
     return box_->ContainingBlock()->IsLayoutNGGrid();
   }
-
+  bool IsFrameSet() const { return box_->IsLayoutNGFrameSet(); }
+  bool IsParentNGFrameSet() const {
+    return box_->Parent()->IsLayoutNGFrameSet();
+  }
   bool IsParentNGGrid() const { return box_->Parent()->IsLayoutNGGrid(); }
 
   // Return true if this block node establishes an inline formatting context.
@@ -123,6 +157,7 @@ class CORE_EXPORT NGBlockNode : public NGLayoutInputNode {
   bool IsInlineLevel() const;
   bool IsAtomicInlineLevel() const;
   bool HasAspectRatio() const;
+  bool IsInTopLayer() const;
 
   // Returns the aspect ratio of a replaced element.
   LogicalSize GetAspectRatio() const;
@@ -132,7 +167,7 @@ class CORE_EXPORT NGBlockNode : public NGLayoutInputNode {
   LogicalSize GetReplacedSizeOverrideIfAny(const NGConstraintSpace&) const;
 
   // Returns the transform to apply to a child (e.g. for layout-overflow).
-  absl::optional<TransformationMatrix> GetTransformForChildFragment(
+  absl::optional<gfx::Transform> GetTransformForChildFragment(
       const NGPhysicalBoxFragment& child_fragment,
       PhysicalSize size) const;
 
@@ -182,8 +217,7 @@ class CORE_EXPORT NGBlockNode : public NGLayoutInputNode {
       const NGConstraintSpace& parent_constraint_space,
       const ComputedStyle& parent_style,
       bool use_first_line_style,
-      NGBaselineAlgorithmType baseline_algorithm_type =
-          NGBaselineAlgorithmType::kInlineBlock);
+      NGBaselineAlgorithmType baseline_algorithm_type);
 
   void InsertIntoLegacyPositionedObjectsOf(LayoutBlock*) const;
 
@@ -191,8 +225,9 @@ class CORE_EXPORT NGBlockNode : public NGLayoutInputNode {
   void StoreMargins(const NGConstraintSpace&, const NGBoxStrut& margins);
   void StoreMargins(const NGPhysicalBoxStrut& margins);
 
-  // Write the inline-size of columns in a multicol container to legacy.
-  void StoreColumnInlineSize(LayoutUnit);
+  // Write the inline-size and number of columns in a multicol container to
+  // legacy.
+  void StoreColumnSizeAndCount(LayoutUnit inline_size, int count);
 
   static bool CanUseNewLayout(const LayoutBox&);
   bool CanUseNewLayout() const;
@@ -215,7 +250,8 @@ class CORE_EXPORT NGBlockNode : public NGLayoutInputNode {
       const NGPhysicalBoxFragment& child_fragment,
       PhysicalOffset,
       const NGPhysicalBoxFragment& container_fragment,
-      const NGBlockBreakToken* previous_container_break_token = nullptr) const;
+      const NGBlockBreakToken* previous_container_break_token = nullptr,
+      bool needs_invalidation_check = false) const;
 
   // If extra columns are added after a multicol has been written back to
   // legacy, for example for an OOF positioned element, we need to update the
@@ -243,7 +279,8 @@ class CORE_EXPORT NGBlockNode : public NGLayoutInputNode {
 
   // Update the layout results vector in LayoutBox with the new result.
   void StoreResultInLayoutBox(const NGLayoutResult*,
-                              const NGBlockBreakToken*) const;
+                              const NGBlockBreakToken*,
+                              bool clear_trailing_results = false) const;
 
   // After we run the layout algorithm, this function copies back the geometry
   // data to the layout box.
@@ -255,9 +292,9 @@ class CORE_EXPORT NGBlockNode : public NGLayoutInputNode {
       const NGPhysicalBoxFragment& container,
       const NGFragmentItems& items,
       const NGBlockBreakToken* previous_break_token) const;
-  void PlaceChildrenInLayoutBox(
-      const NGPhysicalBoxFragment&,
-      const NGBlockBreakToken* previous_break_token) const;
+  void PlaceChildrenInLayoutBox(const NGPhysicalBoxFragment&,
+                                const NGBlockBreakToken* previous_break_token,
+                                bool needs_invalidation_check = false) const;
   void PlaceChildrenInFlowThread(
       LayoutMultiColumnFlowThread*,
       const NGConstraintSpace&,

@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,23 +10,27 @@
 #include <string>
 #include <utility>
 
-#include "base/callback.h"
 #include "base/command_line.h"
+#include "base/functional/callback.h"
 #include "base/i18n/base_i18n_switches.h"
 #include "base/memory/raw_ptr.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/icu_test_util.h"
 #include "build/build_config.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/base/ui_base_switches.h"
 #include "ui/gfx/font_list.h"
+#include "ui/gfx/text_constants.h"
 #include "ui/views/border.h"
 #include "ui/views/controls/link.h"
+#include "ui/views/controls/link_fragment.h"
 #include "ui/views/style/typography.h"
 #include "ui/views/test/test_layout_provider.h"
 #include "ui/views/test/test_views.h"
 #include "ui/views/test/views_test_base.h"
+#include "ui/views/test/views_test_utils.h"
 #include "ui/views/widget/widget.h"
 
 using base::ASCIIToUTF16;
@@ -34,6 +38,8 @@ using base::ASCIIToUTF16;
 namespace views {
 
 namespace {
+
+using ::testing::SizeIs;
 
 Label* LabelAt(StyledLabel* styled,
                size_t index,
@@ -117,7 +123,7 @@ TEST_F(StyledLabelTest, TrailingWhitespaceiIgnored) {
   InitStyledLabel(text);
 
   styled()->SetBounds(0, 0, 1000, 1000);
-  styled()->Layout();
+  test::RunScheduledLayout(styled());
 
   ASSERT_EQ(1u, styled()->children().size());
   EXPECT_EQ(u"This is a test block of text", LabelAt(styled(), 0)->GetText());
@@ -128,7 +134,7 @@ TEST_F(StyledLabelTest, RespectLeadingWhitespace) {
   InitStyledLabel(text);
 
   styled()->SetBounds(0, 0, 1000, 1000);
-  styled()->Layout();
+  test::RunScheduledLayout(styled());
 
   ASSERT_EQ(1u, styled()->children().size());
   EXPECT_EQ(u"   This is a test block of text",
@@ -140,7 +146,7 @@ TEST_F(StyledLabelTest, RespectLeadingSpacesInNonFirstLine) {
   const std::string text(std::string("First line\n") + indented_line);
   InitStyledLabel(text);
   styled()->SetBounds(0, 0, 1000, 1000);
-  styled()->Layout();
+  test::RunScheduledLayout(styled());
   ASSERT_EQ(2u, styled()->children().size());
   EXPECT_EQ(ASCIIToUTF16(indented_line), LabelAt(styled(), 1)->GetText());
 }
@@ -154,7 +160,7 @@ TEST_F(StyledLabelTest, CorrectWrapAtNewline) {
   gfx::Size label_preferred_size = label.GetPreferredSize();
   // Correct handling of \n and label width limit encountered at the same place
   styled()->SetBounds(0, 0, label_preferred_size.width(), 1000);
-  styled()->Layout();
+  test::RunScheduledLayout(styled());
   ASSERT_EQ(2u, styled()->children().size());
   EXPECT_EQ(ASCIIToUTF16(first_line), LabelAt(styled(), 0)->GetText());
   const auto* label_1 = LabelAt(styled(), 1);
@@ -170,7 +176,7 @@ TEST_F(StyledLabelTest, FirstLineNotEmptyWhenLeadingWhitespaceTooLong) {
   gfx::Size label_preferred_size = label.GetPreferredSize();
 
   styled()->SetBounds(0, 0, label_preferred_size.width() / 2, 1000);
-  styled()->Layout();
+  test::RunScheduledLayout(styled());
 
   ASSERT_EQ(1u, styled()->children().size());
   EXPECT_EQ(u"a", LabelAt(styled(), 0)->GetText());
@@ -192,7 +198,7 @@ TEST_F(StyledLabelTest, BasicWrapping) {
   styled()->SetBounds(
       0, 0, styled()->GetInsets().width() + label_preferred_size.width(),
       styled()->GetInsets().height() + 2 * label_preferred_size.height());
-  styled()->Layout();
+  test::RunScheduledLayout(styled());
   ASSERT_EQ(2u, styled()->children().size());
   EXPECT_EQ(3, styled()->children()[0]->x());
   EXPECT_EQ(3, styled()->children()[0]->y());
@@ -206,7 +212,7 @@ TEST_F(StyledLabelTest, AllowEmptyLines) {
   const std::string multiline_text("one\n\nthree");
   InitStyledLabel(multiline_text);
   styled()->SetBounds(0, 0, 1000, 1000);
-  styled()->Layout();
+  test::RunScheduledLayout(styled());
   EXPECT_EQ(3 * default_height, styled()->GetHeightForWidth(1000));
   ASSERT_EQ(2u, styled()->children().size());
   EXPECT_EQ(styled()->GetHeightForWidth(1000),
@@ -225,7 +231,7 @@ TEST_F(StyledLabelTest, WrapLongWords) {
   styled()->SetBounds(
       0, 0, styled()->GetInsets().width() + label_preferred_size.width(),
       styled()->GetInsets().height() + 2 * label_preferred_size.height());
-  styled()->Layout();
+  test::RunScheduledLayout(styled());
 
   ASSERT_EQ(2u, styled()->children().size());
   ASSERT_EQ(gfx::Point(), styled()->origin());
@@ -266,56 +272,8 @@ TEST_F(StyledLabelTest, CreateLinks) {
 
   // Verify layout creates the right number of children.
   styled()->SetBounds(0, 0, 1000, 1000);
-  styled()->Layout();
+  test::RunScheduledLayout(styled());
   EXPECT_EQ(7u, styled()->children().size());
-}
-
-TEST_F(StyledLabelTest, DontBreakLinks) {
-  const std::string text("This is a test block of text, ");
-  const std::string link_text("and this should be a link");
-  InitStyledLabel(text + link_text);
-  styled()->AddStyleRange(
-      gfx::Range(text.size(), text.size() + link_text.size()),
-      StyledLabel::RangeStyleInfo::CreateForLink(base::RepeatingClosure()));
-
-  Label label(ASCIIToUTF16(text + link_text.substr(0, link_text.size() / 2)));
-  gfx::Size label_preferred_size = label.GetPreferredSize();
-  int pref_height = styled()->GetHeightForWidth(label_preferred_size.width());
-  EXPECT_EQ(label_preferred_size.height() * 2,
-            pref_height - styled()->GetInsets().height());
-
-  styled()->SetBounds(0, 0, label_preferred_size.width(), pref_height);
-  styled()->Layout();
-  ASSERT_EQ(2u, styled()->children().size());
-
-  // No additional insets should be added.
-  EXPECT_EQ(0, styled()->children()[0]->x());
-  // The Link shouldn't be offset.
-  EXPECT_EQ(0, styled()->children()[1]->x());
-}
-
-TEST_F(StyledLabelTest, StyledRangeWithDisabledLineWrapping) {
-  const std::string text("This is a test block of text, ");
-  const std::string unbreakable_text("and this should not be broken");
-  InitStyledLabel(text + unbreakable_text);
-  StyledLabel::RangeStyleInfo style_info;
-  style_info.disable_line_wrapping = true;
-  styled()->AddStyleRange(
-      gfx::Range(text.size(), text.size() + unbreakable_text.size()),
-      style_info);
-
-  Label label(ASCIIToUTF16(
-      text + unbreakable_text.substr(0, unbreakable_text.size() / 2)));
-  gfx::Size label_preferred_size = label.GetPreferredSize();
-  int pref_height = styled()->GetHeightForWidth(label_preferred_size.width());
-  EXPECT_EQ(label_preferred_size.height() * 2,
-            pref_height - styled()->GetInsets().height());
-
-  styled()->SetBounds(0, 0, label_preferred_size.width(), pref_height);
-  styled()->Layout();
-  ASSERT_EQ(2u, styled()->children().size());
-  EXPECT_EQ(0, styled()->children()[0]->x());
-  EXPECT_EQ(0, styled()->children()[1]->x());
 }
 
 TEST_F(StyledLabelTest, StyledRangeCustomFontUnderlined) {
@@ -331,7 +289,7 @@ TEST_F(StyledLabelTest, StyledRangeCustomFontUnderlined) {
       style_info);
 
   styled()->SetBounds(0, 0, 1000, 1000);
-  styled()->Layout();
+  test::RunScheduledLayout(styled());
 
   ASSERT_EQ(2u, styled()->children().size());
   EXPECT_EQ(gfx::Font::UNDERLINE,
@@ -376,11 +334,11 @@ TEST_F(StyledLabelTest, StyledRangeTextStyleBold) {
   StyledLabel unstyled;
   unstyled.SetText(ASCIIToUTF16(bold_text));
   unstyled.SetBounds(0, 0, styled_width, pref_height);
-  unstyled.Layout();
+  test::RunScheduledLayout(&unstyled);
   EXPECT_EQ(1u, unstyled.children().size());
 
   styled()->SetBounds(0, 0, styled_width, pref_height);
-  styled()->Layout();
+  test::RunScheduledLayout(styled());
 
   ASSERT_EQ(3u, styled()->children().size());
 
@@ -415,10 +373,12 @@ TEST_F(StyledLabelInWidgetTest, Color) {
       style_info_link);
 
   styled()->SetBounds(0, 0, 1000, 1000);
-  styled()->Layout();
+  test::RunScheduledLayout(styled());
 
   // The code below is not prepared to deal with dark mode.
-  widget()->GetNativeTheme()->set_use_dark_colors(false);
+  auto* const native_theme = widget()->GetNativeTheme();
+  native_theme->set_use_dark_colors(false);
+  native_theme->NotifyOnNativeThemeUpdated();
 
   auto* container = widget()->GetContentsView();
   // Obtain the default text color for a label.
@@ -433,18 +393,70 @@ TEST_F(StyledLabelInWidgetTest, Color) {
 
   ASSERT_EQ(3u, styled()->children().size());
   EXPECT_EQ(SK_ColorBLUE, LabelAt(styled(), 0)->GetEnabledColor());
-  EXPECT_EQ(kDefaultLinkColor,
-            LabelAt(styled(), 1, Link::kViewClassName)->GetEnabledColor());
+  EXPECT_EQ(
+      kDefaultLinkColor,
+      LabelAt(styled(), 1, LinkFragment::kViewClassName)->GetEnabledColor());
   EXPECT_EQ(kDefaultTextColor, LabelAt(styled(), 2)->GetEnabledColor());
 
   // Test adjusted color readability.
   styled()->SetDisplayedOnBackgroundColor(SK_ColorBLACK);
-  styled()->Layout();
+  test::RunScheduledLayout(styled());
   label->SetBackgroundColor(SK_ColorBLACK);
 
   const SkColor kAdjustedTextColor = label->GetEnabledColor();
   EXPECT_NE(kAdjustedTextColor, kDefaultTextColor);
   EXPECT_EQ(kAdjustedTextColor, LabelAt(styled(), 2)->GetEnabledColor());
+}
+
+TEST_F(StyledLabelInWidgetTest, SetBackgroundColor) {
+  InitStyledLabel("test label");
+
+  styled()->SetBounds(0, 0, 1000, 1000);
+  test::RunScheduledLayout(styled());
+
+  ASSERT_THAT(styled()->children(), SizeIs(1u));
+  // The default background color is `ui::kColorDialogBackground`.
+  EXPECT_EQ(widget()->GetColorProvider()->GetColor(ui::kColorDialogBackground),
+            LabelAt(styled(), 0)->GetBackgroundColor());
+
+  styled()->SetDisplayedOnBackgroundColor(SK_ColorBLUE);
+  EXPECT_EQ(SK_ColorBLUE, LabelAt(styled(), 0)->GetBackgroundColor());
+
+  styled()->SetDisplayedOnBackgroundColor(ui::kColorAlertHighSeverity);
+  EXPECT_EQ(widget()->GetColorProvider()->GetColor(ui::kColorAlertHighSeverity),
+            LabelAt(styled(), 0)->GetBackgroundColor());
+
+  // Setting a color overwrites the color id.
+  styled()->SetDisplayedOnBackgroundColor(SK_ColorCYAN);
+  EXPECT_EQ(SK_ColorCYAN, LabelAt(styled(), 0)->GetBackgroundColor());
+}
+
+TEST_F(StyledLabelInWidgetTest, SetBackgroundColorIdReactsToThemeChange) {
+  InitStyledLabel("test label");
+
+  styled()->SetBounds(0, 0, 1000, 1000);
+  test::RunScheduledLayout(styled());
+
+  ASSERT_THAT(styled()->children(), SizeIs(1u));
+  auto* const native_theme = widget()->GetNativeTheme();
+  native_theme->set_use_dark_colors(true);
+  native_theme->NotifyOnNativeThemeUpdated();
+  EXPECT_EQ(widget()->GetColorProvider()->GetColor(ui::kColorDialogBackground),
+            LabelAt(styled(), 0)->GetBackgroundColor());
+
+  native_theme->set_use_dark_colors(false);
+  native_theme->NotifyOnNativeThemeUpdated();
+  EXPECT_EQ(widget()->GetColorProvider()->GetColor(ui::kColorDialogBackground),
+            LabelAt(styled(), 0)->GetBackgroundColor());
+
+  styled()->SetDisplayedOnBackgroundColor(ui::kColorAlertHighSeverity);
+  EXPECT_EQ(widget()->GetColorProvider()->GetColor(ui::kColorAlertHighSeverity),
+            LabelAt(styled(), 0)->GetBackgroundColor());
+
+  native_theme->set_use_dark_colors(true);
+  native_theme->NotifyOnNativeThemeUpdated();
+  EXPECT_EQ(widget()->GetColorProvider()->GetColor(ui::kColorAlertHighSeverity),
+            LabelAt(styled(), 0)->GetBackgroundColor());
 }
 
 TEST_F(StyledLabelTest, StyledRangeWithTooltip) {
@@ -476,11 +488,11 @@ TEST_F(StyledLabelTest, StyledRangeWithTooltip) {
             pref_height - styled()->GetInsets().height());
 
   styled()->SetBounds(0, 0, label_preferred_size.width(), pref_height);
-  styled()->Layout();
+  test::RunScheduledLayout(styled());
 
   EXPECT_EQ(label_preferred_size.width(), styled()->width());
 
-  ASSERT_EQ(5u, styled()->children().size());
+  ASSERT_EQ(6u, styled()->children().size());
 
   // The labels shouldn't be offset to cater for focus rings.
   EXPECT_EQ(0, styled()->children()[0]->x());
@@ -490,7 +502,6 @@ TEST_F(StyledLabelTest, StyledRangeWithTooltip) {
             styled()->children()[1]->x());
   EXPECT_EQ(styled()->children()[2]->bounds().right(),
             styled()->children()[3]->x());
-  EXPECT_EQ(0, styled()->children()[4]->x());
 
   std::u16string tooltip =
       styled()->children()[1]->GetTooltipText(gfx::Point(1, 1));
@@ -514,7 +525,7 @@ TEST_F(StyledLabelTest, SetTextContextAndDefaultStyle) {
   EXPECT_EQ(label.GetPreferredSize().height(), styled()->height());
   EXPECT_EQ(label.GetPreferredSize().width(), styled()->width());
 
-  styled()->Layout();
+  test::RunScheduledLayout(styled());
   ASSERT_EQ(1u, styled()->children().size());
   Label* sublabel = LabelAt(styled(), 0);
   EXPECT_EQ(style::CONTEXT_DIALOG_TITLE, sublabel->GetTextContext());
@@ -558,7 +569,7 @@ TEST_F(StyledLabelTest, LineHeightWithLink) {
 TEST_F(StyledLabelTest, HandleEmptyLayout) {
   const std::string text("This is a test block of text.");
   InitStyledLabel(text);
-  styled()->Layout();
+  test::RunScheduledLayout(styled());
   EXPECT_EQ(0u, styled()->children().size());
 }
 
@@ -578,7 +589,7 @@ TEST_F(StyledLabelTest, CacheSize) {
   EXPECT_EQ(0u, styled()->children().size());
 
   styled()->SetBounds(0, 0, preferred_width, preferred_height);
-  styled()->Layout();
+  test::RunScheduledLayout(styled());
 
   // controls should be created after layout
   // height should be the same as precalculated
@@ -590,7 +601,7 @@ TEST_F(StyledLabelTest, CacheSize) {
   EXPECT_EQ(real_height, precalculated_height);
 
   // another call to Layout should not kill and recreate all controls
-  styled()->Layout();
+  test::RunScheduledLayout(styled());
   View* first_child_after_second_layout =
       styled()->children().empty() ? nullptr : styled()->children().front();
   EXPECT_EQ(first_child_after_layout, first_child_after_second_layout);
@@ -613,7 +624,7 @@ TEST_F(StyledLabelTest, Border) {
   gfx::Size label_preferred_size = label.GetPreferredSize();
   styled()->SetBorder(CreateEmptyBorder(gfx::Insets::TLBR(5, 10, 6, 20)));
   styled()->SetBounds(0, 0, 1000, 0);
-  styled()->Layout();
+  test::RunScheduledLayout(styled());
   EXPECT_EQ(
       label_preferred_size.height() + 5 /*top border*/ + 6 /*bottom border*/,
       styled()->GetPreferredSize().height());
@@ -686,23 +697,29 @@ TEST_F(StyledLabelTest, AlignmentInLTR) {
   const std::string text("text");
   InitStyledLabel(text);
   styled()->SetBounds(0, 0, 1000, 1000);
-  styled()->Layout();
+  test::RunScheduledLayout(styled());
   const auto& children = styled()->children();
   ASSERT_EQ(1u, children.size());
 
   // Test the default alignment puts the text on the leading side (left).
   EXPECT_EQ(0, children.front()->bounds().x());
 
+  // Setting |ALIGN_RIGHT| indicates the text should be aligned to the trailing
+  // side, and hence its trailing side coordinates (i.e. right) should align
+  // with the trailing side coordinate of the label (right).
   styled()->SetHorizontalAlignment(gfx::ALIGN_RIGHT);
-  styled()->Layout();
+  test::RunScheduledLayout(styled());
   EXPECT_EQ(1000, children.front()->bounds().right());
 
+  // Setting |ALIGN_LEFT| indicates the text should be aligned to the leading
+  // side, and hence its leading side coordinates (i.e. x) should align with the
+  // leading side coordinate of the label (x).
   styled()->SetHorizontalAlignment(gfx::ALIGN_LEFT);
-  styled()->Layout();
+  test::RunScheduledLayout(styled());
   EXPECT_EQ(0, children.front()->bounds().x());
 
   styled()->SetHorizontalAlignment(gfx::ALIGN_CENTER);
-  styled()->Layout();
+  test::RunScheduledLayout(styled());
   Label label(ASCIIToUTF16(text));
   EXPECT_EQ((1000 - label.GetPreferredSize().width()) / 2,
             children.front()->bounds().x());
@@ -719,7 +736,7 @@ TEST_F(StyledLabelTest, AlignmentInRTL) {
   const std::string text("text");
   InitStyledLabel(text);
   styled()->SetBounds(0, 0, 1000, 1000);
-  styled()->Layout();
+  test::RunScheduledLayout(styled());
   const auto& children = styled()->children();
   ASSERT_EQ(1u, children.size());
 
@@ -727,18 +744,22 @@ TEST_F(StyledLabelTest, AlignmentInRTL) {
   // Note that x-coordinates in RTL place the origin (0) on the right.
   EXPECT_EQ(0, children.front()->bounds().x());
 
-  // Setting |ALIGN_LEFT| should be flipped to |ALIGN_RIGHT|.
-  styled()->SetHorizontalAlignment(gfx::ALIGN_LEFT);
-  styled()->Layout();
+  // Setting |ALIGN_RIGHT| indicates the text should be aligned to the trailing
+  // side, and hence its trailing side coordinates (i.e. right) should align
+  // with the trailing side coordinate of the label (right).
+  styled()->SetHorizontalAlignment(gfx::ALIGN_RIGHT);
+  test::RunScheduledLayout(styled());
   EXPECT_EQ(1000, children.front()->bounds().right());
 
-  // Setting |ALIGN_RIGHT| should be flipped to |ALIGN_LEFT|.
-  styled()->SetHorizontalAlignment(gfx::ALIGN_RIGHT);
-  styled()->Layout();
+  // Setting |ALIGN_LEFT| indicates the text should be aligned to the leading
+  // side, and hence its leading side coordinates (i.e. x) should align with the
+  // leading side coordinate of the label (x).
+  styled()->SetHorizontalAlignment(gfx::ALIGN_LEFT);
+  test::RunScheduledLayout(styled());
   EXPECT_EQ(0, children.front()->bounds().x());
 
   styled()->SetHorizontalAlignment(gfx::ALIGN_CENTER);
-  styled()->Layout();
+  test::RunScheduledLayout(styled());
   Label label(ASCIIToUTF16(text));
   EXPECT_EQ((1000 - label.GetPreferredSize().width()) / 2,
             children.front()->bounds().x());
@@ -765,7 +786,7 @@ TEST_F(StyledLabelTest, ViewsCenteredWithLinkAndCustomView) {
   styled()->AddCustomView(std::move(custom_view));
 
   styled()->SetBounds(0, 0, 1000, 500);
-  styled()->Layout();
+  test::RunScheduledLayout(styled());
   const int height = styled()->GetPreferredSize().height();
   for (const auto* child : styled()->children())
     EXPECT_EQ(height / 2, child->bounds().CenterPoint().y());
@@ -787,7 +808,7 @@ TEST_F(StyledLabelTest, ViewsCenteredForEvenAndOddSizes) {
     }
 
     styled()->SetBounds(0, 0, kViewWidth * 3, height);
-    styled()->Layout();
+    test::RunScheduledLayout(styled());
 
     for (const auto* child : styled()->children())
       EXPECT_EQ(height / 2, child->bounds().CenterPoint().y());
@@ -799,13 +820,13 @@ TEST_F(StyledLabelTest, CacheSizeWithAlignment) {
   InitStyledLabel(text);
   styled()->SetHorizontalAlignment(gfx::ALIGN_RIGHT);
   styled()->SetBounds(0, 0, 1000, 1000);
-  styled()->Layout();
+  test::RunScheduledLayout(styled());
   ASSERT_EQ(1u, styled()->children().size());
   const View* child = styled()->children().front();
   EXPECT_EQ(1000, child->bounds().right());
 
   styled()->SetSize({800, 1000});
-  styled()->Layout();
+  test::RunScheduledLayout(styled());
   ASSERT_EQ(1u, styled()->children().size());
   const View* new_child = styled()->children().front();
   EXPECT_EQ(child, new_child);
@@ -819,7 +840,7 @@ TEST_F(StyledLabelTest, SizeToFit) {
   InitStyledLabel(text);
   styled()->SetHorizontalAlignment(gfx::ALIGN_RIGHT);
   styled()->SizeToFit(1000);
-  styled()->Layout();
+  test::RunScheduledLayout(styled());
   ASSERT_EQ(1u, styled()->children().size());
   EXPECT_EQ(1000, styled()->children().front()->bounds().right());
 }
@@ -839,7 +860,7 @@ TEST_F(StyledLabelTest, PreferredSizeRespectsWrapping) {
   size.set_width(size.width() / 2);
   size.set_height(styled()->GetHeightForWidth(size.width()));
   styled()->SetSize(size);
-  styled()->Layout();
+  test::RunScheduledLayout(styled());
   const gfx::Size new_size = styled()->GetPreferredSize();
   EXPECT_LE(new_size.width(), size.width());
   EXPECT_EQ(new_size.height(), size.height());

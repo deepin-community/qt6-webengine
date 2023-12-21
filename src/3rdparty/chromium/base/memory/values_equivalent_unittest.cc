@@ -1,9 +1,10 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "base/memory/values_equivalent.h"
 
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_refptr.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -67,7 +68,7 @@ TEST(ValuesEquivalentTest, CapitalGetPtr) {
     const int* Get() const { return pointer_; }
 
    private:
-    int* pointer_ = nullptr;
+    raw_ptr<int> pointer_ = nullptr;
   };
 
   auto a = 1234;
@@ -92,6 +93,24 @@ TEST(ValuesEquivalentTest, BypassEqualsOperator) {
 
   EXPECT_TRUE(ValuesEquivalent(&a, &a));
   EXPECT_FALSE(ValuesEquivalent(&a, &b));
+}
+
+TEST(ValuesEquavalentTest, Predicate) {
+  auto is_same_or_next = [](int a, int b) { return a == b || a == b + 1; };
+  int x = 1;
+  int y = 2;
+  int z = 3;
+
+  EXPECT_TRUE(ValuesEquivalent(&x, &x, is_same_or_next));
+  EXPECT_FALSE(ValuesEquivalent(&x, &y, is_same_or_next));
+  EXPECT_FALSE(ValuesEquivalent(&x, &z, is_same_or_next));
+  EXPECT_TRUE(ValuesEquivalent(&y, &x, is_same_or_next));
+  EXPECT_FALSE(ValuesEquivalent(&y, &z, is_same_or_next));
+  EXPECT_FALSE(ValuesEquivalent(&z, &x, is_same_or_next));
+  EXPECT_TRUE(ValuesEquivalent(&z, &y, is_same_or_next));
+  EXPECT_TRUE(ValuesEquivalent<int>(nullptr, nullptr, is_same_or_next));
+  EXPECT_FALSE(ValuesEquivalent<int>(&x, nullptr, is_same_or_next));
+  EXPECT_FALSE(ValuesEquivalent<int>(nullptr, &x, is_same_or_next));
 }
 
 }  // namespace base

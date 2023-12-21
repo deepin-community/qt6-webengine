@@ -1,4 +1,4 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,8 +8,7 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-namespace remote_cocoa {
-namespace test {
+namespace remote_cocoa::test {
 
 using testing::_;
 using testing::Invoke;
@@ -20,7 +19,9 @@ class MockClient : public NativeWidgetNSWindowFullscreenController::Client {
   MOCK_METHOD1(FullscreenControllerTransitionStart, void(bool));
   MOCK_METHOD1(FullscreenControllerTransitionComplete, void(bool));
   MOCK_METHOD3(FullscreenControllerSetFrame,
-               void(const gfx::Rect&, bool animate, base::TimeDelta&));
+               void(const gfx::Rect&,
+                    bool animate,
+                    base::OnceCallback<void()> animation_complete));
 
   MOCK_METHOD0(FullscreenControllerToggleFullscreen, void());
   MOCK_METHOD0(FullscreenControllerCloseWindow, void());
@@ -49,6 +50,14 @@ class MacFullscreenControllerTest : public testing::Test {
   NativeWidgetNSWindowFullscreenController controller_{&mock_client_};
   base::test::SingleThreadTaskEnvironment task_environment_;
 };
+
+// Fake implementation of FullscreenControllerSetFrame
+// which executes the given callback immediately.
+void FullscreenControllerSetFrameFake(const gfx::Rect&,
+                                      bool,
+                                      base::OnceCallback<void()> callback) {
+  std::move(callback).Run();
+}
 
 // Simple enter-and-exit fullscreen via the green traffic light button.
 TEST_F(MacFullscreenControllerTest, SimpleUserInitiated) {
@@ -245,7 +254,7 @@ TEST_F(MacFullscreenControllerTest, SimpleCrossScreen) {
       .WillOnce(Return(kDisplay1Frame));
   EXPECT_CALL(mock_client_,
               FullscreenControllerSetFrame(kDisplay1Frame, true, _))
-      .Times(1);
+      .WillOnce(FullscreenControllerSetFrameFake);
   EXPECT_CALL(mock_client_, FullscreenControllerToggleFullscreen())
       .WillOnce(Invoke(&controller_, &NativeWidgetNSWindowFullscreenController::
                                          OnWindowWillEnterFullscreen));
@@ -282,7 +291,7 @@ TEST_F(MacFullscreenControllerTest, SimpleCrossScreen) {
 
   // Let the run loop run, it will restore the bounds.
   EXPECT_CALL(mock_client_, FullscreenControllerSetFrame(kWindowRect, true, _))
-      .Times(1);
+      .WillOnce(FullscreenControllerSetFrameFake);
   EXPECT_CALL(mock_client_, FullscreenControllerTransitionComplete(false))
       .Times(1);
   task_environment_.RunUntilIdle();
@@ -333,7 +342,7 @@ TEST_F(MacFullscreenControllerTest, CrossScreenFromFullscreen) {
   // fullscreen in the RunUntilIdle.
   EXPECT_CALL(mock_client_,
               FullscreenControllerSetFrame(kDisplay1Frame, true, _))
-      .Times(1);
+      .WillOnce(FullscreenControllerSetFrameFake);
   EXPECT_CALL(mock_client_, FullscreenControllerToggleFullscreen())
       .WillOnce(Invoke(&controller_, &NativeWidgetNSWindowFullscreenController::
                                          OnWindowWillEnterFullscreen));
@@ -358,7 +367,7 @@ TEST_F(MacFullscreenControllerTest, CrossScreenFromFullscreen) {
   task_environment_.RunUntilIdle();
   controller_.OnWindowDidExitFullscreen();
   EXPECT_CALL(mock_client_, FullscreenControllerSetFrame(kWindowRect, true, _))
-      .Times(1);
+      .WillOnce(FullscreenControllerSetFrameFake);
   EXPECT_CALL(mock_client_, FullscreenControllerTransitionComplete(false))
       .Times(1);
   task_environment_.RunUntilIdle();
@@ -440,7 +449,7 @@ TEST_F(MacFullscreenControllerTest, CrossScreenFromFullscreenFailEnter) {
   controller_.OnWindowDidExitFullscreen();
   EXPECT_CALL(mock_client_,
               FullscreenControllerSetFrame(kDisplay1Frame, true, _))
-      .Times(1);
+      .WillOnce(FullscreenControllerSetFrameFake);
   EXPECT_CALL(mock_client_, FullscreenControllerToggleFullscreen())
       .WillOnce(Invoke(&controller_, &NativeWidgetNSWindowFullscreenController::
                                          OnWindowWillEnterFullscreen));
@@ -458,7 +467,7 @@ TEST_F(MacFullscreenControllerTest, CrossScreenFromFullscreenFailEnter) {
   // the transition complete, with the final state after transition as being
   // windowed.
   EXPECT_CALL(mock_client_, FullscreenControllerSetFrame(kWindowRect, true, _))
-      .Times(1);
+      .WillOnce(FullscreenControllerSetFrameFake);
   EXPECT_CALL(mock_client_, FullscreenControllerTransitionComplete(false))
       .Times(1);
   task_environment_.RunUntilIdle();
@@ -601,7 +610,7 @@ TEST_F(MacFullscreenControllerTest, EnterCrossScreenWhileExiting) {
       .WillOnce(Return(kDisplay1Frame));
   EXPECT_CALL(mock_client_,
               FullscreenControllerSetFrame(kDisplay1Frame, true, _))
-      .Times(1);
+      .WillOnce(FullscreenControllerSetFrameFake);
   EXPECT_CALL(mock_client_, FullscreenControllerToggleFullscreen())
       .WillOnce(Invoke(&controller_, &NativeWidgetNSWindowFullscreenController::
                                          OnWindowWillEnterFullscreen));
@@ -638,7 +647,7 @@ TEST_F(MacFullscreenControllerTest, EnterCrossScreenWhileEntering) {
 
   // Complete the original fullscreen transition. This will check to see if
   // the display we are on is the display we wanted to be on. Seeing that it
-  // isn't it will post a task to exit fullscreen to move to the correct
+  // isn't, it will post a task to exit fullscreen before moving to the correct
   // display.
   EXPECT_CALL(mock_client_, FullscreenControllerGetDisplayId())
       .WillOnce(Return(kDisplay0Id));
@@ -652,15 +661,18 @@ TEST_F(MacFullscreenControllerTest, EnterCrossScreenWhileEntering) {
                                          OnWindowWillExitFullscreen));
   task_environment_.RunUntilIdle();
 
-  // Complete the transition to windowed mode. This will then move the window
-  // and toggle fullscreen.
+  // Complete the transition to windowed mode. This will once again check to see
+  // if the display we are on is the display we wanted to be on. Seeing that it
+  // isn't, it will move to the correct display and toggle fullscreen.
+  EXPECT_CALL(mock_client_, FullscreenControllerGetDisplayId())
+      .WillOnce(Return(kDisplay0Id));
   controller_.OnWindowDidExitFullscreen();
   EXPECT_CALL(mock_client_, FullscreenControllerGetFrameForDisplay(kDisplay1Id))
       .Times(1)
       .WillOnce(Return(kDisplay1Frame));
   EXPECT_CALL(mock_client_,
               FullscreenControllerSetFrame(kDisplay1Frame, true, _))
-      .Times(1);
+      .WillOnce(FullscreenControllerSetFrameFake);
   EXPECT_CALL(mock_client_, FullscreenControllerToggleFullscreen())
       .WillOnce(Invoke(&controller_, &NativeWidgetNSWindowFullscreenController::
                                          OnWindowWillEnterFullscreen));
@@ -686,7 +698,7 @@ TEST_F(MacFullscreenControllerTest, EnterCrossScreenWhileEntering) {
   controller_.OnWindowDidExitFullscreen();
   EXPECT_TRUE(controller_.IsInFullscreenTransition());
   EXPECT_CALL(mock_client_, FullscreenControllerSetFrame(kWindowRect, true, _))
-      .Times(1);
+      .WillOnce(FullscreenControllerSetFrameFake);
   EXPECT_CALL(mock_client_, FullscreenControllerTransitionComplete(false))
       .Times(1);
   task_environment_.RunUntilIdle();
@@ -694,5 +706,4 @@ TEST_F(MacFullscreenControllerTest, EnterCrossScreenWhileEntering) {
   EXPECT_FALSE(controller_.GetTargetFullscreenState());
 }
 
-}  // namespace test
-}  // namespace remote_cocoa
+}  // namespace remote_cocoa::test

@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,9 +13,9 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_file.h"
+#include "base/functional/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/run_loop.h"
@@ -153,7 +153,7 @@ class StylusButtonEventConverterEvdevTest : public testing::Test {
   }
 
   void DispatchEventForTest(ui::Event* event) {
-    std::unique_ptr<ui::Event> cloned_event = ui::Event::Clone(*event);
+    std::unique_ptr<ui::Event> cloned_event = event->Clone();
     dispatched_events_.push_back(std::move(cloned_event));
   }
 

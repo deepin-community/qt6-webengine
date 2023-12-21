@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -43,23 +43,13 @@ class ServiceWorkerNetworkProviderForFrame final
 
   // Implements WebServiceWorkerNetworkProvider.
   void WillSendRequest(blink::WebURLRequest& request) override;
-  std::unique_ptr<blink::WebURLLoader> CreateURLLoader(
-      const blink::WebURLRequest& request,
-      std::unique_ptr<blink::scheduler::WebResourceLoadingTaskRunnerHandle>
-          freezable_task_runner_handle,
-      std::unique_ptr<blink::scheduler::WebResourceLoadingTaskRunnerHandle>
-          unfreezable_task_runner_handle,
-      blink::CrossVariantMojoRemote<blink::mojom::KeepAliveHandleInterfaceBase>
-          keep_alive_handle,
-      blink::WebBackForwardCacheLoaderHelper back_forward_cache_loader_helper)
-      override;
+  scoped_refptr<network::SharedURLLoaderFactory> GetSubresourceLoaderFactory(
+      const blink::WebURLRequest& request) override;
   blink::mojom::ControllerServiceWorkerMode GetControllerServiceWorkerMode()
       override;
+  blink::mojom::ServiceWorkerFetchHandlerType GetFetchHandlerType() override;
   int64_t ControllerServiceWorkerID() override;
   void DispatchNetworkQuiet() override;
-  blink::CrossVariantMojoReceiver<
-      blink::mojom::WorkerTimingContainerInterfaceBase>
-  TakePendingWorkerTimingReceiver(int request_id) override;
 
   ServiceWorkerProviderContext* context() { return context_.get(); }
 

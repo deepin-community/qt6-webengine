@@ -25,6 +25,7 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_STYLE_BORDER_VALUE_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_STYLE_BORDER_VALUE_H_
 
+#include "base/check_op.h"
 #include "third_party/blink/renderer/core/css/style_color.h"
 #include "third_party/blink/renderer/core/style/computed_style_constants.h"
 #include "third_party/blink/renderer/platform/geometry/layout_unit.h"
@@ -56,11 +57,13 @@ class BorderValue {
   // (in ComputedStyle itself)
   bool VisuallyEqual(const BorderValue& o) const {
     if (style_ == static_cast<unsigned>(EBorderStyle::kNone) &&
-        o.style_ == static_cast<unsigned>(EBorderStyle::kNone))
+        o.style_ == static_cast<unsigned>(EBorderStyle::kNone)) {
       return true;
+    }
     if (style_ == static_cast<unsigned>(EBorderStyle::kHidden) &&
-        o.style_ == static_cast<unsigned>(EBorderStyle::kHidden))
+        o.style_ == static_cast<unsigned>(EBorderStyle::kHidden)) {
       return true;
+    }
     return *this == o;
   }
 
@@ -94,8 +97,9 @@ class BorderValue {
     // Avoid min()/max() from std here in the header, because that would require
     // inclusion of <algorithm>, which is slow to compile.
     int raw_width = width.RawValue();
-    if (raw_width > kMaxValue)
+    if (raw_width > kMaxValue) {
       raw_width = kMaxValue;
+    }
     return static_cast<unsigned>(raw_width);
   }
 

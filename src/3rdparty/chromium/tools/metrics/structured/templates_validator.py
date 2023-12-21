@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Copyright 2021 The Chromium Authors. All rights reserved.
+# Copyright 2021 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -97,6 +97,8 @@ class {project.validator} final :
     static constexpr IdScope kIdScope = IdScope::{project.id_scope};
     static constexpr EventType kEventType =
         StructuredEventProto_EventType_{project.event_type};
+    static constexpr int kKeyRotationPeriod =
+        {project.key_rotation_period};
 }};
 
 {project.validator}::{project.validator}() :
@@ -104,7 +106,8 @@ class {project.validator} final :
   {project.validator}::kProjectNameHash,
   {project.validator}::kIdType,
   {project.validator}::kIdScope,
-  {project.validator}::kEventType
+  {project.validator}::kEventType,
+  {project.validator}::kKeyRotationPeriod
 )
   {{}}
 
@@ -155,7 +158,12 @@ class {event.validator_name} final :
 absl::optional<EventValidator::MetricMetadata>
 {event.validator_name}::GetMetricMetadata(const std::string& metric_name)
 const {{
-   static constexpr auto metric_hash_map = base::MakeFixedFlatMap<
+  {get_metrics_metadata_impl}
+}}
+"""
+
+IMPL_GET_METRICS_METADATA = """\
+static constexpr auto metric_hash_map = base::MakeFixedFlatMap<
       base::StringPiece, EventValidator::MetricMetadata>({{
     {metric_hash_map}
    }});
@@ -163,5 +171,4 @@ const {{
    if (it == metric_hash_map.end())
       return absl::nullopt;
    return it->second;
-}}
 """

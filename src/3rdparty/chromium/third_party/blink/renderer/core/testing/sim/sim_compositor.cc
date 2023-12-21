@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -25,11 +25,8 @@ SimCompositor::SimCompositor() {
 
 SimCompositor::~SimCompositor() = default;
 
-void SimCompositor::SetWebView(
-    WebViewImpl& web_view,
-    frame_test_helpers::TestWebViewClient& view_client) {
+void SimCompositor::SetWebView(WebViewImpl& web_view) {
   web_view_ = &web_view;
-  test_web_view_client_ = &view_client;
 }
 
 SimCanvas::Commands SimCompositor::BeginFrame(double time_delta_in_seconds,
@@ -41,12 +38,20 @@ SimCanvas::Commands SimCompositor::BeginFrame(double time_delta_in_seconds,
   DCHECK(NeedsBeginFrame());
   DCHECK_GT(time_delta_in_seconds, 0);
 
-  last_frame_time_ += base::Seconds(time_delta_in_seconds);
+  base::TimeTicks now = base::TimeTicks::Now();
+  base::TimeTicks start =
+      last_frame_time_ + base::Seconds(time_delta_in_seconds);
+  // Depending on the value of time_delta_in_seconds, `start` might be ahead of
+  // the global clock, which can confuse LocalFrameUkmAggregator. So just sleep
+  // until `start` is definitely in the past.
+  base::PlatformThread::Sleep(start - now);
+  last_frame_time_ = start;
 
   SimCanvas::Commands commands;
   paint_commands_ = &commands;
 
-  LayerTreeHost()->CompositeForTest(last_frame_time_, raster);
+  LayerTreeHost()->CompositeForTest(last_frame_time_, raster,
+                                    base::OnceClosure());
 
   paint_commands_ = nullptr;
   return commands;
@@ -65,7 +70,7 @@ SimCanvas::Commands SimCompositor::PaintFrame() {
 
   auto infinite_rect = LayoutRect::InfiniteIntRect();
   SimCanvas canvas(infinite_rect.width(), infinite_rect.height());
-  builder->EndRecording()->Playback(&canvas);
+  builder->EndRecording().Playback(&canvas);
   return canvas.GetCommands();
 }
 

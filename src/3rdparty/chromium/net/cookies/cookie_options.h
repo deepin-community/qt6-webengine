@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,11 +8,12 @@
 #define NET_COOKIES_COOKIE_OPTIONS_H_
 
 #include <ostream>
+#include <string>
 
 #include "net/base/net_export.h"
 #include "net/cookies/cookie_constants.h"
 #include "net/cookies/cookie_inclusion_status.h"
-#include "net/cookies/same_party_context.h"
+#include "net/first_party_sets/same_party_context.h"
 #include "url/gurl.h"
 
 namespace net {
@@ -88,6 +89,26 @@ class NET_EXPORT CookieOptions {
         kMaxValue = kAllSameSiteRedirect
       };
 
+      // These values are persisted to logs. Entries should not be renumbered
+      // and numeric values should never be reused.
+      enum class HttpMethod {
+        // kUnset indicates this enum wasn't applicable in the context.
+        kUnset = -1,
+        // kUnknown indicates we were unable to convert the method string to
+        // this enum.
+        kUnknown = 0,
+        kGet = 1,
+        kHead = 2,
+        kPost = 3,
+        KPut = 4,
+        kDelete = 5,
+        kConnect = 6,
+        kOptions = 7,
+        kTrace = 8,
+        kPatch = 9,
+        kMaxValue = kPatch
+      };
+
       // Records the type of any context downgrade due to a cross-site redirect,
       // i.e. whether the spec change in
       // https://github.com/httpwg/http-extensions/pull/1348 changed the result
@@ -102,6 +123,15 @@ class NET_EXPORT CookieOptions {
 
       ContextRedirectTypeBug1221316 redirect_type_bug_1221316 =
           ContextRedirectTypeBug1221316::kUnset;
+
+      // Records the HTTP method of requests that result in a cross-site
+      // redirect downgrade. May be kUnset if there wasn't a downgrade or if the
+      // cookie access wasn't due to a request.
+      //
+      // Note that this field is always set when there was a context
+      // downgrade but the associated histrogram is only recorded when that
+      // context downgrade results in a change in inclusion status.
+      HttpMethod http_method_bug_1221316 = HttpMethod::kUnset;
     };
 
     // The following three constructors apply default values for the metadata
@@ -312,6 +342,8 @@ inline void PrintTo(
       << static_cast<int>(m.cross_site_redirect_downgrade);
   *os << ", redirect_type_bug_1221316: "
       << static_cast<int>(m.redirect_type_bug_1221316);
+  *os << ", http_method_bug_1221316: "
+      << static_cast<int>(m.http_method_bug_1221316);
   *os << " }";
 }
 

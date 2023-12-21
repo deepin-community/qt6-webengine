@@ -22,6 +22,7 @@
 #include "third_party/blink/renderer/core/layout/hit_test_result.h"
 
 #include "cc/base/region.h"
+#include "third_party/abseil-cpp/absl/types/variant.h"
 #include "third_party/blink/renderer/core/display_lock/display_lock_utilities.h"
 #include "third_party/blink/renderer/core/dom/flat_tree_traversal.h"
 #include "third_party/blink/renderer/core/dom/pseudo_element.h"
@@ -39,6 +40,7 @@
 #include "third_party/blink/renderer/core/html/html_image_element.h"
 #include "third_party/blink/renderer/core/html/html_map_element.h"
 #include "third_party/blink/renderer/core/html/media/html_media_element.h"
+#include "third_party/blink/renderer/core/html/media/media_source_handle.h"
 #include "third_party/blink/renderer/core/html/parser/html_parser_idioms.h"
 #include "third_party/blink/renderer/core/html_names.h"
 #include "third_party/blink/renderer/core/input_type_names.h"
@@ -79,6 +81,7 @@ HitTestResult::HitTestResult(const HitTestResult& other)
       inner_url_element_(other.URLElement()),
       scrollbar_(other.GetScrollbar()),
       is_over_embedded_content_view_(other.IsOverEmbeddedContentView()),
+      is_over_resizer_(other.is_over_resizer_),
       canvas_region_id_(other.CanvasRegionId()) {
   // Only copy the NodeSet in case of list hit test.
   list_based_test_result_ =
@@ -125,6 +128,7 @@ void HitTestResult::PopulateFromCachedResult(const HitTestResult& other) {
   is_over_embedded_content_view_ = other.IsOverEmbeddedContentView();
   cacheable_ = other.cacheable_;
   canvas_region_id_ = other.CanvasRegionId();
+  is_over_resizer_ = other.IsOverResizer();
 
   // Only copy the NodeSet in case of list hit test.
   list_based_test_result_ =
@@ -422,7 +426,7 @@ KURL HitTestResult::AbsoluteImageURL(const Node* node) {
            (IsA<HTMLEmbedElement>(*node) || IsA<HTMLObjectElement>(*node) ||
             IsA<SVGImageElement>(*node)))
     url_string = To<Element>(*node).ImageSourceURL();
-  if (url_string.IsEmpty())
+  if (url_string.empty())
     return KURL();
 
   return node->GetDocument().CompleteURL(
@@ -440,8 +444,26 @@ KURL HitTestResult::AbsoluteMediaURL() const {
 }
 
 MediaStreamDescriptor* HitTestResult::GetMediaStreamDescriptor() const {
-  if (HTMLMediaElement* media_elt = MediaElement())
-    return media_elt->GetSrcObject();
+  if (HTMLMediaElement* media_elt = MediaElement()) {
+    auto variant = media_elt->GetSrcObjectVariant();
+    if (absl::holds_alternative<MediaStreamDescriptor*>(variant)) {
+      // It might be nullptr-valued variant, too, here, but we return nullptr
+      // for that, regardless.
+      return absl::get<MediaStreamDescriptor*>(variant);
+    }
+  }
+  return nullptr;
+}
+
+MediaSourceHandle* HitTestResult::GetMediaSourceHandle() const {
+  if (HTMLMediaElement* media_elt = MediaElement()) {
+    auto variant = media_elt->GetSrcObjectVariant();
+    if (absl::holds_alternative<MediaSourceHandle*>(variant)) {
+      // It might be a nullptr-valued MediaStreamDescriptor* variant, here, but
+      // we return nullptr for that, regardless.
+      return absl::get<MediaSourceHandle*>(variant);
+    }
+  }
   return nullptr;
 }
 
@@ -491,7 +513,7 @@ bool HitTestResult::IsContentEditable() const {
   if (auto* input = DynamicTo<HTMLInputElement>(*inner_node_))
     return !input->IsDisabledOrReadOnly() && input->IsTextField();
 
-  return HasEditableStyle(*inner_node_);
+  return IsEditable(*inner_node_);
 }
 
 std::tuple<bool, ListBasedHitTestBehavior>
@@ -573,6 +595,7 @@ void HitTestResult::Append(const HitTestResult& other) {
     inner_url_element_ = other.URLElement();
     is_over_embedded_content_view_ = other.IsOverEmbeddedContentView();
     canvas_region_id_ = other.CanvasRegionId();
+    is_over_resizer_ = other.IsOverResizer();
   }
 
   if (other.list_based_test_result_) {

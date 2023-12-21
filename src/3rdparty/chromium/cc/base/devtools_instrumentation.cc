@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -50,7 +50,7 @@ const char kRequestMainThreadFrame[] = "RequestMainThreadFrame";
 const char kDroppedFrame[] = "DroppedFrame";
 const char kBeginMainThreadFrame[] = "BeginMainThreadFrame";
 const char kDrawFrame[] = "DrawFrame";
-const char kCompositeLayers[] = "CompositeLayers";
+const char kCommit[] = "Commit";
 }  // namespace internal
 
 const char kPaintSetup[] = "PaintSetup";
@@ -73,9 +73,6 @@ ScopedImageUploadTask::~ScopedImageUploadTask() {
   auto duration = base::TimeTicks::Now() - start_time_;
   const char* histogram_name = nullptr;
   switch (image_type_) {
-    case ImageType::kJxl:
-      histogram_name = "Renderer4.ImageUploadTaskDurationUs.Jxl";
-      break;
     case ImageType::kAvif:
       histogram_name = "Renderer4.ImageUploadTaskDurationUs.Avif";
       break;
@@ -125,9 +122,6 @@ ScopedImageDecodeTask::~ScopedImageDecodeTask() {
   auto duration = base::TimeTicks::Now() - start_time_;
   const char* histogram_name = nullptr;
   switch (image_type_) {
-    case ImageType::kJxl:
-      histogram_name = "Renderer4.ImageUploadTaskDurationUs.Jxl";
-      break;
     case ImageType::kAvif:
       histogram_name = "Renderer4.ImageDecodeTaskDurationUs.Avif";
       break;

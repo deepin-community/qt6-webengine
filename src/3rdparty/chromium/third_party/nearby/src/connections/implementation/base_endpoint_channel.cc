@@ -15,8 +15,10 @@
 #include "connections/implementation/base_endpoint_channel.h"
 
 #include <cassert>
+#include <memory>
+#include <string>
+#include <utility>
 
-#include "absl/strings/escaping.h"
 #include "absl/strings/str_cat.h"
 #include "connections/implementation/offline_frames.h"
 #include "internal/platform/byte_array.h"
@@ -25,7 +27,6 @@
 #include "internal/platform/mutex.h"
 #include "internal/platform/mutex_lock.h"
 
-namespace location {
 namespace nearby {
 namespace connections {
 
@@ -90,26 +91,32 @@ Exception WriteInt(OutputStream* writer, std::int32_t value) {
 
 }  // namespace
 
-BaseEndpointChannel::BaseEndpointChannel(const std::string& channel_name,
+BaseEndpointChannel::BaseEndpointChannel(const std::string& service_id,
+                                         const std::string& channel_name,
                                          InputStream* reader,
                                          OutputStream* writer)
     : BaseEndpointChannel(
-          channel_name, reader, writer,
+          service_id, channel_name, reader, writer,
           // TODO(edwinwu): Below values should be retrieved from a base socket,
           // the #MediumSocket in Android counterpart, from which all the
           // derived medium sockets should dervied, and implement the supported
           // values and leave the default values in base #MediumSocket.
           /*ConnectionTechnology*/
-          proto::connections::CONNECTION_TECHNOLOGY_UNKNOWN_TECHNOLOGY,
-          /*ConnectionBand*/ proto::connections::CONNECTION_BAND_UNKNOWN_BAND,
+          location::nearby::proto::connections::
+              CONNECTION_TECHNOLOGY_UNKNOWN_TECHNOLOGY,
+          /*ConnectionBand*/
+          location::nearby::proto::connections::CONNECTION_BAND_UNKNOWN_BAND,
           /*frequency*/ -1,
           /*try_count*/ 0) {}
 
 BaseEndpointChannel::BaseEndpointChannel(
-    const std::string& channel_name, InputStream* reader, OutputStream* writer,
-    proto::connections::ConnectionTechnology technology,
-    proto::connections::ConnectionBand band, int frequency, int try_count)
-    : channel_name_(channel_name),
+    const std::string& service_id, const std::string& channel_name,
+    InputStream* reader, OutputStream* writer,
+    location::nearby::proto::connections::ConnectionTechnology technology,
+    location::nearby::proto::connections::ConnectionBand band, int frequency,
+    int try_count)
+    : service_id_(service_id),
+      channel_name_(channel_name),
       reader_(reader),
       writer_(writer),
       technology_(technology),
@@ -118,10 +125,17 @@ BaseEndpointChannel::BaseEndpointChannel(
       try_count_(try_count) {}
 
 ExceptionOr<ByteArray> BaseEndpointChannel::Read() {
+  PacketMetaData packet_meta_data;
+  return Read(packet_meta_data);
+}
+
+ExceptionOr<ByteArray> BaseEndpointChannel::Read(
+    PacketMetaData& packet_meta_data) {
   ByteArray result;
   {
     MutexLock lock(&reader_mutex_);
 
+    packet_meta_data.StartSocketIo();
     ExceptionOr<std::int32_t> read_int = ReadInt(reader_);
     if (!read_int.ok()) {
       return ExceptionOr<ByteArray>(read_int.exception());
@@ -137,6 +151,8 @@ ExceptionOr<ByteArray> BaseEndpointChannel::Read() {
     if (!read_bytes.ok()) {
       return read_bytes;
     }
+    packet_meta_data.StopSocketIo();
+    packet_meta_data.SetPacketSize(read_int.result() + sizeof(std::int32_t));
     result = std::move(read_bytes.result());
   }
 
@@ -145,6 +161,7 @@ ExceptionOr<ByteArray> BaseEndpointChannel::Read() {
     if (IsEncryptionEnabledLocked()) {
       // If encryption is enabled, decode the message.
       std::string input(std::move(result));
+      packet_meta_data.StartEncryption();
       std::unique_ptr<std::string> decrypted_data =
           crypto_context_->DecodeMessageFromPeer(input);
       if (decrypted_data) {
@@ -159,7 +176,8 @@ ExceptionOr<ByteArray> BaseEndpointChannel::Read() {
         result = {};
         auto parsed = parser::FromBytes(ByteArray(input));
         if (parsed.ok()) {
-          if (parser::GetFrameType(parsed.result()) == V1Frame::KEEP_ALIVE) {
+          if (parser::GetFrameType(parsed.result()) ==
+              location::nearby::connections::V1Frame::KEEP_ALIVE) {
             NEARBY_LOGS(INFO)
                 << __func__
                 << ": Read unencrypted KEEP_ALIVE on encrypted channel.";
@@ -174,6 +192,7 @@ ExceptionOr<ByteArray> BaseEndpointChannel::Read() {
               << __func__ << ": Unable to parse data as unencrypted message.";
         }
       }
+      packet_meta_data.StopEncryption();
       if (result.Empty()) {
         NEARBY_LOGS(WARNING) << __func__ << ": Unable to parse read result.";
         return ExceptionOr<ByteArray>(Exception::kInvalidProtocolBuffer);
@@ -189,6 +208,12 @@ ExceptionOr<ByteArray> BaseEndpointChannel::Read() {
 }
 
 Exception BaseEndpointChannel::Write(const ByteArray& data) {
+  PacketMetaData packet_meta_data;
+  return Write(data, packet_meta_data);
+}
+
+Exception BaseEndpointChannel::Write(const ByteArray& data,
+                                     PacketMetaData& packet_meta_data) {
   {
     MutexLock pause_lock(&is_paused_mutex_);
     if (is_paused_) {
@@ -208,8 +233,10 @@ Exception BaseEndpointChannel::Write(const ByteArray& data) {
       MutexLock crypto_lock(&crypto_mutex_);
       if (IsEncryptionEnabledLocked()) {
         // If encryption is enabled, encode the message.
+        packet_meta_data.StartEncryption();
         std::unique_ptr<std::string> encrypted =
             crypto_context_->EncodeMessageToPeer(std::string(data));
+        packet_meta_data.StopEncryption();
         if (!encrypted) {
           NEARBY_LOGS(WARNING) << __func__ << ": Failed to encrypt data.";
           return {Exception::kIo};
@@ -219,8 +246,16 @@ Exception BaseEndpointChannel::Write(const ByteArray& data) {
       }
     }
 
+    size_t data_size = data_to_write->size();
+    if (data_size < 0 || data_size > kMaxAllowedReadBytes) {
+      NEARBY_LOGS(WARNING) << __func__ << ": Write an invalid number of bytes: "
+                           << data_size;
+      return {Exception::kIo};
+    }
+
+    packet_meta_data.StartSocketIo();
     Exception write_exception =
-        WriteInt(writer_, static_cast<std::int32_t>(data_to_write->size()));
+        WriteInt(writer_, static_cast<std::int32_t>(data_size));
     if (write_exception.Raised()) {
       NEARBY_LOGS(WARNING) << __func__ << ": Failed to write header: "
                            << write_exception.value;
@@ -238,6 +273,8 @@ Exception BaseEndpointChannel::Write(const ByteArray& data) {
                            << flush_exception.value;
       return flush_exception;
     }
+    packet_meta_data.StopSocketIo();
+    packet_meta_data.SetPacketSize(data_size + sizeof(std::uint32_t));
   }
 
   {
@@ -289,7 +326,7 @@ void BaseEndpointChannel::SetAnalyticsRecorder(
 }
 
 void BaseEndpointChannel::Close(
-    proto::connections::DisconnectionReason reason) {
+    location::nearby::proto::connections::DisconnectionReason reason) {
   NEARBY_LOGS(INFO) << __func__
                     << ": Closing endpoint channel, reason: " << reason;
   Close();
@@ -302,15 +339,19 @@ void BaseEndpointChannel::Close(
 std::string BaseEndpointChannel::GetType() const {
   MutexLock crypto_lock(&crypto_mutex_);
   std::string subtype = IsEncryptionEnabledLocked() ? "ENCRYPTED_" : "";
-  std::string medium = proto::connections::Medium_Name(
-      proto::connections::Medium::UNKNOWN_MEDIUM);
+  std::string medium = location::nearby::proto::connections::Medium_Name(
+      location::nearby::proto::connections::Medium::UNKNOWN_MEDIUM);
 
-  if (GetMedium() != proto::connections::Medium::UNKNOWN_MEDIUM) {
-    medium =
-        absl::StrCat(subtype, proto::connections::Medium_Name(GetMedium()));
+  if (GetMedium() !=
+      location::nearby::proto::connections::Medium::UNKNOWN_MEDIUM) {
+    medium = absl::StrCat(
+        subtype,
+        location::nearby::proto::connections::Medium_Name(GetMedium()));
   }
   return medium;
 }
+
+std::string BaseEndpointChannel::GetServiceId() const { return service_id_; }
 
 std::string BaseEndpointChannel::GetName() const { return channel_name_; }
 
@@ -356,13 +397,14 @@ absl::Time BaseEndpointChannel::GetLastWriteTimestamp() const {
   return last_write_timestamp_;
 }
 
-proto::connections::ConnectionTechnology BaseEndpointChannel::GetTechnology()
-    const {
+location::nearby::proto::connections::ConnectionTechnology
+BaseEndpointChannel::GetTechnology() const {
   return technology_;
 }
 
 // Returns the used wifi band of this EndpointChannel.
-proto::connections::ConnectionBand BaseEndpointChannel::GetBand() const {
+location::nearby::proto::connections::ConnectionBand
+BaseEndpointChannel::GetBand() const {
   return band_;
 }
 
@@ -398,4 +440,3 @@ void BaseEndpointChannel::UnblockPausedWriter() {
 
 }  // namespace connections
 }  // namespace nearby
-}  // namespace location

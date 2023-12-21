@@ -1,11 +1,11 @@
-// Copyright (c) 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include <math.h>
 
-#include "base/bind.h"
 #include "base/containers/cxx20_erase.h"
+#include "base/functional/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/no_destructor.h"
 #include "base/numerics/math_constants.h"
@@ -60,8 +60,6 @@ VROrientationDevice::VROrientationDevice(mojom::SensorProvider* sensor_provider,
   sensor_provider->GetSensor(kOrientationSensorType,
                              base::BindOnce(&VROrientationDevice::SensorReady,
                                             base::Unretained(this)));
-
-  SetVRDisplayInfo(mojom::VRDisplayInfo::New());
 
   SetSupportedFeatures(GetSupportedFeatures());
 }
@@ -156,9 +154,6 @@ void VROrientationDevice::RequestSession(
   auto* session = session_result->session.get();
 
   session->data_provider = std::move(data_provider);
-  if (display_info_) {
-    session->display_info = display_info_.Clone();
-  }
   session->device_config = device::mojom::XRSessionDeviceConfig::New();
   session->enviroment_blend_mode =
       device::mojom::XREnvironmentBlendMode::kOpaque;
@@ -180,6 +175,19 @@ void VROrientationDevice::RequestSession(
 
   // The sensor may have been suspended, so resume it now.
   sensor_->Resume();
+}
+
+void VROrientationDevice::ShutdownSession(
+    mojom::XRRuntime::ShutdownSessionCallback callback) {
+  // We don't actually have enough information here to figure out which session
+  // is being requested to be terminated. However, since sessions don't get
+  // exclusive control of the device and we can drive many sessions at once,
+  // there's not really anything for us to do here except to reply to the
+  // callback.
+  // The session will end up getting shutdown via other mechanisms (some of
+  // its mojom pipes getting torn down during destruction in the other
+  // processes as a result of continuing the flow here).
+  std::move(callback).Run();
 }
 
 void VROrientationDevice::EndMagicWindowSession(VROrientationSession* session) {

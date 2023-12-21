@@ -80,9 +80,11 @@ typedef enum VulkanObjectType {
     kVulkanObjectTypeAccelerationStructureNV = 41,
     kVulkanObjectTypePerformanceConfigurationINTEL = 42,
     kVulkanObjectTypeIndirectCommandsLayoutNV = 43,
-    kVulkanObjectTypeBufferCollectionFUCHSIA = 44,
-    kVulkanObjectTypeAccelerationStructureKHR = 45,
-    kVulkanObjectTypeMax = 46,
+    kVulkanObjectTypeAccelerationStructureKHR = 44,
+    kVulkanObjectTypeBufferCollectionFUCHSIA = 45,
+    kVulkanObjectTypeMicromapEXT = 46,
+    kVulkanObjectTypeOpticalFlowSessionNV = 47,
+    kVulkanObjectTypeMax = 48,
     // Aliases for backwards compatibilty of "promoted" types
     kVulkanObjectTypeDescriptorUpdateTemplateKHR = kVulkanObjectTypeDescriptorUpdateTemplate,
     kVulkanObjectTypeSamplerYcbcrConversionKHR = kVulkanObjectTypeSamplerYcbcrConversion,
@@ -135,8 +137,10 @@ static const char * const object_string[kVulkanObjectTypeMax] = {
     "AccelerationStructureNV",
     "PerformanceConfigurationINTEL",
     "IndirectCommandsLayoutNV",
-    "BufferCollectionFUCHSIA",
     "AccelerationStructureKHR",
+    "BufferCollectionFUCHSIA",
+    "MicromapEXT",
+    "OpticalFlowSessionNV",
 };
 
 // Helper array to get Vulkan VK_EXT_debug_report object type enum from the internal layers version
@@ -185,8 +189,10 @@ const VkDebugReportObjectTypeEXT get_debug_report_enum[] = {
     VK_DEBUG_REPORT_OBJECT_TYPE_ACCELERATION_STRUCTURE_NV_EXT,   // kVulkanObjectTypeAccelerationStructureNV
     VK_DEBUG_REPORT_OBJECT_TYPE_UNKNOWN_EXT,   // kVulkanObjectTypePerformanceConfigurationINTEL
     VK_DEBUG_REPORT_OBJECT_TYPE_UNKNOWN_EXT,   // kVulkanObjectTypeIndirectCommandsLayoutNV
-    VK_DEBUG_REPORT_OBJECT_TYPE_BUFFER_COLLECTION_FUCHSIA_EXT,   // kVulkanObjectTypeBufferCollectionFUCHSIA
     VK_DEBUG_REPORT_OBJECT_TYPE_ACCELERATION_STRUCTURE_KHR_EXT,   // kVulkanObjectTypeAccelerationStructureKHR
+    VK_DEBUG_REPORT_OBJECT_TYPE_BUFFER_COLLECTION_FUCHSIA_EXT,   // kVulkanObjectTypeBufferCollectionFUCHSIA
+    VK_DEBUG_REPORT_OBJECT_TYPE_UNKNOWN_EXT,   // kVulkanObjectTypeMicromapEXT
+    VK_DEBUG_REPORT_OBJECT_TYPE_UNKNOWN_EXT,   // kVulkanObjectTypeOpticalFlowSessionNV
 };
 
 // Helper array to get Official Vulkan VkObjectType enum from the internal layers version
@@ -235,8 +241,10 @@ const VkObjectType get_object_type_enum[] = {
     VK_OBJECT_TYPE_ACCELERATION_STRUCTURE_NV,   // kVulkanObjectTypeAccelerationStructureNV
     VK_OBJECT_TYPE_PERFORMANCE_CONFIGURATION_INTEL,   // kVulkanObjectTypePerformanceConfigurationINTEL
     VK_OBJECT_TYPE_INDIRECT_COMMANDS_LAYOUT_NV,   // kVulkanObjectTypeIndirectCommandsLayoutNV
-    VK_OBJECT_TYPE_BUFFER_COLLECTION_FUCHSIA,   // kVulkanObjectTypeBufferCollectionFUCHSIA
     VK_OBJECT_TYPE_ACCELERATION_STRUCTURE_KHR,   // kVulkanObjectTypeAccelerationStructureKHR
+    VK_OBJECT_TYPE_BUFFER_COLLECTION_FUCHSIA,   // kVulkanObjectTypeBufferCollectionFUCHSIA
+    VK_OBJECT_TYPE_MICROMAP_EXT,   // kVulkanObjectTypeMicromapEXT
+    VK_OBJECT_TYPE_OPTICAL_FLOW_SESSION_NV,   // kVulkanObjectTypeOpticalFlowSessionNV
 };
 
 // Helper function to convert from VkDebugReportObjectTypeEXT to VkObjectType

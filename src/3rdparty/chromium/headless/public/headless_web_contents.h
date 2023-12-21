@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,7 @@
 #include <string>
 #include <utility>
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/process/kill.h"
 #include "headless/public/headless_devtools_channel.h"
@@ -122,6 +122,9 @@ class HEADLESS_EXPORT HeadlessWebContents::Builder {
   // Specify whether BeginFrames should be controlled via DevTools commands.
   Builder& SetEnableBeginFrameControl(bool enable_begin_frame_control);
 
+  // Specify whether to create the CDP target of type "tab".
+  Builder& SetUseTabTarget(bool use_tab_target);
+
   // The returned object is owned by HeadlessBrowser. Call
   // HeadlessWebContents::Close() to dispose it.
   HeadlessWebContents* Build();
@@ -133,11 +136,12 @@ class HEADLESS_EXPORT HeadlessWebContents::Builder {
 
   explicit Builder(HeadlessBrowserContextImpl* browser_context);
 
-  raw_ptr<HeadlessBrowserContextImpl> browser_context_;
+  raw_ptr<HeadlessBrowserContextImpl, DanglingUntriaged> browser_context_;
 
   GURL initial_url_ = GURL("about:blank");
   gfx::Size window_size_;
   bool enable_begin_frame_control_ = false;
+  bool use_tab_target_ = false;
 };
 
 }  // namespace headless

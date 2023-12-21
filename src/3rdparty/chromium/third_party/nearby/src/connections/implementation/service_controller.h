@@ -27,7 +27,6 @@
 #include "connections/payload.h"
 #include "connections/status.h"
 
-namespace location {
 namespace nearby {
 namespace connections {
 
@@ -38,7 +37,7 @@ namespace connections {
 // ResultCallback arguments are not provided for this class, because all methods
 // are called synchronously.
 // The rest of arguments have the same meaning as the corresponding
-// methods in the definition of location::nearby::Core API.
+// methods in the definition of nearby::Core API.
 //
 // See details here:
 // cpp/core/core.h
@@ -55,6 +54,10 @@ class ServiceController {
   // Note that all Core, ClientProxy objects referencing this service
   // controller are affected.
   virtual void Stop() = 0;
+
+  // Shuts down executors in the BwuManager. After that no tasks should be
+  // running on or posted to BwuManager.
+  virtual void ShutdownBwuManagerExecutors() = 0;
 
   // Starts advertising an endpoint for a local app.
   virtual Status StartAdvertising(ClientProxy* client,
@@ -95,10 +98,12 @@ class ServiceController {
 
   virtual void DisconnectFromEndpoint(ClientProxy* client,
                                       const std::string& endpoint_id) = 0;
+
+  virtual void SetCustomSavePath(ClientProxy* client,
+                                 const std::string& path) = 0;
 };
 
 }  // namespace connections
 }  // namespace nearby
-}  // namespace location
 
 #endif  // CORE_INTERNAL_SERVICE_CONTROLLER_H_

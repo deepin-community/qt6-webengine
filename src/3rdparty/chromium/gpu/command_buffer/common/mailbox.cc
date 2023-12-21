@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -34,7 +34,7 @@ Mailbox GenerateMailbox(bool is_shared_image) {
   // Generates cryptographically-secure bytes.
   base::RandBytes(result.name, sizeof(result.name));
   MarkMailboxAsSharedImage(is_shared_image, result.name);
-#if !defined(NDEBUG)
+#if !defined(NDEBUG) || defined(TOOLKIT_QT)
   int8_t value = 1;
   for (size_t i = 1; i < sizeof(result.name); ++i)
     value ^= result.name[i];
@@ -70,7 +70,7 @@ bool Mailbox::IsSharedImage() const {
   return name[kSharedImageFlagIndex] & kSharedImageFlag;
 }
 
-Mailbox Mailbox::Generate() {
+Mailbox Mailbox::GenerateLegacyMailbox() {
   return GenerateMailbox(false /* is_shared_image */);
 }
 

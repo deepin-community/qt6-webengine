@@ -1,4 +1,4 @@
-# Copyright 2014 The Chromium Authors. All rights reserved.
+# Copyright 2014 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -12,12 +12,9 @@ import("//media/media_options.gni")
 import("//mojo/public/tools/bindings/mojom.gni")
 import("//ppapi/buildflags/buildflags.gni")
 import("//sandbox/features.gni")
+import("//testing/libfuzzer/fuzzer_test.gni")
 import("//tools/ipc_fuzzer/ipc_fuzzer.gni")
 import("features.gni")
-if (is_mac) {
-  import("//build/config/mac/mac_sdk.gni")
-  import("//content/public/app/mac_helpers.gni")
-}
 
 # For feature flags internal to content. See content/public/common:features
 # for feature flags that clients of contents need to know about.
@@ -36,6 +33,34 @@ buildflag_header("buildflags") {
   ]
 }
 
+if (is_linux || is_chromeos) {
+  source_set("sandbox_support_linux") {
+    public = [
+      "zygote/zygote_commands_linux.h",
+      "zygote/zygote_communication_linux.h",
+    ]
+
+    sources = [
+      "zygote/sandbox_support_linux.cc",
+      "zygote/send_zygote_child_ping_linux.cc",
+      "zygote/zygote_communication_linux.cc",
+    ]
+
+    deps = [
+      "//base",
+      "//base:i18n",
+      "//content/public/common:content_descriptors",
+      "//content/public/common:result_codes",
+      "//content/public/common:sandbox_support_linux",
+      "//content/public/common:switches",
+      "//sandbox/policy",
+      "//third_party/icu",
+    ]
+
+    configs += [ "//content:content_implementation" ]
+  }
+}
+
 jumbo_source_set("common") {
   # Targets external to content should always link to the public API.
   # In addition, targets outside of the content component (shell and tests)
@@ -52,8 +77,6 @@ jumbo_source_set("common") {
     "ax_serialization_utils.h",
     "background_fetch/background_fetch_types.cc",
     "background_fetch/background_fetch_types.h",
-    "child_process_host_impl.cc",
-    "child_process_host_impl.h",
     "color_parser.cc",
     "common_param_traits.cc",
     "common_param_traits.h",
@@ -78,6 +101,8 @@ jumbo_source_set("common") {
     "cursors/webcursor_ozone.cc",
     "debug_utils.cc",
     "debug_utils.h",
+    "features.cc",
+    "features.h",
     "fetch/fetch_api_request_proto.cc",
     "fetch/fetch_api_request_proto.h",
     "fetch/fetch_request_type_converters.cc",
@@ -85,7 +110,6 @@ jumbo_source_set("common") {
     "font_list.cc",
     "font_list.h",
     "font_list_fontconfig.cc",
-    "frame_owner_element_type_mojom_traits.cc",
     "gin_java_bridge_messages.h",
     "in_process_child_thread_params.cc",
     "in_process_child_thread_params.h",
@@ -97,7 +121,6 @@ jumbo_source_set("common") {
     "input/input_event_ack_state.cc",
     "input/input_event_stream_validator.cc",
     "input/input_event_stream_validator.h",
-    "input/input_injector_mojom_traits.cc",
     "input/synthetic_gesture_params.cc",
     "input/synthetic_gesture_params.h",
     "input/synthetic_pinch_gesture_params.cc",
@@ -122,14 +145,8 @@ jumbo_source_set("common") {
     "navigation_gesture.h",
     "navigation_params_utils.h",
     "origin_util.cc",
-    "partition_alloc_support.cc",
-    "partition_alloc_support.h",
-    "pepper_file_util.cc",
-    "pepper_file_util.h",
-    "pepper_plugin_list.cc",
-    "pepper_plugin_list.h",
-    "pepper_renderer_instance_data.cc",
-    "pepper_renderer_instance_data.h",
+    "private_aggregation_features.cc",
+    "private_aggregation_features.h",
     "process_type.cc",
     "process_visibility_tracker.cc",
     "process_visibility_tracker.h",
@@ -137,11 +154,8 @@ jumbo_source_set("common") {
     "pseudonymization_salt.h",
     "set_process_title.cc",
     "set_process_title.h",
-    "shared_file_util.cc",
-    "shared_file_util.h",
     "skia_utils.cc",
     "skia_utils.h",
-    "state_transitions.h",
     "thread_pool_util.cc",
     "thread_pool_util.h",
     "trace_utils.h",
@@ -150,6 +164,8 @@ jumbo_source_set("common") {
     "user_agent.cc",
     "web_package/signed_exchange_utils.cc",
     "web_package/signed_exchange_utils.h",
+    "webid/identity_url_loader_throttle.cc",
+    "webid/identity_url_loader_throttle.h",
   ]
   jumbo_excluded_sources = [
     "common_param_traits.cc",
@@ -166,6 +182,7 @@ jumbo_source_set("common") {
     ":mojo_bindings",
     "//cc",
     "//cc/ipc",
+    "//content/public/common:switches",
     "//gpu/command_buffer/common",
     "//ipc",
     "//sandbox/policy",
@@ -192,7 +209,6 @@ jumbo_source_set("common") {
     "//components/tracing:startup_tracing",
     "//content:content_resources",
     "//content:dev_ui_content_resources",
-    "//content/app/resources",
     "//content/common/fetch:fetch_api_request_proto",
     "//content/public/common:interfaces",
     "//content/public/common/zygote:buildflags",
@@ -263,10 +279,15 @@ jumbo_source_set("common") {
     "//content/public/common:interfaces",
   ]
 
+  if (is_posix) {
+    sources += [
+      "shared_file_util.cc",
+      "shared_file_util.h",
+    ]
+  }
+
   if (is_android) {
     sources += [
-      "android/cpu_affinity_setter.cc",
-      "android/cpu_affinity_setter.h",
       "android/cpu_time_metrics.cc",
       "android/cpu_time_metrics.h",
       "android/cpu_time_metrics_internal.cc",
@@ -293,19 +314,23 @@ jumbo_source_set("common") {
     }
   }
 
+  if (is_ios) {
+    # TOOD: Create ios file instead of stealing android
+    sources += [
+      "cursors/webcursor_android.cc",
+      "font_list_android.cc",
+    ]
+  }
+
   if (is_mac) {
     sources += [
-      "cursors/webcursor_mac.mm",
       "font_list_mac.mm",
       "mac/attributed_string_type_converters.h",
       "mac/attributed_string_type_converters.mm",
-      "mac/font_loader.h",
-      "mac/font_loader.mm",
+      "mac/task_port_policy.cc",
+      "mac/task_port_policy.h",
     ]
-    deps += [
-      ":mac_helpers",
-      "//sandbox/mac:seatbelt",
-    ]
+    deps += [ "//sandbox/mac:seatbelt" ]
   }
 
   if (is_win) {
@@ -346,50 +371,43 @@ jumbo_source_set("common") {
   }
 
   if (use_aura) {
-    deps += [ "//ui/aura/cursor" ]
+    deps += [ "//ui/wm" ]
   } else {
     sources -= [ "cursors/webcursor_aura.cc" ]
   }
 
   if (is_linux || is_chromeos) {
-    sources += [
-      "zygote/sandbox_support_linux.cc",
-      "zygote/send_zygote_child_ping_linux.cc",
-      "zygote/zygote_commands_linux.h",
-      "zygote/zygote_communication_linux.cc",
-      "zygote/zygote_communication_linux.h",
-    ]
     deps += [
+      ":sandbox_support_linux",
       ":set_process_title_linux",
     ]
   }
 
-  if (use_zygote_handle) {
+  if (use_zygote) {
     sources += [
       "zygote/zygote_handle_impl_linux.h",
       "zygote/zygote_handle_linux.cc",
     ]
   }
 
-  if (is_mac || is_win || is_android || is_fuchsia || use_qt) {
+  if (is_mac || is_win || is_android || is_fuchsia || is_ios || is_qtwebengine) {
     sources -= [ "font_list_fontconfig.cc" ]
   } else {
     deps += [ "//third_party/fontconfig" ]
   }
 
-  if (enable_plugins) {
-    deps += [
-      "//ppapi/proxy:ipc",
-      "//ppapi/shared_impl",
-    ]
-  } else {
-    sources -= [
+  if (enable_ppapi) {
+    sources += [
       "pepper_file_util.cc",
       "pepper_file_util.h",
       "pepper_plugin_list.cc",
       "pepper_plugin_list.h",
       "pepper_renderer_instance_data.cc",
       "pepper_renderer_instance_data.h",
+    ]
+    deps += [
+      "//ppapi/proxy:ipc",
+      "//ppapi/shared_impl",
     ]
   }
 
@@ -415,6 +433,17 @@ jumbo_source_set("common") {
   }
 }
 
+# This is used by content/shell as well, which we don't want to depend on the
+# entire content/common.
+component("main_frame_counter") {
+  defines = [ "IS_MAIN_FRAME_COUNTER_IMPL" ]
+  sources = [
+    "main_frame_counter.cc",
+    "main_frame_counter.h",
+  ]
+  deps = [ "//base:base" ]
+}
+
 if (is_linux || is_chromeos) {
   source_set("set_process_title_linux") {
     public = [ "set_process_title_linux.h" ]
@@ -425,7 +454,10 @@ if (is_linux || is_chromeos) {
 
 # See comment at the top of //content/BUILD.gn for how this works.
 group("for_content_tests") {
-  visibility = [ "//content/test/*" ]
+  visibility = [
+    "//content/services/auction_worklet:tests",
+    "//content/test/*",
+  ]
   if (!is_component_build) {
     public_deps = [ ":common" ]
   }
@@ -435,15 +467,11 @@ mojom("mojo_bindings") {
   # This interface is internal to content.
   visibility = [ "//content/*" ]
 
-  # indexed_db.mojom used a native typemap that was not available in Java.
-  # indexed_db.mojom was removed in an earlier commit.  This should be removed
-  # at some point.
-  cpp_only = true
-
   disable_variants = true
 
   sources = [
     "agent_scheduling_group.mojom",
+    "aggregatable_report.mojom",
     "associated_interfaces.mojom",
     "child_process.mojom",
     "dom_automation_controller.mojom",
@@ -456,11 +484,12 @@ mojom("mojo_bindings") {
     "media/media_log_records.mojom",
     "native_types.mojom",
     "navigation_client.mojom",
-    "render_accessibility.mojom",
+    "private_aggregation_host.mojom",
     "render_message_filter.mojom",
     "renderer.mojom",
     "renderer_host.mojom",
     "renderer_variations_configuration.mojom",
+    "shared_storage_worklet_service.mojom",
     "web_ui.mojom",
   ]
 
@@ -469,7 +498,7 @@ mojom("mojo_bindings") {
     enabled_features += [ "ipc_logging" ]
   }
   if (is_linux || is_chromeos) {
-    enabled_features += [ "supports_thread_priorities" ]
+    enabled_features += [ "supports_thread_types" ]
   }
   if (use_clang_profiling_inside_sandbox) {
     enabled_features += [ "clang_profiling_inside_sandbox" ]
@@ -488,10 +517,6 @@ mojom("mojo_bindings") {
         {
           mojom = "content.mojom.ChildFrameOwnerElementType"
           cpp = "::blink::FrameOwnerElementType"
-        },
-        {
-          mojom = "content.mojom.ContentSecurityPolicy"
-          cpp = "::content::ContentSecurityPolicy"
         },
         {
           mojom = "content.mojom.NavigationGesture"
@@ -537,14 +562,9 @@ mojom("mojo_bindings") {
           mojom = "content.mojom.VisualProperties"
           cpp = "::blink::VisualProperties"
         },
-        {
-          mojom = "content.mojom.WebPopupType"
-          cpp = "::blink::WebPopupType"
-        },
       ]
 
       traits_headers = [
-        "//cc/input/touch_action.h",
         "//content/common/frame_owner_element_type_mojom_traits.h",
         "//content/common/input/input_injector_mojom_traits.h",
         "//content/common/input/synthetic_pinch_gesture_params.h",
@@ -554,16 +574,9 @@ mojom("mojo_bindings") {
         "//content/common/input/synthetic_tap_gesture_params.h",
         "//content/common/navigation_gesture.h",
         "//net/base/network_change_notifier.h",
-        "//third_party/blink/public/common/input/web_coalesced_input_event_mojom_traits.h",
-        "//third_party/blink/public/common/input/web_input_event.h",
-        "//third_party/blink/public/common/input/web_mouse_wheel_event.h",
-        "//third_party/blink/public/common/input/web_pointer_properties.h",
-        "//third_party/blink/public/common/input/web_touch_point.h",
-        "//third_party/blink/public/common/web_preferences/web_preferences.h",
+        "//third_party/blink/public/common/navigation/impression.h",
         "//third_party/blink/public/common/widget/visual_properties.h",
-        "//ui/events/blink/did_overscroll_params.h",
-        "//ui/events/blink/web_input_event_traits.h",
-        "//ui/latency/ipc/latency_info_param_traits.h",
+        "//ui/events/types/scroll_types.h",
         "//ui/native_theme/native_theme.h",
       ]
 
@@ -571,6 +584,11 @@ mojom("mojo_bindings") {
         "//content/common/content_param_traits_macros.h",
         "//content/public/common/common_param_traits.h",
         "//services/network/public/cpp/p2p_param_traits.h",
+      ]
+
+      traits_sources = [
+        "//content/common/frame_owner_element_type_mojom_traits.cc",
+        "//content/common/input/input_injector_mojom_traits.cc",
       ]
 
       traits_public_deps = [
@@ -581,20 +599,8 @@ mojom("mojo_bindings") {
         # transitive allowance, so those targets' own public_deps aren't included in
         # the set of implied dependencies.
         "//content/common:buildflags",
-        "//media",
-        "//media/base/ipc",
-        "//net",
         "//ppapi/buildflags",
-        "//services/network/public/cpp",
-        "//third_party/blink/public/common",
-        "//ui/accessibility",
-        "//ui/base/ime:text_input_types",
         "//ui/events/blink",
-        "//ui/gfx/ipc",
-        "//ui/gfx/ipc/color",
-        "//ui/gfx/ipc/skia",
-        "//ui/surface",
-        "//url/ipc:url_ipc",
       ]
     },
     {
@@ -618,9 +624,10 @@ mojom("mojo_bindings") {
 
   public_deps = [
     "//cc/mojom",
+    "//components/attribution_reporting:mojom",
+    "//components/services/storage/shared_storage/public/mojom",
     "//components/variations:variations_mojom",
     "//content/public/common:interfaces",
-    "//content/services/shared_storage_worklet/public/mojom:mojom",
     "//ipc:mojom",
     "//ipc:mojom_constants",
     "//media/capture/mojom:video_capture",
@@ -685,32 +692,11 @@ mojom("mojo_bindings") {
   export_header = "content/common/content_export.h"
 }
 
-if (is_mac) {
-  source_set("mac_helpers") {
-    _lines = [
-      "// This file is generated by " +
-          get_label_info(target_name, "label_no_toolchain"),
-      "",
-      "#ifndef GEN_CONTENT_COMMON_MAC_HELPERS_H_",
-      "#define GEN_CONTENT_COMMON_MAC_HELPERS_H_",
-      "",
-      "namespace content {",
-      "",
-    ]
-    foreach(helper_params, content_mac_helpers) {
-      _lines += [ "const char kMacHelperSuffix_${helper_params[0]}[] = \"${helper_params[2]}\";" ]
-    }
-    _lines += [
-      "",
-      "}  // namespace content",
-      "",
-      "#endif  // GEN_CONTENT_COMMON_MAC_HELPERS_H_",
-    ]
-
-    _file = "$target_gen_dir/mac_helpers.h"
-
-    write_file(_file, _lines)
-
-    sources = [ _file ]
-  }
+fuzzer_test("content_input_actions_parser_fuzzer") {
+  sources = [ "input/actions_parser_fuzzer.cc" ]
+  deps = [
+    "//base",
+    "//content/public/common",
+    "//third_party/abseil-cpp:absl",
+  ]
 }

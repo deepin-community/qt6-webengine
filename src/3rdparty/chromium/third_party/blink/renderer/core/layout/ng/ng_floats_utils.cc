@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -45,9 +45,13 @@ NGLayoutOpportunity FindLayoutOpportunityForFloat(
     LayoutUnit inline_size) {
   NGBfcOffset adjusted_origin_point = AdjustToTopEdgeAlignmentRule(
       exclusion_space, unpositioned_float.origin_bfc_offset);
-  LayoutUnit clearance_offset =
-      exclusion_space.ClearanceOffset(unpositioned_float.ClearType(
-          unpositioned_float.parent_space.Direction()));
+
+  const TextDirection direction = unpositioned_float.parent_space.Direction();
+  const EClear clear_type = unpositioned_float.ClearType(direction);
+  const EFloat float_type = unpositioned_float.node.Style().Floating(direction);
+  const LayoutUnit clearance_offset =
+      std::max({exclusion_space.ClearanceOffset(clear_type),
+                exclusion_space.InitialLetterClearanceOffset(float_type)});
 
   AdjustToClearance(clearance_offset, &adjusted_origin_point);
 
@@ -83,7 +87,7 @@ NGConstraintSpace CreateConstraintSpaceForFloat(
     // is at the fragmentainer start, but for floats, it's the block start
     // *margin* edge, since float margins are unbreakable and are never
     // truncated.
-    LayoutUnit margin_edge_offset = parent_space.FragmentainerOffsetAtBfc() +
+    LayoutUnit margin_edge_offset = parent_space.FragmentainerOffset() +
                                     *origin_block_offset - margins->block_start;
     if (margin_edge_offset <= LayoutUnit())
       builder.SetIsAtFragmentainerStart();
@@ -94,7 +98,7 @@ NGConstraintSpace CreateConstraintSpaceForFloat(
   // If we're resuming layout of this float after a fragmentainer break, the
   // margins of its children may be adjoining with the fragmentainer
   // block-start, in which case they may get truncated.
-  if (IsResumingLayout(unpositioned_float.token))
+  if (IsBreakInside(unpositioned_float.token))
     builder.SetDiscardingMarginStrut();
 
   builder.SetAvailableSize(unpositioned_float.available_size);
@@ -275,7 +279,9 @@ NGPositionedFloat PositionFloat(NGUnpositionedFloat* unpositioned_float,
     bool is_at_fragmentainer_start;
     do {
       NGConstraintSpace space = CreateConstraintSpaceForFloat(
-          *unpositioned_float, fragmentainer_delta, fragment_margins);
+          *unpositioned_float,
+          fragmentainer_delta - parent_space.ExpectedBfcBlockOffset(),
+          fragment_margins);
 
       is_at_fragmentainer_start = space.IsAtFragmentainerStart();
 
@@ -339,7 +345,7 @@ NGPositionedFloat PositionFloat(NGUnpositionedFloat* unpositioned_float,
     // behavior is currently unspecified.
     if (!is_at_fragmentainer_start) {
       LayoutUnit fragmentainer_block_offset =
-          parent_space.FragmentainerOffsetAtBfc() +
+          FragmentainerOffsetAtBfc(parent_space) +
           opportunity.rect.start_offset.block_offset +
           fragment_margins.block_start;
       if (!MovePastBreakpoint(parent_space, node, *layout_result,
@@ -367,6 +373,7 @@ NGPositionedFloat PositionFloat(NGUnpositionedFloat* unpositioned_float,
   }
 
   if (parent_space.HasBlockFragmentation() && !need_break_before &&
+      !IsBreakInside(unpositioned_float->token) &&
       exclusion_space->NeedsBreakBeforeFloat(
           unpositioned_float->ClearType(parent_space.Direction())))
     need_break_before = true;
@@ -377,7 +384,8 @@ NGPositionedFloat PositionFloat(NGUnpositionedFloat* unpositioned_float,
     // Create a special exclusion past everything, so that the container(s) may
     // grow to encompass the floats, if appropriate.
     NGBfcOffset past_everything(LayoutUnit(),
-                                FragmentainerSpaceAtBfcStart(parent_space));
+                                FragmentainerSpaceLeft(parent_space) +
+                                    parent_space.ExpectedBfcBlockOffset());
     const NGExclusion* exclusion = NGExclusion::Create(
         NGBfcRect(past_everything, past_everything), float_type);
     exclusion_space->Add(std::move(exclusion));

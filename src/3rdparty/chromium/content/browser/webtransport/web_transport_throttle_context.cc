@@ -1,12 +1,12 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "content/browser/webtransport/web_transport_throttle_context.h"
 
-#include "base/callback.h"
 #include "base/check.h"
 #include "base/check_op.h"
+#include "base/functional/callback.h"
 #include "base/logging.h"
 #include "base/rand_util.h"
 

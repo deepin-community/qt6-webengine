@@ -1,4 +1,4 @@
-// Copyright 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,6 @@
 #include <memory>
 #include <string>
 
-#include "base/memory/ref_counted.h"
 #include "base/threading/platform_thread.h"
 #include "base/time/time.h"
 #include "cc/cc_export.h"
@@ -60,6 +59,9 @@ class CC_EXPORT Proxy {
   // reset. It is only supported when using a scheduler.
   virtual void SetDeferMainFrameUpdate(bool defer_main_frame_update) = 0;
 
+  // Pauses all main and impl-side rendering.
+  virtual void SetPauseRendering(bool pause_rendering) = 0;
+
   // Defers commits until at most the given |timeout| period has passed,
   // but continues to update the document lifecycle in
   // LayerTreeHost::BeginMainFrameUpdate. If multiple calls are made when
@@ -101,12 +103,13 @@ class CC_EXPORT Proxy {
   virtual void SetRenderFrameObserver(
       std::unique_ptr<RenderFrameMetadataObserver> observer) = 0;
 
-  virtual void SetEnableFrameRateThrottling(
-      bool enable_frame_rate_throttling) = 0;
+  virtual void CompositeImmediatelyForTest(base::TimeTicks frame_begin_time,
+                                           bool raster,
+                                           base::OnceClosure callback) = 0;
 
-  // Returns a percentage representing average throughput of last X seconds.
+  // Returns a percentage of dropped frames of the last second.
   // Only implemenented for single threaded proxy.
-  virtual uint32_t GetAverageThroughput() const = 0;
+  virtual double GetPercentDroppedFrames() const = 0;
 };
 
 }  // namespace cc

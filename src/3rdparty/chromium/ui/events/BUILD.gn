@@ -1,4 +1,4 @@
-# Copyright 2014 The Chromium Authors. All rights reserved.
+# Copyright 2014 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -20,7 +20,7 @@ if (is_ios) {
 jumbo_static_library("dom_keycode_converter") {
   public = [
     "keycodes/dom/dom_code.h",
-    "keycodes/dom/dom_codes.h",
+    "keycodes/dom/dom_codes_array.h",
     "keycodes/dom/dom_key.h",
     "keycodes/dom/keycode_converter.h",
   ]
@@ -167,7 +167,7 @@ jumbo_component("events_base") {
       "keycodes/keyboard_code_conversion_fuchsia.h",
     ]
 
-    deps += [ "//third_party/fuchsia-sdk/sdk/fidl/fuchsia.ui.input3" ]
+    deps += [ "//third_party/fuchsia-sdk/sdk/fidl/fuchsia.ui.input3:fuchsia.ui.input3_hlcpp" ]
   }
 
   if (ozone_platform_x11) {
@@ -260,6 +260,11 @@ jumbo_component("events") {
     ]
   }
 
+  if (is_ios) {
+    sources += [ "ios/events_ios.mm" ]
+    frameworks = [ "UIKit.framework" ]
+  }
+
   if (is_linux || is_chromeos || is_win) {
     public += [ "keyboard_event_counter.h" ]
     sources += [ "keyboard_event_counter.cc" ]
@@ -336,7 +341,7 @@ jumbo_component("events") {
     deps += [ "//build:chromeos_buildflags" ]
   }
 
-  if (is_win || is_mac || use_ozone) {
+  if (is_win || is_apple || use_ozone) {
     sources -= [ "events_stub.cc" ]
   }
 
@@ -349,6 +354,10 @@ jumbo_component("events") {
       "android/key_event_android.h",
       "android/key_event_utils.h",
       "android/motion_event_android.h",
+
+      # TODO(crbug.com/1413521): Move this outside is_android block when
+      # consuming cross-platform code which uses it lands.
+      "back_gesture_event.h",
     ]
     sources += [
       "android/drag_event_android.cc",
@@ -357,6 +366,7 @@ jumbo_component("events") {
       "android/key_event_android.cc",
       "android/key_event_utils.cc",
       "android/motion_event_android.cc",
+      "back_gesture_event.cc",
     ]
     deps += [
       ":keyevent_jni_headers",
@@ -370,17 +380,13 @@ jumbo_component("events") {
 
   if (is_fuchsia) {
     public += [
-      "fuchsia/input_event_dispatcher.h",
       "fuchsia/input_event_sink.h",
       "fuchsia/pointer_events_handler.h",
     ]
-    sources += [
-      "fuchsia/input_event_dispatcher.cc",
-      "fuchsia/pointer_events_handler.cc",
-    ]
+    sources += [ "fuchsia/pointer_events_handler.cc" ]
     public_deps += [
-      "//third_party/fuchsia-sdk/sdk/fidl/fuchsia.ui.input",
-      "//third_party/fuchsia-sdk/sdk/fidl/fuchsia.ui.pointer",
+      "//third_party/fuchsia-sdk/sdk/fidl/fuchsia.ui.input:fuchsia.ui.input_hlcpp",
+      "//third_party/fuchsia-sdk/sdk/fidl/fuchsia.ui.pointer:fuchsia.ui.pointer_hlcpp",
     ]
   }
 }
@@ -427,7 +433,6 @@ jumbo_component("keyboard_hook") {
   }
 
   if (use_ozone) {
-    public += [ "ozone/keyboard_hook_ozone.h" ]
     sources += [ "ozone/keyboard_hook_ozone.cc" ]
     deps += [
       "//ui/base:features",
@@ -487,6 +492,7 @@ jumbo_component("gesture_detection") {
     "//base",
     "//base/third_party/dynamic_annotations",
     "//build:chromeos_buildflags",
+    "//ui/base:features",
     "//ui/display",
     "//ui/gfx",
     "//ui/gfx/geometry",
@@ -496,7 +502,9 @@ jumbo_component("gesture_detection") {
 
   if (is_android) {
     sources += [ "gesture_detection/gesture_configuration_android.cc" ]
-  } else if (is_chromecast) {
+  } else if (is_ios) {
+    sources += [ "gesture_detection/gesture_configuration_ios.cc" ]
+  } else if (is_castos) {
     sources += [ "gesture_detection/gesture_configuration_cast.cc" ]
   } else if (use_aura) {
     sources += [ "gesture_detection/gesture_configuration_aura.cc" ]
@@ -517,6 +525,10 @@ jumbo_static_library("test_support") {
     "test/motion_event_test_utils.h",
     "test/platform_event_source_test_api.cc",
     "test/platform_event_source_test_api.h",
+    "test/scoped_event_waiter.cc",
+    "test/scoped_event_waiter.h",
+    "test/test_event.cc",
+    "test/test_event.h",
     "test/test_event_handler.cc",
     "test/test_event_handler.h",
     "test/test_event_processor.cc",
@@ -594,15 +606,11 @@ jumbo_static_library("test_support") {
 
   if (is_fuchsia) {
     sources += [
-      "fuchsia/fakes/fake_mouse_source.cc",
-      "fuchsia/fakes/fake_mouse_source.h",
-      "fuchsia/fakes/fake_touch_source.cc",
-      "fuchsia/fakes/fake_touch_source.h",
-      "fuchsia/fakes/pointer_event_utility.cc",
-      "fuchsia/fakes/pointer_event_utility.h",
+      "fuchsia/util/pointer_event_utility.cc",
+      "fuchsia/util/pointer_event_utility.h",
     ]
 
-    deps += [ "//third_party/fuchsia-sdk/sdk/fidl/fuchsia.ui.pointer" ]
+    deps += [ "//third_party/fuchsia-sdk/sdk/fidl/fuchsia.ui.pointer:fuchsia.ui.pointer_hlcpp" ]
   }
 }
 
@@ -638,6 +646,7 @@ if (!is_ios) {
       "mojom/mojom_traits_unittest.cc",
       "platform/platform_event_source_unittest.cc",
       "scoped_target_handler_unittest.cc",
+      "test/scoped_event_waiter_unittest.cc",
     ]
 
     if (is_mac) {
@@ -713,21 +722,21 @@ if (!is_ios) {
       deps += [ "//ui/events:keyboard_hook" ]
     }
 
-    if (is_chromecast && !is_android) {
+    if (is_castos) {
       sources += [ "chromecast/scroller_unittest.cc" ]
     }
 
     if (is_fuchsia) {
       sources += [
-        "fuchsia/input_event_dispatcher_unittest.cc",
         "fuchsia/pointer_events_handler_unittest.cc",
         "keycodes/keyboard_code_conversion_fuchsia_unittest.cc",
       ]
 
       deps += [
-        "//third_party/fuchsia-sdk/sdk/fidl/fuchsia.ui.input",
-        "//third_party/fuchsia-sdk/sdk/fidl/fuchsia.ui.input3",
-        "//third_party/fuchsia-sdk/sdk/fidl/fuchsia.ui.pointer",
+        "//third_party/fuchsia-sdk/sdk/fidl/fuchsia.ui.input:fuchsia.ui.input_hlcpp",
+        "//third_party/fuchsia-sdk/sdk/fidl/fuchsia.ui.input3:fuchsia.ui.input3_hlcpp",
+        "//third_party/fuchsia-sdk/sdk/fidl/fuchsia.ui.pointer:fuchsia.ui.pointer_hlcpp",
+        "//third_party/fuchsia-sdk/sdk/pkg/scenic_cpp_testing",
       ]
     }
 

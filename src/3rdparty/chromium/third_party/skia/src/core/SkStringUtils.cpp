@@ -6,8 +6,8 @@
  */
 
 #include "include/core/SkString.h"
+#include "src/base/SkUTF.h"
 #include "src/core/SkStringUtils.h"
-#include "src/utils/SkUTF.h"
 
 void SkAppendScalar(SkString* str, SkScalar value, SkScalarAsStringType asType) {
     switch (asType) {
@@ -71,11 +71,11 @@ SkString SkStringFromUTF16(const uint16_t* src, size_t count) {
             n += s;
         }
         ret = SkString(n);
-        char* out = ret.writable_str();
+        char* out = ret.data();
         for (const uint16_t* ptr = src; ptr < end;) {
             out += SkUTF::ToUTF8(SkUTF::NextUTF16(&ptr, stop), out);
         }
-        SkASSERT(out == ret.writable_str() + n);
+        SkASSERT(out == ret.data() + n);
     }
     return ret;
 }

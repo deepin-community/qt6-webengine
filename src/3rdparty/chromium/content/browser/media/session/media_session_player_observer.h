@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -58,6 +58,9 @@ class MediaSessionPlayerObserver {
 
   // The given |player_id| has been requested to mute or unmute.
   virtual void OnSetMute(int player_id, bool mute) = 0;
+
+  // The given |player_id| has been requested to start Media Remoting.
+  virtual void OnRequestMediaRemoting(int player_id) = 0;
 
   // Returns the position for |player_id|.
   virtual absl::optional<media_session::MediaPosition> GetPosition(

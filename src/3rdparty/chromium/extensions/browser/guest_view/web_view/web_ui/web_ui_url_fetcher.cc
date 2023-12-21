@@ -1,10 +1,10 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "extensions/browser/guest_view/web_view/web_ui/web_ui_url_fetcher.h"
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_ui_url_loader_factory.h"
 #include "net/base/load_flags.h"

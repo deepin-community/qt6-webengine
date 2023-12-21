@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,11 +12,13 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/sequence_checker.h"
+#include "components/services/storage/privileged/mojom/indexed_db_client_state_checker.mojom.h"
+#include "components/services/storage/public/cpp/buckets/bucket_info.h"
+#include "components/services/storage/public/cpp/buckets/bucket_locator.h"
 #include "mojo/public/cpp/bindings/pending_associated_receiver.h"
 #include "mojo/public/cpp/bindings/pending_associated_remote.h"
 #include "third_party/blink/public/common/indexeddb/indexeddb_key.h"
 #include "third_party/blink/public/common/indexeddb/indexeddb_key_path.h"
-#include "third_party/blink/public/common/storage_key/storage_key.h"
 #include "third_party/blink/public/mojom/indexeddb/indexeddb.mojom.h"
 
 namespace base {
@@ -35,7 +37,7 @@ class IndexedDBDispatcherHost;
 class DatabaseImpl : public blink::mojom::IDBDatabase {
  public:
   explicit DatabaseImpl(std::unique_ptr<IndexedDBConnection> connection,
-                        const blink::StorageKey& storage_key,
+                        const storage::BucketInfo& bucket,
                         IndexedDBDispatcherHost* dispatcher_host,
                         scoped_refptr<base::SequencedTaskRunner> idb_runner);
 
@@ -129,14 +131,19 @@ class DatabaseImpl : public blink::mojom::IDBDatabase {
                    int64_t index_id,
                    const std::u16string& new_name) override;
   void Abort(int64_t transaction_id) override;
+  void DidBecomeInactive() override;
 
  private:
+  storage::BucketLocator bucket_locator() {
+    return bucket_info_.ToBucketLocator();
+  }
+
   // This raw pointer is safe because all DatabaseImpl instances are owned by
   // an IndexedDBDispatcherHost.
   raw_ptr<IndexedDBDispatcherHost> dispatcher_host_;
   scoped_refptr<IndexedDBContextImpl> indexed_db_context_;
   std::unique_ptr<IndexedDBConnection> connection_;
-  const blink::StorageKey storage_key_;
+  const storage::BucketInfo bucket_info_;
   scoped_refptr<base::SequencedTaskRunner> idb_runner_;
 
   SEQUENCE_CHECKER(sequence_checker_);

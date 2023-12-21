@@ -1,6 +1,7 @@
 load("@org_tensorflow//tensorflow:tensorflow.bzl", "pybind_extension")
 
 package(
+    default_applicable_licenses = ["//tensorflow_lite_support:license"],
     default_visibility = [
         "//tensorflow_lite_support:internal",
     ],
@@ -14,7 +15,8 @@ pybind_extension(
     ],
     module_name = "image_utils",
     deps = [
-        "//tensorflow_lite_support/examples/task/vision/desktop/utils:image_utils",
+        "//tensorflow_lite_support/cc/task/vision/utils:image_utils",
+        "//tensorflow_lite_support/python/task/core/pybinds:task_utils",
         "@pybind11",
         "@pybind11_abseil//pybind11_abseil:status_casters",
     ],

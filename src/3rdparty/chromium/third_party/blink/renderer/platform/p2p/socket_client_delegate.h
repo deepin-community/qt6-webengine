@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -31,7 +31,7 @@ class P2PSocketClientDelegate {
 
   // Called when data is received on the socket.
   virtual void OnDataReceived(const net::IPEndPoint& address,
-                              const Vector<int8_t>& data,
+                              base::span<const uint8_t> data,
                               const base::TimeTicks& timestamp) = 0;
 };
 

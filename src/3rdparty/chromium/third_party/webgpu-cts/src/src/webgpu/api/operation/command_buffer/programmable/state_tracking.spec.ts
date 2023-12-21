@@ -33,7 +33,7 @@ g.test('bind_group_indices')
         { a: 1, b: 0, out: 2 },
       ])
   )
-  .fn(async t => {
+  .fn(t => {
     const { encoderType, groupIndices } = t.params;
 
     const pipeline = t.createBindingStatePipeline(encoderType, groupIndices);
@@ -82,7 +82,7 @@ g.test('bind_group_order')
         ['out', 'b', 'a'],
       ] as const)
   )
-  .fn(async t => {
+  .fn(t => {
     const { encoderType, setOrder } = t.params;
 
     const groupIndices = { a: 0, b: 1, out: 2 };
@@ -104,8 +104,8 @@ g.test('bind_group_order')
     const { encoder, validateFinishAndSubmit } = t.createEncoder(encoderType);
     t.setPipeline(encoder, pipeline);
 
-    for (let i = 0; i < setOrder.length; ++i) {
-      encoder.setBindGroup(groupIndices[setOrder[i]], bindGroups[setOrder[i]]);
+    for (const bindingName of setOrder) {
+      encoder.setBindGroup(groupIndices[bindingName], bindGroups[bindingName]);
     }
 
     t.dispatchOrDraw(encoder);
@@ -131,7 +131,7 @@ g.test('bind_group_before_pipeline')
         { setBefore: ['a', 'b', 'out'], setAfter: [] },
       ] as const)
   )
-  .fn(async t => {
+  .fn(t => {
     const { encoderType, setBefore, setAfter } = t.params;
     const groupIndices = { a: 0, b: 1, out: 2 };
     const pipeline = t.createBindingStatePipeline(encoderType, groupIndices);
@@ -151,14 +151,14 @@ g.test('bind_group_before_pipeline')
 
     const { encoder, validateFinishAndSubmit } = t.createEncoder(encoderType);
 
-    for (let i = 0; i < setBefore.length; ++i) {
-      encoder.setBindGroup(groupIndices[setBefore[i]], bindGroups[setBefore[i]]);
+    for (const bindingName of setBefore) {
+      encoder.setBindGroup(groupIndices[bindingName], bindGroups[bindingName]);
     }
 
     t.setPipeline(encoder, pipeline);
 
-    for (let i = 0; i < setAfter.length; ++i) {
-      encoder.setBindGroup(groupIndices[setAfter[i]], bindGroups[setAfter[i]]);
+    for (const bindingName of setAfter) {
+      encoder.setBindGroup(groupIndices[bindingName], bindGroups[bindingName]);
     }
 
     t.dispatchOrDraw(encoder);
@@ -177,7 +177,7 @@ g.test('one_bind_group_multiple_slots')
     u //
       .combine('encoderType', kProgrammableEncoderTypes)
   )
-  .fn(async t => {
+  .fn(t => {
     const { encoderType } = t.params;
     const pipeline = t.createBindingStatePipeline(encoderType, { a: 0, b: 1, out: 2 });
 
@@ -213,7 +213,7 @@ g.test('bind_group_multiple_sets')
     u //
       .combine('encoderType', kProgrammableEncoderTypes)
   )
-  .fn(async t => {
+  .fn(t => {
     const { encoderType } = t.params;
     const pipeline = t.createBindingStatePipeline(encoderType, { a: 0, b: 1, out: 2 });
 
@@ -263,7 +263,7 @@ g.test('compatible_pipelines')
     u //
       .combine('encoderType', kProgrammableEncoderTypes)
   )
-  .fn(async t => {
+  .fn(t => {
     const { encoderType } = t.params;
     const pipelineA = t.createBindingStatePipeline(encoderType, { a: 0, b: 1, out: 2 });
     const pipelineB = t.createBindingStatePipeline(

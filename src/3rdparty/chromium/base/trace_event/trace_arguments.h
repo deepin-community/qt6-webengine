@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,6 +14,7 @@
 #include <utility>
 
 #include "base/base_export.h"
+#include "base/memory/raw_ptr_exclusion.h"
 #include "base/trace_event/common/trace_event_common.h"
 #include "base/tracing_buildflags.h"
 #include "build/build_config.h" // COMPILER_MSVC
@@ -175,7 +176,7 @@ class BASE_EXPORT ConvertableToTraceFormat
     // into the proto, with the given |field_id|.
     virtual size_t Finalize(uint32_t field_id) = 0;
   };
-  virtual bool AppendToProto(ProtoAppender* appender);
+  virtual bool AppendToProto(ProtoAppender* appender) const;
 
   virtual void EstimateTraceMemoryOverhead(TraceEventMemoryOverhead* overhead);
 
@@ -224,10 +225,17 @@ union BASE_EXPORT TraceValue {
   unsigned long long as_uint;
   long long as_int;
   double as_double;
-  const void* as_pointer;
+  // This field is not a raw_ptr<> because it was filtered by the rewriter for:
+  // #union
+  RAW_PTR_EXCLUSION const void* as_pointer;
   const char* as_string;
-  ConvertableToTraceFormat* as_convertable;
-  protozero::HeapBuffered<perfetto::protos::pbzero::DebugAnnotation>* as_proto;
+  // This field is not a raw_ptr<> because it was filtered by the rewriter for:
+  // #union
+  RAW_PTR_EXCLUSION ConvertableToTraceFormat* as_convertable;
+  // This field is not a raw_ptr<> because it was filtered by the rewriter for:
+  // #union
+  RAW_PTR_EXCLUSION protozero::HeapBuffered<
+      perfetto::protos::pbzero::DebugAnnotation>* as_proto;
 
   // Static method to create a new TraceValue instance from a given
   // initialization value. Note that this deduces the TRACE_VALUE_TYPE_XXX
@@ -598,7 +606,9 @@ class BASE_EXPORT StringStorage {
   // enough, but the compiler will then complaing about inlined constructors
   // and destructors being too complex (!), resulting in larger code for no
   // good reason.
-  Data* data_ = nullptr;
+  // This field is not a raw_ptr<> because it was filtered by the rewriter for:
+  // #constexpr-ctor-field-initializer
+  RAW_PTR_EXCLUSION Data* data_ = nullptr;
 };
 
 // TraceArguments models an array of kMaxSize trace-related items,

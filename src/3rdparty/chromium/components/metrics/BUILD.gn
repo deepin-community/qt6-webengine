@@ -1,4 +1,4 @@
-# Copyright 2014 The Chromium Authors. All rights reserved.
+# Copyright 2014 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -11,20 +11,53 @@ if (is_android) {
   import("//build/config/android/rules.gni")
 }
 
-jumbo_static_library("demographic_metrics_provider") {
-  sources = [
-    "demographic_metrics_provider.cc",
-    "demographic_metrics_provider.h",
-  ]
+if (is_android) {
+  generate_jni("jni_headers") {
+    namespace = "metrics"
+    sources = [
+      "android/java/src/org/chromium/components/metrics/LowEntropySource.java",
+    ]
+  }
 
-  public_deps = [ "//third_party/metrics_proto" ]
+  java_cpp_features("java_features_srcjar") {
+    # External code should depend on ":foo_java" instead.
+    visibility = [ ":*" ]
+    sources = [ "//components/metrics/metrics_features.cc" ]
+    template =
+        "//components/metrics/android/java_templates/MetricsFeatures.java.tmpl"
+  }
 
-  deps = [
-    ":metrics",
-    "//base",
-    "//components/sync/base",
-    "//components/sync/driver",
-  ]
+  java_cpp_strings("java_switches_srcjar") {
+    # External code should depend on ":metrics_java" instead.
+    visibility = [ ":*" ]
+    sources = [ "//components/metrics/metrics_switches.cc" ]
+    template =
+        "//components/metrics/android/java_templates/MetricsSwitches.java.tmpl"
+  }
+
+  java_cpp_enum("java_enum_srcjar") {
+    # External code should depend on ":metrics_java" instead.
+    visibility = [ ":*" ]
+    sources = [ "stability_metrics_helper.h" ]
+  }
+
+  android_library("metrics_java") {
+    # Right now, this only includes the Java switches. But if we need more Java
+    # files, they should be added here as necessary.
+    srcjar_deps = [
+      ":java_enum_srcjar",
+      ":java_features_srcjar",
+      ":java_switches_srcjar",
+    ]
+    sources = [
+      "android/java/src/org/chromium/components/metrics/LowEntropySource.java",
+    ]
+    deps = [
+      "//base:base_java",
+      "//base:jni_java",
+      "//third_party/androidx:androidx_annotation_annotation_java",
+    ]
+  }
 }
 
 jumbo_static_library("metrics") {
@@ -67,16 +100,14 @@ jumbo_static_library("metrics") {
     "field_trials_provider.h",
     "file_metrics_provider.cc",
     "file_metrics_provider.h",
-    "form_factor_metrics_provider.cc",
-    "form_factor_metrics_provider.h",
-    "histogram_encoder.cc",
-    "histogram_encoder.h",
     "log_decoder.cc",
     "log_decoder.h",
     "log_store.h",
     "machine_id_provider.h",
     "metrics_data_validation.cc",
     "metrics_data_validation.h",
+    "metrics_features.cc",
+    "metrics_features.h",
     "metrics_log.cc",
     "metrics_log.h",
     "metrics_log_manager.cc",
@@ -84,6 +115,8 @@ jumbo_static_library("metrics") {
     "metrics_log_store.cc",
     "metrics_log_store.h",
     "metrics_log_uploader.h",
+    "metrics_logs_event_manager.cc",
+    "metrics_logs_event_manager.h",
     "metrics_pref_names.cc",
     "metrics_pref_names.h",
     "metrics_provider.cc",
@@ -102,6 +135,8 @@ jumbo_static_library("metrics") {
     "metrics_service_accessor.h",
     "metrics_service_client.cc",
     "metrics_service_client.h",
+    "metrics_service_observer.cc",
+    "metrics_service_observer.h",
     "metrics_state_manager.cc",
     "metrics_state_manager.h",
     "metrics_switches.cc",
@@ -140,19 +175,19 @@ jumbo_static_library("metrics") {
   ]
 
   deps = [
+    ":library_support",
     "//base",
     "//base:base_static",
     "//build:branding_buildflags",
     "//build:chromeos_buildflags",
+    "//components/flags_ui:switches",
     "//components/prefs",
     "//components/variations",
     "//components/variations/field_trial_config",
-    "//components/variations/service:constants",
     "//components/version_info:version_info",
     "//crypto",
     "//extensions/buildflags",
     "//third_party/icu",
-    "//ui/base",
     "//url",
   ]
 
@@ -165,6 +200,7 @@ jumbo_static_library("metrics") {
 
   if (is_android) {
     sources += [ "drive_metrics_provider_android.cc" ]
+    deps += [ ":jni_headers" ]
   }
 
   if (is_ios) {
@@ -201,7 +237,6 @@ jumbo_static_library("metrics") {
       "system_session_analyzer/system_session_analyzer_win.cc",
       "system_session_analyzer/system_session_analyzer_win.h",
     ]
-    deps += [ "//components/browser_watcher:stability_client" ]
     libs = [ "wevtapi.lib" ]
   } else {
     sources += [ "machine_id_provider_nonwin.cc" ]
@@ -211,34 +246,17 @@ jumbo_static_library("metrics") {
     sources += [ "drive_metrics_provider_fuchsia.cc" ]
   }
 
-  if (use_qt) {
+  if (is_qtwebengine) {
     deps -= [ "//components/variations/field_trial_config" ]
   }
-}
 
-if (is_android) {
-  java_cpp_strings("java_switches_srcjar") {
-    # External code should depend on ":metrics_java" instead.
-    visibility = [ ":*" ]
-    sources = [ "//components/metrics/metrics_switches.cc" ]
-    template =
-        "//components/metrics/android/java_templates/MetricsSwitches.java.tmpl"
-  }
-
-  java_cpp_enum("java_enum_srcjar") {
-    # External code should depend on ":metrics_java" instead.
-    visibility = [ ":*" ]
-    sources = [ "stability_metrics_helper.h" ]
-  }
-
-  android_library("metrics_java") {
-    # Right now, this only includes the Java switches. But if we need more Java
-    # files, they should be added here as necessary.
-    srcjar_deps = [
-      ":java_enum_srcjar",
-      ":java_switches_srcjar",
+  if (is_win || is_linux) {
+    sources += [
+      "motherboard.cc",
+      "motherboard.h",
+      "motherboard_metrics_provider.cc",
+      "motherboard_metrics_provider.h",
     ]
-    deps = [ "//third_party/androidx:androidx_annotation_annotation_java" ]
   }
 }
 
@@ -260,7 +278,7 @@ static_library("component_metrics") {
   ]
 }
 
-if (!is_ios) {
+if (use_blink) {
   static_library("content") {
     sources = [
       # ChromeOS accessibility metrics provider is in chromeos_metrics_provider.
@@ -289,14 +307,19 @@ if (!is_ios) {
   }
 }
 
+# Dependency for histogram manager users: cronet and ios/webview
 source_set("library_support") {
-  sources = [
-    "library_support/histogram_manager.cc",
+  public = [
+    "histogram_encoder.h",
     "library_support/histogram_manager.h",
   ]
+  sources = [
+    "histogram_encoder.cc",
+    "library_support/histogram_manager.cc",
+  ]
+
   deps = [
     "//base",
-    "//components/metrics:metrics",
     "//third_party/metrics_proto",
   ]
 }
@@ -331,6 +354,8 @@ jumbo_static_library("net") {
 
 static_library("ui") {
   sources = [
+    "ui/form_factor_metrics_provider.cc",
+    "ui/form_factor_metrics_provider.h",
     "ui/screen_info_metrics_provider.cc",
     "ui/screen_info_metrics_provider.h",
   ]
@@ -338,6 +363,8 @@ static_library("ui") {
   public_deps = [ ":metrics" ]
   deps = [
     "//base",
+    "//build/config/chromebox_for_meetings:buildflags",
+    "//ui/base",
     "//ui/display",
     "//ui/gfx",
     "//ui/gfx/geometry",
@@ -470,15 +497,14 @@ source_set("unit_tests") {
     "expired_histograms_checker_unittest.cc",
     "field_trials_provider_unittest.cc",
     "file_metrics_provider_unittest.cc",
-    "form_factor_metrics_provider_unittest.cc",
     "histogram_encoder_unittest.cc",
     "library_support/histogram_manager_unittest.cc",
     "log_decoder_unittest.cc",
     "metrics_data_validation_unittest.cc",
-    "metrics_log_manager_unittest.cc",
     "metrics_log_store_unittest.cc",
     "metrics_log_unittest.cc",
     "metrics_service_client_unittest.cc",
+    "metrics_service_observer_unittest.cc",
     "metrics_service_unittest.cc",
     "metrics_state_manager_unittest.cc",
     "net/net_metrics_log_uploader_unittest.cc",
@@ -488,6 +514,7 @@ source_set("unit_tests") {
     "single_sample_metrics_factory_impl_unittest.cc",
     "stability_metrics_helper_unittest.cc",
     "stability_metrics_provider_unittest.cc",
+    "ui/form_factor_metrics_provider_unittest.cc",
     "ui/screen_info_metrics_provider_unittest.cc",
     "unsent_log_store_metrics_impl_unittest.cc",
     "unsent_log_store_unittest.cc",
@@ -508,17 +535,13 @@ source_set("unit_tests") {
     "//build:chromeos_buildflags",
     "//components/component_updater:test_support",
     "//components/encrypted_messages:encrypted_message_proto",
+    "//components/metrics/public/mojom:call_stack_mojo_bindings",
     "//components/network_time:network_time_test_support",
     "//components/prefs:test_support",
+    "//components/sync:test_support",
     "//components/sync/base",
-    "//components/sync/driver:test_support",
     "//components/variations",
     "//components/variations:test_support",
-    "//components/variations/service:constants",
-
-    # TODO(crbug.com/1241702): Clean up version_info when the Variations Safe
-    # Mode experiment is over.
-    "//components/version_info",
     "//extensions/buildflags",
     "//mojo/public/cpp/bindings",
     "//net:test_support",
@@ -551,8 +574,15 @@ source_set("unit_tests") {
 
   if (is_chromeos_ash) {
     deps += [
-      "//chromeos/dbus:test_support",
-      "//chromeos/network:test_support",
+      "//chromeos/ash/components/dbus:test_support",
+      "//chromeos/ash/components/network:test_support",
+    ]
+  }
+
+  if (use_blink) {
+    deps += [
+      ":content",
+      "//content/test:test_support",
     ]
   }
 
@@ -566,11 +596,11 @@ source_set("unit_tests") {
       "content/content_stability_metrics_provider_unittest.cc",
       "content/subprocess_metrics_provider_unittest.cc",
     ]
-    deps += [
-      ":content",
-      "//content/test:test_support",
-      "//extensions/buildflags",
-    ]
+    deps += [ "//extensions/buildflags" ]
+  }
+
+  if (is_win || is_linux) {
+    sources += [ "motherboard_metrics_provider_unittest.cc" ]
   }
 }
 

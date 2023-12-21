@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,10 +7,9 @@
 #include <inttypes.h>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/task/single_thread_task_runner.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "mojo/public/cpp/system/message_pipe.h"
 #include "ui/ozone/platform/scenic/mojom/scenic_gpu_host.mojom.h"
 #include "ui/ozone/platform/scenic/mojom/scenic_gpu_service.mojom.h"
@@ -47,7 +46,7 @@ void ScenicGpuHost::Initialize(
   DCHECK_CALLED_ON_VALID_THREAD(ui_thread_checker_);
 
   DCHECK(!ui_thread_runner_);
-  ui_thread_runner_ = base::ThreadTaskRunnerHandle::Get();
+  ui_thread_runner_ = base::SingleThreadTaskRunner::GetCurrentDefault();
   DCHECK(ui_thread_runner_);
 
   host_receiver_.Bind(std::move(host_receiver));

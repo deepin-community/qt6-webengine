@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -27,6 +27,11 @@ class Clock;
 
 namespace webapps {
 FORWARD_DECLARE_TEST(AppBannerManagerBrowserTest, WebAppBannerNeedsEngagement);
+}
+
+namespace settings {
+FORWARD_DECLARE_TEST(SiteSettingsHandlerTest,
+                     PopulateNotificationPermissionReviewData);
 }
 
 namespace content {
@@ -150,14 +155,6 @@ class SiteEngagementService : public KeyedService,
   // performance-critical code.
   std::vector<mojom::SiteEngagementDetails> GetAllDetails() const;
 
-  // Return an array of engagement score details for all origins which have
-  // had engagement since the specified time.
-  //
-  // Note that this method is quite expensive, so try to avoid calling it in
-  // performance-critical code.
-  std::vector<mojom::SiteEngagementDetails> GetAllDetailsEngagedInTimePeriod(
-      browsing_data::TimePeriod time_period) const;
-
   // Update the engagement score of |url| for a notification interaction.
   void HandleNotificationInteraction(const GURL& url);
 
@@ -191,6 +188,7 @@ class SiteEngagementService : public KeyedService,
  protected:
   // Retrieves the SiteEngagementScore object for |origin|.
   SiteEngagementScore CreateEngagementScore(const GURL& origin) const;
+
   void SetLastEngagementTime(base::Time last_engagement_time) const;
 
   content::BrowserContext* browser_context() { return browser_context_; }
@@ -219,6 +217,8 @@ class SiteEngagementService : public KeyedService,
                            WebAppBannerNeedsEngagement);
   FRIEND_TEST_ALL_PREFIXES(AppBannerSettingsHelperTest, SiteEngagementTrigger);
   FRIEND_TEST_ALL_PREFIXES(HostedAppPWAOnlyTest, EngagementHistogram);
+  FRIEND_TEST_ALL_PREFIXES(settings::SiteSettingsHandlerTest,
+                           PopulateNotificationPermissionReviewData);
 
 #if BUILDFLAG(IS_ANDROID)
   // Shim class to expose the service to Java.
@@ -297,10 +297,6 @@ class SiteEngagementService : public KeyedService,
   // scores to be relative to now. This ensures that users who do not use the
   // browser for an extended period of time do not have their engagement decay.
   bool IsLastEngagementStale() const;
-
-  // Returns the number of origins with maximum daily and total engagement
-  // respectively.
-  int OriginsWithMaxDailyEngagement() const;
 
   // Add and remove observers of this service.
   void AddObserver(SiteEngagementObserver* observer);

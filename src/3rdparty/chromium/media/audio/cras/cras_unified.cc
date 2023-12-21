@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -184,24 +184,15 @@ void CrasUnifiedStream::Start(AudioSourceCallback* callback) {
   // Channel map to CRAS_CHANNEL, values in the same order of
   // corresponding source in Chromium defined Channels.
   static const int kChannelMap[] = {
-    CRAS_CH_FL,
-    CRAS_CH_FR,
-    CRAS_CH_FC,
-    CRAS_CH_LFE,
-    CRAS_CH_RL,
-    CRAS_CH_RR,
-    CRAS_CH_FLC,
-    CRAS_CH_FRC,
-    CRAS_CH_RC,
-    CRAS_CH_SL,
-    CRAS_CH_SR
-  };
+      CRAS_CH_FL,  CRAS_CH_FR,  CRAS_CH_FC, CRAS_CH_LFE, CRAS_CH_RL, CRAS_CH_RR,
+      CRAS_CH_FLC, CRAS_CH_FRC, CRAS_CH_RC, CRAS_CH_SL,  CRAS_CH_SR};
 
   source_callback_ = callback;
 
   // Only start if we can enter the playing state.
-  if (is_playing_)
+  if (is_playing_) {
     return;
+  }
 
   struct libcras_stream_params* stream_params = libcras_stream_params_create();
   if (!stream_params) {
@@ -233,9 +224,10 @@ void CrasUnifiedStream::Start(AudioSourceCallback* callback) {
 
   // Converts to CRAS defined channels. ChannelOrder will return -1
   // for channels that does not present in params_.channel_layout().
-  for (size_t i = 0; i < std::size(kChannelMap); ++i)
-    layout[kChannelMap[i]] = ChannelOrder(params_.channel_layout(),
-                                          static_cast<Channels>(i));
+  for (size_t i = 0; i < std::size(kChannelMap); ++i) {
+    layout[kChannelMap[i]] =
+        ChannelOrder(params_.channel_layout(), static_cast<Channels>(i));
+  }
 
   rc = libcras_stream_params_set_channel_layout(stream_params, CRAS_CH_MAX,
                                                 layout);
@@ -271,8 +263,9 @@ void CrasUnifiedStream::Start(AudioSourceCallback* callback) {
 }
 
 void CrasUnifiedStream::Stop() {
-  if (!client_)
+  if (!client_) {
     return;
+  }
 
   // Removing the stream from the client stops audio.
   libcras_client_rm_stream(client_, stream_id_);
@@ -281,8 +274,9 @@ void CrasUnifiedStream::Stop() {
 }
 
 void CrasUnifiedStream::SetVolume(double volume) {
-  if (!client_)
+  if (!client_) {
     return;
+  }
   volume_ = static_cast<float>(volume);
   libcras_client_set_stream_volume(client_, stream_id_, volume_);
 }
@@ -325,7 +319,7 @@ uint32_t CrasUnifiedStream::WriteAudio(size_t frames,
       std::max(base::TimeDelta::FromTimeSpec(*latency_ts), base::TimeDelta());
 
   int frames_filled = source_callback_->OnMoreData(
-      delay, base::TimeTicks::Now(), 0, output_bus_.get());
+      delay, base::TimeTicks::Now(), {}, output_bus_.get());
 
   // Note: If this ever changes to output raw float the data must be clipped and
   // sanitized since it may come from an untrusted source such as NaCl.
@@ -339,8 +333,9 @@ void CrasUnifiedStream::NotifyStreamError(int err) {
   // This will remove the stream from the client.
   // TODO(dalecurtis): Consider sending a translated |err| code.
   ReportNotifyStreamErrors(err);
-  if (source_callback_)
+  if (source_callback_) {
     source_callback_->OnError(AudioSourceCallback::ErrorType::kUnknown);
+  }
 }
 
 }  // namespace media

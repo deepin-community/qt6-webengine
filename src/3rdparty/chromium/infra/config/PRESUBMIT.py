@@ -1,4 +1,4 @@
-# Copyright 2018 The Chromium Authors. All rights reserved.
+# Copyright 2018 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -15,8 +15,8 @@ _IGNORE_FREEZE_FOOTER = 'Ignore-Freeze'
 
 # The time module's handling of timezones is abysmal, so the boundaries are
 # precomputed in UNIX time
-_FREEZE_START = 1639641600  # 2021/12/16 00:00 -0800
-_FREEZE_END = 1641196800  # 2022/01/03 00:00 -0800
+_FREEZE_START = 1671177600  # 2022/12/16 00:00 -0800
+_FREEZE_END = 1672646400  # 2023/01/02 00:00 -0800
 
 
 def CheckFreeze(input_api, output_api):
@@ -28,11 +28,16 @@ def CheckFreeze(input_api, output_api):
         ts = input_api.time.localtime(t)
         return input_api.time.strftime('%Y/%m/%d %H:%M %z', ts)
 
+      # Don't report errors when on the presubmit --all bot or when testing with
+      # presubmit --files.
+      if input_api.no_diffs:
+        report_type = output_api.PresubmitPromptWarning
+      else:
+        report_type = output_api.PresubmitError
       return [
-          output_api.PresubmitError(
-              'There is a prod freeze in effect from {} until {},'
-              ' files in //infra/config cannot be modified'.format(
-                  convert(_FREEZE_START), convert(_FREEZE_END)))
+          report_type('There is a prod freeze in effect from {} until {},'
+                      ' files in //infra/config cannot be modified'.format(
+                          convert(_FREEZE_START), convert(_FREEZE_END)))
       ]
 
   return []
@@ -55,7 +60,7 @@ def CheckLintLuciMilo(input_api, output_api):
     return input_api.RunTests([
         input_api.Command(
             name='lint-luci-milo',
-            cmd=[input_api.python_executable, 'lint-luci-milo.py'],
+            cmd=[input_api.python3_executable, 'lint-luci-milo.py'],
             kwargs={},
             message=output_api.PresubmitError),
     ])
@@ -66,14 +71,19 @@ def CheckTestingBuildbot(input_api, output_api):
       'infra/config/generated/luci/luci-milo-dev.cfg' in input_api.LocalPaths()
       ):
     return input_api.RunTests([
-        input_api.Command(
-            name='testing/buildbot config checks',
-            cmd=[input_api.python_executable, input_api.os_path.join(
-                '..', '..', 'testing', 'buildbot',
-                'generate_buildbot_json.py',),
-                 '--check'],
-            kwargs={},
-            message=output_api.PresubmitError),
+        input_api.Command(name='testing/buildbot config checks',
+                          cmd=[
+                              input_api.python3_executable,
+                              input_api.os_path.join(
+                                  '..',
+                                  '..',
+                                  'testing',
+                                  'buildbot',
+                                  'generate_buildbot_json.py',
+                              ), '--check'
+                          ],
+                          kwargs={},
+                          message=output_api.PresubmitError),
     ])
   return []
 
@@ -88,6 +98,35 @@ def CheckLucicfgGenOutputDev(input_api, output_api):
 def CheckChangedLUCIConfigs(input_api, output_api):
   return input_api.canned_checks.CheckChangedLUCIConfigs(
       input_api, output_api)
+
+
+# TODO(gbeaty) pinpoint runs builds against revisions that aren't tip-of-tree,
+# so recipe side config can't be updated to refer to
+# //infra/config/generated/testing/gn_isolate_map.pyl until all of the revisions
+# that pinpoint will run against have that file. To workaround this, we'll copy
+# the generated file to //testing/buildbot/gn_isiolate_map.pyl. Once pinpoint is
+# only building revisions that contain
+# //infra/config/generated/testing/gn_isolate_map.pyl, the recipe configs can be
+# updated and we can remove this presubmit check,
+# //testing/buildbot/gn_isiolate_map.pyl and
+# //infra/config/scripts/sync-isolate-map.py.
+def CheckGnIsolateMapPylSynced(input_api, output_api):
+  if ('infra/config/generated/testing/gn_isolate_map.pyl'
+      in input_api.LocalPaths()):
+    with open('generated/testing/gn_isolate_map.pyl') as f:
+      ic_gn_isolate_map = f.read()
+    with open('../../testing/buildbot/gn_isolate_map.pyl') as f:
+      tb_gn_isolate_map = f.read()
+    if ic_gn_isolate_map != tb_gn_isolate_map:
+      sync_script_path = input_api.os_path.join(input_api.PresubmitLocalPath(),
+                                                'scripts/sync-isolate-map.pyl')
+      return [
+          output_api.PresubmitError(
+              '//testing/buildbot/gn_isolate_map.pyl must be kept in sync with'
+              ' //infra/config/generated/testing/gn_isolate_map.pyl, please run'
+              f' {sync_script_path}')
+      ]
+  return []
 
 
 # Footer indicating a CL that is trying to address an outage by some mechanism

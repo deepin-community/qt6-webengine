@@ -8,7 +8,9 @@
 #ifndef TriangulatingPathRenderer_DEFINED
 #define TriangulatingPathRenderer_DEFINED
 
-#include "src/gpu/ganesh/v1/PathRenderer.h"
+#if !defined(SK_ENABLE_OPTIMIZE_SIZE)
+
+#include "src/gpu/ganesh/PathRenderer.h"
 
 namespace skgpu::v1 {
 
@@ -38,5 +40,7 @@ private:
 };
 
 } // namespace skgpu::v1
+
+#endif // SK_ENABLE_OPTIMIZE_SIZE
 
 #endif // TriangulatingPathRenderer_DEFINED

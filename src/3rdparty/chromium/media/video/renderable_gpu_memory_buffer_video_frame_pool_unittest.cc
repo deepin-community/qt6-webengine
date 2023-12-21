@@ -1,9 +1,10 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "media/video/renderable_gpu_memory_buffer_video_frame_pool.h"
 
+#include "base/functional/callback_helpers.h"
 #include "base/memory/weak_ptr.h"
 #include "base/task/thread_pool.h"
 #include "base/test/bind.h"
@@ -41,7 +42,7 @@ class FakeContext : public RenderableGpuMemoryBufferVideoFramePool::Context {
                          gpu::SyncToken& sync_token) override {
     DoCreateSharedImage(gpu_memory_buffer, plane, color_space, surface_origin,
                         alpha_type, usage);
-    mailbox = gpu::Mailbox::Generate();
+    mailbox = gpu::Mailbox::GenerateForSharedImage();
   }
 
   MOCK_METHOD2(DoCreateGpuMemoryBuffer,
@@ -230,8 +231,7 @@ TEST(RenderableGpuMemoryBufferVideoFramePool,
   // Destroy frames on separate threads. TSAN will tell us if there's a problem.
   for (int i = 0; i < kNumFrames; i++) {
     base::ThreadPool::CreateSequencedTaskRunner({})->PostTask(
-        FROM_HERE, base::BindOnce([](scoped_refptr<VideoFrame> video_frame0) {},
-                                  std::move(frames[i])));
+        FROM_HERE, base::DoNothingWithBoundArgs(std::move(frames[i])));
   }
 
   pool.reset();
@@ -256,8 +256,7 @@ TEST(RenderableGpuMemoryBufferVideoFramePool, ConcurrentCreateDestroy) {
   // Destroy the frame on another thread. TSAN will tell us if there's a
   // problem.
   base::ThreadPool::CreateSequencedTaskRunner({})->PostTask(
-      FROM_HERE, base::BindOnce([](scoped_refptr<VideoFrame> video_frame0) {},
-                                std::move(video_frame0)));
+      FROM_HERE, base::DoNothingWithBoundArgs(std::move(video_frame0)));
 
   // Create another frame on the main thread.
   auto video_frame1 = pool->MaybeCreateVideoFrame(size0, color_space0);

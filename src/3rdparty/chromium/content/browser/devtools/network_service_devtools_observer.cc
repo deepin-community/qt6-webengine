@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,7 +13,7 @@
 #include "content/public/common/content_client.h"
 #include "mojo/public/cpp/bindings/self_owned_receiver.h"
 #include "services/network/public/mojom/http_raw_headers.mojom.h"
-#include "third_party/blink/public/mojom/web_feature/web_feature.mojom.h"
+#include "third_party/blink/public/mojom/use_counter/metrics/web_feature.mojom.h"
 
 namespace content {
 
@@ -56,14 +56,15 @@ void NetworkServiceDevToolsObserver::OnRawRequest(
     const net::CookieAccessResultList& request_cookie_list,
     std::vector<network::mojom::HttpRawHeaderPairPtr> request_headers,
     base::TimeTicks timestamp,
-    network::mojom::ClientSecurityStatePtr security_state) {
+    network::mojom::ClientSecurityStatePtr security_state,
+    network::mojom::OtherPartitionInfoPtr other_partition_info) {
   auto* host = GetDevToolsAgentHost();
   if (!host)
     return;
   DispatchToAgents(host,
                    &protocol::NetworkHandler::OnRequestWillBeSentExtraInfo,
                    devtools_request_id, request_cookie_list, request_headers,
-                   timestamp, security_state);
+                   timestamp, security_state, other_partition_info);
 }
 
 void NetworkServiceDevToolsObserver::OnRawResponse(
@@ -72,14 +73,15 @@ void NetworkServiceDevToolsObserver::OnRawResponse(
     std::vector<network::mojom::HttpRawHeaderPairPtr> response_headers,
     const absl::optional<std::string>& response_headers_text,
     network::mojom::IPAddressSpace resource_address_space,
-    int32_t http_status_code) {
+    int32_t http_status_code,
+    const absl::optional<net::CookiePartitionKey>& cookie_partition_key) {
   auto* host = GetDevToolsAgentHost();
   if (!host)
     return;
   DispatchToAgents(host, &protocol::NetworkHandler::OnResponseReceivedExtraInfo,
                    devtools_request_id, response_cookie_list, response_headers,
                    response_headers_text, resource_address_space,
-                   http_status_code);
+                   http_status_code, cookie_partition_key);
 }
 
 void NetworkServiceDevToolsObserver::OnTrustTokenOperationDone(
@@ -208,6 +210,21 @@ void NetworkServiceDevToolsObserver::OnCorsError(
     GetContentClient()->browser()->LogWebFeatureForCurrentPage(
         rfhi,
         blink::mojom::WebFeature::kPrivateNetworkAccessIgnoredPreflightError);
+
+    if (!initiator_origin.has_value() ||
+        !initiator_origin->IsSameOriginWith(url)) {
+      GetContentClient()->browser()->LogWebFeatureForCurrentPage(
+          rfhi, blink::mojom::WebFeature::
+                    kPrivateNetworkAccessIgnoredCrossOriginPreflightError);
+    }
+
+    if (!initiator_origin.has_value() ||
+        net::SchemefulSite(initiator_origin.value()) !=
+            net::SchemefulSite(url)) {
+      GetContentClient()->browser()->LogWebFeatureForCurrentPage(
+          rfhi, blink::mojom::WebFeature::
+                    kPrivateNetworkAccessIgnoredCrossSitePreflightError);
+    }
   }
 
   std::unique_ptr<protocol::Audits::AffectedRequest> affected_request =

@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,8 +16,9 @@ namespace blink {
 // static
 unsigned DocumentStyleEnvironmentVariables::GenerateHashFromName(
     const AtomicString& name) {
-  if (name.Is8Bit())
+  if (name.Is8Bit()) {
     return StringHasher::ComputeHash(name.Characters8(), name.length());
+  }
   return StringHasher::ComputeHash(name.Characters16(), name.length());
 }
 
@@ -39,8 +40,9 @@ CSSVariableData* DocumentStyleEnvironmentVariables::ResolveVariable(
     WTF::Vector<unsigned> indices,
     bool record_metrics) {
   unsigned id = GenerateHashFromName(name);
-  if (record_metrics)
+  if (record_metrics) {
     RecordVariableUsage(id);
+  }
 
   // Mark the variable as seen so we will invalidate the style if we change it.
   seen_variables_.insert(id);
@@ -63,8 +65,9 @@ void DocumentStyleEnvironmentVariables::InvalidateVariable(
   DCHECK(document_);
 
   // Invalidate the document if we have seen this variable on this document.
-  if (seen_variables_.Contains(GenerateHashFromName(name)))
+  if (seen_variables_.Contains(GenerateHashFromName(name))) {
     document_->GetStyleEngine().EnvironmentVariableChanged();
+  }
 
   StyleEnvironmentVariables::InvalidateVariable(name);
 }

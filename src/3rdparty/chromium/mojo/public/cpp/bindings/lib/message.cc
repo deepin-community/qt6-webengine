@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,16 +8,16 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-#include <algorithm>
 #include <atomic>
 #include <tuple>
 #include <utility>
 
-#include "base/bind.h"
 #include "base/check_op.h"
+#include "base/functional/bind.h"
 #include "base/lazy_instance.h"
 #include "base/memory/ptr_util.h"
 #include "base/numerics/safe_math.h"
+#include "base/ranges/algorithm.h"
 #include "base/threading/sequence_local_storage_slot.h"
 #include "base/trace_event/trace_event.h"
 #include "base/trace_event/trace_id_helper.h"
@@ -271,7 +271,7 @@ Message::Message(base::span<const uint8_t> payload,
 
   void* buffer;
   uint32_t buffer_size;
-  DCHECK(base::IsValueInRangeForNumericType<uint32_t>(payload.size()));
+  CHECK(base::IsValueInRangeForNumericType<uint32_t>(payload.size()));
   DCHECK(base::IsValueInRangeForNumericType<uint32_t>(handles.size()));
   MojoAppendMessageDataOptions options;
   options.struct_size = sizeof(options);
@@ -289,8 +289,7 @@ Message::Message(base::span<const uint8_t> payload,
     std::ignore = handle.release();
 
   payload_buffer_ = internal::Buffer(buffer, payload.size(), payload.size());
-  std::copy(payload.begin(), payload.end(),
-            static_cast<uint8_t*>(payload_buffer_.data()));
+  base::ranges::copy(payload, static_cast<uint8_t*>(payload_buffer_.data()));
   transferable_ = true;
   serialized_ = true;
 }
@@ -532,8 +531,7 @@ void Message::SerializeIfNecessary() {
 }
 
 std::unique_ptr<internal::UnserializedMessageContext>
-Message::TakeUnserializedContext(
-    const internal::UnserializedMessageContext::Tag* tag) {
+Message::TakeUnserializedContext(uintptr_t tag) {
   DCHECK(handle_.is_valid());
   uintptr_t context_value = 0;
   MojoResult rv =

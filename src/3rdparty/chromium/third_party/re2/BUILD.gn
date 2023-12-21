@@ -1,4 +1,4 @@
-# Copyright 2014 The Chromium Authors. All rights reserved.
+# Copyright 2014 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -15,6 +15,7 @@ config("re2_config") {
 
 static_library("bundled_re2") {
   sources = [
+    "src/re2/bitmap256.cc",
     "src/re2/bitmap256.h",
     "src/re2/bitstate.cc",
     "src/re2/compile.cc",

@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,6 +8,7 @@
 
 #include "base/win/scoped_safearray.h"
 #include "ui/accessibility/ax_node_position.h"
+#include "ui/accessibility/ax_selection.h"
 #include "ui/accessibility/platform/ax_platform_node_base.h"
 #include "ui/accessibility/platform/ax_platform_node_delegate.h"
 #include "ui/accessibility/platform/ax_platform_node_textrangeprovider_win.h"
@@ -64,7 +65,7 @@ HRESULT AXPlatformNodeTextProviderWin::GetSelection(SAFEARRAY** selection) {
   *selection = nullptr;
 
   AXPlatformNodeDelegate* delegate = owner()->GetDelegate();
-  ui::AXTree::Selection unignored_selection = delegate->GetUnignoredSelection();
+  AXSelection unignored_selection = delegate->GetUnignoredSelection();
 
   AXPlatformNode* anchor_object =
       delegate->GetFromNodeID(unignored_selection.anchor_object_id);
@@ -127,6 +128,17 @@ HRESULT AXPlatformNodeTextProviderWin::GetVisibleRanges(
   WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_TEXT_GETVISIBLERANGES);
   UIA_VALIDATE_TEXTPROVIDER_CALL();
 
+  // Whether we expose embedded object characters for nodes is managed by the
+  // |g_ax_embedded_object_behavior| global variable set in ax_node_position.cc.
+  // When on Windows, this variable is always set to kExposeCharacter... which
+  // is incorrect if we run UIA-specific code relating to computing text content
+  // of nodes that themselves do not have text, such as `<p>` elements. To avoid
+  // problems caused by that, we use the following
+  // ScopedAXEmbeddedObjectBehaviorSetter to modify the value of the global
+  // variable to what is really expected on UIA.
+
+  ScopedAXEmbeddedObjectBehaviorSetter ax_embedded_object_behavior(
+      AXEmbeddedObjectBehavior::kSuppressCharacter);
   const AXPlatformNodeDelegate* delegate = owner()->GetDelegate();
 
   // Get the Clipped Frame Bounds of the current node, not from the root,
@@ -146,7 +158,8 @@ HRESULT AXPlatformNodeTextProviderWin::GetVisibleRanges(
   auto current_line_start = start->Clone();
   while (!current_line_start->IsNullPosition() && *current_line_start < *end) {
     auto current_line_end = current_line_start->CreateNextLineEndPosition(
-        AXBoundaryBehavior::kCrossBoundary);
+        {AXBoundaryBehavior::kCrossBoundary,
+         AXBoundaryDetection::kDontCheckInitialPosition});
     if (current_line_end->IsNullPosition() || *current_line_end > *end)
       current_line_end = end->Clone();
 
@@ -163,7 +176,8 @@ HRESULT AXPlatformNodeTextProviderWin::GetVisibleRanges(
     }
 
     current_line_start = current_line_start->CreateNextLineStartPosition(
-        AXBoundaryBehavior::kCrossBoundary);
+        {AXBoundaryBehavior::kCrossBoundary,
+         AXBoundaryDetection::kDontCheckInitialPosition});
   }
 
   base::win::ScopedSafearray scoped_visible_ranges(

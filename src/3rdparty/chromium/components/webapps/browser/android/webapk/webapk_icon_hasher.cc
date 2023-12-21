@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,10 +7,10 @@
 #include <utility>
 
 #include "base/barrier_closure.h"
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/task/single_thread_task_runner.h"
 #include "content/public/browser/web_contents.h"
 #include "net/base/data_url.h"
 #include "net/base/network_isolation_key.h"
@@ -97,7 +97,7 @@ void WebApkIconHasher::DownloadAndComputeMurmur2HashWithTimeout(
     int timeout_ms,
     Murmur2HashCallback callback) {
   if (!icon_url.is_valid()) {
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(std::move(callback), Icon{}));
     return;
   }
@@ -110,7 +110,7 @@ void WebApkIconHasher::DownloadAndComputeMurmur2HashWithTimeout(
       icon.hash = ComputeMurmur2Hash(data);
       icon.unsafe_data = std::move(data);
     }
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(std::move(callback), std::move(icon)));
     return;
   }
@@ -167,10 +167,11 @@ void WebApkIconHasher::OnSimpleLoaderComplete(
     return;
   }
 
-  // If it's an SVG file, decode the image using Blink's image decoder.
+  // If it's an SVG or WEBP file, decode the image using Blink's image decoder.
   auto simple_url_loader = std::move(simple_url_loader_);
   if (simple_url_loader->ResponseInfo() &&
-      simple_url_loader->ResponseInfo()->mime_type == "image/svg+xml") {
+      (simple_url_loader->ResponseInfo()->mime_type == "image/svg+xml" ||
+       simple_url_loader->ResponseInfo()->mime_type == "image/webp")) {
     if (!web_contents) {
       RunCallback({});
       return;

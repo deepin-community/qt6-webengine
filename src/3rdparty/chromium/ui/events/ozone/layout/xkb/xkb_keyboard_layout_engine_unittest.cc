@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,6 +10,7 @@
 
 #include <tuple>
 
+#include "base/memory/raw_ptr.h"
 #include "build/chromeos_buildflags.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/events/event_constants.h"
@@ -98,7 +99,7 @@ class VkTestXkbKeyboardLayoutEngine : public XkbKeyboardLayoutEngine {
                                int flags,
                                char16_t character) const {
     KeyboardCode key_code = DifficultKeyboardCode(
-        dom_code, flags, key_code_converter_.DomCodeToXkbKeyCode(dom_code),
+        dom_code, flags, key_code_converter_->DomCodeToXkbKeyCode(dom_code),
         flags, CharacterToKeySym(character), character);
     if (key_code == VKEY_UNKNOWN) {
       DomKey dummy_dom_key;
@@ -146,8 +147,8 @@ class VkTestXkbKeyboardLayoutEngine : public XkbKeyboardLayoutEngine {
 
  private:
   EntryType entry_type_;
-  const PrintableEntry* printable_entry_;
-  const KeysymEntry* keysym_entry_;
+  raw_ptr<const PrintableEntry> printable_entry_;
+  raw_ptr<const KeysymEntry> keysym_entry_;
 };
 
 }  // anonymous namespace

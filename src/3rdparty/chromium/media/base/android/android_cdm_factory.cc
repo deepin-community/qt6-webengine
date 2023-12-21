@@ -1,16 +1,16 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "media/base/android/android_cdm_factory.h"
 
-#include "base/bind.h"
 #include "base/feature_list.h"
+#include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/task/bind_post_task.h"
 #include "media/base/android/media_drm_bridge.h"
-#include "media/base/bind_to_current_loop.h"
 #include "media/base/cdm_config.h"
 #include "media/base/content_decryption_module.h"
 #include "media/base/key_system_names.h"
@@ -52,7 +52,7 @@ void AndroidCdmFactory::Create(
 
   // Bound |cdm_created_cb| so we always fire it asynchronously.
   CdmCreatedCB bound_cdm_created_cb =
-      BindToCurrentLoop(std::move(cdm_created_cb));
+      base::BindPostTaskToCurrentDefault(std::move(cdm_created_cb));
 
   // Create AesDecryptor here to support External Clear Key key system.
   // This is used for testing.
@@ -99,7 +99,7 @@ void AndroidCdmFactory::OnCdmCreated(
     const std::string& error_message) {
   DVLOG(1) << __func__ << ": creation_id = " << creation_id;
 
-  DCHECK(pending_creations_.count(creation_id));
+  DCHECK(pending_creations_.contains(creation_id));
   CdmCreatedCB cdm_created_cb =
       std::move(pending_creations_[creation_id].second);
   pending_creations_.erase(creation_id);

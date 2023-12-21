@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -20,17 +20,18 @@
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/notreached.h"
+#include "build/build_config.h"
 #include "gpu/command_buffer/service/gl_utils.h"
 #include "gpu/command_buffer/service/feature_info.h"
 #include "gpu/command_buffer/service/memory_tracking.h"
 #include "gpu/command_buffer/service/sampler_manager.h"
-#include "gpu/command_buffer/service/shared_image_representation.h"
+#include "gpu/command_buffer/service/shared_image/shared_image_representation.h"
 #include "gpu/command_buffer/service/texture_base.h"
 #include "gpu/gpu_gles2_export.h"
 #include "ui/gfx/geometry/rect.h"
-#include "ui/gl/gl_image.h"
 
 namespace gl {
+class GLImage;
 class ProgressReporter;
 }
 
@@ -78,20 +79,22 @@ class GPU_GLES2_EXPORT TexturePassthrough final
   // native GL texture in the destructor
   void MarkContextLost();
 
+#if !BUILDFLAG(IS_ANDROID)
   void SetLevelImage(GLenum target, GLint level, gl::GLImage* image);
   gl::GLImage* GetLevelImage(GLenum target, GLint level) const;
+#endif
 
-  void SetStreamLevelImage(GLenum target,
-                           GLint level,
-                           gl::GLImage* stream_texture_image,
-                           GLuint service_id);
+#if BUILDFLAG(IS_ANDROID)
+  void BindToServiceId(GLuint service_id);
+#endif
 
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_APPLE)
   // Return true if and only if the decoder should BindTexImage / CopyTexImage
   // us before sampling.
   bool is_bind_pending() const { return is_bind_pending_; }
-  void set_is_bind_pending(bool is_bind_pending) {
-    is_bind_pending_ = is_bind_pending;
-  }
+  void set_bind_pending() { is_bind_pending_ = true; }
+  void clear_bind_pending() { is_bind_pending_ = false; }
+#endif
 
   void SetEstimatedSize(size_t size);
   size_t estimated_size() const { return estimated_size_; }
@@ -102,18 +105,21 @@ class GPU_GLES2_EXPORT TexturePassthrough final
  private:
   bool LevelInfoExists(GLenum target, GLint level, size_t* out_face_idx) const;
 
+#if !BUILDFLAG(IS_ANDROID)
   void SetLevelImageInternal(GLenum target,
                              GLint level,
                              gl::GLImage* image,
                              GLuint service_id);
-  void UpdateStreamTextureServiceId(GLenum target, GLint level);
+#endif
 
   friend class base::RefCounted<TexturePassthrough>;
 
   const GLuint owned_service_id_ = 0;
 
   bool have_context_;
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_APPLE)
   bool is_bind_pending_ = false;
+#endif
 
   size_t estimated_size_ = 0;
 
@@ -145,19 +151,17 @@ class GPU_GLES2_EXPORT TexturePassthrough final
 class GPU_GLES2_EXPORT Texture final : public TextureBase {
  public:
   enum ImageState {
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_APPLE)
     // If an image is associated with the texture and image state is UNBOUND,
     // then sampling out of the texture or using it as a target for drawing
     // will not read/write from/to the image.
     UNBOUND,
+#endif
     // If image state is BOUND, then sampling from the texture will return the
     // contents of the image and using it as a target will modify the image.
     BOUND,
-    // Image state is set to COPIED if the contents of the image has been
-    // copied to the texture. Sampling from the texture will be equivalent
-    // to sampling out the image (assuming image has not been changed since
-    // it was copied). Using the texture as a target for drawing will only
-    // modify the texture and not the image.
-    COPIED
+    // State when there is no image present.
+    NOIMAGE,
   };
 
   struct CompatibilitySwizzle {
@@ -185,9 +189,15 @@ class GPU_GLES2_EXPORT Texture final : public TextureBase {
     GLenum format = 0;
     GLenum type = 0;
     scoped_refptr<gl::GLImage> image;
-    ImageState image_state = UNBOUND;
     uint32_t estimated_size = 0;
     bool internal_workaround = false;
+
+   private:
+    friend class Texture;
+
+    // Nothing outside of Texture should directly access the binding state of
+    // the image; clients can use Texture::HasUnboundLevelImage().
+    ImageState image_state = NOIMAGE;
   };
 
   explicit Texture(GLuint service_id);
@@ -301,27 +311,35 @@ class GPU_GLES2_EXPORT Texture final : public TextureBase {
   bool GetLevelType(
       GLint target, GLint level, GLenum* type, GLenum* internal_format) const;
 
-  // Set the image for a particular level. If a GLImage was previously set with
-  // SetLevelStreamTextureImage(), this will reset |service_id_| back to
-  // |owned_service_id_|, removing the service id override set by the
-  // SetLevelStreamTextureImage.
-  void SetLevelImage(GLenum target,
-                     GLint level,
-                     gl::GLImage* image,
-                     ImageState state);
+  // Set an image that has already been bound for a particular level. If a
+  // GLImage was previously set with BindToServiceId(), this will reset
+  // |service_id_| back to |owned_service_id_|, removing the service id override
+  // set by the BindToServiceId.
+  void SetBoundLevelImage(GLenum target, GLint level, gl::GLImage* image);
 
-  // Set the GLImage for a particular level.  This is like SetLevelImage, but it
-  // also makes it optional to override |service_id_| with a texture bound to
-  // the stream texture. See SetStreamTextureServiceId() for the details of how
-  // |service_id| is used.
-  void SetLevelStreamTextureImage(GLenum target,
-                                  GLint level,
-                                  gl::GLImage* image,
-                                  ImageState state,
-                                  GLuint service_id);
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_APPLE)
+  // Set an image that needs binding for a particular level. If a
+  // GLImage was previously set with BindToServiceId(), this will reset
+  // |service_id_| back to |owned_service_id_|, removing the service id
+  // override set by the BindToServiceId.
+  void SetUnboundLevelImage(GLenum target, GLint level, gl::GLImage* image);
+#endif
 
-  // Set the ImageState for the image bound to the given level.
-  void SetLevelImageState(GLenum target, GLint level, ImageState state);
+  // Unset the image for a particular level. After this call, GetLevelImage()
+  // will return nullptr.
+  void UnsetLevelImage(GLenum target, GLint level);
+
+#if BUILDFLAG(IS_ANDROID)
+  // Overrides |service_id_| with a texture bound to
+  // the stream texture. See SetStreamTextureServiceId() for the details of
+  // how |service_id| is used.
+  void BindToServiceId(GLuint service_id);
+#endif
+
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
+  // Marks the image for the given level as bound.
+  void MarkLevelImageBound(GLenum target, GLint level);
+#endif
 
   bool CompatibleWithSamplerUniformType(
       GLenum type,
@@ -329,10 +347,13 @@ class GPU_GLES2_EXPORT Texture final : public TextureBase {
 
   // Get the image associated with a particular level. Returns NULL if level
   // does not exist.
-  gl::GLImage* GetLevelImage(GLint target,
-                             GLint level,
-                             ImageState* state) const;
   gl::GLImage* GetLevelImage(GLint target, GLint level) const;
+
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
+  // Returns true iff (a) there is an image associated with the particular
+  // level, and (b) the image is unbound.
+  bool HasUnboundLevelImage(GLint target, GLint level) const;
+#endif
 
   bool HasImages() const {
     return has_images_;
@@ -411,8 +432,6 @@ class GPU_GLES2_EXPORT Texture final : public TextureBase {
                        const std::string& dump_name) const;
 
   void ApplyFormatWorkarounds(const FeatureInfo* feature_info);
-
-  bool EmulatingRGB();
 
   // In GLES2 "texture complete" means it has all required mips for filtering
   // down to a 1x1 pixel texture, they are in the correct order, they are all
@@ -510,7 +529,7 @@ class GPU_GLES2_EXPORT Texture final : public TextureBase {
     std::vector<LevelInfo> level_infos;
   };
 
-  // Helper for SetLevel*Image.
+  // Helper for Set*LevelImage.
   void SetLevelImageInternal(GLenum target,
                              GLint level,
                              gl::GLImage* image,
@@ -631,10 +650,6 @@ class GPU_GLES2_EXPORT Texture final : public TextureBase {
   // texture.
   void UpdateHasImages();
 
-  // Updates the flag that indicates whether this texture requires RGB
-  // emulation.
-  void UpdateEmulatingRGB();
-
   // Increment the framebuffer state change count in all the managers
   // referencing this texture.
   void IncAllFramebufferStateChangeCount();
@@ -739,8 +754,6 @@ class GPU_GLES2_EXPORT Texture final : public TextureBase {
   bool texture_max_anisotropy_initialized_ = false;
 
   raw_ptr<const CompatibilitySwizzle> compatibility_swizzle_ = nullptr;
-
-  bool emulating_rgb_ = false;
 };
 
 // This class represents a texture in a client context group. It's mostly 1:1
@@ -764,16 +777,16 @@ class GPU_GLES2_EXPORT TextureRef : public base::RefCounted<TextureRef> {
   // TODO(ericrk): Remove this once the Texture itself is generated from and
   // owns the SharedImageRepresentation.
   void SetSharedImageRepresentation(
-      std::unique_ptr<SharedImageRepresentationGLTexture> shared_image);
+      std::unique_ptr<GLTextureImageRepresentation> shared_image);
   const Texture* texture() const { return texture_; }
   Texture* texture() { return texture_; }
   GLuint client_id() const { return client_id_; }
   GLuint service_id() const { return texture_->service_id(); }
   GLint num_observers() const { return num_observers_; }
-  SharedImageRepresentationGLTexture* shared_image() const {
+  GLTextureImageRepresentation* shared_image() const {
     return shared_image_.get();
   }
-  const std::unique_ptr<SharedImageRepresentationGLTexture::ScopedAccess>&
+  const std::unique_ptr<GLTextureImageRepresentation::ScopedAccess>&
   shared_image_scoped_access() const {
     return shared_image_scoped_access_;
   }
@@ -796,13 +809,13 @@ class GPU_GLES2_EXPORT TextureRef : public base::RefCounted<TextureRef> {
   void reset_client_id() { client_id_ = 0; }
 
   raw_ptr<TextureManager> manager_;
-  raw_ptr<Texture> texture_;
+  raw_ptr<Texture, DanglingUntriaged> texture_;
   GLuint client_id_;
   GLint num_observers_;
   bool force_context_lost_;
 
-  std::unique_ptr<SharedImageRepresentationGLTexture> shared_image_;
-  std::unique_ptr<SharedImageRepresentationGLTexture::ScopedAccess>
+  std::unique_ptr<GLTextureImageRepresentation> shared_image_;
+  std::unique_ptr<GLTextureImageRepresentation::ScopedAccess>
       shared_image_scoped_access_;
 };
 
@@ -989,7 +1002,7 @@ class GPU_GLES2_EXPORT TextureManager
   // ID.
   TextureRef* ConsumeSharedImage(
       GLuint client_id,
-      std::unique_ptr<SharedImageRepresentationGLTexture> shared_image);
+      std::unique_ptr<GLTextureImageRepresentation> shared_image);
 
   // Sets |rect| of mip as cleared.
   void SetLevelClearedRect(TextureRef* ref,
@@ -1107,23 +1120,19 @@ class GPU_GLES2_EXPORT TextureManager
     return memory_type_tracker_->GetMemRepresented();
   }
 
-  void SetLevelImage(TextureRef* ref,
-                     GLenum target,
-                     GLint level,
-                     gl::GLImage* image,
-                     Texture::ImageState state);
-
-  void SetLevelStreamTextureImage(TextureRef* ref,
-                                  GLenum target,
-                                  GLint level,
-                                  gl::GLImage* image,
-                                  Texture::ImageState state,
-                                  GLuint service_id);
-
-  void SetLevelImageState(TextureRef* ref,
+  void SetBoundLevelImage(TextureRef* ref,
                           GLenum target,
                           GLint level,
-                          Texture::ImageState state);
+                          gl::GLImage* image);
+
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_APPLE)
+  void SetUnboundLevelImage(TextureRef* ref,
+                            GLenum target,
+                            GLint level,
+                            gl::GLImage* image);
+#endif
+
+  void UnsetLevelImage(TextureRef* ref, GLenum target, GLint level);
 
   size_t GetSignatureSize() const;
 
@@ -1163,7 +1172,8 @@ class GPU_GLES2_EXPORT TextureManager
     GLint border;
     GLenum format;
     GLenum type;
-    const void* pixels;
+    // `pixels` is not a raw_ptr<...> to avoid adding an out-of-line destructor.
+    RAW_PTR_EXCLUSION const void* pixels;
     uint32_t pixels_size;
     uint32_t padding;
     CommandType command_type;
@@ -1200,7 +1210,8 @@ class GPU_GLES2_EXPORT TextureManager
     GLsizei depth;
     GLenum format;
     GLenum type;
-    const void* pixels;
+    // `pixels` is not a raw_ptr<...> to avoid adding an out-of-line destructor.
+    RAW_PTR_EXCLUSION const void* pixels;
     uint32_t pixels_size;
     uint32_t padding;
     CommandType command_type;

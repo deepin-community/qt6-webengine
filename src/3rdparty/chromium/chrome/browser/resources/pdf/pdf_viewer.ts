@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,14 +10,14 @@ import './elements/viewer-password-dialog.js';
 import './elements/viewer-pdf-sidenav.js';
 import './elements/viewer-properties-dialog.js';
 import './elements/viewer-toolbar.js';
-import './elements/shared-vars.js';
-import './pdf_viewer_shared_style.js';
-import 'chrome://resources/cr_elements/hidden_style_css.m.js';
-import 'chrome://resources/cr_elements/shared_vars_css.m.js';
+import './elements/shared-vars.css.js';
+import './pdf_viewer_shared_style.css.js';
+import 'chrome://resources/cr_elements/cr_hidden_style.css.js';
+import 'chrome://resources/cr_elements/cr_shared_vars.css.js';
 
 import {assert, assertNotReached} from 'chrome://resources/js/assert_ts.js';
-import {loadTimeData} from 'chrome://resources/js/load_time_data.m.js';
-import {listenOnce} from 'chrome://resources/js/util.m.js';
+import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
+import {listenOnce} from 'chrome://resources/js/util_ts.js';
 
 import {Bookmark} from './bookmark_type.js';
 import {BrowserApi} from './browser_api.js';
@@ -26,7 +26,7 @@ import {MessageData, PluginController} from './controller.js';
 // <if expr="enable_ink">
 import {ContentController} from './controller.js';
 // </if>
-import {ChangePageAndXyDetail, ChangePageDetail, NavigateDetail} from './elements/viewer-bookmark.js';
+import {ChangePageAndXyDetail, ChangePageDetail, ChangePageOrigin, NavigateDetail} from './elements/viewer-bookmark.js';
 import {ViewerErrorDialogElement} from './elements/viewer-error-dialog.js';
 import {ViewerPasswordDialogElement} from './elements/viewer-password-dialog.js';
 import {ViewerPdfSidenavElement} from './elements/viewer-pdf-sidenav.js';
@@ -37,30 +37,30 @@ import {InkController, InkControllerEventType} from './ink_controller.js';
 import {LocalStorageProxyImpl} from './local_storage_proxy.js';
 import {record, UserAction} from './metrics.js';
 import {NavigatorDelegateImpl, PdfNavigator, WindowOpenDisposition} from './navigator.js';
-import {DeserializeKeyEvent, LoadState} from './pdf_scripting_api.js';
+import {deserializeKeyEvent, LoadState} from './pdf_scripting_api.js';
 import {getTemplate} from './pdf_viewer.html.js';
-import {KeyEventData, PDFViewerBaseElement} from './pdf_viewer_base.js';
+import {KeyEventData, PdfViewerBaseElement} from './pdf_viewer_base.js';
 import {DestinationMessageData, DocumentDimensionsMessageData, hasCtrlModifier, shouldIgnoreKeyEvents} from './pdf_viewer_utils.js';
 
-type EmailMessageData = {
-  type: string,
-  to: string,
-  cc: string,
-  bcc: string,
-  subject: string,
-  body: string,
-};
+interface EmailMessageData {
+  type: string;
+  to: string;
+  cc: string;
+  bcc: string;
+  subject: string;
+  body: string;
+}
 
-type NavigateMessageData = {
-  type: string,
-  url: string,
-  disposition: WindowOpenDisposition,
-};
+interface NavigateMessageData {
+  type: string;
+  url: string;
+  disposition: WindowOpenDisposition;
+}
 
-type ZoomBounds = {
-  min: number,
-  max: number,
-};
+interface ZoomBounds {
+  min: number;
+  max: number;
+}
 
 /**
  * Return the filename component of a URL, percent decoded if possible.
@@ -95,7 +95,7 @@ const LOCAL_STORAGE_SIDENAV_COLLAPSED_KEY: string = 'sidenavCollapsed';
  */
 const BACKGROUND_COLOR: number = 0xff525659;
 
-export interface PDFViewerElement {
+export interface PdfViewerElement {
   $: {
     content: HTMLElement,
     scroller: HTMLElement,
@@ -104,7 +104,7 @@ export interface PDFViewerElement {
   };
 }
 
-export class PDFViewerElement extends PDFViewerBaseElement {
+export class PdfViewerElement extends PdfViewerBaseElement {
   static get is() {
     return 'pdf-viewer';
   }
@@ -193,6 +193,13 @@ export class PDFViewerElement extends PDFViewerBaseElement {
         value: false,
       },
 
+      // <if expr="enable_screen_ai_service">
+      pdfOcrEnabled_: {
+        type: Boolean,
+        value: false,
+      },
+      // </if>
+
       printingEnabled_: {
         type: Boolean,
         value: false,
@@ -251,6 +258,9 @@ export class PDFViewerElement extends PDFViewerBaseElement {
   private navigator_: PdfNavigator|null = null;
   private pageNo_: number;
   private pdfAnnotationsEnabled_: boolean;
+  // <if expr="enable_screen_ai_service">
+  private pdfOcrEnabled_: boolean;
+  // </if>
   private pluginController_: PluginController|null = null;
   private printingEnabled_: boolean;
   private showPasswordDialog_: boolean;
@@ -287,6 +297,10 @@ export class PDFViewerElement extends PDFViewerBaseElement {
     return BACKGROUND_COLOR;
   }
 
+  setPluginSrc(plugin: HTMLEmbedElement) {
+    plugin.src = this.browserApi!.getStreamInfo().streamUrl;
+  }
+
   init(browserApi: BrowserApi) {
     this.initInternal(
         browserApi, this.$.scroller, this.$.sizer, this.$.content);
@@ -311,6 +325,9 @@ export class PDFViewerElement extends PDFViewerBaseElement {
     if (this.toolbarEnabled_) {
       this.$.toolbar.hidden = false;
     }
+    const showSidenav = this.paramsParser.shouldShowSidenav(
+        this.originalUrl, this.sidenavCollapsed_);
+    this.sidenavCollapsed_ = !showSidenav;
 
     this.navigator_ = new PdfNavigator(
         this.originalUrl, this.viewport, this.paramsParser,
@@ -449,6 +466,7 @@ export class PDFViewerElement extends PDFViewerBaseElement {
       const result =
           await this.pluginController_!.save(SaveRequestType.ANNOTATION);
       // Data always exists when save is called with requestType = ANNOTATION.
+      assert(result);
 
       record(UserAction.ENTER_ANNOTATION_MODE);
       this.annotationMode_ = true;
@@ -484,7 +502,7 @@ export class PDFViewerElement extends PDFViewerBaseElement {
   }
 
   /** Exits annotation mode if active. */
-  async exitAnnotationMode_(): Promise<void> {
+  private async exitAnnotationMode_(): Promise<void> {
     if (!this.$.toolbar.annotationMode) {
       return;
     }
@@ -500,37 +518,52 @@ export class PDFViewerElement extends PDFViewerBaseElement {
     this.currentController.setDisplayAnnotations(e.detail);
   }
 
-  private onPresentClick_() {
+  private async enterPresentationMode_(): Promise<void> {
     const scroller = this.$.scroller;
 
-    Promise
-        .all([
-          eventToPromise('fullscreenchange', scroller),
-          scroller.requestFullscreen(),
-        ])
-        .then(() => {
-          this.forceFit(FittingType.FIT_TO_HEIGHT);
+    this.viewport.saveZoomState();
 
-          // Switch viewport's wheel behavior.
-          this.viewport.setPresentationMode(true);
+    await Promise.all([
+      eventToPromise('fullscreenchange', scroller),
+      scroller.requestFullscreen(),
+    ]);
 
-          // Restrict the content to read only (e.g. disable forms and links).
-          this.pluginController_!.setReadOnly(true);
+    this.forceFit(FittingType.FIT_TO_HEIGHT);
 
-          // Revert back to the normal state when exiting Presentation mode.
-          eventToPromise('fullscreenchange', scroller).then(() => {
-            assert(document.fullscreenElement === null);
-            this.viewport.setPresentationMode(false);
-            this.pluginController_!.setReadOnly(false);
+    // Switch viewport's wheel behavior.
+    this.viewport.setPresentationMode(true);
 
-            // Ensure that directional keys still work after exiting.
-            this.shadowRoot!.querySelector('embed')!.focus();
-          });
+    // Set presentation mode, which restricts the content to read only
+    // (e.g. disable forms and links).
+    this.pluginController_!.setPresentationMode(true);
 
-          // Nothing else to do here. The viewport will be updated as a result
-          // of a 'resize' event callback.
-        });
+    // Nothing else to do here. The viewport will be updated as a result
+    // of a 'resize' event callback.
   }
+
+  private exitPresentationMode_(): void {
+    // Revert back to the normal state when exiting Presentation mode.
+    assert(document.fullscreenElement === null);
+    this.viewport.setPresentationMode(false);
+    this.pluginController_!.setPresentationMode(false);
+
+    // Ensure that directional keys still work after exiting.
+    this.shadowRoot!.querySelector('embed')!.focus();
+
+    // Set zoom back to original zoom before presentation mode.
+    this.viewport.restoreZoomState();
+  }
+
+  private async onPresentClick_() {
+    await this.enterPresentationMode_();
+
+    // When fullscreen changes, it means that the user exited Presentation
+    // mode.
+    await eventToPromise('fullscreenchange', this.$.scroller);
+
+    this.exitPresentationMode_();
+  }
+
 
   private onPropertiesClick_() {
     assert(!this.showPropertiesDialog_);
@@ -563,9 +596,10 @@ export class PDFViewerElement extends PDFViewerBaseElement {
    * @param message Message received from the plugin containing the x and y to
    *     navigate to in screen coordinates.
    */
-  private goToPageAndXY_(origin: string, page: number, message: Point) {
-    this.viewport.goToPageAndXY(page, message.x, message.y);
-    if (origin === 'bookmark') {
+  private goToPageAndXy_(
+      origin: ChangePageOrigin, page: number, message: Point) {
+    this.viewport.goToPageAndXy(page, message.x, message.y);
+    if (origin === ChangePageOrigin.BOOKMARK) {
       record(UserAction.FOLLOW_BOOKMARK);
     }
   }
@@ -625,7 +659,7 @@ export class PDFViewerElement extends PDFViewerBaseElement {
     this.pluginController_!.getPasswordComplete(event.detail.password);
   }
 
-  updateUIForViewportChange() {
+  updateUiForViewportChange() {
     // Update toolbar elements.
     this.clockwiseRotations_ = this.viewport.getClockwiseRotations();
     this.pageNo_ = this.viewport.getMostVisiblePage() + 1;
@@ -640,6 +674,9 @@ export class PDFViewerElement extends PDFViewerBaseElement {
 
     this.pdfAnnotationsEnabled_ =
         loadTimeData.getBoolean('pdfAnnotationsEnabled');
+    // <if expr="enable_screen_ai_service">
+    this.pdfOcrEnabled_ = loadTimeData.getBoolean('pdfOcrEnabled');
+    // </if>
     this.printingEnabled_ = loadTimeData.getBoolean('printingEnabled');
     const presetZoomFactors = this.viewport.presetZoomFactors;
     this.zoomBounds_.min = Math.round(presetZoomFactors[0] * 100);
@@ -749,7 +786,7 @@ export class PDFViewerElement extends PDFViewerBaseElement {
       case 'sendKeyEvent':
         const keyEventData = data as unknown as KeyEventData;
         const keyEvent =
-            DeserializeKeyEvent(keyEventData.keyEvent) as ExtendedKeyEvent;
+            deserializeKeyEvent(keyEventData.keyEvent) as ExtendedKeyEvent;
         keyEvent.fromPlugin = true;
         this.handleKeyEvent(keyEvent);
         return;
@@ -844,7 +881,7 @@ export class PDFViewerElement extends PDFViewerBaseElement {
       const result = await this.currentController.saveAttachment(index);
 
       // Cap the PDF attachment size at 100 MB. This cap should be kept in sync
-      // with and is also enforced in pdf/pdf_view_plugin_base.h.
+      // with and is also enforced in pdf/pdf_view_web_plugin.h.
       const MAX_FILE_SIZE = 100 * 1000 * 1000;
       const bufView = new Uint8Array(result.dataToSave);
       assert(
@@ -908,18 +945,18 @@ export class PDFViewerElement extends PDFViewerBaseElement {
 
   private onChangePage_(e: CustomEvent<ChangePageDetail>) {
     this.viewport.goToPage(e.detail.page);
-    if (e.detail.origin === 'bookmark') {
+    if (e.detail.origin === ChangePageOrigin.BOOKMARK) {
       record(UserAction.FOLLOW_BOOKMARK);
-    } else if (e.detail.origin === 'pageSelector') {
+    } else if (e.detail.origin === ChangePageOrigin.PAGE_SELECTOR) {
       record(UserAction.PAGE_SELECTOR_NAVIGATE);
-    } else if (e.detail.origin === 'thumbnail') {
+    } else if (e.detail.origin === ChangePageOrigin.THUMBNAIL) {
       record(UserAction.THUMBNAIL_NAVIGATE);
     }
   }
 
   private onChangePageAndXy_(e: CustomEvent<ChangePageAndXyDetail>) {
     const point = this.viewport.convertPageToScreen(e.detail.page, e.detail);
-    this.goToPageAndXY_(e.detail.origin, e.detail.page, point);
+    this.goToPageAndXy_(e.detail.origin, e.detail.page, point);
   }
 
   private onNavigate_(e: CustomEvent<NavigateDetail>) {
@@ -991,7 +1028,7 @@ export class PDFViewerElement extends PDFViewerBaseElement {
         {
           type: 'saveFile',
           accepts: [{description: '*.pdf', extensions: ['pdf']}],
-          suggestedName: fileName
+          suggestedName: fileName,
         },
         (entry?: FileSystemFileEntry) => {
           if (chrome.runtime.lastError) {
@@ -1068,8 +1105,8 @@ export class PDFViewerElement extends PDFViewerBaseElement {
 
 declare global {
   interface HTMLElementTagNameMap {
-    'pdf-viewer': PDFViewerElement;
+    'pdf-viewer': PdfViewerElement;
   }
 }
 
-customElements.define(PDFViewerElement.is, PDFViewerElement);
+customElements.define(PdfViewerElement.is, PdfViewerElement);

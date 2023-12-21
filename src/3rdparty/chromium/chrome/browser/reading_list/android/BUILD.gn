@@ -1,4 +1,4 @@
-# Copyright 2020 The Chromium Authors. All rights reserved.
+# Copyright 2020 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -12,8 +12,6 @@ group("android") {
 
 source_set("reading_list") {
   sources = [
-    "empty_reading_list_manager.cc",
-    "empty_reading_list_manager.h",
     "reading_list_manager.h",
     "reading_list_manager_impl.cc",
     "reading_list_manager_impl.h",
@@ -52,9 +50,10 @@ source_set("unit_tests") {
     "//chrome/browser/notifications/scheduler/test:test_support",
     "//components/bookmarks/browser",
     "//components/reading_list/core:core",
+    "//components/reading_list/core:test_support",
     "//components/reading_list/features:flags",
     "//components/sync",
-    "//components/sync:test_support_model",
+    "//components/sync:test_support",
     "//skia",
     "//testing/gmock",
     "//testing/gtest",

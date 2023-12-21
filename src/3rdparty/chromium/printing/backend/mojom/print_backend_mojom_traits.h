@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,6 +12,7 @@
 #include "printing/backend/mojom/print_backend.mojom-shared.h"
 #include "printing/backend/print_backend.h"
 #include "printing/mojom/print.mojom.h"
+#include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
 
 namespace mojo {
@@ -58,6 +59,10 @@ struct StructTraits<printing::mojom::PaperDataView,
   static const gfx::Size& size_um(
       const printing::PrinterSemanticCapsAndDefaults::Paper& p) {
     return p.size_um;
+  }
+  static const gfx::Rect& printable_area_um(
+      const printing::PrinterSemanticCapsAndDefaults::Paper& p) {
+    return p.printable_area_um;
   }
 
   static bool Read(printing::mojom::PaperDataView data,
@@ -116,6 +121,42 @@ struct StructTraits<printing::mojom::AdvancedCapabilityDataView,
                    ::printing::AdvancedCapability* out);
 };
 #endif  // BUILDFLAG(IS_CHROMEOS)
+
+#if BUILDFLAG(IS_WIN)
+template <>
+struct StructTraits<printing::mojom::PageOutputQualityAttributeDataView,
+                    ::printing::PageOutputQualityAttribute> {
+  static const std::string& display_name(
+      const ::printing::PageOutputQualityAttribute& p) {
+    return p.display_name;
+  }
+
+  static const std::string& name(
+      const ::printing::PageOutputQualityAttribute& p) {
+    return p.name;
+  }
+
+  static bool Read(printing::mojom::PageOutputQualityAttributeDataView data,
+                   printing::PageOutputQualityAttribute* out);
+};
+
+template <>
+struct StructTraits<printing::mojom::PageOutputQualityDataView,
+                    printing::PageOutputQuality> {
+  static const std::vector<::printing::PageOutputQualityAttribute>& qualities(
+      const ::printing::PageOutputQuality& p) {
+    return p.qualities;
+  }
+
+  static const absl::optional<std::string>& default_quality(
+      const ::printing::PageOutputQuality& p) {
+    return p.default_quality;
+  }
+
+  static bool Read(printing::mojom::PageOutputQualityDataView data,
+                   printing::PageOutputQuality* out);
+};
+#endif  // BUILDFLAG(IS_WIN)
 
 template <>
 struct StructTraits<printing::mojom::PrinterSemanticCapsAndDefaultsDataView,
@@ -184,6 +225,13 @@ struct StructTraits<printing::mojom::PrinterSemanticCapsAndDefaultsDataView,
     return p.advanced_capabilities;
   }
 #endif  // BUILDFLAG(IS_CHROMEOS)
+
+#if BUILDFLAG(IS_WIN)
+  static const absl::optional<printing::PageOutputQuality>& page_output_quality(
+      const printing::PrinterSemanticCapsAndDefaults& p) {
+    return p.page_output_quality;
+  }
+#endif  // BUILDFLAG(IS_WIN)
 
   static bool Read(printing::mojom::PrinterSemanticCapsAndDefaultsDataView data,
                    printing::PrinterSemanticCapsAndDefaults* out);

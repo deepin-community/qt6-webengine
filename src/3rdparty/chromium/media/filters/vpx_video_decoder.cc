@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,15 +11,15 @@
 #include <string>
 #include <vector>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/feature_list.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/sys_byteorder.h"
+#include "base/task/bind_post_task.h"
 #include "base/trace_event/trace_event.h"
-#include "media/base/bind_to_current_loop.h"
 #include "media/base/decoder_buffer.h"
 #include "media/base/limits.h"
 #include "media/base/media_switches.h"
@@ -143,8 +143,9 @@ void VpxVideoDecoder::Initialize(const VideoDecoderConfig& config,
 
   CloseDecoder();
 
-  InitCB bound_init_cb = bind_callbacks_ ? BindToCurrentLoop(std::move(init_cb))
-                                         : std::move(init_cb);
+  InitCB bound_init_cb =
+      bind_callbacks_ ? base::BindPostTaskToCurrentDefault(std::move(init_cb))
+                      : std::move(init_cb);
   if (config.is_encrypted()) {
     std::move(bound_init_cb)
         .Run(DecoderStatus::Codes::kUnsupportedEncryptionMode);
@@ -172,9 +173,9 @@ void VpxVideoDecoder::Decode(scoped_refptr<DecoderBuffer> buffer,
   DCHECK_NE(state_, DecoderState::kUninitialized)
       << "Called Decode() before successful Initialize()";
 
-  DecodeCB bound_decode_cb = bind_callbacks_
-                                 ? BindToCurrentLoop(std::move(decode_cb))
-                                 : std::move(decode_cb);
+  DecodeCB bound_decode_cb =
+      bind_callbacks_ ? base::BindPostTaskToCurrentDefault(std::move(decode_cb))
+                      : std::move(decode_cb);
 
   if (state_ == DecoderState::kError) {
     std::move(bound_decode_cb).Run(DecoderStatus::Codes::kFailed);
@@ -215,7 +216,7 @@ void VpxVideoDecoder::Reset(base::OnceClosure reset_cb) {
   state_ = DecoderState::kNormal;
 
   if (bind_callbacks_)
-    BindToCurrentLoop(std::move(reset_cb)).Run();
+    base::BindPostTaskToCurrentDefault(std::move(reset_cb)).Run();
   else
     std::move(reset_cb).Run();
 
@@ -349,12 +350,13 @@ bool VpxVideoDecoder::VpxDecode(const DecoderBuffer* buffer,
     return false;
 
   if (vpx_image_alpha && config_.codec() == VideoCodec::kVP8) {
-    libyuv::CopyPlane(vpx_image_alpha->planes[VPX_PLANE_Y],
-                      vpx_image_alpha->stride[VPX_PLANE_Y],
-                      (*video_frame)->visible_data(VideoFrame::kAPlane),
-                      (*video_frame)->stride(VideoFrame::kAPlane),
-                      (*video_frame)->visible_rect().width(),
-                      (*video_frame)->visible_rect().height());
+    libyuv::CopyPlane(
+        vpx_image_alpha->planes[VPX_PLANE_Y],
+        vpx_image_alpha->stride[VPX_PLANE_Y],
+        (*video_frame)->GetWritableVisibleData(VideoFrame::kAPlane),
+        (*video_frame)->stride(VideoFrame::kAPlane),
+        (*video_frame)->visible_rect().width(),
+        (*video_frame)->visible_rect().height());
   }
 
   (*video_frame)->set_timestamp(buffer->timestamp());
@@ -368,9 +370,9 @@ bool VpxVideoDecoder::VpxDecode(const DecoderBuffer* buffer,
     return true;
   }
 
-  auto primaries = gfx::ColorSpace::PrimaryID::INVALID;
-  auto transfer = gfx::ColorSpace::TransferID::INVALID;
-  auto matrix = gfx::ColorSpace::MatrixID::INVALID;
+  auto primaries = VideoColorSpace::PrimaryID::UNSPECIFIED;
+  auto transfer = VideoColorSpace::TransferID::UNSPECIFIED;
+  auto matrix = VideoColorSpace::MatrixID::UNSPECIFIED;
   auto range = vpx_image->range == VPX_CR_FULL_RANGE
                    ? gfx::ColorSpace::RangeID::FULL
                    : gfx::ColorSpace::RangeID::LIMITED;
@@ -378,45 +380,42 @@ bool VpxVideoDecoder::VpxDecode(const DecoderBuffer* buffer,
   switch (vpx_image->cs) {
     case VPX_CS_BT_601:
     case VPX_CS_SMPTE_170:
-      primaries = gfx::ColorSpace::PrimaryID::SMPTE170M;
-      transfer = gfx::ColorSpace::TransferID::SMPTE170M;
-      matrix = gfx::ColorSpace::MatrixID::SMPTE170M;
+      primaries = VideoColorSpace::PrimaryID::SMPTE170M;
+      transfer = VideoColorSpace::TransferID::SMPTE170M;
+      matrix = VideoColorSpace::MatrixID::SMPTE170M;
       break;
     case VPX_CS_SMPTE_240:
-      primaries = gfx::ColorSpace::PrimaryID::SMPTE240M;
-      transfer = gfx::ColorSpace::TransferID::SMPTE240M;
-      matrix = gfx::ColorSpace::MatrixID::SMPTE240M;
+      primaries = VideoColorSpace::PrimaryID::SMPTE240M;
+      transfer = VideoColorSpace::TransferID::SMPTE240M;
+      matrix = VideoColorSpace::MatrixID::SMPTE240M;
       break;
     case VPX_CS_BT_709:
-      primaries = gfx::ColorSpace::PrimaryID::BT709;
-      transfer = gfx::ColorSpace::TransferID::BT709;
-      matrix = gfx::ColorSpace::MatrixID::BT709;
+      primaries = VideoColorSpace::PrimaryID::BT709;
+      transfer = VideoColorSpace::TransferID::BT709;
+      matrix = VideoColorSpace::MatrixID::BT709;
       break;
     case VPX_CS_BT_2020:
-      primaries = gfx::ColorSpace::PrimaryID::BT2020;
+      primaries = VideoColorSpace::PrimaryID::BT2020;
       if (vpx_image->bit_depth >= 12)
-        transfer = gfx::ColorSpace::TransferID::BT2020_12;
+        transfer = VideoColorSpace::TransferID::BT2020_12;
       else if (vpx_image->bit_depth >= 10)
-        transfer = gfx::ColorSpace::TransferID::BT2020_10;
+        transfer = VideoColorSpace::TransferID::BT2020_10;
       else
-        transfer = gfx::ColorSpace::TransferID::BT709;
-      matrix = gfx::ColorSpace::MatrixID::BT2020_NCL;  // is this right?
+        transfer = VideoColorSpace::TransferID::BT709;
+      matrix = VideoColorSpace::MatrixID::BT2020_NCL;
       break;
     case VPX_CS_SRGB:
-      primaries = gfx::ColorSpace::PrimaryID::BT709;
-      transfer = gfx::ColorSpace::TransferID::SRGB;
-      matrix = gfx::ColorSpace::MatrixID::GBR;
+      primaries = VideoColorSpace::PrimaryID::BT709;
+      transfer = VideoColorSpace::TransferID::IEC61966_2_1;
+      matrix = VideoColorSpace::MatrixID::RGB;
       break;
     default:
       break;
   }
 
-  // TODO(ccameron): Set a color space even for unspecified values.
-  if (primaries != gfx::ColorSpace::PrimaryID::INVALID) {
-    (*video_frame)
-        ->set_color_space(gfx::ColorSpace(primaries, transfer, matrix, range));
-  }
-
+  (*video_frame)
+      ->set_color_space(VideoColorSpace(primaries, transfer, matrix, range)
+                            .ToGfxColorSpace());
   return true;
 }
 
@@ -592,10 +591,11 @@ bool VpxVideoDecoder::CopyVpxImageToVideoFrame(
     return false;
 
   for (int plane = 0; plane < 3; plane++) {
-    libyuv::CopyPlane(
-        vpx_image->planes[plane], vpx_image->stride[plane],
-        (*video_frame)->visible_data(plane), (*video_frame)->stride(plane),
-        (*video_frame)->row_bytes(plane), (*video_frame)->rows(plane));
+    libyuv::CopyPlane(vpx_image->planes[plane], vpx_image->stride[plane],
+                      (*video_frame)->GetWritableVisibleData(plane),
+                      (*video_frame)->stride(plane),
+                      (*video_frame)->row_bytes(plane),
+                      (*video_frame)->rows(plane));
   }
 
   return true;

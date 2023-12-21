@@ -30,15 +30,17 @@
 
 namespace blink {
 
+class FrameEdgeInfo;
+
 class CORE_EXPORT HTMLFrameElement final : public HTMLFrameElementBase {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
   explicit HTMLFrameElement(Document&);
 
-  bool HasFrameBorder() const { return frame_border_; }
-
+  bool HasFrameBorder() const;
   bool NoResize() const;
+  FrameEdgeInfo EdgeInfo() const;
 
   ParsedPermissionsPolicy ConstructContainerPolicy() const override;
 
@@ -47,9 +49,7 @@ class CORE_EXPORT HTMLFrameElement final : public HTMLFrameElementBase {
   }
 
  private:
-  void AttachLayoutTree(AttachContext&) override;
-
-  bool LayoutObjectIsNeeded(const ComputedStyle&) const override;
+  bool LayoutObjectIsNeeded(const DisplayStyle&) const override;
   LayoutObject* CreateLayoutObject(const ComputedStyle&, LegacyLayout) override;
 
   void ParseAttribute(const AttributeModificationParams&) override;

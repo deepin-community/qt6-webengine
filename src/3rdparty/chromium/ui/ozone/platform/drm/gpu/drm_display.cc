@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -149,25 +149,21 @@ uint32_t DrmDisplay::connector() const {
   return connector_->connector_id;
 }
 
-std::unique_ptr<display::DisplaySnapshot> DrmDisplay::Update(
-    HardwareDisplayControllerInfo* info,
-    uint8_t device_index) {
-  std::unique_ptr<display::DisplaySnapshot> params = CreateDisplaySnapshot(
-      info, drm_->get_fd(), drm_->device_path(), device_index, origin_);
-  crtc_ = info->crtc()->crtc_id;
-  // TODO(crbug.com/1119499): consider taking ownership of |info->connector()|
-  connector_ = ScopedDrmConnectorPtr(
-      drm_->GetConnector(info->connector()->connector_id));
-  if (!connector_) {
-    PLOG(ERROR) << "Failed to get connector "
-                << info->connector()->connector_id;
-    return nullptr;
-  }
+void DrmDisplay::Update(HardwareDisplayControllerInfo* info,
+                        const display::DisplaySnapshot* display_snapshot) {
+  // We take ownership of |info|'s connector because it will not be used again
+  // beyond this point. It is safe to assume that |connector_| is populated
+  // since it was obtained from GetDisplayInfosAndInvalidCrtcs(), which discards
+  // invalid (nullptr) connectors.
+  connector_ = info->ReleaseConnector();
+  DCHECK(connector_);
 
-  display_id_ = params->display_id();
-  modes_ = GetDrmModeVector(info->connector());
-  is_hdr_capable_ =
-      params->bits_per_channel() > 8 && params->color_space().IsHDR();
+  crtc_ = info->crtc()->crtc_id;
+  display_id_ = display_snapshot->display_id();
+  base_connector_id_ = display_snapshot->base_connector_id();
+  modes_ = GetDrmModeVector(connector_.get());
+  is_hdr_capable_ = display_snapshot->bits_per_channel() > 8 &&
+                    display_snapshot->color_space().IsHDR();
   privacy_screen_property_ =
       std::make_unique<PrivacyScreenProperty>(drm(), connector_.get());
 #if BUILDFLAG(IS_CHROMEOS_ASH)
@@ -175,8 +171,35 @@ std::unique_ptr<display::DisplaySnapshot> DrmDisplay::Update(
       is_hdr_capable_ &&
       base::FeatureList::IsEnabled(display::features::kUseHDRTransferFunction);
 #endif
+}
 
-  return params;
+bool DrmDisplay::SetHdcpKeyProp(const std::string& key) {
+  DCHECK(connector_);
+
+  TRACE_EVENT1("drm", "DrmDisplay::SetHdcpKeyProp", "connector",
+               connector_->connector_id);
+
+  // The HDCP key is secret, we want to create it as write only so the user
+  // space can't read it back. (i.e. through `modetest`)
+  ScopedDrmPropertyBlob key_blob;
+  // TODO(markyacoub): the flag requires being merged to libdrm then backported
+  // to CrOS. Remove the #if once that happens.
+#if defined(DRM_MODE_CREATE_BLOB_WRITE_ONLY)
+  key_blob = drm_->CreatePropertyBlobWithFlags(key.data(), key.size(),
+                                               DRM_MODE_CREATE_BLOB_WRITE_ONLY);
+#endif
+
+  if (!key_blob) {
+    LOG(ERROR) << "Failed to create HDCP Key property blob";
+    return false;
+  }
+
+  ScopedDrmPropertyPtr hdcp_key_property(
+      drm_->GetProperty(connector_.get(), kContentProtectionKey));
+  DCHECK(hdcp_key_property);
+
+  return drm_->SetProperty(connector_->connector_id, hdcp_key_property->prop_id,
+                           key_blob->id());
 }
 
 // When reading DRM state always check that it's still valid. Any sort of events
@@ -184,8 +207,7 @@ std::unique_ptr<display::DisplaySnapshot> DrmDisplay::Update(
 bool DrmDisplay::GetHDCPState(
     display::HDCPState* hdcp_state,
     display::ContentProtectionMethod* protection_method) {
-  if (!connector_)
-    return false;
+  DCHECK(connector_);
 
   TRACE_EVENT1("drm", "DrmDisplay::GetHDCPState", "connector",
                connector_->connector_id);
@@ -248,9 +270,7 @@ bool DrmDisplay::GetHDCPState(
 bool DrmDisplay::SetHDCPState(
     display::HDCPState state,
     display::ContentProtectionMethod protection_method) {
-  if (!connector_) {
-    return false;
-  }
+  DCHECK(connector_);
 
   if (protection_method != display::CONTENT_PROTECTION_METHOD_NONE) {
     ScopedDrmPropertyPtr content_type_property(

@@ -1,8 +1,8 @@
-# Copyright 2020 The Chromium Authors. All rights reserved.
+# Copyright 2020 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-load("//lib/builders.star", "builder", "cpu", "defaults", "goma", "os")
+load("//lib/builders.star", "builder", "cpu", "defaults", "os", "reclient")
 load("//lib/builder_config.star", "builder_config")
 
 luci.bucket(
@@ -24,6 +24,22 @@ luci.bucket(
             groups = "project-chromium-admins",
         ),
     ],
+)
+
+luci.bucket(
+    name = "ci.shadow",
+    shadows = "ci",
+    constraints = luci.bucket_constraints(
+        pools = ["luci.chromium.ci"],
+        service_accounts = ["chromium-ci-builder-dev@chops-service-accounts.iam.gserviceaccount.com"],
+    ),
+    bindings = [
+        luci.binding(
+            roles = "role/buildbucket.creator",
+            groups = "mdb/chrome-troopers",
+        ),
+    ],
+    dynamic = True,
 )
 
 luci.gitiles_poller(
@@ -64,45 +80,110 @@ def ci_builder(*, name, resultdb_bigquery_exports = None, **kwargs):
         name = name,
         triggered_by = ["chromium-gitiles-trigger"],
         resultdb_bigquery_exports = resultdb_bigquery_exports,
-        goma_backend = goma.backend.RBE_PROD,
+        reclient_instance = reclient.instance.DEFAULT_TRUSTED,
+        reclient_jobs = reclient.jobs.DEFAULT,
         resultdb_index_by_timestamp = True,
         **kwargs
     )
 
 ci_builder(
-    name = "android-marshmallow-arm64-rel-swarming",
+    name = "android-pie-arm64-rel-swarming",
+    builder_spec = builder_config.builder_spec(
+        gclient_config = builder_config.gclient_config(
+            config = "chromium",
+            apply_configs = [
+                "android",
+            ],
+        ),
+        chromium_config = builder_config.chromium_config(
+            config = "android",
+            build_config = builder_config.build_config.RELEASE,
+            target_arch = builder_config.target_arch.ARM,
+            target_bits = 64,
+            target_platform = builder_config.target_platform.ANDROID,
+        ),
+        android_config = builder_config.android_config(
+            config = "main_builder_mb",
+        ),
+    ),
 )
 
 ci_builder(
     name = "linux-rel-swarming",
     description_html = "Test description. <b>Test HTML</b>.",
+    builder_spec = builder_config.builder_spec(
+        gclient_config = builder_config.gclient_config(config = "chromium"),
+        chromium_config = builder_config.chromium_config(
+            config = "chromium",
+            apply_configs = ["mb"],
+            build_config = builder_config.build_config.RELEASE,
+        ),
+    ),
 )
 
 ci_builder(
     name = "linux-ssd-rel-swarming",
     description_html = "Ensures builders are using available local SSDs",
+    builder_spec = builder_config.builder_spec(
+        gclient_config = builder_config.gclient_config(config = "chromium"),
+        chromium_config = builder_config.chromium_config(
+            config = "chromium",
+            apply_configs = ["mb"],
+            build_config = builder_config.build_config.RELEASE,
+        ),
+    ),
     builderless = False,
 )
 
 ci_builder(
     name = "mac-rel-swarming",
+    builder_spec = builder_config.builder_spec(
+        gclient_config = builder_config.gclient_config(config = "chromium"),
+        chromium_config = builder_config.chromium_config(
+            config = "chromium",
+            apply_configs = ["mb"],
+            build_config = builder_config.build_config.RELEASE,
+        ),
+    ),
     os = os.MAC_DEFAULT,
 )
 
 ci_builder(
     name = "mac-arm-rel-swarming",
+    builder_spec = builder_config.builder_spec(
+        gclient_config = builder_config.gclient_config(config = "chromium"),
+        chromium_config = builder_config.chromium_config(
+            config = "chromium",
+            apply_configs = ["mb"],
+            build_config = builder_config.build_config.RELEASE,
+        ),
+    ),
+    os = os.MAC_DEFAULT,
     cpu = cpu.ARM64,
-    os = os.MAC_11,
 )
 
 ci_builder(
     name = "win-rel-swarming",
+    builder_spec = builder_config.builder_spec(
+        gclient_config = builder_config.gclient_config(config = "chromium"),
+        chromium_config = builder_config.chromium_config(
+            config = "chromium",
+            apply_configs = ["mb"],
+            build_config = builder_config.build_config.RELEASE,
+        ),
+    ),
     os = os.WINDOWS_10,
-    goma_enable_ats = True,
 )
 
 ci_builder(
     name = "win11-rel-swarming",
+    builder_spec = builder_config.builder_spec(
+        gclient_config = builder_config.gclient_config(config = "chromium"),
+        chromium_config = builder_config.chromium_config(
+            config = "chromium",
+            apply_configs = ["mb"],
+            build_config = builder_config.build_config.RELEASE,
+        ),
+    ),
     os = os.WINDOWS_11,
-    goma_enable_ats = True,
 )

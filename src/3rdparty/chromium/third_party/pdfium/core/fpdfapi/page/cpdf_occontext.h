@@ -1,4 +1,4 @@
-// Copyright 2016 PDFium Authors. All rights reserved.
+// Copyright 2016 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,6 +7,7 @@
 #ifndef CORE_FPDFAPI_PAGE_CPDF_OCCONTEXT_H_
 #define CORE_FPDFAPI_PAGE_CPDF_OCCONTEXT_H_
 
+#include <functional>
 #include <map>
 
 #include "core/fxcrt/bytestring.h"
@@ -24,8 +25,8 @@ class CPDF_OCContext final : public Retainable {
 
   CONSTRUCT_VIA_MAKE_RETAIN;
 
-  bool CheckOCGVisible(const CPDF_Dictionary* pOCGDict) const;
-  bool CheckObjectVisible(const CPDF_PageObject* pObj) const;
+  bool CheckOCGDictVisible(const CPDF_Dictionary* pOCGDict) const;
+  bool CheckPageObjectVisible(const CPDF_PageObject* pObj) const;
 
  private:
   CPDF_OCContext(CPDF_Document* pDoc, UsageType eUsageType);
@@ -40,7 +41,8 @@ class CPDF_OCContext final : public Retainable {
 
   UnownedPtr<CPDF_Document> const m_pDocument;
   const UsageType m_eUsageType;
-  mutable std::map<const CPDF_Dictionary*, bool> m_OGCStateCache;
+  mutable std::map<RetainPtr<const CPDF_Dictionary>, bool, std::less<>>
+      m_OGCStateCache;
 };
 
 #endif  // CORE_FPDFAPI_PAGE_CPDF_OCCONTEXT_H_

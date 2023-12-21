@@ -22,40 +22,48 @@
 #include "src/tint/transform/manager.h"
 #include "src/tint/transform/remove_unreachable_statements.h"
 #include "src/tint/transform/simplify_pointers.h"
+#include "src/tint/transform/spirv_atomic.h"
 #include "src/tint/transform/unshadow.h"
 
 namespace tint::reader::spirv {
 
-Program Parse(const std::vector<uint32_t>& input) {
-  ParserImpl parser(input);
-  bool parsed = parser.Parse();
+Program Parse(const std::vector<uint32_t>& input, const Options& options) {
+    ParserImpl parser(input);
+    bool parsed = parser.Parse();
 
-  ProgramBuilder& builder = parser.builder();
-  if (!parsed) {
-    // TODO(bclayton): Migrate spirv::ParserImpl to using diagnostics.
-    builder.Diagnostics().add_error(diag::System::Reader, parser.error());
-    return Program(std::move(builder));
-  }
+    ProgramBuilder& builder = parser.builder();
+    if (!parsed) {
+        // TODO(bclayton): Migrate spirv::ParserImpl to using diagnostics.
+        builder.Diagnostics().add_error(diag::System::Reader, parser.error());
+        return Program(std::move(builder));
+    }
 
-  // The SPIR-V parser can construct disjoint AST nodes, which is invalid for
-  // the Resolver. Clone the Program to clean these up.
-  builder.SetResolveOnBuild(false);
-  Program program_with_disjoint_ast(std::move(builder));
+    if (options.allow_non_uniform_derivatives) {
+        // Suppress errors regarding non-uniform derivative operations if requested, by adding a
+        // diagnostic directive to the module.
+        builder.DiagnosticDirective(builtin::DiagnosticSeverity::kOff, "derivative_uniformity");
+    }
 
-  ProgramBuilder output;
-  CloneContext(&output, &program_with_disjoint_ast, false).Clone();
-  auto program = Program(std::move(output));
-  if (!program.IsValid()) {
-    return program;
-  }
+    // The SPIR-V parser can construct disjoint AST nodes, which is invalid for
+    // the Resolver. Clone the Program to clean these up.
+    builder.SetResolveOnBuild(false);
+    Program program_with_disjoint_ast(std::move(builder));
 
-  transform::Manager manager;
-  manager.Add<transform::Unshadow>();
-  manager.Add<transform::SimplifyPointers>();
-  manager.Add<transform::DecomposeStridedMatrix>();
-  manager.Add<transform::DecomposeStridedArray>();
-  manager.Add<transform::RemoveUnreachableStatements>();
-  return manager.Run(&program).program;
+    ProgramBuilder output;
+    CloneContext(&output, &program_with_disjoint_ast, false).Clone();
+    auto program = Program(std::move(output));
+    if (!program.IsValid()) {
+        return program;
+    }
+
+    transform::Manager manager;
+    manager.Add<transform::Unshadow>();
+    manager.Add<transform::SimplifyPointers>();
+    manager.Add<transform::DecomposeStridedMatrix>();
+    manager.Add<transform::DecomposeStridedArray>();
+    manager.Add<transform::RemoveUnreachableStatements>();
+    manager.Add<transform::SpirvAtomic>();
+    return manager.Run(&program).program;
 }
 
 }  // namespace tint::reader::spirv

@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,17 +8,13 @@
 #include <memory>
 #include <string>
 
+#include "base/values.h"
 #include "extensions/common/extension_id.h"
 #include "extensions/common/mojom/frame.mojom-forward.h"
 #include "extensions/renderer/bindings/api_binding_types.h"
 
-struct ExtensionHostMsg_APIActionOrEvent_Params;
-
-namespace base {
-class DictionaryValue;
-}
-
 namespace extensions {
+
 class ScriptContext;
 class WorkerThreadDispatcher;
 struct Message;
@@ -62,15 +58,14 @@ class IPCMessageSender {
       const std::string& event_name) = 0;
 
   // Sends a message to add/remove a filtered listener.
-  virtual void SendAddFilteredEventListenerIPC(
-      ScriptContext* context,
-      const std::string& event_name,
-      const base::DictionaryValue& filter,
-      bool is_lazy) = 0;
+  virtual void SendAddFilteredEventListenerIPC(ScriptContext* context,
+                                               const std::string& event_name,
+                                               const base::Value::Dict& filter,
+                                               bool is_lazy) = 0;
   virtual void SendRemoveFilteredEventListenerIPC(
       ScriptContext* context,
       const std::string& event_name,
-      const base::DictionaryValue& filter,
+      const base::Value::Dict& filter,
       bool remove_lazy_listener) = 0;
 
   // Opens a message channel to the specified target.
@@ -94,10 +89,11 @@ class IPCMessageSender {
                                           const PortId& port_id) = 0;
 
   // Sends activityLog IPC to the browser process.
-  virtual void SendActivityLogIPC(
-      const ExtensionId& extension_id,
-      ActivityLogCallType call_type,
-      const ExtensionHostMsg_APIActionOrEvent_Params& params) = 0;
+  virtual void SendActivityLogIPC(const ExtensionId& extension_id,
+                                  ActivityLogCallType call_type,
+                                  const std::string& call_name,
+                                  base::Value::List args,
+                                  const std::string& extra) = 0;
 
   // Creates an IPCMessageSender for use on the main thread.
   static std::unique_ptr<IPCMessageSender> CreateMainThreadIPCMessageSender();

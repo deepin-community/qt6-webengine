@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -106,6 +106,10 @@ public final class NavigationImpl extends INavigation.Stub {
         StrictModeWorkaround.apply();
         throwIfNativeDestroyed();
         return Arrays.asList(NavigationImplJni.get().getResponseHeaders(mNativeNavigationImpl));
+    }
+
+    public boolean getIsConsentingContent() {
+        return NavigationImplJni.get().getIsConsentingContent(mNativeNavigationImpl);
     }
 
     @Override
@@ -320,6 +324,7 @@ public final class NavigationImpl extends INavigation.Stub {
         String[] getRedirectChain(long nativeNavigationImpl);
         int getHttpStatusCode(long nativeNavigationImpl);
         String[] getResponseHeaders(long nativeNavigationImpl);
+        boolean getIsConsentingContent(long nativeNavigationImpl);
         boolean isSameDocument(long nativeNavigationImpl);
         boolean isErrorPage(long nativeNavigationImpl);
         boolean isDownload(long nativeNavigationImpl);

@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -197,6 +197,20 @@ TEST_F(PageNodeImplTest, HadFormInteractions) {
   EXPECT_FALSE(page_node->had_form_interaction());
 }
 
+TEST_F(PageNodeImplTest, HadUserEdits) {
+  MockSinglePageInSingleProcessGraph mock_graph(graph());
+  auto* page_node = mock_graph.page.get();
+
+  // This should be initialized to false.
+  EXPECT_FALSE(page_node->had_user_edits());
+
+  page_node->SetHadUserEditsForTesting(true);
+  EXPECT_TRUE(page_node->had_user_edits());
+
+  page_node->SetHadUserEditsForTesting(false);
+  EXPECT_FALSE(page_node->had_user_edits());
+}
+
 TEST_F(PageNodeImplTest, GetFreezingVote) {
   MockSinglePageInSingleProcessGraph mock_graph(graph());
   auto* page_node = mock_graph.page.get();
@@ -227,6 +241,7 @@ class LenientMockObserver : public PageNodeImpl::Observer {
                void(const PageNode*, const FrameNode*));
   MOCK_METHOD3(OnEmbedderFrameNodeChanged,
                void(const PageNode*, const FrameNode*, EmbeddingType));
+  MOCK_METHOD2(OnTypeChanged, void(const PageNode*, PageType));
   MOCK_METHOD1(OnIsVisibleChanged, void(const PageNode*));
   MOCK_METHOD1(OnIsAudibleChanged, void(const PageNode*));
   MOCK_METHOD2(OnLoadingStateChanged,
@@ -240,9 +255,11 @@ class LenientMockObserver : public PageNodeImpl::Observer {
   MOCK_METHOD1(OnTitleUpdated, void(const PageNode*));
   MOCK_METHOD1(OnFaviconUpdated, void(const PageNode*));
   MOCK_METHOD1(OnHadFormInteractionChanged, void(const PageNode*));
+  MOCK_METHOD1(OnHadUserEditsChanged, void(const PageNode*));
   MOCK_METHOD2(OnFreezingVoteChanged,
                void(const PageNode*, absl::optional<freezing::FreezingVote>));
   MOCK_METHOD2(OnPageStateChanged, void(const PageNode*, PageNode::PageState));
+  MOCK_METHOD2(OnAboutToBeDiscarded, void(const PageNode*, const PageNode*));
 
   void SetNotifiedPageNode(const PageNode* page_node) {
     notified_page_node_ = page_node;
@@ -388,27 +405,21 @@ TEST_F(PageNodeImplTest, VisitMainFrameNodes) {
   auto frame2 = CreateFrameNodeAutoId(process.get(), page.get());
 
   std::set<const FrameNode*> visited;
-  EXPECT_TRUE(
-      ToPublic(page.get())
-          ->VisitMainFrameNodes(base::BindRepeating(
-              [](std::set<const FrameNode*>* visited, const FrameNode* frame) {
-                EXPECT_TRUE(visited->insert(frame).second);
-                return true;
-              },
-              base::Unretained(&visited))));
+  EXPECT_TRUE(ToPublic(page.get())
+                  ->VisitMainFrameNodes([&visited](const FrameNode* frame) {
+                    EXPECT_TRUE(visited.insert(frame).second);
+                    return true;
+                  }));
   EXPECT_THAT(visited, testing::UnorderedElementsAre(ToPublic(frame1.get()),
                                                      ToPublic(frame2.get())));
 
   // Do an aborted visit.
   visited.clear();
-  EXPECT_FALSE(
-      ToPublic(page.get())
-          ->VisitMainFrameNodes(base::BindRepeating(
-              [](std::set<const FrameNode*>* visited, const FrameNode* frame) {
-                EXPECT_TRUE(visited->insert(frame).second);
-                return false;
-              },
-              base::Unretained(&visited))));
+  EXPECT_FALSE(ToPublic(page.get())
+                   ->VisitMainFrameNodes([&visited](const FrameNode* frame) {
+                     EXPECT_TRUE(visited.insert(frame).second);
+                     return false;
+                   }));
   EXPECT_EQ(1u, visited.size());
 }
 

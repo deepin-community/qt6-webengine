@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,13 +6,36 @@
 
 #include <limits>
 
+#include "base/feature_list.h"
 #include "base/numerics/checked_math.h"
 #include "base/time/time.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/platform/web_blob_info.h"
+#include "third_party/blink/renderer/bindings/core/v8/serialization/serialization_tag.h"
+#include "third_party/blink/renderer/bindings/core/v8/serialization/trailer_reader.h"
 #include "third_party/blink/renderer/bindings/core/v8/serialization/unpacked_serialized_script_value.h"
 #include "third_party/blink/renderer/bindings/core/v8/to_v8_for_core.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_blob.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_dom_exception.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_dom_matrix.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_dom_matrix_read_only.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_dom_point.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_dom_point_init.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_dom_point_read_only.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_dom_quad.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_dom_rect.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_dom_rect_read_only.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_file.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_file_list.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_image_bitmap.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_image_data.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_message_port.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_mojo_handle.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_offscreen_canvas.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_readable_stream.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_transform_stream.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_writable_stream.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/fileapi/blob.h"
@@ -38,6 +61,7 @@
 #include "third_party/blink/renderer/core/streams/writable_stream.h"
 #include "third_party/blink/renderer/core/typed_arrays/dom_array_buffer.h"
 #include "third_party/blink/renderer/core/typed_arrays/dom_shared_array_buffer.h"
+#include "third_party/blink/renderer/platform/bindings/script_state.h"
 #include "third_party/blink/renderer/platform/file_metadata.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
@@ -91,6 +115,16 @@ size_t ReadVersionEnvelope(SerializedScriptValue* serialized_script_value,
   // envelope.
   if (version < kMinVersionForSeparateEnvelope)
     return 0;
+
+  // These versions expect a trailer offset in the envelope.
+  if (version >= TrailerReader::kMinWireFormatVersion) {
+    static constexpr size_t kTrailerOffsetDataSize =
+        1 + sizeof(uint64_t) + sizeof(uint32_t);
+    DCHECK_LT(i, std::numeric_limits<size_t>::max() - kTrailerOffsetDataSize);
+    i += kTrailerOffsetDataSize;
+    if (i >= length)
+      return 0;
+  }
 
   // Otherwise, we did read the envelope. Hurray!
   *out_version = version;
@@ -231,7 +265,12 @@ bool V8ScriptValueDeserializer::ReadUnguessableToken(
   uint64_t low;
   if (!ReadUint64(&high) || !ReadUint64(&low))
     return false;
-  *token_out = base::UnguessableToken::Deserialize(high, low);
+  absl::optional<base::UnguessableToken> token =
+      base::UnguessableToken::Deserialize(high, low);
+  if (!token.has_value()) {
+    return false;
+  }
+  *token_out = token.value();
   return true;
 }
 
@@ -251,6 +290,10 @@ bool V8ScriptValueDeserializer::ReadUTF8String(String* string) {
 ScriptWrappable* V8ScriptValueDeserializer::ReadDOMObject(
     SerializationTag tag,
     ExceptionState& exception_state) {
+  if (!ExecutionContextExposesInterface(
+          ExecutionContext::From(GetScriptState()), tag)) {
+    return nullptr;
+  }
   switch (tag) {
     case kBlobTag: {
       if (Version() < 3)
@@ -323,6 +366,8 @@ ScriptWrappable* V8ScriptValueDeserializer::ReadDOMObject(
           SerializedPixelFormat::kNative8_LegacyObsolete;
       SerializedOpacityMode canvas_opacity_mode =
           SerializedOpacityMode::kOpaque;
+      SerializedImageOrientation image_orientation =
+          SerializedImageOrientation::kTopLeft;
       uint32_t origin_clean = 0, is_premultiplied = 0, width = 0, height = 0,
                byte_length = 0;
       const void* pixels = nullptr;
@@ -366,6 +411,11 @@ ScriptWrappable* V8ScriptValueDeserializer::ReadDOMObject(
               if (!ReadUint32(&is_premultiplied) || is_premultiplied > 1)
                 return nullptr;
               break;
+            case ImageSerializationTag::kImageOrientationTag:
+              if (!ReadUint32Enum<SerializedImageOrientation>(
+                      &image_orientation))
+                return nullptr;
+              break;
             case ImageSerializationTag::kImageDataStorageFormatTag:
               // Does not apply to ImageBitmap.
               return nullptr;
@@ -378,11 +428,10 @@ ScriptWrappable* V8ScriptValueDeserializer::ReadDOMObject(
       if (!ReadUint32(&width) || !ReadUint32(&height) ||
           !ReadUint32(&byte_length) || !ReadRawBytes(byte_length, &pixels))
         return nullptr;
-      SkImageInfo info =
-          SerializedImageBitmapSettings(predefined_color_space, sk_color_space,
-                                        canvas_pixel_format,
-                                        canvas_opacity_mode, is_premultiplied)
-              .GetSkImageInfo(width, height);
+      SerializedImageBitmapSettings settings(
+          predefined_color_space, sk_color_space, canvas_pixel_format,
+          canvas_opacity_mode, is_premultiplied, image_orientation);
+      SkImageInfo info = settings.GetSkImageInfo(width, height);
       base::CheckedNumeric<uint32_t> computed_byte_length =
           info.computeMinByteSize();
       if (!computed_byte_length.IsValid() ||
@@ -394,7 +443,8 @@ ScriptWrappable* V8ScriptValueDeserializer::ReadDOMObject(
         return nullptr;
       }
       SkPixmap pixmap(info, pixels, info.minRowBytes());
-      return MakeGarbageCollected<ImageBitmap>(pixmap, origin_clean);
+      return MakeGarbageCollected<ImageBitmap>(pixmap, origin_clean,
+                                               settings.GetImageOrientation());
     }
     case kImageBitmapTransferTag: {
       uint32_t index = 0;
@@ -437,6 +487,7 @@ ScriptWrappable* V8ScriptValueDeserializer::ReadDOMObject(
             case ImageSerializationTag::kIsPremultipliedTag:
             case ImageSerializationTag::kCanvasOpacityModeTag:
             case ImageSerializationTag::kParametricColorSpaceTag:
+            case ImageSerializationTag::kImageOrientationTag:
               // Does not apply to ImageData.
               return nullptr;
           }
@@ -730,7 +781,7 @@ V8ScriptValueDeserializer::GetOrCreateBlobDataHandle(const String& uuid,
   // Creating a BlobDataHandle from an empty string will get this renderer
   // killed, so since we're parsing untrusted data (from possibly another
   // process/renderer) return null instead.
-  if (uuid.IsEmpty())
+  if (uuid.empty())
     return nullptr;
   return BlobDataHandle::Create(uuid, type, size);
 }
@@ -766,7 +817,7 @@ V8ScriptValueDeserializer::GetWasmModuleFromId(v8::Isolate* isolate,
     return v8::WasmModuleObject::FromCompiledModule(
         isolate, serialized_script_value_->WasmModules()[id]);
   }
-  CHECK(serialized_script_value_->WasmModules().IsEmpty());
+  CHECK(serialized_script_value_->WasmModules().empty());
   return v8::MaybeLocal<v8::WasmModuleObject>();
 }
 
@@ -793,8 +844,100 @@ V8ScriptValueDeserializer::GetSharedArrayBufferFromId(v8::Isolate* isolate,
   // If the id does not map to a valid index, it is expected that the
   // SerializedScriptValue emptied its shared ArrayBufferContents when crossing
   // a process boundary.
-  CHECK(shared_array_buffers_contents.IsEmpty());
+  CHECK(shared_array_buffers_contents.empty());
   return v8::MaybeLocal<v8::SharedArrayBuffer>();
+}
+
+const v8::SharedValueConveyor*
+V8ScriptValueDeserializer::GetSharedValueConveyor(v8::Isolate* isolate) {
+  if (auto* conveyor =
+          serialized_script_value_->MaybeGetSharedValueConveyor()) {
+    return conveyor;
+  }
+  ExceptionState exception_state(isolate, ExceptionState::kUnknownContext,
+                                 nullptr, nullptr);
+  exception_state.ThrowDOMException(DOMExceptionCode::kDataCloneError,
+                                    "Unable to deserialize shared JS value.");
+  return nullptr;
+}
+
+// static
+bool V8ScriptValueDeserializer::ExecutionContextExposesInterface(
+    ExecutionContext* execution_context,
+    SerializationTag interface_tag) {
+  if (!base::FeatureList::IsEnabled(
+          features::kSSVTrailerEnforceExposureAssertion)) {
+    return true;
+  }
+
+  // If you're updating this, consider whether you should also update
+  // V8ScriptValueSerializer to call TrailerWriter::RequireExposedInterface
+  // (generally via WriteAndRequireInterfaceTag). Any interface which might
+  // potentially not be exposed on all realms, even if not currently (i.e., most
+  // or all) should probably be listed here.
+  switch (interface_tag) {
+    case kBlobTag:
+    case kBlobIndexTag:
+      return V8Blob::IsExposed(execution_context);
+    case kFileTag:
+    case kFileIndexTag:
+      return V8File::IsExposed(execution_context);
+    case kFileListTag:
+    case kFileListIndexTag: {
+      const bool is_exposed = V8FileList::IsExposed(execution_context);
+      if (is_exposed)
+        DCHECK(V8File::IsExposed(execution_context));
+      return is_exposed;
+    }
+    case kImageBitmapTag:
+    case kImageBitmapTransferTag:
+      return V8ImageBitmap::IsExposed(execution_context);
+    case kImageDataTag:
+      return V8ImageData::IsExposed(execution_context);
+    case kDOMPointTag:
+      return V8DOMPoint::IsExposed(execution_context);
+    case kDOMPointReadOnlyTag:
+      return V8DOMPointReadOnly::IsExposed(execution_context);
+    case kDOMRectTag:
+      return V8DOMRect::IsExposed(execution_context);
+    case kDOMRectReadOnlyTag:
+      return V8DOMRectReadOnly::IsExposed(execution_context);
+    case kDOMQuadTag:
+      return V8DOMQuad::IsExposed(execution_context);
+    case kDOMMatrix2DTag:
+    case kDOMMatrixTag:
+      return V8DOMMatrix::IsExposed(execution_context);
+    case kDOMMatrix2DReadOnlyTag:
+    case kDOMMatrixReadOnlyTag:
+      return V8DOMMatrixReadOnly::IsExposed(execution_context);
+    case kMessagePortTag:
+      return V8MessagePort::IsExposed(execution_context);
+    case kMojoHandleTag:
+      // This would ideally be V8MojoHandle::IsExposed, but WebUSB tests
+      // currently rely on being able to send handles to frames and workers
+      // which don't otherwise have MojoJS exposed.
+      return (execution_context->IsWindow() ||
+              execution_context->IsWorkerGlobalScope()) &&
+             RuntimeEnabledFeatures::MojoJSEnabled();
+    case kOffscreenCanvasTransferTag:
+      return V8OffscreenCanvas::IsExposed(execution_context);
+    case kReadableStreamTransferTag:
+      return V8ReadableStream::IsExposed(execution_context);
+    case kWritableStreamTransferTag:
+      return V8WritableStream::IsExposed(execution_context);
+    case kTransformStreamTransferTag: {
+      const bool is_exposed = V8TransformStream::IsExposed(execution_context);
+      if (is_exposed) {
+        DCHECK(V8ReadableStream::IsExposed(execution_context));
+        DCHECK(V8WritableStream::IsExposed(execution_context));
+      }
+      return is_exposed;
+    }
+    case kDOMExceptionTag:
+      return V8DOMException::IsExposed(execution_context);
+    default:
+      return false;
+  }
 }
 
 }  // namespace blink

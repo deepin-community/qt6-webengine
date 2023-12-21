@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,14 +11,15 @@
 #include <utility>
 
 #include "base/base_paths.h"
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/containers/queue.h"
 #include "base/files/file.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/location.h"
 #include "base/memory/platform_shared_memory_region.h"
 #include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ptr_exclusion.h"
 #include "base/memory/read_only_shared_memory_region.h"
 #include "base/memory/shared_memory_mapping.h"
 #include "base/memory/unsafe_shared_memory_region.h"
@@ -35,7 +36,6 @@
 #include "base/test/test_shared_memory_util.h"
 #include "base/test/test_timeouts.h"
 #include "base/threading/thread.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "ipc/ipc_message.h"
 #include "ipc/ipc_message_utils.h"
@@ -801,9 +801,9 @@ class ChannelProxyRunner {
   void CreateProxy(IPC::Listener* listener) {
     io_thread_.StartWithOptions(
         base::Thread::Options(base::MessagePumpType::IO, 0));
-    proxy_ = IPC::SyncChannel::Create(listener, io_thread_.task_runner(),
-                                      base::ThreadTaskRunnerHandle::Get(),
-                                      &never_signaled_);
+    proxy_ = IPC::SyncChannel::Create(
+        listener, io_thread_.task_runner(),
+        base::SingleThreadTaskRunner::GetCurrentDefault(), &never_signaled_);
   }
 
   void RunProxy() {
@@ -811,11 +811,11 @@ class ChannelProxyRunner {
     if (for_server_) {
       factory = IPC::ChannelMojo::CreateServerFactory(
           std::move(handle_), io_thread_.task_runner(),
-          base::ThreadTaskRunnerHandle::Get());
+          base::SingleThreadTaskRunner::GetCurrentDefault());
     } else {
       factory = IPC::ChannelMojo::CreateClientFactory(
           std::move(handle_), io_thread_.task_runner(),
-          base::ThreadTaskRunnerHandle::Get());
+          base::SingleThreadTaskRunner::GetCurrentDefault());
     }
     proxy_->Init(std::move(factory), true);
   }
@@ -1155,7 +1155,9 @@ class ListenerWithSyncAssociatedInterface
     receiver_.Bind(std::move(receiver));
   }
 
-  IPC::Sender* sync_sender_ = nullptr;
+  // This field is not a raw_ptr<> because it was filtered by the rewriter for:
+  // #constexpr-ctor-field-initializer
+  RAW_PTR_EXCLUSION IPC::Sender* sync_sender_ = nullptr;
   int32_t next_expected_value_ = 0;
   int32_t response_value_ = 0;
   base::OnceClosure quit_closure_;
@@ -1295,8 +1297,12 @@ class SimpleTestClientImpl : public IPC::mojom::SimpleTestClient,
 
   bool use_sync_sender_ = false;
   mojo::AssociatedReceiver<IPC::mojom::SimpleTestClient> receiver_{this};
-  IPC::Sender* sync_sender_ = nullptr;
-  IPC::mojom::SimpleTestDriver* driver_ = nullptr;
+  // This field is not a raw_ptr<> because it was filtered by the rewriter for:
+  // #constexpr-ctor-field-initializer
+  RAW_PTR_EXCLUSION IPC::Sender* sync_sender_ = nullptr;
+  // This field is not a raw_ptr<> because it was filtered by the rewriter for:
+  // #constexpr-ctor-field-initializer
+  RAW_PTR_EXCLUSION IPC::mojom::SimpleTestDriver* driver_ = nullptr;
   std::unique_ptr<base::RunLoop> run_loop_;
 };
 

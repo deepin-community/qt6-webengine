@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -126,61 +126,65 @@ class AppLauncherHandler
   // Create a dictionary value for the given web app.
   base::Value::Dict GetWebAppInfo(const web_app::AppId& app_id);
 
-  // Populate the given dictionary with the web store promo content.
-  void FillPromoDictionary(base::DictionaryValue* value);
-
   // Handles the "launchApp" message with unused |args|.
-  void HandleGetApps(const base::ListValue* args);
+  void HandleGetApps(const base::Value::List& args);
 
   // Handles the "launchApp" message with |args| containing [extension_id,
   // source] with optional [url, disposition], |disposition| defaulting to
   // CURRENT_TAB.
-  void HandleLaunchApp(const base::ListValue* args);
+  void HandleLaunchApp(const base::Value::List& args);
+
+  void LaunchApp(std::string extension_id,
+                 extension_misc::AppLaunchBucket launch_bucket,
+                 const std::string& source_value,
+                 WindowOpenDisposition disposition,
+                 bool force_launch_deprecated_apps);
 
   // Handles the "setLaunchType" message with args containing [extension_id,
   // launch_type].
-  void HandleSetLaunchType(const base::ListValue* args);
+  void HandleSetLaunchType(const base::Value::List& args);
 
   // Handles the "uninstallApp" message with |args| containing [extension_id]
   // and an optional bool to not confirm the uninstall when true, defaults to
   // false.
-  void HandleUninstallApp(const base::ListValue* args);
+  void HandleUninstallApp(const base::Value::List& args);
 
   // Handles the "createAppShortcut" message with |args| containing
   // [extension_id].
-  void HandleCreateAppShortcut(const base::ListValue* args);
+  void HandleCreateAppShortcut(base::OnceClosure done,
+                               const base::Value::List& args);
 
   // Handles the "installAppLocally" message with |args| containing
   // [extension_id].
-  void HandleInstallAppLocally(const base::ListValue* args);
+  void HandleInstallAppLocally(const base::Value::List& args);
 
   // Handles the "showAppInfo" message with |args| containing [extension_id].
-  void HandleShowAppInfo(const base::ListValue* args);
+  void HandleShowAppInfo(const base::Value::List& args);
 
   // Handles the "reorderApps" message with |args| containing [dragged_app_id,
   // app_order].
-  void HandleReorderApps(const base::ListValue* args);
+  void HandleReorderApps(const base::Value::List& args);
 
   // Handles the "setPageIndex" message with |args| containing [extension_id,
   // page_index].
-  void HandleSetPageIndex(const base::ListValue* args);
+  void HandleSetPageIndex(const base::Value::List& args);
 
   // Handles "saveAppPageName" message with |args| containing [name,
   // page_index].
-  void HandleSaveAppPageName(const base::ListValue* args);
+  void HandleSaveAppPageName(const base::Value::List& args);
 
   // Handles "generateAppForLink" message with |args| containing [url, title,
   // page_index].
-  void HandleGenerateAppForLink(const base::ListValue* args);
+  void HandleGenerateAppForLink(const base::Value::List& args);
 
   // Handles "pageSelected" message with |args| containing [page_index].
-  void HandlePageSelected(const base::ListValue* args);
+  void HandlePageSelected(const base::Value::List& args);
 
   // Handles "runOnOsLogin" message with |args| containing [app_id, mode]
-  void HandleRunOnOsLogin(const base::ListValue* args);
+  void HandleRunOnOsLogin(const base::Value::List& args);
 
   // Handles "deprecatedDialogLinkClicked" message with no |args|
-  void HandleLaunchDeprecatedAppDialog(const base::ListValue* args);
+  void HandleLaunchDeprecatedAppDialog(const base::Value::List& args);
 
  private:
   FRIEND_TEST_ALL_PREFIXES(AppLauncherHandlerTest,
@@ -200,10 +204,6 @@ class AppLauncherHandler
 
   // Prompts the user to re-enable the app for |extension_id|.
   void PromptToEnableApp(const std::string& extension_id);
-
-  // Records result to UMA after OS Hooks are installed.
-  void OnOsHooksInstalled(const web_app::AppId& app_id,
-                          const web_app::OsHooksErrors os_hooks_errors);
 
   // ExtensionUninstallDialog::Delegate:
   void OnExtensionUninstallDialogClosed(bool did_start_uninstall,
@@ -231,9 +231,6 @@ class AppLauncherHandler
 
   // True if the extension should be displayed.
   bool ShouldShow(const extensions::Extension* extension);
-
-  // Handle installing OS hooks for Web App installs from chrome://apps page.
-  void InstallOsHooks(const web_app::AppId& app_id);
 
   // The apps are represented in the extensions model, which
   // outlives us since it's owned by our containing profile.

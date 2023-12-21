@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,7 @@
 #include <map>
 #include <vector>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/test/bind.h"
 #include "base/test/task_environment.h"
@@ -98,7 +98,7 @@ class BackgroundSyncLauncherTest : public testing::Test {
     auto done_closure = base::BindLambdaForTesting(
         [&]() { num_invocations_fire_background_sync_events_++; });
 
-    test_browser_context_.ForEachStoragePartition(
+    test_browser_context_.ForEachLoadedStoragePartition(
         base::BindRepeating(
             [](base::OnceClosure done_closure,
                StoragePartition* storage_partition) {

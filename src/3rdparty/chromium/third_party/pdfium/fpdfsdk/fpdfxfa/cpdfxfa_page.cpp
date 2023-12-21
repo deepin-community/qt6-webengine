@@ -1,4 +1,4 @@
-// Copyright 2014 PDFium Authors. All rights reserved.
+// Copyright 2014 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,15 +7,15 @@
 #include "fpdfsdk/fpdfxfa/cpdfxfa_page.h"
 
 #include <memory>
+#include <utility>
 
 #include "core/fpdfapi/page/cpdf_page.h"
+#include "core/fpdfapi/page/cpdf_pageimagecache.h"
 #include "core/fpdfapi/parser/cpdf_document.h"
-#include "core/fpdfapi/render/cpdf_pagerendercache.h"
 #include "fpdfsdk/cpdfsdk_pageview.h"
 #include "fpdfsdk/fpdfxfa/cpdfxfa_context.h"
 #include "fpdfsdk/fpdfxfa/cpdfxfa_widget.h"
 #include "third_party/base/check.h"
-#include "third_party/base/notreached.h"
 #include "xfa/fgas/graphics/cfgas_gegraphics.h"
 #include "xfa/fxfa/cxfa_ffdocview.h"
 #include "xfa/fxfa/cxfa_ffpageview.h"
@@ -87,17 +87,17 @@ CPDFXFA_Page* CPDFXFA_Page::AsXFAPage() {
 }
 
 CPDF_Document* CPDFXFA_Page::GetDocument() const {
-  return m_pDocument.Get();
+  return m_pDocument;
 }
 
 bool CPDFXFA_Page::LoadPDFPage() {
-  CPDF_Document* pPDFDoc = GetDocument();
-  CPDF_Dictionary* pDict = pPDFDoc->GetPageDictionary(m_iPageIndex);
+  RetainPtr<CPDF_Dictionary> pDict =
+      GetDocument()->GetMutablePageDictionary(m_iPageIndex);
   if (!pDict)
     return false;
 
   if (!m_pPDFPage || m_pPDFPage->GetDict() != pDict)
-    LoadPDFPageFromDict(pDict);
+    LoadPDFPageFromDict(std::move(pDict));
 
   return true;
 }
@@ -118,15 +118,13 @@ bool CPDFXFA_Page::LoadPage() {
     case FormType::kXFAFull:
       return !!GetXFAPageView();
   }
-  NOTREACHED();
-  return false;
 }
 
-void CPDFXFA_Page::LoadPDFPageFromDict(CPDF_Dictionary* pPageDict) {
+void CPDFXFA_Page::LoadPDFPageFromDict(RetainPtr<CPDF_Dictionary> pPageDict) {
   DCHECK(pPageDict);
-  m_pPDFPage = pdfium::MakeRetain<CPDF_Page>(GetDocument(), pPageDict);
-  m_pPDFPage->SetRenderCache(
-      std::make_unique<CPDF_PageRenderCache>(m_pPDFPage.Get()));
+  m_pPDFPage =
+      pdfium::MakeRetain<CPDF_Page>(GetDocument(), std::move(pPageDict));
+  m_pPDFPage->AddPageImageCache();
   m_pPDFPage->ParseContent();
 }
 
@@ -142,7 +140,7 @@ float CPDFXFA_Page::GetPageWidth() const {
     case FormType::kXFAForeground:
       if (m_pPDFPage)
         return m_pPDFPage->GetPageWidth();
-      FALLTHROUGH;
+      [[fallthrough]];
     case FormType::kXFAFull:
       if (pPageView)
         return pPageView->GetPageViewRect().width;
@@ -164,7 +162,7 @@ float CPDFXFA_Page::GetPageHeight() const {
     case FormType::kXFAForeground:
       if (m_pPDFPage)
         return m_pPDFPage->GetPageHeight();
-      FALLTHROUGH;
+      [[fallthrough]];
     case FormType::kXFAFull:
       if (pPageView)
         return pPageView->GetPageViewRect().height;
@@ -211,7 +209,7 @@ CFX_Matrix CPDFXFA_Page::GetDisplayMatrix(const FX_RECT& rect,
     case FormType::kXFAForeground:
       if (m_pPDFPage)
         return m_pPDFPage->GetDisplayMatrix(rect, iRotate);
-      FALLTHROUGH;
+      [[fallthrough]];
     case FormType::kXFAFull:
       if (pPageView)
         return pPageView->GetDisplayMatrix(rect, iRotate);

@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,8 +7,8 @@
 #include <string>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/printing/print_job.h"
@@ -52,7 +52,7 @@ void FakePrintJobController::StartPrinting(
     const std::string& extension_id,
     std::unique_ptr<printing::PrintSettings> settings) {
   job_id_++;
-  job->SetSource(printing::PrintJob::Source::EXTENSION, extension_id);
+  job->SetSource(printing::PrintJob::Source::kExtension, extension_id);
   auto document = base::MakeRefCounted<printing::PrintedDocument>(
       std::move(settings), std::u16string(), 0);
   int observer_count = 0;

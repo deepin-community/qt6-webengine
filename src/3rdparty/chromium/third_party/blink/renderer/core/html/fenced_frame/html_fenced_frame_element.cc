@@ -1,26 +1,30 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/core/html/fenced_frame/html_fenced_frame_element.h"
 
+#include "base/metrics/histogram_macros.h"
+#include "base/types/pass_key.h"
 #include "services/network/public/cpp/is_potentially_trustworthy.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/fenced_frame/fenced_frame_utils.h"
 #include "third_party/blink/public/common/frame/fenced_frame_sandbox_flags.h"
 #include "third_party/blink/public/mojom/devtools/console_message.mojom-blink.h"
-#include "third_party/blink/public/mojom/web_feature/web_feature.mojom-blink.h"
+#include "third_party/blink/public/mojom/frame/frame.mojom-blink.h"
+#include "third_party/blink/public/mojom/use_counter/metrics/web_feature.mojom-blink.h"
 #include "third_party/blink/renderer/core/css/style_change_reason.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
+#include "third_party/blink/renderer/core/frame/csp/content_security_policy.h"
+#include "third_party/blink/renderer/core/frame/csp/csp_directive_list.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/screen.h"
 #include "third_party/blink/renderer/core/geometry/dom_rect_read_only.h"
 #include "third_party/blink/renderer/core/html/fenced_frame/fenced_frame_ad_sizes.h"
 #include "third_party/blink/renderer/core/html/fenced_frame/fenced_frame_mparch_delegate.h"
-#include "third_party/blink/renderer/core/html/fenced_frame/fenced_frame_shadow_dom_delegate.h"
 #include "third_party/blink/renderer/core/html/html_iframe_element.h"
 #include "third_party/blink/renderer/core/html/html_style_element.h"
 #include "third_party/blink/renderer/core/html_names.h"
@@ -62,48 +66,20 @@ String FencedFrameModeToString(mojom::blink::FencedFrameMode mode) {
   return "";
 }
 
-bool HasDifferentModeThanParent(HTMLFencedFrameElement& outer_element) {
-  mojom::blink::FencedFrameMode current_mode = outer_element.GetMode();
-
-  if (features::kFencedFramesImplementationTypeParam.Get() ==
-      features::FencedFramesImplementationType::kShadowDOM) {
-    // ShadowDOM check.
-    if (Frame* ancestor = outer_element.GetDocument().GetFrame()) {
-      // This loop is only relevant for fenced frames based on ShadowDOM, since
-      // it has to do with the `FramePolicy::is_fenced` bit. We have to keep
-      // traversing up the tree to see if we ever come across a fenced frame of
-      // another mode. In that case, we stop `this` frame from being fully
-      // created, since nested fenced frames of differing modes are not allowed.
-      while (ancestor && ancestor->Owner()) {
-        bool is_ancestor_fenced = ancestor->Owner()->GetFramePolicy().is_fenced;
-        // Note that this variable is only meaningful if `is_ancestor_fenced`
-        // above is true.
-        mojom::blink::FencedFrameMode ancestor_mode =
-            ancestor->Owner()->GetFramePolicy().fenced_frame_mode;
-
-        if (is_ancestor_fenced && ancestor_mode != current_mode) {
-          return true;
-        }
-
-        // If this loop found a fenced ancestor whose mode is compatible with
-        // `current_mode`, it is not necessary to look further up the ancestor
-        // chain. This is because this loop already ran during the creation of
-        // the compatible fenced ancestor, so it is guaranteed that the rest of
-        // the ancestor chain has already been checked and approved for
-        // compatibility.
-        if (is_ancestor_fenced && ancestor_mode == current_mode) {
-          return false;
-        }
-
-        ancestor = ancestor->Tree().Parent();
-      }
-    }
-    return false;
-  }
-  // MPArch check.
-  Page* ancestor_page = outer_element.GetDocument().GetFrame()->GetPage();
+// Helper function that returns whether the mode of the parent tree is different
+// than the mode given to the function. Note that this function will return
+// false if there is no mode set in the parent tree (i.e. not in a fenced frame
+// tree).
+bool ParentModeIsDifferent(mojom::blink::FencedFrameMode current_mode,
+                           LocalFrame& frame) {
+  Page* ancestor_page = frame.GetPage();
   return ancestor_page->IsMainFrameFencedFrameRoot() &&
          ancestor_page->FencedFrameMode() != current_mode;
+}
+
+bool HasDifferentModeThanParent(HTMLFencedFrameElement& outer_element) {
+  return ParentModeIsDifferent(outer_element.GetMode(),
+                               *(outer_element.GetDocument().GetFrame()));
 }
 
 // Returns whether `requested_size` is exactly the same size as `allowed_size`.
@@ -165,6 +141,7 @@ void HTMLFencedFrameElement::Trace(Visitor* visitor) const {
   HTMLFrameOwnerElement::Trace(visitor);
   visitor->Trace(frame_delegate_);
   visitor->Trace(resize_observer_);
+  visitor->Trace(config_);
 }
 
 void HTMLFencedFrameElement::DisconnectContentFrame() {
@@ -177,6 +154,33 @@ void HTMLFencedFrameElement::DisconnectContentFrame() {
   frame_delegate_ = nullptr;
 
   HTMLFrameOwnerElement::DisconnectContentFrame();
+}
+
+ParsedPermissionsPolicy HTMLFencedFrameElement::ConstructContainerPolicy()
+    const {
+  if (!GetExecutionContext())
+    return ParsedPermissionsPolicy();
+
+  scoped_refptr<const SecurityOrigin> src_origin =
+      GetOriginForPermissionsPolicy();
+  scoped_refptr<const SecurityOrigin> self_origin =
+      GetExecutionContext()->GetSecurityOrigin();
+
+  PolicyParserMessageBuffer logger;
+
+  ParsedPermissionsPolicy container_policy =
+      PermissionsPolicyParser::ParseAttribute(allow_, self_origin, src_origin,
+                                              logger, GetExecutionContext());
+
+  for (const auto& message : logger.GetMessages()) {
+    GetDocument().AddConsoleMessage(
+        MakeGarbageCollected<ConsoleMessage>(
+            mojom::blink::ConsoleMessageSource::kOther, message.level,
+            message.content),
+        /* discard_duplicates */ true);
+  }
+
+  return container_policy;
 }
 
 void HTMLFencedFrameElement::SetCollapsed(bool collapse) {
@@ -194,6 +198,13 @@ void HTMLFencedFrameElement::SetCollapsed(bool collapse) {
                                              style_change_reason::kFrame));
 }
 
+void HTMLFencedFrameElement::DidChangeContainerPolicy() {
+  // Don't notify about updates if frame_delegate_ is null, for example when
+  // the delegate hasn't been created yet.
+  if (frame_delegate_)
+    frame_delegate_->DidChangeFramePolicy(GetFramePolicy());
+}
+
 // START HTMLFencedFrameElement::FencedFrameDelegate.
 
 HTMLFencedFrameElement::FencedFrameDelegate*
@@ -201,6 +212,18 @@ HTMLFencedFrameElement::FencedFrameDelegate::Create(
     HTMLFencedFrameElement* outer_element) {
   DCHECK(RuntimeEnabledFeatures::FencedFramesEnabled(
       outer_element->GetExecutionContext()));
+
+  // If the frame embedding a fenced frame is a detached frame, the execution
+  // context will be null. That makes it impossible to check the sandbox flags,
+  // so delegate creation is stopped if that is the case.
+  if (!outer_element->GetExecutionContext()) {
+    outer_element->GetDocument().AddConsoleMessage(
+        MakeGarbageCollected<ConsoleMessage>(
+            mojom::blink::ConsoleMessageSource::kJavaScript,
+            mojom::blink::ConsoleMessageLevel::kWarning,
+            "Can't create a fenced frame in a detached frame."));
+    return nullptr;
+  }
 
   // If the element has been disconnected by the time we attempt to create the
   // delegate (eg, due to deferral while prerendering), we should not create the
@@ -228,6 +251,12 @@ HTMLFencedFrameElement::FencedFrameDelegate::Create(
             "allow-same-origin, allow-forms, allow-scripts, allow-popups, "
             "allow-popups-to-escape-sandbox and "
             "allow-top-navigation-by-user-activation."));
+    RecordFencedFrameCreationOutcome(
+        FencedFrameCreationOutcome::kSandboxFlagsNotSet);
+    RecordFencedFrameUnsandboxedFlags(
+        outer_element->GetExecutionContext()->GetSandboxFlags());
+    RecordFencedFrameFailedSandboxLoadInTopLevelFrame(
+        outer_element->GetDocument().GetFrame()->IsMainFrame());
     return nullptr;
   }
 
@@ -258,14 +287,7 @@ HTMLFencedFrameElement::FencedFrameDelegate::Create(
 
   if (HasDifferentModeThanParent(*outer_element)) {
     mojom::blink::FencedFrameMode parent_mode =
-        features::kFencedFramesImplementationTypeParam.Get() ==
-                features::FencedFramesImplementationType::kShadowDOM
-            ? outer_element->GetDocument()
-                  .GetFrame()
-                  ->Owner()
-                  ->GetFramePolicy()
-                  .fenced_frame_mode
-            : outer_element->GetDocument().GetPage()->FencedFrameMode();
+        outer_element->GetDocument().GetPage()->FencedFrameMode();
 
     outer_element->GetDocument().AddConsoleMessage(
         MakeGarbageCollected<ConsoleMessage>(
@@ -275,12 +297,9 @@ HTMLFencedFrameElement::FencedFrameDelegate::Create(
                 FencedFrameModeToString(outer_element->GetMode()) +
                 "' nested in a fenced frame with mode '" +
                 FencedFrameModeToString(parent_mode) + "'."));
+    RecordFencedFrameCreationOutcome(
+        FencedFrameCreationOutcome::kIncompatibleMode);
     return nullptr;
-  }
-
-  if (features::kFencedFramesImplementationTypeParam.Get() ==
-      features::FencedFramesImplementationType::kShadowDOM) {
-    return MakeGarbageCollected<FencedFrameShadowDOMDelegate>(outer_element);
   }
 
   return MakeGarbageCollected<FencedFrameMPArchDelegate>(outer_element);
@@ -299,6 +318,87 @@ HTMLIFrameElement* HTMLFencedFrameElement::InnerIFrameElement() const {
   if (const ShadowRoot* root = UserAgentShadowRoot())
     return To<HTMLIFrameElement>(root->lastChild());
   return nullptr;
+}
+
+void HTMLFencedFrameElement::setConfig(FencedFrameConfig* config) {
+  config_ = config;
+  if (config_) {
+    NavigateToConfig();
+  }
+}
+
+// static
+bool HTMLFencedFrameElement::canLoadOpaqueURL(ScriptState* script_state) {
+  if (!script_state->ContextIsValid())
+    return false;
+
+  LocalFrame* frame_to_check = LocalDOMWindow::From(script_state)->GetFrame();
+  ExecutionContext* context = ExecutionContext::From(script_state);
+  DCHECK(frame_to_check && context);
+
+  ContentSecurityPolicy* csp = context->GetContentSecurityPolicy();
+  DCHECK(csp);
+
+  // "A fenced frame tree of one mode cannot contain a child fenced frame of
+  // another mode."
+  // See: https://github.com/WICG/fenced-frame/blob/master/explainer/modes.md
+  // TODO(lbrady) Link to spec once it's written.
+  if (ParentModeIsDifferent(mojom::blink::FencedFrameMode::kOpaqueAds,
+                            *frame_to_check)) {
+    return false;
+  }
+
+  if (!context->IsSecureContext())
+    return false;
+
+  // Check that the flags specified in kFencedFrameMandatoryUnsandboxedFlags
+  // are not set in this context. Fenced frames loaded in a sandboxed document
+  // require these flags to remain unsandboxed.
+  if (context->IsSandboxed(kFencedFrameMandatoryUnsandboxedFlags))
+    return false;
+
+  // Check the results of the browser checks for the current frame.
+  // If the embedding frame is an iframe with CSPEE set, or any ancestor
+  // iframes has CSPEE set, the fenced frame will not be allowed to load.
+  // The renderer has no knowledge of CSPEE up the ancestor chain, so we defer
+  // to the browser to determine the existence of CSPEE outside of the scope
+  // we can see here.
+  if (frame_to_check->AncestorOrSelfHasCSPEE())
+    return false;
+
+  // Ensure that if any CSP headers are set that will affect a fenced frame,
+  // they allow all https urls to load. Opaque-ads fenced frames do not support
+  // allowing/disallowing specific hosts, as that could reveal information to
+  // a fenced frame about its embedding page. See design doc for more info:
+  // https://github.com/WICG/fenced-frame/blob/master/explainer/interaction_with_content_security_policy.md
+  // This is being checked in the renderer because processing of <meta> tags
+  // (including CSP) happen in the renderer after navigation commit, so we can't
+  // piggy-back off of the ancestor_or_self_has_cspee bit being sent from the
+  // browser (which is sent at commit time) since it doesn't know about all the
+  // CSP headers yet.
+  for (const auto& policy : csp->GetParsedPolicies()) {
+    CSPOperativeDirective directive = CSPDirectiveListOperativeDirective(
+        *policy, CSPDirectiveName::FencedFrameSrc);
+    if (directive.type != CSPDirectiveName::Unknown) {
+      // "*" urls will cause the allow_star flag to set
+      if (directive.source_list->allow_star) {
+        continue;
+      }
+
+      // Check for "https:" or "https://*:*"
+      bool found_matching_source = false;
+      for (const auto& source : directive.source_list->sources) {
+        if (source->scheme == url::kHttpsScheme && source->host == "") {
+          found_matching_source = true;
+          break;
+        }
+      }
+      if (!found_matching_source)
+        return false;
+    }
+  }
+
+  return true;
 }
 
 Node::InsertionNotificationRequest HTMLFencedFrameElement::InsertedInto(
@@ -335,7 +435,26 @@ void HTMLFencedFrameElement::ParseAttribute(
 
     mode_ = new_mode;
   } else if (params.name == html_names::kSrcAttr) {
-    Navigate();
+    if (config_) {
+      DCHECK(config_->url());
+      GetDocument().AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
+          mojom::blink::ConsoleMessageSource::kJavaScript,
+          mojom::blink::ConsoleMessageLevel::kWarning,
+          "Changing the `src` attribute on a fenced frame has no effect after "
+          "it has already been installed a config with a specified url."));
+      return;
+    }
+
+    KURL url = GetNonEmptyURLAttribute(html_names::kSrcAttr);
+    Navigate(url);
+  } else if (params.name == html_names::kAllowAttr) {
+    if (allow_ != params.new_value) {
+      allow_ = params.new_value;
+      if (!params.new_value.empty()) {
+        UseCounter::Count(GetDocument(),
+                          WebFeature::kFeaturePolicyAllowAttribute);
+      }
+    }
   } else {
     HTMLFrameOwnerElement::ParseAttribute(params);
   }
@@ -366,7 +485,11 @@ void HTMLFencedFrameElement::CollectStyleForPresentationAttribute(
   }
 }
 
-void HTMLFencedFrameElement::Navigate() {
+void HTMLFencedFrameElement::Navigate(
+    const KURL& url,
+    absl::optional<bool> deprecated_should_freeze_initial_size,
+    absl::optional<gfx::Size> content_size) {
+  TRACE_EVENT0("navigation", "HTMLFencedFrameElement::Navigate");
   if (!isConnected())
     return;
 
@@ -379,8 +502,6 @@ void HTMLFencedFrameElement::Navigate() {
   if (!frame_delegate_)
     return;
 
-  KURL url = GetNonEmptyURLAttribute(html_names::kSrcAttr);
-
   if (url.IsEmpty())
     return;
 
@@ -390,38 +511,104 @@ void HTMLFencedFrameElement::Navigate() {
         mojom::blink::ConsoleMessageLevel::kWarning,
         "A fenced frame was not loaded because the page is not in a secure "
         "context."));
+    RecordFencedFrameCreationOutcome(
+        FencedFrameCreationOutcome::kInsecureContext);
     return;
   }
 
   if (mode_ == mojom::blink::FencedFrameMode::kDefault &&
-      !IsValidFencedFrameURL(url)) {
+      !IsValidFencedFrameURL(GURL(url))) {
     GetDocument().AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
         mojom::blink::ConsoleMessageSource::kRendering,
         mojom::blink::ConsoleMessageLevel::kWarning,
         "A fenced frame whose mode is " + FencedFrameModeToString(mode_) +
-            " must be navigated to an \"https\" URL or \"about:blank\"."));
+            " must be navigated to an \"https\" URL, an \"http\" localhost URL,"
+            " or \"about:blank\"."));
+    RecordFencedFrameCreationOutcome(
+        FencedFrameCreationOutcome::kIncompatibleURLDefault);
     return;
   }
 
-  if (mode_ == mojom::blink::FencedFrameMode::kOpaqueAds) {
-    if (!IsValidUrnUuidURL(url) && !IsValidFencedFrameURL(url)) {
-      GetDocument().AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
-          mojom::blink::ConsoleMessageSource::kRendering,
-          mojom::blink::ConsoleMessageLevel::kWarning,
-          "A fenced frame whose mode is " + FencedFrameModeToString(mode_) +
-              " must be navigated to an opaque \"urn:uuid\" URL, an \"https\" "
-              "URL or \"about:blank\"."));
-      return;
-    }
+  if (mode_ == mojom::blink::FencedFrameMode::kOpaqueAds &&
+      !IsValidUrnUuidURL(GURL(url)) && !IsValidFencedFrameURL(GURL(url))) {
+    GetDocument().AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
+        mojom::blink::ConsoleMessageSource::kRendering,
+        mojom::blink::ConsoleMessageLevel::kWarning,
+        "A fenced frame whose mode is " + FencedFrameModeToString(mode_) +
+            " must be navigated to an opaque \"urn:uuid\" URL,"
+            " an \"https\" URL, an \"http\" localhost URL,"
+            " or \"about:blank\"."));
+    RecordFencedFrameCreationOutcome(
+        FencedFrameCreationOutcome::kIncompatibleURLOpaque);
+    return;
   }
+
+  UpdateContainerPolicy();
 
   frame_delegate_->Navigate(url);
 
-  if (!frozen_frame_size_)
-    FreezeFrameSize();
+  RecordFencedFrameCreationOutcome(
+      mode_ == mojom::blink::FencedFrameMode::kDefault
+          ? FencedFrameCreationOutcome::kSuccessDefault
+          : FencedFrameCreationOutcome::kSuccessOpaque);
+
+  // Handle size freezing.
+  // This isn't strictly correct, because the size is frozen on navigation
+  // start rather than navigation commit (i.e. if the navigation fails, the
+  // size will still be frozen). This is unavoidable in our current
+  // implementation, where the embedder freezes the size (because the embedder
+  // doesn't/shouldn't know when/if the config navigation commits). This
+  // inconsistency should be resolved when we make the browser responsible for
+  // size freezing, rather than the embedder.
+  if (content_size.has_value()) {
+    // Check if the config has a content size specified inside it. If so, we
+    // should freeze to that size rather than check the current size.
+    // It is nonsensical to ask for the old size freezing behavior (freeze the
+    // initial size) while also specifying a content size.
+    CHECK(!deprecated_should_freeze_initial_size);
+    PhysicalSize converted_size(LayoutUnit(content_size->width()),
+                                LayoutUnit(content_size->height()));
+    FreezeFrameSize(converted_size, /*should_coerce_size=*/false);
+  } else {
+    if ((!deprecated_should_freeze_initial_size.has_value() &&
+         IsValidUrnUuidURL(GURL(url))) ||
+        (deprecated_should_freeze_initial_size.has_value() &&
+         *deprecated_should_freeze_initial_size)) {
+      // If we are using a urn, or if the config is still using the deprecated
+      // API, freeze the current size at navigation start (or soon after).
+      FreezeCurrentFrameSize();
+    } else {
+      // Otherwise, make sure the frame size isn't frozen.
+      UnfreezeFrameSize();
+    }
+  }
+}
+
+void HTMLFencedFrameElement::NavigateToConfig() {
+  CHECK(config_);
+
+  // Prioritize navigating to `config_`'s internal URN if it exists. If so, that
+  // means it was created by information from the browser process, and the URN
+  // is stored in the `FencedFrameURLMapping`. Otherwise, `config_` was
+  // constructed from script and has a user-supplied URL that `this` will
+  // navigate to instead.
+  KURL url;
+  if (config_->urn_uuid(PassKey())) {
+    url = config_->urn_uuid(PassKey()).value();
+    CHECK(IsValidUrnUuidURL(GURL(url)));
+  } else {
+    CHECK(config_->url());
+    url =
+        config_
+            ->GetValueIgnoringVisibility<FencedFrameConfig::Attribute::kURL>();
+  }
+  Navigate(url, config_->deprecated_should_freeze_initial_size(PassKey()),
+           config_->content_size(PassKey()));
 }
 
 void HTMLFencedFrameElement::CreateDelegateAndNavigate() {
+  TRACE_EVENT0("navigation",
+               "HTMLFencedFrameElement::CreateDelegateAndNavigate");
   // We may queue up several calls to CreateDelegateAndNavigate while
   // prerendering, but we should only actually create the delegate once. Note,
   // this will also mean that we skip calling Navigate() again, but the result
@@ -431,8 +618,8 @@ void HTMLFencedFrameElement::CreateDelegateAndNavigate() {
     return;
   if (GetDocument().IsPrerendering()) {
     GetDocument().AddPostPrerenderingActivationStep(
-        WTF::Bind(&HTMLFencedFrameElement::CreateDelegateAndNavigate,
-                  WrapWeakPersistent(this)));
+        WTF::BindOnce(&HTMLFencedFrameElement::CreateDelegateAndNavigate,
+                      WrapWeakPersistent(this)));
     return;
   }
 
@@ -441,20 +628,22 @@ void HTMLFencedFrameElement::CreateDelegateAndNavigate() {
   freeze_mode_attribute_ = true;
 
   frame_delegate_ = FencedFrameDelegate::Create(this);
-  Navigate();
+
+  if (config_) {
+    NavigateToConfig();
+  } else {
+    Navigate(GetNonEmptyURLAttribute(html_names::kSrcAttr));
+  }
 }
 
 void HTMLFencedFrameElement::AttachLayoutTree(AttachContext& context) {
   HTMLFrameOwnerElement::AttachLayoutTree(context);
-  if (features::IsFencedFramesMPArchBased()) {
-    if (GetLayoutEmbeddedContent() && ContentFrame()) {
-      SetEmbeddedContentView(ContentFrame()->View());
-    }
-  }
+  if (frame_delegate_)
+    frame_delegate_->AttachLayoutTree();
 }
 
 bool HTMLFencedFrameElement::LayoutObjectIsNeeded(
-    const ComputedStyle& style) const {
+    const DisplayStyle& style) const {
   return !collapsed_by_client_ &&
          HTMLFrameOwnerElement::LayoutObjectIsNeeded(style);
 }
@@ -462,15 +651,11 @@ bool HTMLFencedFrameElement::LayoutObjectIsNeeded(
 LayoutObject* HTMLFencedFrameElement::CreateLayoutObject(
     const ComputedStyle& style,
     LegacyLayout legacy_layout) {
-  if (features::IsFencedFramesMPArchBased()) {
-    return MakeGarbageCollected<LayoutIFrame>(this);
-  }
-
-  return HTMLFrameOwnerElement::CreateLayoutObject(style, legacy_layout);
+  return MakeGarbageCollected<LayoutIFrame>(this);
 }
 
 bool HTMLFencedFrameElement::SupportsFocus() const {
-  return features::IsFencedFramesMPArchBased();
+  return frame_delegate_ && frame_delegate_->SupportsFocus();
 }
 
 PhysicalSize HTMLFencedFrameElement::CoerceFrameSize(
@@ -501,6 +686,7 @@ PhysicalSize HTMLFencedFrameElement::CoerceFrameSize(
   static_assert(kAllowedAdSizes.size() > 0UL);
   for (const gfx::Size& allowed_size : kAllowedAdSizes) {
     if (SizeMatchesExactly(requested_size, allowed_size)) {
+      RecordOpaqueFencedFrameSizeCoercion(false);
       return requested_size;
     }
   }
@@ -547,6 +733,7 @@ PhysicalSize HTMLFencedFrameElement::CoerceFrameSize(
       "A fenced frame in opaque-ads mode attempted to load with an "
       "unsupported size, and was therefore rounded to the nearest supported "
       "size."));
+  RecordOpaqueFencedFrameSizeCoercion(true);
 
   // The best size so far, and its loss. A lower loss represents
   // a better fit, so we will find the size that minimizes it, i.e.
@@ -600,44 +787,50 @@ const absl::optional<PhysicalSize> HTMLFencedFrameElement::FrozenFrameSize()
       LayoutUnit::FromFloatRound(frozen_frame_size_->height * ratio));
 }
 
-void HTMLFencedFrameElement::FreezeFrameSize() {
-  DCHECK(!frozen_frame_size_);
+void HTMLFencedFrameElement::UnfreezeFrameSize() {
+  should_freeze_frame_size_on_next_layout_ = false;
 
-  // When the parser finds `<fencedframe>` with the `src` attribute, the
-  // |Navigate| occurs after |LayoutObject| tree is created and its initial
-  // layout was done (|NeedsLayout| is cleared,) but the size of the `<iframe>`
-  // is still (0, 0). Wait until a lifecycle completes and the resize observer
-  // runs.
-  if (!content_rect_) {
-    should_freeze_frame_size_on_next_layout_ = true;
+  // If the frame was already unfrozen, we don't need to do anything.
+  if (!frozen_frame_size_.has_value()) {
     return;
   }
 
-  FreezeFrameSize(content_rect_->size);
+  // Otherwise, the frame previously had a frozen size. Unfreeze it.
+  frozen_frame_size_ = absl::nullopt;
+  frame_delegate_->MarkFrozenFrameSizeStale();
 }
 
-void HTMLFencedFrameElement::FreezeFrameSize(const PhysicalSize& size) {
-  DCHECK(!frozen_frame_size_);
-  // TODO(crbug.com/1123606): This will change when we move frame size coercion
-  // from here to during FLEDGE/SharedStorage.
-  frozen_frame_size_ = CoerceFrameSize(size);
+void HTMLFencedFrameElement::FreezeCurrentFrameSize() {
+  should_freeze_frame_size_on_next_layout_ = false;
 
-  if (features::IsFencedFramesMPArchBased()) {
-    // With MPArch, mark the layout as stale. Do this unconditionally because
-    // we are rounding the size.
-    GetLayoutObject()->SetNeedsLayoutAndFullPaintInvalidation(
-        "Froze MPArch fenced frame");
-
-    // Stop the `ResizeObserver`. It is needed only to compute the
-    // frozen size in MPArch. ShadowDOM stays subscribed in order to
-    // update the CSS on the inner iframe element as the outer container's
-    // size changes.
-    StopResizeObserver();
-  } else {
-    // With Shadow DOM, update the CSS `transform` property whenever
-    // |content_rect_| or |frozen_frame_size_| change.
-    UpdateInnerStyleOnFrozenInternalFrame();
+  // If the inner frame size is already frozen to the current outer frame size,
+  // we don't need to do anything.
+  if (frozen_frame_size_.has_value() && content_rect_.has_value() &&
+      content_rect_->size == *frozen_frame_size_) {
+    return;
   }
+
+  // Otherwise, we need to change the frozen size of the frame.
+  frozen_frame_size_ = absl::nullopt;
+
+  // If we know the current outer frame size, freeze the inner frame to it.
+  if (content_rect_) {
+    FreezeFrameSize(content_rect_->size, /*should_coerce_size=*/true);
+    return;
+  }
+
+  // Otherwise, we need to wait for the next layout.
+  should_freeze_frame_size_on_next_layout_ = true;
+}
+
+void HTMLFencedFrameElement::FreezeFrameSize(const PhysicalSize& size,
+                                             bool should_coerce_size) {
+  frozen_frame_size_ = size;
+  if (should_coerce_size) {
+    frozen_frame_size_ = CoerceFrameSize(size);
+  }
+
+  frame_delegate_->MarkFrozenFrameSizeStale();
 }
 
 void HTMLFencedFrameElement::StartResizeObserver() {
@@ -648,16 +841,9 @@ void HTMLFencedFrameElement::StartResizeObserver() {
   resize_observer_->observe(this);
 }
 
-void HTMLFencedFrameElement::StopResizeObserver() {
-  if (!resize_observer_)
-    return;
-  resize_observer_->disconnect();
-  resize_observer_ = nullptr;
-}
-
 void HTMLFencedFrameElement::ResizeObserverDelegate::OnResize(
     const HeapVector<Member<ResizeObserverEntry>>& entries) {
-  if (entries.IsEmpty())
+  if (entries.empty())
     return;
   const Member<ResizeObserverEntry>& entry = entries.back();
   auto* element = To<HTMLFencedFrameElement>(entry->target());
@@ -666,52 +852,24 @@ void HTMLFencedFrameElement::ResizeObserverDelegate::OnResize(
 }
 
 void HTMLFencedFrameElement::OnResize(const PhysicalRect& content_rect) {
+  // If we don't have a delegate, then we won't have a frame, so no reason to
+  // freeze.
+  if (!frame_delegate_)
+    return;
+  if (frozen_frame_size_.has_value() && !size_set_after_freeze_) {
+    // Only log this once per fenced frame.
+    RecordFencedFrameResizedAfterSizeFrozen();
+    size_set_after_freeze_ = true;
+  }
   content_rect_ = content_rect;
-  // If the size information at |FreezeFrameSize| is not complete and we
-  // needed to postpone freezing until the next resize, do it now. See
-  // |FreezeFrameSize| for more.
+
+  // If we postponed freezing the frame size until the next layout (in
+  // `FreezeCurrentFrameSize`), do it now.
   if (should_freeze_frame_size_on_next_layout_) {
     should_freeze_frame_size_on_next_layout_ = false;
     DCHECK(!frozen_frame_size_);
-    FreezeFrameSize(content_rect_->size);
-    return;
+    FreezeFrameSize(content_rect_->size, /*should_coerce_size=*/true);
   }
-  if (frozen_frame_size_ && !features::IsFencedFramesMPArchBased())
-    UpdateInnerStyleOnFrozenInternalFrame();
-}
-
-void HTMLFencedFrameElement::UpdateInnerStyleOnFrozenInternalFrame() {
-  DCHECK(!features::IsFencedFramesMPArchBased());
-  DCHECK(content_rect_);
-  const absl::optional<PhysicalSize> frozen_size = frozen_frame_size_;
-  DCHECK(frozen_size);
-  const double child_width = frozen_size->width.ToDouble();
-  const double child_height = frozen_size->height.ToDouble();
-  // TODO(kojii): Theoretically this `transform` is the same as `object-fit:
-  // contain`, but `<iframe>` does not support the `object-fit` property today.
-  // We can change to use the `object-fit` property and stop the resize-observer
-  // once it is supported.
-  String css;
-  if (child_width <= std::numeric_limits<double>::epsilon() ||
-      child_height <= std::numeric_limits<double>::epsilon()) {
-    // If the child's width or height is zero, the scale will be infinite. Do
-    // not scale in such cases.
-    css =
-        String::Format("width: %fpx; height: %fpx", child_width, child_height);
-  } else {
-    const double parent_width = content_rect_->Width().ToDouble();
-    const double parent_height = content_rect_->Height().ToDouble();
-    const double scale_x = parent_width / child_width;
-    const double scale_y = parent_height / child_height;
-    const double scale = std::min(scale_x, scale_y);
-    const double tx = (parent_width - child_width * scale) / 2;
-    const double ty = (parent_height - child_height * scale) / 2;
-    css = String::Format(
-        "width: %fpx; height: %fpx; transform: translate(%fpx, %fpx) scale(%f)",
-        child_width, child_height, tx, ty, scale);
-  }
-  InnerIFrameElement()->setAttribute(html_names::kStyleAttr, css,
-                                     ASSERT_NO_EXCEPTION);
 }
 
 }  // namespace blink

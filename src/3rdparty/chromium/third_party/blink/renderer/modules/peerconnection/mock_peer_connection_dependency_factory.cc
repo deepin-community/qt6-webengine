@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -52,19 +52,20 @@ bool MockWebRtcAudioSource::remote() const {
 
 MockMediaStream::MockMediaStream(const std::string& id) : id_(id) {}
 
-bool MockMediaStream::AddTrack(AudioTrackInterface* track) {
+bool MockMediaStream::AddTrack(rtc::scoped_refptr<AudioTrackInterface> track) {
   audio_track_vector_.emplace_back(track);
   NotifyObservers();
   return true;
 }
 
-bool MockMediaStream::AddTrack(VideoTrackInterface* track) {
+bool MockMediaStream::AddTrack(rtc::scoped_refptr<VideoTrackInterface> track) {
   video_track_vector_.emplace_back(track);
   NotifyObservers();
   return true;
 }
 
-bool MockMediaStream::RemoveTrack(AudioTrackInterface* track) {
+bool MockMediaStream::RemoveTrack(
+    rtc::scoped_refptr<AudioTrackInterface> track) {
   auto it = FindTrack(&audio_track_vector_, track->id());
   if (it == audio_track_vector_.end())
     return false;
@@ -73,7 +74,8 @@ bool MockMediaStream::RemoveTrack(AudioTrackInterface* track) {
   return true;
 }
 
-bool MockMediaStream::RemoveTrack(VideoTrackInterface* track) {
+bool MockMediaStream::RemoveTrack(
+    rtc::scoped_refptr<VideoTrackInterface> track) {
   auto it = FindTrack(&video_track_vector_, track->id());
   if (it == video_track_vector_.end())
     return false;
@@ -335,9 +337,9 @@ class MockIceCandidate : public IceCandidateInterface {
 };
 
 MockPeerConnectionDependencyFactory::MockPeerConnectionDependencyFactory()
-    : signaling_thread_("MockPCFactory WebRtc Signaling Thread") {
+    : thread_("MockPCFactory WebRtc Signaling/Networking Thread") {
   EnsureWebRtcAudioDeviceImpl();
-  CHECK(signaling_thread_.Start());
+  CHECK(thread_.Start());
 }
 
 MockPeerConnectionDependencyFactory::~MockPeerConnectionDependencyFactory() {}
@@ -381,7 +383,12 @@ MockPeerConnectionDependencyFactory::CreateIceCandidate(const String& sdp_mid,
 
 scoped_refptr<base::SingleThreadTaskRunner>
 MockPeerConnectionDependencyFactory::GetWebRtcSignalingTaskRunner() {
-  return signaling_thread_.task_runner();
+  return thread_.task_runner();
+}
+
+scoped_refptr<base::SingleThreadTaskRunner>
+MockPeerConnectionDependencyFactory::GetWebRtcNetworkTaskRunner() {
+  return thread_.task_runner();
 }
 
 void MockPeerConnectionDependencyFactory::SetFailToCreateSessionDescription(

@@ -1,10 +1,12 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "base/strings/string_util_win.h"
 
-#include "base/strings/string_util_internal.h"
+#include "base/ranges/algorithm.h"
+#include "base/strings/string_util_impl_helpers.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace base {
 
@@ -22,11 +24,6 @@ std::wstring ToUpperASCII(WStringPiece str) {
 
 int CompareCaseInsensitiveASCII(WStringPiece a, WStringPiece b) {
   return internal::CompareCaseInsensitiveASCIIT(a, b);
-}
-
-bool EqualsCaseInsensitiveASCII(WStringPiece a, WStringPiece b) {
-  return a.size() == b.size() &&
-         internal::CompareCaseInsensitiveASCIIT(a, b) == 0;
 }
 
 bool RemoveChars(WStringPiece input,
@@ -76,12 +73,8 @@ bool ContainsOnlyChars(WStringPiece input, WStringPiece characters) {
   return input.find_first_not_of(characters) == StringPiece::npos;
 }
 
-bool LowerCaseEqualsASCII(WStringPiece str, StringPiece lowercase_ascii) {
-  return internal::DoLowerCaseEqualsASCII(str, lowercase_ascii);
-}
-
 bool EqualsASCII(WStringPiece str, StringPiece ascii) {
-  return std::equal(ascii.begin(), ascii.end(), str.begin(), str.end());
+  return ranges::equal(ascii, str);
 }
 
 bool StartsWith(WStringPiece str,
@@ -136,7 +129,15 @@ std::wstring JoinString(std::initializer_list<WStringPiece> parts,
 std::wstring ReplaceStringPlaceholders(WStringPiece format_string,
                                        const std::vector<std::wstring>& subst,
                                        std::vector<size_t>* offsets) {
-  return internal::DoReplaceStringPlaceholders(format_string, subst, offsets);
+  absl::optional<std::wstring> replacement =
+      internal::DoReplaceStringPlaceholders(
+          format_string, subst,
+          /*placeholder_prefix*/ L'$',
+          /*should_escape_multiple_placeholder_prefixes*/ true,
+          /*is_strict_mode*/ false, offsets);
+
+  DCHECK(replacement);
+  return replacement.value();
 }
 
 }  // namespace base

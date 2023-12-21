@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,10 +7,11 @@
 
 #include <vector>
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/memory/ref_counted.h"
 #include "base/task/sequenced_task_runner.h"
 #include "components/safe_browsing/core/browser/db/hit_report.h"
+#include "components/safe_browsing/core/common/proto/realtimeapi.pb.h"
 #include "components/safe_browsing/core/common/safebrowsing_constants.h"
 #include "services/network/public/mojom/fetch_api.mojom.h"
 #include "url/gurl.h"
@@ -74,6 +75,7 @@ struct UnsafeResource {
   bool is_subframe;
   safe_browsing::SBThreatType threat_type;
   safe_browsing::ThreatMetadata threat_metadata;
+  safe_browsing::RTLookupResponse rt_lookup_response;
   network::mojom::RequestDestination request_destination;
   UrlCheckCallback callback;  // This is called back on |callback_sequence|.
   scoped_refptr<base::SequencedTaskRunner> callback_sequence;

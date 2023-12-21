@@ -37,15 +37,16 @@ import (
 
 // Query represents a WebGPU test query
 // Example queries:
-//    'suite'
-//    'suite:*'
-//    'suite:file'
-//    'suite:file,*'
-//    'suite:file,file'
-//    'suite:file,file,*'
-//    'suite:file,file,file:test'
-//    'suite:file,file,file:test:*'
-//    'suite:file,file,file:test,test:case;*'
+//
+//	'suite'
+//	'suite:*'
+//	'suite:file'
+//	'suite:file,*'
+//	'suite:file,file'
+//	'suite:file,file,*'
+//	'suite:file,file,file:test'
+//	'suite:file,file,file:test:*'
+//	'suite:file,file,file:test,test:case;*'
 type Query struct {
 	Suite string
 	Files string
@@ -198,6 +199,18 @@ func (q Query) CaseParameters() CaseParameters {
 // Append returns the query with the additional strings appended to the target
 func (q Query) Append(t Target, n ...string) Query {
 	switch t {
+	case Suite:
+		switch len(n) {
+		case 0:
+			return q
+		case 1:
+			if q.Suite != "" {
+				panic("cannot append suite when query already contains suite")
+			}
+			return Query{Suite: n[0]}
+		default:
+			panic("cannot append more than one suite")
+		}
 	case Files:
 		return q.AppendFiles(n...)
 	case Tests:
@@ -257,9 +270,10 @@ func (q Query) String() string {
 }
 
 // Compare compares the relative order of q and o, returning:
-//  -1 if q should come before o
-//   1 if q should come after o
-//   0 if q and o are identical
+//
+//	-1 if q should come before o
+//	 1 if q should come after o
+//	 0 if q and o are identical
 func (q Query) Compare(o Query) int {
 	for _, cmp := range []struct{ a, b string }{
 		{q.Suite, o.Suite},
@@ -323,9 +337,10 @@ func (q Query) Contains(o Query) bool {
 }
 
 // Callback function for Query.Walk()
-//   q is the query for the current segment.
-//   t is the target of the query q.
-//   n is the name of the new segment.
+//
+//	q is the query for the current segment.
+//	t is the target of the query q.
+//	n is the name of the new segment.
 type WalkCallback func(q Query, t Target, n string) error
 
 // Walk calls 'f' for each suite, file, test segment, and calls f once for all

@@ -1,4 +1,4 @@
-// Copyright (c) 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,23 +8,21 @@
 #include <utility>
 #include <vector>
 
-#include "base/test/perf_time_logger.h"
-#include "base/test/task_environment.h"
-#include "base/threading/thread_task_runner_handle.h"
-#include "base/timer/elapsed_timer.h"
-
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/containers/contains.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/location.h"
 #include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
+#include "base/task/single_thread_task_runner.h"
+#include "base/test/perf_time_logger.h"
 #include "base/test/task_environment.h"
 #include "base/threading/thread.h"
+#include "base/timer/elapsed_timer.h"
 #include "build/build_config.h"
 #include "components/leveldb_proto/internal/leveldb_database.h"
 #include "components/leveldb_proto/internal/proto_database_impl.h"
@@ -140,7 +138,9 @@ class TestDatabase {
 
 class ProtoDBPerfTest : public testing::Test {
  public:
-  void SetUp() override { task_runner_ = base::ThreadTaskRunnerHandle::Get(); }
+  void SetUp() override {
+    task_runner_ = base::SingleThreadTaskRunner::GetCurrentDefault();
+  }
 
   void TearDown() override {
     ShutdownDBs();

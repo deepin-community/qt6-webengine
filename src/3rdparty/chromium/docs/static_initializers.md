@@ -13,7 +13,7 @@ Note: Another name for static initializers is "global constructors".
 * For Linux and Mac:
   * The expected count is stored in [//testing/scripts/check_static_initializers.py](https://source.chromium.org/chromium/chromium/src/+/main:testing/scripts/check_static_initializers.py)
 * For Android:
-  * The expected count is stored in the build target [//chrome/android:monochrome_static_initializers](https://cs.chromium.org/chromium/src/chrome/android/BUILD.gn)
+  * The expected count is stored in [//chrome/android/static_initializers.gni](https://cs.chromium.org/chromium/src/chrome/android/static_initializers.gni)
 
 ## Removing Static Initializers
 
@@ -25,30 +25,21 @@ Common fixes include:
 
 ## Listing Static Initializers
 
-### Step 1 - Use objdump to report them
+### Option 1 - dump-static-initializers.py
 For Linux:
 
     tools/linux/dump-static-initializers.py out/Release/chrome
 
-For Android (from easiest to hardest):
+For Android:
 
     # Build with: is_official_build=true is_chrome_branded=true
     # This will dump the list of SI's only when they don't match the expected
     # number in static_initializers.gni (this is what the bots use).
     ninja chrome/android:monochrome_static_initializers
-    # or:
-    tools/binary_size/diagnose_bloat.py HEAD  # See README.md for flags.
-    # or (the other two use this under the hood):
-    tools/linux/dump-static-initializers.py --toolchain-prefix third_party/android_ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/arm-linux-androideabi- out/Release/lib.unstripped/libmonochrome.so
-    # arm32 ^^ vv arm64
-    tools/linux/dump-static-initializers.py --toolchain-prefix third_party/android_ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android- out/Release/lib.unstripped/libmonochrome.so
-    # Note: For arm64, having use_thin_lto=true seems to dump a couple extra
-    #     initializers that don't actually exist.
+    # or, to dump directly:
+    tools/linux/dump-static-initializers.py out/Release/lib.unstripped/libmonochrome.so
 
-The last one may actually be the easiest if you've already properly built
-`libmonochrome.so` with `is_official_build=true`.
-
-### Step 2 - Ask compiler to report them
+### Option 2 - Ask compiler to report them
 
 If the source of the new initializers is not obvious from Step 1, you can ask the
 compiler to pinpoint the exact source line.
@@ -68,24 +59,37 @@ More details in [crbug/1136086](https://bugs.chromium.org/p/chromium/issues/deta
 * For more information about `diagnose_bloat.py`, refer to its [README.md](/tools/binary_size/README.md#diagnose_bloat.py)
 * List of existing static initializers documented in [static_initializers.gni](/chrome/android/static_initializers.gni)
 
-### Step 3 - Manual verification
+### Option 3 - Manual Verification
 
-If the source of the new initializers is not revealed with
-`dump-static-initializers.py` (e.g. for static initializers introduced in
-compiler-rt), there's a manual option.
+You can manually go through the steps that `dump-static-initializers.py` does.
 
-1. Locate the address range of the .init_array section with
-`llvm-readelf --hex-dump=.init_array ./lib.unstripped/libmonochrome_64.so`.
-It will yield an address range like 0x0917fd40 to 0x0918fd78.
-2. Each .init_array slot may be zero if the contents are relocatable. To translate,
- use a command like  `llvm-readelf --relocations ./lib/unstripped | grep 0x0917fd40`
-to obtain a result mapping each .init_array slot to a function address.
+1. Locate the address range of the .init_array section with:
 ```
-    000000000918fd40  0000000000000403 R_AARCH64_RELATIVE                51732f0
+$ third_party/llvm-build/Release+Asserts/bin/llvm-readelf \
+    --hex-dump=.init_array out/Release/lib.unstripped/libmonochrome.so
+Hex dump of section '.init_array':
+0x04064624 294a1a02 154acb00 79d3be01 894c1a02 )J...J..y....L..
 ```
-3. Finally, convert the address into a function name with
-`llvm-addr2line --functions -e ./lib.unstripped/libmonochrome_64.so 51732f0`
+
+* `0x04064624` is the location of `.init_array`.
+* The other four entries are addresses of functions **in little endian**.
+
+2. Convert the address into a function name with:
+
 ```
-    __cxx_global_var_init
-    ./../../buildtools/third_party/libc++/trunk/src/iostream.cpp:80
+# Reverse hex pairs to account for endianness.
+$ third_party/llvm-build/Release+Asserts/bin/llvm-symbolizer \
+    --functions -e out/Release/lib.unstripped/libmonochrome.so 0x021a4a29
+_GLOBAL__I_000101
+./../../buildtools/third_party/libc++/trunk/src/iostream.cpp:0:0
+```
+
+3. If any `.init_array` slots are zero, that means they their address is exists
+within the relocation table. To find the address:
+
+```
+# Use the location of ".init_array" printed in step 1, plus an offset for subsequent slots.
+$ third_party/llvm-build/Release+Asserts/bin/llvm-readelf \
+    --relocations out/Release/lib.unstripped/libmonochrome.so | grep 0x04064624
+03dfb7b0  00000017 R_ARM_RELATIVE                    0
 ```

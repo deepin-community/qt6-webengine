@@ -34,7 +34,7 @@ void JsonWriteBuffer::writePad32(const void* data, size_t size) {
     const uint8_t* bytes = reinterpret_cast<const uint8_t*>(data);
     for (size_t i = 0; i < size; ++i) {
         SkString hexByte = SkStringPrintf("%02x", bytes[i]);
-        fWriter->appendString(hexByte.c_str());
+        fWriter->appendString(hexByte);
     }
     fWriter->endArray();
 }
@@ -45,7 +45,7 @@ void JsonWriteBuffer::writeByteArray(const void* data, size_t size) {
     const uint8_t* bytes = reinterpret_cast<const uint8_t*>(data);
     for (size_t i = 0; i < size; ++i) {
         SkString hexByte = SkStringPrintf("%02x", bytes[i]);
-        fWriter->appendString(hexByte.c_str());
+        fWriter->appendString(hexByte);
     }
     fWriter->endArray();
 }
@@ -88,9 +88,9 @@ void JsonWriteBuffer::writeUInt(uint32_t value) {
     fWriter->appendU32(value);
 }
 
-void JsonWriteBuffer::writeString(const char* value) {
+void JsonWriteBuffer::writeString(std::string_view value) {
     this->append("string");
-    fWriter->appendString(value);
+    fWriter->appendString(value.data(), value.size());
 }
 
 void JsonWriteBuffer::writeFlattenable(const SkFlattenable* flattenable) {

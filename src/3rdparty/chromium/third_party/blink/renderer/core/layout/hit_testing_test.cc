@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -17,10 +17,6 @@ namespace blink {
 
 class HitTestingTest : public RenderingTest {
  protected:
-  bool LayoutNGEnabled() const {
-    return RuntimeEnabledFeatures::LayoutNGEnabled();
-  }
-
   PositionWithAffinity HitTest(const PhysicalOffset offset) {
     const HitTestRequest hit_request(HitTestRequest::kActive);
     const HitTestLocation hit_location(offset);

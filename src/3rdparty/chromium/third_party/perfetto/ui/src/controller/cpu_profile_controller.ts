@@ -55,7 +55,7 @@ export class CpuProfileController extends Controller<'main'> {
     this.lastSelectedSample = this.copyCpuProfileSample(selection);
 
     this.getSampleData(selectedSample.id)
-        .then(sampleData => {
+        .then((sampleData) => {
           if (sampleData !== undefined && selectedSample &&
               this.lastSelectedSample &&
               this.lastSelectedSample.id === selectedSample.id) {
@@ -115,7 +115,7 @@ export class CpuProfileController extends Controller<'main'> {
             WHERE symbol.symbol_set_id = spf.symbol_set_id
             LIMIT 1
           ),
-          spf.name
+          COALESCE(spf.deobfuscated_name, spf.name)
         ) AS name,
         spm.name AS mapping
       FROM cpu_profile_stack_sample AS samples
@@ -154,7 +154,7 @@ export class CpuProfileController extends Controller<'main'> {
       mapping: STR,
     });
 
-    const sampleData: CallsiteInfo[] = new Array();
+    const sampleData: CallsiteInfo[] = [];
     for (; it.valid(); it.next()) {
       sampleData.push({
         id: it.id,
@@ -165,7 +165,7 @@ export class CpuProfileController extends Controller<'main'> {
         selfSize: 0,
         mapping: it.mapping,
         merged: false,
-        highlighted: false
+        highlighted: false,
       });
     }
 

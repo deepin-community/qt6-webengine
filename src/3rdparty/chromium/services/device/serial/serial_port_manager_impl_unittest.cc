@@ -1,4 +1,4 @@
-// Copyright (c) 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,9 +9,10 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
 #include "base/command_line.h"
+#include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/test/bind.h"
 #include "base/test/gmock_callback_support.h"
 #include "base/threading/thread.h"
@@ -88,7 +89,7 @@ class SerialPortManagerImplTest : public DeviceServiceTestBase {
     enumerator_->AddDevicePath(kFakeDevicePath2);
 
     manager_ = std::make_unique<SerialPortManagerImpl>(
-        io_task_runner_, base::ThreadTaskRunnerHandle::Get());
+        io_task_runner_, base::SingleThreadTaskRunner::GetCurrentDefault());
     manager_->SetSerialEnumeratorForTesting(std::move(enumerator));
   }
 
@@ -175,7 +176,7 @@ class SerialPortManagerImplTest : public DeviceServiceTestBase {
 
  protected:
   scoped_refptr<base::SingleThreadTaskRunner> adapter_task_runner() {
-    return base::ThreadTaskRunnerHandle::Get();
+    return base::SingleThreadTaskRunner::GetCurrentDefault();
   }
 
   raw_ptr<FakeSerialEnumerator> enumerator_;

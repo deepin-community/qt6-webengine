@@ -10,7 +10,9 @@
 
 #include "quiche/quic/core/congestion_control/rtt_stats.h"
 #include "quiche/quic/core/crypto/crypto_protocol.h"
+#include "quiche/quic/core/quic_config.h"
 #include "quiche/quic/core/quic_connection_stats.h"
+#include "quiche/quic/core/quic_types.h"
 #include "quiche/quic/platform/api/quic_bug_tracker.h"
 #include "quiche/quic/platform/api/quic_flags.h"
 #include "quiche/quic/platform/api/quic_logging.h"
@@ -70,7 +72,8 @@ void QuicReceivedPacketManager::SetFromConfig(const QuicConfig& config,
 }
 
 void QuicReceivedPacketManager::RecordPacketReceived(
-    const QuicPacketHeader& header, QuicTime receipt_time) {
+    const QuicPacketHeader& header, QuicTime receipt_time,
+    const QuicEcnCodepoint ecn) {
   const QuicPacketNumber packet_number = header.packet_number;
   QUICHE_DCHECK(IsAwaitingPacket(packet_number))
       << " packet_number:" << packet_number;
@@ -116,6 +119,27 @@ void QuicReceivedPacketManager::RecordPacketReceived(
     } else {
       ack_frame_.received_packet_times.push_back(
           std::make_pair(packet_number, receipt_time));
+    }
+  }
+
+  if (GetQuicRestartFlag(quic_receive_ecn) && ecn != ECN_NOT_ECT) {
+    QUIC_RESTART_FLAG_COUNT_N(quic_receive_ecn, 1, 3);
+    if (!ack_frame_.ecn_counters.has_value()) {
+      ack_frame_.ecn_counters = QuicEcnCounts();
+    }
+    switch (ecn) {
+      case ECN_NOT_ECT:
+        QUICHE_NOTREACHED();
+        break;  // It's impossible to get here, but the compiler complains.
+      case ECN_ECT0:
+        ack_frame_.ecn_counters->ect0++;
+        break;
+      case ECN_ECT1:
+        ack_frame_.ecn_counters->ect1++;
+        break;
+      case ECN_CE:
+        ack_frame_.ecn_counters->ce++;
+        break;
     }
   }
 
@@ -267,24 +291,9 @@ void QuicReceivedPacketManager::MaybeUpdateAckTimeout(
     return;
   }
 
-  QuicTime ack_timeout_base = now;
-  const bool quic_update_ack_timeout_on_receipt_time =
-      GetQuicReloadableFlag(quic_update_ack_timeout_on_receipt_time);
-  if (quic_update_ack_timeout_on_receipt_time) {
-    if (last_packet_receipt_time <= now) {
-      QUIC_CODE_COUNT(quic_update_ack_timeout_on_receipt_time);
-      ack_timeout_base = last_packet_receipt_time;
-    } else {
-      QUIC_CODE_COUNT(quic_update_ack_timeout_on_now);
-      ack_timeout_base = now;
-    }
-  }
-  QuicTime updated_ack_time =
-      ack_timeout_base +
-      GetMaxAckDelay(last_received_packet_number, *rtt_stats);
-  if (quic_update_ack_timeout_on_receipt_time) {
-    updated_ack_time = std::max(now, updated_ack_time);
-  }
+  const QuicTime updated_ack_time = std::max(
+      now, std::min(last_packet_receipt_time, now) +
+               GetMaxAckDelay(last_received_packet_number, *rtt_stats));
   if (!ack_timeout_.IsInitialized() || ack_timeout_ > updated_ack_time) {
     ack_timeout_ = updated_ack_time;
   }

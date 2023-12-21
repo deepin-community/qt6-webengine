@@ -1,9 +1,10 @@
-# Copyright (c) 2013 The Chromium Authors. All rights reserved.
+# Copyright 2013 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
 import("//build/compiled_action.gni")
 import("//build/config/chromeos/ui_mode.gni")
+import("//build/config/features.gni")
 import("//build/config/nacl/config.gni")
 import("//build/config/ui.gni")
 import("//build_overrides/build.gni")
@@ -43,6 +44,7 @@ static_library("test_support") {
     "../task/sequence_manager/test/test_task_time_observer.h",
     "../timer/mock_timer.cc",
     "../timer/mock_timer.h",
+    "allow_check_is_test_for_testing.h",
     "bind.cc",
     "bind.h",
     "copy_only_int.cc",
@@ -51,6 +53,8 @@ static_library("test_support") {
     "gmock_move_support.h",
     "gtest_links.cc",
     "gtest_links.h",
+    "gtest_tags.cc",
+    "gtest_tags.h",
     "gtest_util.cc",
     "gtest_util.h",
     "gtest_xml_unittest_result_printer.cc",
@@ -88,13 +92,15 @@ static_library("test_support") {
     "perf_time_logger.h",
     "power_monitor_test.cc",
     "power_monitor_test.h",
+    "power_monitor_test_utils.cc",
+    "power_monitor_test_utils.h",
+    "rectify_callback.h",
+    "rectify_callback_internal.h",
     "repeating_test_future.h",
     "scoped_command_line.cc",
     "scoped_command_line.h",
     "scoped_feature_list.cc",
     "scoped_feature_list.h",
-    "scoped_field_trial_list_resetter.cc",
-    "scoped_field_trial_list_resetter.h",
     "scoped_mock_clock_override.cc",
     "scoped_mock_clock_override.h",
     "scoped_mock_time_message_loop_task_runner.cc",
@@ -261,7 +267,7 @@ static_library("test_support") {
     ]
   }
 
-  if (!is_ios) {
+  if (use_blink) {
     sources += [
       "launcher/test_launcher.cc",
       "launcher/test_launcher.h",
@@ -391,6 +397,8 @@ if (is_android) {
 
     deps = [
       "//base:base_java",
+      "//base:jni_java",
+      "//base:process_launcher_java",
       "//testing/android/native_test:native_main_runner_java",
       "//third_party/android_deps:com_google_code_findbugs_jsr305_java",
     ]

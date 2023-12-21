@@ -72,6 +72,17 @@ String StringBuilder::Substring(unsigned start, unsigned length) const {
   return String(Characters16() + start, length);
 }
 
+StringView StringBuilder::SubstringView(unsigned start, unsigned length) const {
+  if (start >= length_)
+    return StringView();
+  if (!string_.IsNull())
+    return StringView(string_, start, length);
+  length = std::min(length, length_ - start);
+  if (is_8bit_)
+    return StringView(Characters8() + start, length);
+  return StringView(Characters16() + start, length);
+}
+
 void StringBuilder::Swap(StringBuilder& builder) {
   absl::optional<Buffer8> buffer8;
   absl::optional<Buffer16> buffer16;
@@ -144,16 +155,16 @@ void StringBuilder::ReserveCapacity(unsigned new_capacity) {
     return;
   }
   if (is_8bit_)
-    buffer8_.ReserveCapacity(new_capacity);
+    buffer8_.reserve(new_capacity);
   else
-    buffer16_.ReserveCapacity(new_capacity);
+    buffer16_.reserve(new_capacity);
 }
 
 void StringBuilder::Reserve16BitCapacity(unsigned new_capacity) {
   if (is_8bit_ || !HasBuffer())
     CreateBuffer16(new_capacity);
   else
-    buffer16_.ReserveCapacity(new_capacity);
+    buffer16_.reserve(new_capacity);
 }
 
 void StringBuilder::Resize(unsigned new_size) {
@@ -208,7 +219,7 @@ void StringBuilder::CreateBuffer16(unsigned added_size) {
   buffer16_.ReserveInitialCapacity(capacity);
   is_8bit_ = false;
   length_ = 0;
-  if (!buffer8.IsEmpty()) {
+  if (!buffer8.empty()) {
     Append(buffer8.data(), length);
     return;
   }

@@ -1,18 +1,19 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/performance_manager/graph/graph_impl.h"
 
-#include <algorithm>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/check_op.h"
+#include "base/containers/contains.h"
 #include "base/containers/flat_map.h"
 #include "base/containers/flat_set.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/notreached.h"
+#include "base/ranges/algorithm.h"
 #include "base/strings/string_piece.h"
 #include "components/performance_manager/graph/frame_node_impl.h"
 #include "components/performance_manager/graph/node_base.h"
@@ -39,8 +40,7 @@ void AddObserverImpl(std::vector<NodeObserverType*>* observers,
                      NodeObserverType* observer) {
   DCHECK(observers);
   DCHECK(observer);
-  auto it = std::find(observers->begin(), observers->end(), observer);
-  DCHECK(it == observers->end());
+  DCHECK(!base::Contains(*observers, observer));
   observers->push_back(observer);
 }
 
@@ -50,12 +50,11 @@ void RemoveObserverImpl(std::vector<NodeObserverType*>* observers,
   DCHECK(observers);
   DCHECK(observer);
   // We expect to find the observer in the array.
-  auto it = std::find(observers->begin(), observers->end(), observer);
+  auto it = base::ranges::find(*observers, observer);
   DCHECK(it != observers->end());
   observers->erase(it);
   // There should only have been one copy of the observer.
-  it = std::find(observers->begin(), observers->end(), observer);
-  DCHECK(it == observers->end());
+  DCHECK(!base::Contains(*observers, observer));
 }
 
 class NodeDataDescriberRegistryImpl : public NodeDataDescriberRegistry {
@@ -66,7 +65,7 @@ class NodeDataDescriberRegistryImpl : public NodeDataDescriberRegistry {
   void RegisterDescriber(const NodeDataDescriber* describer,
                          base::StringPiece name) override;
   void UnregisterDescriber(const NodeDataDescriber* describer) override;
-  base::Value DescribeNodeData(const Node* node) const override;
+  base::Value::Dict DescribeNodeData(const Node* node) const override;
 
   size_t size() const {
     DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -75,8 +74,8 @@ class NodeDataDescriberRegistryImpl : public NodeDataDescriberRegistry {
 
  private:
   template <typename NodeType, typename NodeImplType>
-  base::Value DescribeNodeImpl(
-      base::Value (NodeDataDescriber::*DescribeFn)(const NodeType*) const,
+  base::Value::Dict DescribeNodeImpl(
+      base::Value::Dict (NodeDataDescriber::*DescribeFn)(const NodeType*) const,
       const NodeImplType* node) const VALID_CONTEXT_REQUIRED(sequence_checker_);
 
   base::flat_map<const NodeDataDescriber*, std::string> describers_
@@ -85,16 +84,16 @@ class NodeDataDescriberRegistryImpl : public NodeDataDescriberRegistry {
 };
 
 template <typename NodeType, typename NodeImplType>
-base::Value NodeDataDescriberRegistryImpl::DescribeNodeImpl(
-    base::Value (NodeDataDescriber::*Describe)(const NodeType*) const,
+base::Value::Dict NodeDataDescriberRegistryImpl::DescribeNodeImpl(
+    base::Value::Dict (NodeDataDescriber::*Describe)(const NodeType*) const,
     const NodeImplType* node) const {
-  base::Value result(base::Value::Type::DICTIONARY);
+  base::Value::Dict result;
 
   for (const auto& name_and_describer : describers_) {
-    base::Value description = (name_and_describer.first->*Describe)(node);
-    if (!description.is_none()) {
-      DCHECK_EQ(nullptr, result.FindDictKey(name_and_describer.second));
-      result.SetKey(name_and_describer.second, std::move(description));
+    base::Value::Dict description = (name_and_describer.first->*Describe)(node);
+    if (!description.empty()) {
+      DCHECK_EQ(nullptr, result.FindDict(name_and_describer.second));
+      result.Set(name_and_describer.second, std::move(description));
     }
   }
 
@@ -127,14 +126,14 @@ void NodeDataDescriberRegistryImpl::UnregisterDescriber(
   DCHECK_EQ(1u, erased);
 }
 
-base::Value NodeDataDescriberRegistryImpl::DescribeNodeData(
+base::Value::Dict NodeDataDescriberRegistryImpl::DescribeNodeData(
     const Node* node) const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   const NodeBase* node_base = NodeBase::FromNode(node);
   switch (node_base->type()) {
     case NodeTypeEnum::kInvalidType:
       NOTREACHED();
-      return base::Value();
+      return base::Value::Dict();
     case NodeTypeEnum::kFrame:
       return DescribeNodeImpl(&NodeDataDescriber::DescribeFrameNodeData,
                               FrameNodeImpl::FromNodeBase(node_base));

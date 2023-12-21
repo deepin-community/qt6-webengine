@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "absl/container/inlined_vector.h"
+#include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/optional.h"
 #include "quiche/quic/core/quic_connection_id.h"
@@ -21,19 +22,13 @@
 #include "quiche/quic/core/quic_time.h"
 #include "quiche/quic/platform/api/quic_export.h"
 #include "quiche/quic/platform/api/quic_flags.h"
+#include "quiche/common/quiche_endian.h"
 
 namespace quic {
 
 using QuicPacketLength = uint16_t;
 using QuicControlFrameId = uint32_t;
 using QuicMessageId = uint32_t;
-
-// TODO(b/181256914) replace QuicDatagramStreamId with QuicStreamId once we
-// remove support for draft-ietf-masque-h3-datagram-00 in favor of later drafts.
-using QuicDatagramStreamId = uint64_t;
-using QuicDatagramContextId = uint64_t;
-// Note that for draft-ietf-masque-h3-datagram-00, we represent the flow ID as a
-// QuicDatagramStreamId.
 
 // IMPORTANT: IETF QUIC defines stream IDs and stream counts as being unsigned
 // 62-bit numbers. However, we have decided to only support up to 2^32-1 streams
@@ -187,10 +182,7 @@ enum TransmissionType : int8_t {
   ALL_ZERO_RTT_RETRANSMISSION,  // Retransmits all packets encrypted with 0-RTT
                                 // key.
   LOSS_RETRANSMISSION,          // Retransmits due to loss detection.
-  RTO_RETRANSMISSION,           // Retransmits due to retransmit time out.
-  TLP_RETRANSMISSION,           // Tail loss probes.
   PTO_RETRANSMISSION,           // Retransmission due to probe timeout.
-  PROBING_RETRANSMISSION,       // Retransmission in order to probe bandwidth.
   PATH_RETRANSMISSION,          // Retransmission proactively due to underlying
                                 // network change.
   ALL_INITIAL_RETRANSMISSION,   // Retransmit all packets encrypted with INITIAL
@@ -363,20 +355,6 @@ QUIC_EXPORT_PRIVATE std::string QuicIetfFrameTypeString(QuicIetfFrameType t);
 #define IETF_STREAM_FRAME_LEN_BIT 0x02
 #define IETF_STREAM_FRAME_OFF_BIT 0x04
 
-enum QuicVariableLengthIntegerLength : uint8_t {
-  // Length zero means the variable length integer is not present.
-  VARIABLE_LENGTH_INTEGER_LENGTH_0 = 0,
-  VARIABLE_LENGTH_INTEGER_LENGTH_1 = 1,
-  VARIABLE_LENGTH_INTEGER_LENGTH_2 = 2,
-  VARIABLE_LENGTH_INTEGER_LENGTH_4 = 4,
-  VARIABLE_LENGTH_INTEGER_LENGTH_8 = 8,
-
-  // By default we write the IETF long header length using the 2-byte encoding
-  // of variable length integers, even when the length is below 64, which allows
-  // us to fill in the length before knowing what the length actually is.
-  kQuicDefaultLongHeaderLengthLength = VARIABLE_LENGTH_INTEGER_LENGTH_2,
-};
-
 enum QuicPacketNumberLength : uint8_t {
   PACKET_1BYTE_PACKET_NUMBER = 1,
   PACKET_2BYTE_PACKET_NUMBER = 2,
@@ -461,6 +439,9 @@ enum CongestionControlType {
   kGoogCC,
   kBBRv2,
 };
+
+QUIC_EXPORT_PRIVATE std::string CongestionControlTypeToString(
+    CongestionControlType cc_type);
 
 // EncryptionLevel enumerates the stages of encryption that a QUIC connection
 // progresses through. When retransmitting a packet, the encryption level needs
@@ -552,14 +533,8 @@ enum SentPacketState : uint8_t {
   HANDSHAKE_RETRANSMITTED,
   // This packet is considered as lost, this is used for LOST_RETRANSMISSION.
   LOST,
-  // This packet has been retransmitted when TLP fires.
-  TLP_RETRANSMITTED,
-  // This packet has been retransmitted when RTO fires.
-  RTO_RETRANSMITTED,
   // This packet has been retransmitted when PTO fires.
   PTO_RETRANSMITTED,
-  // This packet has been retransmitted for probing purpose.
-  PROBE_RETRANSMITTED,
   // This packet is sent on a different path or is a PING only packet.
   // Do not update RTT stats and congestion control if the packet is the
   // largest_acked of an incoming ACK.
@@ -732,12 +707,10 @@ enum AckResult {
 
 // Indicates the fate of a serialized packet in WritePacket().
 enum SerializedPacketFate : uint8_t {
-  DISCARD,                     // Discard the packet.
-  COALESCE,                    // Try to coalesce packet.
-  BUFFER,                      // Buffer packet in buffered_packets_.
-  SEND_TO_WRITER,              // Send packet to writer.
-  LEGACY_VERSION_ENCAPSULATE,  // Perform Legacy Version Encapsulation on this
-                               // packet.
+  DISCARD,         // Discard the packet.
+  COALESCE,        // Try to coalesce packet.
+  BUFFER,          // Buffer packet in buffered_packets_.
+  SEND_TO_WRITER,  // Send packet to writer.
 };
 
 QUIC_EXPORT_PRIVATE std::string SerializedPacketFateToString(
@@ -842,6 +815,8 @@ QUIC_EXPORT_PRIVATE std::ostream& operator<<(std::ostream& os,
 
 QUIC_EXPORT_PRIVATE std::string KeyUpdateReasonString(KeyUpdateReason reason);
 
+using QuicSignatureAlgorithmVector = absl::InlinedVector<uint16_t, 8>;
+
 // QuicSSLConfig contains configurations to be applied on a SSL object, which
 // overrides the configurations in SSL_CTX.
 struct QUIC_NO_EXPORT QuicSSLConfig {
@@ -852,7 +827,7 @@ struct QUIC_NO_EXPORT QuicSSLConfig {
   absl::optional<bool> disable_ticket_support;
   // If set, used to configure the SSL object with
   // SSL_set_signing_algorithm_prefs.
-  absl::optional<absl::InlinedVector<uint16_t, 8>> signing_algorithm_prefs;
+  absl::optional<QuicSignatureAlgorithmVector> signing_algorithm_prefs;
   // Client certificate mode for mTLS support. Only used at server side.
   ClientCertMode client_cert_mode = ClientCertMode::kNone;
 };
@@ -864,6 +839,8 @@ struct QUIC_NO_EXPORT QuicDelayedSSLConfig {
   // Client certificate mode for mTLS support. Only used at server side.
   // absl::nullopt means do not change client certificate mode.
   absl::optional<ClientCertMode> client_cert_mode;
+  // QUIC transport parameters as serialized by ProofSourceHandle.
+  absl::optional<std::vector<uint8_t>> quic_transport_parameters;
 };
 
 // ParsedClientHello contains client hello information extracted from a fully
@@ -872,7 +849,6 @@ struct QUIC_NO_EXPORT ParsedClientHello {
   std::string sni;                 // QUIC crypto and TLS.
   std::string uaid;                // QUIC crypto only.
   std::vector<std::string> alpns;  // QUIC crypto and TLS.
-  std::string legacy_version_encapsulation_inner_packet;  // QUIC crypto only.
   // The unvalidated retry token from the last received packet of a potentially
   // multi-packet client hello. TLS only.
   std::string retry_token;
@@ -885,6 +861,42 @@ QUIC_EXPORT_PRIVATE bool operator==(const ParsedClientHello& a,
 
 QUIC_EXPORT_PRIVATE std::ostream& operator<<(
     std::ostream& os, const ParsedClientHello& parsed_chlo);
+
+// The two bits in the IP header for Explicit Congestion Notification can take
+// one of four values.
+enum QuicEcnCodepoint {
+  // The NOT-ECT codepoint, indicating the packet sender is not using (or the
+  // network has disabled) ECN.
+  ECN_NOT_ECT = 0,
+  // The ECT(0) codepoint, indicating the packet sender is using classic ECN
+  // (RFC3168).
+  ECN_ECT0 = 1,
+  // The ECT(1) codepoint, indicating the packet sender is using Low Latency,
+  // Low Loss, Scalable Throughput (L4S) ECN (RFC9330).
+  ECN_ECT1 = 2,
+  // The CE ("Congestion Experienced") codepoint, indicating the packet sender
+  // is using ECN, and a router is experiencing congestion.
+  ECN_CE = 3,
+};
+
+// This struct reports the Explicit Congestion Notification (ECN) contents of
+// the ACK_ECN frame. They are the cumulative number of QUIC packets received
+// for that codepoint in a given Packet Number Space.
+struct QUIC_EXPORT_PRIVATE QuicEcnCounts {
+  QuicEcnCounts() = default;
+  QuicEcnCounts(QuicPacketCount ect0, QuicPacketCount ect1, QuicPacketCount ce)
+      : ect0(ect0), ect1(ect1), ce(ce) {}
+
+  std::string ToString() const {
+    return absl::StrFormat("ECT(0): %s, ECT(1): %s, CE: %s",
+                           std::to_string(ect0), std::to_string(ect1),
+                           std::to_string(ce));
+  }
+
+  QuicPacketCount ect0 = 0;
+  QuicPacketCount ect1 = 0;
+  QuicPacketCount ce = 0;
+};
 
 }  // namespace quic
 

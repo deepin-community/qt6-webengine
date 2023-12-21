@@ -1,4 +1,4 @@
-# Copyright 2022 The Chromium Authors. All rights reserved.
+# Copyright 2022 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -13,6 +13,8 @@ source_set("browsing_topics") {
     "browsing_topics_service_impl.h",
     "browsing_topics_state.cc",
     "browsing_topics_state.h",
+    "candidate_topic.cc",
+    "candidate_topic.h",
     "epoch_topics.cc",
     "epoch_topics.h",
     "topic_and_domains.cc",
@@ -24,6 +26,7 @@ source_set("browsing_topics") {
   deps = [
     "//base",
     "//components/browsing_topics/common:common",
+    "//components/browsing_topics/mojom:mojo_bindings",
     "//components/history/content/browser",
     "//components/history/core/browser",
     "//components/keyed_service/core",
@@ -51,7 +54,10 @@ source_set("test_support") {
   deps = [
     ":browsing_topics",
     "//base/test:test_support",
+    "//components/browsing_topics/mojom:mojo_bindings",
     "//components/history/core/browser:browser",
+    "//components/ukm:test_support",
+    "//services/metrics/public/cpp:ukm_builders",
     "//third_party/blink/public/common",
   ]
 }
@@ -73,6 +79,8 @@ source_set("unit_tests") {
     ":test_support",
     "//base",
     "//base/test:test_support",
+    "//components/content_settings/browser:browser",
+    "//components/content_settings/browser:test_support",
     "//components/content_settings/core/test:test_support",
     "//components/history/content/browser:browser",
     "//components/history/core/browser:browser",

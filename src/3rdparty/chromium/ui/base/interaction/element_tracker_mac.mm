@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -21,6 +21,10 @@ TrackedElementMac::TrackedElementMac(ElementIdentifier identifier,
     : TrackedElement(identifier, context), screen_bounds_(screen_bounds) {}
 
 TrackedElementMac::~TrackedElementMac() = default;
+
+gfx::Rect TrackedElementMac::GetScreenBounds() const {
+  return screen_bounds_;
+}
 
 class ElementTrackerMac::ContextData {
  public:
@@ -50,7 +54,7 @@ class ElementTrackerMac::ContextData {
 
   void ActivateElement(ElementIdentifier identifier) {
     const auto it = elements_.find(identifier);
-    DCHECK(it != elements_.end());
+    CHECK(it != elements_.end());
     ui::ElementTracker::GetFrameworkDelegate()->NotifyElementActivated(
         it->second.get());
   }

@@ -3,6 +3,7 @@
 
 /*!
     \example webenginewidgets/maps
+    \examplecategory {Web Technologies}
     \title WebEngine Widgets Maps Example
     \ingroup webengine-widgetexamples
     \brief Demonstrates how to handle geolocation requests.
@@ -15,12 +16,18 @@
     The \l {https://www.w3.org/TR/geolocation-API/}{Geolocation API} is a
     JavaScript API that web applications can use to determine the user's
     physical location to show on a map, for example. As \QWE relies on the
-    \e {Qt Location} module to power this API, a viable location backend is
+    \e {Qt Positioning} module to power this API, a viable location backend is
     needed for the target platform.
 
     To avoid accidentally sending location information to third parties
     geolocation requests are denied by default. This example demonstrates the
     steps an application must take in order to start accepting these requests.
+
+    \note On Windows 11, enable settings to grant the application access to
+    Windows location services. In the Settings App under
+    \uicontrol {Privacy & Security} > \uicontrol {Location}, enable \uicontrol
+    {Location services}, \uicontrol {Let apps access your location} and \uicontrol
+    {Let desktop apps access your location}.
 
     \include examples-run.qdocinc
 

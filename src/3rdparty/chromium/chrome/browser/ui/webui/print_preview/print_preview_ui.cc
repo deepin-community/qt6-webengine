@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,15 +8,15 @@
 #include <utility>
 #include <vector>
 
-#include "ash/constants/ash_features.h"
-#include "base/bind.h"
 #include "base/containers/flat_map.h"
 #include "base/containers/id_map.h"
 #include "base/files/file_path.h"
+#include "base/functional/bind.h"
 #include "base/lazy_instance.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/numerics/safe_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/lock.h"
 #include "base/values.h"
@@ -24,6 +24,7 @@
 #include "build/chromeos_buildflags.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/pdf/pdf_extension_util.h"
+#include "chrome/browser/policy/management_utils.h"
 #include "chrome/browser/printing/background_printing_manager.h"
 #include "chrome/browser/printing/pdf_nup_converter_client.h"
 #include "chrome/browser/printing/print_job_manager.h"
@@ -45,8 +46,11 @@
 #include "chrome/grit/browser_resources.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
+#include "chrome/grit/pdf_resources.h"
+#include "chrome/grit/pdf_resources_map.h"
 #include "chrome/grit/print_preview_resources.h"
 #include "chrome/grit/print_preview_resources_map.h"
+#include "components/device_event_log/device_event_log.h"
 #include "components/prefs/pref_service.h"
 #include "components/printing/browser/print_composite_client.h"
 #include "components/printing/browser/print_manager_utils.h"
@@ -102,21 +106,19 @@ constexpr char kInvalidPageNumberForDidPreviewPage[] =
     "Invalid page number for DidPreviewPage";
 constexpr char kInvalidPageCountForMetafileReadyForPrinting[] =
     "Invalid page count for MetafileReadyForPrinting";
+constexpr char kInvalidArgsForPrinterSettingsInvalid[] =
+    "Invalid details for PrinterSettingsInvalid";
 
 PrintPreviewUI::TestDelegate* g_test_delegate = nullptr;
 
 void StopWorker(int document_cookie) {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   if (document_cookie <= 0)
     return;
   scoped_refptr<PrintQueriesQueue> queue =
       g_browser_process->print_job_manager()->queue();
   std::unique_ptr<PrinterQuery> printer_query =
       queue->PopPrinterQuery(document_cookie);
-  if (printer_query) {
-    content::GetIOThreadTaskRunner({})->PostTask(
-        FROM_HERE,
-        base::BindOnce(&PrinterQuery::StopWorker, std::move(printer_query)));
-  }
 }
 
 bool IsValidPageNumber(uint32_t page_number, uint32_t page_count) {
@@ -333,12 +335,10 @@ void AddPrintPreviewStrings(content::WebUIDataSource* source) {
 #endif
 
   // Register strings for the PDF viewer, so that $i18n{} replacements work.
-  base::Value pdf_strings(base::Value::Type::DICTIONARY);
+  base::Value::Dict pdf_strings;
   pdf_extension_util::AddStrings(
       pdf_extension_util::PdfViewerContext::kPrintPreview, &pdf_strings);
-  pdf_extension_util::AddAdditionalData(/*enable_annotations=*/false,
-                                        &pdf_strings);
-  source->AddLocalizedStrings(pdf_strings.GetDict());
+  source->AddLocalizedStrings(pdf_strings);
 }
 
 void AddPrintPreviewFlags(content::WebUIDataSource* source, Profile* profile) {
@@ -350,7 +350,8 @@ void AddPrintPreviewFlags(content::WebUIDataSource* source, Profile* profile) {
   source->AddBoolean("useSystemDefaultPrinter", system_default_printer);
 #endif
 
-  source->AddBoolean("isEnterpriseManaged", webui::IsEnterpriseManaged());
+  source->AddBoolean("isEnterpriseManaged",
+                     policy::IsDeviceEnterpriseManaged());
 }
 
 void SetupPrintPreviewPlugin(content::WebUIDataSource* source) {
@@ -363,17 +364,17 @@ void SetupPrintPreviewPlugin(content::WebUIDataSource* source) {
       "object-src chrome-untrusted://print;");
 }
 
-content::WebUIDataSource* CreatePrintPreviewUISource(Profile* profile) {
-  content::WebUIDataSource* source =
-      content::WebUIDataSource::Create(chrome::kChromeUIPrintHost);
+void CreateAndAddPrintPreviewUISource(Profile* profile) {
+  content::WebUIDataSource* source = content::WebUIDataSource::CreateAndAdd(
+      profile, chrome::kChromeUIPrintHost);
   webui::SetupWebUIDataSource(
       source,
       base::make_span(kPrintPreviewResources, kPrintPreviewResourcesSize),
       IDR_PRINT_PREVIEW_PRINT_PREVIEW_HTML);
   AddPrintPreviewStrings(source);
+  source->AddResourcePaths(base::make_span(kPdfResources, kPdfResourcesSize));
   SetupPrintPreviewPlugin(source);
   AddPrintPreviewFlags(source, profile);
-  return source;
 }
 
 PrintPreviewHandler* CreatePrintPreviewHandlers(content::WebUI* web_ui) {
@@ -402,6 +403,8 @@ PrintPreviewHandler* CreatePrintPreviewHandlers(content::WebUI* web_ui) {
 
 }  // namespace
 
+WEB_UI_CONTROLLER_TYPE_IMPL(PrintPreviewUI)
+
 PrintPreviewUI::PrintPreviewUI(content::WebUI* web_ui,
                                std::unique_ptr<PrintPreviewHandler> handler)
     : ConstrainedWebDialogUI(web_ui),
@@ -429,12 +432,7 @@ PrintPreviewUI::PrintPreviewUI(content::WebUI* web_ui)
 
   // Set up the chrome://print/ data source.
   Profile* profile = Profile::FromWebUI(web_ui);
-  content::WebUIDataSource* source = CreatePrintPreviewUISource(profile);
-#if !BUILDFLAG(OPTIMIZE_WEBUI)
-  // For the Polymer 3 demo page.
-  ManagedUIHandler::Initialize(web_ui, source);
-#endif
-  content::WebUIDataSource::Add(profile, source);
+  CreateAndAddPrintPreviewUISource(profile);
 
   // Set up the chrome://theme/ source.
   content::URLDataSource::Add(profile, std::make_unique<ThemeSource>(profile));
@@ -722,8 +720,11 @@ void PrintPreviewUI::SetInitialParams(
     const mojom::RequestPrintPreviewParams& params) {
   if (!print_preview_dialog || !print_preview_dialog->GetWebUI())
     return;
-  PrintPreviewUI* print_preview_ui = static_cast<PrintPreviewUI*>(
-      print_preview_dialog->GetWebUI()->GetController());
+
+  PrintPreviewUI* print_preview_ui = print_preview_dialog->GetWebUI()
+                                         ->GetController()
+                                         ->GetAs<PrintPreviewUI>();
+  CHECK(print_preview_ui);
 #if BUILDFLAG(IS_CHROMEOS_ASH)
   print_preview_ui->source_is_arc_ = params.is_from_arc;
 #endif
@@ -843,23 +844,19 @@ void PrintPreviewUI::DidGetDefaultPageLayout(
     return;
   }
 
-  base::DictionaryValue layout;
-  layout.SetDoubleKey(kSettingMarginTop, page_layout_in_points->margin_top);
-  layout.SetDoubleKey(kSettingMarginLeft, page_layout_in_points->margin_left);
-  layout.SetDoubleKey(kSettingMarginBottom,
-                      page_layout_in_points->margin_bottom);
-  layout.SetDoubleKey(kSettingMarginRight, page_layout_in_points->margin_right);
-  layout.SetDoubleKey(kSettingContentWidth,
-                      page_layout_in_points->content_width);
-  layout.SetDoubleKey(kSettingContentHeight,
-                      page_layout_in_points->content_height);
-  layout.SetIntKey(kSettingPrintableAreaX, printable_area_in_points.x());
-  layout.SetIntKey(kSettingPrintableAreaY, printable_area_in_points.y());
-  layout.SetIntKey(kSettingPrintableAreaWidth,
-                   printable_area_in_points.width());
-  layout.SetIntKey(kSettingPrintableAreaHeight,
-                   printable_area_in_points.height());
-  handler_->SendPageLayoutReady(layout, has_custom_page_size_style, request_id);
+  base::Value::Dict layout;
+  layout.Set(kSettingMarginTop, page_layout_in_points->margin_top);
+  layout.Set(kSettingMarginLeft, page_layout_in_points->margin_left);
+  layout.Set(kSettingMarginBottom, page_layout_in_points->margin_bottom);
+  layout.Set(kSettingMarginRight, page_layout_in_points->margin_right);
+  layout.Set(kSettingContentWidth, page_layout_in_points->content_width);
+  layout.Set(kSettingContentHeight, page_layout_in_points->content_height);
+  layout.Set(kSettingPrintableAreaX, printable_area_in_points.x());
+  layout.Set(kSettingPrintableAreaY, printable_area_in_points.y());
+  layout.Set(kSettingPrintableAreaWidth, printable_area_in_points.width());
+  layout.Set(kSettingPrintableAreaHeight, printable_area_in_points.height());
+  handler_->SendPageLayoutReady(std::move(layout), has_custom_page_size_style,
+                                request_id);
 }
 
 bool PrintPreviewUI::OnPendingPreviewPage(uint32_t page_number) {
@@ -1074,7 +1071,14 @@ void PrintPreviewUI::PrintPreviewCancelled(int32_t document_cookie,
 }
 
 void PrintPreviewUI::PrinterSettingsInvalid(int32_t document_cookie,
-                                            int32_t request_id) {
+                                            int32_t request_id,
+                                            const std::string& details) {
+  if (!base::IsStringASCII(details)) {
+    receiver_.ReportBadMessage(kInvalidArgsForPrinterSettingsInvalid);
+    return;
+  }
+  if (!details.empty())
+    PRINTER_LOG(ERROR) << "Printer settings invalid: " << details;
   StopWorker(document_cookie);
   if (ShouldCancelRequest(id_, request_id))
     return;

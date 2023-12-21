@@ -44,9 +44,9 @@
 #include "third_party/blink/renderer/core/layout/layout_video.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
 #include "third_party/blink/renderer/core/loader/resource/image_resource_content.h"
-#include "third_party/blink/renderer/core/paint/image_element_timing.h"
 #include "third_party/blink/renderer/core/paint/image_painter.h"
 #include "third_party/blink/renderer/core/paint/paint_layer.h"
+#include "third_party/blink/renderer/core/paint/timing/image_element_timing.h"
 #include "third_party/blink/renderer/core/svg/graphics/svg_image.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
@@ -55,10 +55,7 @@
 namespace blink {
 
 LayoutImage::LayoutImage(Element* element)
-    : LayoutReplaced(element, LayoutSize()),
-      did_increment_visually_non_empty_pixel_count_(false),
-      is_generated_content_(false),
-      image_device_pixel_ratio_(1.0f) {}
+    : LayoutReplaced(element, LayoutSize()) {}
 
 LayoutImage* LayoutImage::CreateAnonymous(PseudoElement& pseudo) {
   LayoutImage* image = MakeGarbageCollected<LayoutImage>(nullptr);
@@ -207,7 +204,7 @@ void LayoutImage::InvalidatePaintAndMarkForLayoutIfNeeded(
     }
   }
 
-  SetShouldDoFullPaintInvalidationWithoutGeometryChange(
+  SetShouldDoFullPaintInvalidationWithoutLayoutChange(
       PaintInvalidationReason::kImage);
 
   if (defer == CanDeferInvalidation::kYes && ImageResource() &&
@@ -285,12 +282,6 @@ bool LayoutImage::ComputeBackgroundIsKnownToBeObscured() const {
   return ForegroundIsKnownToBeOpaqueInRect(BackgroundPaintedExtent(), 0);
 }
 
-LayoutUnit LayoutImage::MinimumReplacedHeight() const {
-  NOT_DESTROYED();
-  return image_resource_->ErrorOccurred() ? IntrinsicSize().Height()
-                                          : LayoutUnit();
-}
-
 HTMLMapElement* LayoutImage::ImageMap() const {
   NOT_DESTROYED();
   auto* i = DynamicTo<HTMLImageElement>(GetNode());
@@ -302,11 +293,11 @@ HTMLMapElement* LayoutImage::ImageMap() const {
 bool LayoutImage::NodeAtPoint(HitTestResult& result,
                               const HitTestLocation& hit_test_location,
                               const PhysicalOffset& accumulated_offset,
-                              HitTestAction hit_test_action) {
+                              HitTestPhase phase) {
   NOT_DESTROYED();
   HitTestResult temp_result(result);
-  bool inside = LayoutReplaced::NodeAtPoint(
-      temp_result, hit_test_location, accumulated_offset, hit_test_action);
+  bool inside = LayoutReplaced::NodeAtPoint(temp_result, hit_test_location,
+                                            accumulated_offset, phase);
 
   if (!inside && result.GetHitTestRequest().ListBased())
     result.Append(temp_result);
@@ -375,15 +366,19 @@ void LayoutImage::ComputeIntrinsicSizingInfo(
     if (SVGImage* svg_image = EmbeddedSVGImage()) {
       svg_image->GetIntrinsicSizingInfo(intrinsic_sizing_info);
 
-      if (auto view_box = ComputeObjectViewBoxRect()) {
+      // Scale for the element's effective zoom (which includes scaling for
+      // device scale) is already applied when computing the view box. If the
+      // element has no view box then it needs to be explicitly applied here.
+      if (auto view_box_size = ComputeObjectViewBoxSizeForIntrinsicSizing()) {
         DCHECK(intrinsic_sizing_info.has_width);
         DCHECK(intrinsic_sizing_info.has_height);
-        intrinsic_sizing_info.size = static_cast<gfx::SizeF>(view_box->size);
+        intrinsic_sizing_info.size = *view_box_size;
+      } else {
+        intrinsic_sizing_info.size.Scale(StyleRef().EffectiveZoom());
       }
 
       // Handle zoom & vertical writing modes here, as the embedded SVG document
       // doesn't know about them.
-      intrinsic_sizing_info.size.Scale(StyleRef().EffectiveZoom());
       if (StyleRef().GetObjectFit() != EObjectFit::kScaleDown)
         intrinsic_sizing_info.size.Scale(ImageDevicePixelRatio());
 
@@ -467,10 +462,24 @@ void LayoutImage::UpdateAfterLayout() {
   if (auto* image_element = DynamicTo<HTMLImageElement>(node)) {
     media_element_parser_helpers::CheckUnsizedMediaViolation(
         this, image_element->IsDefaultIntrinsicSize());
+    image_element->SetAutoSizesUsecounter();
   } else if (auto* video_element = DynamicTo<HTMLVideoElement>(node)) {
     media_element_parser_helpers::CheckUnsizedMediaViolation(
         this, video_element->IsDefaultIntrinsicSize());
   }
+}
+
+void LayoutImage::MutableForPainting::UpdatePaintedRect(
+    const PhysicalRect& paint_rect) {
+  // As an optimization for sprite sheets, an image may use the cull rect when
+  // generating the display item. We need to invalidate the display item if
+  // this rect changes.
+  auto& image = To<LayoutImage>(layout_object_);
+  if (image.last_paint_rect_ != paint_rect) {
+    static_cast<const DisplayItemClient&>(layout_object_).Invalidate();
+  }
+
+  image.last_paint_rect_ = paint_rect;
 }
 
 }  // namespace blink

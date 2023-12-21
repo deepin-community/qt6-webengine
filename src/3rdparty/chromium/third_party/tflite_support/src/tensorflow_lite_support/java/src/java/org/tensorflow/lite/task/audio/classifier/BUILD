@@ -1,6 +1,7 @@
 load("@build_bazel_rules_android//android:rules.bzl", "android_library")
 
 package(
+    default_applicable_licenses = ["//tensorflow_lite_support:license"],
     default_visibility = ["//visibility:public"],
     licenses = ["notice"],  # Apache 2.0
 )
@@ -26,7 +27,6 @@ android_library(
 android_library(
     name = "audio_classifier_java",
     srcs = [":audio_classifier_src"],
-    javacopts = ["-source 7 -target 7"],
     manifest = "//tensorflow_lite_support/java/src/java/org/tensorflow/lite/task/audio:AndroidManifest.xml",
     deps = [
         "//tensorflow_lite_support/java:tensorflowlite_support_java",

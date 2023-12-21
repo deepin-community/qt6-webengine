@@ -1,15 +1,15 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include <memory>
 #include <string>
 
-#include "base/bind.h"
 #include "base/check_op.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
+#include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/path_service.h"
 #include "base/process/memory.h"
@@ -163,7 +163,7 @@ class NetworkQualityEstimatorPrefsBrowserTest : public InProcessBrowserTest {
     DCHECK(content::GetNetworkService());
 
     mojo::Remote<network::mojom::NetworkServiceTest> network_service_test;
-    content::GetNetworkService()->BindTestInterface(
+    content::GetNetworkService()->BindTestInterfaceForTesting(
         network_service_test.BindNewPipeAndPassReceiver());
     base::RunLoop run_loop;
     network_service_test->SimulateNetworkQualityChange(
@@ -216,11 +216,10 @@ IN_PROC_BROWSER_TEST_F(NetworkQualityEstimatorPrefsBrowserTest,
   auto state = base::MakeRefCounted<JsonPrefStore>(data_path.Append(
       *context_params->file_paths->http_server_properties_file_name));
 
-  base::DictionaryValue pref_value;
-  base::Value value("2G");
-  pref_value.SetKey("network_id_foo", value.Clone());
-  state->SetValue("net.network_qualities",
-                  base::Value::ToUniquePtrValue(pref_value.Clone()), 0);
+  base::Value::Dict pref_value;
+  pref_value.Set("network_id_foo", "2G");
+  state->SetValue("net.network_qualities", base::Value(std::move(pref_value)),
+                  0);
 
   // Wait for the pending commit to finish before creating the network context.
   base::RunLoop loop;

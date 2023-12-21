@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,6 @@
 #include "base/notreached.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/remote.h"
-#include "services/network/public/mojom/web_sandbox_flags.mojom-blink.h"
 #include "third_party/blink/public/common/browser_interface_broker_proxy.h"
 #include "third_party/blink/public/mojom/file_system_access/file_system_access_error.mojom-blink.h"
 #include "third_party/blink/public/mojom/file_system_access/file_system_access_manager.mojom-blink-forward.h"
@@ -24,16 +23,14 @@
 #include "third_party/blink/renderer/bindings/modules/v8/v8_open_file_picker_options.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_save_file_picker_options.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_union_filesystemhandle_wellknowndirectory.h"
-#include "third_party/blink/renderer/core/dom/dom_exception.h"
-#include "third_party/blink/renderer/core/execution_context/security_context.h"
-#include "third_party/blink/renderer/core/fileapi/file_error.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
-#include "third_party/blink/renderer/core/workers/worker_global_scope.h"
+#include "third_party/blink/renderer/core/probe/core_probes.h"
 #include "third_party/blink/renderer/modules/file_system_access/file_system_access_error.h"
 #include "third_party/blink/renderer/modules/file_system_access/file_system_directory_handle.h"
 #include "third_party/blink/renderer/modules/file_system_access/file_system_file_handle.h"
 #include "third_party/blink/renderer/platform/bindings/enumeration_base.h"
+#include "third_party/blink/renderer/platform/bindings/exception_code.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/network/http_parsers.h"
@@ -123,7 +120,7 @@ Vector<mojom::blink::ChooseFileSystemEntryAcceptsOptionPtr> ConvertAccepts(
     Vector<String> extensions;
     for (const auto& a : t->accept()) {
       String type = a.first.StripWhiteSpace(IsHTTPWhitespace);
-      if (type.IsEmpty()) {
+      if (type.empty()) {
         exception_state.ThrowTypeError("Invalid type: " + a.first);
         return {};
       }
@@ -188,7 +185,7 @@ void VerifyIsAllowedToShowFilePicker(const LocalDOMWindow& window,
   }
 
   LocalFrame* local_frame = window.GetFrame();
-  if (!local_frame || local_frame->IsCrossOriginToMainFrame()) {
+  if (!local_frame || local_frame->IsCrossOriginToOutermostMainFrame()) {
     exception_state.ThrowSecurityError(
         "Cross origin sub frames aren't allowed to show a file picker.");
     return;
@@ -227,8 +224,24 @@ ScriptPromise ShowFilePickerImpl(
     LocalDOMWindow& window,
     mojom::blink::FilePickerOptionsPtr options,
     mojom::blink::CommonFilePickerOptionsPtr common_options,
+    ExceptionState& exception_state,
     bool return_as_sequence) {
-  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
+  bool multiple =
+      options->which() ==
+          mojom::blink::FilePickerOptions::Tag::kOpenFilePickerOptions &&
+      options->get_open_file_picker_options()->can_select_multiple_files;
+  bool intercepted = false;
+  probe::FileChooserOpened(window.GetFrame(), /*element=*/nullptr, multiple,
+                           &intercepted);
+  if (intercepted) {
+    exception_state.ThrowDOMException(
+        DOMExceptionCode::kAbortError,
+        "Intercepted by Page.setInterceptFileChooserDialog().");
+    return ScriptPromise();
+  }
+
+  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(
+      script_state, exception_state.GetContext());
   ScriptPromise resolver_result = resolver->Promise();
 
   // TODO(mek): Cache mojo::Remote<mojom::blink::FileSystemAccessManager>
@@ -242,7 +255,7 @@ ScriptPromise ShowFilePickerImpl(
   auto* raw_manager = manager.get();
   raw_manager->ChooseEntries(
       std::move(options), std::move(common_options),
-      WTF::Bind(
+      WTF::BindOnce(
           [](ScriptPromiseResolver* resolver,
              mojo::Remote<mojom::blink::FileSystemAccessManager>,
              bool return_as_sequence, LocalFrame* local_frame,
@@ -304,7 +317,7 @@ ScriptPromise GlobalFileSystemAccess::showOpenFilePicker(
   if (exception_state.HadException())
     return ScriptPromise();
 
-  if (accepts.IsEmpty() && options->excludeAcceptAllOption()) {
+  if (accepts.empty() && options->excludeAcceptAllOption()) {
     exception_state.ThrowTypeError("Need at least one accepted type");
     return ScriptPromise();
   }
@@ -350,6 +363,7 @@ ScriptPromise GlobalFileSystemAccess::showOpenFilePicker(
       mojom::blink::CommonFilePickerOptions::New(
           std::move(starting_directory_id),
           std::move(well_known_starting_directory), std::move(token)),
+      exception_state,
       /*return_as_sequence=*/true);
 }
 
@@ -367,7 +381,7 @@ ScriptPromise GlobalFileSystemAccess::showSaveFilePicker(
   if (exception_state.HadException())
     return ScriptPromise();
 
-  if (accepts.IsEmpty() && options->excludeAcceptAllOption()) {
+  if (accepts.empty() && options->excludeAcceptAllOption()) {
     exception_state.ThrowTypeError("Need at least one accepted type");
     return ScriptPromise();
   }
@@ -414,6 +428,7 @@ ScriptPromise GlobalFileSystemAccess::showSaveFilePicker(
       mojom::blink::CommonFilePickerOptions::New(
           std::move(starting_directory_id),
           std::move(well_known_starting_directory), std::move(token)),
+      exception_state,
       /*return_as_sequence=*/false);
 }
 
@@ -464,6 +479,7 @@ ScriptPromise GlobalFileSystemAccess::showDirectoryPicker(
       mojom::blink::CommonFilePickerOptions::New(
           std::move(starting_directory_id),
           std::move(well_known_starting_directory), std::move(token)),
+      exception_state,
       /*return_as_sequence=*/false);
 }
 

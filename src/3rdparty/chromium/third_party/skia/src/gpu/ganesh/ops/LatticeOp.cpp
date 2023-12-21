@@ -236,7 +236,7 @@ private:
             }
         }
 
-        int patchCnt = fPatches.count();
+        int patchCnt = fPatches.size();
         int numRects = 0;
         for (int i = 0; i < patchCnt; i++) {
             numRects += fPatches[i].fIter->numRectsToDraw();
@@ -270,20 +270,20 @@ private:
 
             SkIRect srcR;
             SkRect dstR;
-            Sk4f scales(1.f / fView.proxy()->width(), 1.f / fView.proxy()->height(),
-                        1.f / fView.proxy()->width(), 1.f / fView.proxy()->height());
-            static const Sk4f kDomainOffsets(0.5f, 0.5f, -0.5f, -0.5f);
-            static const Sk4f kFlipOffsets(0.f, 1.f, 0.f, 1.f);
-            static const Sk4f kFlipMuls(1.f, -1.f, 1.f, -1.f);
+            skvx::float4 scales(1.f / fView.proxy()->width(), 1.f / fView.proxy()->height(),
+                                1.f / fView.proxy()->width(), 1.f / fView.proxy()->height());
+            static const skvx::float4 kDomainOffsets(0.5f, 0.5f, -0.5f, -0.5f);
+            static const skvx::float4 kFlipOffsets(0.f, 1.f, 0.f, 1.f);
+            static const skvx::float4 kFlipMuls(1.f, -1.f, 1.f, -1.f);
             while (patch.fIter->next(&srcR, &dstR)) {
-                Sk4f coords(SkIntToScalar(srcR.fLeft), SkIntToScalar(srcR.fTop),
-                            SkIntToScalar(srcR.fRight), SkIntToScalar(srcR.fBottom));
-                Sk4f domain = coords + kDomainOffsets;
+                skvx::float4 coords(SkIntToScalar(srcR.fLeft), SkIntToScalar(srcR.fTop),
+                                    SkIntToScalar(srcR.fRight), SkIntToScalar(srcR.fBottom));
+                skvx::float4 domain = coords + kDomainOffsets;
                 coords *= scales;
                 domain *= scales;
                 if (fView.origin() == kBottomLeft_GrSurfaceOrigin) {
                     coords = kFlipMuls * coords + kFlipOffsets;
-                    domain = SkNx_shuffle<0, 3, 2, 1>(kFlipMuls * domain + kFlipOffsets);
+                    domain = skvx::shuffle<0, 3, 2, 1>(kFlipMuls * domain + kFlipOffsets);
                 }
                 SkRect texDomain;
                 SkRect texCoords;
@@ -353,7 +353,7 @@ private:
             return CombineResult::kCannotCombine;
         }
 
-        fPatches.move_back_n(that->fPatches.count(), that->fPatches.begin());
+        fPatches.move_back_n(that->fPatches.size(), that->fPatches.begin());
         fWideColor |= that->fWideColor;
         return CombineResult::kMerged;
     }
@@ -362,7 +362,7 @@ private:
     SkString onDumpInfo() const override {
         SkString str;
 
-        for (int i = 0; i < fPatches.count(); ++i) {
+        for (int i = 0; i < fPatches.size(); ++i) {
             str.appendf("%d: Color: 0x%08x Dst [L: %.2f, T: %.2f, R: %.2f, B: %.2f]\n", i,
                         fPatches[i].fColor.toBytes_RGBA(), fPatches[i].fDst.fLeft,
                         fPatches[i].fDst.fTop, fPatches[i].fDst.fRight, fPatches[i].fDst.fBottom);
@@ -476,8 +476,9 @@ GR_DRAW_OP_TEST_DEFINE(NonAALatticeOp) {
                                                               1,
                                                               GrMipmapped::kNo,
                                                               SkBackingFit::kExact,
-                                                              SkBudgeted::kYes,
-                                                              GrProtected::kNo);
+                                                              skgpu::Budgeted::kYes,
+                                                              GrProtected::kNo,
+                                                              /*label=*/"LatticeOp");
 
     do {
         if (random->nextBool()) {

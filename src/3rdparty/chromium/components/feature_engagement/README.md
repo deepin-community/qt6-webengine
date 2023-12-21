@@ -145,21 +145,21 @@ you would have to add it to the following places:
     For features configured only on the client side:
 
     ```c++
-    const base::Feature kIPHGoatTeleportationFeature{"IPH_GoatTeleportation",
-                                                     base::FEATURE_ENABLED_BY_DEFAULT};
+    BASE_FEATURE(kIPHGoatTeleportationFeature, "IPH_GoatTeleportation",
+                 base::FEATURE_ENABLED_BY_DEFAULT);
     ```
 
     For features configured only on the server side:
 
     ```c++
-    const base::Feature kIPHGoatTeleportationFeature{"IPH_GoatTeleportation",
-                                                     base::FEATURE_DISABLED_BY_DEFAULT};
+    BASE_FEATURE(kIPHGoatTeleportationFeature, "IPH_GoatTeleportation",
+                 base::FEATURE_DISABLED_BY_DEFAULT);
     ```
 
 1.  `//components/feature_engagement/public/feature_constants.h`:
 
     ```c++
-    extern const base::Feature kIPHGoatTeleportationFeature;
+    BASE_DECLARE_FEATURE(kIPHGoatTeleportationFeature);
     ```
 
 1.  `//components/feature_engagement/public/feature_list.cc`:
@@ -229,7 +229,7 @@ if (trigger_help_ui) {
 }
 ```
 
-If `feature_engagement::Tracker::ShouldTriggerHelpUI` return `true` you must
+If `feature_engagement::Tracker::ShouldTriggerHelpUI` returns `true`, you must
 display the In-Product Help, as it will be tracked as if you showed it. In
 addition you are required to inform when the feature has been dismissed:
 
@@ -292,8 +292,8 @@ shown.
 To ensure that your in-product help triggers at the right time, you need to
 configure what the constraints are for showing. There are two ways of doing
 this: (1) Using a [client side configuration](#client-side-configuration), or
-(2) [field trial configuration](#field-trial-configuration). It is also possible
-to use a mix of both (1) and (2).
+(2) using a [field trial configuration](#field-trial-configuration). It is also
+possible to use a [mix of both (1) and (2)](#mixed-configuration).
 
 Please read both sections below to figure out what fits your use-case best.
 
@@ -340,8 +340,8 @@ As an example for when leaving an IPH disabled by default could be helpful,
 imagine that your feature uses one main feature flag in addition to multiple IPH
 feature flags. You can still check in all the configuration locally, but leave
 the main feature flag and the IPHs off by default. This enables you to use a
-field trial to turn the IPHs on at the same time as your your main feature flag.
-This could potentially help some features in two ways:
+field trial to turn the IPHs on at the same time as your main feature flag. This
+could potentially help some features in two ways:
 
 1.  They do not need to guard invocations of `ShouldTriggerHelpUI(...)` for each
     IPH with their main feature flag, possibly leading to simpler code if the
@@ -402,6 +402,10 @@ When using a server side configuration, it is suggested to define the
 `base::Feature` as `base::FEATURE_DISABLED_BY_DEFAULT`, since there is no
 default configuration available.
 
+### Mixed configuration
+
+When having an active field trial configuration in the fieldtrial_testing_config.json, it will override any configuration declared on the client side (default configuration). However it is still possible to test out the default client configuration by enabling the flag `IPH Use Client Config` from `chrome://flags`.
+
 ## Demo mode
 
 The feature_engagement::Tracker supports a special demo mode, which enables a
@@ -461,6 +465,7 @@ Format:
   "event_used": "{EventConfig}",
   "event_trigger": "{EventConfig}",
   "event_???": "{EventConfig}",
+  "snooze_params": "{SnoozeParams}"
   "tracking_only": "{Boolean}"
   "x_???": "..."
  }
@@ -519,12 +524,13 @@ into the same field trial.
 *   `event_used` __REQUIRED__
     *   Relates to what the in-product help wants to highlight, i.e. teach the
         user about and increase usage of.
-    *   This is typically the action that the In-Product Help should stimulate
-        usage of.
+    *   This is typically recorded during the action that the In-Product Help
+        should stimulate usage of.
     *   Special UMA is tracked for this.
     *   See [EventConfig](#EventConfig) below for details.
 *   `event_trigger` __REQUIRED__
     *   Relates to the times in-product help is triggered.
+    *   Automatically increments when the in-product help is triggered.
     *   Special UMA is tracked for this.
     *   See [EventConfig](#EventConfig) below for details.
 *   `event_???`
@@ -533,6 +539,10 @@ into the same field trial.
     *   Name must match `/^event_[a-zA-Z0-9-_]+$/` and not be `event_used` or
         `event_trigger`.
     *   See [EventConfig](#EventConfig) below for details.
+*   `snooze_params`
+    *   Enabled snooze capability for in-product help bubbles.
+    *   By default, an in-product help is not snoozable and is dismissed until triggered again.
+    *   See [SnoozeParams](#SnoozeParams) below for details.
 *   `tracking_only`
     *   Set to true if in-product help should never trigger.
     *   Tracker::ShouldTriggerHelpUI(...) will always return false, but if all
@@ -766,6 +776,36 @@ all
 none
 ```
 
+### SnoozeParams
+
+Format: `max_limit:{uint32_t},snooze_interval:{uint32_t}`
+
+The SnoozeParams is a comma separated data structure with the following two key-value pairs described below:
+
+*   `max_limit`
+
+    * The maximum amount of times an IPH bubble is shown to the client before being force dismissed.
+    * The value must be given as a number of recurrence.
+        * If `N = 0`, the IPH bubble will be dismissed after the first occurrence.
+        * If `N = 1`, the IPH bubble will be dismissed after the 2nd occurrence.
+    * Value client side data type: uint32_t
+
+*   `snooze_interval`
+
+    * The interval between when the client snoozes the IPH bubble and when the IPH is elligible to be shown to the client again.
+    * The value must be given as a number of days.
+        * If `N=1`, the IPH bubble will not be shown again to the client in the next 1 day (24 hours).
+    * Value client side data type: uint32_t
+
+
+**Examples**
+
+The IPH bubble will be force dismissed after 2 snoozes, which means it will be shown to the client exactly 3 times. The IPH bubble will be shown no less then 4 days apart.
+
+```
+max_limit:2,snooze_interval:4
+```
+
 ### Manual testing using field trial configurations
 
 Usually, the options for testing IPHs provided in
@@ -855,6 +895,57 @@ When adding new test suites, also remember to add the suite to the filter file:
 
 See
 [this doc](https://docs.google.com/document/d/1EhQe3G9juBiw-otuRnGf5gzTsfHZVZiSKrgF6r7Sz4E/edit#heading=h.la5fs7q2klme)
+
+## Example
+
+Let's image you want to add an in-product help to increase the use of the "Save
+password" infobar. The in-product help will be shown at most once per year, when
+the user is shown an infobar, if the user ignored the infobar 3 times in the
+past 60 days and accepted it less than 2 times in the past two years.
+
+The configuration will look like this:
+
+ ```
+{
+  "availability": ">=0",
+  "session_rate": "<1",
+  "event_used": "name:password_infobar_accepted;comparator:<=2;window:720;storage:720",
+  "event_trigger": "name:password_infobar_iph_trigger;comparator:==0;window:360;storage:360",
+  "event_1": "name:password_infobar_ignored;comparator:>=3;window:60;storage:60"
+}
+```
+
+In `//components/feature_engagement/public/feature_constants.h`:
+
+```c++
+BASE_DECLARE_FEATURE(kIPHPasswordInfobarFeature);
+```
+
+In `//components/feature_engagement/public/event_constants.h`
+
+```c++
+extern const char kPasswordInfobarIgnored[];  // "password_infobar_ignored"
+extern const char kPasswordInfobarAccepted[];  // "password_infobar_accepted"
+```
+
+In the Password Infobar code (example code):
+
+```c++
+void PasswordInfobar::OnInfobarIgnored() {
+  tracker->NotifyEvent(kPasswordInfobarIgnored);
+}
+
+void PasswordInfobar::OnInfobarAccepted() {
+  tracker->NotifyEvent(kPasswordInfobarAccepted);
+}
+
+void PasswordInfobar::OnInfobarPresented() {
+  if (tracker->ShouldTriggerHelpUI(kIPHPasswordInfobarFeature)) {
+    // Display the IPH.
+  }
+}
+```
+
 
 [field-trial-testing-configuration]: https://chromium.googlesource.com/chromium/src/+/main/testing/variations/README.md
 [GetClientSideFeatureConfig]: https://source.chromium.org/chromium/chromium/src/+/main:components/feature_engagement/public/feature_configurations.cc?q=GetClientSideFeatureConfig

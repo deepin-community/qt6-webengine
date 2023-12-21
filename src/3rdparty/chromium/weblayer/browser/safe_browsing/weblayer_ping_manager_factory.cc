@@ -1,4 +1,4 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,13 +6,16 @@
 
 #include "base/no_destructor.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
+#include "components/safe_browsing/content/browser/web_ui/safe_browsing_ui.h"
 #include "components/safe_browsing/core/browser/ping_manager.h"
 #include "components/safe_browsing/core/common/features.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "weblayer/browser/browser_context_impl.h"
 #include "weblayer/browser/browser_process.h"
 #include "weblayer/browser/profile_impl.h"
 #include "weblayer/browser/safe_browsing/safe_browsing_service.h"
 #include "weblayer/browser/safe_browsing/safe_browsing_token_fetcher_impl.h"
+#include "weblayer/browser/safe_browsing/weblayer_user_population_helper.h"
 
 namespace weblayer {
 
@@ -51,16 +54,21 @@ KeyedService* WebLayerPingManagerFactory::BuildServiceInstanceFor(
           base::Unretained(ProfileImpl::FromBrowserContext(context)))),
       base::BindRepeating(
           &WebLayerPingManagerFactory::ShouldFetchAccessTokenForReport,
-          base::Unretained(this), context));
+          base::Unretained(this), context),
+      safe_browsing::WebUIInfoSingleton::GetInstance(),
+      content::GetUIThreadTaskRunner({}),
+      base::BindRepeating(&GetUserPopulationForBrowserContext, context),
+      base::FeatureList::IsEnabled(
+          safe_browsing::kAddPageLoadTokenToClientSafeBrowsingReport)
+          ? base::BindRepeating(&GetPageLoadTokenForURL, context)
+          : base::NullCallback());
 }
 
 bool WebLayerPingManagerFactory::ShouldFetchAccessTokenForReport(
     content::BrowserContext* context) const {
   PrefService* pref_service =
       static_cast<BrowserContextImpl*>(context)->pref_service();
-  return base::FeatureList::IsEnabled(
-             safe_browsing::kSafeBrowsingCsbrrWithToken) &&
-         safe_browsing::IsEnhancedProtectionEnabled(*pref_service) &&
+  return safe_browsing::IsEnhancedProtectionEnabled(*pref_service) &&
          // TODO(crbug.com/1171215): Change this to production mechanism for
          // enabling Gaia-keyed client reports once that mechanism is
          // determined.

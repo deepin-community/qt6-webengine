@@ -1,12 +1,12 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/autofill/core/browser/geo/alternative_state_name_map_updater.h"
-#include "base/callback_helpers.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/functional/callback_helpers.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
@@ -26,6 +26,12 @@
 
 using base::ASCIIToUTF16;
 using base::UTF8ToUTF16;
+
+namespace i18n::addressinput {
+
+using ::operator<<;
+
+}  // namespace i18n::addressinput
 
 namespace autofill {
 

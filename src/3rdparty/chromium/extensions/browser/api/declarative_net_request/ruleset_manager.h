@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -99,6 +99,8 @@ class RulesetManager {
   void OnRenderFrameCreated(content::RenderFrameHost* host);
   void OnRenderFrameDeleted(content::RenderFrameHost* host);
   void OnDidFinishNavigation(content::NavigationHandle* navigation_handle);
+
+  bool has_rulesets() const { return !rulesets_.empty(); }
 
   // Returns the number of CompositeMatchers currently being managed.
   size_t GetMatcherCountForTest() const { return rulesets_.size(); }

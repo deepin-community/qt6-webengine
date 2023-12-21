@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -25,14 +25,18 @@ namespace feature_engagement {
 
 namespace {
 
-const base::Feature kFeatureConfigTestFeatureFoo{
-    "test_foo", base::FEATURE_DISABLED_BY_DEFAULT};
-const base::Feature kFeatureConfigTestFeatureBar{
-    "test_bar", base::FEATURE_DISABLED_BY_DEFAULT};
-const base::Feature kFeatureConfigTestFeatureQux{
-    "test_qux", base::FEATURE_DISABLED_BY_DEFAULT};
-const base::Feature kFeatureConfigTestFeatureXyz{
-    "test_xyz", base::FEATURE_DISABLED_BY_DEFAULT};
+BASE_FEATURE(kFeatureConfigTestFeatureFoo,
+             "test_foo",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kFeatureConfigTestFeatureBar,
+             "test_bar",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kFeatureConfigTestFeatureQux,
+             "test_qux",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kFeatureConfigTestFeatureXyz,
+             "test_xyz",
+             base::FEATURE_DISABLED_BY_DEFAULT);
 
 FeatureConfig GetValidFeatureConfig() {
   FeatureConfig config;
@@ -58,6 +62,19 @@ FeatureConfig GetNonBlockingFeatureConfig() {
   return config;
 }
 
+GroupConfig GetValidGroupConfig() {
+  GroupConfig config;
+  config.valid = true;
+  return config;
+}
+
+GroupConfig GetAcceptingGroupConfig() {
+  GroupConfig config;
+  config.valid = true;
+  config.trigger = EventConfig("trigger", Comparator(ANY, 0), 0, 0);
+  return config;
+}
+
 SessionRateImpact CreateSessionRateImpactTypeExplicit(
     std::vector<std::string> affected_features) {
   SessionRateImpact impact;
@@ -68,7 +85,10 @@ SessionRateImpact CreateSessionRateImpactTypeExplicit(
 
 class TestConfiguration : public Configuration {
  public:
-  TestConfiguration() { config_ = GetValidFeatureConfig(); }
+  TestConfiguration() {
+    config_ = GetValidFeatureConfig();
+    group_config_ = GetValidGroupConfig();
+  }
   ~TestConfiguration() override = default;
 
   // Configuration implementation.
@@ -86,10 +106,26 @@ class TestConfiguration : public Configuration {
   const std::vector<std::string> GetRegisteredFeatures() const override {
     return std::vector<std::string>();
   }
+  const GroupConfig& GetGroupConfig(const base::Feature& group) const override {
+    return group_config_;
+  }
+  const GroupConfig& GetGroupConfigByName(
+      const std::string& group_name) const override {
+    return group_config_;
+  }
+  const Configuration::GroupConfigMap& GetRegisteredGroupConfigs()
+      const override {
+    return group_map_;
+  }
+  const std::vector<std::string> GetRegisteredGroups() const override {
+    return std::vector<std::string>();
+  }
 
  private:
   FeatureConfig config_;
+  GroupConfig group_config_;
   Configuration::ConfigMap map_;
+  Configuration::GroupConfigMap group_map_;
 };
 
 class TestEventModel : public EventModel {
@@ -270,30 +306,38 @@ class FeatureConfigConditionValidatorTest : public ::testing::Test {
       uint32_t current_day) {
     FeatureConfig config = GetAcceptingFeatureConfig();
     config.event_configs.insert(EventConfig("event1", comparator, window, 0));
-    return validator_.MeetsConditions(
-        kFeatureConfigTestFeatureFoo, config, event_model_, availability_model_,
-        display_lock_controller_, &configuration_, current_day);
+    return validator_.MeetsConditions(kFeatureConfigTestFeatureFoo, config, {},
+                                      event_model_, availability_model_,
+                                      display_lock_controller_, &configuration_,
+                                      current_day);
   }
 
   ConditionValidator::Result GetResultForDay(const FeatureConfig& config,
                                              uint32_t current_day) {
-    return validator_.MeetsConditions(
-        kFeatureConfigTestFeatureFoo, config, event_model_, availability_model_,
-        display_lock_controller_, &configuration_, current_day);
+    return validator_.MeetsConditions(kFeatureConfigTestFeatureFoo, config, {},
+                                      event_model_, availability_model_,
+                                      display_lock_controller_, &configuration_,
+                                      current_day);
   }
 
   ConditionValidator::Result GetResultForDayZero(const FeatureConfig& config) {
-    return validator_.MeetsConditions(
-        kFeatureConfigTestFeatureFoo, config, event_model_, availability_model_,
-        display_lock_controller_, &configuration_, 0);
+    return GetResultForDayZeroWithGroups(config, {});
   }
 
   ConditionValidator::Result GetResultForDayZeroForFeature(
       const base::Feature& feature,
       const FeatureConfig& config) {
     return validator_.MeetsConditions(
-        feature, config, event_model_, availability_model_,
+        feature, config, {}, event_model_, availability_model_,
         display_lock_controller_, &configuration_, 0);
+  }
+
+  ConditionValidator::Result GetResultForDayZeroWithGroups(
+      const FeatureConfig& config,
+      std::vector<GroupConfig> group_configs) {
+    return validator_.MeetsConditions(
+        kFeatureConfigTestFeatureFoo, config, group_configs, event_model_,
+        availability_model_, display_lock_controller_, &configuration_, 0);
   }
 
   TestEventModel event_model_;
@@ -957,8 +1001,9 @@ TEST_F(FeatureConfigConditionValidatorTest, TestMultipleEvents) {
   config.event_configs.insert(
       EventConfig("event2", Comparator(EQUAL, 5u), 99u, 0));
   ConditionValidator::Result result = validator_.MeetsConditions(
-      kFeatureConfigTestFeatureFoo, config, event_model_, availability_model_,
-      display_lock_controller_, &configuration_, current_day);
+      kFeatureConfigTestFeatureFoo, config, {}, event_model_,
+      availability_model_, display_lock_controller_, &configuration_,
+      current_day);
   EXPECT_TRUE(result.NoErrors());
 
   // Verify validator counts correctly for two events last 100 days.
@@ -967,9 +1012,10 @@ TEST_F(FeatureConfigConditionValidatorTest, TestMultipleEvents) {
       EventConfig("event1", Comparator(EQUAL, 20u), 100u, 0));
   config.event_configs.insert(
       EventConfig("event2", Comparator(EQUAL, 10u), 100u, 0));
-  result = validator_.MeetsConditions(
-      kFeatureConfigTestFeatureFoo, config, event_model_, availability_model_,
-      display_lock_controller_, &configuration_, current_day);
+  result = validator_.MeetsConditions(kFeatureConfigTestFeatureFoo, config, {},
+                                      event_model_, availability_model_,
+                                      display_lock_controller_, &configuration_,
+                                      current_day);
   EXPECT_TRUE(result.NoErrors());
 
   // Verify validator counts correctly for two events last 101 days.
@@ -978,9 +1024,10 @@ TEST_F(FeatureConfigConditionValidatorTest, TestMultipleEvents) {
       EventConfig("event1", Comparator(EQUAL, 30u), 101u, 0));
   config.event_configs.insert(
       EventConfig("event2", Comparator(EQUAL, 15u), 101u, 0));
-  result = validator_.MeetsConditions(
-      kFeatureConfigTestFeatureFoo, config, event_model_, availability_model_,
-      display_lock_controller_, &configuration_, current_day);
+  result = validator_.MeetsConditions(kFeatureConfigTestFeatureFoo, config, {},
+                                      event_model_, availability_model_,
+                                      display_lock_controller_, &configuration_,
+                                      current_day);
   EXPECT_TRUE(result.NoErrors());
 
   // Verify validator counts correctly for two events last 101 days, and returns
@@ -990,9 +1037,10 @@ TEST_F(FeatureConfigConditionValidatorTest, TestMultipleEvents) {
       EventConfig("event1", Comparator(EQUAL, 0), 101u, 0));
   config.event_configs.insert(
       EventConfig("event2", Comparator(EQUAL, 15u), 101u, 0));
-  result = validator_.MeetsConditions(
-      kFeatureConfigTestFeatureFoo, config, event_model_, availability_model_,
-      display_lock_controller_, &configuration_, current_day);
+  result = validator_.MeetsConditions(kFeatureConfigTestFeatureFoo, config, {},
+                                      event_model_, availability_model_,
+                                      display_lock_controller_, &configuration_,
+                                      current_day);
   EXPECT_FALSE(result.NoErrors());
   EXPECT_FALSE(result.preconditions_ok);
 
@@ -1003,9 +1051,10 @@ TEST_F(FeatureConfigConditionValidatorTest, TestMultipleEvents) {
       EventConfig("event1", Comparator(EQUAL, 30u), 101u, 0));
   config.event_configs.insert(
       EventConfig("event2", Comparator(EQUAL, 0), 101u, 0));
-  result = validator_.MeetsConditions(
-      kFeatureConfigTestFeatureFoo, config, event_model_, availability_model_,
-      display_lock_controller_, &configuration_, current_day);
+  result = validator_.MeetsConditions(kFeatureConfigTestFeatureFoo, config, {},
+                                      event_model_, availability_model_,
+                                      display_lock_controller_, &configuration_,
+                                      current_day);
   EXPECT_FALSE(result.NoErrors());
   EXPECT_FALSE(result.preconditions_ok);
 
@@ -1016,9 +1065,10 @@ TEST_F(FeatureConfigConditionValidatorTest, TestMultipleEvents) {
       EventConfig("event1", Comparator(EQUAL, 0), 101u, 0));
   config.event_configs.insert(
       EventConfig("event2", Comparator(EQUAL, 0), 101u, 0));
-  result = validator_.MeetsConditions(
-      kFeatureConfigTestFeatureFoo, config, event_model_, availability_model_,
-      display_lock_controller_, &configuration_, current_day);
+  result = validator_.MeetsConditions(kFeatureConfigTestFeatureFoo, config, {},
+                                      event_model_, availability_model_,
+                                      display_lock_controller_, &configuration_,
+                                      current_day);
   EXPECT_FALSE(result.NoErrors());
   EXPECT_FALSE(result.preconditions_ok);
 }
@@ -1182,6 +1232,378 @@ TEST_F(FeatureConfigConditionValidatorTest,
   ConditionValidator::Result result = GetResultForDayZero(non_blocking_config);
   EXPECT_TRUE(result.NoErrors());
   EXPECT_TRUE(result.currently_showing_ok);
+}
+
+TEST_F(FeatureConfigConditionValidatorTest, GroupConfigInvalidShouldFail) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitWithFeatures({kFeatureConfigTestFeatureFoo}, {});
+
+  FeatureConfig config = GetValidFeatureConfig();
+  GroupConfig group_config = GroupConfig();
+
+  ConditionValidator::Result result =
+      GetResultForDayZeroWithGroups(config, {group_config});
+  EXPECT_FALSE(result.NoErrors());
+  EXPECT_FALSE(result.config_ok);
+  EXPECT_FALSE(result.groups_ok);
+}
+
+TEST_F(FeatureConfigConditionValidatorTest, ReadyModelEmptyGroupConfig) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitWithFeatures({kFeatureConfigTestFeatureFoo}, {});
+
+  FeatureConfig config = GetValidFeatureConfig();
+  GroupConfig group_config = GetValidGroupConfig();
+
+  EXPECT_TRUE(GetResultForDayZeroWithGroups(config, {group_config}).NoErrors());
+}
+
+TEST_F(FeatureConfigConditionValidatorTest, ReadyModelAcceptingGroupConfig) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitWithFeatures({kFeatureConfigTestFeatureFoo}, {});
+
+  FeatureConfig config = GetAcceptingFeatureConfig();
+  GroupConfig group_config = GetAcceptingGroupConfig();
+
+  EXPECT_TRUE(GetResultForDayZeroWithGroups(config, {group_config}).NoErrors());
+}
+
+TEST_F(FeatureConfigConditionValidatorTest, GroupTrigger) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitWithFeatures({kFeatureConfigTestFeatureFoo}, {});
+
+  FeatureConfig config = GetAcceptingFeatureConfig();
+  GroupConfig group_config = GetAcceptingGroupConfig();
+  group_config.trigger = EventConfig("trigger", Comparator(LESS_THAN, 0), 0, 0);
+
+  ConditionValidator::Result result =
+      GetResultForDayZeroWithGroups(config, {group_config});
+  EXPECT_FALSE(result.NoErrors());
+  EXPECT_FALSE(result.trigger_ok);
+  EXPECT_FALSE(result.groups_ok);
+}
+
+TEST_F(FeatureConfigConditionValidatorTest, GroupSingleOKPrecondition) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitWithFeatures({kFeatureConfigTestFeatureFoo}, {});
+
+  FeatureConfig config = GetAcceptingFeatureConfig();
+  GroupConfig group_config = GetAcceptingGroupConfig();
+  group_config.event_configs.insert(
+      EventConfig("event1", Comparator(ANY, 0), 0, 0));
+
+  EXPECT_TRUE(GetResultForDayZeroWithGroups(config, {group_config}).NoErrors());
+}
+
+TEST_F(FeatureConfigConditionValidatorTest, GroupMultipleOKPreconditions) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitWithFeatures({kFeatureConfigTestFeatureFoo}, {});
+
+  FeatureConfig config = GetAcceptingFeatureConfig();
+  GroupConfig group_config = GetAcceptingGroupConfig();
+  group_config.event_configs.insert(
+      EventConfig("event1", Comparator(ANY, 0), 0, 0));
+  group_config.event_configs.insert(
+      EventConfig("event2", Comparator(ANY, 0), 0, 0));
+
+  EXPECT_TRUE(GetResultForDayZeroWithGroups(config, {group_config}).NoErrors());
+}
+
+TEST_F(FeatureConfigConditionValidatorTest,
+       GroupOneOKThenOneFailingPrecondition) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitWithFeatures({kFeatureConfigTestFeatureFoo}, {});
+
+  FeatureConfig config = GetAcceptingFeatureConfig();
+  GroupConfig group_config = GetAcceptingGroupConfig();
+  group_config.event_configs.insert(
+      EventConfig("event1", Comparator(ANY, 0), 0, 0));
+  group_config.event_configs.insert(
+      EventConfig("event2", Comparator(LESS_THAN, 0), 0, 0));
+
+  ConditionValidator::Result result =
+      GetResultForDayZeroWithGroups(config, {group_config});
+  EXPECT_FALSE(result.NoErrors());
+  EXPECT_FALSE(result.preconditions_ok);
+  EXPECT_FALSE(result.groups_ok);
+}
+
+TEST_F(FeatureConfigConditionValidatorTest, MultipleGroupOKPreconditions) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitWithFeatures({kFeatureConfigTestFeatureFoo}, {});
+
+  FeatureConfig config = GetAcceptingFeatureConfig();
+  GroupConfig group_one_config = GetAcceptingGroupConfig();
+  group_one_config.event_configs.insert(
+      EventConfig("event1", Comparator(ANY, 0), 0, 0));
+  GroupConfig group_two_config = GetAcceptingGroupConfig();
+  group_two_config.event_configs.insert(
+      EventConfig("event2", Comparator(ANY, 0), 0, 0));
+
+  EXPECT_TRUE(GetResultForDayZeroWithGroups(
+                  config, {group_one_config, group_two_config})
+                  .NoErrors());
+}
+
+TEST_F(FeatureConfigConditionValidatorTest,
+       MultipleGroupOneOKThenOneFailingPrecondition) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitWithFeatures({kFeatureConfigTestFeatureFoo}, {});
+
+  FeatureConfig config = GetAcceptingFeatureConfig();
+  GroupConfig group_one_config = GetAcceptingGroupConfig();
+  group_one_config.event_configs.insert(
+      EventConfig("event1", Comparator(ANY, 0), 0, 0));
+  GroupConfig group_two_config = GetAcceptingGroupConfig();
+  group_two_config.event_configs.insert(
+      EventConfig("event2", Comparator(LESS_THAN, 0), 0, 0));
+
+  ConditionValidator::Result result = GetResultForDayZeroWithGroups(
+      config, {group_one_config, group_two_config});
+  EXPECT_FALSE(result.NoErrors());
+  EXPECT_FALSE(result.preconditions_ok);
+  EXPECT_FALSE(result.groups_ok);
+}
+
+TEST_F(FeatureConfigConditionValidatorTest,
+       MultipleGroupOneFailingThenOneOKPrecondition) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitWithFeatures({kFeatureConfigTestFeatureFoo}, {});
+
+  FeatureConfig config = GetAcceptingFeatureConfig();
+  GroupConfig group_one_config = GetAcceptingGroupConfig();
+  group_one_config.event_configs.insert(
+      EventConfig("event1", Comparator(LESS_THAN, 0), 0, 0));
+  GroupConfig group_two_config = GetAcceptingGroupConfig();
+  group_two_config.event_configs.insert(
+      EventConfig("event2", Comparator(ANY, 0), 0, 0));
+
+  ConditionValidator::Result result = GetResultForDayZeroWithGroups(
+      config, {group_one_config, group_two_config});
+  EXPECT_FALSE(result.NoErrors());
+  EXPECT_FALSE(result.preconditions_ok);
+  EXPECT_FALSE(result.groups_ok);
+}
+
+TEST_F(FeatureConfigConditionValidatorTest, FeatureAndGroupOKPreconditions) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitWithFeatures({kFeatureConfigTestFeatureFoo}, {});
+
+  FeatureConfig config = GetAcceptingFeatureConfig();
+  config.event_configs.insert(EventConfig("event1", Comparator(ANY, 0), 0, 0));
+
+  GroupConfig group_config = GetAcceptingGroupConfig();
+  group_config.event_configs.insert(
+      EventConfig("event2", Comparator(ANY, 0), 0, 0));
+
+  EXPECT_TRUE(GetResultForDayZeroWithGroups(config, {group_config}).NoErrors());
+}
+
+TEST_F(FeatureConfigConditionValidatorTest,
+       FeatureOKThenGroupFailingPrecondition) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitWithFeatures({kFeatureConfigTestFeatureFoo}, {});
+
+  FeatureConfig config = GetAcceptingFeatureConfig();
+  config.event_configs.insert(EventConfig("event1", Comparator(ANY, 0), 0, 0));
+
+  GroupConfig group_config = GetAcceptingGroupConfig();
+  group_config.event_configs.insert(
+      EventConfig("event2", Comparator(LESS_THAN, 0), 0, 0));
+
+  ConditionValidator::Result result =
+      GetResultForDayZeroWithGroups(config, {group_config});
+  EXPECT_FALSE(result.NoErrors());
+  EXPECT_FALSE(result.preconditions_ok);
+  EXPECT_FALSE(result.groups_ok);
+}
+
+TEST_F(FeatureConfigConditionValidatorTest,
+       FeatureFailingThenGroupOKPrecondition) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitWithFeatures({kFeatureConfigTestFeatureFoo}, {});
+
+  FeatureConfig config = GetAcceptingFeatureConfig();
+  config.event_configs.insert(
+      EventConfig("event1", Comparator(LESS_THAN, 0), 0, 0));
+
+  GroupConfig group_one_config = GetAcceptingGroupConfig();
+  group_one_config.event_configs.insert(
+      EventConfig("event2", Comparator(ANY, 0), 0, 0));
+
+  ConditionValidator::Result result =
+      GetResultForDayZeroWithGroups(config, {group_one_config});
+  EXPECT_FALSE(result.NoErrors());
+  EXPECT_FALSE(result.preconditions_ok);
+  EXPECT_TRUE(result.groups_ok);
+}
+
+TEST_F(FeatureConfigConditionValidatorTest, GroupSessionRate) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitWithFeatures(
+      {kFeatureConfigTestFeatureFoo, kFeatureConfigTestFeatureBar}, {});
+  std::vector<std::string> all_feature_names = {
+      kFeatureConfigTestFeatureFoo.name, kFeatureConfigTestFeatureBar.name};
+
+  FeatureConfig foo_config = GetAcceptingFeatureConfig();
+  FeatureConfig bar_config = GetAcceptingFeatureConfig();
+
+  GroupConfig group_config = GetAcceptingGroupConfig();
+  group_config.session_rate = Comparator(LESS_THAN, 2u);
+
+  EXPECT_TRUE(
+      GetResultForDayZeroWithGroups(foo_config, {group_config}).NoErrors());
+
+  validator_.NotifyIsShowing(kFeatureConfigTestFeatureBar, bar_config,
+                             all_feature_names);
+  validator_.NotifyDismissed(kFeatureConfigTestFeatureBar);
+  EXPECT_TRUE(
+      GetResultForDayZeroWithGroups(foo_config, {group_config}).NoErrors());
+
+  validator_.NotifyIsShowing(kFeatureConfigTestFeatureBar, bar_config,
+                             all_feature_names);
+  validator_.NotifyDismissed(kFeatureConfigTestFeatureBar);
+  ConditionValidator::Result result =
+      GetResultForDayZeroWithGroups(foo_config, {group_config});
+  EXPECT_FALSE(result.NoErrors());
+  EXPECT_FALSE(result.session_rate_ok);
+  EXPECT_FALSE(result.groups_ok);
+
+  validator_.NotifyIsShowing(kFeatureConfigTestFeatureBar, bar_config,
+                             all_feature_names);
+  validator_.NotifyDismissed(kFeatureConfigTestFeatureBar);
+  result = GetResultForDayZeroWithGroups(foo_config, {group_config});
+  EXPECT_FALSE(result.NoErrors());
+  EXPECT_FALSE(result.session_rate_ok);
+  EXPECT_FALSE(result.groups_ok);
+}
+
+TEST_F(FeatureConfigConditionValidatorTest,
+       GroupAndFeatureSessionRateGroupLower) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitWithFeatures(
+      {kFeatureConfigTestFeatureFoo, kFeatureConfigTestFeatureBar}, {});
+  std::vector<std::string> all_feature_names = {
+      kFeatureConfigTestFeatureFoo.name, kFeatureConfigTestFeatureBar.name};
+
+  FeatureConfig foo_config = GetAcceptingFeatureConfig();
+  foo_config.session_rate = Comparator(LESS_THAN, 3u);
+  FeatureConfig bar_config = GetAcceptingFeatureConfig();
+
+  GroupConfig group_config = GetAcceptingGroupConfig();
+  group_config.session_rate = Comparator(LESS_THAN, 2u);
+
+  EXPECT_TRUE(
+      GetResultForDayZeroWithGroups(foo_config, {group_config}).NoErrors());
+
+  validator_.NotifyIsShowing(kFeatureConfigTestFeatureBar, bar_config,
+                             all_feature_names);
+  validator_.NotifyDismissed(kFeatureConfigTestFeatureBar);
+  EXPECT_TRUE(
+      GetResultForDayZeroWithGroups(foo_config, {group_config}).NoErrors());
+
+  validator_.NotifyIsShowing(kFeatureConfigTestFeatureBar, bar_config,
+                             all_feature_names);
+  validator_.NotifyDismissed(kFeatureConfigTestFeatureBar);
+  ConditionValidator::Result result =
+      GetResultForDayZeroWithGroups(foo_config, {group_config});
+  EXPECT_FALSE(result.NoErrors());
+  EXPECT_FALSE(result.session_rate_ok);
+  EXPECT_FALSE(result.groups_ok);
+
+  validator_.NotifyIsShowing(kFeatureConfigTestFeatureBar, bar_config,
+                             all_feature_names);
+  validator_.NotifyDismissed(kFeatureConfigTestFeatureBar);
+  result = GetResultForDayZeroWithGroups(foo_config, {group_config});
+  EXPECT_FALSE(result.NoErrors());
+  EXPECT_FALSE(result.session_rate_ok);
+  EXPECT_FALSE(result.groups_ok);
+}
+
+TEST_F(FeatureConfigConditionValidatorTest,
+       GroupAndFeatureSessionRateGroupHigher) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitWithFeatures(
+      {kFeatureConfigTestFeatureFoo, kFeatureConfigTestFeatureBar}, {});
+  std::vector<std::string> all_feature_names = {
+      kFeatureConfigTestFeatureFoo.name, kFeatureConfigTestFeatureBar.name};
+
+  FeatureConfig foo_config = GetAcceptingFeatureConfig();
+  foo_config.session_rate = Comparator(LESS_THAN, 2u);
+  FeatureConfig bar_config = GetAcceptingFeatureConfig();
+
+  GroupConfig group_config = GetAcceptingGroupConfig();
+  group_config.session_rate = Comparator(LESS_THAN, 3u);
+
+  EXPECT_TRUE(
+      GetResultForDayZeroWithGroups(foo_config, {group_config}).NoErrors());
+
+  validator_.NotifyIsShowing(kFeatureConfigTestFeatureBar, bar_config,
+                             all_feature_names);
+  validator_.NotifyDismissed(kFeatureConfigTestFeatureBar);
+  EXPECT_TRUE(
+      GetResultForDayZeroWithGroups(foo_config, {group_config}).NoErrors());
+
+  validator_.NotifyIsShowing(kFeatureConfigTestFeatureBar, bar_config,
+                             all_feature_names);
+  validator_.NotifyDismissed(kFeatureConfigTestFeatureBar);
+  ConditionValidator::Result result =
+      GetResultForDayZeroWithGroups(foo_config, {group_config});
+  EXPECT_FALSE(result.NoErrors());
+  EXPECT_FALSE(result.session_rate_ok);
+  EXPECT_TRUE(result.groups_ok);
+
+  validator_.NotifyIsShowing(kFeatureConfigTestFeatureBar, bar_config,
+                             all_feature_names);
+  validator_.NotifyDismissed(kFeatureConfigTestFeatureBar);
+  result = GetResultForDayZeroWithGroups(foo_config, {group_config});
+  EXPECT_FALSE(result.NoErrors());
+  EXPECT_FALSE(result.session_rate_ok);
+  EXPECT_FALSE(result.groups_ok);
+}
+
+TEST_F(FeatureConfigConditionValidatorTest, TwoGroupsSessionRate) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitWithFeatures(
+      {kFeatureConfigTestFeatureFoo, kFeatureConfigTestFeatureBar}, {});
+  std::vector<std::string> all_feature_names = {
+      kFeatureConfigTestFeatureFoo.name, kFeatureConfigTestFeatureBar.name};
+
+  FeatureConfig foo_config = GetAcceptingFeatureConfig();
+  FeatureConfig bar_config = GetAcceptingFeatureConfig();
+
+  GroupConfig group_one_config = GetAcceptingGroupConfig();
+  group_one_config.session_rate = Comparator(LESS_THAN, 3u);
+  GroupConfig group_two_config = GetAcceptingGroupConfig();
+  group_two_config.session_rate = Comparator(LESS_THAN, 2u);
+
+  std::vector<GroupConfig> group_configs = {group_one_config, group_two_config};
+
+  EXPECT_TRUE(
+      GetResultForDayZeroWithGroups(foo_config, group_configs).NoErrors());
+
+  validator_.NotifyIsShowing(kFeatureConfigTestFeatureBar, bar_config,
+                             all_feature_names);
+  validator_.NotifyDismissed(kFeatureConfigTestFeatureBar);
+  EXPECT_TRUE(
+      GetResultForDayZeroWithGroups(foo_config, group_configs).NoErrors());
+
+  validator_.NotifyIsShowing(kFeatureConfigTestFeatureBar, bar_config,
+                             all_feature_names);
+  validator_.NotifyDismissed(kFeatureConfigTestFeatureBar);
+  ConditionValidator::Result result =
+      GetResultForDayZeroWithGroups(foo_config, group_configs);
+  EXPECT_FALSE(result.NoErrors());
+  EXPECT_FALSE(result.session_rate_ok);
+  EXPECT_FALSE(result.groups_ok);
+
+  validator_.NotifyIsShowing(kFeatureConfigTestFeatureBar, bar_config,
+                             all_feature_names);
+  validator_.NotifyDismissed(kFeatureConfigTestFeatureBar);
+  result = GetResultForDayZeroWithGroups(foo_config, group_configs);
+  EXPECT_FALSE(result.NoErrors());
+  EXPECT_FALSE(result.session_rate_ok);
+  EXPECT_FALSE(result.groups_ok);
 }
 
 }  // namespace feature_engagement

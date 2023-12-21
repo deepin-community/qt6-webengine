@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -214,7 +214,8 @@ void ContentIndexDatabase::DidSerializeIcons(
                           is_top_level_context);
 
   service_worker_context_->StoreRegistrationUserData(
-      service_worker_registration_id, blink::StorageKey(origin),
+      service_worker_registration_id,
+      blink::StorageKey::CreateFirstParty(origin),
       {{std::move(entry_key), std::move(entry_value)},
        {std::move(icon_key), std::move(icons_value)}},
       base::BindOnce(&ContentIndexDatabase::DidAddEntry,
@@ -558,7 +559,8 @@ void ContentIndexDatabase::DidDeleteItem(
     return;
 
   service_worker_context_->FindReadyRegistrationForId(
-      service_worker_registration_id, blink::StorageKey(origin),
+      service_worker_registration_id,
+      blink::StorageKey::CreateFirstParty(origin),
       base::BindOnce(&ContentIndexDatabase::StartActiveWorkerForDispatch,
                      weak_ptr_factory_.GetWeakPtr(), description_id));
 }

@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,13 +10,12 @@
 #include <set>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
 #include "base/task/sequenced_task_runner.h"
-#include "base/threading/sequenced_task_runner_handle.h"
 #include "base/time/time.h"
 #include "components/sync/base/client_tag_hash.h"
 #include "components/sync/base/time.h"
@@ -35,8 +34,6 @@ namespace {
 
 using sync_pb::SessionSpecifics;
 using syncer::MetadataChangeList;
-using syncer::ModelTypeStore;
-using syncer::ModelTypeSyncBridge;
 
 // Default time without activity after which a session is considered stale and
 // becomes a candidate for garbage collection.
@@ -275,6 +272,11 @@ std::string SessionSyncBridge::GetStorageKey(
   return SessionStore::GetStorageKey(entity_data.specifics.session());
 }
 
+bool SessionSyncBridge::IsEntityDataValid(
+    const syncer::EntityData& entity_data) const {
+  return SessionStore::AreValidSpecifics(entity_data.specifics.session());
+}
+
 void SessionSyncBridge::ApplyStopSyncChanges(
     std::unique_ptr<MetadataChangeList> delete_metadata_change_list) {
   DCHECK(store_);
@@ -302,7 +304,7 @@ SessionSyncBridge::CreateLocalSessionWriteBatch() {
     syncing_->local_data_out_of_sync = false;
     // We use PostTask() to avoid interferring with the ongoing handling of
     // local changes that triggered this function.
-    base::SequencedTaskRunnerHandle::Get()->PostTask(
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(&SessionSyncBridge::ResubmitLocalSession,
                                   weak_ptr_factory_.GetWeakPtr()));
   }
@@ -389,9 +391,9 @@ void SessionSyncBridge::DoGarbageCollection(SessionStore::WriteBatch* batch) {
   for (const auto* session :
        store_->tracker()->LookupAllForeignSessions(SyncedSessionTracker::RAW)) {
     const base::TimeDelta session_age =
-        base::Time::Now() - session->modified_time;
+        base::Time::Now() - session->GetModifiedTime();
     if (session_age > kStaleSessionThreshold) {
-      const std::string session_tag = session->session_tag;
+      const std::string session_tag = session->GetSessionTag();
       DVLOG(1) << "Found stale session " << session_tag << " with age "
                << session_age.InDays() << " days, deleting.";
       DeleteForeignSessionWithBatch(session_tag, batch);

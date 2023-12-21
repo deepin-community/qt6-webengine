@@ -51,7 +51,7 @@ The bot provides analysis using:
     - If you think that there might not be a consensus that the code your adding
       is worth the added file size, then add why you think it is.
         - To get a feeling for how large existing features are, refer to
-          [milestone size breakdowns].
+          [go/chrome-supersize] (Googlers only).
 
 - Add a footer to the commit description along the lines of:
     - `Binary-Size: Size increase is unavoidable (see above).`
@@ -64,7 +64,7 @@ footers.
 ***
 
 [optimization advice]: /docs/speed/binary_size/optimization_advice.md
-[milestone size breakdowns]: https://storage.googleapis.com/chrome-supersize/index.html
+[go/chrome-supersize]: https://goto.google.com/chrome-supersize
 
 
 
@@ -96,8 +96,8 @@ footers.
 
 ### Mutable Constants
 
-- **What**: Checks that all variables named `kVariableName` are in read-only
-  sections of the binary (either `.rodata` or `.data.rel.do`).
+- **What**: Checks that all globals named `kVariableName` or `VARIABLE_NAME`
+  are in read-only sections of the binary (either `.rodata` or `.data.rel.do`).
 - **Why**: Guards against accidentally missing a `const` keyword. Non-const
   variables have a larger memory footprint than const ones.
 - For more context see [https://crbug.com/747064](https://crbug.com/747064).
@@ -106,6 +106,9 @@ footers.
 
 - Make the symbol read-only (usually by adding "const").
 - If you can't make it const, then rename it.
+- If the symbol is logically const, and you really don't want to rename it to
+  reveal that it is not actually mutable, you can annotate it with the
+  [LOGICALLY_CONST] macro.
 - To check what section a symbol is in for a local build:
   ```sh
   ninja -C out/Release obj/.../your_file.o
@@ -125,6 +128,8 @@ const char kMyVar[] = "..."; // A const char array (good).
 
 For more information on when to use `const char *` vs `const char[]`, see
 [//docs/native_relocations.md](/docs/native_relocations.md).
+
+[LOGICALLY_CONST]: https://source.chromium.org/search?q=symbol:LOGICALLY_CONST
 
 ### Added Symbols named “ForTest”
 

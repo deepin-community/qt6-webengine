@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -41,11 +41,16 @@ class MODULES_EXPORT AXVirtualObject : public AXObject {
   ax::mojom::blink::Role AriaRoleAttribute() const override;
 
  private:
-  bool ComputeAccessibilityIsIgnored(IgnoredReasons* = nullptr) const override;
-
   Member<AccessibleNode> accessible_node_;
 
   ax::mojom::blink::Role aria_role_;
+};
+
+template <>
+struct DowncastTraits<AXVirtualObject> {
+  static bool AllowFrom(const AXObject& object) {
+    return object.IsVirtualObject();
+  }
 };
 
 }  // namespace blink

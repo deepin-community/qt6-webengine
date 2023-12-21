@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -50,6 +50,7 @@ class MockMediaSessionPlayerObserver : public MediaSessionPlayerObserver {
   void OnSetAudioSinkId(int player_id,
                         const std::string& raw_device_id) override {}
   void OnSetMute(int player_id, bool mute) override {}
+  void OnRequestMediaRemoting(int player_id) override {}
 
   absl::optional<media_session::MediaPosition> GetPosition(
       int player_id) const override {
@@ -82,7 +83,7 @@ class MockMediaSessionPlayerObserver : public MediaSessionPlayerObserver {
   }
 
  private:
-  raw_ptr<RenderFrameHost> render_frame_host_;
+  raw_ptr<RenderFrameHost, DanglingUntriaged> render_frame_host_;
   media::MediaContentType media_content_type_;
 };
 
@@ -100,6 +101,24 @@ ActionMappingEntry kActionMappings[] = {
     {MediaSessionAction::kSeekBackward, MediaSessionUserAction::kSeekBackward},
     {MediaSessionAction::kSeekForward, MediaSessionUserAction::kSeekForward},
     {MediaSessionAction::kSkipAd, MediaSessionUserAction::kSkipAd},
+    {MediaSessionAction::kStop, MediaSessionUserAction::kStop},
+    {MediaSessionAction::kSeekTo, MediaSessionUserAction::kSeekTo},
+    {MediaSessionAction::kScrubTo, MediaSessionUserAction::kScrubTo},
+    {MediaSessionAction::kEnterPictureInPicture,
+     MediaSessionUserAction::kEnterPictureInPicture},
+    {MediaSessionAction::kExitPictureInPicture,
+     MediaSessionUserAction::kExitPictureInPicture},
+    {MediaSessionAction::kSwitchAudioDevice,
+     MediaSessionUserAction::kSwitchAudioDevice},
+    {MediaSessionAction::kToggleMicrophone,
+     MediaSessionUserAction::kToggleMicrophone},
+    {MediaSessionAction::kToggleCamera, MediaSessionUserAction::kToggleCamera},
+    {MediaSessionAction::kHangUp, MediaSessionUserAction::kHangUp},
+    {MediaSessionAction::kRaise, MediaSessionUserAction::kRaise},
+    {MediaSessionAction::kSetMute, MediaSessionUserAction::kSetMute},
+    {MediaSessionAction::kPreviousSlide,
+     MediaSessionUserAction::kPreviousSlide},
+    {MediaSessionAction::kNextSlide, MediaSessionUserAction::kNextSlide},
 };
 
 }  // anonymous namespace
@@ -112,12 +131,12 @@ class MediaSessionImplUmaTest : public RenderViewHostImplTestHarness {
   void SetUp() override {
     RenderViewHostImplTestHarness::SetUp();
 
-    contents()->GetMainFrame()->InitializeRenderFrameIfNeeded();
+    contents()->GetPrimaryMainFrame()->InitializeRenderFrameIfNeeded();
     StartPlayer();
 
     mock_media_session_service_ =
         std::make_unique<testing::NiceMock<MockMediaSessionServiceImpl>>(
-            contents()->GetMainFrame());
+            contents()->GetPrimaryMainFrame());
   }
 
   void TearDown() override {
@@ -130,7 +149,7 @@ class MediaSessionImplUmaTest : public RenderViewHostImplTestHarness {
 
   void StartPlayer() {
     player_ = std::make_unique<MockMediaSessionPlayerObserver>(
-        contents()->GetMainFrame(), media::MediaContentType::Persistent);
+        contents()->GetPrimaryMainFrame(), media::MediaContentType::Persistent);
     GetSession()->AddPlayer(player_.get(), kPlayerId);
   }
 

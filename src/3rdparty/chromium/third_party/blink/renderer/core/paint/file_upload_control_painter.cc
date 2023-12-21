@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,9 +11,10 @@
 #include "third_party/blink/renderer/core/paint/box_painter.h"
 #include "third_party/blink/renderer/core/paint/paint_auto_dark_mode.h"
 #include "third_party/blink/renderer/core/paint/paint_info.h"
-#include "third_party/blink/renderer/core/paint/paint_timing_detector.h"
+#include "third_party/blink/renderer/core/paint/timing/paint_timing_detector.h"
 #include "third_party/blink/renderer/platform/fonts/text_run_paint_info.h"
 #include "third_party/blink/renderer/platform/graphics/paint/drawing_recorder.h"
+#include "ui/gfx/geometry/rect_conversions.h"
 
 namespace blink {
 
@@ -46,7 +47,8 @@ void FileUploadControlPainter::PaintObject(const PaintInfo& paint_info,
                            ? button->GetLayoutBox()->PixelSnappedWidth()
                            : 0;
     LayoutUnit button_and_spacing_width(
-        button_width + LayoutFileUploadControl::kAfterButtonSpacing);
+        button_width + (layout_file_upload_control_.StyleRef().EffectiveZoom() *
+                        LayoutFileUploadControl::kAfterButtonSpacing));
     gfx::RectF text_bounds;
     float text_width = font.Width(text_run, nullptr, &text_bounds);
     LayoutUnit text_x;

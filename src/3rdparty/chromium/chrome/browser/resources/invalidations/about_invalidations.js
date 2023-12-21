@@ -1,10 +1,10 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 import 'chrome://resources/js/jstemplate_compiled.js';
-import {addWebUIListener} from 'chrome://resources/js/cr.m.js';
-import {$} from 'chrome://resources/js/util.m.js';
+import {addWebUiListener} from 'chrome://resources/js/cr.js';
+import {$} from 'chrome://resources/js/util_ts.js';
 import {loadTestModule} from './test_loader_util.js';
 
 /**
@@ -122,7 +122,7 @@ function logToTable(oId, isInvalidation) {
       time: '',
       version: '',
       payload: '',
-      type: 'content'
+      type: 'content',
     };
   }
   // Refresh the type to be a content because it might have been
@@ -194,23 +194,24 @@ function updateDetailedStatus(newDetails) {
  * Function that notifies the InvalidationsMessageHandler that the UI is
  * ready to receive real-time notifications.
  */
-function onLoadWork() {
-  addWebUIListener('handlers-updated', handlers => updateHandlers(handlers));
-  addWebUIListener(
+async function onLoadWork() {
+  addWebUiListener('handlers-updated', handlers => updateHandlers(handlers));
+  addWebUiListener(
       'state-updated',
       (state, lastChanged) => updateInvalidatorState(state, lastChanged));
-  addWebUIListener(
+  addWebUiListener(
       'ids-updated', (registrar, ids) => updateIds(registrar, ids));
-  addWebUIListener(
+  addWebUiListener(
       'log-invalidations', invalidations => logInvalidations(invalidations));
-  addWebUIListener(
+  addWebUiListener(
       'detailed-status-updated',
       networkDetails => updateDetailedStatus(networkDetails));
   $('request-detailed-status').onclick = function() {
     cachedDetails = {};
     chrome.send('requestDetailedStatus');
   };
-  if (loadTestModule()) {
+
+  if (await loadTestModule()) {
     return;
   }
   chrome.send('doneLoading');

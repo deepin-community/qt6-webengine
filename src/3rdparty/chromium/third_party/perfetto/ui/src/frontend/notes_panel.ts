@@ -19,10 +19,19 @@ import {randomColor} from '../common/colorizer';
 import {AreaNote, Note} from '../common/state';
 import {timeToString} from '../common/time';
 
+import {
+  BottomTab,
+  bottomTabRegistry,
+  NewBottomTabArgs,
+} from './bottom_tab';
 import {TRACK_SHELL_WIDTH} from './css_constants';
 import {PerfettoMouseEvent} from './events';
 import {globals} from './globals';
-import {gridlines} from './gridline_helper';
+import {
+  TickGenerator,
+  TickType,
+  timeScaleForVisibleWindow,
+} from './gridline_helper';
 import {Panel, PanelSize} from './panel';
 import {isTraceLoaded} from './sidebar';
 
@@ -74,29 +83,43 @@ export class NotesPanel extends Panel {
           },
         },
         isTraceLoaded() ?
-            m('button',
-              {
-                onclick: (e: Event) => {
-                  e.preventDefault();
-                  globals.dispatch(
-                      Actions.toggleAllTrackGroups({collapsed: !allCollapsed}));
-                }
-              },
-              m('i.material-icons',
-                {title: allCollapsed ? 'Expand all' : 'Collapse all'},
-                allCollapsed ? 'unfold_more' : 'unfold_less')) :
+            [
+              m('button',
+                {
+                  onclick: (e: Event) => {
+                    e.preventDefault();
+                    globals.dispatch(Actions.toggleAllTrackGroups(
+                        {collapsed: !allCollapsed}));
+                  },
+                },
+                m('i.material-icons',
+                  {title: allCollapsed ? 'Expand all' : 'Collapse all'},
+                  allCollapsed ? 'unfold_more' : 'unfold_less')),
+              m('button',
+                {
+                  onclick: (e: Event) => {
+                    e.preventDefault();
+                    globals.dispatch(Actions.clearAllPinnedTracks({}));
+                  },
+                },
+                m('i.material-icons',
+                  {title: 'Clear all pinned tracks'},
+                  'clear_all')),
+            ] :
             '');
   }
 
   renderCanvas(ctx: CanvasRenderingContext2D, size: PanelSize) {
     const timeScale = globals.frontendLocalState.timeScale;
-    const range = globals.frontendLocalState.visibleWindowTime;
     let aNoteIsHovered = false;
 
     ctx.fillStyle = '#999';
     ctx.fillRect(TRACK_SHELL_WIDTH - 2, 0, 2, size.height);
-    for (const xAndTime of gridlines(size.width, range, timeScale)) {
-      ctx.fillRect(xAndTime[0], 0, 1, size.height);
+    const relScale = timeScaleForVisibleWindow(TRACK_SHELL_WIDTH, size.width);
+    if (relScale.timeSpan.duration > 0 && relScale.widthPx > 0) {
+      for (const {type, position} of new TickGenerator(relScale)) {
+        if (type === TickType.MAJOR) ctx.fillRect(position, 0, 1, size.height);
+      }
     }
 
     ctx.textBaseline = 'bottom';
@@ -259,13 +282,32 @@ export class NotesPanel extends Panel {
   }
 }
 
-interface NotesEditorPanelAttrs {
+interface NotesEditorTabConfig {
   id: string;
 }
 
-export class NotesEditorPanel extends Panel<NotesEditorPanelAttrs> {
-  view({attrs}: m.CVnode<NotesEditorPanelAttrs>) {
-    const note = globals.state.notes[attrs.id];
+export class NotesEditorTab extends BottomTab<NotesEditorTabConfig> {
+  static readonly kind = 'org.perfetto.NotesEditorTab';
+
+  static create(args: NewBottomTabArgs): NotesEditorTab {
+    return new NotesEditorTab(args);
+  }
+
+  constructor(args: NewBottomTabArgs) {
+    super(args);
+  }
+
+  renderTabCanvas() {}
+
+  getTitle() {
+    return 'Current Selection';
+  }
+
+  viewTab() {
+    const note = globals.state.notes[this.config.id];
+    if (note === undefined) {
+      return m('.', `No Note with id ${this.config.id}`);
+    }
     const startTime =
         getStartTimestamp(note) - globals.state.traceTime.startSec;
     return m(
@@ -281,7 +323,7 @@ export class NotesEditorPanel extends Panel<NotesEditorPanelAttrs> {
             onchange: (e: InputEvent) => {
               const newText = (e.target as HTMLInputElement).value;
               globals.dispatch(Actions.changeNoteText({
-                id: attrs.id,
+                id: this.config.id,
                 newText,
               }));
             },
@@ -291,7 +333,7 @@ export class NotesEditorPanel extends Panel<NotesEditorPanelAttrs> {
               onchange: (e: Event) => {
                 const newColor = (e.target as HTMLInputElement).value;
                 globals.dispatch(Actions.changeNoteColor({
-                  id: attrs.id,
+                  id: this.config.id,
                   newColor,
                 }));
               },
@@ -299,14 +341,14 @@ export class NotesEditorPanel extends Panel<NotesEditorPanelAttrs> {
           m('button',
             {
               onclick: () => {
-                globals.dispatch(Actions.removeNote({id: attrs.id}));
+                globals.dispatch(Actions.removeNote({id: this.config.id}));
                 globals.dispatch(Actions.setCurrentTab({tab: undefined}));
                 globals.rafScheduler.scheduleFullRedraw();
-              }
+              },
             },
             'Remove')),
     );
   }
-
-  renderCanvas(_ctx: CanvasRenderingContext2D, _size: PanelSize) {}
 }
+
+bottomTabRegistry.register(NotesEditorTab);

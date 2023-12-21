@@ -1,4 +1,4 @@
-// Copyright 2021 The Tint Authors.
+// Copyright 2023 The Tint Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,66 +16,38 @@
 #define SRC_TINT_SEM_EXPRESSION_H_
 
 #include "src/tint/ast/expression.h"
-#include "src/tint/sem/behavior.h"
-#include "src/tint/sem/constant.h"
 #include "src/tint/sem/node.h"
 
 // Forward declarations
 namespace tint::sem {
 class Statement;
-class Type;
 }  // namespace tint::sem
 
 namespace tint::sem {
+
 /// Expression holds the semantic information for expression nodes.
 class Expression : public Castable<Expression, Node> {
- public:
-  /// Constructor
-  /// @param declaration the AST node
-  /// @param type the resolved type of the expression
-  /// @param statement the statement that owns this expression
-  /// @param constant the constant value of the expression. May be invalid
-  /// @param has_side_effects true if this expression may have side-effects
-  Expression(const ast::Expression* declaration,
-             const sem::Type* type,
-             const Statement* statement,
-             Constant constant,
-             bool has_side_effects);
+  public:
+    /// Constructor
+    /// @param declaration the AST node
+    /// @param statement the statement that owns this expression
+    Expression(const ast::Expression* declaration, const Statement* statement);
 
-  /// Destructor
-  ~Expression() override;
+    /// Destructor
+    ~Expression() override;
 
-  /// @returns the AST node
-  const ast::Expression* Declaration() const { return declaration_; }
+    /// @returns the AST node
+    const ast::Expression* Declaration() const { return declaration_; }
 
-  /// @return the resolved type of the expression
-  const sem::Type* Type() const { return type_; }
+    /// @return the statement that owns this expression
+    const Statement* Stmt() const { return statement_; }
 
-  /// @return the statement that owns this expression
-  const Statement* Stmt() const { return statement_; }
+  protected:
+    /// The AST expression node for this semantic expression
+    const ast::Expression* const declaration_;
 
-  /// @return the constant value of this expression
-  const Constant& ConstantValue() const { return constant_; }
-
-  /// @return the behaviors of this statement
-  const sem::Behaviors& Behaviors() const { return behaviors_; }
-
-  /// @return the behaviors of this statement
-  sem::Behaviors& Behaviors() { return behaviors_; }
-
-  /// @return true of this expression may have side effects
-  bool HasSideEffects() const { return has_side_effects_; }
-
- protected:
-  /// The AST expression node for this semantic expression
-  const ast::Expression* const declaration_;
-
- private:
-  const sem::Type* const type_;
-  const Statement* const statement_;
-  const Constant constant_;
-  sem::Behaviors behaviors_{sem::Behavior::kNext};
-  const bool has_side_effects_;
+  private:
+    const Statement* const statement_;
 };
 
 }  // namespace tint::sem

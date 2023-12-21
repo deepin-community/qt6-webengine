@@ -39,12 +39,28 @@ absl_cc_library(
     kernel_timeout_internal
   HDRS
     "internal/kernel_timeout.h"
+  SRCS
+    "internal/kernel_timeout.cc"
   COPTS
     ${ABSL_DEFAULT_COPTS}
   DEPS
-    absl::core_headers
+    absl::config
     absl::raw_logging_internal
     absl::time
+)
+
+absl_cc_test(
+  NAME
+    kernel_timeout_internal_test
+  SRCS
+    "internal/kernel_timeout_test.cc"
+  COPTS
+    ${ABSL_TEST_COPTS}
+  DEPS
+    absl::kernel_timeout_internal
+    absl::config
+    absl::time
+    GTest::gmock_main
 )
 
 absl_cc_library(
@@ -136,8 +152,9 @@ absl_cc_library(
   COPTS
     ${ABSL_DEFAULT_COPTS}
   DEPS
-    absl::synchronization
+    absl::any_invocable
     absl::core_headers
+    absl::synchronization
   TESTONLY
 )
 
@@ -157,6 +174,20 @@ absl_cc_test(
     absl::memory
     absl::raw_logging_internal
     absl::time
+    GTest::gmock_main
+)
+
+absl_cc_test(
+  NAME
+    mutex_method_pointer_test
+  SRCS
+    "mutex_method_pointer_test.cc"
+  COPTS
+    ${ABSL_TEST_COPTS}
+  DEPS
+    absl::base
+    absl::config
+    absl::synchronization
     GTest::gmock_main
 )
 

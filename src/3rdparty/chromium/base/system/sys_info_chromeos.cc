@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -24,6 +24,9 @@
 
 namespace base {
 
+const char kLsbReleaseKey[] = "LSB_RELEASE";
+const char kLsbReleaseTimeKey[] = "LSB_RELEASE_TIME";  // Seconds since epoch
+
 namespace {
 
 const char* const kLinuxStandardBaseVersionKeys[] = {
@@ -38,12 +41,11 @@ const char* const kChromeOsReleaseNames[] = {
 
 const char kLinuxStandardBaseReleaseFile[] = "/etc/lsb-release";
 
-const char kLsbReleaseKey[] = "LSB_RELEASE";
-const char kLsbReleaseTimeKey[] = "LSB_RELEASE_TIME";  // Seconds since epoch
-
 const char kLsbReleaseSourceKey[] = "lsb-release";
 const char kLsbReleaseSourceEnv[] = "env";
 const char kLsbReleaseSourceFile[] = "file";
+
+}  // namespace
 
 class ChromeOSVersionInfo {
  public:
@@ -61,7 +63,7 @@ class ChromeOSVersionInfo {
       // If the LSB_RELEASE and LSB_RELEASE_TIME environment variables are not
       // set, fall back to a blocking read of the lsb_release file. This should
       // only happen in non Chrome OS environments.
-      ThreadRestrictions::ScopedAllowIO allow_io;
+      ScopedAllowBlocking allow_blocking;
       FilePath path(kLinuxStandardBaseReleaseFile);
       ReadFileToString(path, &lsb_release);
       File::Info fileinfo;
@@ -167,8 +169,6 @@ ChromeOSVersionInfo& GetChromeOSVersionInfo() {
   return *version_info;
 }
 
-}  // namespace
-
 // static
 std::string SysInfo::HardwareModelName() {
   std::string board = GetLsbReleaseBoard();
@@ -262,6 +262,27 @@ void SysInfo::CrashIfChromeOSNonTestImage() {
 
   // Crash if can't find test-image marker in the release track.
   CHECK_NE(track.find(kTestImageRelease), std::string::npos);
+}
+
+SysInfo::HardwareInfo SysInfo::GetHardwareInfoSync() {
+  HardwareInfo info;
+  // Manufacturer of ChromeOS device is always Google so hardcode it.
+  info.manufacturer = "Google";
+  if (IsRunningOnChromeOS()) {
+    // Read the model name from cros-configfs.
+    constexpr char kModelNamePath[] = "/run/chromeos-config/v1/name";
+    constexpr size_t kMaxStringSize = 100u;
+    std::string data;
+    if (ReadFileToStringWithMaxSize(FilePath(kModelNamePath), &data,
+                                    kMaxStringSize)) {
+      TrimWhitespaceASCII(data, TrimPositions::TRIM_ALL, &info.model);
+    }
+    DCHECK(IsStringUTF8(info.model));
+  } else {
+    // Fake model name on chromeos linux-emulator (for both linux/ash).
+    info.model = "linux-emulator";
+  }
+  return info;
 }
 
 }  // namespace base

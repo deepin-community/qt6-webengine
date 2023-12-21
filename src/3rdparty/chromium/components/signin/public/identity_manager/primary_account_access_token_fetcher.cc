@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,8 +6,8 @@
 
 #include <utility>
 
-#include "base/bind.h"
 #include "base/check_op.h"
+#include "base/functional/bind.h"
 #include "components/signin/public/identity_manager/access_token_info.h"
 #include "google_apis/gaia/core_account_id.h"
 #include "google_apis/gaia/google_service_auth_error.h"
@@ -18,24 +18,44 @@ PrimaryAccountAccessTokenFetcher::PrimaryAccountAccessTokenFetcher(
     const std::string& oauth_consumer_name,
     IdentityManager* identity_manager,
     const ScopeSet& scopes,
-    AccessTokenFetcher::TokenCallback callback,
     Mode mode,
     ConsentLevel consent)
     : oauth_consumer_name_(oauth_consumer_name),
       identity_manager_(identity_manager),
       scopes_(scopes),
-      callback_(std::move(callback)),
       mode_(mode),
       consent_(consent) {
   identity_manager_observation_.Observe(identity_manager_.get());
+}
+
+PrimaryAccountAccessTokenFetcher::PrimaryAccountAccessTokenFetcher(
+    const std::string& oauth_consumer_name,
+    IdentityManager* identity_manager,
+    const ScopeSet& scopes,
+    AccessTokenFetcher::TokenCallback callback,
+    Mode mode,
+    ConsentLevel consent)
+    : PrimaryAccountAccessTokenFetcher(oauth_consumer_name,
+                                       identity_manager,
+                                       scopes,
+                                       mode,
+                                       consent) {
+  Start(std::move(callback));
+}
+
+PrimaryAccountAccessTokenFetcher::~PrimaryAccountAccessTokenFetcher() = default;
+
+void PrimaryAccountAccessTokenFetcher::Start(
+    AccessTokenFetcher::TokenCallback callback) {
+  DCHECK(callback);
+  DCHECK(!callback_);
+  callback_ = std::move(callback);
   if (mode_ == Mode::kImmediate || AreCredentialsAvailable()) {
     StartAccessTokenRequest();
     return;
   }
   waiting_for_account_available_ = true;
 }
-
-PrimaryAccountAccessTokenFetcher::~PrimaryAccountAccessTokenFetcher() = default;
 
 CoreAccountId PrimaryAccountAccessTokenFetcher::GetAccountId() const {
   return identity_manager_->GetPrimaryAccountId(consent_);

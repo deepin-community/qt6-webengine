@@ -1,15 +1,14 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "net/test/url_request/url_request_failed_job.h"
 
-#include "base/bind.h"
 #include "base/check_op.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/task/single_thread_task_runner.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "net/base/net_errors.h"
 #include "net/base/url_util.h"
 #include "net/http/http_response_headers.h"
@@ -79,10 +78,7 @@ GURL GetMockUrl(const std::string& scheme,
 URLRequestFailedJob::URLRequestFailedJob(URLRequest* request,
                                          FailurePhase phase,
                                          int net_error)
-    : URLRequestJob(request),
-      phase_(phase),
-      net_error_(net_error),
-      total_received_bytes_(0) {
+    : URLRequestJob(request), phase_(phase), net_error_(net_error) {
   CHECK_GE(phase, URLRequestFailedJob::FailurePhase::START);
   CHECK_LE(phase, URLRequestFailedJob::FailurePhase::READ_ASYNC);
   CHECK_LT(net_error, OK);
@@ -94,7 +90,7 @@ URLRequestFailedJob::URLRequestFailedJob(URLRequest* request, int net_error)
 URLRequestFailedJob::~URLRequestFailedJob() = default;
 
 void URLRequestFailedJob::Start() {
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(&URLRequestFailedJob::StartAsync,
                                 weak_factory_.GetWeakPtr()));
 }
@@ -104,7 +100,7 @@ int URLRequestFailedJob::ReadRawData(IOBuffer* buf, int buf_size) {
   if (net_error_ == ERR_IO_PENDING || phase_ == READ_SYNC)
     return net_error_;
 
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(&URLRequestFailedJob::ReadRawDataComplete,
                                 weak_factory_.GetWeakPtr(), net_error_));
   return ERR_IO_PENDING;
@@ -138,12 +134,10 @@ void URLRequestFailedJob::AddUrlHandlerForHostname(
     const std::string& hostname) {
   URLRequestFilter* filter = URLRequestFilter::GetInstance();
   // Add |hostname| to URLRequestFilter for HTTP and HTTPS.
-  filter->AddHostnameInterceptor(
-      "http", hostname,
-      std::unique_ptr<URLRequestInterceptor>(new MockJobInterceptor()));
-  filter->AddHostnameInterceptor(
-      "https", hostname,
-      std::unique_ptr<URLRequestInterceptor>(new MockJobInterceptor()));
+  filter->AddHostnameInterceptor("http", hostname,
+                                 std::make_unique<MockJobInterceptor>());
+  filter->AddHostnameInterceptor("https", hostname,
+                                 std::make_unique<MockJobInterceptor>());
 }
 
 // static
@@ -185,7 +179,8 @@ void URLRequestFailedJob::StartAsync() {
     return;
   }
   const std::string headers = "HTTP/1.1 200 OK";
-  response_info_.headers = new net::HttpResponseHeaders(headers);
+  response_info_.headers =
+      base::MakeRefCounted<net::HttpResponseHeaders>(headers);
   total_received_bytes_ = headers.size();
   NotifyHeadersComplete();
 }

@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,15 +6,15 @@
  * @fileoverview 'cr-slider' is a slider component used to select a number from
  * a continuous or discrete range of numbers.
  */
-import '../../js/cr.m.js';
-import '../hidden_style_css.m.js';
-import '../shared_vars_css.m.js';
+import '../cr_hidden_style.css.js';
+import '../cr_shared_vars.css.js';
 
+import {assert} from '//resources/js/assert_ts.js';
+import {EventTracker} from '//resources/js/event_tracker.js';
 import {PaperRippleBehavior} from '//resources/polymer/v3_0/paper-behaviors/paper-ripple-behavior.js';
-import {Debouncer, html, microTask, mixinBehaviors, PolymerElement} from '//resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+import {Debouncer, microTask, mixinBehaviors, PolymerElement} from '//resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
-import {assert} from '../../js/assert_ts.js';
-import {EventTracker} from '../../js/event_tracker.m.js';
+import {getTemplate} from './cr_slider.html.js';
 
 /**
  * The |value| is the corresponding value that the current slider tick is
@@ -23,11 +23,11 @@ import {EventTracker} from '../../js/event_tracker.m.js';
  * aria-valuemax, and aria-valuenow, and is optional. If missing, |value| will
  * be used instead.
  */
-export type SliderTick = {
-  value: number,
-  label: string,
-  ariaValue?: number,
-};
+export interface SliderTick {
+  value: number;
+  label: string;
+  ariaValue?: number;
+}
 
 function clamp(min: number, max: number, value: number): number {
   return Math.min(max, Math.max(min, value));
@@ -68,6 +68,10 @@ export class CrSliderElement extends CrSliderElementBase {
     return 'cr-slider';
   }
 
+  static get template() {
+    return getTemplate();
+  }
+
   static get properties() {
     return {
       disabled: {
@@ -97,6 +101,15 @@ export class CrSliderElement extends CrSliderElementBase {
         type: Boolean,
         value: false,
         notify: true,
+      },
+
+      /**
+       * The amount the slider value increments by when pressing any of the keys
+       * from `deltaKeyMap_`. Defaults to 1.
+       */
+      keyPressSliderIncrement: {
+        type: Number,
+        value: 1,
       },
 
       markerCount: {
@@ -177,18 +190,20 @@ export class CrSliderElement extends CrSliderElementBase {
       'onTicksChanged_(ticks.*)',
       'updateUi_(ticks.*, value, min, max)',
       'onValueMinMaxChange_(value, min, max)',
+      'buildDeltaKeyMap_(isRtl_, keyPressSliderIncrement)',
     ];
   }
 
   disabled: boolean;
   dragging: boolean;
   updatingFromKey: boolean;
+  keyPressSliderIncrement: number;
   markerCount: number;
   max: number;
   min: number;
   noKeybindings: boolean;
   snaps: boolean;
-  ticks: Array<SliderTick>|Array<number>;
+  ticks: SliderTick[]|number[];
   value: number;
 
   private disabled_: boolean;
@@ -200,6 +215,8 @@ export class CrSliderElement extends CrSliderElementBase {
   private deltaKeyMap_: Map<string, number>|null = null;
   private draggingEventTracker_: EventTracker|null = null;
   private debouncer_: Debouncer;
+
+  /* eslint-disable-next-line @typescript-eslint/naming-convention */
   override _rippleContainer: Element;
 
   override ready() {
@@ -216,14 +233,6 @@ export class CrSliderElement extends CrSliderElementBase {
   override connectedCallback() {
     super.connectedCallback();
     this.isRtl_ = window.getComputedStyle(this)['direction'] === 'rtl';
-    this.deltaKeyMap_ = new Map([
-      ['ArrowDown', -1],
-      ['ArrowUp', 1],
-      ['PageDown', -1],
-      ['PageUp', 1],
-      ['ArrowLeft', this.isRtl_ ? 1 : -1],
-      ['ArrowRight', this.isRtl_ ? -1 : 1],
-    ]);
     this.draggingEventTracker_ = new EventTracker();
   }
 
@@ -453,6 +462,21 @@ export class CrSliderElement extends CrSliderElementBase {
     }
   }
 
+  private buildDeltaKeyMap_() {
+    const increment = this.keyPressSliderIncrement;
+    const decrement = -this.keyPressSliderIncrement;
+    this.deltaKeyMap_ = new Map([
+      ['ArrowDown', decrement],
+      ['ArrowUp', increment],
+      ['PageDown', decrement],
+      ['PageUp', increment],
+      ['ArrowLeft', this.isRtl_ ? increment : decrement],
+      ['ArrowRight', this.isRtl_ ? decrement : increment],
+    ]);
+  }
+
+  // Overridden from PaperRippleBehavior
+  /* eslint-disable-next-line @typescript-eslint/naming-convention */
   override _createRipple() {
     this._rippleContainer = this.$.knob;
     const ripple = super._createRipple();
@@ -460,10 +484,6 @@ export class CrSliderElement extends CrSliderElementBase {
     ripple.setAttribute('recenters', '');
     ripple.classList.add('circle', 'toggle-ink');
     return ripple;
-  }
-
-  static get template() {
-    return html`{__html_template__}`;
   }
 }
 

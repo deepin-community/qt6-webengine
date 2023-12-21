@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -304,8 +304,9 @@ IN_PROC_BROWSER_TEST_P(TabCapturePerformanceTest, MAYBE_Performance) {
   const base::Value response = SendMessageToExtension(
       base::StringPrintf("{start:true, passThroughWebRTC:%s}",
                          HasFlag(kTestThroughWebRTC) ? "true" : "false"));
-  const std::string* reason = response.FindStringKey("reason");
-  ASSERT_TRUE(response.FindBoolKey("success").value_or(false))
+  ASSERT_TRUE(response.is_dict());
+  const std::string* reason = response.GetDict().FindString("reason");
+  ASSERT_TRUE(response.GetDict().FindBool("success").value_or(false))
       << (reason ? *reason : std::string("<MISSING REASON>"));
 
   // Observe the running browser for a while, collecting a trace.

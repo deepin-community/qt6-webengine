@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -113,11 +113,6 @@ class PropertyTreeManager {
 
   int EnsureCompositorPageScaleTransformNode(const TransformPaintPropertyNode&);
 
-  // Used to offset the scroll translation during overscroll.
-  void SetOverscrollTransformNodeId(const int id);
-  void SetOverscrollClipNodeId(const int id);
-  void SetFixedElementsDontOverscroll(const bool value);
-
   // This function is expected to be invoked right before emitting each layer.
   // It keeps track of the nesting of clip and effects, output a composited
   // effect node whenever an effect is entered, or a non-trivial clip is
@@ -160,10 +155,6 @@ class PropertyTreeManager {
   void EnsureCompositorScrollNodes(
       const Vector<const TransformPaintPropertyNode*>&
           scroll_translation_nodes);
-
-  // Sets the cc::ScrollNode::is_composited bit to true for the node with ID
-  // |cc_node_id|.
-  void SetCcScrollNodeIsComposited(int cc_node_id);
 
   // Updates conditional render surface reasons for all effect nodes in
   // |GetEffectTree|. Every effect is supposed to have render surface enabled
@@ -299,13 +290,15 @@ class PropertyTreeManager {
                              const EffectPaintPropertyNode&,
                              const ClipPaintPropertyNode&,
                              const TransformPaintPropertyNode&);
-  void SetCurrentEffectRenderSurfaceReason(cc::RenderSurfaceReason);
 
   // Should only be called from EnsureCompositorTransformNode as part of
   // creating the associated scroll offset transform node.
   void CreateCompositorScrollNode(
       const ScrollPaintPropertyNode&,
-      const cc::TransformNode& scroll_offset_translation);
+      const cc::TransformNode& scroll_offset_translation,
+      bool is_composited);
+
+  void UpdatePixelMovingFilterClipExpanders();
 
   PropertyTreeManagerClient& client_;
 
@@ -342,6 +335,10 @@ class PropertyTreeManager {
   // A set of synthetic clips masks which will be applied if a layer under them
   // is encountered which draws content (and thus necessitates the mask).
   HashSet<int> pending_synthetic_mask_layers_;
+
+  // EnsureCompositorClipNode() collects pixel moving filter clips. We'll set
+  // clip_expander of their cc nodes after all effect nodes have been converted.
+  Vector<const ClipPaintPropertyNode*> pixel_moving_filter_clip_expanders_;
 };
 
 }  // namespace blink

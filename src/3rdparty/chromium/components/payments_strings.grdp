@@ -260,15 +260,6 @@
     <message name="IDS_PAYMENTS_EMAIL_FIELD_IN_CONTACT_DETAILS" desc="The label for text input field containing an email address. Sentence-cased. [CHAR_LIMIT=32]">
       Email
     </message>
-    <message name="IDS_PAYMENTS_SAVE_CARD_TO_DEVICE_CHECKBOX" desc="The label for the checkbox that enables the user to save a credit card to their device, for example, on their phone. Sentence-cased." formatter_data="android_java">
-      Save this card to this device
-    </message>
-    <message name="IDS_PAYMENTS_ACCEPTED_CARDS_LABEL" desc="The title for the section that displays the card networks that the merchant accepts. Below the title, we show a row of icons indicating the accepted networks (Visa icon, Mastercard icon, etc.). Sentence-cased." formatter_data="android_java">
-      Accepted cards
-    </message>
-    <message name="IDS_PAYMENTS_CREDIT_CARD_EXPIRATION_DATE_ABBR" desc="Abbreviated label for credit card expiration date. Sentence-cased. [CHAR_LIMIT=32]" formatter_data="android_java">
-      Expires <ph name="EXPIRATION_MONTH">%1$s<ex>06</ex></ph>/<ph name="EXPIRATION_YEAR">%2$s<ex>17</ex></ph>
-    </message>
     <message name="IDS_PAYMENTS_LOADING_MESSAGE" desc="The text that informs the user that payment information is being loaded up. Sentence-cased." formatter_data="android_java">
       Loading
     </message>
@@ -293,17 +284,8 @@
     <message name="IDS_PAYMENTS_EMAIL_FIELD_IN_CONTACT_DETAILS" desc="The label for text input field containing an email address. Title-Cased. [CHAR_LIMIT=32]">
       Email
     </message>
-    <message name="IDS_PAYMENTS_SAVE_CARD_TO_DEVICE_CHECKBOX" desc="The label for the checkbox that enables the user to save a credit card to their device, for example, on their phone. Title-Cased.">
-      Save This Card to This Device
-    </message>
-    <message name="IDS_PAYMENTS_ACCEPTED_CARDS_LABEL" desc="The title for the section that displays the card networks that the merchant accepts. Below the title, we show a row of icons indicating the accepted networks (Visa icon, Mastercard icon, etc.). Title-Cased.">
-      Accepted Cards
-    </message>
     <message name="IDS_PAYMENTS_ACCEPTED_CREDIT_CARDS_LABEL" desc="The title for the section that displays the credit card networks that the merchant accepts. Below the title, we show a row of icons indicating the accepted credit card networks (Visa icon, Mastercard icon, etc.). Title-Cased.">
       Accepted Credit Cards
-    </message>
-    <message name="IDS_PAYMENTS_CREDIT_CARD_EXPIRATION_DATE_ABBR" desc="Abbreviated label for credit card expiration date. Title-Cased. [CHAR_LIMIT=32]" formatter_data="android_java">
-      Expires <ph name="EXPIRATION_MONTH">%1$s<ex>06</ex></ph>/<ph name="EXPIRATION_YEAR">%2$s<ex>17</ex></ph>
     </message>
     <message name="IDS_PAYMENTS_LOADING_MESSAGE" desc="The text that informs the user that payment information is being loaded up. Title-Cased.">
       Loading
@@ -433,7 +415,7 @@
   <message name="IDS_PAYMENTS_CARD_NUMBER_INVALID_VALIDATION_MESSAGE" desc="The text that informs the user that the credit card number they have entered is not valid." formatter_data="android_java">
     Enter a valid card number
   </message>
-  <message name="IDS_PAYMENTS_CARD_EXPIRATION_INVALID_VALIDATION_MESSAGE" desc="The text that informs the user that the credit card expiration date they have entered is not valid." formatter_data="android_java">
+  <message name="IDS_PAYMENTS_CARD_EXPIRATION_INVALID_VALIDATION_MESSAGE" desc="The text that informs the user that the credit card expiration date they have entered is not valid.">
     Enter a valid expiration date
   </message>
   <message name="IDS_PAYMENTS_INVALID_ADDRESS" desc="The label to indicate the shipping address is invalid. For example, missing state or city name." formatter_data="android_java">
@@ -571,6 +553,9 @@
   <message name="IDS_PAYMENTS_BACK" desc="The screen reader string for the back arrow button in the Desktop Payments dialog">
     Back
   </message>
+  <message name="IDS_PAYMENTS_CLOSE" desc="The screen reader string for the close/exit icon in the Desktop Payments dialog">
+    Close
+  </message>
   <message name="IDS_PAYMENTS_EDIT" desc="The screen reader string for the pencil edit button in the Desktop Payments dialog">
     Edit
   </message>
@@ -603,6 +588,9 @@
   <message name="IDS_PAYMENT_HANDLER_SHEET_CLOSED" desc="Accessibility string read when the payment-handler bottom sheet is closed." formatter_data="android_java">
     Payment handler sheet is closed
   </message>
+  <message name="IDS_PAYMENT_HANDLER_ICON" desc="The alt text for the payment handler icon. Used for accessibility.">
+    Payment handler icon
+  </message>
 
   <!-- Secure Payment Confirmation strings -->
   <if expr="not is_win and not is_macosx">
@@ -610,15 +598,37 @@
     <message name="IDS_SECURE_PAYMENT_CONFIRMATION_VERIFY_PURCHASE" desc="The title string on a payment confirmation dialog that confirms the details of the payment that the user is about to verify. The user has the option to click 'Cancel' or 'Continue', and clicking 'Continue' will open the system interface to verify their identity, for example with their fingerprint." formatter_data="android_java">
         Verify your purchase
     </message>
+    <if expr="is_android">
+      <message name="IDS_SECURE_PAYMENT_CONFIRMATION_OPT_OUT_LABEL" desc="Text on a dialog that explains to the user that they previously opted into this behavior for a given provider. Includes link text that they can click to request that the provider deletes their data." formatter_data="android_java">
+          You chose to verify with <ph name="DEVICE_LABEL">%1$s<ex>this phone</ex></ph> on websites that use <ph name="PROVIDER_ORIGIN">%2$s<ex>example.com</ex></ph>. This provider may have stored information about your payment method, which you can <ph name="BEGIN_LINK">BEGIN_LINK</ph>request to be deleted<ph name="END_LINK">END_LINK</ph>.
+      </message>
+      <message name="IDS_SECURE_PAYMENT_CONFIRMATION_THIS_PHONE_LABEL" desc="Substring for a dialog that refers to the users current device, when the device is a phone." formatter_data="android_java">
+        this phone
+      </message>
+      <message name="IDS_SECURE_PAYMENT_CONFIRMATION_THIS_TABLET_LABEL" desc="Substring for a dialog that refers to the users current device, when the device is a tablet." formatter_data="android_java">
+        this tablet
+      </message>
+    </if>
+    <if expr="not is_android">
+      <message name="IDS_SECURE_PAYMENT_CONFIRMATION_OPT_OUT_LABEL" desc="Text on a dialog that explains to the user that they previously opted into this behavior for a given provider. Includes link text that they can click to request that the provider deletes their data.">
+          You chose to verify with an authenticator device on websites that use <ph name="PROVIDER_ORIGIN">$1<ex>example.com</ex></ph>. This provider may have stored information about your payment method, which you can <ph name="LINK_TEXT">$2<ex>request to be deleted</ex></ph>.
+      </message>
+    </if>
   </if> <!-- not is_win and not is_macosx -->
   <if expr="is_macosx">
     <message name="IDS_SECURE_PAYMENT_CONFIRMATION_VERIFY_PURCHASE" desc="The title string on a payment confirmation dialog that confirms the details of the payment that the user is about to verify. The user has the option to click 'Cancel' or 'Verify', and clicking 'Verify' will open the system interface to verify their identity with the Touch ID fingerprint sensor.">
         Use Touch ID to verify and complete your purchase?
     </message>
+    <message name="IDS_SECURE_PAYMENT_CONFIRMATION_OPT_OUT_LABEL" desc="Text on a dialog that explains to the user that they previously opted into this behavior for a given provider. Includes link text that they can click to request that the provider deletes their data.">
+        You chose to verify with Touch ID on websites that use <ph name="PROVIDER_ORIGIN">$1<ex>example.com</ex></ph>. This provider may have stored information about your payment method, which you can <ph name="LINK_TEXT">$2<ex>request to be deleted</ex></ph>.
+    </message>
   </if> <!-- is_macosx -->
   <if expr="is_win">
     <message name="IDS_SECURE_PAYMENT_CONFIRMATION_VERIFY_PURCHASE" desc="The title string on a payment confirmation dialog that confirms the details of the payment that the user is about to verify. The user has the option to click 'Cancel' or 'Verify', and clicking 'Verify' will open the system interface to verify their identity with the Windows Hello biometric sensor, such as fingerprint or face recognition.">
         Use Windows Hello to verify and complete your purchase?
+    </message>
+    <message name="IDS_SECURE_PAYMENT_CONFIRMATION_OPT_OUT_LABEL" desc="Text on a dialog that explains to the user that they previously opted into this behavior for a given provider. Includes link text that they can click to request that the provider deletes their data.">
+        You chose to verify with Windows Hello on websites that use <ph name="PROVIDER_ORIGIN">$1<ex>example.com</ex></ph>. This provider may have stored information about your payment method, which you can <ph name="LINK_TEXT">$2<ex>request to be deleted</ex></ph>.
     </message>
   </if>  <!-- is_win -->
   <message name="IDS_SECURE_PAYMENT_CONFIRMATION_STORE_LABEL" desc="In a secure payment confirmation dialog, this is the label for the row of data that shows the store name, e.g. merchant.com." formatter_data="android_java">
@@ -629,6 +639,9 @@
   </message>
   <message name="IDS_SECURE_PAYMENT_CONFIRMATION_VERIFY_BUTTON_LABEL" desc="As in 'Verify my identity', this is the label of the affirmitive button in a payment confirmation dialog that asks the user to verify their identity with a platform authenticator such as a fingerprint reader.">
     Verify
+  </message>
+  <message name="IDS_SECURE_PAYMENT_CONFIRMATION_OPT_OUT_LINK_LABEL" desc="Part of a longer text string where the user is being offered the choice to request that previously stored information on them be deleted. The longer text string is 'This provider may have stored information about your payment method, which you can [request to be deleted].'">
+    request to be deleted
   </message>
   <if expr="is_android">
     <message name="IDS_NO_MATCHING_CREDENTIAL_DESCRIPTION" desc="Description on a dialog that appears when there are no matching payment credentials to authenticate. Informs users that additional steps are needed to verify the payment." formatter_data="android_java">

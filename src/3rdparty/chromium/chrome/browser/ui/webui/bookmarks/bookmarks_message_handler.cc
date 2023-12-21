@@ -1,10 +1,10 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "chrome/browser/ui/webui/bookmarks/bookmarks_message_handler.h"
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/values.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/pref_names.h"
@@ -17,12 +17,12 @@ BookmarksMessageHandler::BookmarksMessageHandler() {}
 BookmarksMessageHandler::~BookmarksMessageHandler() {}
 
 void BookmarksMessageHandler::RegisterMessages() {
-  web_ui()->RegisterDeprecatedMessageCallback(
+  web_ui()->RegisterMessageCallback(
       "getIncognitoAvailability",
       base::BindRepeating(
           &BookmarksMessageHandler::HandleGetIncognitoAvailability,
           base::Unretained(this)));
-  web_ui()->RegisterDeprecatedMessageCallback(
+  web_ui()->RegisterMessageCallback(
       "getCanEditBookmarks",
       base::BindRepeating(&BookmarksMessageHandler::HandleGetCanEditBookmarks,
                           base::Unretained(this)));
@@ -51,9 +51,9 @@ int BookmarksMessageHandler::GetIncognitoAvailability() {
 }
 
 void BookmarksMessageHandler::HandleGetIncognitoAvailability(
-    const base::ListValue* args) {
-  CHECK_EQ(1U, args->GetListDeprecated().size());
-  const base::Value& callback_id = args->GetListDeprecated()[0];
+    const base::Value::List& args) {
+  CHECK_EQ(1U, args.size());
+  const base::Value& callback_id = args[0];
 
   AllowJavascript();
 
@@ -72,9 +72,9 @@ bool BookmarksMessageHandler::CanEditBookmarks() {
 }
 
 void BookmarksMessageHandler::HandleGetCanEditBookmarks(
-    const base::ListValue* args) {
-  CHECK_EQ(1U, args->GetListDeprecated().size());
-  const base::Value& callback_id = args->GetListDeprecated()[0];
+    const base::Value::List& args) {
+  CHECK_EQ(1U, args.size());
+  const base::Value& callback_id = args[0];
 
   AllowJavascript();
 

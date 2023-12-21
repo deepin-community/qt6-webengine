@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,10 +8,10 @@
 #include <string>
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/system/sys_info.h"
-#include "base/threading/sequenced_task_runner_handle.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/trace_event/trace_event.h"
 #include "components/viz/common/gpu/context_provider.h"
 #include "content/public/browser/android/compositor.h"
@@ -31,8 +31,6 @@
 #include "ui/gfx/color_space.h"
 #include "ui/gfx/geometry/transform.h"
 #include "ui/gl/android/surface_texture.h"
-
-#include <android/native_window_jni.h>
 
 #define VOID_OFFSET(x) reinterpret_cast<void*>(x)
 #define SHADER(Src) #Src
@@ -189,7 +187,7 @@ void MailboxToSurfaceBridgeImpl::OnContextAvailableOnUiThread(
 }
 
 void MailboxToSurfaceBridgeImpl::BindContextProviderToCurrentThread() {
-  auto result = context_provider_->BindToCurrentThread();
+  auto result = context_provider_->BindToCurrentSequence();
   if (result != gpu::ContextResult::kSuccess) {
     DLOG(ERROR) << "Failed to init viz::ContextProvider";
     return;
@@ -216,22 +214,17 @@ void MailboxToSurfaceBridgeImpl::BindContextProviderToCurrentThread() {
 
 void MailboxToSurfaceBridgeImpl::CreateSurface(
     gl::SurfaceTexture* surface_texture) {
-  ANativeWindow* window = surface_texture->CreateSurface();
   gpu::GpuSurfaceTracker* tracker = gpu::GpuSurfaceTracker::Get();
-  ANativeWindow_acquire(window);
-  // Skip ANativeWindow_setBuffersGeometry, the default size appears to work.
-  surface_ = std::make_unique<gl::ScopedJavaSurface>(surface_texture);
   surface_handle_ =
       tracker->AddSurfaceForNativeWidget(gpu::GpuSurfaceTracker::SurfaceRecord(
-          window, surface_->j_surface(),
+          gl::ScopedJavaSurface(surface_texture),
           false /* can_be_used_with_surface_control */));
   // Unregistering happens in the destructor.
-  ANativeWindow_release(window);
 }
 
 void MailboxToSurfaceBridgeImpl::CreateAndBindContextProvider(
     base::OnceClosure on_bound_callback) {
-  gl_thread_task_runner_ = base::ThreadTaskRunnerHandle::Get();
+  gl_thread_task_runner_ = base::SingleThreadTaskRunner::GetCurrentDefault();
   on_context_bound_ = std::move(on_bound_callback);
 
   // The callback to run in this thread. It is necessary to keep |surface| alive
@@ -304,7 +297,10 @@ bool MailboxToSurfaceBridgeImpl::CopyMailboxToSurfaceAndSwap(
   if (!IsConnected()) {
     // We may not have a context yet, i.e. due to surface initialization
     // being incomplete. This is not an error, but we obviously can't draw
-    // yet. TODO(klausw): change the caller to defer this until we are ready.
+    // yet. This affects the non-shared-buffer path on Android N (or
+    // if UseSharedBuffer was forced to false due to GPU bug workarounds),
+    // and may result in a couple of discarded images while waiting for
+    // initialization which is generally harmless.
     return false;
   }
 
@@ -347,10 +343,10 @@ void MailboxToSurfaceBridgeImpl::WaitSyncToken(
 }
 
 void MailboxToSurfaceBridgeImpl::WaitForClientGpuFence(
-    gfx::GpuFence* gpu_fence) {
+    gfx::GpuFence& gpu_fence) {
   TRACE_EVENT0("gpu", __FUNCTION__);
   DCHECK(IsConnected());
-  GLuint id = gl_->CreateClientGpuFenceCHROMIUM(gpu_fence->AsClientGpuFence());
+  GLuint id = gl_->CreateClientGpuFenceCHROMIUM(gpu_fence.AsClientGpuFence());
   gl_->WaitGpuFenceCHROMIUM(id);
   gl_->DestroyGpuFenceCHROMIUM(id);
 }
@@ -484,14 +480,11 @@ void MailboxToSurfaceBridgeImpl::DrawQuad(unsigned int texture_handle,
 
   // We're redrawing over the entire viewport, but it's generally more
   // efficient on mobile tiling GPUs to clear anyway as a hint that
-  // we're done with the old content. TODO(klausw, https://crbug.com/700389):
-  // investigate using gl_->DiscardFramebufferEXT here since that's more
-  // efficient on desktop, but it would need a capability check since
-  // it's not supported on older devices such as Nexus 5X.
+  // we're done with the old content.
   gl_->Clear(GL_COLOR_BUFFER_BIT);
 
   float uv_transform_floats[16];
-  uv_transform.matrix().getColMajor(uv_transform_floats);
+  uv_transform.GetColMajorF(uv_transform_floats);
   gl_->UniformMatrix4fv(uniform_uv_transform_handle_, 1, GL_FALSE,
                         &uv_transform_floats[0]);
 

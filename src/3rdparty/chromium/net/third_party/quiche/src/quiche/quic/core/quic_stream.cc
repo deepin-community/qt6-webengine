@@ -108,12 +108,6 @@ QuicByteCount GetReceivedFlowControlWindow(QuicSession* session,
 
 }  // namespace
 
-// static
-const SpdyPriority QuicStream::kDefaultPriority;
-
-// static
-const int QuicStream::kDefaultUrgency;
-
 PendingStream::PendingStream(QuicStreamId id, QuicSession* session)
     : id_(id),
       version_(session->version()),
@@ -150,7 +144,7 @@ void PendingStream::AddBytesConsumed(QuicByteCount bytes) {
 void PendingStream::ResetWithError(QuicResetStreamError /*error*/) {
   // Currently PendingStream is only read-unidirectional. It shouldn't send
   // Reset.
-  QUIC_NOTREACHED();
+  QUICHE_NOTREACHED();
 }
 
 void PendingStream::OnUnrecoverableError(QuicErrorCode error,
@@ -342,7 +336,6 @@ QuicStream::QuicStream(QuicStreamId id, QuicSession* session,
       id_(id),
       session_(session),
       stream_delegate_(session),
-      precedence_(CalculateDefaultPriority(session)),
       stream_bytes_read_(stream_bytes_read),
       stream_error_(QuicResetStreamError::NoError()),
       connection_error_(QUIC_NO_ERROR),
@@ -364,7 +357,7 @@ QuicStream::QuicStream(QuicStreamId id, QuicSession* session,
       add_random_padding_after_fin_(false),
       send_buffer_(
           session->connection()->helper()->GetStreamSendBufferAllocator()),
-      buffered_data_threshold_(GetQuicFlag(FLAGS_quic_buffered_data_threshold)),
+      buffered_data_threshold_(GetQuicFlag(quic_buffered_data_threshold)),
       is_static_(is_static),
       deadline_(QuicTime::Zero()),
       was_draining_(false),
@@ -384,7 +377,7 @@ QuicStream::QuicStream(QuicStreamId id, QuicSession* session,
     CloseWriteSide();
   }
   if (type_ != CRYPTO) {
-    stream_delegate_->RegisterStreamPriority(id, is_static_, precedence_);
+    stream_delegate_->RegisterStreamPriority(id, is_static_, priority_);
   }
 }
 
@@ -397,7 +390,7 @@ QuicStream::~QuicStream() {
         << ", fin_outstanding: " << fin_outstanding_;
   }
   if (stream_delegate_ != nullptr && type_ != CRYPTO) {
-    stream_delegate_->UnregisterStreamPriority(id(), is_static_);
+    stream_delegate_->UnregisterStreamPriority(id());
   }
 }
 
@@ -635,16 +628,14 @@ void QuicStream::OnUnrecoverableError(QuicErrorCode error,
   stream_delegate_->OnStreamError(error, ietf_error, details);
 }
 
-const spdy::SpdyStreamPrecedence& QuicStream::precedence() const {
-  return precedence_;
-}
+const QuicStreamPriority& QuicStream::priority() const { return priority_; }
 
-void QuicStream::SetPriority(const spdy::SpdyStreamPrecedence& precedence) {
-  precedence_ = precedence;
+void QuicStream::SetPriority(const QuicStreamPriority& priority) {
+  priority_ = priority;
 
   MaybeSendPriorityUpdateFrame();
 
-  stream_delegate_->UpdateStreamPriority(id(), precedence);
+  stream_delegate_->UpdateStreamPriority(id(), priority);
 }
 
 void QuicStream::WriteOrBufferData(
@@ -741,20 +732,17 @@ void QuicStream::MaybeSendBlocked() {
         << ENDPOINT << "MaybeSendBlocked called on stream without flow control";
     return;
   }
-  if (flow_controller_->ShouldSendBlocked()) {
-    session_->SendBlocked(id_);
-  }
+  flow_controller_->MaybeSendBlocked();
   if (!stream_contributes_to_connection_flow_control_) {
     return;
   }
-  if (connection_flow_controller_->ShouldSendBlocked()) {
-    session_->SendBlocked(QuicUtils::GetInvalidStreamId(transport_version()));
-  }
+  connection_flow_controller_->MaybeSendBlocked();
+
   // If the stream is blocked by connection-level flow control but not by
   // stream-level flow control, add the stream to the write blocked list so that
   // the stream will be given a chance to write when a connection-level
   // WINDOW_UPDATE arrives.
-  if (connection_flow_controller_->IsBlocked() &&
+  if (!write_side_closed_ && connection_flow_controller_->IsBlocked() &&
       !flow_controller_->IsBlocked()) {
     session_->MarkConnectionLevelWriteBlocked(id());
   }
@@ -1139,8 +1127,7 @@ void QuicStream::OnStreamFrameLost(QuicStreamOffset offset,
 bool QuicStream::RetransmitStreamData(QuicStreamOffset offset,
                                       QuicByteCount data_length, bool fin,
                                       TransmissionType type) {
-  QUICHE_DCHECK(type == PTO_RETRANSMISSION || type == RTO_RETRANSMISSION ||
-                type == TLP_RETRANSMISSION || type == PROBING_RETRANSMISSION);
+  QUICHE_DCHECK(type == PTO_RETRANSMISSION);
   if (HasDeadlinePassed()) {
     OnDeadlinePassed();
     return true;
@@ -1296,7 +1283,7 @@ void QuicStream::WriteBufferedData(EncryptionLevel level) {
         was_draining_ = true;
       }
       CloseWriteSide();
-    } else if (fin && !consumed_data.fin_consumed) {
+    } else if (fin && !consumed_data.fin_consumed && !write_side_closed_) {
       session_->MarkConnectionLevelWriteBlocked(id());
     }
   } else {
@@ -1428,15 +1415,6 @@ void QuicStream::UpdateReceiveWindowSize(QuicStreamOffset size) {
     return;
   }
   flow_controller_->UpdateReceiveWindowSize(size);
-}
-
-// static
-spdy::SpdyStreamPrecedence QuicStream::CalculateDefaultPriority(
-    const QuicSession* session) {
-  return spdy::SpdyStreamPrecedence(
-      VersionUsesHttp3(session->transport_version())
-          ? kDefaultUrgency
-          : QuicStream::kDefaultPriority);
 }
 
 absl::optional<QuicByteCount> QuicStream::GetSendWindow() const {

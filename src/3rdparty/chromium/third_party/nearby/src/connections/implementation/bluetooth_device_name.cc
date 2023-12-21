@@ -25,7 +25,6 @@
 #include "internal/platform/base_input_stream.h"
 #include "internal/platform/logging.h"
 
-namespace location {
 namespace nearby {
 namespace connections {
 
@@ -107,7 +106,7 @@ BluetoothDeviceName::BluetoothDeviceName(
   // The next 3 bytes are supposed to be the service_id_hash.
   service_id_hash_ = base_input_stream.ReadBytes(kServiceIdHashLength);
 
-  // The next 1 byte is field containning WebRtc state.
+  // The next 1 byte is field containing WebRtc state.
   auto field_byte = static_cast<char>(base_input_stream.ReadUint8());
   web_rtc_state_ = (field_byte & kWebRtcConnectableFlagBitmask) == 1
                        ? WebRtcState::kConnectable
@@ -129,7 +128,7 @@ BluetoothDeviceName::BluetoothDeviceName(
                "endpoint info to be %d bytes, got %" PRIu64,
                expected_endpoint_info_length, endpoint_info_.size());
 
-    // Clear enpoint_id for validadity.
+    // Clear endpoint_id for validity.
     endpoint_id_.clear();
     return;
   }
@@ -150,7 +149,7 @@ BluetoothDeviceName::BluetoothDeviceName(
                    "expected uwbAddress size to be %d bytes, got %" PRIu64,
                    expected_uwb_address_length, uwb_address_.size());
 
-        // Clear enpoint_id for validadity.
+        // Clear endpoint_id for validity.
         endpoint_id_.clear();
         return;
       }
@@ -209,4 +208,3 @@ BluetoothDeviceName::operator std::string() const {
 
 }  // namespace connections
 }  // namespace nearby
-}  // namespace location

@@ -67,7 +67,7 @@
 #endif
 #endif  // _WIN32
 
-#if defined(__linux__) || defined(__APPLE__) || defined(__FreeBSD__)
+#if defined(__linux__) || defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__)
 #include <dlfcn.h>
 #endif
 
@@ -77,6 +77,10 @@
 
 #if defined(VK_USE_PLATFORM_MACOS_MVK) || defined(VK_USE_PLATFORM_METAL_EXT)
 #include "metal_view.h"
+#endif
+
+#if defined(VK_USE_PLATFORM_WAYLAND_KHR)
+#include <wayland-client.h>
 #endif
 
 #include <vulkan/vulkan.h>
@@ -226,14 +230,17 @@ auto GetVectorInit(const char *func_name, F &&f, T init, Ts &&...ts) -> std::vec
     uint32_t count = 0;
     std::vector<T> results;
     VkResult err;
+    uint32_t iteration_count = 0;
+    uint32_t max_iterations = 3;
     do {
         err = f(ts..., &count, nullptr);
         if (err) THROW_VK_ERR(func_name, err);
         results.resize(count, init);
         err = f(ts..., &count, results.data());
         results.resize(count);
-    } while (err == VK_INCOMPLETE);
-    if (err) THROW_VK_ERR(func_name, err);
+        iteration_count++;
+    } while (err == VK_INCOMPLETE || iteration_count < max_iterations);
+    if (err && iteration_count <= max_iterations) THROW_VK_ERR(func_name, err);
     return results;
 }
 
@@ -245,7 +252,7 @@ auto GetVector(const char *func_name, F &&f, Ts &&...ts) -> std::vector<T> {
 // ----------- Instance Setup ------- //
 struct VkDll {
     VkResult Initialize() {
-#if defined(__linux__) || defined(__FreeBSD__)
+#if defined(__linux__) || defined(__FreeBSD__) || defined(__OpenBSD__)
         library = dlopen("libvulkan.so", RTLD_NOW | RTLD_LOCAL);
         if (!library) library = dlopen("libvulkan.so.1", RTLD_NOW | RTLD_LOCAL);
 #elif defined(_WIN32)
@@ -257,7 +264,7 @@ struct VkDll {
         return VK_SUCCESS;
     }
     void Close() {
-#if defined(__linux__) || defined(__FreeBSD__)
+#if defined(__linux__) || defined(__FreeBSD__) || defined(__OpenBSD__)
         dlclose(library);
 #elif defined(_WIN32)
         FreeLibrary(library);
@@ -418,13 +425,13 @@ struct VkDll {
   private:
     template <typename T>
     void Load(T &func_dest, const char *func_name) {
-#if defined(__linux__) || defined(__FreeBSD__)
+#if defined(__linux__) || defined(__FreeBSD__) || defined(__OpenBSD__)
         func_dest = reinterpret_cast<T>(dlsym(library, func_name));
 #elif defined(_WIN32)
         func_dest = reinterpret_cast<T>(GetProcAddress(library, func_name));
 #endif
     }
-#if defined(__linux__) || defined(__FreeBSD__)
+#if defined(__linux__) || defined(__FreeBSD__) || defined(__OpenBSD__)
     void *library;
 #elif defined(_WIN32)
     HMODULE library;
@@ -551,21 +558,23 @@ struct SurfaceExtension {
 };
 
 struct VulkanVersion {
-    uint32_t major;
-    uint32_t minor;
-    uint32_t patch;
+    uint32_t major = 1;
+    uint32_t minor = 0;
+    uint32_t patch = 0;
+    VulkanVersion() = default;
+    VulkanVersion(uint32_t version) noexcept
+        : major{VK_VERSION_MAJOR(version)}, minor{VK_VERSION_MINOR(version)}, patch{VK_VERSION_PATCH(version)} {}
+    std::string str() { return std::to_string(major) + "." + std::to_string(minor) + "." + std::to_string(patch); }
+    operator std::string() { return str(); }
 };
-
-VulkanVersion make_vulkan_version(uint32_t version) {
-    return {VK_VERSION_MAJOR(version), VK_VERSION_MINOR(version), VK_VERSION_PATCH(version)};
-}
+std::ostream &operator<<(std::ostream &out, const VulkanVersion &v) { return out << v.major << "." << v.minor << "." << v.patch; }
 
 struct AppInstance {
     VkDll dll;
 
     VkInstance instance;
     uint32_t instance_version;
-    VulkanVersion vk_version{};
+    VulkanVersion vk_version;
 
     VkDebugReportCallbackEXT debug_callback = VK_NULL_HANDLE;
 
@@ -627,7 +636,7 @@ struct AppInstance {
             if (err) THROW_VK_ERR("vkEnumerateInstanceVersion", err);
         }
 
-        vk_version = make_vulkan_version(instance_version);
+        vk_version = VulkanVersion(instance_version);
         // fallback to baked header version if loader returns 0 for the patch version
         if (VK_VERSION_PATCH(instance_version) == 0) vk_version.patch = VK_VERSION_PATCH(VK_HEADER_VERSION);
 
@@ -1244,12 +1253,10 @@ class AppSurface {
     std::unique_ptr<surface_capabilities2_chain> chain_for_surface_capabilities2;
 
     AppSurface(AppInstance &inst, VkPhysicalDevice phys_device, SurfaceExtension surface_extension)
-        : inst(inst),
-          phys_device(phys_device),
-          surface_extension(surface_extension),
-          surf_present_modes(GetVector<VkPresentModeKHR>("vkGetPhysicalDeviceSurfacePresentModesKHR",
+        : inst(inst), phys_device(phys_device), surface_extension(surface_extension) {
+        surf_present_modes = GetVector<VkPresentModeKHR>("vkGetPhysicalDeviceSurfacePresentModesKHR",
                                                          inst.ext_funcs.vkGetPhysicalDeviceSurfacePresentModesKHR, phys_device,
-                                                         surface_extension.surface)) {
+                                                         surface_extension.surface);
         const VkPhysicalDeviceSurfaceInfo2KHR surface_info2 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SURFACE_INFO_2_KHR, nullptr,
                                                                surface_extension.surface};
 
@@ -1307,8 +1314,10 @@ class AppSurface {
 
 std::vector<VkPhysicalDeviceGroupProperties> GetGroups(AppInstance &inst) {
     if (inst.CheckExtensionEnabled(VK_KHR_DEVICE_GROUP_CREATION_EXTENSION_NAME)) {
-        return GetVector<VkPhysicalDeviceGroupProperties>("vkEnumeratePhysicalDeviceGroupsKHR",
-                                                          inst.ext_funcs.vkEnumeratePhysicalDeviceGroupsKHR, inst.instance);
+        VkPhysicalDeviceGroupProperties group_props{};
+        group_props.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GROUP_PROPERTIES;
+        return GetVectorInit<VkPhysicalDeviceGroupProperties>(
+            "vkEnumeratePhysicalDeviceGroupsKHR", inst.ext_funcs.vkEnumeratePhysicalDeviceGroupsKHR, group_props, inst.instance);
     }
     return {};
 }
@@ -1475,10 +1484,15 @@ struct AppGpu {
     AppInstance &inst;
     uint32_t id{};
     VkPhysicalDevice phys_device = VK_NULL_HANDLE;
-    VulkanVersion api_version{};
+    VulkanVersion api_version;
 
     VkPhysicalDeviceProperties props{};
     VkPhysicalDeviceProperties2KHR props2{};
+
+    VkPhysicalDeviceDriverProperties driver_props{};
+    VkPhysicalDeviceIDProperties device_id_props{};
+    bool found_driver_props = false;
+    bool found_device_id_props = false;
 
     std::vector<VkQueueFamilyProperties> queue_props;
     std::vector<VkQueueFamilyProperties2KHR> queue_props2;
@@ -1511,7 +1525,7 @@ struct AppGpu {
         inst.dll.fp_vkGetPhysicalDeviceProperties(phys_device, &props);
 
         // needs to find the minimum of the instance and device version, and use that to print the device info
-        api_version = make_vulkan_version(props.apiVersion);
+        api_version = VulkanVersion(props.apiVersion);
 
         inst.dll.fp_vkGetPhysicalDeviceMemoryProperties(phys_device, &memory_props);
 
@@ -1551,6 +1565,22 @@ struct AppGpu {
                 setup_queue_properties2_chain(queue_props2[i], chain_for_queue_props2[i]);
             }
             inst.ext_funcs.vkGetPhysicalDeviceQueueFamilyProperties2KHR(phys_device, &queue_prop2_count, queue_props2.data());
+
+            if ((CheckPhysicalDeviceExtensionIncluded(VK_KHR_DRIVER_PROPERTIES_EXTENSION_NAME) || api_version.minor >= 2)) {
+                void *place = props2.pNext;
+                while (place) {
+                    VkBaseOutStructure *structure = static_cast<VkBaseOutStructure *>(place);
+                    if (structure->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES) {
+                        driver_props = *reinterpret_cast<VkPhysicalDeviceDriverProperties *>(structure);
+                        found_driver_props = true;
+
+                    } else if (structure->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES) {
+                        device_id_props = *reinterpret_cast<VkPhysicalDeviceIDProperties *>(structure);
+                        found_device_id_props = true;
+                    }
+                    place = structure->pNext;
+                }
+            }
         }
 
         // Use the queue_props2 if they exist, else fallback on vulkan 1.0 queue_props
@@ -1616,14 +1646,15 @@ struct AppGpu {
                 }
 
                 VkImageCreateInfo image_ci_regular = GetImageCreateInfo(0, format, tiling, 0);
-                VkImageCreateInfo image_ci_transient = GetImageCreateInfo(
-                    0, format, tiling, VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
+                VkImageCreateInfo image_ci_transient =
+                    GetImageCreateInfo(0, format, tiling, VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT);
                 VkImageCreateInfo image_ci_sparse =
                     GetImageCreateInfo(VK_IMAGE_CREATE_SPARSE_BINDING_BIT, format, tiling, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
 
                 if (tiling == VK_IMAGE_TILING_LINEAR) {
                     if (format == color_format) {
                         image_ci_regular.usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+                        image_ci_transient.usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
                     } else {
                         // linear tiling is only applicable to color image types
                         continue;
@@ -1746,6 +1777,26 @@ struct AppGpu {
             return props2.properties;
         } else {
             return props;
+        }
+    }
+
+    // Vendor specific driverVersion mapping scheme
+    // If one isn't present, fall back to the standard Vulkan scheme
+    std::string GetDriverVersionString() {
+        uint32_t v = props.driverVersion;
+        if ((found_driver_props && driver_props.driverID == VK_DRIVER_ID_NVIDIA_PROPRIETARY) ||
+            (!found_driver_props && props.deviceID == 4318)) {
+            return std::to_string((v >> 22) & 0x3ff) + "." + std::to_string((v >> 14) & 0x0ff) + "." +
+                   std::to_string((v >> 6) & 0x0ff) + "." + std::to_string((v)&0x003ff);
+        } else if ((found_driver_props && driver_props.driverID == VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS)
+#if defined(WIN32)
+                   || (!found_driver_props && props.deviceID == 0x8086)  // only do the fallback check if running in windows
+#endif
+        ) {
+            return std::to_string((v >> 14)) + "." + std::to_string((v)&0x3fff);
+        } else {
+            // AMD uses the standard vulkan scheme
+            return VulkanVersion(v).str();
         }
     }
 };

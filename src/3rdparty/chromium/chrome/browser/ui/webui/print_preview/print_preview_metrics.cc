@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -165,16 +165,6 @@ void ReportPrintSettingsStats(const base::Value::Dict& print_settings,
   if (print_settings.FindString(kSettingPinValue))
     ReportPrintSettingHistogram(PrintSettingsBuckets::kPin);
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
-}
-
-void ReportRegeneratePreviewRequestCountBeforeCancel(size_t count) {
-  base::UmaHistogramCounts1M(
-      "PrintPreview.RegeneratePreviewRequest.BeforeCancel", count);
-}
-
-void ReportRegeneratePreviewRequestCountBeforePrint(size_t count) {
-  base::UmaHistogramCounts1M(
-      "PrintPreview.RegeneratePreviewRequest.BeforePrint", count);
 }
 
 void ReportUserActionHistogram(UserActionBuckets event) {

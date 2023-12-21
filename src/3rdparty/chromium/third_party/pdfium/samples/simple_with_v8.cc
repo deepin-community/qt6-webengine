@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,7 +12,9 @@
 #include "public/fpdf_formfill.h"
 #include "public/fpdfview.h"
 #include "v8/include/libplatform/libplatform.h"
-#include "v8/include/v8.h"
+#include "v8/include/v8-array-buffer.h"
+#include "v8/include/v8-initialization.h"
+#include "v8/include/v8-isolate.h"
 
 int main(int argc, const char* argv[]) {
   // V8 must be initialized before the PDFium library if using V8.

@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -23,6 +23,11 @@
 #include "media/gpu/vaapi/vaapi_video_encoder_delegate.h"
 #include "media/gpu/vaapi/vaapi_wrapper.h"
 #include "media/video/video_encode_accelerator.h"
+
+namespace base {
+class SequencedTaskRunner;
+class SingleThreadTaskRunner;
+}  // namespace base
 
 namespace media {
 
@@ -99,8 +104,6 @@ class MEDIA_GPU_EXPORT VaapiVideoEncodeAccelerator
 
   // Holds input frames coming from the client ready to be encoded.
   struct InputFrameRef;
-  // Holds output buffers coming from the client ready to be filled.
-  struct BitstreamBufferRef;
 
   //
   // Tasks for each of the VEA interface calls to be executed on
@@ -114,10 +117,9 @@ class MEDIA_GPU_EXPORT VaapiVideoEncodeAccelerator
   // encoding.
   void EncodeTask(scoped_refptr<VideoFrame> frame, bool force_keyframe);
 
-  // Maps |buffer_ref|, push it onto the available_bitstream_buffers_, and
-  // attempts to return any pending encoded data in it, if any.
-  void UseOutputBitstreamBufferTask(
-      std::unique_ptr<BitstreamBufferRef> buffer_ref);
+  // Push |buffer| into |available_bitstream_buffers_|, and attempts to return
+  // any pending encoded data in it, if any.
+  void UseOutputBitstreamBufferTask(BitstreamBuffer buffer);
 
   void RequestEncodingParametersChangeTask(
       VideoBitrateAllocation bitrate_allocation,
@@ -178,8 +180,8 @@ class MEDIA_GPU_EXPORT VaapiVideoEncodeAccelerator
   // are available, and if so, claims them by associating them with
   // a EncodeJob, and returns the newly-created job, nullptr otherwise.
   std::unique_ptr<EncodeJob> CreateEncodeJob(
-      scoped_refptr<VideoFrame> frame,
       bool force_keyframe,
+      base::TimeDelta frame_timestamp,
       const VASurface& input_surface,
       scoped_refptr<VASurface> reconstructed_surface);
 
@@ -201,8 +203,8 @@ class MEDIA_GPU_EXPORT VaapiVideoEncodeAccelerator
 
   // Downloads encoded data produced as a result of running |encode_result| into
   // |buffer|, and returns it to the client.
-  void ReturnBitstreamBuffer(std::unique_ptr<EncodeResult> encode_result,
-                             std::unique_ptr<BitstreamBufferRef> buffer);
+  void ReturnBitstreamBuffer(const EncodeResult& encode_result,
+                             const BitstreamBuffer& buffer);
 
   // Puts the encoder into en error state and notifies the client
   // about the error.
@@ -278,21 +280,18 @@ class MEDIA_GPU_EXPORT VaapiVideoEncodeAccelerator
   // indexed by a layer resolution.
   EncodeSurfacesCountMap encode_surfaces_count_;
 
-  // VA buffers for coded frames.
-  std::vector<VABufferID> available_va_buffer_ids_;
-
   // Queue of input frames to be encoded.
-  base::queue<std::unique_ptr<InputFrameRef>> input_queue_;
+  base::queue<InputFrameRef> input_queue_;
 
   // BitstreamBuffers mapped, ready to be filled with encoded stream data.
-  base::queue<std::unique_ptr<BitstreamBufferRef>> available_bitstream_buffers_;
+  base::queue<BitstreamBuffer> available_bitstream_buffers_;
 
   // VASurfaces already encoded and waiting for the bitstream buffer to
   // be downloaded.
-  base::queue<std::unique_ptr<EncodeResult>> pending_encode_results_;
+  base::queue<absl::optional<EncodeResult>> pending_encode_results_;
 
   // Task runner for interacting with the client, and its checker.
-  const scoped_refptr<base::SingleThreadTaskRunner> child_task_runner_;
+  const scoped_refptr<base::SequencedTaskRunner> child_task_runner_;
   SEQUENCE_CHECKER(child_sequence_checker_);
 
   // Encoder sequence and its checker. All tasks are executed on it.

@@ -16,6 +16,8 @@
 
 #include <cstdint>
 #include <memory>
+#include <string>
+#include <utility>
 
 #include "absl/memory/memory.h"
 #include "connections/implementation/offline_frames_validator.h"
@@ -32,11 +34,11 @@
 #include "internal/platform/os_name.h"
 #include "internal/platform/pipe.h"
 
-namespace location {
 namespace nearby {
 namespace connections {
 
 namespace {
+using ::location::nearby::connections::PayloadTransferFrame;
 
 class BytesInternalPayload : public InternalPayload {
  public:
@@ -45,8 +47,11 @@ class BytesInternalPayload : public InternalPayload {
         total_size_(payload_.AsBytes().size()),
         detached_only_chunk_(false) {}
 
-  PayloadTransferFrame::PayloadHeader::PayloadType GetType() const override {
-    return PayloadTransferFrame::PayloadHeader::BYTES;
+  location::nearby::connections::PayloadTransferFrame::PayloadHeader::
+      PayloadType
+      GetType() const override {
+    return location::nearby::connections::PayloadTransferFrame::PayloadHeader::
+        BYTES;
   }
 
   std::int64_t GetTotalSize() const override { return total_size_; }
@@ -85,8 +90,11 @@ class OutgoingStreamInternalPayload : public InternalPayload {
   explicit OutgoingStreamInternalPayload(Payload payload)
       : InternalPayload(std::move(payload)) {}
 
-  PayloadTransferFrame::PayloadHeader::PayloadType GetType() const override {
-    return PayloadTransferFrame::PayloadHeader::STREAM;
+  location::nearby::connections::PayloadTransferFrame::PayloadHeader::
+      PayloadType
+      GetType() const override {
+    return location::nearby::connections::PayloadTransferFrame::PayloadHeader::
+        STREAM;
   }
 
   std::int64_t GetTotalSize() const override { return -1; }
@@ -147,8 +155,8 @@ class OutgoingStreamInternalPayload : public InternalPayload {
 
 class IncomingStreamInternalPayload : public InternalPayload {
  public:
-  IncomingStreamInternalPayload(Payload payload, OutputStream& output_stream)
-      : InternalPayload(std::move(payload)), output_stream_(&output_stream) {}
+  IncomingStreamInternalPayload(Payload payload, std::shared_ptr<Pipe> pipe)
+      : InternalPayload(std::move(payload)), pipe_(pipe) {}
 
   PayloadTransferFrame::PayloadHeader::PayloadType GetType() const override {
     return PayloadTransferFrame::PayloadHeader::STREAM;
@@ -162,11 +170,11 @@ class IncomingStreamInternalPayload : public InternalPayload {
     if (chunk.Empty()) {
       NEARBY_LOGS(INFO) << "Received null last chunk for incoming payload "
                         << this << ", closing OutputStream.";
-      output_stream_->Close();
+      Close();
       return {Exception::kSuccess};
     }
 
-    return output_stream_->Write(chunk);
+    return pipe_->GetOutputStream().Write(chunk);
   }
 
   ExceptionOr<size_t> SkipToOffset(size_t offset) override {
@@ -175,10 +183,10 @@ class IncomingStreamInternalPayload : public InternalPayload {
     return {Exception::kIo};
   }
 
-  void Close() override { output_stream_->Close(); }
+  void Close() override { pipe_->GetOutputStream().Close(); }
 
  private:
-  OutputStream* output_stream_;
+  std::shared_ptr<Pipe> pipe_;
 };
 
 class OutgoingFileInternalPayload : public InternalPayload {
@@ -187,8 +195,11 @@ class OutgoingFileInternalPayload : public InternalPayload {
       : InternalPayload(std::move(payload)),
         total_size_{payload_.AsFile()->GetTotalSize()} {}
 
-  PayloadTransferFrame::PayloadHeader::PayloadType GetType() const override {
-    return PayloadTransferFrame::PayloadHeader::FILE;
+  location::nearby::connections::PayloadTransferFrame::PayloadHeader::
+      PayloadType
+      GetType() const override {
+    return location::nearby::connections::PayloadTransferFrame::PayloadHeader::
+        FILE;
   }
 
   std::int64_t GetTotalSize() const override { return total_size_; }
@@ -257,8 +268,11 @@ class IncomingFileInternalPayload : public InternalPayload {
         output_file_(std::move(output_file)),
         total_size_(total_size) {}
 
-  PayloadTransferFrame::PayloadHeader::PayloadType GetType() const override {
-    return PayloadTransferFrame::PayloadHeader::FILE;
+  location::nearby::connections::PayloadTransferFrame::PayloadHeader::
+      PayloadType
+      GetType() const override {
+    return location::nearby::connections::PayloadTransferFrame::PayloadHeader::
+        FILE;
   }
 
   std::int64_t GetTotalSize() const override { return total_size_; }
@@ -290,8 +304,8 @@ class IncomingFileInternalPayload : public InternalPayload {
 
 }  // namespace
 
-using location::nearby::api::ImplementationPlatform;
-using location::nearby::api::OSName;
+using ::nearby::api::ImplementationPlatform;
+using ::nearby::api::OSName;
 
 std::unique_ptr<InternalPayload> CreateOutgoingInternalPayload(
     Payload payload) {
@@ -313,18 +327,32 @@ std::unique_ptr<InternalPayload> CreateOutgoingInternalPayload(
   }
 }
 
-std::string make_path(std::string& parent_folder, std::string& file_name) {
+// if custom_save_path is empty, default download path is used
+std::string make_path(const std::string& custom_save_path,
+                      std::string& parent_folder, std::string& file_name) {
+  if (!custom_save_path.empty()) {
+    std::string path = absl::StrCat(custom_save_path, "/", parent_folder);
+    return api::ImplementationPlatform::GetCustomSavePath(path, file_name);
+  }
   return api::ImplementationPlatform::GetDownloadPath(parent_folder, file_name);
 }
 
-std::string make_path(std::string& parent_folder, int64_t id) {
+// if custom_save_path is empty, default download path is used
+std::string make_path(const std::string& custom_save_path,
+                      std::string& parent_folder, int64_t id) {
   std::string file_name(std::to_string(id));
+  if (!custom_save_path.empty()) {
+    std::string path = absl::StrCat(custom_save_path, "/", parent_folder);
+    return api::ImplementationPlatform::GetCustomSavePath(path, file_name);
+  }
   return api::ImplementationPlatform::GetDownloadPath(parent_folder, file_name);
 }
 
 std::unique_ptr<InternalPayload> CreateIncomingInternalPayload(
-    const PayloadTransferFrame& frame) {
-  if (frame.packet_type() != PayloadTransferFrame::DATA) {
+    const location::nearby::connections::PayloadTransferFrame& frame,
+    const std::string& custom_save_path) {
+  if (frame.packet_type() !=
+      location::nearby::connections::PayloadTransferFrame::DATA) {
     return {};
   }
 
@@ -343,13 +371,13 @@ std::unique_ptr<InternalPayload> CreateIncomingInternalPayload(
                   [pipe]() -> InputStream& {
                     return pipe->GetInputStream();  // NOLINT
                   }),
-          pipe->GetOutputStream());
+          pipe);
     }
 
     case PayloadTransferFrame::PayloadHeader::FILE: {
-      std::string parent_folder("");
-      std::string file_name("");
-      std::string file_path("");
+      std::string parent_folder;
+      std::string file_name;
+      std::string file_path;
 
       int64_t total_size = 0;
 
@@ -359,11 +387,13 @@ std::unique_ptr<InternalPayload> CreateIncomingInternalPayload(
 
       if (frame.payload_header().has_file_name()) {
         file_name = frame.payload_header().file_name();
-        file_path = make_path(parent_folder, file_name);
+        // if custom_save_path is empty, default download path is used
+        file_path = make_path(custom_save_path, parent_folder, file_name);
       } else {
         if (frame.payload_header().has_id()) {
           file_name = std::to_string(frame.payload_header().id());
-          file_path = make_path(parent_folder, file_name);
+          // if custom_save_path is empty, default download path is used
+          file_path = make_path(custom_save_path, parent_folder, file_name);
         } else {
           // This is an error condition, we don't have any way to generate a
           // file name for the output file.
@@ -399,4 +429,3 @@ std::unique_ptr<InternalPayload> CreateIncomingInternalPayload(
 
 }  // namespace connections
 }  // namespace nearby
-}  // namespace location

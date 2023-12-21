@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -18,6 +18,7 @@
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
+#include "content/public/test/content_browser_test_content_browser_client.h"
 #include "content/public/test/content_browser_test_utils.h"
 #include "content/public/test/fenced_frame_test_util.h"
 #include "content/public/test/find_test_utils.h"
@@ -160,7 +161,7 @@ class FindRequestManagerTestBase : public ContentBrowserTest {
   }
 
   FindTestWebContentsDelegate test_delegate_;
-  raw_ptr<WebContentsDelegate> normal_delegate_;
+  raw_ptr<WebContentsDelegate, DanglingUntriaged> normal_delegate_;
 
   // The ID of the last find request requested.
   int last_request_id_;
@@ -614,7 +615,7 @@ IN_PROC_BROWSER_TEST_P(FindRequestManagerTest, MAYBE(FindNewMatches)) {
 
   // Dynamically add new text to the page. This text contains 5 new matches for
   // "result".
-  ASSERT_TRUE(ExecJs(contents()->GetMainFrame(), "addNewText()"));
+  ASSERT_TRUE(ExecJs(contents()->GetPrimaryMainFrame(), "addNewText()"));
 
   Find("result", options.Clone());
   delegate()->WaitForFinalReply();
@@ -760,7 +761,7 @@ class MainFrameSizeChangedWaiter : public WebContentsObserver {
  private:
   void FrameSizeChanged(RenderFrameHost* render_frame_host,
                         const gfx::Size& frame_size) override {
-    if (render_frame_host == web_contents()->GetMainFrame())
+    if (render_frame_host->IsInPrimaryMainFrame())
       run_loop_.Quit();
   }
 
@@ -785,8 +786,7 @@ IN_PROC_BROWSER_TEST_F(FindRequestManagerTest,
   options->run_synchronously_for_testing = true;
   Find("result", options->Clone());
   delegate()->WaitForFinalReply();
-  FindResults results = delegate()->GetFindResults();
-  EXPECT_EQ(19, results.number_of_matches);
+  EXPECT_EQ(19, delegate()->GetFindResults().number_of_matches);
 
   contents()->RequestFindMatchRects(-1);
   delegate()->WaitForMatchRects();
@@ -816,8 +816,7 @@ IN_PROC_BROWSER_TEST_F(FindRequestManagerTest,
     Find("result", options->Clone());
     delegate()->WaitForFinalReply();
 
-    FindResults results = delegate()->GetFindResults();
-    EXPECT_EQ(19, results.number_of_matches);
+    EXPECT_EQ(19, delegate()->GetFindResults().number_of_matches);
 
     // Request the find match rects.
     contents()->RequestFindMatchRects(-1);
@@ -969,8 +968,9 @@ class ZoomToFindInPageRectMessageFilter
 }  // namespace
 
 // Tests activating the find match nearest to a given point.
-// TODO(crbug.com/1285135): Fix flaky failures.
-IN_PROC_BROWSER_TEST_P(FindRequestManagerTest, ActivateNearestFindMatch) {
+// TODO(crbug.com/1362116): Fix flaky failures.
+IN_PROC_BROWSER_TEST_P(FindRequestManagerTest,
+                       DISABLED_ActivateNearestFindMatch) {
   LoadAndWait("/find_in_page.html");
   if (test_with_oopif())
     MakeChildFrameCrossProcess();
@@ -1086,11 +1086,9 @@ IN_PROC_BROWSER_TEST_P(FindRequestManagerTest, DISABLED_HistoryBackAndForth) {
   test_page();
 }
 
-class FindInPageDisabledForOriginBrowserClient : public ContentBrowserClient {
+class FindInPageDisabledForOriginBrowserClient
+    : public ContentBrowserTestContentBrowserClient {
  public:
-  FindInPageDisabledForOriginBrowserClient() = default;
-  ~FindInPageDisabledForOriginBrowserClient() override = default;
-
   // ContentBrowserClient:
   bool IsFindInPageDisabledForOrigin(const url::Origin& origin) override {
     return origin.host() == "b.com";
@@ -1101,7 +1099,6 @@ class FindInPageDisabledForOriginBrowserClient : public ContentBrowserClient {
 // find-in-page.
 IN_PROC_BROWSER_TEST_P(FindRequestManagerTest, FindInPageDisabledForOrigin) {
   FindInPageDisabledForOriginBrowserClient browser_client;
-  auto* old_client = content::SetBrowserClientForTesting(&browser_client);
 
   // Start with a basic case to set a baseline.
   LoadAndWait("/find_in_page.html");
@@ -1176,8 +1173,6 @@ IN_PROC_BROWSER_TEST_P(FindRequestManagerTest, FindInPageDisabledForOrigin) {
   results = delegate()->GetFindResults();
   EXPECT_EQ(last_request_id(), results.request_id);
   EXPECT_EQ(7, results.number_of_matches);
-
-  content::SetBrowserClientForTesting(old_client);
 }
 
 class FindRequestManagerPortalTest : public FindRequestManagerTest {
@@ -1213,8 +1208,9 @@ IN_PROC_BROWSER_TEST_F(FindRequestManagerPortalTest, Portal) {
 class FindTestWebContentsPrerenderingDelegate
     : public FindTestWebContentsDelegate {
  public:
-  bool IsPrerender2Supported(WebContents& web_contents) override {
-    return true;
+  PreloadingEligibility IsPrerender2Supported(
+      WebContents& web_contents) override {
+    return PreloadingEligibility::kEligible;
   }
 };
 
@@ -1284,15 +1280,16 @@ class FindRequestManagerTestWithBFCache : public FindRequestManagerTest {
  public:
   FindRequestManagerTestWithBFCache() {
     scoped_feature_list_.InitWithFeaturesAndParameters(
-        {{features::kBackForwardCache,
-          {{"TimeToLiveInBackForwardCacheInSeconds", "3600"}}}},
+        {{features::kBackForwardCache, {{}}},
+         {features::kBackForwardCacheTimeToLiveControl,
+          {{"time_to_live_seconds", "3600"}}}},
         // Allow BackForwardCache for all devices regardless of their memory.
         {features::kBackForwardCacheMemoryControls});
   }
   ~FindRequestManagerTestWithBFCache() override = default;
 
   content::RenderFrameHost* render_frame_host() {
-    return contents()->GetMainFrame();
+    return contents()->GetPrimaryMainFrame();
   }
 
  private:
@@ -1339,7 +1336,7 @@ IN_PROC_BROWSER_TEST_F(FindRequestManagerTestWithBFCache, Basic) {
   contents()->GetController().GoBack();
   EXPECT_TRUE(WaitForLoadStop(shell()->web_contents()));
   // |rfh_a| should become the active frame.
-  EXPECT_EQ(rfh_a.get(), render_frame_host());
+  EXPECT_TRUE(rfh_a->IsInPrimaryMainFrame());
   // The results from the page A should be 19 as the mainframe(2 results) and
   // the new subframe (17 results).
   expect_match_results(19);
@@ -1352,7 +1349,7 @@ IN_PROC_BROWSER_TEST_F(FindRequestManagerTestWithBFCache, Basic) {
   contents()->GetController().GoForward();
   EXPECT_TRUE(WaitForLoadStop(shell()->web_contents()));
   // |rfh_b| should become the active frame.
-  EXPECT_EQ(rfh_b.get(), render_frame_host());
+  EXPECT_TRUE(rfh_b->IsInPrimaryMainFrame());
   // The results from the page B should be 5 as the mainframe(5 results) and no
   // subframe.
   expect_match_results(5);
@@ -1477,13 +1474,17 @@ IN_PROC_BROWSER_TEST_F(FindRequestManagerFencedFrameTest,
   auto options = blink::mojom::FindOptions::New();
   options->run_synchronously_for_testing = true;
   Find("result", options.Clone());
+  // Initial find request is pop from the queue immediately so we make a second
+  // find request.
+  options->new_session = false;
+  Find("result", options.Clone());
 
   // Create a fenced frame.
   GURL find_test_url =
       embedded_test_server()->GetURL("/fenced_frames/find_in_page.html");
   content::RenderFrameHost* fenced_frame_host =
       fenced_frame_test_helper().CreateFencedFrame(
-          GetWebContents()->GetMainFrame(), find_test_url);
+          GetWebContents()->GetPrimaryMainFrame(), find_test_url);
   EXPECT_NE(nullptr, fenced_frame_host);
   EXPECT_TRUE(CheckFrame(fenced_frame_host));
   EXPECT_EQ(find_request_queue_size(), 1);
@@ -1508,7 +1509,7 @@ IN_PROC_BROWSER_TEST_F(FindRequestManagerFencedFrameTest,
   // Navigate the main frame, this causes the find request queue to be cleared,
   // since it's the primary main frame.
   EXPECT_TRUE(NavigateToURL(shell(), find_test_url));
-  EXPECT_TRUE(CheckFrame(GetWebContents()->GetMainFrame()));
+  EXPECT_TRUE(CheckFrame(GetWebContents()->GetPrimaryMainFrame()));
   EXPECT_EQ(find_request_queue_size(), 0);
 }
 
@@ -1625,7 +1626,7 @@ INSTANTIATE_TEST_SUITE_P(
 // new results from the new document when we navigate the subframe that
 // hasn't finished the find-in-page session to the new document.
 // TODO(crbug.com/1311444): Fix flakiness and reenable the test.
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
 #define MAYBE_NavigateFrameDuringFind DISABLED_NavigateFrameDuringFind
 #else
 #define MAYBE_NavigateFrameDuringFind NavigateFrameDuringFind
@@ -1653,7 +1654,7 @@ IN_PROC_BROWSER_TEST_P(FindRequestManagerTestWithTestConfig,
     ASSERT_TRUE(WaitForLoadStop(shell()->web_contents()));
   } else {
     fenced_frame_host = fenced_frame_test_helper().CreateFencedFrame(
-        shell()->web_contents()->GetMainFrame(), frame_url);
+        shell()->web_contents()->GetPrimaryMainFrame(), frame_url);
     EXPECT_NE(nullptr, fenced_frame_host);
   }
 
@@ -1769,7 +1770,7 @@ IN_PROC_BROWSER_TEST_F(FindRequestManagerTestWithBFCache,
   contents()->GetController().GoBack();
   EXPECT_TRUE(WaitForLoadStop(shell()->web_contents()));
   // |rfh_a| should become the active frame.
-  EXPECT_EQ(rfh_a.get(), render_frame_host());
+  EXPECT_TRUE(rfh_a->IsInPrimaryMainFrame());
   // Ensure B is cached.
   EXPECT_EQ(rfh_b->GetLifecycleState(),
             content::RenderFrameHost::LifecycleState::kInBackForwardCache);
@@ -1788,7 +1789,7 @@ IN_PROC_BROWSER_TEST_F(FindRequestManagerTestWithBFCache,
   contents()->GetController().GoForward();
   EXPECT_TRUE(WaitForLoadStop(shell()->web_contents()));
   // |rfh_b| should become the active frame.
-  EXPECT_EQ(rfh_b.get(), render_frame_host());
+  EXPECT_TRUE(rfh_b->IsInPrimaryMainFrame());
 
   // 9) Wait for replies from the main frame and the subframes.
   delegate.WaitForFinalReply();

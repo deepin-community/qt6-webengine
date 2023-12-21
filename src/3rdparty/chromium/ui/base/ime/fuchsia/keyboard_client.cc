@@ -1,12 +1,17 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "ui/base/ime/fuchsia/keyboard_client.h"
-#include <memory>
+
+#include <limits>
+#include <tuple>
+#include <utility>
 
 #include "base/logging.h"
 #include "base/notreached.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "ui/events/event.h"
 #include "ui/events/fuchsia/input_event_sink.h"
 #include "ui/events/keycodes/dom/dom_code.h"
 #include "ui/events/keycodes/dom/keycode_converter.h"
@@ -17,22 +22,91 @@ namespace ui {
 
 namespace {
 
+// Adds `flag` to `event_flags` if `modifier` is present. Also removes handled
+// modifiers from `unhandled_modifiers`.
+inline void MaybeAddFlag(fuchsia::ui::input3::Modifiers modifier,
+                         EventFlags flag,
+                         EventFlags& event_flags,
+                         fuchsia::ui::input3::Modifiers& unhandled_modifiers) {
+  if (unhandled_modifiers & modifier) {
+    event_flags |= flag;
+    // Remove modifier from unhandled.
+    unhandled_modifiers &= ~modifier;
+  }
+}
+
 // Converts the state of modifiers managed by Fuchsia (e.g. Caps and Num Lock)
 // into ui::Event flags.
-int ModifiersToEventFlags(const fuchsia::ui::input3::Modifiers& modifiers) {
-  int event_flags = 0;
-  if ((modifiers & fuchsia::ui::input3::Modifiers::CAPS_LOCK) ==
-      fuchsia::ui::input3::Modifiers::CAPS_LOCK) {
-    event_flags |= EF_CAPS_LOCK_ON;
+int ModifiersToEventFlags(fuchsia::ui::input3::Modifiers modifiers) {
+  EventFlags event_flags = EF_NONE;
+  MaybeAddFlag(fuchsia::ui::input3::Modifiers::CAPS_LOCK, EF_CAPS_LOCK_ON,
+               event_flags, modifiers);
+  MaybeAddFlag(fuchsia::ui::input3::Modifiers::NUM_LOCK, EF_NUM_LOCK_ON,
+               event_flags, modifiers);
+  MaybeAddFlag(fuchsia::ui::input3::Modifiers::SCROLL_LOCK, EF_SCROLL_LOCK_ON,
+               event_flags, modifiers);
+
+  // This mapping is present in case blink adds support in the future, but blink
+  // doesn't currently output the Function modifier. See
+  // https://crsrc.org/c/ui/events/blink/blink_event_util.cc;l=268?q=EventFlagsToWebEventModifiers
+  MaybeAddFlag(fuchsia::ui::input3::Modifiers::FUNCTION, EF_FUNCTION_DOWN,
+               event_flags, modifiers);
+  if (modifiers & fuchsia::ui::input3::Modifiers::SYMBOL) {
+    // fuchsia::ui::input3::Modifiers::SYMBOL has no equivalent in
+    // //ui/events/event_constants.h.
+    DLOG(WARNING) << "Ignoring unsupported Symbol modifier.";
+    modifiers &= ~fuchsia::ui::input3::Modifiers::SYMBOL;
   }
-  if ((modifiers & fuchsia::ui::input3::Modifiers::NUM_LOCK) ==
-      fuchsia::ui::input3::Modifiers::NUM_LOCK) {
-    event_flags |= EF_NUM_LOCK_ON;
+
+  MaybeAddFlag(fuchsia::ui::input3::Modifiers::SHIFT, EF_SHIFT_DOWN,
+               event_flags, modifiers);
+  if (modifiers & (fuchsia::ui::input3::Modifiers::LEFT_SHIFT |
+                   fuchsia::ui::input3::Modifiers::RIGHT_SHIFT)) {
+    DCHECK(event_flags & EF_SHIFT_DOWN)
+        << "Fuchsia is expected to provide an agnostic SHIFT modifier for both "
+           "LEFT and RIGHT SHIFT";
+    modifiers &= ~fuchsia::ui::input3::Modifiers::LEFT_SHIFT &
+                 ~fuchsia::ui::input3::Modifiers::RIGHT_SHIFT;
   }
-  if ((modifiers & fuchsia::ui::input3::Modifiers::SCROLL_LOCK) ==
-      fuchsia::ui::input3::Modifiers::SCROLL_LOCK) {
-    event_flags |= EF_SCROLL_LOCK_ON;
+
+  MaybeAddFlag(fuchsia::ui::input3::Modifiers::ALT, EF_ALT_DOWN, event_flags,
+               modifiers);
+  if (modifiers & (fuchsia::ui::input3::Modifiers::LEFT_ALT |
+                   fuchsia::ui::input3::Modifiers::RIGHT_ALT)) {
+    DCHECK(event_flags & EF_ALT_DOWN)
+        << "Fuchsia is expected to provide an agnostic ALT modifier for both "
+           "LEFT and RIGHT ALT";
+    modifiers &= ~fuchsia::ui::input3::Modifiers::LEFT_ALT &
+                 ~fuchsia::ui::input3::Modifiers::RIGHT_ALT;
   }
+
+  MaybeAddFlag(fuchsia::ui::input3::Modifiers::ALT_GRAPH, EF_ALTGR_DOWN,
+               event_flags, modifiers);
+
+  MaybeAddFlag(fuchsia::ui::input3::Modifiers::META, EF_COMMAND_DOWN,
+               event_flags, modifiers);
+  if (modifiers & (fuchsia::ui::input3::Modifiers::LEFT_META |
+                   fuchsia::ui::input3::Modifiers::RIGHT_META)) {
+    DCHECK(event_flags & EF_COMMAND_DOWN)
+        << "Fuchsia is expected to provide an agnostic META modifier for both "
+           "LEFT and RIGHT META";
+    modifiers &= ~fuchsia::ui::input3::Modifiers::LEFT_META &
+                 ~fuchsia::ui::input3::Modifiers::RIGHT_META;
+  }
+
+  MaybeAddFlag(fuchsia::ui::input3::Modifiers::CTRL, EF_CONTROL_DOWN,
+               event_flags, modifiers);
+  if (modifiers & (fuchsia::ui::input3::Modifiers::LEFT_CTRL |
+                   fuchsia::ui::input3::Modifiers::RIGHT_CTRL)) {
+    DCHECK(event_flags & EF_CONTROL_DOWN)
+        << "Fuchsia is expected to provide an agnostic CTRL modifier for both "
+           "LEFT and RIGHT CTRL";
+    modifiers &= ~fuchsia::ui::input3::Modifiers::LEFT_CTRL &
+                 ~fuchsia::ui::input3::Modifiers::RIGHT_CTRL;
+  }
+
+  DLOG_IF(WARNING, modifiers)
+      << "Unkown Modifier received: " << static_cast<uint64_t>(modifiers);
   return event_flags;
 }
 
@@ -52,32 +126,6 @@ absl::optional<EventType> ConvertKeyEventType(
                    << static_cast<int>(type);
       return absl::nullopt;
   }
-}
-
-// Creates an event for an event which has no |key|.
-absl::optional<ui::KeyEvent> ConvertToCharacterEvent(
-    const fuchsia::ui::input3::KeyEvent& key_event) {
-  DCHECK(!key_event.has_key());
-
-  absl::optional<EventType> event_type = ConvertKeyEventType(key_event.type());
-  if (!event_type) {
-    return absl::nullopt;
-  }
-  if (event_type != ET_KEY_PRESSED) {
-    // Keypress phase cannot be tracked on keypresses without hardware keys,
-    // so only handle the "pressed" edge transition.
-    return absl::nullopt;
-  }
-
-  const uint32_t codepoint = key_event.key_meaning().codepoint();
-  if (codepoint > std::numeric_limits<char16_t>::max()) {
-    // TODO(crbug.com/1220260): Handle codepoints outside the BMP.
-    return absl::nullopt;
-  }
-
-  return ui::KeyEvent(*event_type, VKEY_UNKNOWN, DomCode::NONE,
-                      EF_IS_SYNTHESIZED, DomKey::FromCharacter(codepoint),
-                      base::TimeTicks::FromZxTime(key_event.timestamp()), true);
 }
 
 }  // namespace
@@ -128,94 +176,60 @@ bool KeyboardClient::IsValid(const fuchsia::ui::input3::KeyEvent& key_event) {
 
 bool KeyboardClient::ProcessKeyEvent(
     const fuchsia::ui::input3::KeyEvent& key_event) {
-  const bool generate_character_event = !key_event.has_key();
-  absl::optional<ui::KeyEvent> converted_event;
-  if (generate_character_event) {
-    converted_event = ConvertToCharacterEvent(key_event);
-  } else {
-    UpdateCachedModifiers(key_event);
-    converted_event = ConvertKeystrokeEvent(key_event);
-  }
-  if (!converted_event) {
-    return false;
-  }
-
-  event_sink_->DispatchEvent(&converted_event.value());
-  return converted_event->handled();
-}
-
-absl::optional<ui::KeyEvent> KeyboardClient::ConvertKeystrokeEvent(
-    const fuchsia::ui::input3::KeyEvent& key_event) {
-  DCHECK(key_event.has_key());
-
   absl::optional<EventType> event_type = ConvertKeyEventType(key_event.type());
-  if (!event_type) {
-    return absl::nullopt;
-  }
+  if (!event_type)
+    return false;
 
   // Convert |key_event| to a ui::KeyEvent.
-  int event_flags = EventFlagsForCachedModifiers();
+  int event_flags = EF_NONE;
   if (key_event.has_modifiers())
     event_flags |= ModifiersToEventFlags(key_event.modifiers());
-
-  // TODO(https://crbug.com/1187257): Use input3.KeyMeaning instead of US layout
-  // as the default.
-  DomCode dom_code = KeycodeConverter::UsbKeycodeToDomCode(key_event.key());
-  DomKey dom_key;
-  KeyboardCode key_code;
-  if (!DomCodeToUsLayoutDomKey(dom_code, event_flags, &dom_key, &key_code)) {
-    LOG(ERROR) << "DomCodeToUsLayoutDomKey() failed for key: "
-               << key_event.key();
+  if (key_event.has_repeat_sequence()) {
+    event_flags |= EF_IS_REPEAT;
   }
 
-  return ui::KeyEvent(*event_type, key_code, dom_code, event_flags, dom_key,
-                      base::TimeTicks::FromZxTime(key_event.timestamp()));
-}
+  // Derive the DOM Key and Code directly from the event's fields.
+  // |key_event| has already been validated, so is guaranteed to have one
+  // or both of the |key| or |key_meaning| fields set.
+  DomCode dom_code = DomCode::NONE;
+  DomKey dom_key = DomKey::UNIDENTIFIED;
+  KeyboardCode key_code = VKEY_UNKNOWN;
 
-// TODO(https://crbug.com/850697): Add additional modifiers as they become
-// supported.
-void KeyboardClient::UpdateCachedModifiers(
-    const fuchsia::ui::input3::KeyEvent& key_event) {
-  // A SYNC event indicates that the key was pressed while the view gained input
-  // focus. A CANCEL event indicates the key was held when the view lost input
-  // focus. In both cases, the state of locally tracked modifiers should be
-  // updated.
-  bool modifier_active =
-      key_event.type() == fuchsia::ui::input3::KeyEventType::PRESSED ||
-      key_event.type() == fuchsia::ui::input3::KeyEventType::SYNC;
-  switch (key_event.key()) {
-    case fuchsia::input::Key::LEFT_SHIFT:
-      left_shift_ = modifier_active;
-      break;
-    case fuchsia::input::Key::RIGHT_SHIFT:
-      right_shift_ = modifier_active;
-      break;
-    case fuchsia::input::Key::LEFT_ALT:
-      left_alt_ = modifier_active;
-      break;
-    case fuchsia::input::Key::RIGHT_ALT:
-      right_alt_ = modifier_active;
-      break;
-    case fuchsia::input::Key::LEFT_CTRL:
-      left_ctrl_ = modifier_active;
-      break;
-    case fuchsia::input::Key::RIGHT_CTRL:
-      right_ctrl_ = modifier_active;
-      break;
-    default:
-      break;
+  if (key_event.has_key()) {
+    dom_code = KeycodeConverter::UsbKeycodeToDomCode(key_event.key());
+
+    // Derive the legacy key_code. At present this only takes into account the
+    // DOM Code, and event flags, so requires that key() be set.
+    // TODO(crbug.com/1187257): Take into account the KeyMeaning, similarly to
+    // the X11 event conversion implementation.
+    // TODO(fxbug.dev/106600): Remove default-derivation of DOM Key, once the
+    // platform defines the missing values.
+    std::ignore =
+        DomCodeToUsLayoutDomKey(dom_code, event_flags, &dom_key, &key_code);
   }
-}
 
-int KeyboardClient::EventFlagsForCachedModifiers() {
-  int event_flags = 0;
-  if (left_shift_ || right_shift_)
-    event_flags |= EF_SHIFT_DOWN;
-  if (left_alt_ || right_alt_)
-    event_flags |= EF_ALT_DOWN;
-  if (left_ctrl_ || right_ctrl_)
-    event_flags |= EF_CONTROL_DOWN;
-  return event_flags;
+  if (key_event.has_key_meaning()) {
+    // If the KeyMeaning is specified then use it to set the DOM Key.
+
+    // Ignore events with codepoints outside the Basic Multilingual Plane,
+    // since the Chromium keyboard pipeline cannot currently handle them.
+    if (key_event.key_meaning().is_codepoint() &&
+        (key_event.key_meaning().codepoint() >
+         std::numeric_limits<char16_t>::max())) {
+      return false;
+    }
+
+    DomKey dom_key_from_meaning =
+        DomKeyFromFuchsiaKeyMeaning(key_event.key_meaning());
+    if (dom_key_from_meaning != DomKey::UNIDENTIFIED)
+      dom_key = dom_key_from_meaning;
+  }
+
+  ui::KeyEvent converted_event(
+      *event_type, key_code, dom_code, event_flags, dom_key,
+      base::TimeTicks::FromZxTime(key_event.timestamp()));
+  event_sink_->DispatchEvent(&converted_event);
+  return converted_event.handled();
 }
 
 }  // namespace ui

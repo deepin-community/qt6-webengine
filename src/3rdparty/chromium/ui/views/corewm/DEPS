@@ -2,9 +2,10 @@
 
 include_rules = [
   "-ui/views",
+  "+ui/views/buildflags.h",
   "+ui/views/corewm",
   "+ui/views/views_export.h",
-  "+ui/views/buildflags.h",
+  "+ui/views/views_features.h"
 ]
 
 # TODO: temporary, don't add more.
@@ -21,6 +22,10 @@ specific_include_rules = {
     "+ui/views/painter.h",
     "+ui/views/widget/widget.h",
     "+ui/views/view.h",
+  ],
+
+  "tooltip_lacros.cc": [
+    "+ui/views/widget/desktop_aura/desktop_window_tree_host_lacros.h",
   ],
 
   "desktop_capture_controller_unittest.cc": [

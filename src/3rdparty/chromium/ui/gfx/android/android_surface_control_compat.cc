@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,14 +10,16 @@
 
 #include "base/android/build_info.h"
 #include "base/atomic_sequence_num.h"
-#include "base/bind.h"
 #include "base/debug/crash_logging.h"
+#include "base/functional/bind.h"
 #include "base/hash/md5_constexpr.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
+#include "base/memory/raw_ptr.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/system/sys_info.h"
 #include "base/task/bind_post_task.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/trace_event/trace_event.h"
 #include "ui/gfx/color_space.h"
 
@@ -33,6 +35,7 @@ using pASurfaceControl_createFromWindow =
     ASurfaceControl* (*)(ANativeWindow* parent, const char* name);
 using pASurfaceControl_create = ASurfaceControl* (*)(ASurfaceControl* parent,
                                                      const char* name);
+using pASurfaceControl_fromJava = ASurfaceControl* (*)(JNIEnv*, jobject);
 using pASurfaceControl_release = void (*)(ASurfaceControl*);
 
 // ASurfaceTransaction enums
@@ -123,6 +126,10 @@ using pASurfaceTransactionStats_releaseASurfaceControls =
     void (*)(ASurfaceControl** surface_controls);
 using pASurfaceTransactionStats_getPreviousReleaseFenceFd =
     int (*)(ASurfaceTransactionStats* stats, ASurfaceControl* surface_control);
+using pASurfaceTransaction_setEnableBackPressure =
+    void (*)(ASurfaceTransaction* transaction,
+             ASurfaceControl* surface_control,
+             bool enable_back_pressure);
 }
 
 namespace gfx {
@@ -160,9 +167,9 @@ struct SurfaceControlMethods {
   void InitWithStubs() {
     struct TransactionStub {
       ASurfaceTransaction_OnComplete on_complete = nullptr;
-      void* on_complete_ctx = nullptr;
+      raw_ptr<void> on_complete_ctx = nullptr;
       ASurfaceTransaction_OnCommit on_commit = nullptr;
-      void* on_commit_ctx = nullptr;
+      raw_ptr<void> on_commit_ctx = nullptr;
     };
 
     ASurfaceTransaction_createFn = []() {
@@ -217,6 +224,7 @@ struct SurfaceControlMethods {
 
     LOAD_FUNCTION(main_dl_handle, ASurfaceControl_createFromWindow);
     LOAD_FUNCTION(main_dl_handle, ASurfaceControl_create);
+    LOAD_FUNCTION_MAYBE(main_dl_handle, ASurfaceControl_fromJava);
     LOAD_FUNCTION(main_dl_handle, ASurfaceControl_release);
 
     LOAD_FUNCTION(main_dl_handle, ASurfaceTransaction_create);
@@ -247,6 +255,8 @@ struct SurfaceControlMethods {
                   ASurfaceTransactionStats_releaseASurfaceControls);
     LOAD_FUNCTION(main_dl_handle,
                   ASurfaceTransactionStats_getPreviousReleaseFenceFd);
+    LOAD_FUNCTION_MAYBE(main_dl_handle,
+                        ASurfaceTransaction_setEnableBackPressure);
   }
 
   ~SurfaceControlMethods() = default;
@@ -255,6 +265,7 @@ struct SurfaceControlMethods {
   // Surface methods.
   pASurfaceControl_createFromWindow ASurfaceControl_createFromWindowFn;
   pASurfaceControl_create ASurfaceControl_createFn;
+  pASurfaceControl_fromJava ASurfaceControl_fromJavaFn;
   pASurfaceControl_release ASurfaceControl_releaseFn;
 
   // Transaction methods.
@@ -282,6 +293,8 @@ struct SurfaceControlMethods {
       ASurfaceTransaction_setHdrMetadata_smpte2086Fn;
   pASurfaceTransaction_setFrameRate ASurfaceTransaction_setFrameRateFn;
   pASurfaceTransaction_setFrameTimeline ASurfaceTransaction_setFrameTimelineFn;
+  pASurfaceTransaction_setEnableBackPressure
+      ASurfaceTransaction_setEnableBackPressureFn;
 
   // TransactionStats methods.
   pASurfaceTransactionStats_getPresentFenceFd
@@ -397,7 +410,7 @@ uint64_t ColorSpaceToADataSpace(const gfx::ColorSpace& color_space) {
   if (!color_space.IsValid() || color_space == gfx::ColorSpace::CreateSRGB())
     return ADATASPACE_SRGB;
 
-  if (color_space == gfx::ColorSpace::CreateSCRGBLinear())
+  if (color_space == gfx::ColorSpace::CreateSRGBLinear())
     return ADATASPACE_SCRGB_LINEAR;
 
   if (color_space == gfx::ColorSpace::CreateDisplayP3D65())
@@ -547,6 +560,17 @@ bool SurfaceControl::SupportsSetFrameTimeline() {
              nullptr;
 }
 
+bool SurfaceControl::SupportsSurfacelessControl() {
+  return IsSupported() &&
+         !!SurfaceControlMethods::Get().ASurfaceControl_fromJavaFn;
+}
+
+bool SurfaceControl::SupportsSetEnableBackPressure() {
+  return IsSupported() &&
+         SurfaceControlMethods::Get()
+                 .ASurfaceTransaction_setEnableBackPressureFn != nullptr;
+}
+
 void SurfaceControl::SetStubImplementationForTesting() {
   SurfaceControlMethods::GetImpl(/*load_functions=*/false).InitWithStubs();
 }
@@ -582,6 +606,19 @@ SurfaceControl::Surface::Surface(ANativeWindow* parent, const char* name) {
   surface_ = owned_surface_;
 }
 
+SurfaceControl::Surface::Surface(
+    JNIEnv* env,
+    const base::android::JavaRef<jobject>& j_surface_control) {
+  CHECK(SupportsSurfacelessControl());
+  owned_surface_ = SurfaceControlMethods::Get().ASurfaceControl_fromJavaFn(
+      env, j_surface_control.obj());
+  if (!owned_surface_) {
+    LOG(ERROR) << "Failed to obtain ASurfaceControl from java";
+    return;
+  }
+  surface_ = owned_surface_;
+}
+
 SurfaceControl::Surface::~Surface() {
   if (owned_surface_)
     SurfaceControlMethods::Get().ASurfaceControl_releaseFn(owned_surface_);
@@ -609,31 +646,45 @@ SurfaceControl::Transaction::Transaction()
 }
 
 SurfaceControl::Transaction::~Transaction() {
-  if (transaction_)
-    SurfaceControlMethods::Get().ASurfaceTransaction_deleteFn(transaction_);
+  DestroyIfNeeded();
+}
+
+void SurfaceControl::Transaction::DestroyIfNeeded() {
+  if (!transaction_)
+    return;
+  if (need_to_apply_)
+    SurfaceControlMethods::Get().ASurfaceTransaction_applyFn(transaction_);
+  SurfaceControlMethods::Get().ASurfaceTransaction_deleteFn(transaction_);
+  transaction_ = nullptr;
 }
 
 SurfaceControl::Transaction::Transaction(Transaction&& other)
     : id_(other.id_),
       transaction_(other.transaction_),
       on_commit_cb_(std::move(other.on_commit_cb_)),
-      on_complete_cb_(std::move(other.on_complete_cb_)) {
+      on_complete_cb_(std::move(other.on_complete_cb_)),
+      need_to_apply_(other.need_to_apply_) {
   other.transaction_ = nullptr;
   other.id_ = 0;
+  other.need_to_apply_ = false;
 }
 
 SurfaceControl::Transaction& SurfaceControl::Transaction::operator=(
     Transaction&& other) {
-  if (transaction_)
-    SurfaceControlMethods::Get().ASurfaceTransaction_deleteFn(transaction_);
+  if (this == &other)
+    return *this;
+
+  DestroyIfNeeded();
 
   transaction_ = other.transaction_;
   id_ = other.id_;
   on_commit_cb_ = std::move(other.on_commit_cb_);
   on_complete_cb_ = std::move(other.on_complete_cb_);
+  need_to_apply_ = other.need_to_apply_;
 
   other.transaction_ = nullptr;
   other.id_ = 0;
+  other.need_to_apply_ = false;
   return *this;
 }
 
@@ -654,6 +705,13 @@ void SurfaceControl::Transaction::SetBuffer(const Surface& surface,
   SurfaceControlMethods::Get().ASurfaceTransaction_setBufferFn(
       transaction_, surface.surface(), buffer,
       fence_fd.is_valid() ? fence_fd.release() : -1);
+  // In T OS, setBuffer call setOnComplete internally, so Apply() is required to
+  // decrease ref count of SurfaceControl.
+  // TODO(crbug.com/1395271): remove this if AOSP fix the issue
+  if (base::android::BuildInfo::GetInstance()->sdk_int() >=
+      base::android::SDK_VERSION_T) {
+    need_to_apply_ = true;
+  }
 }
 
 void SurfaceControl::Transaction::SetGeometry(const Surface& surface,
@@ -735,18 +793,12 @@ void SurfaceControl::Transaction::SetHDRMetadata(
         .maxFrameAverageLightLevel =
             static_cast<float>(metadata->max_frame_average_light_level)};
 
+    const auto& primaries = metadata->color_volume_metadata.primaries;
     AHdrMetadata_smpte2086 smpte2086 = {
-        .displayPrimaryRed =
-            {.x = metadata->color_volume_metadata.primary_r.x(),
-             .y = metadata->color_volume_metadata.primary_r.y()},
-        .displayPrimaryGreen =
-            {.x = metadata->color_volume_metadata.primary_g.x(),
-             .y = metadata->color_volume_metadata.primary_g.y()},
-        .displayPrimaryBlue =
-            {.x = metadata->color_volume_metadata.primary_b.x(),
-             .y = metadata->color_volume_metadata.primary_b.y()},
-        .whitePoint = {.x = metadata->color_volume_metadata.white_point.x(),
-                       .y = metadata->color_volume_metadata.white_point.y()},
+        .displayPrimaryRed = {.x = primaries.fRX, .y = primaries.fRY},
+        .displayPrimaryGreen = {.x = primaries.fGX, .y = primaries.fGY},
+        .displayPrimaryBlue = {.x = primaries.fBX, .y = primaries.fBY},
+        .whitePoint = {.x = primaries.fWX, .y = primaries.fWY},
         .maxLuminance = metadata->color_volume_metadata.luminance_max,
         .minLuminance = metadata->color_volume_metadata.luminance_min};
 
@@ -804,10 +856,12 @@ void SurfaceControl::Transaction::Apply() {
 
   PrepareCallbacks();
   SurfaceControlMethods::Get().ASurfaceTransaction_applyFn(transaction_);
+  need_to_apply_ = false;
 }
 
 ASurfaceTransaction* SurfaceControl::Transaction::GetTransaction() {
   PrepareCallbacks();
+  need_to_apply_ = false;
   return transaction_;
 }
 
@@ -819,6 +873,9 @@ void SurfaceControl::Transaction::PrepareCallbacks() {
 
     SurfaceControlMethods::Get().ASurfaceTransaction_setOnCommitFn(
         transaction_, ack_ctx, &OnTransactiOnCommittedOnAnyThread);
+    // setOnCommit and setOnComplete increase ref count of SurfaceControl and
+    // Apply() is required to decrease the ref count.
+    need_to_apply_ = true;
   }
 
   if (on_complete_cb_) {
@@ -828,7 +885,14 @@ void SurfaceControl::Transaction::PrepareCallbacks() {
 
     SurfaceControlMethods::Get().ASurfaceTransaction_setOnCompleteFn(
         transaction_, ack_ctx, &OnTransactionCompletedOnAnyThread);
+    need_to_apply_ = true;
   }
+}
+
+void SurfaceControl::Transaction::SetEnableBackPressure(const Surface& surface,
+                                                        bool enable) {
+  SurfaceControlMethods::Get().ASurfaceTransaction_setEnableBackPressureFn(
+      transaction_, surface.surface(), enable);
 }
 
 }  // namespace gfx

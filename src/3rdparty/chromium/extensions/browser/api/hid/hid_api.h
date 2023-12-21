@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,7 +11,6 @@
 #include <string>
 
 #include "base/memory/raw_ptr.h"
-#include "base/memory/ref_counted.h"
 #include "extensions/browser/api/api_resource_manager.h"
 #include "extensions/browser/api/hid/hid_connection_resource.h"
 #include "extensions/browser/api/hid/hid_device_manager.h"
@@ -21,8 +20,6 @@
 #include "services/device/public/mojom/hid.mojom.h"
 
 namespace extensions {
-
-class DevicePermissionsPrompt;
 
 class HidGetDevicesFunction : public ExtensionFunction {
  public:
@@ -39,30 +36,7 @@ class HidGetDevicesFunction : public ExtensionFunction {
   // ExtensionFunction:
   ResponseAction Run() override;
 
-  void OnEnumerationComplete(std::unique_ptr<base::ListValue> devices);
-};
-
-class HidGetUserSelectedDevicesFunction : public ExtensionFunction {
- public:
-  DECLARE_EXTENSION_FUNCTION("hid.getUserSelectedDevices",
-                             HID_GETUSERSELECTEDDEVICES)
-
-  HidGetUserSelectedDevicesFunction();
-
-  HidGetUserSelectedDevicesFunction(const HidGetUserSelectedDevicesFunction&) =
-      delete;
-  HidGetUserSelectedDevicesFunction& operator=(
-      const HidGetUserSelectedDevicesFunction&) = delete;
-
- private:
-  ~HidGetUserSelectedDevicesFunction() override;
-
-  // ExtensionFunction:
-  ResponseAction Run() override;
-
-  void OnDevicesChosen(std::vector<device::mojom::HidDeviceInfoPtr> devices);
-
-  std::unique_ptr<DevicePermissionsPrompt> prompt_;
+  void OnEnumerationComplete(base::Value::List devices);
 };
 
 class HidConnectFunction : public ExtensionFunction {

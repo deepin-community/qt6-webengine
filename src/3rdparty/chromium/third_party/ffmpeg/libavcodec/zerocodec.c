@@ -20,7 +20,7 @@
 
 #include "avcodec.h"
 #include "codec_internal.h"
-#include "internal.h"
+#include "decode.h"
 #include "zlib_wrapper.h"
 #include "libavutil/common.h"
 
@@ -29,11 +29,10 @@ typedef struct ZeroCodecContext {
     FFZStream zstream;
 } ZeroCodecContext;
 
-static int zerocodec_decode_frame(AVCodecContext *avctx, void *data,
+static int zerocodec_decode_frame(AVCodecContext *avctx, AVFrame *pic,
                                   int *got_frame, AVPacket *avpkt)
 {
     ZeroCodecContext *zc = avctx->priv_data;
-    AVFrame *pic         = data;
     AVFrame *prev_pic    = zc->previous_frame;
     z_stream *const zstream = &zc->zstream.zstream;
     uint8_t *prev        = prev_pic->data[0];
@@ -85,11 +84,12 @@ static int zerocodec_decode_frame(AVCodecContext *avctx, void *data,
             return AVERROR_INVALIDDATA;
         }
 
-        if (!(avpkt->flags & AV_PKT_FLAG_KEY))
+        if (!(avpkt->flags & AV_PKT_FLAG_KEY)) {
             for (j = 0; j < avctx->width << 1; j++)
                 dst[j] += prev[j] & -!dst[j];
+            prev -= prev_pic->linesize[0];
+        }
 
-        prev -= prev_pic->linesize[0];
         dst  -= pic->linesize[0];
     }
 
@@ -137,14 +137,13 @@ static void zerocodec_decode_flush(AVCodecContext *avctx)
 const FFCodec ff_zerocodec_decoder = {
     .p.type         = AVMEDIA_TYPE_VIDEO,
     .p.name         = "zerocodec",
-    .p.long_name    = NULL_IF_CONFIG_SMALL("ZeroCodec Lossless Video"),
+    CODEC_LONG_NAME("ZeroCodec Lossless Video"),
     .p.id           = AV_CODEC_ID_ZEROCODEC,
     .priv_data_size = sizeof(ZeroCodecContext),
     .init           = zerocodec_decode_init,
-    .decode         = zerocodec_decode_frame,
+    FF_CODEC_DECODE_CB(zerocodec_decode_frame),
     .flush          = zerocodec_decode_flush,
     .close          = zerocodec_decode_close,
     .p.capabilities = AV_CODEC_CAP_DR1,
-    .caps_internal  = FF_CODEC_CAP_INIT_THREADSAFE |
-                      FF_CODEC_CAP_INIT_CLEANUP,
+    .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
 };

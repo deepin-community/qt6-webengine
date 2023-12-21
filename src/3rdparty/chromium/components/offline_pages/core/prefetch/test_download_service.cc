@@ -1,16 +1,16 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/offline_pages/core/prefetch/test_download_service.h"
 
-#include "base/bind.h"
 #include "base/files/file.h"
 #include "base/files/file_util.h"
+#include "base/functional/bind.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/test/bind.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "components/download/public/background_service/download_metadata.h"
 #include "components/download/public/background_service/service_config.h"
@@ -57,11 +57,11 @@ void TestDownloadService::StartDownload(
     download::DownloadParams download_params) {
   if (!download_dir_.IsValid())
     CHECK(download_dir_.CreateUniqueTempDir());
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE,
       base::BindOnce(std::move(download_params.callback), download_params.guid,
                      download::DownloadParams::ACCEPTED));
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(&TestDownloadService::FinishDownload,
                                 base::Unretained(this), download_params.guid));
 }

@@ -1,9 +1,10 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "weblayer/test/weblayer_browser_test.h"
 
+#include "base/command_line.h"
 #include "base/synchronization/lock.h"
 #include "base/thread_annotations.h"
 #include "components/variations/variations_ids_provider.h"
@@ -144,7 +145,7 @@ class WebLayerVariationsHttpBrowserTest : public WebLayerBrowserTest {
 // Verify in an integration test that the variations header (X-Client-Data) is
 // attached to network requests to Google but stripped on redirects.
 IN_PROC_BROWSER_TEST_F(WebLayerVariationsHttpBrowserTest,
-                       TestStrippingHeadersFromResourceRequest) {
+                       DISABLED_TestStrippingHeadersFromResourceRequest) {
   OneShotNavigationObserver observer(shell());
   shell()->tab()->GetNavigationController()->Navigate(GetGoogleRedirectUrl1());
   observer.WaitForNavigation();

@@ -1,5 +1,7 @@
 #include "quiche/http2/adapter/nghttp2_adapter.h"
 
+#include <memory>
+
 #include "quiche/http2/adapter/http2_protocol.h"
 #include "quiche/http2/adapter/http2_visitor_interface.h"
 #include "quiche/http2/adapter/mock_http2_visitor.h"
@@ -878,7 +880,7 @@ TEST(NgHttp2AdapterTest, ClientSendsTrailers) {
                  {":path", "/this/is/request/one"}});
 
   const std::string kBody = "This is an example request body.";
-  auto body1 = absl::make_unique<TestDataFrameSource>(visitor, false);
+  auto body1 = std::make_unique<TestDataFrameSource>(visitor, false);
   body1->AppendPayload(kBody);
   // nghttp2 does not require that the data source indicate the end of data
   // before trailers are enqueued.
@@ -1778,7 +1780,7 @@ TEST(NgHttp2AdapterTest, ClientReceivesGoAwayWithPendingStreams) {
 
   const std::string initial_frames =
       TestFrameSequence()
-          .ServerPreface({{.id = MAX_CONCURRENT_STREAMS, .value = 1}})
+          .ServerPreface({{MAX_CONCURRENT_STREAMS, 1}})
           .Serialize();
 
   // Server preface (SETTINGS with MAX_CONCURRENT_STREAMS)
@@ -2051,7 +2053,7 @@ TEST(NgHttp2AdapterTest, ClientSubmitRequest) {
   EXPECT_FALSE(adapter->want_write());
   const char* kSentinel = "";
   const absl::string_view kBody = "This is an example request body.";
-  auto body1 = absl::make_unique<TestDataFrameSource>(visitor, true);
+  auto body1 = std::make_unique<TestDataFrameSource>(visitor, true);
   body1->AppendPayload(kBody);
   body1->EndData();
   int stream_id =
@@ -2520,11 +2522,54 @@ TEST(NgHttp2AdapterTest, ClientQueuesRequests) {
   adapter->Send();
 }
 
+TEST(NgHttp2AdapterTest, ClientAcceptsHeadResponseWithContentLength) {
+  DataSavingVisitor visitor;
+  auto adapter = NgHttp2Adapter::CreateClientAdapter(visitor);
+
+  const std::vector<Header> headers = ToHeaders({{":method", "HEAD"},
+                                                 {":scheme", "http"},
+                                                 {":authority", "example.com"},
+                                                 {":path", "/"}});
+  const int32_t stream_id = adapter->SubmitRequest(headers, nullptr, nullptr);
+
+  testing::InSequence s;
+
+  EXPECT_CALL(visitor, OnBeforeFrameSent(HEADERS, stream_id, _, 0x5));
+  EXPECT_CALL(visitor, OnFrameSent(HEADERS, stream_id, _, 0x5, 0));
+
+  adapter->Send();
+
+  const std::string initial_frames =
+      TestFrameSequence()
+          .ServerPreface()
+          .Headers(stream_id, {{":status", "200"}, {"content-length", "101"}},
+                   /*fin=*/true)
+          .Serialize();
+
+  EXPECT_CALL(visitor, OnFrameHeader(0, _, SETTINGS, 0x0));
+  EXPECT_CALL(visitor, OnSettingsStart());
+  EXPECT_CALL(visitor, OnSettingsEnd());
+  EXPECT_CALL(visitor, OnFrameHeader(stream_id, _, HEADERS, 5));
+  EXPECT_CALL(visitor, OnBeginHeadersForStream(stream_id));
+  EXPECT_CALL(visitor, OnHeaderForStream).Times(2);
+  EXPECT_CALL(visitor, OnEndHeadersForStream(stream_id));
+  EXPECT_CALL(visitor, OnEndStream(stream_id));
+  EXPECT_CALL(visitor,
+              OnCloseStream(stream_id, Http2ErrorCode::HTTP2_NO_ERROR));
+
+  adapter->ProcessBytes(initial_frames);
+
+  EXPECT_CALL(visitor, OnBeforeFrameSent(SETTINGS, 0, 0, 0x1));
+  EXPECT_CALL(visitor, OnFrameSent(SETTINGS, 0, 0, 0x1, 0));
+
+  adapter->Send();
+}
+
 TEST(NgHttp2AdapterTest, SubmitMetadata) {
   DataSavingVisitor visitor;
   auto adapter = NgHttp2Adapter::CreateClientAdapter(visitor);
 
-  auto source = absl::make_unique<TestMetadataSource>(ToHeaderBlock(ToHeaders(
+  auto source = std::make_unique<TestMetadataSource>(ToHeaderBlock(ToHeaders(
       {{"query-cost", "is too darn high"}, {"secret-sauce", "hollandaise"}})));
   adapter->SubmitMetadata(1, 16384u, std::move(source));
   EXPECT_TRUE(adapter->want_write());
@@ -2548,7 +2593,7 @@ TEST(NgHttp2AdapterTest, SubmitMetadataMultipleFrames) {
   auto adapter = NgHttp2Adapter::CreateClientAdapter(visitor);
 
   const auto kLargeValue = std::string(63 * 1024, 'a');
-  auto source = absl::make_unique<TestMetadataSource>(
+  auto source = std::make_unique<TestMetadataSource>(
       ToHeaderBlock(ToHeaders({{"large-value", kLargeValue}})));
   adapter->SubmitMetadata(1, 16384u, std::move(source));
   EXPECT_TRUE(adapter->want_write());
@@ -2581,7 +2626,7 @@ TEST(NgHttp2AdapterTest, SubmitConnectionMetadata) {
   DataSavingVisitor visitor;
   auto adapter = NgHttp2Adapter::CreateClientAdapter(visitor);
 
-  auto source = absl::make_unique<TestMetadataSource>(ToHeaderBlock(ToHeaders(
+  auto source = std::make_unique<TestMetadataSource>(ToHeaderBlock(ToHeaders(
       {{"query-cost", "is too darn high"}, {"secret-sauce", "hollandaise"}})));
   adapter->SubmitMetadata(0, 16384u, std::move(source));
   EXPECT_TRUE(adapter->want_write());
@@ -2612,7 +2657,7 @@ TEST(NgHttp2AdapterTest, ClientObeysMaxConcurrentStreams) {
 
   const std::string initial_frames =
       TestFrameSequence()
-          .ServerPreface({{.id = MAX_CONCURRENT_STREAMS, .value = 1}})
+          .ServerPreface({{MAX_CONCURRENT_STREAMS, 1}})
           .Serialize();
   testing::InSequence s;
 
@@ -2637,7 +2682,7 @@ TEST(NgHttp2AdapterTest, ClientObeysMaxConcurrentStreams) {
 
   EXPECT_FALSE(adapter->want_write());
   const absl::string_view kBody = "This is an example request body.";
-  auto body1 = absl::make_unique<TestDataFrameSource>(visitor, true);
+  auto body1 = std::make_unique<TestDataFrameSource>(visitor, true);
   body1->AppendPayload(kBody);
   body1->EndData();
   const int stream_id =
@@ -2753,7 +2798,7 @@ TEST(NgHttp2AdapterTest, ClientReceivesInitialWindowSetting) {
   visitor.Clear();
 
   const std::string kLongBody = std::string(81000, 'c');
-  auto body1 = absl::make_unique<TestDataFrameSource>(visitor, true);
+  auto body1 = std::make_unique<TestDataFrameSource>(visitor, true);
   body1->AppendPayload(kLongBody);
   body1->EndData();
   const int stream_id =
@@ -2806,7 +2851,7 @@ TEST(NgHttp2AdapterTest, ClientReceivesInitialWindowSettingAfterStreamStart) {
   visitor.Clear();
 
   const std::string kLongBody = std::string(81000, 'c');
-  auto body1 = absl::make_unique<TestDataFrameSource>(visitor, true);
+  auto body1 = std::make_unique<TestDataFrameSource>(visitor, true);
   body1->AppendPayload(kLongBody);
   body1->EndData();
   const int stream_id =
@@ -3265,6 +3310,80 @@ TEST(NgHttp2AdapterTest, MaxFrameSizeSettingAppliedAfterAck) {
   EXPECT_THAT(visitor.data(), EqualsFrames({SpdyFrameType::SETTINGS}));
 }
 
+TEST(NgHttp2AdapterTest, WindowUpdateRaisesFlowControlWindowLimit) {
+  DataSavingVisitor visitor;
+  auto adapter = NgHttp2Adapter::CreateServerAdapter(visitor);
+
+  const std::string data_chunk(kDefaultFramePayloadSizeLimit, 'a');
+  const std::string request = TestFrameSequence()
+                                  .ClientPreface()
+                                  .Headers(1,
+                                           {{":method", "GET"},
+                                            {":scheme", "https"},
+                                            {":authority", "example.com"},
+                                            {":path", "/"}},
+                                           /*fin=*/false)
+                                  .Serialize();
+
+  // Client preface (empty SETTINGS)
+  EXPECT_CALL(visitor, OnFrameHeader(0, 0, SETTINGS, 0));
+  EXPECT_CALL(visitor, OnSettingsStart());
+  EXPECT_CALL(visitor, OnSettingsEnd());
+  // Stream 1
+  EXPECT_CALL(visitor, OnFrameHeader(1, _, HEADERS, 4));
+  EXPECT_CALL(visitor, OnBeginHeadersForStream(1));
+  EXPECT_CALL(visitor, OnHeaderForStream).Times(4);
+  EXPECT_CALL(visitor, OnEndHeadersForStream(1));
+
+  adapter->ProcessBytes(request);
+
+  // Updates the advertised window for the connection and stream 1.
+  adapter->SubmitWindowUpdate(0, 2 * kDefaultFramePayloadSizeLimit);
+  adapter->SubmitWindowUpdate(1, 2 * kDefaultFramePayloadSizeLimit);
+
+  EXPECT_CALL(visitor, OnBeforeFrameSent(SETTINGS, 0, 0, 0x1));
+  EXPECT_CALL(visitor, OnFrameSent(SETTINGS, 0, 0, 0x1, 0));
+  EXPECT_CALL(visitor, OnBeforeFrameSent(WINDOW_UPDATE, 0, 4, 0x0));
+  EXPECT_CALL(visitor, OnFrameSent(WINDOW_UPDATE, 0, 4, 0x0, 0));
+  EXPECT_CALL(visitor, OnBeforeFrameSent(WINDOW_UPDATE, 1, 4, 0x0));
+  EXPECT_CALL(visitor, OnFrameSent(WINDOW_UPDATE, 1, 4, 0x0, 0));
+
+  int result = adapter->Send();
+  EXPECT_EQ(0, result);
+
+  // Verifies the advertised window.
+  EXPECT_EQ(kInitialFlowControlWindowSize + 2 * kDefaultFramePayloadSizeLimit,
+            adapter->GetReceiveWindowSize());
+  EXPECT_EQ(kInitialFlowControlWindowSize + 2 * kDefaultFramePayloadSizeLimit,
+            adapter->GetStreamReceiveWindowSize(1));
+
+  const std::string request_body = TestFrameSequence()
+                                       .Data(1, data_chunk)
+                                       .Data(1, data_chunk)
+                                       .Data(1, data_chunk)
+                                       .Data(1, data_chunk)
+                                       .Data(1, data_chunk)
+                                       .Serialize();
+
+  EXPECT_CALL(visitor, OnFrameHeader(1, _, DATA, 0)).Times(5);
+  EXPECT_CALL(visitor, OnBeginDataForStream(1, _)).Times(5);
+  EXPECT_CALL(visitor, OnDataForStream(1, _)).Times(5);
+
+  // DATA frames on stream 1 consume most of the window.
+  adapter->ProcessBytes(request_body);
+  EXPECT_EQ(kInitialFlowControlWindowSize - 3 * kDefaultFramePayloadSizeLimit,
+            adapter->GetReceiveWindowSize());
+  EXPECT_EQ(kInitialFlowControlWindowSize - 3 * kDefaultFramePayloadSizeLimit,
+            adapter->GetStreamReceiveWindowSize(1));
+
+  // Marking the data consumed should result in an advertised window larger than
+  // the initial window.
+  adapter->MarkDataConsumedForStream(1, 4 * kDefaultFramePayloadSizeLimit);
+  EXPECT_GT(adapter->GetReceiveWindowSize(), kInitialFlowControlWindowSize);
+  EXPECT_GT(adapter->GetStreamReceiveWindowSize(1),
+            kInitialFlowControlWindowSize);
+}
+
 TEST(NgHttp2AdapterTest, ConnectionErrorOnControlFrameSent) {
   DataSavingVisitor visitor;
   auto adapter = NgHttp2Adapter::CreateServerAdapter(visitor);
@@ -3336,7 +3455,7 @@ TEST(NgHttp2AdapterTest, ConnectionErrorOnDataFrameSent) {
   const int64_t read_result = adapter->ProcessBytes(frames);
   EXPECT_EQ(static_cast<size_t>(read_result), frames.size());
 
-  auto body = absl::make_unique<TestDataFrameSource>(visitor, true);
+  auto body = std::make_unique<TestDataFrameSource>(visitor, true);
   body->AppendPayload("Here is some data, which will lead to a fatal error");
   TestDataFrameSource* body_ptr = body.get();
   int submit_result = adapter->SubmitResponse(
@@ -3498,6 +3617,41 @@ TEST(NgHttp2AdapterTest, ServerHandlesFrames) {
   EXPECT_THAT(visitor.data(),
               EqualsFrames({SpdyFrameType::SETTINGS, SpdyFrameType::PING,
                             SpdyFrameType::PING}));
+}
+
+TEST(OgHttp2AdapterTest, HeaderValuesWithObsTextAllowed) {
+  DataSavingVisitor visitor;
+  auto adapter = NgHttp2Adapter::CreateServerAdapter(visitor);
+
+  const std::string frames = TestFrameSequence()
+                                 .ClientPreface()
+                                 .Headers(1,
+                                          {{":method", "GET"},
+                                           {":scheme", "https"},
+                                           {":authority", "example.com"},
+                                           {":path", "/"},
+                                           {"name", "val\xa1ue"}},
+                                          /*fin=*/true)
+                                 .Serialize();
+  testing::InSequence s;
+
+  // Client preface (empty SETTINGS)
+  EXPECT_CALL(visitor, OnFrameHeader(0, 0, SETTINGS, 0));
+  EXPECT_CALL(visitor, OnSettingsStart());
+  EXPECT_CALL(visitor, OnSettingsEnd());
+  // Stream 1
+  EXPECT_CALL(visitor, OnFrameHeader(1, _, HEADERS, 5));
+  EXPECT_CALL(visitor, OnBeginHeadersForStream(1));
+  EXPECT_CALL(visitor, OnHeaderForStream(1, ":method", "GET"));
+  EXPECT_CALL(visitor, OnHeaderForStream(1, ":scheme", "https"));
+  EXPECT_CALL(visitor, OnHeaderForStream(1, ":authority", "example.com"));
+  EXPECT_CALL(visitor, OnHeaderForStream(1, ":path", "/"));
+  EXPECT_CALL(visitor, OnHeaderForStream(1, "name", "val\xa1ue"));
+  EXPECT_CALL(visitor, OnEndHeadersForStream(1));
+  EXPECT_CALL(visitor, OnEndStream(1));
+
+  const int64_t result = adapter->ProcessBytes(frames);
+  EXPECT_EQ(frames.size(), static_cast<size_t>(result));
 }
 
 TEST(NgHttp2AdapterTest, ServerHandlesDataWithPadding) {
@@ -3676,7 +3830,7 @@ TEST(NgHttp2AdapterTest, ServerSubmitsTrailersWhileDataDeferred) {
 
   // The body source must indicate that the end of the body is not the end of
   // the stream.
-  auto body1 = absl::make_unique<TestDataFrameSource>(visitor, false);
+  auto body1 = std::make_unique<TestDataFrameSource>(visitor, false);
   body1->AppendPayload(kBody);
   auto* body1_ptr = body1.get();
   int submit_result = adapter->SubmitResponse(
@@ -4672,7 +4826,7 @@ TEST(NgHttp2AdapterTest, ServerSubmitResponse) {
   const absl::string_view kBody = "This is an example response body.";
   // A data fin is not sent so that the stream remains open, and the flow
   // control state can be verified.
-  auto body1 = absl::make_unique<TestDataFrameSource>(visitor, false);
+  auto body1 = std::make_unique<TestDataFrameSource>(visitor, false);
   body1->AppendPayload(kBody);
   int submit_result = adapter->SubmitResponse(
       1,
@@ -4707,6 +4861,81 @@ TEST(NgHttp2AdapterTest, ServerSubmitResponse) {
   EXPECT_EQ(adapter->GetStreamSendWindowSize(3), -1);
 
   EXPECT_GT(adapter->GetHpackEncoderDynamicTableSize(), 0);
+}
+
+TEST(NgHttp2AdapterTest, ServerSubmitResponseWithResetFromClient) {
+  DataSavingVisitor visitor;
+  auto adapter = NgHttp2Adapter::CreateServerAdapter(visitor);
+  EXPECT_FALSE(adapter->want_write());
+
+  const std::string frames = TestFrameSequence()
+                                 .ClientPreface()
+                                 .Headers(1,
+                                          {{":method", "GET"},
+                                           {":scheme", "https"},
+                                           {":authority", "example.com"},
+                                           {":path", "/this/is/request/one"}},
+                                          /*fin=*/true)
+                                 .Serialize();
+  testing::InSequence s;
+
+  // Client preface (empty SETTINGS)
+  EXPECT_CALL(visitor, OnFrameHeader(0, 0, SETTINGS, 0));
+  EXPECT_CALL(visitor, OnSettingsStart());
+  EXPECT_CALL(visitor, OnSettingsEnd());
+  // Stream 1
+  EXPECT_CALL(visitor, OnFrameHeader(1, _, HEADERS, 5));
+  EXPECT_CALL(visitor, OnBeginHeadersForStream(1));
+  EXPECT_CALL(visitor, OnHeaderForStream).Times(4);
+  EXPECT_CALL(visitor, OnEndHeadersForStream(1));
+  EXPECT_CALL(visitor, OnEndStream(1));
+
+  const int64_t result = adapter->ProcessBytes(frames);
+  EXPECT_EQ(frames.size(), result);
+
+  EXPECT_EQ(1, adapter->GetHighestReceivedStreamId());
+
+  // Server will want to send a SETTINGS ack.
+  EXPECT_TRUE(adapter->want_write());
+
+  EXPECT_CALL(visitor, OnBeforeFrameSent(SETTINGS, 0, 0, 0x1));
+  EXPECT_CALL(visitor, OnFrameSent(SETTINGS, 0, 0, 0x1, 0));
+
+  int send_result = adapter->Send();
+  EXPECT_EQ(0, send_result);
+  EXPECT_THAT(visitor.data(), EqualsFrames({SpdyFrameType::SETTINGS}));
+  visitor.Clear();
+
+  EXPECT_FALSE(adapter->want_write());
+  const absl::string_view kBody = "This is an example response body.";
+  auto body1 = std::make_unique<TestDataFrameSource>(visitor, true);
+  body1->AppendPayload(kBody);
+  int submit_result = adapter->SubmitResponse(
+      1,
+      ToHeaders({{":status", "404"},
+                 {"x-comment", "I have no idea what you're talking about."}}),
+      std::move(body1));
+  EXPECT_EQ(submit_result, 0);
+  EXPECT_TRUE(adapter->want_write());
+
+  // Client resets the stream before the server can send the response.
+  const std::string reset =
+      TestFrameSequence().RstStream(1, Http2ErrorCode::CANCEL).Serialize();
+  EXPECT_CALL(visitor, OnFrameHeader(1, 4, RST_STREAM, 0));
+  EXPECT_CALL(visitor, OnRstStream(1, Http2ErrorCode::CANCEL));
+  EXPECT_CALL(visitor, OnCloseStream(1, Http2ErrorCode::CANCEL));
+  const int64_t reset_result = adapter->ProcessBytes(reset);
+  EXPECT_EQ(reset.size(), static_cast<size_t>(reset_result));
+
+  // Outbound HEADERS and DATA are dropped.
+  EXPECT_CALL(visitor, OnBeforeFrameSent(HEADERS, 1, _, _)).Times(0);
+  EXPECT_CALL(visitor, OnFrameSent(HEADERS, 1, _, _, _)).Times(0);
+  EXPECT_CALL(visitor, OnFrameSent(DATA, 1, _, _, _)).Times(0);
+
+  send_result = adapter->Send();
+  EXPECT_EQ(0, send_result);
+
+  EXPECT_THAT(visitor.data(), testing::IsEmpty());
 }
 
 // Should also test: client attempts shutdown, server attempts shutdown after an
@@ -4806,7 +5035,7 @@ TEST(NgHttp2AdapterTest, ServerSendsTrailers) {
 
   // The body source must indicate that the end of the body is not the end of
   // the stream.
-  auto body1 = absl::make_unique<TestDataFrameSource>(visitor, false);
+  auto body1 = std::make_unique<TestDataFrameSource>(visitor, false);
   body1->AppendPayload(kBody);
   body1->EndData();
   int submit_result = adapter->SubmitResponse(
@@ -4980,7 +5209,7 @@ TEST(NgHttp2AdapterTest, RepeatedHeaderNames) {
 
   const std::vector<Header> headers1 = ToHeaders(
       {{":status", "200"}, {"content-length", "10"}, {"content-length", "10"}});
-  auto body1 = absl::make_unique<TestDataFrameSource>(visitor, true);
+  auto body1 = std::make_unique<TestDataFrameSource>(visitor, true);
   body1->AppendPayload("perfection");
   body1->EndData();
 
@@ -5038,7 +5267,7 @@ TEST(NgHttp2AdapterTest, ServerRespondsToRequestWithTrailers) {
   EXPECT_EQ(frames.size(), static_cast<size_t>(result));
 
   const std::vector<Header> headers1 = ToHeaders({{":status", "200"}});
-  auto body1 = absl::make_unique<TestDataFrameSource>(visitor, true);
+  auto body1 = std::make_unique<TestDataFrameSource>(visitor, true);
   TestDataFrameSource* body1_ptr = body1.get();
 
   int submit_result = adapter->SubmitResponse(1, headers1, std::move(body1));
@@ -5115,7 +5344,7 @@ TEST(NgHttp2AdapterTest, ServerSubmitsResponseWithDataSourceError) {
   const int64_t result = adapter->ProcessBytes(frames);
   EXPECT_EQ(frames.size(), static_cast<size_t>(result));
 
-  auto body1 = absl::make_unique<TestDataFrameSource>(visitor, false);
+  auto body1 = std::make_unique<TestDataFrameSource>(visitor, false);
   body1->SimulateError();
   int submit_result = adapter->SubmitResponse(
       1, ToHeaders({{":status", "200"}, {"x-comment", "Sure, sounds good."}}),
@@ -5246,6 +5475,72 @@ TEST(NgHttp2AdapterTest, IncompleteRequestWithServerResponse) {
   EXPECT_FALSE(adapter->want_write());
 }
 
+TEST(NgHttp2AdapterTest, ServerHandlesMultipleContentLength) {
+  DataSavingVisitor visitor;
+  auto adapter = NgHttp2Adapter::CreateServerAdapter(visitor);
+  EXPECT_FALSE(adapter->want_write());
+
+  const std::string frames = TestFrameSequence()
+                                 .ClientPreface()
+                                 .Headers(1,
+                                          {{":method", "POST"},
+                                           {":scheme", "https"},
+                                           {":authority", "example.com"},
+                                           {":path", "/1"},
+                                           {"content-length", "7"},
+                                           {"content-length", "7"}},
+                                          /*fin=*/false)
+                                 .Headers(3,
+                                          {{":method", "POST"},
+                                           {":scheme", "https"},
+                                           {":authority", "example.com"},
+                                           {":path", "/3"},
+                                           {"content-length", "11"},
+                                           {"content-length", "13"}},
+                                          /*fin=*/false)
+                                 .Serialize();
+  testing::InSequence s;
+
+  // Client preface (empty SETTINGS)
+  EXPECT_CALL(visitor, OnFrameHeader(0, 0, SETTINGS, 0));
+  EXPECT_CALL(visitor, OnSettingsStart());
+  EXPECT_CALL(visitor, OnSettingsEnd());
+  // Stream 1
+  EXPECT_CALL(visitor, OnFrameHeader(1, _, HEADERS, 4));
+  EXPECT_CALL(visitor, OnBeginHeadersForStream(1));
+  EXPECT_CALL(visitor, OnHeaderForStream(1, ":method", "POST"));
+  EXPECT_CALL(visitor, OnHeaderForStream(1, ":scheme", "https"));
+  EXPECT_CALL(visitor, OnHeaderForStream(1, ":authority", "example.com"));
+  EXPECT_CALL(visitor, OnHeaderForStream(1, ":path", "/1"));
+  EXPECT_CALL(visitor, OnHeaderForStream(1, "content-length", "7"));
+  // nghttp2 does not like duplicate Content-Length headers.
+  EXPECT_CALL(
+      visitor,
+      OnErrorDebug("Invalid HTTP header field was received: frame type: 1, "
+                   "stream: 1, name: [content-length], value: [7]"));
+  EXPECT_CALL(
+      visitor,
+      OnInvalidFrame(1, Http2VisitorInterface::InvalidFrameError::kHttpHeader));
+  // Stream 3
+  EXPECT_CALL(visitor, OnFrameHeader(3, _, HEADERS, 4));
+  EXPECT_CALL(visitor, OnBeginHeadersForStream(3));
+  EXPECT_CALL(visitor, OnHeaderForStream(3, ":method", "POST"));
+  EXPECT_CALL(visitor, OnHeaderForStream(3, ":scheme", "https"));
+  EXPECT_CALL(visitor, OnHeaderForStream(3, ":authority", "example.com"));
+  EXPECT_CALL(visitor, OnHeaderForStream(3, ":path", "/3"));
+  EXPECT_CALL(visitor, OnHeaderForStream(3, "content-length", "11"));
+  EXPECT_CALL(
+      visitor,
+      OnErrorDebug("Invalid HTTP header field was received: frame type: 1, "
+                   "stream: 3, name: [content-length], value: [13]"));
+  EXPECT_CALL(
+      visitor,
+      OnInvalidFrame(3, Http2VisitorInterface::InvalidFrameError::kHttpHeader));
+
+  const int64_t result = adapter->ProcessBytes(frames);
+  EXPECT_EQ(frames.size(), static_cast<size_t>(result));
+}
+
 TEST(NgHttp2AdapterTest, ServerSendsInvalidTrailers) {
   DataSavingVisitor visitor;
   auto adapter = NgHttp2Adapter::CreateServerAdapter(visitor);
@@ -5283,7 +5578,7 @@ TEST(NgHttp2AdapterTest, ServerSendsInvalidTrailers) {
 
   // The body source must indicate that the end of the body is not the end of
   // the stream.
-  auto body1 = absl::make_unique<TestDataFrameSource>(visitor, false);
+  auto body1 = std::make_unique<TestDataFrameSource>(visitor, false);
   body1->AppendPayload(kBody);
   body1->EndData();
   int submit_result = adapter->SubmitResponse(
@@ -5782,6 +6077,119 @@ TEST(NgHttp2AdapterTest, AutomaticPingAcksDisabled) {
   EXPECT_THAT(visitor.data(), EqualsFrames({SpdyFrameType::SETTINGS}));
 }
 
+TEST(NgHttp2AdapterTest, InvalidMaxFrameSizeSetting) {
+  DataSavingVisitor visitor;
+  auto adapter = NgHttp2Adapter::CreateServerAdapter(visitor);
+
+  const std::string frames =
+      TestFrameSequence().ClientPreface({{MAX_FRAME_SIZE, 3u}}).Serialize();
+  testing::InSequence s;
+
+  // Client preface
+  EXPECT_CALL(visitor, OnFrameHeader(0, 6, SETTINGS, 0));
+  EXPECT_CALL(
+      visitor,
+      OnInvalidFrame(0, Http2VisitorInterface::InvalidFrameError::kProtocol));
+
+  const int64_t read_result = adapter->ProcessBytes(frames);
+  EXPECT_EQ(static_cast<size_t>(read_result), frames.size());
+
+  EXPECT_TRUE(adapter->want_write());
+
+  EXPECT_CALL(visitor, OnBeforeFrameSent(GOAWAY, 0, _, 0x0));
+  EXPECT_CALL(visitor,
+              OnFrameSent(GOAWAY, 0, _, 0x0,
+                          static_cast<int>(Http2ErrorCode::PROTOCOL_ERROR)));
+
+  int send_result = adapter->Send();
+  EXPECT_EQ(0, send_result);
+  EXPECT_THAT(visitor.data(), EqualsFrames({SpdyFrameType::GOAWAY}));
+}
+
+TEST(OgHttp2AdapterTest, InvalidPushSetting) {
+  DataSavingVisitor visitor;
+  auto adapter = NgHttp2Adapter::CreateServerAdapter(visitor);
+
+  const std::string frames =
+      TestFrameSequence().ClientPreface({{ENABLE_PUSH, 3u}}).Serialize();
+  testing::InSequence s;
+
+  // Client preface
+  EXPECT_CALL(visitor, OnFrameHeader(0, 6, SETTINGS, 0));
+  EXPECT_CALL(visitor, OnInvalidFrame(0, _));
+
+  const int64_t read_result = adapter->ProcessBytes(frames);
+  EXPECT_EQ(static_cast<size_t>(read_result), frames.size());
+
+  EXPECT_TRUE(adapter->want_write());
+
+  EXPECT_CALL(visitor, OnBeforeFrameSent(GOAWAY, 0, _, 0x0));
+  EXPECT_CALL(visitor,
+              OnFrameSent(GOAWAY, 0, _, 0x0,
+                          static_cast<int>(Http2ErrorCode::PROTOCOL_ERROR)));
+
+  int send_result = adapter->Send();
+  EXPECT_EQ(0, send_result);
+  EXPECT_THAT(visitor.data(), EqualsFrames({SpdyFrameType::GOAWAY}));
+}
+
+TEST(NgHttp2AdapterTest, InvalidConnectProtocolSetting) {
+  DataSavingVisitor visitor;
+  auto adapter = NgHttp2Adapter::CreateServerAdapter(visitor);
+
+  const std::string frames = TestFrameSequence()
+                                 .ClientPreface({{ENABLE_CONNECT_PROTOCOL, 3u}})
+                                 .Serialize();
+  testing::InSequence s;
+
+  EXPECT_CALL(visitor, OnFrameHeader(0, 6, SETTINGS, 0));
+  EXPECT_CALL(
+      visitor,
+      OnInvalidFrame(0, Http2VisitorInterface::InvalidFrameError::kProtocol));
+
+  int64_t read_result = adapter->ProcessBytes(frames);
+  EXPECT_EQ(static_cast<size_t>(read_result), frames.size());
+
+  EXPECT_TRUE(adapter->want_write());
+
+  EXPECT_CALL(visitor, OnBeforeFrameSent(GOAWAY, 0, _, 0x0));
+  EXPECT_CALL(visitor,
+              OnFrameSent(GOAWAY, 0, _, 0x0,
+                          static_cast<int>(Http2ErrorCode::PROTOCOL_ERROR)));
+
+  int send_result = adapter->Send();
+  EXPECT_EQ(0, send_result);
+  EXPECT_THAT(visitor.data(), EqualsFrames({SpdyFrameType::GOAWAY}));
+
+  auto adapter2 = NgHttp2Adapter::CreateServerAdapter(visitor);
+  const std::string frames2 = TestFrameSequence()
+                                  .ClientPreface({{ENABLE_CONNECT_PROTOCOL, 1}})
+                                  .Settings({{ENABLE_CONNECT_PROTOCOL, 0}})
+                                  .Serialize();
+
+  EXPECT_CALL(visitor, OnFrameHeader(0, 6, SETTINGS, 0));
+  EXPECT_CALL(visitor, OnSettingsStart());
+  EXPECT_CALL(visitor, OnSetting(Http2Setting{ENABLE_CONNECT_PROTOCOL, 1u}));
+  EXPECT_CALL(visitor, OnSettingsEnd());
+  EXPECT_CALL(visitor, OnFrameHeader(0, 6, SETTINGS, 0));
+  EXPECT_CALL(visitor, OnSettingsStart());
+  // Surprisingly, nghttp2 allows this behavior, which is prohibited in RFC
+  // 8441.
+  EXPECT_CALL(visitor, OnSetting(Http2Setting{ENABLE_CONNECT_PROTOCOL, 0u}));
+  EXPECT_CALL(visitor, OnSettingsEnd());
+
+  read_result = adapter2->ProcessBytes(frames2);
+  EXPECT_EQ(static_cast<size_t>(read_result), frames2.size());
+
+  EXPECT_TRUE(adapter2->want_write());
+
+  EXPECT_CALL(visitor, OnBeforeFrameSent(SETTINGS, 0, _, 0x1));
+  EXPECT_CALL(visitor, OnFrameSent(SETTINGS, 0, _, 0x1, 0));
+  EXPECT_CALL(visitor, OnBeforeFrameSent(SETTINGS, 0, _, 0x1));
+  EXPECT_CALL(visitor, OnFrameSent(SETTINGS, 0, _, 0x1, 0));
+  adapter2->Send();
+}
+
 TEST(NgHttp2AdapterTest, ServerForbidsProtocolPseudoheaderBeforeAck) {
   DataSavingVisitor visitor;
   auto adapter = NgHttp2Adapter::CreateServerAdapter(visitor);
@@ -5960,14 +6368,14 @@ TEST(NgHttp2AdapterTest, SkipsSendingFramesForRejectedStream) {
   const int64_t initial_result = adapter->ProcessBytes(initial_frames);
   EXPECT_EQ(static_cast<size_t>(initial_result), initial_frames.size());
 
-  auto body = absl::make_unique<TestDataFrameSource>(visitor, true);
+  auto body = std::make_unique<TestDataFrameSource>(visitor, true);
   body->AppendPayload("Here is some data, which will be completely ignored!");
 
   int submit_result = adapter->SubmitResponse(
       1, ToHeaders({{":status", "200"}}), std::move(body));
   ASSERT_EQ(0, submit_result);
 
-  auto source = absl::make_unique<TestMetadataSource>(ToHeaderBlock(ToHeaders(
+  auto source = std::make_unique<TestMetadataSource>(ToHeaderBlock(ToHeaders(
       {{"query-cost", "is too darn high"}, {"secret-sauce", "hollandaise"}})));
   adapter->SubmitMetadata(1, 16384u, std::move(source));
 
@@ -6099,7 +6507,7 @@ TEST(NgHttp2AdapterTest, ServerDoesNotSendFramesAfterImmediateGoAway) {
   EXPECT_EQ(static_cast<size_t>(read_result), frames.size());
 
   // Submit a response for the stream.
-  auto body = absl::make_unique<TestDataFrameSource>(visitor, true);
+  auto body = std::make_unique<TestDataFrameSource>(visitor, true);
   body->AppendPayload("This data is doomed to never be written.");
   int submit_result = adapter->SubmitResponse(
       1, ToHeaders({{":status", "200"}}), std::move(body));
@@ -6112,7 +6520,7 @@ TEST(NgHttp2AdapterTest, ServerDoesNotSendFramesAfterImmediateGoAway) {
   adapter->SubmitSettings({});
 
   // Submit some metadata.
-  auto source = absl::make_unique<TestMetadataSource>(ToHeaderBlock(ToHeaders(
+  auto source = std::make_unique<TestMetadataSource>(ToHeaderBlock(ToHeaders(
       {{"query-cost", "is too darn high"}, {"secret-sauce", "hollandaise"}})));
   adapter->SubmitMetadata(1, 16384u, std::move(source));
 
@@ -6690,6 +7098,96 @@ TEST(NgHttp2AdapterTest, ServerHandlesConnectionSpecificHeaders) {
       EqualsFrames({SpdyFrameType::SETTINGS, SpdyFrameType::RST_STREAM,
                     SpdyFrameType::RST_STREAM, SpdyFrameType::RST_STREAM,
                     SpdyFrameType::RST_STREAM, SpdyFrameType::RST_STREAM}));
+}
+
+TEST(NgHttp2AdapterTest, NegativeFlowControlStreamResumption) {
+  DataSavingVisitor visitor;
+  auto adapter = NgHttp2Adapter::CreateServerAdapter(visitor);
+
+  const std::string frames =
+      TestFrameSequence()
+          .ClientPreface({{INITIAL_WINDOW_SIZE, 128u * 1024u}})
+          .WindowUpdate(0, 1 << 20)
+          .Headers(1,
+                   {{":method", "GET"},
+                    {":scheme", "https"},
+                    {":authority", "example.com"},
+                    {":path", "/this/is/request/one"}},
+                   /*fin=*/true)
+          .Serialize();
+  testing::InSequence s;
+
+  // Client preface (empty SETTINGS)
+  EXPECT_CALL(visitor, OnFrameHeader(0, 6, SETTINGS, 0));
+  EXPECT_CALL(visitor, OnSettingsStart());
+  EXPECT_CALL(visitor,
+              OnSetting(Http2Setting{Http2KnownSettingsId::INITIAL_WINDOW_SIZE,
+                                     128u * 1024u}));
+  EXPECT_CALL(visitor, OnSettingsEnd());
+
+  EXPECT_CALL(visitor, OnFrameHeader(0, 4, WINDOW_UPDATE, 0));
+  EXPECT_CALL(visitor, OnWindowUpdate(0, 1 << 20));
+
+  // Stream 1
+  EXPECT_CALL(visitor, OnFrameHeader(1, _, HEADERS, 0x5));
+  EXPECT_CALL(visitor, OnBeginHeadersForStream(1));
+  EXPECT_CALL(visitor, OnHeaderForStream(1, _, _)).Times(4);
+  EXPECT_CALL(visitor, OnEndHeadersForStream(1));
+  EXPECT_CALL(visitor, OnEndStream(1));
+
+  const int64_t read_result = adapter->ProcessBytes(frames);
+  EXPECT_EQ(static_cast<size_t>(read_result), frames.size());
+
+  // Submit a response for the stream.
+  auto body = std::make_unique<TestDataFrameSource>(visitor, true);
+  TestDataFrameSource& body_ref = *body;
+  body_ref.AppendPayload(std::string(70000, 'a'));
+  int submit_result = adapter->SubmitResponse(
+      1, ToHeaders({{":status", "200"}}), std::move(body));
+  ASSERT_EQ(0, submit_result);
+
+  EXPECT_CALL(visitor, OnBeforeFrameSent(SETTINGS, 0, _, 0x1));
+  EXPECT_CALL(visitor, OnFrameSent(SETTINGS, 0, _, 0x1, 0));
+  EXPECT_CALL(visitor, OnBeforeFrameSent(HEADERS, 1, _, 0x4));
+  EXPECT_CALL(visitor, OnFrameSent(HEADERS, 1, _, 0x4, 0));
+  EXPECT_CALL(visitor, OnFrameSent(DATA, 1, _, 0x0, 0)).Times(5);
+
+  adapter->Send();
+  EXPECT_FALSE(adapter->want_write());
+
+  EXPECT_CALL(visitor, OnFrameHeader(0, 6, SETTINGS, 0));
+  EXPECT_CALL(visitor, OnSettingsStart());
+  EXPECT_CALL(visitor,
+              OnSetting(Http2Setting{Http2KnownSettingsId::INITIAL_WINDOW_SIZE,
+                                     64u * 1024u}));
+  EXPECT_CALL(visitor, OnSettingsEnd());
+
+  // Processing these SETTINGS will cause stream 1's send window to become
+  // negative.
+  adapter->ProcessBytes(TestFrameSequence()
+                            .Settings({{INITIAL_WINDOW_SIZE, 64u * 1024u}})
+                            .Serialize());
+  EXPECT_TRUE(adapter->want_write());
+  // nghttp2 does not expose the fact that the send window size is negative.
+  EXPECT_EQ(adapter->GetStreamSendWindowSize(1), 0);
+
+  body_ref.AppendPayload("Stream should be resumed.");
+  adapter->ResumeStream(1);
+
+  EXPECT_CALL(visitor, OnBeforeFrameSent(SETTINGS, 0, _, 0x1));
+  EXPECT_CALL(visitor, OnFrameSent(SETTINGS, 0, _, 0x1, 0));
+  adapter->Send();
+  EXPECT_FALSE(adapter->want_write());
+
+  // Upon receiving the WINDOW_UPDATE, stream 1 should be ready to write.
+  EXPECT_CALL(visitor, OnFrameHeader(1, 4, WINDOW_UPDATE, 0));
+  EXPECT_CALL(visitor, OnWindowUpdate(1, 10000));
+  adapter->ProcessBytes(TestFrameSequence().WindowUpdate(1, 10000).Serialize());
+  EXPECT_TRUE(adapter->want_write());
+  EXPECT_GT(adapter->GetStreamSendWindowSize(1), 0);
+
+  EXPECT_CALL(visitor, OnFrameSent(DATA, 1, _, 0x0, 0));
+  adapter->Send();
 }
 
 }  // namespace

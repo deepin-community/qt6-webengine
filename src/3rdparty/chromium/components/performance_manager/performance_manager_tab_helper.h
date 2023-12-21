@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -88,6 +88,7 @@ class PerformanceManagerTabHelper
   void DidUpdateFaviconURL(
       content::RenderFrameHost* render_frame_host,
       const std::vector<blink::mojom::FaviconURLPtr>& candidates) override;
+  void AboutToBeDiscarded(content::WebContents* new_contents) override;
 
   // WebContentsProxyImpl overrides. Note that `LastNavigationId()` and
   // `LastNewDocNavigationId()` refer to navigations associated with the

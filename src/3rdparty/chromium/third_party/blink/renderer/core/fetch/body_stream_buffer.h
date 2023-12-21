@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,6 +13,7 @@
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/dom/abort_signal.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
+#include "third_party/blink/renderer/core/fetch/bytes_uploader.h"
 #include "third_party/blink/renderer/core/fetch/fetch_data_loader.h"
 #include "third_party/blink/renderer/core/streams/underlying_source_base.h"
 #include "third_party/blink/renderer/platform/bindings/trace_wrapper_v8_reference.h"
@@ -21,7 +22,6 @@
 
 namespace blink {
 
-class BytesUploader;
 class EncodedFormData;
 class ExceptionState;
 class ReadableStream;
@@ -69,7 +69,8 @@ class CORE_EXPORT BodyStreamBuffer final : public UnderlyingSourceBase,
   scoped_refptr<EncodedFormData> DrainAsFormData();
   void DrainAsChunkedDataPipeGetter(
       ScriptState*,
-      mojo::PendingReceiver<network::mojom::blink::ChunkedDataPipeGetter>);
+      mojo::PendingReceiver<network::mojom::blink::ChunkedDataPipeGetter>,
+      BytesUploader::Client* client);
   // While loading is in progress, a SelfKeepAlive is used to prevent this
   // object from being garbage collected. If the context is destroyed, the
   // SelfKeepAlive is cleared. See https://crbug.com/1292744 for details.
@@ -149,6 +150,9 @@ class CORE_EXPORT BodyStreamBuffer final : public UnderlyingSourceBase,
   // We need this to ensure that we detect that abort has been signalled
   // correctly.
   Member<AbortSignal> signal_;
+  // We need to keep the abort algorithms alive for the duration of the load.
+  Member<AbortSignal::AlgorithmHandle> stream_buffer_abort_handle_;
+  Member<AbortSignal::AlgorithmHandle> loader_client_abort_handle_;
   // CachedMetadata handler used for loading compiled WASM code.
   Member<ScriptCachedMetadataHandler> cached_metadata_handler_;
   // Additional side data associated with this body stream.  It should only be

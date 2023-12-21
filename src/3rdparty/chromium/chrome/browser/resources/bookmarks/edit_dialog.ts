@@ -1,20 +1,21 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import 'chrome://resources/cr_elements/cr_button/cr_button.m.js';
-import 'chrome://resources/cr_elements/cr_dialog/cr_dialog.m.js';
-import 'chrome://resources/cr_elements/cr_input/cr_input.m.js';
-import 'chrome://resources/cr_elements/shared_style_css.m.js';
+import 'chrome://resources/cr_elements/cr_button/cr_button.js';
+import 'chrome://resources/cr_elements/cr_dialog/cr_dialog.js';
+import 'chrome://resources/cr_elements/cr_input/cr_input.js';
+import 'chrome://resources/cr_elements/cr_shared_style.css.js';
 import './strings.m.js';
 
-import {CrDialogElement} from 'chrome://resources/cr_elements/cr_dialog/cr_dialog.m.js';
-import {CrInputElement} from 'chrome://resources/cr_elements/cr_input/cr_input.m.js';
+import {CrDialogElement} from 'chrome://resources/cr_elements/cr_dialog/cr_dialog.js';
+import {CrInputElement} from 'chrome://resources/cr_elements/cr_input/cr_input.js';
 import {assert} from 'chrome://resources/js/assert_ts.js';
-import {loadTimeData} from 'chrome://resources/js/load_time_data.m.js';
+import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {highlightUpdatedItems, trackUpdatedItems} from './api_listener.js';
+import {BookmarksApiProxyImpl} from './bookmarks_api_proxy.js';
 import {DialogFocusManager} from './dialog_focus_manager.js';
 import {getTemplate} from './edit_dialog.html.js';
 import {BookmarkNode} from './types.js';
@@ -153,7 +154,8 @@ export class BookmarksEditDialogElement extends PolymerElement {
     } else {
       edit['parentId'] = this.parentId_;
       trackUpdatedItems();
-      chrome.bookmarks.create(edit, highlightUpdatedItems);
+      BookmarksApiProxyImpl.getInstance().create(edit).then(
+          highlightUpdatedItems);
     }
     this.$.dialog.close();
   }

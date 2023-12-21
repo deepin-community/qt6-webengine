@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -17,8 +17,8 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/sys_string_conversions.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/threading/scoped_blocking_call.h"
-#include "base/threading/sequenced_task_runner_handle.h"
 #include "base/trace_event/memory_dump_manager.h"
 #include "base/trace_event/process_memory_dump.h"
 #include "third_party/leveldatabase/env_chromium.h"
@@ -41,7 +41,8 @@ LeveldbValueStore::LeveldbValueStore(const std::string& uma_client_name,
     : LazyLevelDb(uma_client_name, db_path) {
   base::trace_event::MemoryDumpManager::GetInstance()
       ->RegisterDumpProviderWithSequencedTaskRunner(
-          this, "LeveldbValueStore", base::SequencedTaskRunnerHandle::Get(),
+          this, "LeveldbValueStore",
+          base::SequencedTaskRunner::GetCurrentDefault(),
           base::trace_event::MemoryDumpProvider::Options());
 }
 
@@ -80,7 +81,7 @@ ValueStore::ReadResult LeveldbValueStore::Get(
   if (!status.ok())
     return ReadResult(std::move(status));
 
-  std::unique_ptr<base::DictionaryValue> settings(new base::DictionaryValue());
+  base::Value::Dict settings;
 
   for (const std::string& key : keys) {
     absl::optional<base::Value> setting;
@@ -88,7 +89,7 @@ ValueStore::ReadResult LeveldbValueStore::Get(
     if (!status.ok())
       return ReadResult(std::move(status));
     if (setting)
-      settings->SetKey(key, std::move(*setting));
+      settings.Set(key, std::move(*setting));
   }
 
   return ReadResult(std::move(settings), std::move(status));
@@ -99,7 +100,7 @@ ValueStore::ReadResult LeveldbValueStore::Get() {
   if (!status.ok())
     return ReadResult(std::move(status));
 
-  std::unique_ptr<base::DictionaryValue> settings(new base::DictionaryValue());
+  base::Value::Dict settings;
 
   std::unique_ptr<leveldb::Iterator> it(db()->NewIterator(read_options()));
   for (it->SeekToFirst(); it->Valid(); it->Next()) {
@@ -112,7 +113,7 @@ ValueStore::ReadResult LeveldbValueStore::Get() {
                                                 : VALUE_RESTORE_DELETE_FAILURE,
                                kInvalidJson));
     }
-    settings->SetKey(key, std::move(*value));
+    settings.Set(key, std::move(*value));
   }
 
   if (!it->status().ok()) {
@@ -143,7 +144,7 @@ ValueStore::WriteResult LeveldbValueStore::Set(WriteOptions options,
 
 ValueStore::WriteResult LeveldbValueStore::Set(
     WriteOptions options,
-    const base::DictionaryValue& settings) {
+    const base::Value::Dict& settings) {
   Status status = EnsureDbIsOpen();
   if (!status.ok())
     return WriteResult(std::move(status));
@@ -151,9 +152,8 @@ ValueStore::WriteResult LeveldbValueStore::Set(
   leveldb::WriteBatch batch;
   ValueStoreChangeList changes;
 
-  for (base::DictionaryValue::Iterator it(settings); !it.IsAtEnd();
-       it.Advance()) {
-    status.Merge(AddToBatch(options, it.key(), it.value(), &batch, &changes));
+  for (const auto [key, value] : settings) {
+    status.Merge(AddToBatch(options, key, value, &batch, &changes));
     if (!status.ok())
       return WriteResult(std::move(status));
   }
@@ -188,7 +188,8 @@ ValueStore::WriteResult LeveldbValueStore::Remove(
     }
   }
 
-  leveldb::Status ldb_status = db()->Write(leveldb::WriteOptions(), &batch);
+  leveldb::Status ldb_status;
+  ldb_status = db()->Write(leveldb::WriteOptions(), &batch);
   if (!ldb_status.ok() && !ldb_status.IsNotFound()) {
     status.Merge(ToValueStoreError(ldb_status));
     return WriteResult(std::move(status));
@@ -203,10 +204,10 @@ ValueStore::WriteResult LeveldbValueStore::Clear() {
   if (!read_result.status().ok())
     return WriteResult(read_result.PassStatus());
 
-  base::DictionaryValue& whole_db = read_result.settings();
-  while (!whole_db.DictEmpty()) {
-    std::string next_key = base::DictionaryValue::Iterator(whole_db).key();
-    absl::optional<base::Value> next_value = whole_db.ExtractKey(next_key);
+  base::Value::Dict& whole_db = read_result.settings();
+  while (!whole_db.empty()) {
+    std::string next_key = whole_db.begin()->first;
+    absl::optional<base::Value> next_value = whole_db.Extract(next_key);
     changes.emplace_back(next_key, std::move(*next_value), absl::nullopt);
   }
 

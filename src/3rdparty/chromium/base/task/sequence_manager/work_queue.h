@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -48,7 +48,7 @@ class BASE_EXPORT WorkQueue {
   // Assigns the current set index.
   void AssignSetIndex(size_t work_queue_set_index);
 
-  Value AsValue(TimeTicks now) const;
+  Value::List AsValue(TimeTicks now) const;
 
   // Returns true if the |tasks_| is empty. This method ignores any fences.
   bool Empty() const { return tasks_.empty(); }
@@ -85,7 +85,7 @@ class BASE_EXPORT WorkQueue {
 
     // `work_queue_` is not a raw_ptr<...> for performance reasons (based on
     // analysis of sampling profiler data and tab_search:top100:2020).
-    WorkQueue* work_queue_;
+    RAW_PTR_EXCLUSION WorkQueue* work_queue_;
 
     const bool was_empty_;
   };
@@ -163,7 +163,8 @@ class BASE_EXPORT WorkQueue {
   void CollectTasksOlderThan(TaskOrder reference,
                              std::vector<const Task*>* result) const;
 
- private:
+  bool RemoveAllCancelledTasksFromFrontImpl();
+
   bool InsertFenceImpl(Fence fence);
 
   TaskQueueImpl::TaskDeque tasks_;

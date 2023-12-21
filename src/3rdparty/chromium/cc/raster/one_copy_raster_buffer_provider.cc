@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,6 +14,7 @@
 #include "base/feature_list.h"
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/trace_event/process_memory_dump.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
@@ -25,6 +26,7 @@
 #include "components/viz/common/resources/platform_color.h"
 #include "components/viz/common/resources/resource_format.h"
 #include "components/viz/common/resources/resource_sizes.h"
+#include "components/viz/common/resources/shared_image_format.h"
 #include "gpu/GLES2/gl2extchromium.h"
 #include "gpu/command_buffer/client/context_support.h"
 #include "gpu/command_buffer/client/gpu_memory_buffer_manager.h"
@@ -47,9 +49,9 @@ const int kMaxBytesPerCopyOperation = 1024 * 1024 * 4;
 // at normal thread priority.
 // TODO(crbug.com/1072756): Cleanup the feature when the Stable experiment is
 // complete, on November 25, 2020.
-const base::Feature kOneCopyRasterBufferPlaybackNormalThreadPriority{
-    "OneCopyRasterBufferPlaybackNormalThreadPriority",
-    base::FEATURE_ENABLED_BY_DEFAULT};
+BASE_FEATURE(kOneCopyRasterBufferPlaybackNormalThreadPriority,
+             "OneCopyRasterBufferPlaybackNormalThreadPriority",
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 }  // namespace
 
@@ -400,12 +402,13 @@ gpu::SyncToken OneCopyRasterBufferProvider::CopyOnWorkerThread(
 
   if (mailbox->IsZero()) {
     uint32_t usage =
-        gpu::SHARED_IMAGE_USAGE_DISPLAY | gpu::SHARED_IMAGE_USAGE_RASTER;
+        gpu::SHARED_IMAGE_USAGE_DISPLAY_READ | gpu::SHARED_IMAGE_USAGE_RASTER;
     if (mailbox_texture_is_overlay_candidate)
       usage |= gpu::SHARED_IMAGE_USAGE_SCANOUT;
     *mailbox = sii->CreateSharedImage(
-        resource_format, resource_size, color_space, kTopLeft_GrSurfaceOrigin,
-        kPremul_SkAlphaType, usage, gpu::kNullSurfaceHandle);
+        viz::SharedImageFormat::SinglePlane(resource_format), resource_size,
+        color_space, kTopLeft_GrSurfaceOrigin, kPremul_SkAlphaType, usage,
+        gpu::kNullSurfaceHandle);
     // Clear the resource if we're not going to initialize it fully from the
     // copy due to non-exact resource reuse.  See https://crbug.com/1313091
     needs_clear = rect_to_copy.size() != resource_size;
@@ -413,7 +416,7 @@ gpu::SyncToken OneCopyRasterBufferProvider::CopyOnWorkerThread(
 
   // Create staging shared image.
   if (staging_buffer->mailbox.IsZero()) {
-    const uint32_t usage = gpu::SHARED_IMAGE_USAGE_RASTER;
+    const uint32_t usage = gpu::SHARED_IMAGE_USAGE_CPU_WRITE;
     staging_buffer->mailbox = sii->CreateSharedImage(
         staging_buffer->gpu_memory_buffer.get(), gpu_memory_buffer_manager_,
         color_space, kTopLeft_GrSurfaceOrigin, kPremul_SkAlphaType, usage);
@@ -468,7 +471,9 @@ gpu::SyncToken OneCopyRasterBufferProvider::CopyOnWorkerThread(
                                                       resource_size.height());
     SkBitmap bitmap;
     if (bitmap.tryAllocPixels(dst_info, clear_bytes_per_row)) {
-      bitmap.eraseColor(raster_source->background_color());
+      // SkBitmap.cpp doesn't yet have an interface for SkColor4fs
+      // https://bugs.chromium.org/p/skia/issues/detail?id=13329
+      bitmap.eraseColor(raster_source->background_color().toSkColor());
       ri->WritePixels(*mailbox, 0, 0, mailbox_texture_target,
                       clear_bytes_per_row, dst_info, bitmap.getPixels());
     }
@@ -487,10 +492,10 @@ gpu::SyncToken OneCopyRasterBufferProvider::CopyOnWorkerThread(
     int rows_to_copy = std::min(chunk_size_in_rows, height - y);
     DCHECK_GT(rows_to_copy, 0);
 
-    ri->CopySubTexture(staging_buffer->mailbox, *mailbox,
-                       mailbox_texture_target, 0, y, 0, y, rect_to_copy.width(),
-                       rows_to_copy, false /* unpack_flip_y */,
-                       false /* unpack_premultiply_alpha */);
+    ri->CopySharedImage(
+        staging_buffer->mailbox, *mailbox, mailbox_texture_target, 0, y, 0, y,
+        rect_to_copy.width(), rows_to_copy, false /* unpack_flip_y */,
+        false /* unpack_premultiply_alpha */);
     y += rows_to_copy;
 
     // Increment |bytes_scheduled_since_last_flush_| by the amount of memory

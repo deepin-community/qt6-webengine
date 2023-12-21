@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,6 +7,7 @@
 #include "base/memory/scoped_refptr.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/extensions/extension_service_test_base.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "chrome/browser/sessions/session_tab_helper_factory.h"
 #include "chrome/test/base/search_test_utils.h"
@@ -15,8 +16,6 @@
 #include "content/public/test/web_contents_tester.h"
 #include "extensions/browser/api_test_utils.h"
 #include "extensions/common/extension_builder.h"
-#include "ui/display/test/scoped_screen_override.h"
-#include "ui/display/test/test_screen.h"
 
 namespace extensions {
 
@@ -74,8 +73,6 @@ class SearchApiUnitTest : public ExtensionServiceTestBase {
   std::unique_ptr<TestBrowserWindow> browser_window_;
   std::unique_ptr<Browser> browser_;
 
-  display::test::TestScreen test_screen_;
-  std::unique_ptr<display::test::ScopedScreenOverride> scoped_screen_override_;
   scoped_refptr<extensions::SearchQueryFunction> function_;
 };
 
@@ -91,8 +88,6 @@ void SearchApiUnitTest::SetUp() {
   params.type = Browser::TYPE_NORMAL;
   params.window = browser_window_.get();
   browser_ = std::unique_ptr<Browser>(Browser::Create(params));
-  scoped_screen_override_ =
-      std::make_unique<display::test::ScopedScreenOverride>(&test_screen_);
 
   // Mock TemplateURLService.
   auto* template_url_service = static_cast<TemplateURLService*>(

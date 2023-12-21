@@ -1,18 +1,19 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <algorithm>
 #include <set>
 #include <string>
 
-#include "base/callback_helpers.h"
 #include "base/files/file_path.h"
+#include "base/functional/callback_helpers.h"
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
+#include "base/ranges/algorithm.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/test/bind.h"
+#include "base/test/gtest_util.h"
 #include "base/test/mock_log.h"
 #include "base/test/scoped_command_line.h"
 #include "base/test/scoped_feature_list.h"
@@ -23,6 +24,7 @@
 #include "content/browser/process_lock.h"
 #include "content/browser/site_info.h"
 #include "content/browser/site_instance_impl.h"
+#include "content/common/content_navigation_policy.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/site_isolation_policy.h"
@@ -100,7 +102,7 @@ void LockProcessIfNeeded(int process_id,
       site_instance->GetSiteInfo().ShouldLockProcessToSite(
           site_instance->GetIsolationContext())) {
     ChildProcessSecurityPolicyImpl::GetInstance()->LockProcess(
-        site_instance->GetIsolationContext(), process_id,
+        site_instance->GetIsolationContext(), process_id, false,
         ProcessLock::FromSiteInfo(site_instance->GetSiteInfo()));
   }
 }
@@ -129,6 +131,14 @@ class ChildProcessSecurityPolicyTest : public testing::Test {
   }
 
   void TearDown() override {
+    auto* policy = ChildProcessSecurityPolicyImpl::GetInstance();
+    {
+      base::AutoLock lock(policy->lock_);
+      EXPECT_EQ(0u, policy->security_state_.size())
+          << "ChildProcessSecurityPolicy should not be tracking any processes "
+          << "at test shutdown.  Did you forget to call Remove() at the end of "
+          << "a test?";
+    }
     test_browser_client_.ClearSchemes();
     SetBrowserClientForTesting(old_browser_client_);
   }
@@ -219,9 +229,10 @@ class ChildProcessSecurityPolicyTest : public testing::Test {
                         const url::Origin& origin) {
     ChildProcessSecurityPolicyImpl* p =
         ChildProcessSecurityPolicyImpl::GetInstance();
-    return p->IsIsolatedOrigin(IsolationContext(browsing_instance_id, context,
-                                                /*is_guest=*/false),
-                               origin, false /* origin_requests_isolation */);
+    return p->IsIsolatedOrigin(
+        IsolationContext(browsing_instance_id, context,
+                         /*is_guest=*/false, /*is_fenced=*/false),
+        origin, false /* origin_requests_isolation */);
   }
 
   // Returns the number of isolated origin entries for a particular origin.
@@ -233,10 +244,8 @@ class ChildProcessSecurityPolicyTest : public testing::Test {
     GURL key(SiteInfo::GetSiteForOrigin(origin));
     base::AutoLock isolated_origins_lock(p->isolated_origins_lock_);
     auto origins_for_key = p->isolated_origins_[key];
-    return std::count_if(origins_for_key.begin(), origins_for_key.end(),
-                         [origin](const IsolatedOriginEntry& entry) {
-                           return entry.origin() == origin;
-                         });
+    return base::ranges::count(origins_for_key, origin,
+                               &IsolatedOriginEntry::origin);
   }
 
   void CheckGetSiteForURL(BrowserContext* context,
@@ -1175,7 +1184,15 @@ TEST_F(ChildProcessSecurityPolicyTest, RemoveRace) {
 // threads to capture permission state from the UI & IO threads during the
 // removal process. It is intended to simulate pending tasks that could be
 // run on each thread during removal.
+//
+// TODO(crbug.com/1286533): Refactor the test to avoid calls to
+// CanAccessDataForOrigin on the IO thread, by checking for the presence of
+// security state instead.
 TEST_F(ChildProcessSecurityPolicyTest, RemoveRace_CanAccessDataForOrigin) {
+  if (ShouldRestrictCanAccessDataForOriginToUIThread()) {
+    return;
+  }
+
   ChildProcessSecurityPolicyImpl* p =
       ChildProcessSecurityPolicyImpl::GetInstance();
 
@@ -1299,7 +1316,15 @@ TEST_F(ChildProcessSecurityPolicyTest, RemoveRace_CanAccessDataForOrigin) {
 // threads to capture permission state from the UI & IO threads during the
 // removal process. It is intended to simulate pending tasks that could be
 // run on each thread during removal.
+//
+// TODO(crbug.com/1286533): Refactor the test to avoid calls to
+// CanAccessDataForOrigin on the IO thread, by checking for the presence of
+// security state instead.
 TEST_F(ChildProcessSecurityPolicyTest, HandleExtendsSecurityStateLifetime) {
+  if (ShouldRestrictCanAccessDataForOriginToUIThread()) {
+    return;
+  }
+
   ChildProcessSecurityPolicyImpl* p =
       ChildProcessSecurityPolicyImpl::GetInstance();
 
@@ -2776,10 +2801,8 @@ TEST_F(ChildProcessSecurityPolicyTest,
       baz_instance->GetIsolationContext().browsing_instance_id();
 
   // Isolate foo.com for `foo_instance`'s BrowsingInstance only.
-  p->AddIsolatedOriginForBrowsingInstance(
-      foo_instance->GetIsolationContext(), foo,
-      false /* is_origin_agent_cluster */,
-      false /* requires_origin_keyed_process */, IsolatedOriginSource::TEST);
+  p->AddCoopIsolatedOriginForBrowsingInstance(
+      foo_instance->GetIsolationContext(), foo, IsolatedOriginSource::TEST);
   LOCKED_EXPECT_THAT(
       p->isolated_origins_lock_, p->isolated_origins_,
       testing::UnorderedElementsAre(GetIsolatedOriginEntry(
@@ -2810,10 +2833,8 @@ TEST_F(ChildProcessSecurityPolicyTest,
 
   // Isolating foo.com again in the same BrowsingInstance should have no
   // effect.
-  p->AddIsolatedOriginForBrowsingInstance(
-      foo_instance->GetIsolationContext(), foo,
-      false /* is_origin_agent_cluster */,
-      false /* requires_origin_keyed_process */, IsolatedOriginSource::TEST);
+  p->AddCoopIsolatedOriginForBrowsingInstance(
+      foo_instance->GetIsolationContext(), foo, IsolatedOriginSource::TEST);
   EXPECT_EQ(1, GetIsolatedOriginEntryCount(foo));
   LOCKED_EXPECT_THAT(
       p->isolated_origins_lock_, p->isolated_origins_,
@@ -2822,10 +2843,8 @@ TEST_F(ChildProcessSecurityPolicyTest,
           foo_browsing_instance_id, foo)));
 
   // Isolate baz.com in `baz_browsing_instance`'s BrowsingInstance.
-  p->AddIsolatedOriginForBrowsingInstance(
-      baz_instance->GetIsolationContext(), baz,
-      false /* is_origin_agent_cluster */,
-      false /* requires_origin_keyed_process */, IsolatedOriginSource::TEST);
+  p->AddCoopIsolatedOriginForBrowsingInstance(
+      baz_instance->GetIsolationContext(), baz, IsolatedOriginSource::TEST);
   LOCKED_EXPECT_THAT(
       p->isolated_origins_lock_, p->isolated_origins_,
       testing::UnorderedElementsAre(
@@ -2849,10 +2868,8 @@ TEST_F(ChildProcessSecurityPolicyTest,
   EXPECT_TRUE(IsIsolatedOrigin(&context, baz_browsing_instance_id, baz));
 
   // Isolate bar.com in foo.com (not bar.com)'s BrowsingInstance.
-  p->AddIsolatedOriginForBrowsingInstance(
-      foo_instance->GetIsolationContext(), bar,
-      false /* is_origin_agent_cluster */,
-      false /* requires_origin_keyed_process */, IsolatedOriginSource::TEST);
+  p->AddCoopIsolatedOriginForBrowsingInstance(
+      foo_instance->GetIsolationContext(), bar, IsolatedOriginSource::TEST);
 
   // Verify that foo.com and bar.com are both isolated in `foo_instance`'s
   // BrowsingInstance, nothing is isolated in bar_instance's BrowsingInstance,
@@ -2870,14 +2887,10 @@ TEST_F(ChildProcessSecurityPolicyTest,
   // Isolate foo.com in `bar_instance` and `baz_instance`'s BrowsingInstances
   // and verify that this takes effect.  This should result in having three
   // entries for foo.com, one for each BrowsingInstance.
-  p->AddIsolatedOriginForBrowsingInstance(
-      bar_instance->GetIsolationContext(), foo,
-      false /* is_origin_agent_cluster */,
-      false /* requires_origin_keyed_process */, IsolatedOriginSource::TEST);
-  p->AddIsolatedOriginForBrowsingInstance(
-      baz_instance->GetIsolationContext(), foo,
-      false /* is_origin_agent_cluster */,
-      false /* requires_origin_keyed_process */, IsolatedOriginSource::TEST);
+  p->AddCoopIsolatedOriginForBrowsingInstance(
+      bar_instance->GetIsolationContext(), foo, IsolatedOriginSource::TEST);
+  p->AddCoopIsolatedOriginForBrowsingInstance(
+      baz_instance->GetIsolationContext(), foo, IsolatedOriginSource::TEST);
   EXPECT_TRUE(IsIsolatedOrigin(&context, foo_browsing_instance_id, foo));
   EXPECT_TRUE(IsIsolatedOrigin(&context, foo_browsing_instance_id, bar));
   EXPECT_FALSE(IsIsolatedOrigin(&context, foo_browsing_instance_id, baz));
@@ -2930,10 +2943,8 @@ TEST_F(ChildProcessSecurityPolicyTest,
       foo_instance->GetIsolationContext().browsing_instance_id();
 
   // Isolate foo.com for `foo_instance`'s BrowsingInstance only.
-  p->AddIsolatedOriginForBrowsingInstance(
-      foo_instance->GetIsolationContext(), foo,
-      false /* is_origin_agent_cluster */,
-      false /* requires_origin_keyed_process */, IsolatedOriginSource::TEST);
+  p->AddCoopIsolatedOriginForBrowsingInstance(
+      foo_instance->GetIsolationContext(), foo, IsolatedOriginSource::TEST);
   EXPECT_EQ(1, GetIsolatedOriginEntryCount(foo));
 
   // Create a SiteInstance for bar.com in a new BrowsingInstance.
@@ -2971,10 +2982,8 @@ TEST_F(ChildProcessSecurityPolicyTest,
       SiteInstanceImpl::CreateForTesting(&context, GURL("https://foo.com/"));
   EXPECT_EQ(future_id,
             future_instance->GetIsolationContext().browsing_instance_id());
-  p->AddIsolatedOriginForBrowsingInstance(
-      future_instance->GetIsolationContext(), foo,
-      false /* is_origin_agent_cluster */,
-      false /* requires_origin_keyed_process */, IsolatedOriginSource::TEST);
+  p->AddCoopIsolatedOriginForBrowsingInstance(
+      future_instance->GetIsolationContext(), foo, IsolatedOriginSource::TEST);
   EXPECT_EQ(2, GetIsolatedOriginEntryCount(foo));
 
   // Likewise, an attempt to re-add foo.com for future BrowsingInstances should
@@ -2986,10 +2995,8 @@ TEST_F(ChildProcessSecurityPolicyTest,
   // precedes `future_id` and doesn't match `foo_browsing_instance_id`.  Check
   // this with `bar_instance`'s BrowsingInstance.
   EXPECT_LT(bar_browsing_instance_id, future_id);
-  p->AddIsolatedOriginForBrowsingInstance(
-      bar_instance->GetIsolationContext(), foo,
-      false /* is_origin_agent_cluster */,
-      false /* requires_origin_keyed_process */, IsolatedOriginSource::TEST);
+  p->AddCoopIsolatedOriginForBrowsingInstance(
+      bar_instance->GetIsolationContext(), foo, IsolatedOriginSource::TEST);
   EXPECT_EQ(3, GetIsolatedOriginEntryCount(foo));
   EXPECT_TRUE(IsIsolatedOrigin(&context, foo_browsing_instance_id, foo));
   EXPECT_TRUE(IsIsolatedOrigin(&context, bar_browsing_instance_id, foo));
@@ -3037,14 +3044,15 @@ TEST_F(ChildProcessSecurityPolicyTest, NoBrowsingInstanceIDs_OriginKeyed) {
             UrlInfo::OriginIsolationRequest::kOriginAgentCluster |
             UrlInfo::OriginIsolationRequest::kRequiresOriginKeyedProcess);
     UrlInfo url_info(UrlInfoInit(foo.GetURL())
-                         .WithOrigin(foo)
                          .WithOriginIsolationRequest(origin_isolation_request));
     scoped_refptr<SiteInstanceImpl> foo_instance =
         SiteInstanceImpl::CreateForUrlInfo(&context, url_info,
-                                           /*is_guest=*/false);
+                                           /*is_guest=*/false,
+                                           /*is_fenced=*/false);
 
     p->Add(kRendererID, &context);
     p->LockProcess(foo_instance->GetIsolationContext(), kRendererID,
+                   /*is_process_used=*/false,
                    ProcessLock::FromSiteInfo(foo_instance->GetSiteInfo()));
 
     EXPECT_TRUE(p->GetProcessLock(kRendererID).is_locked_to_site());
@@ -3094,11 +3102,13 @@ TEST_F(ChildProcessSecurityPolicyTest, NoBrowsingInstanceIDs_SiteKeyed) {
     p->AddFutureIsolatedOrigins({url::Origin::Create(GURL("https://foo.com"))},
                                 IsolatedOriginSource::TEST, &context);
 
-    UrlInfo url_info(UrlInfoInit(foo.GetURL()).WithOrigin(foo));
+    UrlInfo url_info(UrlInfoInit(foo.GetURL()));
     scoped_refptr<SiteInstanceImpl> foo_instance =
         SiteInstanceImpl::CreateForUrlInfo(&context, url_info,
-                                           /*is_guest=*/false);
+                                           /*is_guest=*/false,
+                                           /*is_fenced=*/false);
     p->LockProcess(foo_instance->GetIsolationContext(), kRendererID,
+                   /*is_process_used=*/false,
                    ProcessLock::FromSiteInfo(foo_instance->GetSiteInfo()));
 
     EXPECT_TRUE(p->GetProcessLock(kRendererID).is_locked_to_site());
@@ -3177,6 +3187,7 @@ TEST_F(ChildProcessSecurityPolicyTest, NoBrowsingInstanceIDs_UnlockedProcess) {
     // BrowsingInstanceId will not be '1' in general.
     p->Add(kRendererID, &context);
     p->LockProcess(foo_instance->GetIsolationContext(), kRendererID,
+                   /*is_process_used=*/false,
                    ProcessLock::CreateAllowAnySite(
                        StoragePartitionConfig::CreateDefault(&context),
                        WebExposedIsolationInfo::CreateNonIsolated()));
@@ -3185,7 +3196,8 @@ TEST_F(ChildProcessSecurityPolicyTest, NoBrowsingInstanceIDs_UnlockedProcess) {
     EXPECT_TRUE(foo_instance->HasSite());
     EXPECT_EQ(foo_instance->GetSiteInfo(),
               SiteInfo::CreateForDefaultSiteInstance(
-                  &context, StoragePartitionConfig::CreateDefault(&context),
+                  foo_instance->GetIsolationContext(),
+                  StoragePartitionConfig::CreateDefault(&context),
                   WebExposedIsolationInfo::CreateNonIsolated()));
     EXPECT_FALSE(foo_instance->RequiresDedicatedProcess());
   }
@@ -3199,6 +3211,41 @@ TEST_F(ChildProcessSecurityPolicyTest, NoBrowsingInstanceIDs_UnlockedProcess) {
   // all of the BrowsingInstances are gone, since that would require checking
   // whether foo itself requires a dedicated process.
   EXPECT_FALSE(p->CanAccessDataForOrigin(kRendererID, foo));
+
+  // We need to remove it otherwise other tests may fail.
+  p->Remove(kRendererID);
+}
+
+// Regression test for https://crbug.com/1324407.
+TEST_F(ChildProcessSecurityPolicyTest, CannotLockUsedProcessToSite) {
+  ChildProcessSecurityPolicyImpl* p =
+      ChildProcessSecurityPolicyImpl::GetInstance();
+  TestBrowserContext context;
+
+  scoped_refptr<SiteInstanceImpl> foo_instance =
+      SiteInstanceImpl::CreateForTesting(&context, GURL("https://foo.com"));
+  scoped_refptr<SiteInstanceImpl> bar_instance =
+      SiteInstanceImpl::CreateForTesting(&context, GURL("https://bar.com"));
+
+  // Start by putting foo.com into an allows-any-site process.
+  p->Add(kRendererID, &context);
+  p->LockProcess(foo_instance->GetIsolationContext(), kRendererID,
+                 /*is_process_used=*/false,
+                 ProcessLock::CreateAllowAnySite(
+                     StoragePartitionConfig::CreateDefault(&context),
+                     WebExposedIsolationInfo::CreateNonIsolated()));
+  EXPECT_TRUE(p->GetProcessLock(kRendererID).allows_any_site());
+  EXPECT_FALSE(p->GetProcessLock(kRendererID).is_locked_to_site());
+
+  // If the process is then considered used (e.g., by loading content), it
+  // should not be possible to lock it to another site.
+  EXPECT_CHECK_DEATH_WITH(
+      {
+        p->LockProcess(bar_instance->GetIsolationContext(), kRendererID,
+                       /*is_process_used=*/true,
+                       ProcessLock::FromSiteInfo(bar_instance->GetSiteInfo()));
+      },
+      "Cannot lock an already used process to .*bar\\.com");
 
   // We need to remove it otherwise other tests may fail.
   p->Remove(kRendererID);

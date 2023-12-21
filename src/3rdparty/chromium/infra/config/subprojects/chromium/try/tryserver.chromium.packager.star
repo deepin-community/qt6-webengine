@@ -1,4 +1,4 @@
-# Copyright 2021 The Chromium Authors. All rights reserved.
+# Copyright 2021 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 """Definitions of builders in the tryserver.chromium.packager builder group."""
@@ -8,10 +8,10 @@ load("//lib/try.star", "try_")
 load("//lib/consoles.star", "consoles")
 
 try_.defaults.set(
-    builder_group = "tryserver.chromium.packager",
     executable = "recipe:chromium_3pp",
-    execution_timeout = try_.DEFAULT_EXECUTION_TIMEOUT,
+    builder_group = "tryserver.chromium.packager",
     pool = try_.DEFAULT_POOL,
+    execution_timeout = try_.DEFAULT_EXECUTION_TIMEOUT,
     service_account = "chromium-cipd-try-builder@chops-service-accounts.iam.gserviceaccount.com",
 )
 
@@ -41,10 +41,10 @@ try_.builder(
         },
     },
     tryjob = try_.job(
-        location_regexp = [
+        location_filters = [
             # Enable for CLs touching files under "3pp" directories which are
             # two level deep or more from the repo root.
-            ".+/[+]/.+/3pp/.+",
+            ".+/3pp/.+",
         ],
     ),
 )

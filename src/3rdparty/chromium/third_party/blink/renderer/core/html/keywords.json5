@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -73,6 +73,12 @@
     "eager",
     "auto",
 
+    // popover attribute (experimental)
+    // https://github.com/openui/open-ui/blob/main/research/src/pages/popup/popup.research.explainer.mdx
+    "auto",
+    "hint",
+    "async",
+
     // referrerpolicy attribute
     // https://w3c.github.io/webappsec-referrer-policy/#referrer-policies
     "no-referrer",
@@ -100,5 +106,10 @@
     // https://github.com/WICG/fenced-frame
     "default",
     "opaque-ads",
+
+    // shadowrootmode attribute
+    // https://github.com/whatwg/html/pull/5465
+    "open",
+    "closed",
   ],
 }

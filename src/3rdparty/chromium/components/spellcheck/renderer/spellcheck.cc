@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,18 +6,18 @@
 
 #include <stddef.h>
 #include <stdint.h>
-#include <algorithm>
+
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
 #include "base/check_op.h"
 #include "base/command_line.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/notreached.h"
 #include "base/observer_list.h"
+#include "base/ranges/algorithm.h"
 #include "base/task/single_thread_task_runner.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "components/spellcheck/common/spellcheck_common.h"
@@ -454,7 +454,7 @@ void SpellCheck::PostDelayedSpellCheckTask(SpellcheckRequest* request) {
   if (!request)
     return;
 
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(&SpellCheck::PerformSpellCheck, AsWeakPtr(),
                                 base::Owned(request)));
 }
@@ -465,10 +465,7 @@ void SpellCheck::PerformSpellCheck(SpellcheckRequest* param) {
   DCHECK(param);
 
   if (languages_.empty() ||
-      std::find_if(languages_.begin(), languages_.end(),
-                   [](std::unique_ptr<SpellcheckLanguage>& language) {
-                     return !language->IsEnabled();
-                   }) != languages_.end()) {
+      !base::ranges::all_of(languages_, &SpellcheckLanguage::IsEnabled)) {
     param->completion()->DidCancelCheckingText();
   } else {
     WebVector<blink::WebTextCheckingResult> results;
@@ -608,10 +605,7 @@ size_t SpellCheck::LanguageCount() {
 }
 
 size_t SpellCheck::EnabledLanguageCount() {
-  return std::count_if(languages_.begin(), languages_.end(),
-                       [](std::unique_ptr<SpellcheckLanguage>& language) {
-                         return language->IsEnabled();
-                       });
+  return base::ranges::count_if(languages_, &SpellcheckLanguage::IsEnabled);
 }
 
 void SpellCheck::NotifyDictionaryObservers(
@@ -622,8 +616,7 @@ void SpellCheck::NotifyDictionaryObservers(
 }
 
 bool SpellCheck::IsWordInSupportedScript(const std::u16string& word) const {
-  return std::find_if(languages_.begin(), languages_.end(),
-                      [word](const auto& language) {
-                        return language->IsTextInSameScript(word);
-                      }) != languages_.end();
+  return base::ranges::any_of(languages_, [word](const auto& language) {
+    return language->IsTextInSameScript(word);
+  });
 }

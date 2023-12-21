@@ -1,4 +1,4 @@
-// Copyright 2014 PDFium Authors. All rights reserved.
+// Copyright 2014 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,20 +6,14 @@
 
 #include "core/fxge/apple/fx_quartz_device.h"
 
+#include <CoreGraphics/CoreGraphics.h>
+
 #include "core/fxcrt/fx_extension.h"
 #include "core/fxge/cfx_graphstatedata.h"
 #include "core/fxge/cfx_path.h"
 #include "core/fxge/cfx_renderdevice.h"
 #include "core/fxge/dib/cfx_dibitmap.h"
-#include "core/fxge/fx_freetype.h"
-
-#if !defined(_SKIA_SUPPORT_) && !defined(_SKIA_SUPPORT_PATHS_)
-#include "core/fxge/agg/fx_agg_driver.h"
-#endif
-
-#if defined(OS_IOS)
-#include <CoreGraphics/CoreGraphics.h>
-#endif
+#include "core/fxge/freetype/fx_freetype.h"
 
 #ifndef CGFLOAT_IS_DOUBLE
 #error Expected CGFLOAT_IS_DOUBLE to be defined by CoreGraphics headers
@@ -39,7 +33,7 @@ void* CQuartz2D::CreateGraphics(const RetainPtr<CFX_DIBitmap>& pBitmap) {
   }
   CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
   CGContextRef context = CGBitmapContextCreate(
-      pBitmap->GetBuffer(), pBitmap->GetWidth(), pBitmap->GetHeight(), 8,
+      pBitmap->GetBuffer().data(), pBitmap->GetWidth(), pBitmap->GetHeight(), 8,
       pBitmap->GetPitch(), colorSpace, bmpInfo);
   CGColorSpaceRelease(colorSpace);
   return context;

@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -29,7 +29,7 @@ bool VulkanFunctionPointers::BindUnassociatedFunctionPointersFromLoaderLib(
   loader_library_ = lib;
 
   // vkGetInstanceProcAddr must be handled specially since it gets its
-  // function pointer through base::GetFunctionPOinterFromNativeLibrary().
+  // function pointer through base::GetFunctionPointerFromNativeLibrary().
   // Other Vulkan functions don't do this.
   vkGetInstanceProcAddr = reinterpret_cast<PFN_vkGetInstanceProcAddr>(
       base::GetFunctionPointerFromNativeLibrary(loader_library_,

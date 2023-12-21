@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -34,19 +34,18 @@ void WorkerNodeImplDescriber::OnTakenFromGraph(Graph* graph) {
   graph->GetNodeDataDescriberRegistry()->UnregisterDescriber(this);
 }
 
-base::Value WorkerNodeImplDescriber::DescribeWorkerNodeData(
+base::Value::Dict WorkerNodeImplDescriber::DescribeWorkerNodeData(
     const WorkerNode* node) const {
   const WorkerNodeImpl* impl = WorkerNodeImpl::FromNode(node);
   if (!impl)
-    return base::Value();
+    return base::Value::Dict();
 
-  base::Value ret(base::Value::Type::DICTIONARY);
-  ret.SetKey("browser_context_id", base::Value(impl->browser_context_id()));
-  ret.SetKey("worker_token", base::Value(impl->worker_token().ToString()));
-  ret.SetKey("url", base::Value(impl->url().spec()));
-  ret.SetKey("worker_type",
-             base::Value(WorkerTypeToString(impl->worker_type())));
-  ret.SetKey("priority", PriorityAndReasonToValue(impl->priority_and_reason()));
+  base::Value::Dict ret;
+  ret.Set("browser_context_id", impl->browser_context_id());
+  ret.Set("worker_token", impl->worker_token().ToString());
+  ret.Set("url", impl->url().spec());
+  ret.Set("worker_type", WorkerTypeToString(impl->worker_type()));
+  ret.Set("priority", PriorityAndReasonToValue(impl->priority_and_reason()));
 
   return ret;
 }

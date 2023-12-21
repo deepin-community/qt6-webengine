@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,18 +13,23 @@
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "base/strings/string_piece_forward.h"
+#include "components/password_manager/core/browser/import/csv_password.h"
 #include "components/password_manager/core/browser/password_store.h"
 #include "components/password_manager/core/browser/password_store_consumer.h"
+#include "components/password_manager/core/browser/ui/affiliated_group.h"
+#include "components/password_manager/core/browser/ui/credential_ui_entry.h"
 
 namespace password_manager {
 
-struct PasswordForm;
+class AffiliationService;
+class PasswordUndoHelper;
+class PasswordsGrouper;
 
 // This interface provides a way for clients to obtain a list of all saved
 // passwords and register themselves as observers for changes. In contrast to
 // simply registering oneself as an observer of a password store directly, this
 // class possibly responds to changes in multiple password stores, such as the
-// local and account store used for passwords for butter.
+// local and account store used for passwords for account store users.
 // Furthermore, this class exposes a direct mean to edit a password, and
 // notifies its observers about this event. An example use case for this is the
 // bulk check settings page, where an edit operation in that page should result
@@ -34,8 +39,6 @@ struct PasswordForm;
 class SavedPasswordsPresenter : public PasswordStoreInterface::Observer,
                                 public PasswordStoreConsumer {
  public:
-  using SavedPasswordsView = base::span<const PasswordForm>;
-
   // Observer interface. Clients can implement this to get notified about
   // changes to the list of saved passwords or if a given password was edited
   // Clients can register and de-register themselves, and are expected to do so
@@ -46,82 +49,137 @@ class SavedPasswordsPresenter : public PasswordStoreInterface::Observer,
     // passwords changed.
     //
     // OnEdited() will be invoked synchronously if EditPassword() is invoked
-    // with a password that was present in |passwords_|.
+    // with a password that was present in cache.
     // |password.password_value| will be equal to |new_password| in this case.
-    virtual void OnEdited(const PasswordForm& password) {}
+    virtual void OnEdited(const CredentialUIEntry& password) {}
     // OnSavedPasswordsChanged() gets invoked asynchronously after a change to
     // the underlying password store happens. This might be due to a call to
     // EditPassword(), but can also happen if passwords are added or removed due
     // to other reasons.
-    virtual void OnSavedPasswordsChanged(SavedPasswordsView passwords) {}
+    virtual void OnSavedPasswordsChanged() {}
   };
 
-  explicit SavedPasswordsPresenter(
-      scoped_refptr<PasswordStoreInterface> profile_store,
-      scoped_refptr<PasswordStoreInterface> account_store = nullptr);
+  // Result of EditSavedCredentials.
+  enum class EditResult {
+    // Some credentials were successfully updated.
+    kSuccess,
+    // New credential matches the old one so nothing was changed.
+    kNothingChanged,
+    // Credential couldn't be found in the store.
+    kNotFound,
+    // Credentials with the same username and sign on realm already exists.
+    kAlreadyExisits,
+    // Password was empty.
+    kEmptyPassword,
+    kMaxValue = kEmptyPassword,
+  };
+
+  // Result of AddCredentialsCallback.
+  enum class AddResult {
+    // Credential is expected to be added successfully.
+    kSuccess,
+    // Credential is invalid.
+    kInvalid,
+    // Credential (with the same username, realm, and password) already exists
+    // in the profile or/and account store.
+    kExactMatch,
+    // Credential with the same username and realm already exists in the profile
+    // store.
+    kConflictInProfileStore,
+    // Credential with the same username and realm already exists in the account
+    // store.
+    kConflictInAccountStore,
+    // Credential with the same username and realm already exists in both
+    // profile and account stores.
+    kConflictInProfileAndAccountStore,
+    kMaxValue = kConflictInProfileAndAccountStore,
+  };
+
+  using AddCredentialsCallback =
+      base::OnceCallback<void(const std::vector<AddResult>&)>;
+  using DuplicatePasswordsMap = std::multimap<std::string, PasswordForm>;
+
+  SavedPasswordsPresenter(AffiliationService* affiliation_service,
+                          scoped_refptr<PasswordStoreInterface> profile_store,
+                          scoped_refptr<PasswordStoreInterface> account_store);
   ~SavedPasswordsPresenter() override;
 
   // Initializes the presenter and makes it issue the first request for all
   // saved passwords.
   void Init();
 
+  // Returns whether there are ongoing fetch requests to credential stores.
+  bool IsWaitingForPasswordStore() const;
+
   // Removes the credential and all its duplicates from the store.
-  void RemovePassword(const PasswordForm& form);
+  bool RemoveCredential(const CredentialUIEntry& credential);
 
-  // Adds the credential to the store specified in the |form|. Returns true
-  // if the password was added, false if |form|'s data is not valid (invalid
-  // url/empty password), or an entry with such signon_realm and username
-  // already exists in any (profile or account) store.
-  bool AddPassword(const PasswordForm& form);
+  // Cancels the last removal operation.
+  void UndoLastRemoval();
 
-  // Tries to edit |password|. After checking whether |form| is present in
-  // |passwords_|, this will ask the password store to change the underlying
-  // password_value to |new_password| in case it was found. This will also
-  // notify clients that an edit event happened in case |form| was present
-  // in |passwords_|.
-  bool EditPassword(const PasswordForm& form, std::u16string new_password);
+  // Adds the |credential| to the specified store. Returns true if the password
+  // was added, false if |credential|'s data is not valid (invalid url/empty
+  // password), or an entry with such signon_realm and username already exists
+  // in any (profile or account) store.
+  bool AddCredential(const CredentialUIEntry& credential,
+                     password_manager::PasswordForm::Type type =
+                         password_manager::PasswordForm::Type::kManuallyAdded);
 
-  // Modifies the provided password form and its duplicates
-  // with `new_username` and `new_password`.
+  // Adds |credentials| to the specified store.
+  // Credentials that have invalid data or already exist are ignored.
   //
-  // Note: this will also change duplicates of 'form' in all stores.
-  bool EditSavedPasswords(const PasswordForm& form,
-                          const std::u16string& new_username,
-                          const std::u16string& new_password);
+  // NOTE: Informing observers of credentials belonging to mixed types of stores
+  // is not supported.
+  //
+  // For a single credential the behaviour is identical to AddCredential method.
+  //
+  // The result is conveyed in AddCredentialsCallback: a vector of corresponding
+  // AddResult statuses.
+  void AddCredentials(const std::vector<CredentialUIEntry>& credentials,
+                      password_manager::PasswordForm::Type type,
+                      AddCredentialsCallback completion);
 
-  // Modifies provided password forms, with |new_username|, |new_password| and
-  // |new_note|. |forms| must represent single credential, with its duplicates,
-  // or the same form saved on another store type.
-  bool EditSavedPasswords(const SavedPasswordsView forms,
-                          const std::u16string& new_username,
-                          const std::u16string& new_password,
-                          const std::u16string& new_note = std::u16string());
+  // Modifies all the saved credentials matching |original_credential| to
+  // |updated_credential|. Only username, password, notes and password issues
+  // are modifiable.
+  EditResult EditSavedCredentials(const CredentialUIEntry& original_credential,
+                                  const CredentialUIEntry& updated_credential);
 
-  // Returns a list of the currently saved credentials.
-  SavedPasswordsView GetSavedPasswords() const;
-
-  // Returns a list of unique password forms which includes normal credentials,
+  // Returns a list of unique passwords which includes normal credentials,
   // federated credentials and blocked forms. If a same form is present both on
   // account and profile stores it will be represented as a single entity.
   // Uniqueness is determined using site name, username, password. For Android
   // credentials package name is also taken into account and for Federated
   // credentials federation origin.
-  std::vector<PasswordForm> GetUniquePasswordForms() const;
+  std::vector<CredentialUIEntry> GetSavedCredentials() const;
 
-  // Returns all the usernames for credentials saved for `signon_realm`. If
-  // `is_using_account_store` is true, this method will only consider
-  // credentials saved in the account store. Otherwiser it will only consider
-  // credentials saved in the profile store.
-  std::vector<std::u16string> GetUsernamesForRealm(
-      const std::string& signon_realm,
-      bool is_using_account_store);
+  // Returns a list of affiliated groups for the Password Manager.
+  std::vector<AffiliatedGroup> GetAffiliatedGroups();
+
+  // Returns a list of saved passwords (excluding blocked and federated
+  // credentials).
+  std::vector<CredentialUIEntry> GetSavedPasswords() const;
+
+  // Returns a list of sites blocked by users for the Password Manager.
+  std::vector<CredentialUIEntry> GetBlockedSites();
+
+  // Returns PasswordForms corresponding to |credential|.
+  std::vector<PasswordForm> GetCorrespondingPasswordForms(
+      const CredentialUIEntry& credential) const;
 
   // Allows clients and register and de-register themselves.
   void AddObserver(Observer* observer);
   void RemoveObserver(Observer* observer);
 
  private:
-  using DuplicatePasswordsMap = std::multimap<std::string, PasswordForm>;
+  // Adds the |credential| to the specified store.
+  // Expects a credential that is valid to be added - can be verified by
+  // calling `GetExpectedAddResult()` before. `completion` callback wil be run
+  // after the DB call is completed.
+  void AddCredentialAsync(const CredentialUIEntry& credential,
+                          password_manager::PasswordForm::Type type,
+                          base::OnceClosure completion);
+
   // PasswordStoreInterface::Observer
   void OnLoginsChanged(PasswordStoreInterface* store,
                        const PasswordStoreChangeList& changes) override;
@@ -137,21 +195,41 @@ class SavedPasswordsPresenter : public PasswordStoreInterface::Observer,
       std::vector<std::unique_ptr<PasswordForm>> results) override;
 
   // Notify observers about changes in the compromised credentials.
-  void NotifyEdited(const PasswordForm& password);
+  void NotifyEdited(const CredentialUIEntry& password);
   void NotifySavedPasswordsChanged();
 
-  // Returns the `profile_store_` or `account_store_` if `form` is stored in the
-  // profile store or the account store accordingly. This function should be
-  // used only for credential stored in a single store.
+  void RemoveObservers();
+
+  // Returns the expected result for adding |credential|, looks for
+  // missing/invalid fields and checks if the credential already exists in the
+  // memory cache.
+  AddResult GetExpectedAddResult(const CredentialUIEntry& credential) const;
+
+  // Returns the `profile_store_` or `account_store_` if `form` is stored in
+  // the profile store or the account store accordingly. This function should
+  // be used only for credential stored in a single store.
   PasswordStoreInterface& GetStoreFor(const PasswordForm& form);
+
+  // Try to unblocklist in both stores.If credentials don't
+  // exist, the unblocklist operation is a no-op.
+  void UnblocklistBothStores(const CredentialUIEntry& credential);
+
+  // Helper functions to update local cache of PasswordForms.
+  void RemoveForms(const std::vector<PasswordForm>& forms);
+  void AddForms(const std::vector<PasswordForm>& forms);
 
   // The password stores containing the saved passwords.
   scoped_refptr<PasswordStoreInterface> profile_store_;
   scoped_refptr<PasswordStoreInterface> account_store_;
 
-  // Cache of the most recently obtained saved passwords. Profile store
-  // passwords are always stored first, and then account store passwords if any.
-  std::vector<PasswordForm> passwords_;
+  // The number of stores from which no updates have been received yet.
+  int pending_store_updates = 0;
+
+  std::unique_ptr<PasswordUndoHelper> undo_helper_;
+
+  // Helper object which groups passwords based on information provided by the
+  // affiliation service.
+  std::unique_ptr<PasswordsGrouper> passwords_grouper_;
 
   // Structure used to deduplicate list of passwords.
   DuplicatePasswordsMap sort_key_to_password_forms_;

@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,9 +9,9 @@
 #include <string>
 #include <vector>
 
-#include "base/callback.h"
 #include "base/component_export.h"
 #include "base/containers/flat_set.h"
+#include "base/functional/callback.h"
 #include "base/message_loop/message_pump_type.h"
 #include "base/task/single_thread_task_runner.h"
 #include "build/build_config.h"
@@ -31,6 +31,8 @@ enum class PlatformKeyboardHookTypes;
 
 class CursorFactory;
 class GpuPlatformSupportHost;
+class ImeKeyEventDispatcher;
+class InputMethod;
 class InputController;
 class KeyEvent;
 class OverlayManagerOzone;
@@ -45,11 +47,6 @@ class PlatformUserInputMonitor;
 class PlatformUtils;
 class SurfaceFactoryOzone;
 class SystemInputInjector;
-
-namespace internal {
-class InputMethodDelegate;
-}  // namespace internal
-class InputMethod;
 
 struct PlatformWindowInitProperties;
 
@@ -125,10 +122,6 @@ class COMPONENT_EXPORT(OZONE) OzonePlatform {
     // Determines if the platform supports vulkan swap chain.
     bool supports_vulkan_swap_chain = false;
 
-    // Linux only: determines if the platform uses the external Vulkan image
-    // factory.
-    bool uses_external_vulkan_image_factory = false;
-
     // Linux only: determines if Skia can fall back to the X11 output device.
     bool skia_can_fall_back_to_x11 = false;
 
@@ -198,6 +191,18 @@ class COMPONENT_EXPORT(OZONE) OzonePlatform {
     // Wayland only: determines whether BufferQueue needs a background image to
     // be stacked below an AcceleratedWidget to make a widget opaque.
     bool needs_background_image = false;
+
+    // Wayland only: determines whether clip rects can be delegated via the
+    // wayland protocol.
+    bool supports_clip_rect = false;
+
+    // Wayland only: determine whether toplevel surfaces can be activated and
+    // deactivated.
+    bool supports_activation = false;
+
+    // Wayland only: determines whether tooltip can be delegated via wayland
+    // protocol.
+    bool supports_tooltip = false;
   };
 
   // Corresponds to chrome_browser_main_extra_parts.h.
@@ -217,11 +222,13 @@ class COMPONENT_EXPORT(OZONE) OzonePlatform {
   // error handlers if supported so that we can print errors during the browser
   // process' start up).
   static void PreEarlyInitialization();
-  // Sets error handlers if supported for the browser process after the message
-  // loop started. It's required to call this so that we can exit cleanly if the
+  // Sets error handlers if supported for the browser process, and provides a
+  // task_runner suitable for handling user input after the message loop
+  // started. It's required to call this so that we can exit cleanly if the
   // server can exit before we do.
   virtual void PostCreateMainMessageLoop(
-      base::OnceCallback<void()> shutdown_cb);
+      base::OnceCallback<void()> shutdown_cb,
+      scoped_refptr<base::SingleThreadTaskRunner> user_input_task_runner);
   // Resets the error handlers if set.
   virtual void PostMainMessageLoopRun();
 
@@ -239,6 +246,8 @@ class COMPONENT_EXPORT(OZONE) OzonePlatform {
   static void InitializeForGPU(const InitParams& args);
 
   static OzonePlatform* GetInstance();
+
+  static bool IsInitialized();
 
   // Returns the current ozone platform name.
   // Some tests may skip based on the platform name.
@@ -266,7 +275,7 @@ class COMPONENT_EXPORT(OZONE) OzonePlatform {
   virtual void InitScreen(PlatformScreen* screen) = 0;
   virtual PlatformClipboard* GetPlatformClipboard();
   virtual std::unique_ptr<InputMethod> CreateInputMethod(
-      internal::InputMethodDelegate* delegate,
+      ImeKeyEventDispatcher* ime_key_event_dispatcher,
       gfx::AcceleratedWidget widget) = 0;
   virtual PlatformGLEGLUtility* GetPlatformGLEGLUtility();
   virtual PlatformMenuUtils* GetPlatformMenuUtils();

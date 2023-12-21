@@ -1,4 +1,4 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,6 +13,8 @@
 #include "url/gurl.h"
 
 namespace history_clusters {
+
+enum class ClusteringRequestSource;
 
 // Computes a simplified GURL for deduping purposes only. The resulting GURL may
 // not be valid or navigable, and is only intended for History Cluster deduping.
@@ -30,15 +32,21 @@ GURL ComputeURLForDeduping(const GURL& url);
 // should be separately canonicalized by TemplateURLService and not sent here.
 std::string ComputeURLKeywordForLookup(const GURL& url);
 
+// Returns a string suitable for display in the Journeys UI from the normalized
+// visit URL. Displays the host and the path. Set `trim_after_host` to true to
+// also remove the path, query, and ref.
+std::u16string ComputeURLForDisplay(const GURL& normalized_url,
+                                    bool trim_after_host = false);
+
 // Stable sorts visits according to score, then reverse-chronologically.
-void StableSortVisits(std::vector<history::ClusterVisit>* visits);
+void StableSortVisits(std::vector<history::ClusterVisit>& visits);
 
 // Erases all clusters that don't match `query`. Also may re-score the visits
 // within matching clusters.
 //
 // If `query` is an empty string, leaves `clusters` unmodified.
 void ApplySearchQuery(const std::string& query,
-                      std::vector<history::Cluster>* clusters);
+                      std::vector<history::Cluster>& clusters);
 
 // If `query` is empty, erases all non-prominent clusters.
 //
@@ -48,8 +56,34 @@ void ApplySearchQuery(const std::string& query,
 // `seen_single_visit_cluster_urls` and this function updates that set.
 void CullNonProminentOrDuplicateClusters(
     std::string query,
-    std::vector<history::Cluster>* clusters,
+    std::vector<history::Cluster>& clusters,
     std::set<GURL>* seen_single_visit_cluster_urls);
+
+// Removes low scoring visits and clusters with less than`min_visits` visits
+// remaining.
+void HideAndCullLowScoringVisits(std::vector<history::Cluster>& clusters,
+                                 size_t min_visits);
+
+// Coalesces the related searches off of individual visits and places them at
+// the cluster level with numerical limits defined by flags.
+void CoalesceRelatedSearches(std::vector<history::Cluster>& clusters);
+
+// Enforces the reverse-chronological invariant of clusters, as well the
+// by-score sorting of visits within clusters. Exposed for testing.
+void SortClusters(std::vector<history::Cluster>* clusters);
+
+// Whether to use navigation context clusters from persistence.
+bool ShouldUseNavigationContextClustersFromPersistence();
+
+// Whether the transition is user-visible.
+bool IsTransitionUserVisible(int32_t transition);
+
+// Returns the histogram name slice for the clustering request source.
+std::string GetHistogramNameSliceForRequestSource(
+    ClusteringRequestSource source);
+
+// Returns whether `source` is a UI source.
+bool IsUIRequestSource(ClusteringRequestSource source);
 
 }  // namespace history_clusters
 

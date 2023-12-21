@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,8 +8,8 @@
 
 #include <memory>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/ios/ios_util.h"
 #include "base/test/bind.h"
 #import "base/test/ios/wait_util.h"
@@ -182,7 +182,7 @@ class AccountConsistencyServiceTest : public PlatformTest {
         signin::AccountConsistencyMethod::kDisabled, signin_client_.get()));
     settings_map_ = new HostContentSettingsMap(
         &prefs_, false /* is_off_the_record */, false /* store_last_modified */,
-        false /* restore_session */);
+        false /* restore_session */, false /* should_record_metrics */);
     cookie_settings_ = new content_settings::CookieSettings(settings_map_.get(),
                                                             &prefs_, false, "");
     // Use a NiceMock here to suppress "uninteresting call" warnings.
@@ -358,12 +358,12 @@ class AccountConsistencyServiceTest : public PlatformTest {
     base::RunLoop run_loop;
     network::mojom::CookieManager* cookie_manager =
         browser_state_.GetCookieManager();
-    cookie_manager->GetAllCookies(base::BindOnce(base::BindLambdaForTesting(
+    cookie_manager->GetAllCookies(base::BindLambdaForTesting(
         [&run_loop,
          &cookies_out](const std::vector<net::CanonicalCookie>& cookies) {
           cookies_out = cookies;
           run_loop.Quit();
-        })));
+        }));
     run_loop.Run();
 
     return cookies_out;

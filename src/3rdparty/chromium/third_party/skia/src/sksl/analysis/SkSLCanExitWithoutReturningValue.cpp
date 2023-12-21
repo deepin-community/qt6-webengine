@@ -6,8 +6,8 @@
  */
 
 #include "include/private/SkSLDefines.h"
+#include "include/private/SkSLIRNode.h"
 #include "include/private/SkSLStatement.h"
-#include "include/private/SkTArray.h"
 #include "src/sksl/SkSLAnalysis.h"
 #include "src/sksl/analysis/SkSLProgramVisitor.h"
 #include "src/sksl/ir/SkSLDoStatement.h"
@@ -145,7 +145,6 @@ public:
 
             case Statement::Kind::kDiscard:
             case Statement::Kind::kExpression:
-            case Statement::Kind::kInlineMarker:
             case Statement::Kind::kNop:
             case Statement::Kind::kVarDeclaration:
                 // None of these statements could contain a return.

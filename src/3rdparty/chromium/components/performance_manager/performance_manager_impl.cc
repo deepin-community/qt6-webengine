@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,15 +8,15 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
 #include "base/check_op.h"
 #include "base/containers/flat_set.h"
 #include "base/feature_list.h"
+#include "base/functional/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/notreached.h"
 #include "base/task/lazy_thread_pool_task_runner.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/task/task_traits.h"
-#include "base/threading/sequenced_task_runner_handle.h"
 #include "components/performance_manager/graph/frame_node_impl.h"
 #include "components/performance_manager/graph/page_node_impl.h"
 #include "components/performance_manager/graph/process_node_impl.h"
@@ -155,10 +155,26 @@ std::unique_ptr<PageNodeImpl> PerformanceManagerImpl::CreatePageNode(
 
 // static
 std::unique_ptr<ProcessNodeImpl> PerformanceManagerImpl::CreateProcessNode(
-    content::ProcessType process_type,
-    RenderProcessHostProxy proxy) {
+    BrowserProcessNodeTag tag) {
   return CreateNodeImpl<ProcessNodeImpl>(
-      base::OnceCallback<void(ProcessNodeImpl*)>(), process_type, proxy);
+      base::OnceCallback<void(ProcessNodeImpl*)>(), tag);
+}
+
+// static
+std::unique_ptr<ProcessNodeImpl> PerformanceManagerImpl::CreateProcessNode(
+    RenderProcessHostProxy render_process_host_proxy) {
+  return CreateNodeImpl<ProcessNodeImpl>(
+      base::OnceCallback<void(ProcessNodeImpl*)>(),
+      std::move(render_process_host_proxy));
+}
+
+// static
+std::unique_ptr<ProcessNodeImpl> PerformanceManagerImpl::CreateProcessNode(
+    content::ProcessType process_type,
+    BrowserChildProcessHostProxy browser_child_process_host_proxy) {
+  return CreateNodeImpl<ProcessNodeImpl>(
+      base::OnceCallback<void(ProcessNodeImpl*)>(), process_type,
+      std::move(browser_child_process_host_proxy));
 }
 
 // static
@@ -201,7 +217,7 @@ void PerformanceManagerImpl::SetOnDestroyedCallbackForTesting(
   // Bind the callback in one that can be called on the PM sequence (it also
   // binds the main thread, and bounces a task back to that thread).
   scoped_refptr<base::SequencedTaskRunner> main_thread =
-      base::SequencedTaskRunnerHandle::Get();
+      base::SequencedTaskRunner::GetCurrentDefault();
   base::OnceClosure pm_callback = base::BindOnce(
       [](scoped_refptr<base::SequencedTaskRunner> main_thread,
          base::OnceClosure callback) {

@@ -1,20 +1,23 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "headless/lib/browser/headless_browser_main_parts.h"
 
+#include <memory.h>
 #include <stdio.h>
 
 #include "base/debug/alias.h"
 #include "base/run_loop.h"
 #include "build/build_config.h"
+#include "components/headless/clipboard/headless_clipboard.h"
 #include "content/public/common/result_codes.h"
-#include "headless/app/headless_shell_switches.h"
 #include "headless/lib/browser/headless_browser_context_impl.h"
 #include "headless/lib/browser/headless_browser_impl.h"
 #include "headless/lib/browser/headless_devtools.h"
 #include "headless/lib/browser/headless_screen.h"
+#include "headless/lib/browser/headless_select_file_dialog_factory.h"
+#include "headless/public/switches.h"
 
 #if defined(HEADLESS_USE_PREFS)
 #include "components/os_crypt/os_crypt.h"  // nogncheck
@@ -25,8 +28,8 @@
 #endif
 
 #if defined(HEADLESS_USE_POLICY)
+#include "components/headless/policy/headless_mode_policy.h"  // nogncheck
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
-#include "headless/lib/browser/policy/headless_mode_policy.h"
 #include "headless/lib/browser/policy/headless_policies.h"
 #endif
 
@@ -49,10 +52,8 @@ const base::FilePath::CharType kLocalStateFilename[] =
 
 }  // namespace
 
-HeadlessBrowserMainParts::HeadlessBrowserMainParts(
-    content::MainFunctionParams parameters,
-    HeadlessBrowserImpl* browser)
-    : parameters_(std::move(parameters)), browser_(browser) {}
+HeadlessBrowserMainParts::HeadlessBrowserMainParts(HeadlessBrowserImpl* browser)
+    : browser_(browser) {}
 
 HeadlessBrowserMainParts::~HeadlessBrowserMainParts() = default;
 
@@ -61,8 +62,10 @@ int HeadlessBrowserMainParts::PreMainMessageLoopRun() {
   CreatePrefService();
 #endif
   MaybeStartLocalDevToolsHttpHandler();
+  SetHeadlessClipboardForCurrentThread();
   browser_->PlatformInitialize();
   browser_->RunOnStartCallback();
+  HeadlessSelectFileDialogFactory::SetUp();
   return content::RESULT_CODE_NORMAL_EXIT;
 }
 
@@ -72,6 +75,10 @@ void HeadlessBrowserMainParts::WillRunMainMessageLoop(
 }
 
 void HeadlessBrowserMainParts::PostMainMessageLoopRun() {
+  // HeadlessBrowserImpl::Shutdown() is supposed to remove all browser contexts
+  // and therefore all associated web contents, however crbug.com/1342152
+  // implies it may not be happening.
+  CHECK_EQ(0U, browser_->GetAllBrowserContexts().size());
   if (devtools_http_handler_started_) {
     StopLocalDevToolsHttpHandler();
     devtools_http_handler_started_ = false;
@@ -112,7 +119,7 @@ void HeadlessBrowserMainParts::MaybeStartLocalDevToolsHttpHandler() {
 
 #if defined(HEADLESS_USE_POLICY)
   const PrefService* pref_service = browser_->GetPrefs();
-  if (!policy::IsRemoteDebuggingAllowed(pref_service)) {
+  if (!IsRemoteDebuggingAllowed(pref_service)) {
     // Follow content/browser/devtools/devtools_http_handler.cc that reports its
     // remote debugging port on stderr for symmetry.
     fputs("\nDevTools remote debugging is disallowed by the system admin.\n",
@@ -157,7 +164,7 @@ void HeadlessBrowserMainParts::CreatePrefService() {
   PrefServiceFactory factory;
 
 #if defined(HEADLESS_USE_POLICY)
-  policy::RegisterPrefs(pref_registry.get());
+  RegisterHeadlessPrefs(pref_registry.get());
 
   policy_connector_ =
       std::make_unique<policy::HeadlessBrowserPolicyConnector>();

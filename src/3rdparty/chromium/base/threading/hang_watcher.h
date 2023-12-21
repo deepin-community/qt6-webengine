@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,14 +14,16 @@
 #include "base/atomicops.h"
 #include "base/base_export.h"
 #include "base/bits.h"
-#include "base/callback.h"
-#include "base/callback_forward.h"
-#include "base/callback_helpers.h"
 #include "base/compiler_specific.h"
+#include "base/dcheck_is_on.h"
 #include "base/debug/crash_logging.h"
+#include "base/functional/callback.h"
+#include "base/functional/callback_forward.h"
+#include "base/functional/callback_helpers.h"
 #include "base/gtest_prod_util.h"
 #include "base/memory/memory_pressure_listener.h"
 #include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ptr_exclusion.h"
 #include "base/synchronization/lock.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/template_util.h"
@@ -67,12 +69,12 @@ class BASE_EXPORT WatchHangsInScope {
   // A good default value needs to be large enough to represent a significant
   // hang and avoid noise while being small enough to not exclude too many
   // hangs. The nature of the work that gets executed on the thread is also
-  // important. We can be much stricter when monitoring a UI thread compared tp
+  // important. We can be much stricter when monitoring a UI thread compared to
   // a ThreadPool thread for example.
-  static const base::TimeDelta kDefaultHangWatchTime;
+  static constexpr base::TimeDelta kDefaultHangWatchTime = base::Seconds(10);
 
   // Constructing/destructing thread must be the same thread.
-  explicit WatchHangsInScope(TimeDelta timeout);
+  explicit WatchHangsInScope(TimeDelta timeout = kDefaultHangWatchTime);
   ~WatchHangsInScope();
 
   WatchHangsInScope(const WatchHangsInScope&) = delete;
@@ -97,7 +99,9 @@ class BASE_EXPORT WatchHangsInScope {
 
 #if DCHECK_IS_ON()
   // The previous WatchHangsInScope created on this thread.
-  WatchHangsInScope* previous_watch_hangs_in_scope_;
+  // This field is not a raw_ptr<> because it was filtered by the rewriter for:
+  // #union
+  RAW_PTR_EXCLUSION WatchHangsInScope* previous_watch_hangs_in_scope_;
 #endif
 };
 
@@ -242,6 +246,10 @@ class BASE_EXPORT HangWatcher : public DelegateSimpleThread::Delegate {
 
   // Begin executing the monitoring loop on the HangWatcher thread.
   void Start();
+
+  // Returns the value of the crash key with the time since last system power
+  // resume.
+  std::string GetTimeSinceLastSystemPowerResumeCrashKeyValue() const;
 
  private:
   // See comment of ::RegisterThread() for details.
@@ -486,8 +494,8 @@ class BASE_EXPORT HangWatchDeadline {
 
  private:
   using TimeTicksInternalRepresentation =
-      base::invoke_result<decltype(&TimeTicks::ToInternalValue),
-                          TimeTicks>::type;
+      std::invoke_result<decltype(&TimeTicks::ToInternalValue),
+                         TimeTicks>::type;
   static_assert(std::is_same<TimeTicksInternalRepresentation, int64_t>::value,
                 "Bit manipulations made by HangWatchDeadline need to be"
                 "adapted if internal representation of TimeTicks changes.");
@@ -620,7 +628,7 @@ class BASE_EXPORT HangWatchState {
   WatchHangsInScope* GetCurrentWatchHangsInScope();
 #endif
 
-  uint64_t GetThreadID() const;
+  PlatformThreadId GetThreadID() const;
 
   // Retrieve the current hang watch deadline directly. For testing only.
   HangWatchDeadline* GetHangWatchDeadlineForTesting();
@@ -647,9 +655,8 @@ class BASE_EXPORT HangWatchState {
   HangWatchDeadline deadline_;
 
   // A unique ID of the thread under watch. Used for logging in crash reports
-  // only. Unsigned type is used as it provides a correct behavior for all
-  // platforms for positive thread ids. Any valid thread id should be positive.
-  uint64_t thread_id_;
+  // only.
+  PlatformThreadId thread_id_;
 
   // Number of active HangWatchScopeEnables on this thread.
   int nesting_level_ = 0;

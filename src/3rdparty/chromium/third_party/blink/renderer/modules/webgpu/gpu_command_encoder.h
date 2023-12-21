@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -40,7 +40,8 @@ class GPUCommandEncoder : public DawnObject<WGPUCommandEncoder> {
       const GPURenderPassDescriptor* descriptor,
       ExceptionState& exception_state);
   GPUComputePassEncoder* beginComputePass(
-      const GPUComputePassDescriptor* descriptor);
+      const GPUComputePassDescriptor* descriptor,
+      ExceptionState& exception_state);
   void copyBufferToBuffer(DawnObject<WGPUBuffer>* src,
                           uint64_t src_offset,
                           DawnObject<WGPUBuffer>* dst,
@@ -79,10 +80,9 @@ class GPUCommandEncoder : public DawnObject<WGPUCommandEncoder> {
         GetHandle(), querySet->GetHandle(), firstQuery, queryCount,
         destination->GetHandle(), destinationOffset);
   }
-  void writeTimestamp(DawnObject<WGPUQuerySet>* querySet, uint32_t queryIndex) {
-    GetProcs().commandEncoderWriteTimestamp(GetHandle(), querySet->GetHandle(),
-                                            queryIndex);
-  }
+  void writeTimestamp(DawnObject<WGPUQuerySet>* querySet,
+                      uint32_t queryIndex,
+                      ExceptionState& exception_state);
   void clearBuffer(DawnObject<WGPUBuffer>* buffer, uint64_t offset) {
     GetProcs().commandEncoderClearBuffer(GetHandle(), buffer->GetHandle(),
                                          offset, WGPU_WHOLE_SIZE);

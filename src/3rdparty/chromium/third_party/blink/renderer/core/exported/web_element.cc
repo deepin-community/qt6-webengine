@@ -30,13 +30,16 @@
 
 #include "third_party/blink/public/web/web_element.h"
 
+#include "third_party/blink/public/web/web_label_element.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_element.h"
 #include "third_party/blink/renderer/core/css/css_computed_style_declaration.h"
 #include "third_party/blink/renderer/core/css/css_property_names.h"
 #include "third_party/blink/renderer/core/dom/element.h"
 #include "third_party/blink/renderer/core/editing/editing_utilities.h"
 #include "third_party/blink/renderer/core/html/custom/custom_element.h"
+#include "third_party/blink/renderer/core/html/forms/html_label_element.h"
 #include "third_party/blink/renderer/core/html/forms/text_control_element.h"
+#include "third_party/blink/renderer/core/html/html_element.h"
 #include "third_party/blink/renderer/core/html/html_object_element.h"
 #include "third_party/blink/renderer/core/html_names.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
@@ -64,7 +67,7 @@ bool WebElement::IsEditable() const {
   const Element* element = ConstUnwrap<Element>();
 
   element->GetDocument().UpdateStyleAndLayoutTree();
-  if (HasEditableStyle(*element))
+  if (blink::IsEditable(*element))
     return true;
 
   if (auto* text_control = ToTextControlOrNull(element)) {
@@ -85,14 +88,8 @@ WebString WebElement::GetIdAttribute() const {
 }
 
 bool WebElement::HasHTMLTagName(const WebString& tag_name) const {
-  // How to create                     class              nodeName localName
-  // createElement('input')            HTMLInputElement   INPUT    input
-  // createElement('INPUT')            HTMLInputElement   INPUT    input
-  // createElementNS(xhtmlNS, 'input') HTMLInputElement   INPUT    input
-  // createElementNS(xhtmlNS, 'INPUT') HTMLUnknownElement INPUT    INPUT
   const Element* element = ConstUnwrap<Element>();
-  return html_names::xhtmlNamespaceURI == element->namespaceURI() &&
-         element->localName() == String(tag_name).LowerASCII();
+  return element->IsHTMLWithTagName(String(tag_name));
 }
 
 bool WebElement::HasAttribute(const WebString& attr_name) const {
@@ -109,30 +106,30 @@ void WebElement::SetAttribute(const WebString& attr_name,
                                   IGNORE_EXCEPTION_FOR_TESTING);
 }
 
-unsigned WebElement::AttributeCount() const {
-  if (!ConstUnwrap<Element>()->hasAttributes())
-    return 0;
-  return ConstUnwrap<Element>()->Attributes().size();
-}
-
-WebString WebElement::AttributeLocalName(unsigned index) const {
-  if (index >= AttributeCount())
-    return WebString();
-  return ConstUnwrap<Element>()->Attributes().at(index).LocalName();
-}
-
-WebString WebElement::AttributeValue(unsigned index) const {
-  if (index >= AttributeCount())
-    return WebString();
-  return ConstUnwrap<Element>()->Attributes().at(index).Value();
-}
-
 WebString WebElement::TextContent() const {
   return ConstUnwrap<Element>()->textContent();
 }
 
 WebString WebElement::InnerHTML() const {
   return ConstUnwrap<Element>()->innerHTML();
+}
+
+WebVector<WebLabelElement> WebElement::Labels() const {
+  auto* html_element = blink::DynamicTo<HTMLElement>(ConstUnwrap<Element>());
+  if (!html_element)
+    return {};
+  LabelsNodeList* html_labels =
+      const_cast<HTMLElement*>(html_element)->labels();
+  if (!html_labels)
+    return {};
+  Vector<WebLabelElement> labels;
+  for (unsigned i = 0; i < html_labels->length(); i++) {
+    if (auto* label_element =
+            blink::DynamicTo<HTMLLabelElement>(html_labels->item(i))) {
+      labels.push_back(label_element);
+    }
+  }
+  return labels;
 }
 
 bool WebElement::IsAutonomousCustomElement() const {
@@ -164,8 +161,8 @@ WebNode WebElement::OpenOrClosedShadowRoot() {
   return WebNode(root);
 }
 
-gfx::Rect WebElement::BoundsInViewport() const {
-  return ConstUnwrap<Element>()->BoundsInViewport();
+gfx::Rect WebElement::BoundsInWidget() const {
+  return ConstUnwrap<Element>()->BoundsInWidget();
 }
 
 SkBitmap WebElement::ImageContents() {
@@ -196,6 +193,16 @@ gfx::Size WebElement::GetImageSize() {
   return gfx::Size(image->width(), image->height());
 }
 
+gfx::Size WebElement::GetClientSize() const {
+  Element* element = const_cast<Element*>(ConstUnwrap<Element>());
+  return gfx::Size(element->clientWidth(), element->clientHeight());
+}
+
+gfx::Size WebElement::GetScrollSize() const {
+  Element* element = const_cast<Element*>(ConstUnwrap<Element>());
+  return gfx::Size(element->scrollWidth(), element->scrollHeight());
+}
+
 WebString WebElement::GetComputedValue(const WebString& property_name) {
   if (IsNull())
     return WebString();
@@ -210,12 +217,6 @@ WebString WebElement::GetComputedValue(const WebString& property_name) {
   auto* computed_style =
       MakeGarbageCollected<CSSComputedStyleDeclaration>(element);
   return computed_style->GetPropertyCSSValue(property_id)->CssText();
-}
-
-void WebElement::UseCountParamUrlUsageIfNeeded(bool is_pdf) const {
-  if (auto* object =
-          ::blink::DynamicTo<HTMLObjectElement>(ConstUnwrap<Element>()))
-    object->UseCountParamUrlUsageIfNeeded(is_pdf);
 }
 
 WebElement::WebElement(Element* elem) : WebNode(elem) {}

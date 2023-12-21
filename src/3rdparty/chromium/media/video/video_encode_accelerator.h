@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,7 +11,7 @@
 #include <memory>
 #include <vector>
 
-#include "base/callback_forward.h"
+#include "base/functional/callback_forward.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/time/time.h"
 #include "media/base/bitrate.h"
@@ -36,6 +36,18 @@ class VideoFrame;
 //                  temporal_idx > 0.
 struct MEDIA_EXPORT H264Metadata final {
   uint8_t temporal_idx = 0;
+  bool layer_sync = false;
+};
+
+// Metadata for H265 bitstream buffer.
+//  |temporal_idx|  indicates the temporal index of this frame.
+//  |spatial_idx|   indicates the spatial index of this frame.
+//  |layer_sync|    is true iff this frame has |temporal_idx| > 0 and does NOT
+//                  reference any reference buffer containing a frame with
+//                  temporal_idx > 0.
+struct MEDIA_EXPORT H265Metadata final {
+  uint8_t temporal_idx = 0;
+  uint8_t spatial_idx = 0;
   bool layer_sync = false;
 };
 
@@ -130,17 +142,31 @@ struct MEDIA_EXPORT BitstreamBufferMetadata final {
   base::TimeDelta timestamp;
   int32_t qp = -1;
 
+  absl::optional<uint8_t> spatial_idx() const;
+
   // |h264|, |vp8| or |vp9| may be set, but not multiple of them. Presumably,
   // it's also possible for none of them to be set.
   absl::optional<H264Metadata> h264;
   absl::optional<Vp8Metadata> vp8;
   absl::optional<Vp9Metadata> vp9;
   absl::optional<Av1Metadata> av1;
+  absl::optional<H265Metadata> h265;
+
+  // Some platforms may adjust the encoding size to meet hardware requirements.
+  // If not set, the encoded size is the same as configured.
+  absl::optional<gfx::Size> encoded_size;
 };
 
 // Video encoder interface.
 class MEDIA_EXPORT VideoEncodeAccelerator {
  public:
+  // Bitmask values for supported rate control modes.
+  enum SupportedRateControlMode : uint8_t {
+    kNoMode = 0,  // for uninitialized profiles only
+    kConstantMode = 0b0001,
+    kVariableMode = 0b0010,
+  };
+
   // Specification of an encoding profile supported by an encoder.
   struct MEDIA_EXPORT SupportedProfile {
     SupportedProfile();
@@ -149,6 +175,7 @@ class MEDIA_EXPORT VideoEncodeAccelerator {
         const gfx::Size& max_resolution,
         uint32_t max_framerate_numerator = 0u,
         uint32_t max_framerate_denominator = 1u,
+        SupportedRateControlMode rc_modes = kConstantMode,
         const std::vector<SVCScalabilityMode>& scalability_modes = {});
     SupportedProfile(const SupportedProfile& other);
     SupportedProfile& operator=(const SupportedProfile& other) = default;
@@ -158,7 +185,9 @@ class MEDIA_EXPORT VideoEncodeAccelerator {
     gfx::Size max_resolution;
     uint32_t max_framerate_numerator{0};
     uint32_t max_framerate_denominator{0};
+    SupportedRateControlMode rate_control_modes = kNoMode;
     std::vector<SVCScalabilityMode> scalability_modes;
+    bool is_software_codec = false;
   };
   using SupportedProfiles = std::vector<SupportedProfile>;
   using FlushCallback = base::OnceCallback<void(bool)>;
@@ -194,6 +223,10 @@ class MEDIA_EXPORT VideoEncodeAccelerator {
     // kShmem if a video frame has a shared memory.
     // kGpuMemoryBuffer if a video frame has a GpuMemoryBuffer.
     enum class StorageType { kShmem, kGpuMemoryBuffer };
+
+    // Used to require a certain encoder type is selected. The default is that
+    // hardware is required.
+    enum class EncoderType { kHardware, kSoftware, kNoPreference };
 
     struct MEDIA_EXPORT SpatialLayer {
       // The encoder dimension of the spatial layer.
@@ -292,6 +325,10 @@ class MEDIA_EXPORT VideoEncodeAccelerator {
     // This flag forces the encoder to use low latency mode, suitable for
     // RTC use cases.
     bool require_low_delay = true;
+
+    // Indicates what type of encoder is required. Useful when OS software
+    // encoders may be present and/or superior to built-in encoders.
+    EncoderType required_encoder_type = EncoderType::kHardware;
   };
 
   // Interface for clients that use VideoEncodeAccelerator. These callbacks will
@@ -345,14 +382,6 @@ class MEDIA_EXPORT VideoEncodeAccelerator {
   // Returns a list of the supported codec profiles of the video encoder. This
   // can be called before Initialize().
   virtual SupportedProfiles GetSupportedProfiles() = 0;
-
-  // Returns a list of the supported codec profiles of the video encoder,
-  // similar to GetSupportedProfiles(), but this function only populates:
-  // codec, framerate range and resolution range.
-  //
-  // Populating things like SVC modes can take a lot of time and they are
-  // not always used. See https://crbug.com/1263196
-  virtual SupportedProfiles GetSupportedProfilesLight();
 
   // Initializes the video encoder with specific configuration.  Called once per
   // encoder construction.  This call is synchronous and returns true iff
@@ -429,7 +458,7 @@ class MEDIA_EXPORT VideoEncodeAccelerator {
   virtual bool IsGpuFrameResizeSupported();
 
  protected:
-  // Do not delete directly; use Destroy() or own it with a scoped_ptr, which
+  // Do not delete directly; use Destroy() or own it with a unique_ptr, which
   // will Destroy() it properly by default.
   virtual ~VideoEncodeAccelerator();
 };
@@ -438,6 +467,7 @@ MEDIA_EXPORT bool operator==(const VideoEncodeAccelerator::SupportedProfile& l,
                              const VideoEncodeAccelerator::SupportedProfile& r);
 MEDIA_EXPORT bool operator==(const Vp8Metadata& l, const Vp8Metadata& r);
 MEDIA_EXPORT bool operator==(const Vp9Metadata& l, const Vp9Metadata& r);
+MEDIA_EXPORT bool operator==(const Av1Metadata& l, const Av1Metadata& r);
 MEDIA_EXPORT bool operator==(const BitstreamBufferMetadata& l,
                              const BitstreamBufferMetadata& r);
 MEDIA_EXPORT bool operator==(
@@ -445,6 +475,35 @@ MEDIA_EXPORT bool operator==(
     const VideoEncodeAccelerator::Config::SpatialLayer& r);
 MEDIA_EXPORT bool operator==(const VideoEncodeAccelerator::Config& l,
                              const VideoEncodeAccelerator::Config& r);
+
+MEDIA_EXPORT inline VideoEncodeAccelerator::SupportedRateControlMode operator|(
+    VideoEncodeAccelerator::SupportedRateControlMode lhs,
+    VideoEncodeAccelerator::SupportedRateControlMode rhs) {
+  return static_cast<VideoEncodeAccelerator::SupportedRateControlMode>(
+      static_cast<uint8_t>(lhs) | static_cast<uint8_t>(rhs));
+}
+
+MEDIA_EXPORT inline VideoEncodeAccelerator::SupportedRateControlMode&
+operator|=(VideoEncodeAccelerator::SupportedRateControlMode& lhs,
+           VideoEncodeAccelerator::SupportedRateControlMode rhs) {
+  lhs = lhs | rhs;
+  return lhs;
+}
+
+MEDIA_EXPORT inline VideoEncodeAccelerator::SupportedRateControlMode operator&(
+    VideoEncodeAccelerator::SupportedRateControlMode lhs,
+    VideoEncodeAccelerator::SupportedRateControlMode rhs) {
+  return static_cast<VideoEncodeAccelerator::SupportedRateControlMode>(
+      static_cast<uint8_t>(lhs) & static_cast<uint8_t>(rhs));
+}
+
+MEDIA_EXPORT inline VideoEncodeAccelerator::SupportedRateControlMode&
+operator&=(VideoEncodeAccelerator::SupportedRateControlMode& lhs,
+           VideoEncodeAccelerator::SupportedRateControlMode rhs) {
+  lhs = lhs & rhs;
+  return lhs;
+}
+
 }  // namespace media
 
 namespace std {

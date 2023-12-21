@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -123,7 +123,7 @@ struct COMPONENT_EXPORT(DEVICE_FIDO) Components {
   // request_type contains the hinted type of the request. This can
   // be used to guide UI ahead of receiving the actual request. This defaults to
   // `kGetAssertion` if not present or if the value in the QR code is unknown.
-  FidoRequestType request_type = FidoRequestType::kGetAssertion;
+  CableRequestType request_type = CableRequestType::kGetAssertion;
 };
 
 COMPONENT_EXPORT(DEVICE_FIDO)
@@ -132,7 +132,7 @@ absl::optional<Components> Parse(const std::string& qr_url);
 // Encode returns the contents of a QR code that represents |qr_key|.
 COMPONENT_EXPORT(DEVICE_FIDO)
 std::string Encode(base::span<const uint8_t, kQRKeySize> qr_key,
-                   FidoRequestType request_type);
+                   CableRequestType request_type);
 
 // BytesToDigits returns a base-10 encoding of |in|.
 COMPONENT_EXPORT(DEVICE_FIDO)
@@ -150,10 +150,11 @@ namespace sync {
 // timestamp.
 COMPONENT_EXPORT(DEVICE_FIDO) uint32_t IDNow();
 
-// IDIsValid returns true iff |candidate| is an acceptable pairing ID. This
-// determination is based on the current time since Sync pairing IDs are
-// timestamps in disguise.
-COMPONENT_EXPORT(DEVICE_FIDO) bool IDIsValid(uint32_t candidate);
+// IDIsMoreThanNPeriodsOld returns true iff |candidate| is a pairing ID that
+// was generated more than `periods` time periods before the current time. A
+// time period is 86400 seconds, i.e. basically a day.
+COMPONENT_EXPORT(DEVICE_FIDO)
+bool IDIsMoreThanNPeriodsOld(uint32_t candidate, unsigned periods);
 
 }  // namespace sync
 
@@ -183,12 +184,12 @@ void Derive(uint8_t* out,
 // client payload to give the phone an early hint about the type of request.
 // This lets it craft better UI.
 COMPONENT_EXPORT(DEVICE_FIDO)
-const char* RequestTypeToString(FidoRequestType request_type);
+const char* RequestTypeToString(CableRequestType request_type);
 
 // RequestTypeFromString performs the inverse of `RequestTypeToString`. If the
 // value of `s` is unknown, `kGetAssertion` is returned.
 COMPONENT_EXPORT(DEVICE_FIDO)
-FidoRequestType RequestTypeFromString(const std::string& s);
+CableRequestType RequestTypeFromString(const std::string& s);
 
 // Derive derives a sub-secret from a secret and nonce. It is not possible to
 // learn anything about |secret| from the value of the sub-secret, assuming that

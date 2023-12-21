@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,6 +11,7 @@
 
 #include "base/check_op.h"
 #include "base/component_export.h"
+#include "base/memory/raw_ptr_exclusion.h"
 #include "mojo/public/cpp/bindings/lib/bindings_internal.h"
 #include "mojo/public/cpp/bindings/message.h"
 
@@ -86,7 +87,9 @@ class MessageFragment {
   }
 
  private:
-  Message& message_;
+  // Exclude from `raw_ref` rewriter - increases Android binary size by
+  // ~350K.
+  RAW_PTR_EXCLUSION Message& message_;
   size_t index_ = kInvalidFragmentIndex;
 };
 
@@ -158,7 +161,9 @@ class MessageFragment<Array_Data<T>> {
   }
 
  private:
-  Message& message_;
+  // Exclude from `raw_ref` rewriter - increases Android binary size by
+  // ~350K.
+  RAW_PTR_EXCLUSION Message& message_;
   size_t index_ = kInvalidFragmentIndex;
 };
 

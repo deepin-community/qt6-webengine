@@ -27,6 +27,7 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_PAINT_PAINT_INFO_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_PAINT_PAINT_INFO_H_
 
+#include "base/check_op.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/layout/layout_box.h"
 #include "third_party/blink/renderer/core/layout/ng/ng_physical_box_fragment.h"
@@ -53,18 +54,6 @@ struct CORE_EXPORT PaintInfo {
         phase(phase),
         cull_rect_(cull_rect),
         paint_flags_(paint_flags) {}
-
-  PaintInfo(GraphicsContext& new_context,
-            const PaintInfo& copy_other_fields_from)
-      : context(new_context),
-        phase(copy_other_fields_from.phase),
-        cull_rect_(copy_other_fields_from.cull_rect_),
-        fragment_id_(copy_other_fields_from.fragment_id_),
-        paint_flags_(copy_other_fields_from.paint_flags_) {
-    // We should never pass these flags to other PaintInfo.
-    DCHECK(!copy_other_fields_from.is_painting_background_in_contents_space);
-    DCHECK(!copy_other_fields_from.skips_background_);
-  }
 
   // Creates a PaintInfo for painting descendants. See comments about the paint
   // phases in PaintPhase.h for details.
@@ -123,7 +112,7 @@ struct CORE_EXPORT PaintInfo {
 
   // Returns the fragment of the current painting object matching the current
   // layer fragment.
-  const FragmentData* LegacyFragmentToPaint(const LayoutObject& object) const {
+  const FragmentData* FragmentToPaint(const LayoutObject& object) const {
     if (fragment_id_ == WTF::kNotFound)
       return &object.FirstFragment();
     for (const auto* fragment = &object.FirstFragment(); fragment;
@@ -136,23 +125,6 @@ struct CORE_EXPORT PaintInfo {
     return nullptr;
   }
 
-  const FragmentData* FragmentToPaint(const LayoutObject& object) const {
-    if (const auto* box = DynamicTo<LayoutBox>(&object)) {
-      // We're are looking up FragmentData via LayoutObject, even though the
-      // object has NG fragments. This happens with objects that don't support
-      // fragment traversal, such as replaced content. We cannot use legacy-
-      // based lookup in such cases, as we might not have set a fragment ID to
-      // match against. Since we got here, though, it has to mean that we should
-      // paint the one and only fragment.
-      if (box->PhysicalFragmentCount()) {
-        DCHECK_EQ(box->PhysicalFragmentCount(), 1u);
-        DCHECK(!box->FirstFragment().NextFragment());
-        return &box->FirstFragment();
-      }
-    }
-    return LegacyFragmentToPaint(object);
-  }
-
   // Returns the FragmentData of the specified physical fragment. If we're
   // performing fragment traversal, it will map directly to the right
   // FragmentData. Otherwise we'll fall back to matching against the current
@@ -161,7 +133,7 @@ struct CORE_EXPORT PaintInfo {
       const NGPhysicalFragment& fragment) const {
     if (fragment_id_ == WTF::kNotFound)
       return fragment.GetFragmentData();
-    return LegacyFragmentToPaint(*fragment.GetLayoutObject());
+    return FragmentToPaint(*fragment.GetLayoutObject());
   }
 
   wtf_size_t FragmentID() const { return fragment_id_; }

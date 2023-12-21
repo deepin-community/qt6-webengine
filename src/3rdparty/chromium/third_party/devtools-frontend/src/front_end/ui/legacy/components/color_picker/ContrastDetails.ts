@@ -9,55 +9,54 @@ import * as Platform from '../../../../core/platform/platform.js';
 import * as Root from '../../../../core/root/root.js';
 import * as UI from '../../legacy.js';
 
-import type {ContrastInfo} from './ContrastInfo.js';
-import {Events as ContrastInfoEvents} from './ContrastInfo.js';
+import {Events as ContrastInfoEvents, type ContrastInfo} from './ContrastInfo.js';
 
 const UIStrings = {
   /**
-  *@description Label for when no contrast information is available in the color picker
-  */
+   *@description Label for when no contrast information is available in the color picker
+   */
   noContrastInformationAvailable: 'No contrast information available',
   /**
-  *@description Text of a DOM element in Contrast Details of the Color Picker
-  */
+   *@description Text of a DOM element in Contrast Details of the Color Picker
+   */
   contrastRatio: 'Contrast ratio',
   /**
-  *@description Text to show more content
-  */
+   *@description Text to show more content
+   */
   showMore: 'Show more',
   /**
-  *@description Choose bg color text content in Contrast Details of the Color Picker
-  */
+   *@description Choose bg color text content in Contrast Details of the Color Picker
+   */
   pickBackgroundColor: 'Pick background color',
   /**
-  *@description Tooltip text that appears when hovering over largeicon eyedropper button in Contrast Details of the Color Picker
-  */
+   *@description Tooltip text that appears when hovering over largeicon eyedropper button in Contrast Details of the Color Picker
+   */
   toggleBackgroundColorPicker: 'Toggle background color picker',
   /**
-  *@description Text of a button in Contrast Details of the Color Picker
-  *@example {rgba(0 0 0 / 100%) } PH1
-  */
+   *@description Text of a button in Contrast Details of the Color Picker
+   *@example {rgba(0 0 0 / 100%) } PH1
+   */
   useSuggestedColorStoFixLow: 'Use suggested color {PH1}to fix low contrast',
   /**
-  *@description Label for the APCA contrast in Color Picker
-  */
+   *@description Label for the APCA contrast in Color Picker
+   */
   apca: 'APCA',
   /**
-  *@description Label aa text content in Contrast Details of the Color Picker
-  */
+   *@description Label aa text content in Contrast Details of the Color Picker
+   */
   aa: 'AA',
   /**
-  *@description Text that starts with a colon and includes a placeholder
-  *@example {3.0} PH1
-  */
+   *@description Text that starts with a colon and includes a placeholder
+   *@example {3.0} PH1
+   */
   placeholderWithColon: ': {PH1}',
   /**
-  *@description Label aaa text content in Contrast Details of the Color Picker
-  */
+   *@description Label aaa text content in Contrast Details of the Color Picker
+   */
   aaa: 'AAA',
   /**
-  *@description Text to show less content
-  */
+   *@description Text to show less content
+   */
   showLess: 'Show less',
 };
 const str_ = i18n.i18n.registerUIStrings('ui/legacy/components/color_picker/ContrastDetails.ts', UIStrings);
@@ -68,7 +67,7 @@ export class ContrastDetails extends Common.ObjectWrapper.ObjectWrapper<EventTyp
   private readonly toggleMainColorPicker:
       (arg0?: boolean|undefined, arg1?: Common.EventTarget.EventTargetEvent<unknown>|undefined) => void;
   private readonly expandedChangedCallback: () => void;
-  private readonly colorSelectedCallback: (arg0: Common.Color.Color) => void;
+  private readonly colorSelectedCallback: (arg0: Common.Color.Legacy) => void;
   private expandedInternal: boolean;
   private passesAA: boolean;
   private contrastUnknown: boolean;
@@ -95,7 +94,7 @@ export class ContrastDetails extends Common.ObjectWrapper.ObjectWrapper<EventTyp
       contrastInfo: ContrastInfo, contentElement: Element,
       toggleMainColorPickerCallback:
           (arg0?: boolean|undefined, arg1?: Common.EventTarget.EventTargetEvent<unknown>|undefined) => void,
-      expandedChangedCallback: () => void, colorSelectedCallback: (arg0: Common.Color.Color) => void) {
+      expandedChangedCallback: () => void, colorSelectedCallback: (arg0: Common.Color.Legacy) => void) {
     super();
     this.contrastInfo = contrastInfo;
     this.elementInternal = contentElement.createChild('div', 'spectrum-contrast-details collapsed') as HTMLElement;
@@ -186,7 +185,7 @@ export class ContrastDetails extends Common.ObjectWrapper.ObjectWrapper<EventTyp
     this.noContrastInfoAvailable.classList.add('hidden');
   }
 
-  private computeSuggestedColor(threshold: string): Common.Color.Color|null|undefined {
+  private computeSuggestedColor(threshold: string): Common.Color.Legacy|null|undefined {
     const fgColor = this.contrastInfo.color();
     const bgColor = this.contrastInfo.bgColor();
     if (!fgColor || !bgColor) {
@@ -199,7 +198,7 @@ export class ContrastDetails extends Common.ObjectWrapper.ObjectWrapper<EventTyp
         return;
       }
       // We add 1% to the min required contrast to make sure we are over the limit.
-      return Common.Color.Color.findFgColorForContrastAPCA(fgColor, bgColor, requiredContrast + 1);
+      return Common.Color.findFgColorForContrastAPCA(fgColor, bgColor, requiredContrast + 1);
     }
 
     const requiredContrast = this.contrastInfo.contrastRatioThreshold(threshold);
@@ -208,7 +207,7 @@ export class ContrastDetails extends Common.ObjectWrapper.ObjectWrapper<EventTyp
     }
 
     // We add a bit to the required contrast to make sure we are over the limit.
-    return Common.Color.Color.findFgColorForContrast(fgColor, bgColor, requiredContrast + 0.1);
+    return Common.Color.findFgColorForContrast(fgColor, bgColor, requiredContrast + 0.1);
   }
 
   private onSuggestColor(threshold: string): void {
@@ -221,8 +220,7 @@ export class ContrastDetails extends Common.ObjectWrapper.ObjectWrapper<EventTyp
   private createFixColorButton(parent: Element, suggestedColor: Common.Color.Color): HTMLElement {
     const button = parent.createChild('button', 'contrast-fix-button') as HTMLElement;
     const originalColorFormat = this.contrastInfo.colorFormat();
-    const colorFormat = originalColorFormat && originalColorFormat !== Common.Color.Format.Nickname &&
-            originalColorFormat !== Common.Color.Format.Original ?
+    const colorFormat = originalColorFormat && originalColorFormat !== Common.Color.Format.Nickname ?
         originalColorFormat :
         Common.Color.Format.HEXA;
     const formattedColor = suggestedColor.asString(colorFormat);
@@ -290,6 +288,7 @@ export class ContrastDetails extends Common.ObjectWrapper.ObjectWrapper<EventTyp
       labelAPCA.addEventListener('click', (_event: Event) => ContrastDetails.showHelp());
       this.elementInternal.classList.toggle('contrast-fail', !passesAPCA);
       this.contrastValueBubble.classList.toggle('contrast-aa', passesAPCA);
+      this.bgColorSwatch.setColors(fgColor, bgColor);
       return;
     }
 
@@ -359,10 +358,8 @@ export class ContrastDetails extends Common.ObjectWrapper.ObjectWrapper<EventTyp
   }
 
   private static showHelp(): void {
-    // TODO(crbug.com/1253323): Cast to UrlString will be removed when migration to branded types is complete.
-    Host.InspectorFrontendHost.InspectorFrontendHostInstance.openInNewTab(
-        UI.UIUtils.addReferrerToURL('https://web.dev/color-and-contrast-accessibility/') as
-        Platform.DevToolsPath.UrlString);
+    Host.InspectorFrontendHost.InspectorFrontendHostInstance.openInNewTab(UI.UIUtils.addReferrerToURL(
+        'https://web.dev/color-and-contrast-accessibility/' as Platform.DevToolsPath.UrlString));
   }
 
   setVisible(visible: boolean): void {
@@ -456,7 +453,7 @@ export class ContrastDetails extends Common.ObjectWrapper.ObjectWrapper<EventTyp
     data: rgbColor,
   }: Common.EventTarget.EventTargetEvent<Host.InspectorFrontendHostAPI.EyeDropperPickedColorEvent>): void {
     const rgba = [rgbColor.r, rgbColor.g, rgbColor.b, (rgbColor.a / 2.55 | 0) / 100];
-    const color = Common.Color.Color.fromRGBA(rgba);
+    const color = Common.Color.Legacy.fromRGBA(rgba);
     this.contrastInfo.setBgColor(color);
     this.toggleBackgroundColorPickerInternal(false);
     Host.InspectorFrontendHost.InspectorFrontendHostInstance.bringToFront();
@@ -484,10 +481,10 @@ export class Swatch {
     this.textPreview.textContent = 'Aa';
   }
 
-  setColors(fgColor: Common.Color.Color, bgColor: Common.Color.Color): void {
+  setColors(fgColor: Common.Color.Legacy, bgColor: Common.Color.Legacy): void {
     this.textPreview.style.color = fgColor.asString(Common.Color.Format.RGBA) as string;
     this.swatchInnerElement.style.backgroundColor = bgColor.asString(Common.Color.Format.RGBA) as string;
     // Show border if the swatch is white.
-    this.swatchElement.classList.toggle('swatch-inner-white', bgColor.hsla()[2] > 0.9);
+    this.swatchElement.classList.toggle('swatch-inner-white', bgColor.as(Common.Color.Format.HSL).l > 0.9);
   }
 }

@@ -1,10 +1,11 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/modules/breakout_box/media_stream_video_track_underlying_source.h"
 
 #include "base/feature_list.h"
+#include "base/task/sequenced_task_runner.h"
 #include "media/capture/video/video_capture_buffer_pool_util.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
@@ -30,8 +31,9 @@ bool IsScreenOrWindowCapture(const std::string& device_id) {
 }
 }  // namespace
 
-const base::Feature kBreakoutBoxFrameLimiter{"BreakoutBoxFrameLimiter",
-                                             base::FEATURE_ENABLED_BY_DEFAULT};
+BASE_FEATURE(kBreakoutBoxFrameLimiter,
+             "BreakoutBoxFrameLimiter",
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 const int MediaStreamVideoTrackUnderlyingSource::kMaxMonitoredFrameCount = 20;
 const int MediaStreamVideoTrackUnderlyingSource::kMinMonitoredFrameCount = 2;

@@ -1,13 +1,13 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/offline_pages/core/background/offliner_client.h"
 
 #include "base/memory/raw_ptr.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/test/mock_callback.h"
 #include "base/test/test_mock_time_task_runner.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "components/offline_pages/core/background/offliner_stub.h"
 #include "components/offline_pages/core/background/save_page_request.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -36,7 +36,8 @@ class OfflinerClientTest : public testing::Test {
  protected:
   scoped_refptr<base::TestMockTimeTaskRunner> task_runner_{
       new base::TestMockTimeTaskRunner};
-  base::ThreadTaskRunnerHandle task_runner_handle_{task_runner_};
+  base::SingleThreadTaskRunner::CurrentDefaultHandle
+      task_runner_current_default_handle_{task_runner_};
 
   MockProgressCallback progress_callback_;
   raw_ptr<OfflinerStub> offliner_ = new OfflinerStub;

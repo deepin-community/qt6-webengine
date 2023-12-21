@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -21,6 +21,7 @@ class ReceiverMediaToMojoAdapter : public mojom::VideoFrameHandler {
   ~ReceiverMediaToMojoAdapter() override;
 
   // video_capture::mojom::VideoFrameHandler:
+  void OnCaptureConfigurationChanged() override;
   void OnNewBuffer(int32_t buffer_id,
                    media::mojom::VideoBufferHandlePtr buffer_handle) override;
   void OnFrameAccessHandlerReady(
@@ -32,6 +33,7 @@ class ReceiverMediaToMojoAdapter : public mojom::VideoFrameHandler {
   void OnBufferRetired(int32_t buffer_id) override;
   void OnError(media::VideoCaptureError error) override;
   void OnFrameDropped(media::VideoCaptureFrameDropReason reason) override;
+  void OnNewCropVersion(uint32_t crop_version) override;
   void OnFrameWithEmptyRegionCapture() override;
   void OnLog(const std::string& message) override;
   void OnStarted() override;

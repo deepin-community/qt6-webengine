@@ -9,7 +9,6 @@
 
 #include <memory>
 
-#include "include/sksl/DSL.h"
 #include "src/gpu/ganesh/GrCaps.h"
 #include "src/gpu/ganesh/GrFragmentProcessor.h"
 #include "src/gpu/ganesh/GrGeometryProcessor.h"
@@ -21,7 +20,8 @@
 #include "src/gpu/ganesh/effects/GrTextureEffect.h"
 #include "src/gpu/ganesh/glsl/GrGLSLVarying.h"
 #include "src/sksl/SkSLCompiler.h"
-#include "src/sksl/dsl/priv/DSLFPs.h"
+
+using namespace skia_private;
 
 const int GrGLSLProgramBuilder::kVarsPerBlock = 8;
 
@@ -49,7 +49,6 @@ void GrGLSLProgramBuilder::addFeature(GrShaderFlags shaders,
 bool GrGLSLProgramBuilder::emitAndInstallProcs() {
     // First we loop over all of the installed processors and collect coord transforms.  These will
     // be sent to the ProgramImpl in its emitCode function
-    SkSL::dsl::Start(this->shaderCompiler());
     SkString inputColor;
     SkString inputCoverage;
     if (!this->emitAndInstallPrimProc(&inputColor, &inputCoverage)) {
@@ -65,7 +64,6 @@ bool GrGLSLProgramBuilder::emitAndInstallProcs() {
         return false;
     }
     fGPImpl->emitTransformCode(&fVS, this->uniformHandler());
-    SkSL::dsl::End();
 
     return this->checkSamplerCounts();
 }
@@ -79,14 +77,8 @@ bool GrGLSLProgramBuilder::emitAndInstallPrimProc(SkString* outputColor, SkStrin
     this->nameExpression(outputCoverage, "outputCoverage");
 
     SkASSERT(!fUniformHandles.fRTAdjustmentUni.isValid());
-    GrShaderFlags rtAdjustVisibility;
-    if (geomProc.willUseTessellationShaders()) {
-        rtAdjustVisibility = kTessEvaluation_GrShaderFlag;
-    } else {
-        rtAdjustVisibility = kVertex_GrShaderFlag;
-    }
     fUniformHandles.fRTAdjustmentUni = this->uniformHandler()->addUniform(
-            nullptr, rtAdjustVisibility, SkSLType::kFloat4, SkSL::Compiler::RTADJUST_NAME);
+            nullptr, kVertex_GrShaderFlag, SkSLType::kFloat4, SkSL::Compiler::RTADJUST_NAME);
 
     fFS.codeAppendf("// Stage %d, %s\n", fStageIndex, geomProc.name());
     fVS.codeAppendf("// Primitive Processor %s\n", geomProc.name());
@@ -94,7 +86,7 @@ bool GrGLSLProgramBuilder::emitAndInstallPrimProc(SkString* outputColor, SkStrin
     SkASSERT(!fGPImpl);
     fGPImpl = geomProc.makeProgramImpl(*this->shaderCaps());
 
-    SkAutoSTArray<4, SamplerHandle> texSamplers(geomProc.numTextureSamplers());
+    AutoSTArray<4, SamplerHandle> texSamplers(geomProc.numTextureSamplers());
     for (int i = 0; i < geomProc.numTextureSamplers(); ++i) {
         SkString name;
         name.printf("TextureSampler_%d", i);
@@ -282,7 +274,7 @@ void GrGLSLProgramBuilder::writeFPFunction(const GrFragmentProcessor& fp,
         }
     }
 
-    SkASSERT(numParams <= (int)SK_ARRAY_COUNT(params));
+    SkASSERT(numParams <= (int)std::size(params));
 
     // First, emit every child's function. This needs to happen (even for children that aren't
     // sampled), so that all of the expected uniforms are registered.
@@ -300,7 +292,7 @@ void GrGLSLProgramBuilder::writeFPFunction(const GrFragmentProcessor& fp,
 
     fFS.emitFunction(SkSLType::kHalf4,
                      impl.functionName(),
-                     SkMakeSpan(params, numParams),
+                     SkSpan(params, numParams),
                      fFS.code().c_str());
     fFS.deleteStage();
 }
@@ -332,10 +324,21 @@ bool GrGLSLProgramBuilder::emitAndInstallDstTexture() {
                 "DstTextureCoords",
                 &dstTextureCoordsName);
         fFS.codeAppend("// Read color from copy of the destination\n");
-        fFS.codeAppendf("half2 _dstTexCoord = (half2(sk_FragCoord.xy) - %s.xy) * %s.zw;\n",
-                        dstTextureCoordsName, dstTextureCoordsName);
-        if (fDstTextureOrigin == kBottomLeft_GrSurfaceOrigin) {
-            fFS.codeAppend("_dstTexCoord.y = 1.0 - _dstTexCoord.y;\n");
+        if (dstTextureProxy->textureType() == GrTextureType::k2D) {
+            fFS.codeAppendf("half2 _dstTexCoord = (half2(sk_FragCoord.xy) - %s.xy) * %s.zw;\n",
+                    dstTextureCoordsName, dstTextureCoordsName);
+            if (fDstTextureOrigin == kBottomLeft_GrSurfaceOrigin) {
+                fFS.codeAppend("_dstTexCoord.y = 1.0 - _dstTexCoord.y;\n");
+            }
+        } else {
+            SkASSERT(dstTextureProxy->textureType() == GrTextureType::kRectangle);
+            fFS.codeAppendf("half2 _dstTexCoord = (half2(sk_FragCoord.xy) - %s.xy);\n",
+                    dstTextureCoordsName);
+            if (fDstTextureOrigin == kBottomLeft_GrSurfaceOrigin) {
+                // When the texture type is kRectangle, instead of a scale stored in the zw of the
+                // uniform, we store the height in z so we can flip the coord here.
+                fFS.codeAppendf("_dstTexCoord.y = %s.z - _dstTexCoord.y;\n", dstTextureCoordsName);
+            }
         }
         const char* dstColor = fFS.dstColor();
         SkString dstColorDecl = SkStringPrintf("half4 %s;", dstColor);
@@ -377,10 +380,6 @@ bool GrGLSLProgramBuilder::emitAndInstallXferProc(const SkString& colorIn,
     // Enable dual source secondary output if we have one
     if (xp.hasSecondaryOutput()) {
         fFS.enableSecondaryOutput();
-    }
-
-    if (this->shaderCaps()->mustDeclareFragmentShaderOutput()) {
-        fFS.enableCustomOutput();
     }
 
     SkString openBrace;
@@ -425,7 +424,7 @@ GrGLSLProgramBuilder::SamplerHandle GrGLSLProgramBuilder::emitInputSampler(
 
 bool GrGLSLProgramBuilder::checkSamplerCounts() {
     const GrShaderCaps& shaderCaps = *this->shaderCaps();
-    if (fNumFragmentSamplers > shaderCaps.maxFragmentSamplers()) {
+    if (fNumFragmentSamplers > shaderCaps.fMaxFragmentSamplers) {
         GrCapsDebugf(this->caps(), "Program would use too many fragment samplers\n");
         return false;
     }

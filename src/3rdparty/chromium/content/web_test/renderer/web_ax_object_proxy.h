@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,6 +12,7 @@
 
 #include "gin/object_template_builder.h"
 #include "gin/wrappable.h"
+#include "third_party/blink/public/web/web_ax_context.h"
 #include "third_party/blink/public/web/web_ax_object.h"
 #include "ui/accessibility/ax_event_intent.h"
 #include "v8/include/v8.h"
@@ -29,6 +30,7 @@ class WebAXObjectProxy : public gin::Wrappable<WebAXObjectProxy> {
     virtual ~Factory() {}
     virtual v8::Local<v8::Object> GetOrCreate(
         const blink::WebAXObject& object) = 0;
+    virtual blink::WebAXContext* GetAXContext() = 0;
   };
 
   static gin::WrapperInfo kWrapperInfo;
@@ -195,6 +197,7 @@ class WebAXObjectProxy : public gin::Wrappable<WebAXObjectProxy> {
   bool IsPressActionSupported();
   bool IsIncrementActionSupported();
   bool IsDecrementActionSupported();
+  bool HasDefaultAction();
   v8::Local<v8::Object> ParentElement();
   void Increment();
   void Decrement();
@@ -208,6 +211,8 @@ class WebAXObjectProxy : public gin::Wrappable<WebAXObjectProxy> {
   void ScrollToMakeVisible();
   void ScrollToMakeVisibleWithSubFocus(int x, int y, int width, int height);
   void ScrollToGlobalPoint(int x, int y);
+  void ScrollUp();
+  void ScrollDown();
   int ScrollX();
   int ScrollY();
   std::string ToString();
@@ -241,7 +246,7 @@ class WebAXObjectProxy : public gin::Wrappable<WebAXObjectProxy> {
   blink::WebAXObject accessibility_object_;
   Factory* factory_;
 
-  v8::Persistent<v8::Function> notification_callback_;
+  v8::Global<v8::Function> notification_callback_;
 };
 
 class RootWebAXObjectProxy : public WebAXObjectProxy {
@@ -252,25 +257,18 @@ class RootWebAXObjectProxy : public WebAXObjectProxy {
   bool IsRoot() const override;
 };
 
-// Provides simple lifetime management of the WebAXObjectProxy instances: all
-// WebAXObjectProxys ever created from the controller are stored in a list and
-// cleared explicitly.
 class WebAXObjectProxyList : public WebAXObjectProxy::Factory {
  public:
-  WebAXObjectProxyList();
+  explicit WebAXObjectProxyList(blink::WebAXContext&);
   ~WebAXObjectProxyList() override;
 
   void Clear();
   v8::Local<v8::Object> GetOrCreate(const blink::WebAXObject&) override;
+  blink::WebAXContext* GetAXContext() override;
 
  private:
-  // Defines the Persistents as copyable because v8 does not support moving
-  // in non-copyable (default) traits either.
-  using CopyablePersistentObject =
-      v8::Persistent<v8::Object, v8::CopyablePersistentTraits<v8::Object>>;
-  // Because the v8::Persistent in this container uses CopyablePersistentObject
-  // traits, it will not leak on destruction.
-  std::vector<CopyablePersistentObject> elements_;
+  std::vector<v8::Global<v8::Object>> elements_;
+  blink::WebAXContext* const ax_context_;
 };
 
 }  // namespace content

@@ -88,6 +88,7 @@
 #include "protos/perfetto/trace/perfetto/tracing_service_event.pbzero.h"
 #include "protos/perfetto/trace/system_info.pbzero.h"
 #include "protos/perfetto/trace/trace_packet.pbzero.h"
+#include "protos/perfetto/trace/trace_uuid.pbzero.h"
 #include "protos/perfetto/trace/trigger.pbzero.h"
 
 // General note: this class must assume that Producers are malicious and will
@@ -281,10 +282,10 @@ bool ShouldLogEvent(const TraceConfig& cfg) {
     case TraceConfig::STATSD_LOGGING_DISABLED:
       return false;
     case TraceConfig::STATSD_LOGGING_UNSPECIFIED:
-      // For backward compatibility with older versions of perfetto_cmd.
-      return cfg.enable_extra_guardrails();
+      break;
   }
-  PERFETTO_FATAL("For GCC");
+  // For backward compatibility with older versions of perfetto_cmd.
+  return cfg.enable_extra_guardrails();
 }
 
 // Appends `data` (which has `size` bytes), to `*packet`. Splits the data in
@@ -312,13 +313,12 @@ void AppendOwnedSlicesToPacket(std::unique_ptr<uint8_t[]> data,
 
 }  // namespace
 
+#if !PERFETTO_IS_AT_LEAST_CPP17()
 // These constants instead are defined in the header because are used by tests.
-constexpr size_t TracingServiceImpl::kDefaultShmSize;
-constexpr size_t TracingServiceImpl::kDefaultShmPageSize;
-
 constexpr size_t TracingServiceImpl::kMaxShmSize;
 constexpr uint32_t TracingServiceImpl::kDataSourceStopTimeoutMs;
 constexpr uint8_t TracingServiceImpl::kSyncMarker[];
+#endif
 
 std::string GetBugreportPath() {
 #if PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID) && \
@@ -567,9 +567,17 @@ base::Status TracingServiceImpl::EnableTracing(ConsumerEndpointImpl* consumer,
                                                const TraceConfig& cfg,
                                                base::ScopedFile fd) {
   PERFETTO_DCHECK_THREAD(thread_checker_);
-  PERFETTO_DLOG("Enabling tracing for consumer %p",
-                reinterpret_cast<void*>(consumer));
-  MaybeLogUploadEvent(cfg, PerfettoStatsdAtom::kTracedEnableTracing);
+
+  // If the producer is specifying a UUID, respect that (at least for the first
+  // snapshot). Otherwise generate a new UUID.
+  base::Uuid uuid(cfg.trace_uuid_lsb(), cfg.trace_uuid_msb());
+  if (!uuid)
+    uuid = base::Uuidv4();
+
+  PERFETTO_DLOG("Enabling tracing for consumer %p, UUID: %s",
+                reinterpret_cast<void*>(consumer),
+                uuid.ToPrettyString().c_str());
+  MaybeLogUploadEvent(cfg, uuid, PerfettoStatsdAtom::kTracedEnableTracing);
   if (cfg.lockdown_mode() == TraceConfig::LOCKDOWN_SET)
     lockdown_mode_ = true;
   if (cfg.lockdown_mode() == TraceConfig::LOCKDOWN_CLEAR)
@@ -582,7 +590,8 @@ base::Status TracingServiceImpl::EnableTracing(ConsumerEndpointImpl* consumer,
         GetTracingSession(consumer->tracing_session_id_);
     if (tracing_session) {
       MaybeLogUploadEvent(
-          cfg, PerfettoStatsdAtom::kTracedEnableTracingExistingTraceSession);
+          cfg, uuid,
+          PerfettoStatsdAtom::kTracedEnableTracingExistingTraceSession);
       return PERFETTO_SVC_ERR(
           "A Consumer is trying to EnableTracing() but another tracing "
           "session is already active (forgot a call to FreeBuffers() ?)");
@@ -593,7 +602,7 @@ base::Status TracingServiceImpl::EnableTracing(ConsumerEndpointImpl* consumer,
                                        ? kGuardrailsMaxTracingDurationMillis
                                        : kMaxTracingDurationMillis;
   if (cfg.duration_ms() > max_duration_ms) {
-    MaybeLogUploadEvent(cfg,
+    MaybeLogUploadEvent(cfg, uuid,
                         PerfettoStatsdAtom::kTracedEnableTracingTooLongTrace);
     return PERFETTO_SVC_ERR("Requested too long trace (%" PRIu32
                             "ms  > %" PRIu32 " ms)",
@@ -606,7 +615,8 @@ base::Status TracingServiceImpl::EnableTracing(ConsumerEndpointImpl* consumer,
                              cfg.trigger_config().trigger_timeout_ms() >
                                  kGuardrailsMaxTracingDurationMillis)) {
     MaybeLogUploadEvent(
-        cfg, PerfettoStatsdAtom::kTracedEnableTracingInvalidTriggerTimeout);
+        cfg, uuid,
+        PerfettoStatsdAtom::kTracedEnableTracingInvalidTriggerTimeout);
     return PERFETTO_SVC_ERR(
         "Traces with START_TRACING triggers must provide a positive "
         "trigger_timeout_ms < 7 days (received %" PRIu32 "ms)",
@@ -615,7 +625,7 @@ base::Status TracingServiceImpl::EnableTracing(ConsumerEndpointImpl* consumer,
 
   if (has_trigger_config && cfg.duration_ms() != 0) {
     MaybeLogUploadEvent(
-        cfg, PerfettoStatsdAtom::kTracedEnableTracingDurationWithTrigger);
+        cfg, uuid, PerfettoStatsdAtom::kTracedEnableTracingDurationWithTrigger);
     return PERFETTO_SVC_ERR(
         "duration_ms was set, this must not be set for traces with triggers.");
   }
@@ -630,7 +640,8 @@ base::Status TracingServiceImpl::EnableTracing(ConsumerEndpointImpl* consumer,
     // emitting them wildy out of order breaking windowed sorting in trace
     // processor).
     MaybeLogUploadEvent(
-        cfg, PerfettoStatsdAtom::kTracedEnableTracingStopTracingWriteIntoFile);
+        cfg, uuid,
+        PerfettoStatsdAtom::kTracedEnableTracingStopTracingWriteIntoFile);
     return PERFETTO_SVC_ERR(
         "Specifying trigger mode STOP_TRACING and write_into_file together is "
         "unsupported");
@@ -640,7 +651,8 @@ base::Status TracingServiceImpl::EnableTracing(ConsumerEndpointImpl* consumer,
   for (const auto& trigger : cfg.trigger_config().triggers()) {
     if (!triggers.insert(trigger.name()).second) {
       MaybeLogUploadEvent(
-          cfg, PerfettoStatsdAtom::kTracedEnableTracingDuplicateTriggerName);
+          cfg, uuid,
+          PerfettoStatsdAtom::kTracedEnableTracingDuplicateTriggerName);
       return PERFETTO_SVC_ERR("Duplicate trigger name: %s",
                               trigger.name().c_str());
     }
@@ -649,7 +661,8 @@ base::Status TracingServiceImpl::EnableTracing(ConsumerEndpointImpl* consumer,
   if (cfg.enable_extra_guardrails()) {
     if (cfg.deferred_start()) {
       MaybeLogUploadEvent(
-          cfg, PerfettoStatsdAtom::kTracedEnableTracingInvalidDeferredStart);
+          cfg, uuid,
+          PerfettoStatsdAtom::kTracedEnableTracingInvalidDeferredStart);
       return PERFETTO_SVC_ERR(
           "deferred_start=true is not supported in unsupervised traces");
     }
@@ -657,24 +670,30 @@ base::Status TracingServiceImpl::EnableTracing(ConsumerEndpointImpl* consumer,
     for (const auto& buf : cfg.buffers()) {
       if (buf.size_kb() % 4 != 0) {
         MaybeLogUploadEvent(
-            cfg, PerfettoStatsdAtom::kTracedEnableTracingInvalidBufferSize);
+            cfg, uuid,
+            PerfettoStatsdAtom::kTracedEnableTracingInvalidBufferSize);
         return PERFETTO_SVC_ERR(
             "buffers.size_kb must be a multiple of 4, got %" PRIu32,
             buf.size_kb());
       }
       buf_size_sum += buf.size_kb();
     }
-    if (buf_size_sum > kGuardrailsMaxTracingBufferSizeKb) {
+
+    uint32_t max_tracing_buffer_size_kb =
+        std::max(kGuardrailsMaxTracingBufferSizeKb,
+                 cfg.guardrail_overrides().max_tracing_buffer_size_kb());
+    if (buf_size_sum > max_tracing_buffer_size_kb) {
       MaybeLogUploadEvent(
-          cfg, PerfettoStatsdAtom::kTracedEnableTracingBufferSizeTooLarge);
+          cfg, uuid,
+          PerfettoStatsdAtom::kTracedEnableTracingBufferSizeTooLarge);
       return PERFETTO_SVC_ERR("Requested too large trace buffer (%" PRIu64
                               "kB  > %" PRIu32 " kB)",
-                              buf_size_sum, kGuardrailsMaxTracingBufferSizeKb);
+                              buf_size_sum, max_tracing_buffer_size_kb);
     }
   }
 
   if (cfg.buffers_size() > kMaxBuffersPerConsumer) {
-    MaybeLogUploadEvent(cfg,
+    MaybeLogUploadEvent(cfg, uuid,
                         PerfettoStatsdAtom::kTracedEnableTracingTooManyBuffers);
     return PERFETTO_SVC_ERR("Too many buffers configured (%d)",
                             cfg.buffers_size());
@@ -687,7 +706,7 @@ base::Status TracingServiceImpl::EnableTracing(ConsumerEndpointImpl* consumer,
     size_t target_buffer = cfg_data_source.config().target_buffer();
     if (target_buffer >= num_buffers) {
       MaybeLogUploadEvent(
-          cfg, PerfettoStatsdAtom::kTracedEnableTracingOobTargetBuffer);
+          cfg, uuid, PerfettoStatsdAtom::kTracedEnableTracingOobTargetBuffer);
       return PERFETTO_SVC_ERR(
           "Data source \"%s\" specified an out of bounds target_buffer (%zu >= "
           "%zu)",
@@ -698,9 +717,12 @@ base::Status TracingServiceImpl::EnableTracing(ConsumerEndpointImpl* consumer,
   if (!cfg.unique_session_name().empty()) {
     const std::string& name = cfg.unique_session_name();
     for (auto& kv : tracing_sessions_) {
+      if (kv.second.state == TracingSession::CLONED_READ_ONLY)
+        continue;  // Don't consider cloned sessions in uniqueness checks.
       if (kv.second.config.unique_session_name() == name) {
         MaybeLogUploadEvent(
-            cfg, PerfettoStatsdAtom::kTracedEnableTracingDuplicateSessionName);
+            cfg, uuid,
+            PerfettoStatsdAtom::kTracedEnableTracingDuplicateSessionName);
         static const char fmt[] =
             "A trace with this unique session name (%s) already exists";
         // This happens frequently, don't make it an "E"LOG.
@@ -731,7 +753,8 @@ base::Status TracingServiceImpl::EnableTracing(ConsumerEndpointImpl* consumer,
       previous_s = now_s;
     } else {
       MaybeLogUploadEvent(
-          cfg, PerfettoStatsdAtom::kTracedEnableTracingSessionNameTooRecent);
+          cfg, uuid,
+          PerfettoStatsdAtom::kTracedEnableTracingSessionNameTooRecent);
       return PERFETTO_SVC_ERR(
           "A trace with unique session name \"%s\" began less than %" PRId64
           "s ago (%" PRId64 "s)",
@@ -751,7 +774,8 @@ base::Status TracingServiceImpl::EnableTracing(ConsumerEndpointImpl* consumer,
   }
   if (sessions_for_uid >= per_uid_limit) {
     MaybeLogUploadEvent(
-        cfg, PerfettoStatsdAtom::kTracedEnableTracingTooManySessionsForUid);
+        cfg, uuid,
+        PerfettoStatsdAtom::kTracedEnableTracingTooManySessionsForUid);
     return PERFETTO_SVC_ERR(
         "Too many concurrent tracing sesions (%d) for uid %d limit is %d",
         sessions_for_uid, static_cast<int>(consumer->uid_), per_uid_limit);
@@ -763,7 +787,8 @@ base::Status TracingServiceImpl::EnableTracing(ConsumerEndpointImpl* consumer,
   // trace_probes and the way it handles stalls in the shmem buffer.
   if (tracing_sessions_.size() >= kMaxConcurrentTracingSessions) {
     MaybeLogUploadEvent(
-        cfg, PerfettoStatsdAtom::kTracedEnableTracingTooManyConcurrentSessions);
+        cfg, uuid,
+        PerfettoStatsdAtom::kTracedEnableTracingTooManyConcurrentSessions);
     return PERFETTO_SVC_ERR("Too many concurrent tracing sesions (%zu)",
                             tracing_sessions_.size());
   }
@@ -778,7 +803,7 @@ base::Status TracingServiceImpl::EnableTracing(ConsumerEndpointImpl* consumer,
     trace_filter.reset(new protozero::MessageFilter());
     if (!trace_filter->LoadFilterBytecode(bytecode.data(), bytecode.size())) {
       MaybeLogUploadEvent(
-          cfg, PerfettoStatsdAtom::kTracedEnableTracingInvalidFilter);
+          cfg, uuid, PerfettoStatsdAtom::kTracedEnableTracingInvalidFilter);
       return PERFETTO_SVC_ERR("Trace filter bytecode invalid, aborting");
     }
     // The filter is created using perfetto.protos.Trace as root message
@@ -792,7 +817,7 @@ base::Status TracingServiceImpl::EnableTracing(ConsumerEndpointImpl* consumer,
     uint32_t packet_field_id = TracePacket::kPacketFieldNumber;
     if (!trace_filter->SetFilterRoot(&packet_field_id, 1)) {
       MaybeLogUploadEvent(
-          cfg, PerfettoStatsdAtom::kTracedEnableTracingInvalidFilter);
+          cfg, uuid, PerfettoStatsdAtom::kTracedEnableTracingInvalidFilter);
       return PERFETTO_SVC_ERR("Failed to set filter root.");
     }
   }
@@ -804,15 +829,17 @@ base::Status TracingServiceImpl::EnableTracing(ConsumerEndpointImpl* consumer,
                     std::forward_as_tuple(tsid, consumer, cfg, task_runner_))
            .first->second;
 
+  tracing_session->trace_uuid = uuid;
+
   if (trace_filter)
     tracing_session->trace_filter = std::move(trace_filter);
 
   if (cfg.write_into_file()) {
     if (!fd ^ !cfg.output_path().empty()) {
-      tracing_sessions_.erase(tsid);
       MaybeLogUploadEvent(
-          tracing_session->config,
+          tracing_session->config, uuid,
           PerfettoStatsdAtom::kTracedEnableTracingInvalidFdOutputFile);
+      tracing_sessions_.erase(tsid);
       return PERFETTO_SVC_ERR(
           "When write_into_file==true either a FD needs to be passed or "
           "output_path must be populated (but not both)");
@@ -821,7 +848,7 @@ base::Status TracingServiceImpl::EnableTracing(ConsumerEndpointImpl* consumer,
       fd = CreateTraceFile(cfg.output_path(), /*overwrite=*/false);
       if (!fd) {
         MaybeLogUploadEvent(
-            tracing_session->config,
+            tracing_session->config, uuid,
             PerfettoStatsdAtom::kTracedEnableTracingFailedToCreateFile);
         tracing_sessions_.erase(tsid);
         return PERFETTO_SVC_ERR("Failed to create the trace file %s",
@@ -841,6 +868,7 @@ base::Status TracingServiceImpl::EnableTracing(ConsumerEndpointImpl* consumer,
 
   // Initialize the log buffers.
   bool did_allocate_all_buffers = true;
+  bool invalid_buffer_config = false;
 
   // Allocate the trace buffers. Also create a map to translate a consumer
   // relative index (TraceConfig.DataSourceConfig.target_buffer) into the
@@ -857,14 +885,24 @@ base::Status TracingServiceImpl::EnableTracing(ConsumerEndpointImpl* consumer,
       break;
     }
     tracing_session->buffers_index.push_back(global_id);
-    const size_t buf_size_bytes = buffer_cfg.size_kb() * 1024u;
-    total_buf_size_kb += buffer_cfg.size_kb();
+    // TraceBuffer size is limited to 32-bit.
+    const uint32_t buf_size_kb = buffer_cfg.size_kb();
+    const uint64_t buf_size_bytes = buf_size_kb * static_cast<uint64_t>(1024);
+    const size_t buf_size = static_cast<size_t>(buf_size_bytes);
+    if (buf_size_bytes == 0 ||
+        buf_size_bytes > std::numeric_limits<uint32_t>::max() ||
+        buf_size != buf_size_bytes) {
+      invalid_buffer_config = true;
+      did_allocate_all_buffers = false;
+      break;
+    }
+    total_buf_size_kb += buf_size_kb;
     TraceBuffer::OverwritePolicy policy =
         buffer_cfg.fill_policy() == TraceConfig::BufferConfig::DISCARD
             ? TraceBuffer::kDiscard
             : TraceBuffer::kOverwrite;
-    auto it_and_inserted = buffers_.emplace(
-        global_id, TraceBuffer::Create(buf_size_bytes, policy));
+    auto it_and_inserted =
+        buffers_.emplace(global_id, TraceBuffer::Create(buf_size, policy));
     PERFETTO_DCHECK(it_and_inserted.second);  // buffers_.count(global_id) == 0.
     std::unique_ptr<TraceBuffer>& trace_buffer = it_and_inserted.first->second;
     if (!trace_buffer) {
@@ -873,24 +911,28 @@ base::Status TracingServiceImpl::EnableTracing(ConsumerEndpointImpl* consumer,
     }
   }
 
-  UpdateMemoryGuardrail();
-
   // This can happen if either:
   // - All the kMaxTraceBufferID slots are taken.
-  // - OOM, or, more relistically, we exhausted virtual memory.
+  // - OOM, or, more realistically, we exhausted virtual memory.
+  // - The buffer size in the config is invalid.
   // In any case, free all the previously allocated buffers and abort.
-  // TODO(fmayer): add a test to cover this case, this is quite subtle.
   if (!did_allocate_all_buffers) {
     for (BufferID global_id : tracing_session->buffers_index) {
       buffer_ids_.Free(global_id);
       buffers_.erase(global_id);
     }
-    tracing_sessions_.erase(tsid);
-    MaybeLogUploadEvent(tracing_session->config,
+    MaybeLogUploadEvent(tracing_session->config, uuid,
                         PerfettoStatsdAtom::kTracedEnableTracingOom);
+    tracing_sessions_.erase(tsid);
+    if (invalid_buffer_config) {
+      return PERFETTO_SVC_ERR(
+          "Failed to allocate tracing buffers: Invalid buffer sizes");
+    }
     return PERFETTO_SVC_ERR(
         "Failed to allocate tracing buffers: OOM or too many buffers");
   }
+
+  UpdateMemoryGuardrail();
 
   consumer->tracing_session_id_ = tsid;
 
@@ -945,9 +987,12 @@ base::Status TracingServiceImpl::EnableTracing(ConsumerEndpointImpl* consumer,
   tracing_session->state = TracingSession::CONFIGURED;
   PERFETTO_LOG(
       "Configured tracing session %" PRIu64
-      ", #sources:%zu, duration:%d ms, #buffers:%d, total "
+      ", #sources:%zu, duration:%d ms%s, #buffers:%d, total "
       "buffer size:%zu KB, total sessions:%zu, uid:%d session name: \"%s\"",
       tsid, cfg.data_sources().size(), tracing_session->config.duration_ms(),
+      tracing_session->config.prefer_suspend_clock_for_duration()
+          ? " (suspend_clock)"
+          : "",
       cfg.buffers_size(), total_buf_size_kb, tracing_sessions_.size(),
       static_cast<unsigned int>(consumer->uid_),
       cfg.unique_session_name().c_str());
@@ -1090,12 +1135,12 @@ base::Status TracingServiceImpl::StartTracing(TracingSessionID tsid) {
         "StartTracing() failed, invalid session ID %" PRIu64, tsid);
   }
 
-  MaybeLogUploadEvent(tracing_session->config,
+  MaybeLogUploadEvent(tracing_session->config, tracing_session->trace_uuid,
                       PerfettoStatsdAtom::kTracedStartTracing);
 
   if (tracing_session->state != TracingSession::CONFIGURED) {
     MaybeLogUploadEvent(
-        tracing_session->config,
+        tracing_session->config, tracing_session->trace_uuid,
         PerfettoStatsdAtom::kTracedStartTracingInvalidSessionState);
     return PERFETTO_SVC_ERR("StartTracing() failed, invalid session state: %d",
                             tracing_session->state);
@@ -1147,28 +1192,19 @@ base::Status TracingServiceImpl::StartTracing(TracingSessionID tsid) {
   // Trigger delayed task if the trace is time limited.
   const uint32_t trace_duration_ms = tracing_session->config.duration_ms();
   if (trace_duration_ms > 0) {
-    task_runner_->PostDelayedTask(
-        [weak_this, tsid] {
-          // Skip entirely the flush if the trace session doesn't exist anymore.
-          // This is to prevent misleading error messages to be logged.
-          if (!weak_this)
-            return;
-          auto* tracing_session_ptr = weak_this->GetTracingSession(tsid);
-          if (!tracing_session_ptr)
-            return;
-          // If this trace was using STOP_TRACING triggers and we've seen
-          // one, then the trigger overrides the normal timeout. In this
-          // case we just return and let the other task clean up this trace.
-          if (tracing_session_ptr->config.trigger_config().trigger_mode() ==
-                  TraceConfig::TriggerConfig::STOP_TRACING &&
-              !tracing_session_ptr->received_triggers.empty())
-            return;
-          // In all other cases (START_TRACING or no triggers) we flush
-          // after |trace_duration_ms| unconditionally.
-          weak_this->FlushAndDisableTracing(tsid);
-        },
-        trace_duration_ms);
-  }
+    auto stop_task =
+        std::bind(&TracingServiceImpl::StopOnDurationMsExpiry, weak_this, tsid);
+    if (tracing_session->config.prefer_suspend_clock_for_duration()) {
+      base::PeriodicTask::Args stop_args;
+      stop_args.use_suspend_aware_timer = true;
+      stop_args.period_ms = trace_duration_ms;
+      stop_args.one_shot = true;
+      stop_args.task = std::move(stop_task);
+      tracing_session->timed_stop_task.Start(stop_args);
+    } else {
+      task_runner_->PostDelayedTask(std::move(stop_task), trace_duration_ms);
+    }
+  }  // if (trace_duration_ms > 0).
 
   // Start the periodic drain tasks if we should to save the trace into a file.
   if (tracing_session->config.write_into_file()) {
@@ -1203,6 +1239,29 @@ base::Status TracingServiceImpl::StartTracing(TracingSessionID tsid) {
 
   MaybeNotifyAllDataSourcesStarted(tracing_session);
   return base::OkStatus();
+}
+
+// static
+void TracingServiceImpl::StopOnDurationMsExpiry(
+    base::WeakPtr<TracingServiceImpl> weak_this,
+    TracingSessionID tsid) {
+  // Skip entirely the flush if the trace session doesn't exist anymore.
+  // This is to prevent misleading error messages to be logged.
+  if (!weak_this)
+    return;
+  auto* tracing_session_ptr = weak_this->GetTracingSession(tsid);
+  if (!tracing_session_ptr)
+    return;
+  // If this trace was using STOP_TRACING triggers and we've seen
+  // one, then the trigger overrides the normal timeout. In this
+  // case we just return and let the other task clean up this trace.
+  if (tracing_session_ptr->config.trigger_config().trigger_mode() ==
+          TraceConfig::TriggerConfig::STOP_TRACING &&
+      !tracing_session_ptr->received_triggers.empty())
+    return;
+  // In all other cases (START_TRACING or no triggers) we flush
+  // after |trace_duration_ms| unconditionally.
+  weak_this->FlushAndDisableTracing(tsid);
 }
 
 void TracingServiceImpl::StartDataSourceInstance(
@@ -1241,13 +1300,17 @@ void TracingServiceImpl::DisableTracing(TracingSessionID tsid,
     return;
   }
 
-  MaybeLogUploadEvent(tracing_session->config,
+  MaybeLogUploadEvent(tracing_session->config, tracing_session->trace_uuid,
                       PerfettoStatsdAtom::kTracedDisableTracing);
 
   switch (tracing_session->state) {
     // Spurious call to DisableTracing() while already disabled, nothing to do.
     case TracingSession::DISABLED:
       PERFETTO_DCHECK(tracing_session->AllDataSourceInstancesStopped());
+      return;
+
+    case TracingSession::CLONED_READ_ONLY:
+      PERFETTO_DLOG("DisableTracing() cannot be called on a cloned session");
       return;
 
     // This is either:
@@ -1427,7 +1490,7 @@ void TracingServiceImpl::ActivateTriggers(
   for (const auto& trigger_name : triggers) {
     PERFETTO_DLOG("Received ActivateTriggers request for \"%s\"",
                   trigger_name.c_str());
-    base::Hash hash;
+    base::Hasher hash;
     hash.Update(trigger_name.c_str(), trigger_name.size());
     std::string triggered_session_name;
     base::Uuid triggered_session_uuid;
@@ -1449,9 +1512,10 @@ void TracingServiceImpl::ActivateTriggers(
           [&trigger_name](const TraceConfig::TriggerConfig::Trigger& trigger) {
             return trigger.name() == trigger_name;
           });
-      if (iter == tracing_session.config.trigger_config().triggers().end()) {
+      if (iter == tracing_session.config.trigger_config().triggers().end())
         continue;
-      }
+      if (tracing_session.state == TracingSession::CLONED_READ_ONLY)
+        continue;
 
       // If this trigger requires a certain producer to have sent it
       // (non-empty producer_name()) ensure the producer who sent this trigger
@@ -1488,9 +1552,8 @@ void TracingServiceImpl::ActivateTriggers(
       trigger_matched = true;
       triggered_session_id = tracing_session.id;
       triggered_session_name = tracing_session.config.unique_session_name();
-      triggered_session_uuid.set_lsb_msb(
-          tracing_session.config.trace_uuid_lsb(),
-          tracing_session.config.trace_uuid_msb());
+      triggered_session_uuid.set_lsb_msb(tracing_session.trace_uuid.lsb(),
+                                         tracing_session.trace_uuid.msb());
       trigger_mode = static_cast<int>(
           tracing_session.config.trigger_config().trigger_mode());
 
@@ -1510,9 +1573,9 @@ void TracingServiceImpl::ActivateTriggers(
             break;
 
           trigger_activated = true;
-          MaybeLogUploadEvent(tracing_session.config,
-                              PerfettoStatsdAtom::kTracedTriggerStartTracing,
-                              iter->name());
+          MaybeLogUploadEvent(
+              tracing_session.config, tracing_session.trace_uuid,
+              PerfettoStatsdAtom::kTracedTriggerStartTracing, iter->name());
 
           // We override the trace duration to be the trigger's requested
           // value, this ensures that the trace will end after this amount
@@ -1529,9 +1592,9 @@ void TracingServiceImpl::ActivateTriggers(
             break;
 
           trigger_activated = true;
-          MaybeLogUploadEvent(tracing_session.config,
-                              PerfettoStatsdAtom::kTracedTriggerStopTracing,
-                              iter->name());
+          MaybeLogUploadEvent(
+              tracing_session.config, tracing_session.trace_uuid,
+              PerfettoStatsdAtom::kTracedTriggerStopTracing, iter->name());
 
           // Now that we've seen a trigger we need to stop, flush, and disable
           // this session after the configured |stop_delay_ms|.
@@ -1570,9 +1633,9 @@ void TracingServiceImpl::ActivateTriggers(
   }  // for (trigger_name : triggers)
 }
 
-// Always invoked kDataSourceStopTimeoutMs after DisableTracing(). In nominal
-// conditions all data sources should have acked the stop and this will early
-// out.
+// Always invoked TraceConfig.data_source_stop_timeout_ms (by default
+// kDataSourceStopTimeoutMs) after DisableTracing(). In nominal conditions all
+// data sources should have acked the stop and this will early out.
 void TracingServiceImpl::OnDisableTracingTimeout(TracingSessionID tsid) {
   PERFETTO_DCHECK_THREAD(thread_checker_);
   TracingSession* tracing_session = GetTracingSession(tsid);
@@ -1622,7 +1685,7 @@ void TracingServiceImpl::DisableTracingNotifyConsumerAndFlushFile(
     tracing_session->on_disable_callback_for_bugreport = nullptr;
   }
 
-  MaybeLogUploadEvent(tracing_session->config,
+  MaybeLogUploadEvent(tracing_session->config, tracing_session->trace_uuid,
                       PerfettoStatsdAtom::kTracedNotifyTracingDisabled);
 
   if (tracing_session->consumer_maybe_null)
@@ -2108,6 +2171,13 @@ bool TracingServiceImpl::ReadBuffersIntoFile(TracingSessionID tsid) {
 }
 
 bool TracingServiceImpl::IsWaitingForTrigger(TracingSession* tracing_session) {
+  // Ignore the logic below for cloned tracing sessions. In this case we
+  // actually want to read the (cloned) trace buffers even if no trigger was
+  // hit.
+  if (tracing_session->state == TracingSession::CLONED_READ_ONLY) {
+    return false;
+  }
+
   // When a tracing session is waiting for a trigger, it is considered empty. If
   // a tracing session finishes and moves into DISABLED without ever receiving a
   // trigger, the trace should never return any data. This includes the
@@ -2151,7 +2221,7 @@ std::vector<TracePacket> TracingServiceImpl::ReadBuffers(
   }
 
   if (!tracing_session->config.builtin_data_sources().disable_trace_config()) {
-    MaybeEmitTraceConfig(tracing_session, &packets);
+    MaybeEmitUuidAndTraceConfig(tracing_session, &packets);
     MaybeEmitReceivedTriggers(tracing_session, &packets);
   }
   if (!tracing_session->config.builtin_data_sources().disable_system_info())
@@ -2413,7 +2483,9 @@ void TracingServiceImpl::FreeBuffers(TracingSessionID tsid) {
     PERFETTO_DCHECK(buffers_.count(buffer_id) == 1);
     buffers_.erase(buffer_id);
   }
-  bool notify_traceur = tracing_session->config.notify_traceur();
+  bool notify_traceur =
+      tracing_session->config.notify_traceur() &&
+      tracing_session->state != TracingSession::CLONED_READ_ONLY;
   bool is_long_trace =
       (tracing_session->config.write_into_file() &&
        tracing_session->config.file_write_period_ms() < kMillisPerDay);
@@ -2664,6 +2736,16 @@ TracingServiceImpl::DataSourceInstance* TracingServiceImpl::SetupDataSource(
 
   DataSourceConfig& ds_config = ds_instance->config;
   ds_config.set_trace_duration_ms(tracing_session->config.duration_ms());
+
+  // Rationale for `if (prefer) set_prefer(true)`, rather than `set(prefer)`:
+  // ComputeStartupConfigHash() in tracing_muxer_impl.cc compares hashes of the
+  // DataSourceConfig and expects to know (and clear) the fields generated by
+  // the tracing service. Unconditionally adding a new field breaks backward
+  // compatibility of startup tracing with older SDKs, because the serialization
+  // also propagates unkonwn fields, breaking the hash matching check.
+  if (tracing_session->config.prefer_suspend_clock_for_duration())
+    ds_config.set_prefer_suspend_clock_for_duration(true);
+
   ds_config.set_stop_timeout_ms(tracing_session->data_source_stop_timeout_ms());
   ds_config.set_enable_extra_guardrails(
       tracing_session->config.enable_extra_guardrails());
@@ -3214,17 +3296,30 @@ TraceStats TracingServiceImpl::GetTraceStats(TracingSession* tracing_session) {
   return trace_stats;
 }
 
-void TracingServiceImpl::MaybeEmitTraceConfig(
+void TracingServiceImpl::MaybeEmitUuidAndTraceConfig(
     TracingSession* tracing_session,
     std::vector<TracePacket>* packets) {
   if (tracing_session->did_emit_config)
     return;
   tracing_session->did_emit_config = true;
-  protozero::HeapBuffered<protos::pbzero::TracePacket> packet;
-  packet->set_trusted_uid(static_cast<int32_t>(uid_));
-  packet->set_trusted_packet_sequence_id(kServicePacketSequenceID);
-  tracing_session->config.Serialize(packet->set_trace_config());
-  SerializeAndAppendPacket(packets, packet.SerializeAsArray());
+
+  {
+    protozero::HeapBuffered<protos::pbzero::TracePacket> packet;
+    packet->set_trusted_uid(static_cast<int32_t>(uid_));
+    packet->set_trusted_packet_sequence_id(kServicePacketSequenceID);
+    auto* uuid = packet->set_trace_uuid();
+    uuid->set_lsb(tracing_session->trace_uuid.lsb());
+    uuid->set_msb(tracing_session->trace_uuid.msb());
+    SerializeAndAppendPacket(packets, packet.SerializeAsArray());
+  }
+
+  {
+    protozero::HeapBuffered<protos::pbzero::TracePacket> packet;
+    packet->set_trusted_uid(static_cast<int32_t>(uid_));
+    packet->set_trusted_packet_sequence_id(kServicePacketSequenceID);
+    tracing_session->config.Serialize(packet->set_trace_config());
+    SerializeAndAppendPacket(packets, packet.SerializeAsArray());
+  }
 }
 
 void TracingServiceImpl::MaybeEmitSystemInfo(
@@ -3263,6 +3358,7 @@ void TracingServiceImpl::MaybeEmitSystemInfo(
     PERFETTO_ELOG("Unable to read ro.build.version.sdk");
   }
   info->set_hz(sysconf(_SC_CLK_TCK));
+  info->set_page_size(static_cast<uint32_t>(sysconf(_SC_PAGESIZE)));
 #endif  // PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID)
   packet->set_trusted_uid(static_cast<int32_t>(uid_));
   packet->set_trusted_packet_sequence_id(kServicePacketSequenceID);
@@ -3423,17 +3519,15 @@ bool TracingServiceImpl::MaybeSaveTraceForBugreport(
 }
 
 void TracingServiceImpl::MaybeLogUploadEvent(const TraceConfig& cfg,
+                                             const base::Uuid& uuid,
                                              PerfettoStatsdAtom atom,
                                              const std::string& trigger_name) {
   if (!ShouldLogEvent(cfg))
     return;
 
-  // If the UUID is not set for some reason, don't log anything.
-  if (cfg.trace_uuid_lsb() == 0 && cfg.trace_uuid_msb() == 0)
-    return;
-
-  android_stats::MaybeLogUploadEvent(atom, cfg.trace_uuid_lsb(),
-                                     cfg.trace_uuid_msb(), trigger_name);
+  PERFETTO_DCHECK(uuid);  // The UUID must be set at this point.
+  android_stats::MaybeLogUploadEvent(atom, uuid.lsb(), uuid.msb(),
+                                     trigger_name);
 }
 
 void TracingServiceImpl::MaybeLogTriggerEvent(const TraceConfig& cfg,
@@ -3460,6 +3554,111 @@ size_t TracingServiceImpl::PurgeExpiredAndCountTriggerInWindow(
   }
   trigger_history_.erase_front(remove_count);
   return trigger_count;
+}
+
+void TracingServiceImpl::FlushAndCloneSession(ConsumerEndpointImpl* consumer,
+                                              TracingSessionID tsid) {
+  PERFETTO_DCHECK_THREAD(thread_checker_);
+  auto weak_this = weak_ptr_factory_.GetWeakPtr();
+  auto weak_consumer = consumer->GetWeakPtr();
+  Flush(tsid, 0, [weak_this, tsid, weak_consumer](bool final_flush_outcome) {
+    PERFETTO_LOG("FlushAndCloneSession(%" PRIu64 ") started, success=%d", tsid,
+                 final_flush_outcome);
+    if (!weak_this || !weak_consumer)
+      return;
+    base::Status result =
+        weak_this->DoCloneSession(&*weak_consumer, tsid, final_flush_outcome);
+    weak_consumer->consumer_->OnSessionCloned(result.ok(), result.message());
+  });
+}
+
+base::Status TracingServiceImpl::DoCloneSession(ConsumerEndpointImpl* consumer,
+                                                TracingSessionID src_tsid,
+                                                bool final_flush_outcome) {
+  PERFETTO_DLOG("CloneSession(%" PRIu64 ") started, consumer uid: %d", src_tsid,
+                static_cast<int>(consumer->uid_));
+  TracingSession* src = GetTracingSession(src_tsid);
+
+  // The session might be gone by the time we try to clone it.
+  if (!src)
+    return PERFETTO_SVC_ERR("session not found");
+
+  if (consumer->tracing_session_id_) {
+    return PERFETTO_SVC_ERR(
+        "The consumer is already attached to another tracing session");
+  }
+
+  if (src->consumer_uid != consumer->uid_ && consumer->uid_ != 0)
+    return PERFETTO_SVC_ERR("Not allowed to clone a session from another UID");
+
+  // First clone all TraceBuffer(s). This can fail because of ENOMEM. If it
+  // happens bail out early before creating any session.
+  std::vector<std::pair<BufferID, std::unique_ptr<TraceBuffer>>> buf_snaps;
+  buf_snaps.reserve(src->num_buffers());
+  bool buf_clone_failed = false;
+  for (BufferID src_buf_id : src->buffers_index) {
+    TraceBuffer* src_buf = GetBufferByID(src_buf_id);
+    std::unique_ptr<TraceBuffer> buf_snap = src_buf->CloneReadOnly();
+    BufferID buf_global_id = buffer_ids_.Allocate();
+    buf_clone_failed |= !buf_snap.get() || !buf_global_id;
+    buf_snaps.emplace_back(buf_global_id, std::move(buf_snap));
+  }
+
+  // Free up allocated IDs in case of failure. No need to free the TraceBuffers,
+  // as they are still owned by the temporary |buf_snaps|.
+  if (buf_clone_failed) {
+    for (auto& kv : buf_snaps) {
+      if (kv.first)
+        buffer_ids_.Free(kv.first);
+    }
+    return PERFETTO_SVC_ERR("Buffer allocation failed");
+  }
+
+  const TracingSessionID tsid = ++last_tracing_session_id_;
+  TracingSession* cloned_session =
+      &tracing_sessions_
+           .emplace(
+               std::piecewise_construct, std::forward_as_tuple(tsid),
+               std::forward_as_tuple(tsid, consumer, src->config, task_runner_))
+           .first->second;
+
+  cloned_session->state = TracingSession::CLONED_READ_ONLY;
+  cloned_session->trace_uuid = base::Uuidv4();  // Generate a new UUID.
+
+  for (auto& kv : buf_snaps) {
+    BufferID buf_global_id = kv.first;
+    std::unique_ptr<TraceBuffer>& buf = kv.second;
+    buffers_.emplace(buf_global_id, std::move(buf));
+    cloned_session->buffers_index.emplace_back(buf_global_id);
+  }
+  UpdateMemoryGuardrail();
+
+  // Copy over relevant state that we want to persist in the cloned session.
+  // Mostly stats and metadata that is emitted in the trace file by the service.
+  cloned_session->received_triggers = src->received_triggers;
+  cloned_session->lifecycle_events =
+      std::vector<TracingSession::LifecycleEvent>(src->lifecycle_events);
+  cloned_session->initial_clock_snapshot = src->initial_clock_snapshot;
+  cloned_session->clock_snapshot_ring_buffer = src->clock_snapshot_ring_buffer;
+  cloned_session->invalid_packets = src->invalid_packets;
+  cloned_session->flushes_requested = src->flushes_requested;
+  cloned_session->flushes_succeeded = src->flushes_succeeded;
+  cloned_session->flushes_failed = src->flushes_failed;
+  if (src->trace_filter) {
+    // Copy the trace filter.
+    cloned_session->trace_filter.reset(
+        new protozero::MessageFilter(*src->trace_filter));
+  }
+
+  PERFETTO_DLOG("Consumer (uid:%d) cloned tracing session %" PRIu64
+                " -> %" PRIu64,
+                static_cast<int>(consumer->uid_), src_tsid, tsid);
+
+  consumer->tracing_session_id_ = tsid;
+  cloned_session->final_flush_outcome = final_flush_outcome
+                                            ? TraceStats::FINAL_FLUSH_SUCCEEDED
+                                            : TraceStats::FINAL_FLUSH_FAILED;
+  return base::OkStatus();
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -3747,6 +3946,9 @@ void TracingServiceImpl::ConsumerEndpointImpl::QueryServiceState(
       case TracingSession::State::DISABLING_WAITING_STOP_ACKS:
         session->set_state("STOP_WAIT");
         break;
+      case TracingSession::State::CLONED_READ_ONLY:
+        session->set_state("CLONED_READ_ONLY");
+        break;
     }
   }
   callback(/*success=*/true, svc_state);
@@ -3785,6 +3987,13 @@ void TracingServiceImpl::ConsumerEndpointImpl::SaveTraceForBugreport(
   }
 }
 
+void TracingServiceImpl::ConsumerEndpointImpl::CloneSession(
+    TracingSessionID tsid) {
+  PERFETTO_DCHECK_THREAD(thread_checker_);
+  // FlushAndCloneSession will call OnSessionCloned after the async flush.
+  service_->FlushAndCloneSession(this, tsid);
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // TracingServiceImpl::ProducerEndpointImpl implementation
 ////////////////////////////////////////////////////////////////////////////////
@@ -3815,6 +4024,12 @@ TracingServiceImpl::ProducerEndpointImpl::ProducerEndpointImpl(
 TracingServiceImpl::ProducerEndpointImpl::~ProducerEndpointImpl() {
   service_->DisconnectProducer(id_);
   producer_->OnDisconnect();
+}
+
+void TracingServiceImpl::ProducerEndpointImpl::Disconnect() {
+  PERFETTO_DCHECK_THREAD(thread_checker_);
+  // Disconnection is only supported via destroying the ProducerEndpoint.
+  PERFETTO_FATAL("Not supported");
 }
 
 void TracingServiceImpl::ProducerEndpointImpl::RegisterDataSource(
@@ -4096,7 +4311,8 @@ TracingServiceImpl::TracingSession::TracingSession(
       consumer_maybe_null(consumer),
       consumer_uid(consumer->uid_),
       config(new_config),
-      snapshot_periodic_task(task_runner) {
+      snapshot_periodic_task(task_runner),
+      timed_stop_task(task_runner) {
   // all_data_sources_flushed is special because we store up to 64 events of
   // this type. Other events will go through the default case in
   // SnapshotLifecycleEvent() where they will be given a max history of 1.

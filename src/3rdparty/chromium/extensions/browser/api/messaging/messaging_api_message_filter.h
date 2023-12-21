@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -33,6 +33,8 @@ class MessagingAPIMessageFilter : public content::BrowserMessageFilter {
   MessagingAPIMessageFilter& operator=(const MessagingAPIMessageFilter&) =
       delete;
 
+  static void EnsureAssociatedFactoryBuilt();
+
  private:
   friend class base::DeleteHelper<MessagingAPIMessageFilter>;
   friend class content::BrowserThread;
@@ -61,7 +63,6 @@ class MessagingAPIMessageFilter : public content::BrowserMessageFilter {
                                 const extensions::PortId& port_id);
   void OnOpenChannelToTab(const PortContext& source_context,
                           const ExtensionMsg_TabTargetConnectionInfo& info,
-                          const std::string& extension_id,
                           const std::string& channel_name,
                           const extensions::PortId& port_id);
   void OnOpenMessagePort(const PortContext& port_context,

@@ -1,17 +1,16 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/core/layout/list_marker.h"
 
 #include "third_party/blink/renderer/core/layout/ng/list/layout_ng_list_item.h"
-#include "third_party/blink/renderer/core/layout/ng/ng_layout_test.h"
+#include "third_party/blink/renderer/core/testing/core_unit_test_helper.h"
+#include "third_party/blink/renderer/platform/loader/fetch/resource_fetcher.h"
 
 namespace blink {
 
-// We don't test legacy layout because it's deprecated, and we don't want to
-// complicate the test with the legacy LayoutListMarker here.
-class ListMarkerTest : public NGLayoutTest {
+class ListMarkerTest : public RenderingTest {
  protected:
   LayoutObject* GetMarker(const char* list_item_id) {
     LayoutNGListItem* list_item =
@@ -45,6 +44,26 @@ class ListMarkerTest : public NGLayoutTest {
     GetDocument().body()->appendChild(sheet);
   }
 };
+
+TEST_F(ListMarkerTest, FallbackToTextWhenImagesDisable) {
+  GetDocument().Fetcher()->SetImagesEnabled(false);
+  GetDocument().body()->setInnerHTML(R"HTML(
+    <style>
+      #decimal {
+          list-style-type:decimal;
+          list-style-image:url("data:image/gif;base64,R0lGODdhCQAJAKEAAO6C7v8A/6Ag8AAAACwAAAAACQAJAAACFISPaWLhLhh4UNIQG81zswiGIlgAADs=");
+      }
+    </style>
+
+    <ul>
+      <li id="decimal">decimal</li>
+    </ul>
+  )HTML");
+  UpdateAllLifecyclePhasesForTest();
+
+  LayoutObject* object = GetMarker("decimal")->SlowFirstChild();
+  EXPECT_TRUE(object->IsText());
+}
 
 TEST_F(ListMarkerTest, AddCounterStyle) {
   GetDocument().body()->setInnerHTML(R"HTML(
@@ -231,8 +250,6 @@ TEST_F(ListMarkerTest, RemoveOverrideOfSameScopeCounterStyle) {
 }
 
 TEST_F(ListMarkerTest, ModifyShadowDOMWithOwnCounterStyles) {
-  ScopedCSSAtRuleCounterStyleInShadowDOMForTest scope(true);
-
   GetDocument().body()->setInnerHTML(R"HTML(
     <style>
       @counter-style foo {
@@ -318,7 +335,29 @@ TEST_F(ListMarkerTest, WidthOfSymbolForFontSizeZero) {
   const auto& target_layout_object = *target.GetLayoutObject();
 
   EXPECT_EQ(LayoutUnit(),
-            ListMarker::WidthOfSymbol(target_layout_object.StyleRef()));
+            ListMarker::WidthOfSymbol(target_layout_object.StyleRef(),
+                                      target_layout_object.StyleRef()
+                                          .ListStyleType()
+                                          ->GetCounterStyleName()));
+}
+
+// crbug.com/1310599
+TEST_F(ListMarkerTest, InlineMarginsForOutside) {
+  GetDocument().body()->setInnerHTML(
+      R"HTML(<details open><summary id="target" style="
+  font-size: 536870912px;
+  zoom: 65536;
+  list-style-position: outside;
+  ">foo</summary></details>)HTML",
+      ASSERT_NO_EXCEPTION);
+  GetDocument().UpdateStyleAndLayoutTree();
+  auto* item_object = GetLayoutObjectByElementId("target");
+  auto* marker_object = ListMarker::MarkerFromListItem(item_object);
+  auto [start, end] = ListMarker::InlineMarginsForOutside(
+      GetDocument(), marker_object->StyleRef(), item_object->StyleRef(),
+      LayoutUnit::Max());
+  EXPECT_EQ(LayoutUnit::Min(), start);
+  EXPECT_EQ(LayoutUnit(), end);
 }
 
 }  // namespace blink

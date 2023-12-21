@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,7 +11,10 @@
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
+#include "base/task/single_thread_task_runner.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/test/test_timeouts.h"
+#include "build/chromeos_buildflags.h"
 #include "content/browser/renderer_host/render_widget_host_view_aura.h"
 #include "content/browser/renderer_host/render_widget_host_view_child_frame.h"
 #include "content/browser/renderer_host/render_widget_host_view_event_handler.h"
@@ -31,31 +34,61 @@
 #include "third_party/blink/public/common/switches.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_tree_host.h"
+#include "ui/base/pointer/touch_editing_controller.h"
+#include "ui/base/ui_base_features.h"
 #include "ui/display/display_switches.h"
 #include "ui/events/event_sink.h"
 #include "ui/events/event_utils.h"
 #include "ui/events/test/event_generator.h"
 #include "ui/events/test/motion_event_test_utils.h"
 #include "ui/touch_selection/touch_selection_controller_test_api.h"
+#include "ui/touch_selection/touch_selection_magnifier_runner.h"
 
 namespace content {
 namespace {
 
 bool JSONToPoint(const std::string& str, gfx::PointF* point) {
-  std::unique_ptr<base::Value> value = base::JSONReader::ReadDeprecated(str);
+  absl::optional<base::Value> value = base::JSONReader::Read(str);
   if (!value)
     return false;
-  base::DictionaryValue* root;
-  if (!value->GetAsDictionary(&root))
+  base::Value::Dict* root = value->GetIfDict();
+  if (!root)
     return false;
-  absl::optional<double> x = root->FindDoubleKey("x");
-  absl::optional<double> y = root->FindDoubleKey("y");
+  absl::optional<double> x = root->FindDouble("x");
+  absl::optional<double> y = root->FindDouble("y");
   if (!x || !y)
     return false;
   point->set_x(*x);
   point->set_y(*y);
   return true;
 }
+
+// A mock touch selection magnifier runner to use whenever a default one is not
+// installed.
+class TestTouchSelectionMagnifierRunner
+    : public ui::TouchSelectionMagnifierRunner {
+ public:
+  TestTouchSelectionMagnifierRunner() = default;
+
+  TestTouchSelectionMagnifierRunner(const TestTouchSelectionMagnifierRunner&) =
+      delete;
+  TestTouchSelectionMagnifierRunner& operator=(
+      const TestTouchSelectionMagnifierRunner&) = delete;
+
+  ~TestTouchSelectionMagnifierRunner() override = default;
+
+ private:
+  void ShowMagnifier(aura::Window* context,
+                     const gfx::PointF& position) override {
+    magnifier_running_ = true;
+  }
+
+  void CloseMagnifier() override { magnifier_running_ = false; }
+
+  bool IsRunning() const override { return magnifier_running_; }
+
+  bool magnifier_running_ = false;
+};
 
 // A mock touch selection menu runner to use whenever a default one is not
 // installed.
@@ -75,7 +108,7 @@ class TestTouchSelectionMenuRunner : public ui::TouchSelectionMenuRunner {
     return true;
   }
 
-  void OpenMenu(ui::TouchSelectionMenuClient* client,
+  void OpenMenu(base::WeakPtr<ui::TouchSelectionMenuClient> client,
                 const gfx::Rect& anchor_rect,
                 const gfx::Size& handle_image_size,
                 aura::Window* context) override {
@@ -120,6 +153,10 @@ class TestTouchSelectionControllerClientAura
     run_loop_.reset();
   }
 
+  ui::TouchSelectionMenuClient* GetActiveMenuClient() {
+    return active_menu_client_;
+  }
+
  private:
   // TouchSelectionControllerClientAura:
   void OnSelectionEvent(ui::SelectionEventType event) override {
@@ -139,7 +176,12 @@ class TestTouchSelectionControllerClientAura
 
 class TouchSelectionControllerClientAuraTest : public ContentBrowserTest {
  public:
-  TouchSelectionControllerClientAuraTest() {}
+  TouchSelectionControllerClientAuraTest() {
+#if BUILDFLAG(IS_CHROMEOS)
+    scoped_feature_list_.InitAndEnableFeature(
+        features::kTouchTextEditingRedesign);
+#endif  // BUILDFLAG(IS_CHROMEOS)
+  }
 
   TouchSelectionControllerClientAuraTest(
       const TouchSelectionControllerClientAuraTest&) = delete;
@@ -200,21 +242,27 @@ class TouchSelectionControllerClientAuraTest : public ContentBrowserTest {
 
   void SetUpOnMainThread() override {
     ContentBrowserTest::SetUpOnMainThread();
+    if (!ui::TouchSelectionMagnifierRunner::GetInstance())
+      magnifier_runner_ = std::make_unique<TestTouchSelectionMagnifierRunner>();
     if (!ui::TouchSelectionMenuRunner::GetInstance())
       menu_runner_ = std::make_unique<TestTouchSelectionMenuRunner>();
   }
 
  private:
   void TearDownOnMainThread() override {
+    magnifier_runner_ = nullptr;
     menu_runner_ = nullptr;
     selection_controller_client_ = nullptr;
     ContentBrowserTest::TearDownOnMainThread();
   }
 
+  std::unique_ptr<TestTouchSelectionMagnifierRunner> magnifier_runner_;
   std::unique_ptr<TestTouchSelectionMenuRunner> menu_runner_;
 
   raw_ptr<TestTouchSelectionControllerClientAura> selection_controller_client_ =
       nullptr;
+
+  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 class TouchSelectionControllerClientAuraCAPFeatureTest
@@ -506,8 +554,9 @@ IN_PROC_BROWSER_TEST_P(TouchSelectionControllerClientAuraSiteIsolationTest,
             parent_view->selection_controller()->GetVisibleRectBetweenBounds());
 }
 
+// Failing in sanitizer runs: https://crbug.com/1405296
 IN_PROC_BROWSER_TEST_P(TouchSelectionControllerClientAuraSiteIsolationTest,
-                       BasicSelectionIsolatedScrollMainframe) {
+                       DISABLED_BasicSelectionIsolatedScrollMainframe) {
   GURL test_url(embedded_test_server()->GetURL(
       "a.com", "/cross_site_iframe_factory.html?a(a)"));
   EXPECT_TRUE(NavigateToURL(shell(), test_url));
@@ -668,7 +717,7 @@ IN_PROC_BROWSER_TEST_P(TouchSelectionControllerClientAuraSiteIsolationTest,
   // child frame's compositor frame.
   {
     base::RunLoop loop;
-    base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
         FROM_HERE, loop.QuitClosure(), TestTimeouts::tiny_timeout());
     loop.Run();
   }
@@ -899,6 +948,102 @@ IN_PROC_BROWSER_TEST_P(TouchSelectionControllerClientAuraCAPFeatureTest,
             rwhva->selection_controller()->GetVisibleRectBetweenBounds());
 }
 
+#if BUILDFLAG(IS_CHROMEOS)
+// Tests that the select all command in the quick menu works correctly and that
+// the touch handles and quick menu are shown after the command is executed.
+IN_PROC_BROWSER_TEST_P(TouchSelectionControllerClientAuraCAPFeatureTest,
+                       SelectAllCommand) {
+  // Set the test page up.
+  ASSERT_NO_FATAL_FAILURE(StartTestWithPage("/touch_selection.html"));
+  InitSelectionController();
+
+  RenderWidgetHostViewAura* rwhva = GetRenderWidgetHostViewAura();
+  ui::TouchSelectionControllerTestApi selection_controller_test_api(
+      rwhva->selection_controller());
+  EXPECT_EQ(ui::TouchSelectionController::INACTIVE,
+            rwhva->selection_controller()->active_status());
+  EXPECT_FALSE(ui::TouchSelectionMenuRunner::GetInstance()->IsRunning());
+  EXPECT_EQ(gfx::RectF(),
+            rwhva->selection_controller()->GetVisibleRectBetweenBounds());
+
+  gfx::NativeView native_view = rwhva->GetNativeView();
+  ui::test::EventGenerator generator(native_view->GetRootWindow());
+
+  // Tap inside the textfield and wait for the insertion handle to appear.
+  selection_controller_client()->InitWaitForSelectionEvent(
+      ui::INSERTION_HANDLE_SHOWN);
+  gfx::Point point = gfx::ToRoundedPoint(GetPointInsideTextfield());
+  generator.delegate()->ConvertPointFromTarget(native_view, &point);
+  generator.GestureTapAt(point);
+  selection_controller_client()->Wait();
+  EXPECT_EQ(ui::TouchSelectionController::INSERTION_ACTIVE,
+            rwhva->selection_controller()->active_status());
+
+  // Execute select all command. All text in textfield should be selected and
+  // touch handles and quick menu should be shown.
+  selection_controller_client()->InitWaitForSelectionEvent(
+      ui::SELECTION_HANDLES_SHOWN);
+  selection_controller_client()->GetActiveMenuClient()->ExecuteCommand(
+      ui::TouchEditable::kSelectAll, 0);
+  selection_controller_client()->Wait();
+  EXPECT_EQ(ui::TouchSelectionController::SELECTION_ACTIVE,
+            rwhva->selection_controller()->active_status());
+  EXPECT_TRUE(ui::TouchSelectionMenuRunner::GetInstance()->IsRunning());
+  EXPECT_TRUE(selection_controller_test_api.GetStartVisible());
+  EXPECT_TRUE(selection_controller_test_api.GetEndVisible());
+  EXPECT_EQ(
+      selection_controller_client()->GetActiveMenuClient()->GetSelectedText(),
+      u"Text in a textfield");
+}
+
+// Tests that the select word command in the quick menu works correctly and that
+// the touch handles and quick menu are shown after the command is executed.
+IN_PROC_BROWSER_TEST_P(TouchSelectionControllerClientAuraCAPFeatureTest,
+                       SelectWordCommand) {
+  // Set the test page up.
+  ASSERT_NO_FATAL_FAILURE(StartTestWithPage("/touch_selection.html"));
+  InitSelectionController();
+
+  RenderWidgetHostViewAura* rwhva = GetRenderWidgetHostViewAura();
+  ui::TouchSelectionControllerTestApi selection_controller_test_api(
+      rwhva->selection_controller());
+  EXPECT_EQ(ui::TouchSelectionController::INACTIVE,
+            rwhva->selection_controller()->active_status());
+  EXPECT_FALSE(ui::TouchSelectionMenuRunner::GetInstance()->IsRunning());
+  EXPECT_EQ(gfx::RectF(),
+            rwhva->selection_controller()->GetVisibleRectBetweenBounds());
+
+  gfx::NativeView native_view = rwhva->GetNativeView();
+  ui::test::EventGenerator generator(native_view->GetRootWindow());
+
+  // Tap inside the textfield and wait for the insertion handle to appear.
+  selection_controller_client()->InitWaitForSelectionEvent(
+      ui::INSERTION_HANDLE_SHOWN);
+  gfx::Point point = gfx::ToRoundedPoint(GetPointInsideTextfield());
+  generator.delegate()->ConvertPointFromTarget(native_view, &point);
+  generator.GestureTapAt(point);
+  selection_controller_client()->Wait();
+  EXPECT_EQ(ui::TouchSelectionController::INSERTION_ACTIVE,
+            rwhva->selection_controller()->active_status());
+
+  // Execute select word command. The word around the current caret position
+  // should be selected and touch handles and quick menu should be shown.
+  selection_controller_client()->InitWaitForSelectionEvent(
+      ui::SELECTION_HANDLES_SHOWN);
+  selection_controller_client()->GetActiveMenuClient()->ExecuteCommand(
+      ui::TouchEditable::kSelectWord, 0);
+  selection_controller_client()->Wait();
+  EXPECT_EQ(ui::TouchSelectionController::SELECTION_ACTIVE,
+            rwhva->selection_controller()->active_status());
+  EXPECT_TRUE(ui::TouchSelectionMenuRunner::GetInstance()->IsRunning());
+  EXPECT_TRUE(selection_controller_test_api.GetStartVisible());
+  EXPECT_TRUE(selection_controller_test_api.GetEndVisible());
+  EXPECT_EQ(
+      selection_controller_client()->GetActiveMenuClient()->GetSelectedText(),
+      u"Text");
+}
+#endif
+
 class TouchSelectionControllerClientAuraScaleFactorTest
     : public TouchSelectionControllerClientAuraTest {
  public:
@@ -934,6 +1079,7 @@ IN_PROC_BROWSER_TEST_P(
 
   EXPECT_EQ(ui::TouchSelectionController::INACTIVE,
             rwhva->selection_controller()->active_status());
+  EXPECT_FALSE(ui::TouchSelectionMagnifierRunner::GetInstance()->IsRunning());
   EXPECT_FALSE(ui::TouchSelectionMenuRunner::GetInstance()->IsRunning());
   EXPECT_EQ(2.f, rwhva->GetDeviceScaleFactor());
   EXPECT_EQ(gfx::RectF(),
@@ -988,6 +1134,7 @@ IN_PROC_BROWSER_TEST_P(
       ui::PointerDetails(ui::EventPointerType::kTouch, 0));
   rwhva->OnTouchEvent(&touch_down);
   selection_controller_client()->Wait();
+  EXPECT_FALSE(ui::TouchSelectionMagnifierRunner::GetInstance()->IsRunning());
 
   // Move it.
   selection_controller_client()->InitWaitForSelectionEvent(
@@ -998,6 +1145,7 @@ IN_PROC_BROWSER_TEST_P(
       ui::PointerDetails(ui::EventPointerType::kTouch, 0));
   rwhva->OnTouchEvent(&touch_move);
   selection_controller_client()->Wait();
+  EXPECT_TRUE(ui::TouchSelectionMagnifierRunner::GetInstance()->IsRunning());
 
   // Then release.
   selection_controller_client()->InitWaitForSelectionEvent(
@@ -1007,6 +1155,7 @@ IN_PROC_BROWSER_TEST_P(
                           ui::PointerDetails(ui::EventPointerType::kTouch, 0));
   rwhva->OnTouchEvent(&touch_up);
   selection_controller_client()->Wait();
+  EXPECT_FALSE(ui::TouchSelectionMagnifierRunner::GetInstance()->IsRunning());
 
   // The handle should have moved to right.
   EXPECT_EQ(start_top.y(), controller->start().edge_start().y());
@@ -1071,6 +1220,7 @@ IN_PROC_BROWSER_TEST_P(
       ui::PointerDetails(ui::EventPointerType::kTouch, 0));
   rwhva->OnTouchEvent(&touch_down);
   selection_controller_client()->Wait();
+  EXPECT_FALSE(ui::TouchSelectionMagnifierRunner::GetInstance()->IsRunning());
 
   // Move it.
   selection_controller_client()->InitWaitForSelectionEvent(
@@ -1081,6 +1231,7 @@ IN_PROC_BROWSER_TEST_P(
       ui::PointerDetails(ui::EventPointerType::kTouch, 0));
   rwhva->OnTouchEvent(&touch_move);
   selection_controller_client()->Wait();
+  EXPECT_TRUE(ui::TouchSelectionMagnifierRunner::GetInstance()->IsRunning());
 
   // Then release.
   selection_controller_client()->InitWaitForSelectionEvent(
@@ -1090,6 +1241,7 @@ IN_PROC_BROWSER_TEST_P(
                           ui::PointerDetails(ui::EventPointerType::kTouch, 0));
   rwhva->OnTouchEvent(&touch_up);
   selection_controller_client()->Wait();
+  EXPECT_FALSE(ui::TouchSelectionMagnifierRunner::GetInstance()->IsRunning());
 
   gfx::RectF moved_handle_rect =
       rwhva->selection_controller()->GetStartHandleRect();

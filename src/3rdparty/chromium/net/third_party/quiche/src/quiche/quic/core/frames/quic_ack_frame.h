@@ -10,7 +10,6 @@
 #include "quiche/quic/core/quic_interval.h"
 #include "quiche/quic/core/quic_interval_set.h"
 #include "quiche/quic/core/quic_types.h"
-#include "quiche/quic/platform/api/quic_containers.h"
 #include "quiche/quic/platform/api/quic_export.h"
 #include "quiche/quic/platform/api/quic_flags.h"
 
@@ -116,12 +115,8 @@ struct QUIC_EXPORT_PRIVATE QuicAckFrame {
   // Set of packets.
   PacketNumberQueue packets;
 
-  // ECN counters, used only in version 99's ACK frame and valid only when
-  // |ecn_counters_populated| is true.
-  bool ecn_counters_populated = false;
-  QuicPacketCount ect_0_count = 0;
-  QuicPacketCount ect_1_count = 0;
-  QuicPacketCount ecn_ce_count = 0;
+  // ECN counters.
+  absl::optional<QuicEcnCounts> ecn_counters;
 };
 
 // The highest acked packet number we've observed from the peer. If no packets

@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -130,6 +130,32 @@ class SecurePaymentConfirmationModel {
     cancel_button_visible_ = cancel_button_visible;
   }
 
+  // Opt Out text visibility and label.
+  bool opt_out_visible() const { return opt_out_visible_; }
+  void set_opt_out_visible(const bool opt_out_visible) {
+    opt_out_visible_ = opt_out_visible;
+  }
+  const std::u16string& opt_out_label() const { return opt_out_label_; }
+  void set_opt_out_label(const std::u16string& opt_out_label) {
+    opt_out_label_ = opt_out_label;
+  }
+  const std::u16string& opt_out_link_label() const {
+    return opt_out_link_label_;
+  }
+  void set_opt_out_link_label(const std::u16string& opt_out_link_label) {
+    opt_out_link_label_ = opt_out_link_label;
+  }
+  bool opt_out_clicked() const { return opt_out_clicked_; }
+  void set_opt_out_clicked(const bool opt_out_clicked) {
+    opt_out_clicked_ = opt_out_clicked;
+  }
+
+  // Relying Party id (origin); used in the opt out dialog.
+  const std::u16string& relying_party_id() const { return relying_party_id_; }
+  void set_relying_party_id(const std::u16string& relying_party_id) {
+    relying_party_id_ = relying_party_id;
+  }
+
   base::WeakPtr<SecurePaymentConfirmationModel> GetWeakPtr();
 
  private:
@@ -141,7 +167,7 @@ class SecurePaymentConfirmationModel {
 
   std::u16string instrument_label_;
   std::u16string instrument_value_;
-  raw_ptr<const SkBitmap> instrument_icon_ = nullptr;
+  raw_ptr<const SkBitmap, DanglingUntriaged> instrument_icon_ = nullptr;
 
   std::u16string total_label_;
   std::u16string total_value_;
@@ -156,6 +182,13 @@ class SecurePaymentConfirmationModel {
 
   bool cancel_button_enabled_ = true;
   bool cancel_button_visible_ = true;
+
+  bool opt_out_visible_ = false;
+  std::u16string opt_out_label_;
+  std::u16string opt_out_link_label_;
+  bool opt_out_clicked_ = false;
+
+  std::u16string relying_party_id_;
 
   base::WeakPtrFactory<SecurePaymentConfirmationModel> weak_ptr_factory_{this};
 };

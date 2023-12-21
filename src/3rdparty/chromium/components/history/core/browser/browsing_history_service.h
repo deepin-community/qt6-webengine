@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,7 +12,7 @@
 #include <string>
 #include <vector>
 
-#include "base/callback_forward.h"
+#include "base/functional/callback_forward.h"
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
@@ -159,6 +159,9 @@ class BrowsingHistoryService : public HistoryServiceObserver,
       base::OnceCallback<void(base::Time)> callback);
 
   // Removes `items` from history.
+  // TODO(tommycli): Update this API to take only URLs and timestamps, because
+  // callers only have that information, and only that information is used by
+  // the actual implementation.
   void RemoveVisits(const std::vector<HistoryEntry>& items);
 
   // SyncServiceObserver implementation.
@@ -251,7 +254,7 @@ class BrowsingHistoryService : public HistoryServiceObserver,
   // Deleting the request will cancel it.
   std::unique_ptr<WebHistoryService::Request> web_history_request_;
 
-  // True if there is a pending delete requests to the history service.
+  // True if there is a pending delete requests to the web service.
   bool has_pending_delete_request_ = false;
 
   // Tracker for delete requests to the history service.

@@ -4,6 +4,7 @@
 /*!
     \page qtwebengine-features.html
     \title Qt WebEngine Features
+    \ingroup explanations-webtechnologies
 
     \brief Summarizes \QWE features.
 
@@ -132,6 +133,9 @@
     Note that during the \c selectClientCertificate calls, \QWE lists both system
     and in-memory stored clients certificates.
 
+    See also \l{WebEngine Widgets Client Certificate Example}{Client Certificate Example}
+    for more implementation details.
+
     \section1 Custom Schemes
 
     \QWE makes it possible for the application to define its own custom
@@ -163,7 +167,7 @@
     \section1 Favicon
 
     \QWE supports the web site URL icon, \e favicon. Each icon is stored in the internal
-    database for each \l QWebEngieProfile and can be accessed using a \l QWebEnginePage::icon()
+    database for each \l QWebEngineProfile and can be accessed using a \l QWebEnginePage::icon()
     call or a \l {WebEngineView::icon}{WebEngineView.icon} property for the currently loaded content.
 
     Moreover \QWE provides API for accessing already stored icons in the internal profile's database.
@@ -295,6 +299,12 @@
     tested by using \l{WebEngine Widgets Maps Example}{Maps} and allowing it to
     find the current position of the user.
 
+    \note On Windows 11, enable settings to grant the maps example access to
+    Windows location services. In the Settings App under
+    \uicontrol {Privacy & Security} > \uicontrol {Location}, enable \uicontrol
+    {Location services}, \uicontrol {Let apps access your location} and \uicontrol
+    {Let desktop apps access your location}.
+
     See \l{Qt Positioning} for a possible backend setup like the GPS or IP based positioning.
 
     Support for this feature was added in Qt 5.5.0.
@@ -380,7 +390,6 @@
     WebEngineView::colorDialogRequested(),
     WebEngineView::fileDialogRequested(), and
     WebEngineView::formValidationMessageRequested() signals. For an example,
-    see \l{WebEngine Qt Quick Custom Dialogs Example}.
 
     \section1 Pepper Plugin API
 

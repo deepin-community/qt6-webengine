@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,9 +6,13 @@
 
 #include <memory>
 
+#include "ash/public/cpp/window_properties.h"
+#include "ash/wm/desks/desks_controller.h"
+#include "ash/wm/desks/desks_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/trace_event/trace_event.h"
-#include "build/chromeos_buildflags.h"
+#include "chromeos/ui/base/window_properties.h"
+#include "components/exo/client_controlled_shell_surface.h"
 #include "components/exo/permission.h"
 #include "components/exo/shell_surface_base.h"
 #include "components/exo/surface.h"
@@ -24,14 +28,6 @@
 #include "ui/views/widget/widget.h"
 #include "ui/wm/core/window_util.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "ash/public/cpp/window_properties.h"
-#include "ash/wm/desks/desks_controller.h"
-#include "ash/wm/desks/desks_util.h"
-#include "chromeos/ui/base/window_properties.h"
-#include "components/exo/client_controlled_shell_surface.h"
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
-
 namespace exo {
 
 namespace {
@@ -41,12 +37,10 @@ DEFINE_UI_CLASS_PROPERTY_KEY(Surface*, kRootSurfaceKey, nullptr)
 // Startup Id set by the client.
 DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(std::string, kStartupIdKey, nullptr)
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
 // A property key containing the client controlled shell surface.
 DEFINE_UI_CLASS_PROPERTY_KEY(ClientControlledShellSurface*,
                              kClientControlledShellSurface,
                              nullptr)
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
 // Returns true if the component for a located event should be taken care of
 // by the window system.
@@ -107,16 +101,12 @@ const std::string* GetShellStartupId(const aura::Window* window) {
 }
 
 void SetShellUseImmersiveForFullscreen(aura::Window* window, bool value) {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
   window->SetProperty(chromeos::kImmersiveImpliedByFullscreen, value);
 
   // Ensure the shelf is fully hidden in plain fullscreen, but shown
   // (auto-hides based on mouse movement) when in immersive fullscreen.
   window->SetProperty(chromeos::kHideShelfWhenFullscreenKey, !value);
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 }
-
-#if BUILDFLAG(IS_CHROMEOS_ASH)
 
 void SetShellClientAccessibilityId(aura::Window* window,
                                    const absl::optional<int32_t>& id) {
@@ -165,8 +155,6 @@ int GetWindowDeskStateChanged(const aura::Window* window) {
   return workspace;
 }
 
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
-
 void SetShellRootSurface(ui::PropertyHandler* property_handler,
                          Surface* surface) {
   property_handler->SetProperty(kRootSurfaceKey, surface);
@@ -197,12 +185,25 @@ Surface* GetTargetSurfaceForLocatedEvent(
     const ui::LocatedEvent* original_event) {
   aura::Window* window =
       WMHelper::GetInstance()->GetCaptureClient()->GetCaptureWindow();
+  Surface* root_surface = nullptr;
+
   if (!window) {
-    return Surface::AsSurface(
-        static_cast<aura::Window*>(original_event->target()));
+    auto* target_window = static_cast<aura::Window*>(original_event->target());
+    auto* target_surface = Surface::AsSurface(target_window);
+    if (target_surface) {
+      return target_surface;
+    }
+    // The target can be a window of the shell surface, if it was
+    // capture but released during event dispatching.
+    root_surface = GetShellRootSurface(target_window);
+    if (!root_surface) {
+      return nullptr;
+    }
+    window = target_window;
+  } else {
+    root_surface = GetShellRootSurface(window);
   }
 
-  Surface* root_surface = GetShellRootSurface(window);
   // Skip if the event is captured by non exo windows.
   if (!root_surface) {
     auto* widget = views::Widget::GetTopLevelWidgetForNativeView(window);
@@ -223,9 +224,8 @@ Surface* GetTargetSurfaceForLocatedEvent(
 
   // Create a clone of the event as targeter may update it during the
   // search.
-  auto cloned = ui::Event::Clone(*original_event);
+  auto cloned = original_event->Clone();
   ui::LocatedEvent* event = cloned->AsLocatedEvent();
-
   while (true) {
     gfx::PointF location_in_target_f = event->location_f();
     gfx::Point location_in_target = event->location();
@@ -293,14 +293,14 @@ void GrantPermissionToActivate(aura::Window* window, base::TimeDelta timeout) {
   // owns the Permission object.
   window->SetProperty(
       kPermissionKey,
-      new Permission(Permission::Capability::kActivate, timeout));
+      std::make_unique<Permission>(Permission::Capability::kActivate, timeout));
 }
 
 void GrantPermissionToActivateIndefinitely(aura::Window* window) {
   // Activation is the only permission, so just set the property. The window
   // owns the Permission object.
-  window->SetProperty(kPermissionKey,
-                      new Permission(Permission::Capability::kActivate));
+  window->SetProperty(kPermissionKey, std::make_unique<Permission>(
+                                          Permission::Capability::kActivate));
 }
 
 void RevokePermissionToActivate(aura::Window* window) {

@@ -1,4 +1,4 @@
-# Copyright 2016 The Chromium Authors. All rights reserved.
+# Copyright 2016 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -19,6 +19,9 @@ declare_args() {
   # Enable iOS 14, WidgetKit extension.
   ios_enable_widget_kit_extension = true
 
+  # Enable iOS 16 lockscreen extensions.
+  ios_enable_lockscreen_extension = true
+
   # Enable share extension.
   ios_enable_share_extension = true
 
@@ -37,6 +40,9 @@ declare_args() {
 
   # Controls whether ScreenTime API is used.
   ios_enable_screen_time = true
+
+  # Enable background fetch mode for feed refresh.
+  ios_enable_background_mode = true
 
   # Value of the encryption export compliance code. See "Cryptography and
   # U.S. Export Compliance" in "Submitting the App to App Review" in the
@@ -63,6 +69,9 @@ declare_args() {
 
   # List of plist templates to merge when generating chrome cpe entitlements.
   ios_chrome_cpe_entitlements_additions = []
+
+  # Use perf_tests_hook if true
+  ios_is_perf_test = false
 }
 
 if (target_environment == "catalyst") {
@@ -78,15 +87,11 @@ if (target_environment == "catalyst") {
   ios_enable_screen_time = false
 }
 
-# Configure whether breakpad support is enabled.
-breakpad_enabled = is_official_build && is_chrome_branded
-
-if (breakpad_enabled) {
-  breakpad_enabled_as_int = 1
+# Configure is_official_release.
+if (is_official_build && is_chrome_branded) {
   is_official_release = enable_dsyms && target_environment == "device" &&
                         current_toolchain == default_toolchain
 } else {
-  breakpad_enabled_as_int = 0
   is_official_release = false
 }
 

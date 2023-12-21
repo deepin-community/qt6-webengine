@@ -1,11 +1,11 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/mirroring/browser/single_client_video_capture_host.h"
 
-#include "base/bind.h"
-#include "base/callback.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/memory/weak_ptr.h"
 #include "base/token.h"
 #include "content/public/browser/web_contents_media_capture_id.h"
@@ -179,9 +179,19 @@ void SingleClientVideoCaptureHost::GetDeviceFormatsInUse(
   std::move(callback).Run(media::VideoCaptureFormats());
 }
 
+void SingleClientVideoCaptureHost::OnCaptureConfigurationChanged() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  // Ignore this call.
+}
+
 void SingleClientVideoCaptureHost::OnFrameDropped(
     const base::UnguessableToken& device_id,
     media::VideoCaptureFrameDropReason reason) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  // Ignore this call.
+}
+
+void SingleClientVideoCaptureHost::OnNewCropVersion(uint32_t crop_version) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   // Ignore this call.
 }

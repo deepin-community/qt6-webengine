@@ -1,4 +1,4 @@
-// Copyright (c) 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,13 +8,14 @@
 #include <atomic>
 #include <cstddef>
 
-#include "base/base_export.h"
+#include "base/allocator/partition_allocator/partition_alloc_base/compiler_specific.h"
+#include "base/allocator/partition_allocator/partition_alloc_base/component_export.h"
 
 namespace partition_alloc {
 
 // PartitionAlloc supports setting hooks to observe allocations/frees as they
 // occur as well as 'override' hooks that allow overriding those operations.
-class BASE_EXPORT PartitionAllocHooks {
+class PA_COMPONENT_EXPORT(PARTITION_ALLOC) PartitionAllocHooks {
  public:
   // Log allocation and free events.
   typedef void AllocationObserverHook(void* address,
@@ -25,7 +26,7 @@ class BASE_EXPORT PartitionAllocHooks {
   // If it returns true, the allocation has been overridden with the pointer in
   // *out.
   typedef bool AllocationOverrideHook(void** out,
-                                      int flags,
+                                      unsigned int flags,
                                       size_t size,
                                       const char* type_name);
   // If it returns true, then the allocation was overridden and has been freed.
@@ -33,6 +34,12 @@ class BASE_EXPORT PartitionAllocHooks {
   // If it returns true, the underlying allocation is overridden and *out holds
   // the size of the underlying allocation.
   typedef bool ReallocOverrideHook(size_t* out, void* address);
+
+  // Special hook type, independent of the rest. Triggered when `free()` detects
+  // outstanding references to the allocation.
+  // IMPORTANT: Make sure the hook always overwrites `[address, address + size)`
+  // with a bit pattern that cannot be interpreted as a valid memory address.
+  typedef void QuarantineOverrideHook(void* address, size_t size);
 
   // To unhook, call Set*Hooks with nullptrs.
   static void SetObserverHooks(AllocationObserverHook* alloc_hook,
@@ -52,7 +59,7 @@ class BASE_EXPORT PartitionAllocHooks {
                                               size_t size,
                                               const char* type_name);
   static bool AllocationOverrideHookIfEnabled(void** out,
-                                              int flags,
+                                              unsigned int flags,
                                               size_t size,
                                               const char* type_name);
 
@@ -64,6 +71,12 @@ class BASE_EXPORT PartitionAllocHooks {
                                            size_t size,
                                            const char* type_name);
   static bool ReallocOverrideHookIfEnabled(size_t* out, void* address);
+
+  PA_ALWAYS_INLINE static QuarantineOverrideHook* GetQuarantineOverrideHook() {
+    return quarantine_override_hook_.load(std::memory_order_acquire);
+  }
+
+  static void SetQuarantineOverrideHook(QuarantineOverrideHook* hook);
 
  private:
   // Single bool that is used to indicate whether observer or allocation hooks
@@ -78,16 +91,10 @@ class BASE_EXPORT PartitionAllocHooks {
   static std::atomic<AllocationOverrideHook*> allocation_override_hook_;
   static std::atomic<FreeOverrideHook*> free_override_hook_;
   static std::atomic<ReallocOverrideHook*> realloc_override_hook_;
+
+  static std::atomic<QuarantineOverrideHook*> quarantine_override_hook_;
 };
 
 }  // namespace partition_alloc
-
-namespace base {
-
-// TODO(https://crbug.com/1288247): Remove these 'using' declarations once
-// the migration to the new namespaces gets done.
-using ::partition_alloc::PartitionAllocHooks;
-
-}  // namespace base
 
 #endif  // BASE_ALLOCATOR_PARTITION_ALLOCATOR_PARTITION_ALLOC_HOOKS_H_

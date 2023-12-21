@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,6 +16,7 @@
 #include "components/heavy_ad_intervention/heavy_ad_service.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
 #include "components/language/core/browser/language_prefs.h"
+#include "components/origin_trials/browser/origin_trials.h"
 #include "components/payments/core/payment_prefs.h"
 #include "components/permissions/permission_manager.h"
 #include "components/pref_registry/pref_registry_syncable.h"
@@ -23,6 +24,7 @@
 #include "components/prefs/json_pref_store.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/pref_service_factory.h"
+#include "components/reduce_accept_language/browser/reduce_accept_language_service.h"
 #include "components/safe_browsing/core/common/safe_browsing_prefs.h"
 #include "components/security_interstitials/content/stateful_ssl_host_state_delegate.h"
 #include "components/site_isolation/pref_names.h"
@@ -46,7 +48,9 @@
 #include "weblayer/browser/browsing_data_remover_delegate_factory.h"
 #include "weblayer/browser/client_hints_factory.h"
 #include "weblayer/browser/heavy_ad_service_factory.h"
+#include "weblayer/browser/origin_trials_factory.h"
 #include "weblayer/browser/permissions/permission_manager_factory.h"
+#include "weblayer/browser/reduce_accept_language_factory.h"
 #include "weblayer/browser/stateful_ssl_host_state_delegate_factory.h"
 #include "weblayer/public/common/switches.h"
 
@@ -122,6 +126,10 @@ BrowserContextImpl::BrowserContextImpl(ProfileImpl* profile_impl,
   }
 
   site_isolation::SiteIsolationPolicy::ApplyPersistedIsolatedOrigins(this);
+
+  // Ensure the delegate is initialized early to give it time to load its
+  // persistence.
+  GetOriginTrialsControllerDelegate();
 }
 
 BrowserContextImpl::~BrowserContextImpl() {
@@ -220,10 +228,20 @@ BrowserContextImpl::GetBrowsingDataRemoverDelegate() {
   return BrowsingDataRemoverDelegateFactory::GetForBrowserContext(this);
 }
 
-download::InProgressDownloadManager*
-BrowserContextImpl::RetriveInProgressDownloadManager() {
+content::ReduceAcceptLanguageControllerDelegate*
+BrowserContextImpl::GetReduceAcceptLanguageControllerDelegate() {
+  return ReduceAcceptLanguageFactory::GetForBrowserContext(this);
+}
+
+content::OriginTrialsControllerDelegate*
+BrowserContextImpl::GetOriginTrialsControllerDelegate() {
+  return OriginTrialsFactory::GetForBrowserContext(this);
+}
+
+std::unique_ptr<download::InProgressDownloadManager>
+BrowserContextImpl::RetrieveInProgressDownloadManager() {
   // Override this to provide a connection to the wake lock service.
-  auto* download_manager = new download::InProgressDownloadManager(
+  auto download_manager = std::make_unique<download::InProgressDownloadManager>(
       nullptr, path_,
       path_.empty() ? nullptr
                     : GetDefaultStoragePartition()->GetProtoDatabaseProvider(),
@@ -303,6 +321,8 @@ void BrowserContextImpl::RegisterPrefs(
   blink::web_pref::WebPreferences pref_defaults;
   pref_registry->RegisterBooleanPref(browser_ui::prefs::kWebKitForceEnableZoom,
                                      pref_defaults.force_enable_zoom);
+  pref_registry->SetDefaultPrefValue(::prefs::kSafeBrowsingEnhanced,
+                                     base::Value(true));
 #endif
 
   BrowserContextDependencyManager::GetInstance()

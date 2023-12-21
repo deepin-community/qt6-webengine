@@ -1,6 +1,8 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+
+#include "base/memory/raw_ptr.h"
 
 #import <Cocoa/Cocoa.h>
 
@@ -15,8 +17,7 @@
 #include "ui/views/test/widget_test.h"
 #include "ui/views/widget/widget.h"
 
-namespace views {
-namespace test {
+namespace views::test {
 
 namespace {
 
@@ -73,8 +74,9 @@ class TabbedPaneAccessibilityMacTest : public WidgetTest {
     WidgetTest::TearDown();
   }
 
-  Tab* GetTabAt(size_t index) {
-    return static_cast<Tab*>(tabbed_pane_->tab_strip_->children()[index]);
+  TabbedPaneTab* GetTabAt(size_t index) {
+    return static_cast<TabbedPaneTab*>(
+        tabbed_pane_->tab_strip_->children()[index]);
   }
 
   id<NSAccessibility> A11yElementAtPoint(const gfx::Point& point) {
@@ -89,8 +91,8 @@ class TabbedPaneAccessibilityMacTest : public WidgetTest {
   }
 
  protected:
-  Widget* widget_ = nullptr;
-  TabbedPane* tabbed_pane_ = nullptr;
+  raw_ptr<Widget> widget_ = nullptr;
+  raw_ptr<TabbedPane> tabbed_pane_ = nullptr;
 };
 
 // Test the Tab's a11y information compared to a Cocoa NSTabViewItem.
@@ -178,5 +180,4 @@ TEST_F(TabbedPaneAccessibilityMacTest, WritableValue) {
   EXPECT_TRUE(GetTabAt(0)->selected());
 }
 
-}  // namespace test
-}  // namespace views
+}  // namespace views::test

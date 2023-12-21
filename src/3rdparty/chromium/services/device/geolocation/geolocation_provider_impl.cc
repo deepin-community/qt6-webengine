@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,17 +6,16 @@
 
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback.h"
-#include "base/callback_helpers.h"
 #include "base/check.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
 #include "base/lazy_instance.h"
 #include "base/location.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/singleton.h"
 #include "base/notreached.h"
 #include "base/task/single_thread_task_runner.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/default_tick_clock.h"
 #include "build/build_config.h"
 #include "net/base/network_change_notifier.h"
@@ -139,7 +138,7 @@ GeolocationProviderImpl::GeolocationProviderImpl()
     : base::Thread("Geolocation"),
       user_did_opt_into_location_services_(false),
       ignore_location_updates_(false),
-      main_task_runner_(base::ThreadTaskRunnerHandle::Get()) {
+      main_task_runner_(base::SingleThreadTaskRunner::GetCurrentDefault()) {
   DCHECK(main_task_runner_->BelongsToCurrentThread());
   high_accuracy_callbacks_.set_removal_callback(base::BindRepeating(
       &GeolocationProviderImpl::OnClientsChanged, base::Unretained(this)));

@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -77,7 +77,7 @@ class MODULES_EXPORT MediaRecorder
   // ScriptWrappable
   bool HasPendingActivity() const final { return state_ != State::kInactive; }
 
-  virtual void WriteData(const char* data,
+  virtual void WriteData(const void* data,
                          size_t length,
                          bool last_in_slice,
                          double timecode);
@@ -98,10 +98,10 @@ class MODULES_EXPORT MediaRecorder
 
   Member<MediaStream> stream_;
   String mime_type_;
-  int audio_bits_per_second_;
-  int video_bits_per_second_;
+  uint32_t audio_bits_per_second_{0};
+  uint32_t video_bits_per_second_{0};
 
-  State state_;
+  State state_ = State::kInactive;
   bool first_write_received_ = false;
   std::unique_ptr<BlobData> blob_data_;
   Member<MediaRecorderHandler> recorder_handler_;

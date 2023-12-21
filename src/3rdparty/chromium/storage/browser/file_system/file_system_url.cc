@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,8 +7,11 @@
 #include <sstream>
 
 #include "base/check.h"
+#include "base/feature_list.h"
+#include "base/strings/escape.h"
 #include "base/strings/string_util.h"
-#include "net/base/escape.h"
+#include "storage/browser/file_system/file_system_features.h"
+#include "storage/browser/file_system/file_system_util.h"
 #include "storage/common/file_system/file_system_types.h"
 #include "storage/common/file_system/file_system_util.h"
 #include "third_party/blink/public/common/storage_key/storage_key.h"
@@ -17,7 +20,27 @@
 
 namespace storage {
 
-namespace {}  // namespace
+namespace {
+
+bool AreSameStorageKey(const FileSystemURL& a, const FileSystemURL& b) {
+  // TODO(https://crbug.com/1396116): Make the `storage_key_` member optional.
+  // This class improperly uses a StorageKey with an opaque origin to indicate a
+  // lack of origin for FileSystemURLs corresponding to non-sandboxed file
+  // systems. This leads to unexpected behavior when comparing two non-sandboxed
+  // FileSystemURLs which differ only in the nonce of their default-constructed
+  // StorageKey.
+  return base::FeatureList::IsEnabled(
+             features::kFileSystemURLComparatorsTreatOpaqueOriginAsNoOrigin)
+             ? a.storage_key() == b.storage_key() ||
+                   (a.type() == b.type() &&
+                    (a.type() == storage::kFileSystemTypeExternal ||
+                     a.type() == storage::kFileSystemTypeLocal) &&
+                    a.storage_key().origin().opaque() &&
+                    b.storage_key().origin().opaque())
+             : a.storage_key() == b.storage_key();
+}
+
+}  // namespace
 
 FileSystemURL::FileSystemURL()
     : is_null_(true),
@@ -38,7 +61,8 @@ FileSystemURL::~FileSystemURL() = default;
 
 // static
 FileSystemURL FileSystemURL::CreateForTest(const GURL& url) {
-  return FileSystemURL(url, blink::StorageKey(url::Origin::Create(url)));
+  return FileSystemURL(
+      url, blink::StorageKey::CreateFirstParty(url::Origin::Create(url)));
 }
 
 FileSystemURL FileSystemURL::CreateForTest(const blink::StorageKey& storage_key,
@@ -122,7 +146,7 @@ GURL FileSystemURL::ToGURL() const {
   // Exactly match with DOMFileSystemBase::createFileSystemURL()'s encoding
   // behavior, where the path is escaped by KURL::encodeWithURLEscapeSequences
   // which is essentially encodeURIComponent except '/'.
-  std::string escaped = net::EscapeQueryParamValue(
+  std::string escaped = base::EscapeQueryParamValue(
       virtual_path_.NormalizePathSeparatorsTo('/').AsUTF8Unsafe(),
       false /* use_plus */);
   base::ReplaceSubstringsAfterOffset(&escaped, 0, "%2F", "/");
@@ -162,8 +186,20 @@ std::string FileSystemURL::DebugString() const {
     ss << path_.value();
   }
   ss << ", storage key: " << storage_key_.GetDebugString();
+  if (bucket_.has_value()) {
+    ss << ", bucket id: " << bucket_->id;
+  }
   ss << " }";
   return ss.str();
+}
+
+BucketLocator FileSystemURL::GetBucket() const {
+  if (bucket())
+    return *bucket_;
+
+  auto bucket = storage::BucketLocator::ForDefaultBucket(storage_key());
+  bucket.type = storage::FileSystemTypeToQuotaStorageType(type());
+  return bucket;
 }
 
 bool FileSystemURL::IsParent(const FileSystemURL& child) const {
@@ -171,29 +207,41 @@ bool FileSystemURL::IsParent(const FileSystemURL& child) const {
 }
 
 bool FileSystemURL::IsInSameFileSystem(const FileSystemURL& other) const {
-  return origin() == other.origin() && type() == other.type() &&
-         filesystem_id() == other.filesystem_id();
+  // Invalid FileSystemURLs should never be considered of the same file system.
+  bool is_maybe_valid =
+      !base::FeatureList::IsEnabled(
+          features::kFileSystemURLComparatorsTreatOpaqueOriginAsNoOrigin) ||
+      (is_valid() && other.is_valid());
+  return AreSameStorageKey(*this, other) && is_maybe_valid &&
+         type() == other.type() && filesystem_id() == other.filesystem_id() &&
+         bucket() == other.bucket();
 }
 
 bool FileSystemURL::operator==(const FileSystemURL& that) const {
   if (is_null_ && that.is_null_) {
     return true;
-  } else {
-    return storage_key() == that.storage_key() && type_ == that.type_ &&
-           path_ == that.path_ && filesystem_id_ == that.filesystem_id_ &&
-           is_valid_ == that.is_valid_;
   }
+
+  return AreSameStorageKey(*this, that) && type_ == that.type_ &&
+         path_ == that.path_ && filesystem_id_ == that.filesystem_id_ &&
+         is_valid_ == that.is_valid_ && bucket_ == that.bucket_;
 }
 
 bool FileSystemURL::Comparator::operator()(const FileSystemURL& lhs,
                                            const FileSystemURL& rhs) const {
   DCHECK(lhs.is_valid_ && rhs.is_valid_);
-  if (lhs.storage_key() != rhs.storage_key())
+  if (!AreSameStorageKey(lhs, rhs)) {
     return lhs.storage_key() < rhs.storage_key();
-  if (lhs.type_ != rhs.type_)
+  }
+  if (lhs.type_ != rhs.type_) {
     return lhs.type_ < rhs.type_;
-  if (lhs.filesystem_id_ != rhs.filesystem_id_)
+  }
+  if (lhs.filesystem_id_ != rhs.filesystem_id_) {
     return lhs.filesystem_id_ < rhs.filesystem_id_;
+  }
+  if (lhs.bucket_ != rhs.bucket_) {
+    return lhs.bucket_ < rhs.bucket_;
+  }
   return lhs.path_ < rhs.path_;
 }
 

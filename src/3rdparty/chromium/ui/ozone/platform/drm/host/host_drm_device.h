@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,7 @@
 
 #include <memory>
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "base/synchronization/lock.h"
@@ -62,11 +62,15 @@ class HostDrmDevice : public base::RefCountedThreadSafe<HostDrmDevice>,
   void GpuAddGraphicsDevice(const base::FilePath& path,
                             base::ScopedFD fd) override;
   bool GpuRemoveGraphicsDevice(const base::FilePath& path) override;
+  void GpuShouldDisplayEventTriggerConfiguration(
+      const EventPropertyMap& event_props) override;
 
   // Services needed by DrmDisplayHost
   void GpuConfigureNativeDisplays(
       const std::vector<display::DisplayConfigurationParams>& config_requests,
-      display::ConfigureCallback callback) override;
+      display::ConfigureCallback callback,
+      uint32_t modeset_flag) override;
+  bool GpuSetHdcpKeyProp(int64_t display_id, const std::string& key) override;
   bool GpuGetHDCPState(int64_t display_id) override;
   bool GpuSetHDCPState(
       int64_t display_id,
@@ -100,6 +104,9 @@ class HostDrmDevice : public base::RefCountedThreadSafe<HostDrmDevice>,
   void GpuRefreshNativeDisplaysCallback(MovableDisplaySnapshots displays) const;
   void GpuTakeDisplayControlCallback(bool success) const;
   void GpuRelinquishDisplayControlCallback(bool success) const;
+  void GpuShouldDisplayEventTriggerConfigurationCallback(
+      bool should_trigger) const;
+  void GpuSetHdcpKeyPropCallback(int64_t display_id, bool success) const;
   void GpuGetHDCPStateCallback(
       int64_t display_id,
       bool success,

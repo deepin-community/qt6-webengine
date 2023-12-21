@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -29,6 +29,12 @@ class GURL;
 using DefaultClientCallback = base::OnceCallback<void(bool)>;
 
 namespace custom_handlers {
+
+enum class RphRegistrationMode {
+  kNone,
+  kAutoAccept,
+  kAutoReject,
+};
 
 class ProtocolHandler;
 
@@ -77,9 +83,14 @@ class ProtocolHandlerRegistry : public KeyedService {
     virtual void OnProtocolHandlerRegistryChanged() = 0;
   };
 
-  // Creates a new instance.
+  // Intended for testing use only.
   ProtocolHandlerRegistry(PrefService* prefs,
                           std::unique_ptr<Delegate> delegate);
+
+  // Creates a new instance and performs initialization.
+  static std::unique_ptr<ProtocolHandlerRegistry> Create(
+      PrefService* prefs,
+      std::unique_ptr<Delegate> delegate);
 
   ProtocolHandlerRegistry(const ProtocolHandlerRegistry&) = delete;
   ProtocolHandlerRegistry& operator=(const ProtocolHandlerRegistry&) = delete;
@@ -213,17 +224,14 @@ class ProtocolHandlerRegistry : public KeyedService {
   // load command was issued, otherwise the command will be ignored.
   void AddPredefinedHandler(const ProtocolHandler& handler);
 
-  // Install default protocol handlers for chromeos which must be done
-  // prior to calling InitProtocolSettings.
-  // TODO(jfernandez): This method is declared as public because it's invoked by
-  // the ProtocolHandlerRegistryFactory. Instead declaring it private and make
-  // the factory a friend class, we  could add a Create() method on
-  // ProtocolHandlerRegistry that constructs the object, calls the necessary
-  // methods on it, then returns it as a unique_ptr (this is the usual way to
-  // have these Init() type methods called correctly).
-  void InstallDefaultsForChromeOS();
-
   void SetIsLoading(bool is_loading);
+
+  base::WeakPtr<ProtocolHandlerRegistry> GetWeakPtr();
+
+  void SetRphRegistrationMode(RphRegistrationMode mode) {
+    registration_mode_ = mode;
+  }
+  RphRegistrationMode registration_mode() const { return registration_mode_; }
 
  private:
   friend class base::DeleteHelper<ProtocolHandlerRegistry>;
@@ -231,6 +239,10 @@ class ProtocolHandlerRegistry : public KeyedService {
       content::BrowserThread::IO>;
 
   friend class ProtocolHandlerRegistryTest;
+
+  // Install default protocol handlers for chromeos which must be done
+  // prior to calling InitProtocolSettings.
+  void InstallPredefinedHandlers();
 
   // Puts the given handler at the top of the list of handlers for its
   // protocol.
@@ -366,6 +378,10 @@ class ProtocolHandlerRegistry : public KeyedService {
   bool is_loaded_;
 
   base::ObserverList<Observer> observers_;
+
+  // The current registration automation mode for registerProtocolHandler API,
+  // to be used for any future RegisterProtocolHandler requests.
+  RphRegistrationMode registration_mode_ = RphRegistrationMode::kNone;
 
   // Makes it possible to invalidate the callback for the
   // DefaultProtocolClientWorker.

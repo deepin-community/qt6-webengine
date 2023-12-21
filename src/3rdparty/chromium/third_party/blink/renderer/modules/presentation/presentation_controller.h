@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -19,6 +19,7 @@
 #include "third_party/blink/renderer/platform/mojo/heap_mojo_receiver.h"
 #include "third_party/blink/renderer/platform/supplementable.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
+#include "third_party/blink/renderer/platform/wtf/gc_plugin.h"
 
 namespace blink {
 
@@ -105,6 +106,7 @@ class MODULES_EXPORT PresentationController
   HeapHashSet<WeakMember<ControllerPresentationConnection>> connections_;
 
   // Holder of the Mojo connection to the PresentationService remote.
+  GC_PLUGIN_IGNORE("https://crbug.com/1381979")
   mojo::Remote<mojom::blink::PresentationService> presentation_service_remote_;
 
   // Lazily-initialized binding for mojom::blink::PresentationController. Sent

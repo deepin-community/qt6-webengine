@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,20 +7,25 @@
 #include "base/debug/debugger.h"
 #include "base/logging.h"
 #include "base/notreached.h"
-#include "base/strings/stringprintf.h"
 #include "base/time/time.h"
 #include "base/time/time_override.h"
+#include "base/trace_event/base_tracing.h"
+#include "base/trace_event/trace_event.h"
 
 namespace ui {
+namespace {
+// Setting to false disable the check globally.
+bool default_check_active_duration = true;
+}  // namespace
 
 // Do not fail on builds that run slow, such as SANITIZER, debug.
 #if !DCHECK_IS_ON() || defined(ADDRESS_SANITIZER) ||           \
     defined(MEMORY_SANITIZER) || defined(THREAD_SANITIZER) ||  \
     defined(LEAK_SANITIZER) || defined(UNDEFINED_SANITIZER) || \
     !defined(NDEBUG)
-#define NOTREACHED_OR_WARN() LOG(WARNING)
+#define DCHECK_OR_WARNING WARNING
 #else
-#define NOTREACHED_OR_WARN() NOTREACHED()
+#define DCHECK_OR_WARNING DCHECK
 #endif
 
 // Log animations that took more than 1m.  When DCHECK is enabled, it will fail
@@ -34,7 +39,8 @@ CompositorAnimationObserver::CompositorAnimationObserver(
 CompositorAnimationObserver::~CompositorAnimationObserver() = default;
 
 void CompositorAnimationObserver::Start() {
-  start_.emplace(base::TimeTicks::Now());
+  if (default_check_active_duration && check_active_duration_)
+    start_.emplace(base::TimeTicks::Now());
 }
 
 void CompositorAnimationObserver::Check() {
@@ -52,11 +58,18 @@ void CompositorAnimationObserver::ResetIfActive() {
 void CompositorAnimationObserver::NotifyFailure() {
   if (!base::debug::BeingDebugged() &&
       !base::subtle::ScopedTimeClockOverrides::overrides_active()) {
-    NOTREACHED_OR_WARN()
+    TRACE_EVENT_BEGIN("ui", "LongCompositorAnimationObserved",
+                      perfetto::ThreadTrack::Current(), *start_);
+    TRACE_EVENT_END("ui");
+    LOG(DCHECK_OR_WARNING)
         << "CompositorAnimationObserver is active for too long ("
         << (base::TimeTicks::Now() - *start_).InSecondsF()
         << "s) location=" << location_.ToString();
   }
+}
+
+void CompositorAnimationObserver::DisableCheckActiveDuration() {
+  default_check_active_duration = false;
 }
 
 }  // namespace ui

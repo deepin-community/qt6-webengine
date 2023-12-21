@@ -23,36 +23,43 @@
 
 namespace dawn::native::vulkan {
 
-    class VulkanInstance;
+class VulkanInstance;
 
-    class Adapter : public AdapterBase {
-      public:
-        Adapter(InstanceBase* instance,
-                VulkanInstance* vulkanInstance,
-                VkPhysicalDevice physicalDevice);
-        ~Adapter() override = default;
+class Adapter : public AdapterBase {
+  public:
+    Adapter(InstanceBase* instance,
+            VulkanInstance* vulkanInstance,
+            VkPhysicalDevice physicalDevice);
+    ~Adapter() override;
 
-        // AdapterBase Implementation
-        bool SupportsExternalImages() const override;
+    // AdapterBase Implementation
+    bool SupportsExternalImages() const override;
 
-        const VulkanDeviceInfo& GetDeviceInfo() const;
-        VkPhysicalDevice GetPhysicalDevice() const;
-        VulkanInstance* GetVulkanInstance() const;
+    const VulkanDeviceInfo& GetDeviceInfo() const;
+    VkPhysicalDevice GetPhysicalDevice() const;
+    VulkanInstance* GetVulkanInstance() const;
 
-        bool IsDepthStencilFormatSupported(VkFormat format);
+    bool IsDepthStencilFormatSupported(VkFormat format) const;
 
-      private:
-        MaybeError InitializeImpl() override;
-        MaybeError InitializeSupportedFeaturesImpl() override;
-        MaybeError InitializeSupportedLimitsImpl(CombinedLimits* limits) override;
+    bool IsAndroidQualcomm() const;
 
-        ResultOrError<Ref<DeviceBase>> CreateDeviceImpl(
-            const DeviceDescriptor* descriptor) override;
+  private:
+    MaybeError InitializeImpl() override;
+    void InitializeSupportedFeaturesImpl() override;
+    MaybeError InitializeSupportedLimitsImpl(CombinedLimits* limits) override;
 
-        VkPhysicalDevice mPhysicalDevice;
-        Ref<VulkanInstance> mVulkanInstance;
-        VulkanDeviceInfo mDeviceInfo = {};
-    };
+    MaybeError ValidateFeatureSupportedWithDeviceTogglesImpl(
+        wgpu::FeatureName feature,
+        const TogglesState& deviceToggles) override;
+
+    void SetupBackendDeviceToggles(TogglesState* deviceToggles) const override;
+    ResultOrError<Ref<DeviceBase>> CreateDeviceImpl(const DeviceDescriptor* descriptor,
+                                                    const TogglesState& deviceToggles) override;
+
+    VkPhysicalDevice mPhysicalDevice;
+    Ref<VulkanInstance> mVulkanInstance;
+    VulkanDeviceInfo mDeviceInfo = {};
+};
 
 }  // namespace dawn::native::vulkan
 

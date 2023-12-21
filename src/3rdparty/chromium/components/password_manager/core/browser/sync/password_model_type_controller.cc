@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,8 @@
 
 #include "base/feature_list.h"
 #include "base/metrics/histogram_functions.h"
-#include "base/threading/sequenced_task_runner_handle.h"
+#include "base/task/sequenced_task_runner.h"
+#include "build/build_config.h"
 #include "components/password_manager/core/browser/password_manager_features_util.h"
 #include "components/password_manager/core/common/password_manager_features.h"
 #include "components/prefs/pref_service.h"
@@ -33,7 +34,7 @@ enum class ClearedOnStartup {
 
 void RecordClearedOnStartup(ClearedOnStartup state) {
   base::UmaHistogramEnumeration(
-      "PasswordManager.AccountStorage.ClearedOnStartup", state);
+      "PasswordManager.AccountStorage.ClearedOnStartup2", state);
 }
 
 void PasswordStoreClearDone(bool cleared) {
@@ -65,32 +66,29 @@ PasswordModelTypeController::PasswordModelTypeController(
           base::BindRepeating(
               &PasswordModelTypeController::OnOptInStateMaybeChanged,
               base::Unretained(this))) {
-  identity_manager_->AddObserver(this);
+  identity_manager_observation_.Observe(identity_manager_);
 
-  DCHECK_EQ(
-      base::FeatureList::IsEnabled(features::kEnablePasswordsAccountStorage),
-      !!account_password_store_for_cleanup);
-  if (base::FeatureList::IsEnabled(features::kEnablePasswordsAccountStorage)) {
+  if (account_password_store_for_cleanup) {
+    DCHECK(
+        base::FeatureList::IsEnabled(features::kEnablePasswordsAccountStorage));
     // Note: Right now, we're still in the middle of SyncService initialization,
     // so we can't check IsOptedInForAccountStorage() yet (SyncService might not
     // have determined the syncing account yet). Post a task do to it after the
     // initialization is complete.
-    base::SequencedTaskRunnerHandle::Get()->PostTask(
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(&PasswordModelTypeController::MaybeClearStore,
                                   weak_ptr_factory_.GetWeakPtr(),
                                   account_password_store_for_cleanup));
   }
 }
 
-PasswordModelTypeController::~PasswordModelTypeController() {
-  identity_manager_->RemoveObserver(this);
-}
+PasswordModelTypeController::~PasswordModelTypeController() = default;
 
 void PasswordModelTypeController::LoadModels(
     const syncer::ConfigureContext& configure_context,
     const ModelLoadCallback& model_load_callback) {
   DCHECK(CalledOnValidThread());
-  sync_service_->AddObserver(this);
+  sync_service_observation_.Observe(sync_service_);
   sync_mode_ = configure_context.sync_mode;
   ModelTypeController::LoadModels(configure_context, model_load_callback);
 }
@@ -98,7 +96,7 @@ void PasswordModelTypeController::LoadModels(
 void PasswordModelTypeController::Stop(syncer::ShutdownReason shutdown_reason,
                                        StopCallback callback) {
   DCHECK(CalledOnValidThread());
-  sync_service_->RemoveObserver(this);
+  sync_service_observation_.Reset();
   // In transport-only mode, our storage is scoped to the Gaia account. That
   // means it should be cleared if Sync is stopped for any reason (other than
   // just browser shutdown). E.g. when switching to full-Sync mode, we don't
@@ -119,6 +117,7 @@ void PasswordModelTypeController::Stop(syncer::ShutdownReason shutdown_reason,
 
 syncer::DataTypeController::PreconditionState
 PasswordModelTypeController::GetPreconditionState() const {
+#if !BUILDFLAG(IS_IOS) && !BUILDFLAG(IS_ANDROID)
   // If Sync-the-feature is enabled, then the user has opted in to that, and no
   // additional opt-in is required here.
   if (sync_service_->IsSyncFeatureEnabled() ||
@@ -130,6 +129,12 @@ PasswordModelTypeController::GetPreconditionState() const {
   return features_util::IsOptedInForAccountStorage(pref_service_, sync_service_)
              ? PreconditionState::kPreconditionsMet
              : PreconditionState::kMustStopAndClearData;
+#else
+  // On Android and iOS, there is no explicit opt-in - instead the user's choice
+  // is handled via Sync's selected types (see `UserSelectableType`). So nothing
+  // to check here.
+  return PreconditionState::kPreconditionsMet;
+#endif  // !BUILDFLAG(IS_IOS) && !BUILDFLAG(IS_ANDROID)
 }
 
 bool PasswordModelTypeController::ShouldRunInTransportOnlyMode() const {
@@ -150,6 +155,7 @@ void PasswordModelTypeController::OnStateChanged(syncer::SyncService* sync) {
 void PasswordModelTypeController::OnAccountsInCookieUpdated(
     const signin::AccountsInCookieJarInfo& accounts_in_cookie_jar_info,
     const GoogleServiceAuthError& error) {
+#if !BUILDFLAG(IS_IOS) && !BUILDFLAG(IS_ANDROID)
   // If the account information is stale, do nothing for now - wait until there
   // is fresh information.
   if (!accounts_in_cookie_jar_info.accounts_are_fresh) {
@@ -168,10 +174,13 @@ void PasswordModelTypeController::OnAccountsInCookieUpdated(
   // Keep any account-storage settings only for known accounts.
   features_util::KeepAccountStorageSettingsOnlyForUsers(pref_service_,
                                                         gaia_ids);
+#endif  // !BUILDFLAG(IS_IOS) && !BUILDFLAG(IS_ANDROID)
 }
 
 void PasswordModelTypeController::OnAccountsCookieDeletedByUserAction() {
+#if !BUILDFLAG(IS_IOS) && !BUILDFLAG(IS_ANDROID)
   features_util::ClearAccountStorageSettingsForAllUsers(pref_service_);
+#endif  // !BUILDFLAG(IS_IOS) && !BUILDFLAG(IS_ANDROID)
 }
 
 void PasswordModelTypeController::OnPrimaryAccountChanged(

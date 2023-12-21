@@ -45,6 +45,31 @@
 
 namespace blink {
 
+namespace {
+
+AffineTransform DeprecatedCalculateTransformToLayer(
+    const LayoutObject* layout_object) {
+  AffineTransform transform;
+  while (layout_object) {
+    transform = layout_object->LocalToSVGParentTransform() * transform;
+    if (layout_object->IsSVGRoot())
+      break;
+    layout_object = layout_object->Parent();
+  }
+
+  // Continue walking up the layer tree, accumulating CSS transforms.
+  PaintLayer* layer = layout_object ? layout_object->EnclosingLayer() : nullptr;
+  while (layer) {
+    if (gfx::Transform* layer_transform = layer->Transform())
+      transform = AffineTransform::FromTransform(*layer_transform) * transform;
+    layer = layer->Parent();
+  }
+
+  return transform;
+}
+
+}  // namespace
+
 struct SearchCandidate {
   DISALLOW_NEW();
 
@@ -114,11 +139,11 @@ static const LayoutSVGRoot& ComputeTransformToSVGRoot(
   for (; !parent->IsSVGRoot(); parent = parent->Parent()) {
     if (filter_skipped && parent->StyleRef().HasFilter())
       *filter_skipped = true;
-    root_border_box_transform.PreMultiply(parent->LocalToSVGParentTransform());
+    root_border_box_transform.PostConcat(parent->LocalToSVGParentTransform());
   }
 
   const auto& svg_root = To<LayoutSVGRoot>(*parent);
-  root_border_box_transform.PreMultiply(svg_root.LocalToBorderBoxTransform());
+  root_border_box_transform.PostConcat(svg_root.LocalToBorderBoxTransform());
   return svg_root;
 }
 
@@ -149,7 +174,7 @@ bool SVGLayoutSupport::MapToVisualRectInAncestorSpace(
   }
 
   // Apply initial viewport clip.
-  if (svg_root.ShouldApplyViewportClip()) {
+  if (svg_root.ClipsToContentBox()) {
     PhysicalRect clip_rect(svg_root.OverflowClipRect(PhysicalOffset()));
     if (visual_rect_flags & kEdgeInclusive) {
       if (!result_rect.InclusiveIntersect(clip_rect))
@@ -193,7 +218,7 @@ void SVGLayoutSupport::MapAncestorToLocal(const LayoutObject& object,
   DCHECK_NE(ancestor, &object);
   DCHECK(object.IsSVGContainer() || object.IsSVGShape() ||
          object.IsSVGImage() || object.IsSVGText() ||
-         object.IsSVGForeignObject());
+         object.IsSVGForeignObjectIncludingNG());
   AffineTransform local_to_svg_root;
   const LayoutSVGRoot& svg_root =
       ComputeTransformToSVGRoot(object, local_to_svg_root, nullptr);
@@ -239,6 +264,7 @@ bool SVGLayoutSupport::IsOverflowHidden(const LayoutObject& object) {
 
 bool SVGLayoutSupport::IsOverflowHidden(const ComputedStyle& style) {
   return style.OverflowX() == EOverflow::kHidden ||
+         style.OverflowX() == EOverflow::kClip ||
          style.OverflowX() == EOverflow::kScroll;
 }
 
@@ -374,43 +400,16 @@ bool SVGLayoutSupport::IsIsolationRequired(const LayoutObject* object) {
          object->HasNonIsolatedBlendingDescendants();
 }
 
-AffineTransform::Transform
-    SubtreeContentTransformScope::current_content_transformation_ =
-        IDENTITY_TRANSFORM;
+AffineTransform SubtreeContentTransformScope::current_content_transformation_;
 
 SubtreeContentTransformScope::SubtreeContentTransformScope(
     const AffineTransform& subtree_content_transformation)
     : saved_content_transformation_(current_content_transformation_) {
-  AffineTransform content_transformation =
-      subtree_content_transformation *
-      AffineTransform(current_content_transformation_);
-  content_transformation.CopyTransformTo(current_content_transformation_);
+  current_content_transformation_.PostConcat(subtree_content_transformation);
 }
 
 SubtreeContentTransformScope::~SubtreeContentTransformScope() {
-  saved_content_transformation_.CopyTransformTo(
-      current_content_transformation_);
-}
-
-AffineTransform SVGLayoutSupport::DeprecatedCalculateTransformToLayer(
-    const LayoutObject* layout_object) {
-  AffineTransform transform;
-  while (layout_object) {
-    transform = layout_object->LocalToSVGParentTransform() * transform;
-    if (layout_object->IsSVGRoot())
-      break;
-    layout_object = layout_object->Parent();
-  }
-
-  // Continue walking up the layer tree, accumulating CSS transforms.
-  PaintLayer* layer = layout_object ? layout_object->EnclosingLayer() : nullptr;
-  while (layer) {
-    if (TransformationMatrix* layer_transform = layer->Transform())
-      transform = layer_transform->ToAffineTransform() * transform;
-    layer = layer->Parent();
-  }
-
-  return transform;
+  current_content_transformation_ = saved_content_transformation_;
 }
 
 float SVGLayoutSupport::CalculateScreenFontSizeScalingFactor(
@@ -476,7 +475,7 @@ static SearchCandidate SearchTreeForFindClosestLayoutSVGText(
 
   // If a LayoutSVGText was found and there are no potentially closer sub-trees,
   // just return |closestText|.
-  if (closest_text.layout_object && candidates.IsEmpty())
+  if (closest_text.layout_object && candidates.empty())
     return closest_text;
 
   std::stable_sort(candidates.begin(), candidates.end(),

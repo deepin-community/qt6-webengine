@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,8 +6,9 @@
 
 namespace feed {
 
-FeedStreamSurface::FeedStreamSurface(StreamType stream_type)
-    : stream_type_(stream_type) {
+FeedStreamSurface::FeedStreamSurface(StreamType stream_type,
+                                     SingleWebFeedEntryPoint entry_point)
+    : stream_type_(stream_type), entry_point_(entry_point) {
   static SurfaceId::Generator id_generator;
   surface_id_ = id_generator.GenerateNextId();
 }

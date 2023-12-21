@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,14 +9,13 @@
 
 #include <utility>
 
-#include "base/bind.h"
 #include "base/compiler_specific.h"
 #include "base/containers/contains.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/task/single_thread_task_runner.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "ipc/ipc_channel_factory.h"
 #include "ipc/ipc_listener.h"
@@ -224,9 +223,6 @@ void ChannelProxy::Context::Clear() {
 
 // Called on the IPC::Channel thread
 void ChannelProxy::Context::OnSendMessage(std::unique_ptr<Message> message) {
-  if (quota_checker_)
-    quota_checker_->AfterMessagesDequeued(1);
-
   if (!channel_) {
     OnChannelClosed();
     return;
@@ -422,9 +418,6 @@ void ChannelProxy::Context::AddGenericAssociatedInterfaceForIOThread(
 }
 
 void ChannelProxy::Context::Send(Message* message) {
-  if (quota_checker_)
-    quota_checker_->BeforeMessagesEnqueued(1);
-
   ipc_task_runner()->PostTask(
       FROM_HERE, base::BindOnce(&ChannelProxy::Context::OnSendMessage, this,
                                 base::WrapUnique(message)));
@@ -502,9 +495,6 @@ void ChannelProxy::Init(std::unique_ptr<ChannelFactory> factory,
                         bool create_pipe_now) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(!did_init_);
-
-  DCHECK(!context_->quota_checker_);
-  context_->quota_checker_ = factory->GetQuotaChecker();
 
   if (create_pipe_now) {
     // Create the channel immediately.  This effectively sets up the

@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,6 +11,7 @@
 #include "build/build_config.h"
 #include "media/mojo/mojom/audio_stream_factory.mojom.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "mojo/public/cpp/bindings/receiver.h"
 #include "services/audio/public/mojom/audio_service.mojom.h"
 #include "services/audio/public/mojom/debug_recording.mojom.h"
 #include "services/audio/public/mojom/device_notifications.mojom.h"
@@ -27,17 +28,16 @@ class SystemMonitor;
 }  // namespace base
 
 namespace media {
+class AecdumpRecordingManager;
 class AudioDeviceListenerMac;
 class AudioManager;
 class AudioLogFactory;
 }  // namespace media
 
 namespace audio {
-class AecdumpRecordingManager;
 class DebugRecording;
 class DeviceNotifier;
 class LogFactoryManager;
-class ServiceMetrics;
 class SystemInfo;
 
 class Service final : public mojom::AudioService {
@@ -65,8 +65,11 @@ class Service final : public mojom::AudioService {
   // a DeviceNotifier object that allows clients to/ subscribe to notifications
   // about device changes and a LogFactoryManager object that allows clients to
   // set a factory for audio logs.
+  // If |run_audio_processing| is true, the service will run Audio Processing
+  // Module (including for example acoustic echo cancellation).
   Service(std::unique_ptr<AudioManagerAccessor> audio_manager_accessor,
           bool enable_remote_client_support,
+          bool run_audio_processing,
           mojo::PendingReceiver<mojom::AudioService> receiver);
 
   Service(const Service&) = delete;
@@ -117,6 +120,7 @@ class Service final : public mojom::AudioService {
   mojo::Receiver<mojom::AudioService> receiver_;
   std::unique_ptr<AudioManagerAccessor> audio_manager_accessor_;
   const bool enable_remote_client_support_;
+  const bool run_audio_processing_;
   std::unique_ptr<base::SystemMonitor> system_monitor_;
 #if BUILDFLAG(IS_MAC)
   std::unique_ptr<media::AudioDeviceListenerMac> audio_device_listener_mac_;
@@ -125,13 +129,12 @@ class Service final : public mojom::AudioService {
 
   // Manages starting / stopping of diagnostic audio processing recordings. Must
   // outlive |debug_recording_| and |stream_factory_|, if instantiated.
-  std::unique_ptr<AecdumpRecordingManager> aecdump_recording_manager_;
+  std::unique_ptr<media::AecdumpRecordingManager> aecdump_recording_manager_;
 
   std::unique_ptr<DebugRecording> debug_recording_;
   absl::optional<StreamFactory> stream_factory_;
   std::unique_ptr<DeviceNotifier> device_notifier_;
   std::unique_ptr<LogFactoryManager> log_factory_manager_;
-  std::unique_ptr<ServiceMetrics> metrics_;
 };
 
 }  // namespace audio

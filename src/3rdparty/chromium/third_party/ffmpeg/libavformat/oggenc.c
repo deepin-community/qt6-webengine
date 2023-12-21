@@ -197,13 +197,13 @@ static int ogg_buffer_page(AVFormatContext *s, OGGStreamContext *oggstream)
 }
 
 static int ogg_buffer_data(AVFormatContext *s, AVStream *st,
-                           uint8_t *data, unsigned size, int64_t granule,
+                           const uint8_t *data, unsigned size, int64_t granule,
                            int header)
 {
     OGGStreamContext *oggstream = st->priv_data;
     OGGContext *ogg = s->priv_data;
     int total_segments = size / 255 + 1;
-    uint8_t *p = data;
+    const uint8_t *p = data;
     int i, segments, len, flush = 0;
 
     // Handles VFR by flushing page because this frame needs to have a timestamp
@@ -688,7 +688,7 @@ static int ogg_write_packet(AVFormatContext *s, AVPacket *pkt)
     int i;
 
     if (pkt)
-        return ogg_write_packet_internal(s, pkt);
+        return pkt->size ? ogg_write_packet_internal(s, pkt) : 0;
 
     for (i = 0; i < s->nb_streams; i++) {
         OGGStreamContext *oggstream = s->streams[i]->priv_data;

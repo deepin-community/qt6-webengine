@@ -1,15 +1,17 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import 'chrome://resources/cr_elements/cr_button/cr_button.m.js';
-import './signin_shared_css.js';
+import 'chrome://resources/cr_elements/cr_button/cr_button.js';
+import './signin_shared.css.js';
 import './strings.m.js';
 
-import {assert, assertNotReached} from 'chrome://resources/js/assert.m.js';
-import {html, PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+import {assert, assertNotReached} from 'chrome://resources/js/assert_ts.js';
+import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
+import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {SyncConfirmationBrowserProxy, SyncConfirmationBrowserProxyImpl} from './sync_confirmation_browser_proxy.js';
+import {getTemplate} from './sync_disabled_confirmation_app.html.js';
 
 interface SyncDisabledConfirmationAppElement {
   $: {
@@ -23,9 +25,21 @@ class SyncDisabledConfirmationAppElement extends PolymerElement {
   }
 
   static get template() {
-    return html`{__html_template__}`;
+    return getTemplate();
   }
 
+  static get properties() {
+    return {
+      signoutDisallowed_: {
+        type: Boolean,
+        value() {
+          return loadTimeData.getBoolean('signoutDisallowed');
+        },
+      },
+    };
+  }
+
+  private signoutDisallowed_: boolean;
   private syncConfirmationBrowserProxy_: SyncConfirmationBrowserProxy =
       SyncConfirmationBrowserProxyImpl.getInstance();
 
@@ -39,7 +53,7 @@ class SyncDisabledConfirmationAppElement extends PolymerElement {
   private onConfirm_(e: Event) {
     this.syncConfirmationBrowserProxy_.confirm(
         this.getConsentDescription_(),
-        this.getConsentConfirmation_(e.composedPath() as Array<HTMLElement>));
+        this.getConsentConfirmation_(e.composedPath() as HTMLElement[]));
   }
 
   /**
@@ -47,7 +61,7 @@ class SyncDisabledConfirmationAppElement extends PolymerElement {
    *     element.
    * @return The text of the consent confirmation element.
    */
-  private getConsentConfirmation_(path: Array<HTMLElement>): string {
+  private getConsentConfirmation_(path: HTMLElement[]): string {
     for (const element of path) {
       if (element.nodeType !== Node.DOCUMENT_FRAGMENT_NODE &&
           element.hasAttribute('consent-confirmation')) {
@@ -55,7 +69,6 @@ class SyncDisabledConfirmationAppElement extends PolymerElement {
       }
     }
     assertNotReached('No consent confirmation element found.');
-    return '';
   }
 
   /** @return Text of the consent description elements. */

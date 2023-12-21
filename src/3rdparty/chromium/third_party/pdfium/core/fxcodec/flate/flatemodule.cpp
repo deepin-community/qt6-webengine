@@ -1,4 +1,4 @@
-// Copyright 2014 PDFium Authors. All rights reserved.
+// Copyright 2014 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,6 +6,7 @@
 
 #include "core/fxcodec/flate/flatemodule.h"
 
+#include <stdint.h>
 #include <string.h>
 
 #include <algorithm>
@@ -15,9 +16,12 @@
 #include <vector>
 
 #include "core/fxcodec/scanlinedecoder.h"
+#include "core/fxcrt/data_vector.h"
+#include "core/fxcrt/fixed_zeroed_data_vector.h"
 #include "core/fxcrt/fx_extension.h"
 #include "core/fxcrt/fx_memory_wrappers.h"
 #include "core/fxcrt/fx_safe_types.h"
+#include "core/fxcrt/span_util.h"
 #include "core/fxge/calculate_pitch.h"
 #include "third_party/base/check.h"
 #include "third_party/base/notreached.h"
@@ -62,7 +66,7 @@ uint32_t FlateGetPossiblyTruncatedTotalIn(z_stream* context) {
 bool FlateCompress(unsigned char* dest_buf,
                    unsigned long* dest_size,
                    const unsigned char* src_buf,
-                   uint32_t src_size) {
+                   unsigned long src_size) {
   return compress(dest_buf, dest_size, src_buf, src_size) == Z_OK;
 }
 
@@ -133,22 +137,26 @@ class CLZWDecoder {
   uint32_t dest_buf_size_ = 0;  // Actual allocated size.
   uint32_t dest_byte_pos_ = 0;  // Size used.
   uint32_t stack_len_ = 0;
-  uint8_t decode_stack_[4000];
+  FixedZeroedDataVector<uint8_t> decode_stack_;
   const uint8_t early_change_;
   uint8_t code_len_ = 9;
   uint32_t current_code_ = 0;
-  uint32_t codes_[5021];
+  FixedZeroedDataVector<uint32_t> codes_;
 };
 
 CLZWDecoder::CLZWDecoder(pdfium::span<const uint8_t> src_span,
                          bool early_change)
-    : src_span_(src_span), early_change_(early_change ? 1 : 0) {}
+    : src_span_(src_span),
+      decode_stack_(4000),
+      early_change_(early_change ? 1 : 0),
+      codes_(5021) {}
 
 void CLZWDecoder::AddCode(uint32_t prefix_code, uint8_t append_char) {
   if (current_code_ + early_change_ == 4094)
     return;
 
-  codes_[current_code_++] = (prefix_code << 16) | append_char;
+  pdfium::span<uint32_t> codes_span = codes_.writable_span();
+  codes_span[current_code_++] = (prefix_code << 16) | append_char;
   if (current_code_ + early_change_ == 512 - 258)
     code_len_ = 10;
   else if (current_code_ + early_change_ == 1024 - 258)
@@ -158,22 +166,24 @@ void CLZWDecoder::AddCode(uint32_t prefix_code, uint8_t append_char) {
 }
 
 void CLZWDecoder::DecodeString(uint32_t code) {
+  pdfium::span<uint8_t> decode_span = decode_stack_.writable_span();
+  pdfium::span<const uint32_t> codes_span = codes_.span();
   while (true) {
     int index = code - 258;
     if (index < 0 || static_cast<uint32_t>(index) >= current_code_)
       break;
 
-    uint32_t data = codes_[index];
-    if (stack_len_ >= sizeof(decode_stack_))
+    uint32_t data = codes_span[index];
+    if (stack_len_ >= decode_span.size())
       return;
 
-    decode_stack_[stack_len_++] = static_cast<uint8_t>(data);
+    decode_span[stack_len_++] = static_cast<uint8_t>(data);
     code = data >> 16;
   }
-  if (stack_len_ >= sizeof(decode_stack_))
+  if (stack_len_ >= decode_span.size())
     return;
 
-  decode_stack_[stack_len_++] = static_cast<uint8_t>(code);
+  decode_span[stack_len_++] = static_cast<uint8_t>(code);
 }
 
 void CLZWDecoder::ExpandDestBuf(uint32_t additional_size) {
@@ -189,6 +199,7 @@ void CLZWDecoder::ExpandDestBuf(uint32_t additional_size) {
 }
 
 bool CLZWDecoder::Decode() {
+  pdfium::span<uint8_t> decode_span = decode_stack_.writable_span();
   uint32_t old_code = 0xFFFFFFFF;
   uint8_t last_char = 0;
 
@@ -249,8 +260,8 @@ bool CLZWDecoder::Decode() {
     DCHECK(old_code < 256 || old_code >= 258);
     stack_len_ = 0;
     if (code - 258 >= current_code_) {
-      if (stack_len_ < sizeof(decode_stack_))
-        decode_stack_[stack_len_++] = last_char;
+      if (stack_len_ < decode_stack_.size())
+        decode_span[stack_len_++] = last_char;
       DecodeString(old_code);
     } else {
       DecodeString(code);
@@ -269,9 +280,9 @@ bool CLZWDecoder::Decode() {
     }
 
     for (uint32_t i = 0; i < stack_len_; i++)
-      dest_buf_.get()[dest_byte_pos_ + i] = decode_stack_[stack_len_ - i - 1];
+      dest_buf_.get()[dest_byte_pos_ + i] = decode_span[stack_len_ - i - 1];
     dest_byte_pos_ += stack_len_;
-    last_char = decode_stack_[stack_len_ - 1];
+    last_char = decode_span[stack_len_ - 1];
     if (old_code >= 258 && old_code - 258 >= current_code_)
       break;
 
@@ -616,7 +627,7 @@ class FlateScanlineDecoder : public ScanlineDecoder {
  protected:
   std::unique_ptr<z_stream, FlateDeleter> m_pFlate;
   const pdfium::span<const uint8_t> m_SrcBuf;
-  std::vector<uint8_t, FxAllocAllocator<uint8_t>> m_Scanline;
+  DataVector<uint8_t> m_Scanline;
 };
 
 FlateScanlineDecoder::FlateScanlineDecoder(pdfium::span<const uint8_t> src_span,
@@ -684,9 +695,9 @@ class FlatePredictorScanlineDecoder final : public FlateScanlineDecoder {
   int m_Columns = 0;
   uint32_t m_PredictPitch = 0;
   size_t m_LeftOver = 0;
-  std::vector<uint8_t, FxAllocAllocator<uint8_t>> m_LastLine;
-  std::vector<uint8_t, FxAllocAllocator<uint8_t>> m_PredictBuffer;
-  std::vector<uint8_t, FxAllocAllocator<uint8_t>> m_PredictRaw;
+  DataVector<uint8_t> m_LastLine;
+  DataVector<uint8_t> m_PredictBuffer;
+  DataVector<uint8_t> m_PredictRaw;
 };
 
 FlatePredictorScanlineDecoder::FlatePredictorScanlineDecoder(
@@ -785,8 +796,8 @@ void FlatePredictorScanlineDecoder::GetNextLineWithoutPredictedPitch() {
     }
     size_t read_bytes =
         m_PredictPitch > bytes_to_go ? bytes_to_go : m_PredictPitch;
-    memcpy(m_Scanline.data() + m_Pitch - bytes_to_go, m_PredictBuffer.data(),
-           read_bytes);
+    fxcrt::spancpy(pdfium::make_span(m_Scanline).subspan(m_Pitch - bytes_to_go),
+                   pdfium::make_span(m_PredictBuffer).first(read_bytes));
     m_LeftOver += m_PredictPitch - read_bytes;
     bytes_to_go -= read_bytes;
   }
@@ -863,20 +874,19 @@ uint32_t FlateModule::FlateOrLZWDecode(
 }
 
 // static
-bool FlateModule::Encode(pdfium::span<const uint8_t> src_span,
-                         std::unique_ptr<uint8_t, FxFreeDeleter>* dest_buf,
-                         uint32_t* dest_size) {
-  const uint8_t* src_buf = src_span.data();
-  FX_SAFE_UINT32 src_size = src_span.size();
-  *dest_size = (src_size + src_size / 1000 + 12).ValueOrDie();
-  dest_buf->reset(FX_Alloc(uint8_t, *dest_size));
-  unsigned long temp_size = *dest_size;
-  if (!FlateCompress(dest_buf->get(), &temp_size, src_buf,
-                     src_size.ValueOrDie())) {
-    return false;
-  }
-  *dest_size = pdfium::base::checked_cast<uint32_t>(temp_size);
-  return true;
+DataVector<uint8_t> FlateModule::Encode(pdfium::span<const uint8_t> src_span) {
+  const unsigned long src_size =
+      pdfium::base::checked_cast<unsigned long>(src_span.size());
+  pdfium::base::CheckedNumeric<unsigned long> safe_dest_size = src_size;
+  safe_dest_size += src_size / 1000;
+  safe_dest_size += 12;
+  unsigned long dest_size = safe_dest_size.ValueOrDie();
+  DataVector<uint8_t> dest_buf(dest_size);
+  if (!FlateCompress(dest_buf.data(), &dest_size, src_span.data(), src_size))
+    return {};
+
+  dest_buf.resize(pdfium::base::checked_cast<size_t>(dest_size));
+  return dest_buf;
 }
 
 }  // namespace fxcodec

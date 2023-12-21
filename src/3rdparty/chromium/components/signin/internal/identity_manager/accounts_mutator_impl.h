@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -66,9 +66,9 @@ class AccountsMutatorImpl : public AccountsMutator {
 #endif
 
  private:
-  raw_ptr<ProfileOAuth2TokenService> token_service_;
-  raw_ptr<AccountTrackerService> account_tracker_service_;
-  raw_ptr<PrimaryAccountManager> primary_account_manager_;
+  raw_ptr<ProfileOAuth2TokenService, DanglingUntriaged> token_service_;
+  raw_ptr<AccountTrackerService, DanglingUntriaged> account_tracker_service_;
+  raw_ptr<PrimaryAccountManager, DanglingUntriaged> primary_account_manager_;
 #if BUILDFLAG(ENABLE_DICE_SUPPORT)
   raw_ptr<PrefService> pref_service_;
 #endif

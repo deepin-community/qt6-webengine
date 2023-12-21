@@ -1,10 +1,11 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "media/remoting/stream_provider.h"
 
 #include "base/memory/raw_ptr.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/test/task_environment.h"
 #include "components/cast_streaming/public/remoting_proto_enum_utils.h"
 #include "components/cast_streaming/public/remoting_proto_utils.h"
@@ -41,7 +42,7 @@ class StreamProviderTest : public testing::Test {
         mock_controller_->mock_remotee()->BindNewPipeAndPassRemote());
     mock_remotee_ = mock_controller_->mock_remotee();
     stream_provider_ = std::make_unique<StreamProvider>(
-        mock_controller_, base::ThreadTaskRunnerHandle::Get());
+        mock_controller_, base::SingleThreadTaskRunner::GetCurrentDefault());
 
     rpc_messenger_ = mock_controller_->rpc_messenger();
     sender_audio_demuxer_stream_handle_ = rpc_messenger_->GetUniqueHandle();
@@ -206,10 +207,14 @@ class StreamProviderTest : public testing::Test {
     return stream_provider_->video_stream_->current_frame_count_;
   }
 
-  void OnBufferReadFromDemuxerStream(DemuxerStream::Type type,
-                                     DemuxerStream::Status status,
-                                     scoped_refptr<DecoderBuffer> buffer) {
+  void OnBufferReadFromDemuxerStream(
+      DemuxerStream::Type type,
+      DemuxerStream::Status status,
+      DemuxerStream::DecoderBufferVector buffers) {
     EXPECT_EQ(status, DemuxerStream::Status::kOk);
+    EXPECT_EQ(buffers.size(), 1u)
+        << "StreamProviderTest only reads a single-buffer.";
+    scoped_refptr<DecoderBuffer> buffer = std::move(buffers[0]);
     switch (type) {
       case DemuxerStream::Type::AUDIO:
         received_audio_buffer_ = buffer;
@@ -287,8 +292,8 @@ TEST_F(StreamProviderTest, ReadBuffer) {
   EXPECT_TRUE(stream_provider_initialized_);
 
   audio_stream_->Read(
-      base::BindOnce(&StreamProviderTest::OnBufferReadFromDemuxerStream,
-                     base::Unretained(this), DemuxerStream::Type::AUDIO));
+      1, base::BindOnce(&StreamProviderTest::OnBufferReadFromDemuxerStream,
+                        base::Unretained(this), DemuxerStream::Type::AUDIO));
   task_environment_.RunUntilIdle();
   EXPECT_EQ(audio_buffer_->data_size(), received_audio_buffer_->data_size());
   EXPECT_EQ(audio_buffer_->end_of_stream(),
@@ -297,8 +302,8 @@ TEST_F(StreamProviderTest, ReadBuffer) {
             received_audio_buffer_->is_key_frame());
 
   video_stream_->Read(
-      base::BindOnce(&StreamProviderTest::OnBufferReadFromDemuxerStream,
-                     base::Unretained(this), DemuxerStream::Type::VIDEO));
+      1, base::BindOnce(&StreamProviderTest::OnBufferReadFromDemuxerStream,
+                        base::Unretained(this), DemuxerStream::Type::VIDEO));
   task_environment_.RunUntilIdle();
   EXPECT_EQ(video_buffer_->end_of_stream(),
             received_video_buffer_->end_of_stream());

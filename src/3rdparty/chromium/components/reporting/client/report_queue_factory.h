@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,16 +7,13 @@
 
 #include <memory>
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/strings/string_piece_forward.h"
 #include "base/task/sequenced_task_runner.h"
 #include "components/reporting/client/report_queue.h"
 #include "components/reporting/client/report_queue_configuration.h"
 #include "components/reporting/util/statusor.h"
-
-namespace net {
-class BackoffEntry;
-}  // namespace net
+#include "net/base/backoff_entry.h"
 
 namespace reporting {
 
@@ -25,18 +22,14 @@ namespace reporting {
 // allows automatic retries under the hood if the creation of the ReportQueue
 // fails.
 //
-// Usage:
-// 1. ReportQueueFactory::Create(dm_token, destination, success_callback)
-// 2. ReportQueueFactory::Create(event_type, destination, success_callback)
+// To synchronously create `SpeculativeReportQueue`:
+//    ... = ReportQueueFactory::CreateSpeculativeReportQueue(dm_token,
+//    destination[, reserved_space]);
 //
-// Option 1 is deprecated in favor of option 2 since the new version retrieves
-// DM tokens autonomously without forcing the user to specify them before hand.
-// dm_token is the DMToken value (as StringPiece) under which
-// identity the ReportQueue will be created. event_type describes the type of
-// events being reported so the provider can determine what DM token needs to be
-// used for reporting purposes. destination is a requirement to
-// define where the event is coming from. success_callback is the callback that
-// will pass the ReportQueue back to the model.
+// To asynchronously create `ReportQueue` (currently used in tests only):
+//    ReportQueueFactory::Create(event_type, destination, success_callback[,
+//    reserved_space]);
+//
 class ReportQueueFactory {
  public:
   using SuccessCallback =
@@ -44,32 +37,38 @@ class ReportQueueFactory {
   using TrySetReportQueueCallback =
       base::OnceCallback<void(StatusOr<std::unique_ptr<ReportQueue>>)>;
 
-  // Deprecated
-  static void Create(base::StringPiece dm_token_value,
-                     Destination destination,
-                     SuccessCallback done_cb);
-
+  // Instantiates regular ReportQueue (asynchronous operation).
+  // `event_type` describes the type of events being reported so the provider
+  // can determine what DM token needs to be used for reporting purposes.
+  // `destination` is a requirement to define where the event is coming from.
+  // `reserved_space` is optional. If it is > 0, respective ReportQueue will be
+  // "opportunistic" - underlying Storage would only accept an enqueue request
+  // if after adding the new record remaining amount of disk space will not drop
+  // below `reserved_space`.
+  // `success_callback` is the callback that will pass the ReportQueue back to
+  // the model.
   static void Create(EventType event_type,
                      Destination destination,
-                     SuccessCallback done_cb);
+                     SuccessCallback done_cb,
+                     int64_t reserved_space = 0L);
 
-  // Deprecated
-  static std::unique_ptr<::reporting::ReportQueue, base::OnTaskRunnerDeleter>
-  CreateSpeculativeReportQueue(base::StringPiece dm_token_value,
-                               Destination destination);
-
-  static std::unique_ptr<::reporting::ReportQueue, base::OnTaskRunnerDeleter>
-  CreateSpeculativeReportQueue(EventType event_type, Destination destination);
+  // Instantiates and returns SpeculativeReportQueue.
+  // `event_type`, `destination` and `reserved_space` have the same meaining as
+  // in `Create` factory method above.
+  static std::unique_ptr<ReportQueue, base::OnTaskRunnerDeleter>
+  CreateSpeculativeReportQueue(EventType event_type,
+                               Destination destination,
+                               int64_t reserved_space = 0L);
 
  private:
   static void TrySetReportQueue(
       SuccessCallback success_cb,
-      StatusOr<std::unique_ptr<reporting::ReportQueue>> report_queue_result);
+      StatusOr<std::unique_ptr<ReportQueue>> report_queue_result);
 
   static TrySetReportQueueCallback CreateTrySetCallback(
       Destination destination,
       SuccessCallback success_cb,
-      std::unique_ptr<net::BackoffEntry> backoff_entry);
+      std::unique_ptr<::net::BackoffEntry> backoff_entry);
 };
 
 }  // namespace reporting

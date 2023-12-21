@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,7 @@
 #include <string.h>
 #include <memory>
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
 #include "mojo/public/cpp/bindings/receiver_set.h"
@@ -19,6 +19,7 @@
 #include "third_party/blink/public/mojom/websockets/websocket_connector.mojom-blink.h"
 #include "third_party/blink/public/platform/web_url.h"
 #include "third_party/blink/public/platform/websocket_handshake_throttle.h"
+#include "third_party/blink/renderer/bindings/core/v8/capture_source_location.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
@@ -101,9 +102,8 @@ class WebSocketChannelImplTestBase : public PageTestBase {
     local_frame_client_ = MakeGarbageCollected<EmptyLocalFrameClient>();
     local_frame_client_->GetBrowserInterfaceBroker().SetBinderForTesting(
         mojom::blink::WebSocketConnector::Name_,
-        base::BindRepeating(
-            &WebSocketChannelImplTestBase::BindWebSocketConnector,
-            GetWeakPtr()));
+        WTF::BindRepeating(&WebSocketChannelImplTestBase::BindWebSocketConnector,
+                  GetWeakPtr()));
 
     PageTestBase::SetupPageWithClients(nullptr /* page_clients */,
                                        local_frame_client_.Get());
@@ -296,8 +296,8 @@ class WebSocketChannelImplTest : public WebSocketChannelImplTestBase {
   void SetUp() override {
     WebSocketChannelImplTestBase::SetUp();
     channel_ = WebSocketChannelImpl::CreateForTesting(
-        GetFrame().DomWindow(), channel_client_.Get(),
-        SourceLocation::Capture(), std::move(handshake_throttle_));
+        GetFrame().DomWindow(), channel_client_.Get(), CaptureSourceLocation(),
+        std::move(handshake_throttle_));
   }
 
   MockWebSocketChannelClient* ChannelClient() { return channel_client_.Get(); }
@@ -402,7 +402,7 @@ class CallTrackingClosure {
   base::OnceClosure Closure() {
     // This use of base::Unretained is safe because nothing can call the
     // callback once the test has finished.
-    return WTF::Bind(&CallTrackingClosure::Called, base::Unretained(this));
+    return WTF::BindOnce(&CallTrackingClosure::Called, base::Unretained(this));
   }
 
   bool WasCalled() const { return was_called_; }
@@ -433,7 +433,7 @@ TEST_F(WebSocketChannelImplTest, ConnectSuccess) {
                   .IsEquivalent(GetDocument().SiteForCookies()));
 
   ASSERT_TRUE(Channel()->Connect(KURL("ws://localhost/"), "x"));
-  EXPECT_TRUE(connector_.GetConnectArgs().IsEmpty());
+  EXPECT_TRUE(connector_.GetConnectArgs().empty());
 
   test::RunPendingTasks();
   auto connect_args = connector_.TakeConnectArgs();
@@ -483,7 +483,7 @@ TEST_F(WebSocketChannelImplTest, MojoConnectionErrorDuringHandshake) {
   }
 
   ASSERT_TRUE(Channel()->Connect(KURL("ws://localhost/"), "x"));
-  EXPECT_TRUE(connector_.GetConnectArgs().IsEmpty());
+  EXPECT_TRUE(connector_.GetConnectArgs().empty());
 
   test::RunPendingTasks();
   auto connect_args = connector_.TakeConnectArgs();
@@ -1663,7 +1663,7 @@ TEST_F(WebSocketChannelImplMultipleTest, ConnectionLimit) {
     auto* channel_client = MockWebSocketChannelClient::Create();
 
     channel = WebSocketChannelImpl::CreateForTesting(
-        GetFrame().DomWindow(), channel_client, SourceLocation::Capture(),
+        GetFrame().DomWindow(), channel_client, CaptureSourceLocation(),
         std::move(handshake_throttle));
     channel->Connect(url, "");
   }
@@ -1672,7 +1672,7 @@ TEST_F(WebSocketChannelImplMultipleTest, ConnectionLimit) {
   test::RunPendingTasks();
 
   auto* failing_channel = WebSocketChannelImpl::CreateForTesting(
-      GetFrame().DomWindow(), failure_channel_client, SourceLocation::Capture(),
+      GetFrame().DomWindow(), failure_channel_client, CaptureSourceLocation(),
       std::move(failure_handshake_throttle));
   failing_channel->Connect(url, "");
 
@@ -1690,7 +1690,7 @@ TEST_F(WebSocketChannelImplMultipleTest, ConnectionLimit) {
 
   auto* successful_channel = WebSocketChannelImpl::CreateForTesting(
       GetFrame().DomWindow(), successful_channel_client,
-      SourceLocation::Capture(), std::move(successful_handshake_throttle));
+      CaptureSourceLocation(), std::move(successful_handshake_throttle));
   successful_channel->Connect(url, "");
 
   // Let the connect be passed through mojo.

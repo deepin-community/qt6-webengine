@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,7 +16,6 @@
 #include "weblayer/browser/component_updater/registration.h"
 #include "weblayer/browser/devtools_server_android.h"
 #include "weblayer/browser/java/jni/WebLayerImpl_jni.h"
-#include "weblayer/browser/url_bar/page_info_client_impl.h"
 #include "weblayer/common/crash_reporter/crash_keys.h"
 
 using base::android::JavaParamRef;

@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,8 +6,8 @@
 #include <utility>
 
 #include "base/auto_reset.h"
-#include "base/bind.h"
 #include "base/command_line.h"
+#include "base/functional/bind.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
@@ -118,7 +118,7 @@ class CompositorEventAckBrowserTest : public ContentBrowserTest {
   ~CompositorEventAckBrowserTest() override {}
 
   RenderWidgetHostImpl* GetWidgetHost() {
-    auto* main_frame = shell()->web_contents()->GetMainFrame();
+    auto* main_frame = shell()->web_contents()->GetPrimaryMainFrame();
     return RenderWidgetHostImpl::From(
         main_frame->GetRenderViewHost()->GetWidget());
   }

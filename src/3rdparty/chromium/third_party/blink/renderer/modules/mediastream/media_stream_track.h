@@ -1,4 +1,4 @@
-// Copyright (c) 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,6 +10,7 @@
 #include "build/build_config.h"
 #include "third_party/blink/renderer/bindings/core/v8/active_script_wrappable.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
+#include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_capture_handle.h"
 #include "third_party/blink/renderer/modules/event_target_modules.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
@@ -22,13 +23,26 @@
 
 namespace blink {
 
+static const char kContentHintStringNone[] = "";
+static const char kContentHintStringAudioSpeech[] = "speech";
+static const char kContentHintStringAudioMusic[] = "music";
+static const char kContentHintStringVideoMotion[] = "motion";
+static const char kContentHintStringVideoDetail[] = "detail";
+static const char kContentHintStringVideoText[] = "text";
+
 class AudioSourceProvider;
 class ImageCapture;
+class MediaConstraints;
 class MediaTrackCapabilities;
 class MediaTrackConstraints;
 class MediaStream;
 class MediaTrackSettings;
 class ScriptState;
+
+String ContentHintToString(
+    const WebMediaStreamTrack::ContentHintType& content_hint);
+
+String ReadyStateToString(const MediaStreamSource::ReadyState& ready_state);
 
 class MODULES_EXPORT MediaStreamTrack
     : public EventTargetWithInlineData,
@@ -42,9 +56,33 @@ class MODULES_EXPORT MediaStreamTrack
     virtual void TrackChangedState() = 0;
   };
 
-  // TODO(1288839): Implement to recreate MST after transfer
-  static MediaStreamTrack* Create(ExecutionContext* context,
-                                  const base::UnguessableToken& token);
+  // For carrying data to the FromTransferredState method.
+  struct TransferredValues {
+    const WrapperTypeInfo* track_impl_subtype;
+    base::UnguessableToken session_id;
+    base::UnguessableToken transfer_id;
+    String kind;
+    String id;
+    String label;
+    bool enabled;
+    bool muted;
+    WebMediaStreamTrack::ContentHintType content_hint;
+    MediaStreamSource::ReadyState ready_state;
+    // Set only if
+    // track_impl_subtype->IsSubclass(BrowserCaptureMediaStreamTrack::GetStaticWrapperTypeInfo())
+    absl::optional<uint32_t> crop_version;
+  };
+
+  // See SetFromTransferredStateImplForTesting in ./test/transfer_test_utils.h.
+  using FromTransferredStateImplForTesting =
+      base::RepeatingCallback<MediaStreamTrack*(const TransferredValues&)>;
+
+  // Create a MediaStreamTrack instance as a result of a transfer into this
+  // context, eg when receiving a postMessage() with an MST in the transfer
+  // list.
+  // TODO(https://crbug.com/1288839): Implement to recreate MST after transfer
+  static MediaStreamTrack* FromTransferredState(ScriptState* script_state,
+                                                const TransferredValues& data);
 
   // MediaStreamTrack.idl
   virtual String kind() const = 0;
@@ -57,7 +95,7 @@ class MODULES_EXPORT MediaStreamTrack
   virtual String readyState() const = 0;
   virtual void SetContentHint(const String&) = 0;
   virtual void stopTrack(ExecutionContext*) = 0;
-  virtual MediaStreamTrack* clone(ScriptState*) = 0;
+  virtual MediaStreamTrack* clone(ExecutionContext*) = 0;
   virtual MediaTrackCapabilities* getCapabilities() const = 0;
   virtual MediaTrackConstraints* getConstraints() const = 0;
   virtual MediaTrackSettings* getSettings() const = 0;
@@ -65,12 +103,16 @@ class MODULES_EXPORT MediaStreamTrack
   virtual ScriptPromise applyConstraints(ScriptState*,
                                          const MediaTrackConstraints*) = 0;
 
-  virtual void SetConstraints(const MediaConstraints&) = 0;
+  virtual void applyConstraints(ScriptPromiseResolver*,
+                                const MediaTrackConstraints*) = 0;
+  virtual void SetInitialConstraints(const MediaConstraints& constraints) = 0;
+  virtual void SetConstraints(const MediaConstraints& constraints) = 0;
 
   DEFINE_ATTRIBUTE_EVENT_LISTENER(mute, kMute)
   DEFINE_ATTRIBUTE_EVENT_LISTENER(unmute, kUnmute)
   DEFINE_ATTRIBUTE_EVENT_LISTENER(ended, kEnded)
   DEFINE_ATTRIBUTE_EVENT_LISTENER(capturehandlechange, kCapturehandlechange)
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(configurationchange, kConfigurationchange)
 
   virtual MediaStreamSource::ReadyState GetReadyState() = 0;
 
@@ -93,23 +135,31 @@ class MODULES_EXPORT MediaStreamTrack
       int context_sample_rate) = 0;
 
   virtual ImageCapture* GetImageCapture() = 0;
-  virtual absl::optional<base::UnguessableToken> serializable_session_id()
-      const = 0;
-
-#if !BUILDFLAG(IS_ANDROID)
-  // Only relevant for focusable streams (FocusableMediaStreamTrack).
-  // When called on one of these, it signals that Conditional Focus
-  // no longer applies - the browser will now decide whether
-  // the captured display surface should be captured. Later calls to
-  // FocusableMediaStreamTrack.focus() will now raise an exception.
-  virtual void CloseFocusWindowOfOpportunity() = 0;
-#endif
+  virtual absl::optional<const MediaStreamDevice> device() const = 0;
+  // This function is called on the track by the serializer once it has been
+  // serialized for transfer to another context.
+  // Prepares the track for a potentially cross-renderer transfer. After this
+  // is called, the track will be in an ended state and no longer usable.
+  virtual void BeingTransferred(const base::UnguessableToken& transfer_id) = 0;
+  // Returns true if this track is allowed to be transferred. If a transfer is
+  //  not allowed, message will contain an explanatory text that can be
+  //  surfaced to the caller.
+  virtual bool TransferAllowed(String& message) const = 0;
 
   virtual void AddObserver(Observer*) = 0;
 
   void Trace(Visitor* visitor) const override {
     EventTargetWithInlineData::Trace(visitor);
   }
+
+ private:
+  // Friend in order to allow setting a new impl for FromTransferredState.
+  friend void SetFromTransferredStateImplForTesting(
+      FromTransferredStateImplForTesting impl);
+  // Provides access to the global mock impl of FromTransferredState. Set to
+  // base::NullCallback() to restore the real impl.
+  static FromTransferredStateImplForTesting&
+  GetFromTransferredStateImplForTesting();
 };
 
 typedef HeapVector<Member<MediaStreamTrack>> MediaStreamTrackVector;

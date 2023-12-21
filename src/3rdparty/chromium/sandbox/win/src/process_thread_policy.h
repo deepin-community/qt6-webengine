@@ -1,4 +1,4 @@
-// Copyright (c) 2006-2010 The Chromium Authors. All rights reserved.
+// Copyright 2006-2010 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -53,13 +53,13 @@ class ProcessPolicy {
 
   // Processes a 'CreateThread()' request from the target.
   // 'client_info' : the target process that is making the request.
-  static DWORD CreateThreadAction(const ClientInfo& client_info,
-                                  SIZE_T stack_size,
-                                  LPTHREAD_START_ROUTINE start_address,
-                                  PVOID parameter,
-                                  DWORD creation_flags,
-                                  LPDWORD thread_id,
-                                  HANDLE* handle);
+  static NTSTATUS CreateThreadAction(const ClientInfo& client_info,
+                                     SIZE_T stack_size,
+                                     LPTHREAD_START_ROUTINE start_address,
+                                     PVOID parameter,
+                                     DWORD creation_flags,
+                                     LPDWORD thread_id,
+                                     HANDLE* handle);
 };
 
 }  // namespace sandbox

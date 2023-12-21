@@ -1,14 +1,15 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/account_manager_core/account_manager_util.h"
 
-#include "absl/types/optional.h"
+#include "base/notreached.h"
 #include "components/account_manager_core/account.h"
 #include "components/account_manager_core/account_addition_options.h"
 #include "components/account_manager_core/account_addition_result.h"
 #include "google_apis/gaia/google_service_auth_error.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace account_manager {
 
@@ -87,6 +88,8 @@ crosapi::mojom::GoogleServiceAuthError::State ToMojoGoogleServiceAuthErrorState(
       return cm::GoogleServiceAuthError::State::kUnexpectedServiceResponse;
     case GoogleServiceAuthError::State::SERVICE_ERROR:
       return cm::GoogleServiceAuthError::State::kServiceError;
+    case GoogleServiceAuthError::State::SCOPE_LIMITED_UNRECOVERABLE_ERROR:
+      return cm::GoogleServiceAuthError::State::kScopeLimitedUnrecoverableError;
     case GoogleServiceAuthError::State::NUM_STATES:
       NOTREACHED();
       return cm::GoogleServiceAuthError::State::kNone;
@@ -132,6 +135,18 @@ crosapi::mojom::AccountAdditionResult::Status ToMojoAccountAdditionStatus(
       return cm::AccountAdditionResult::Status::kUnexpectedResponse;
     case account_manager::AccountAdditionResult::Status::kBlockedByPolicy:
       return cm::AccountAdditionResult::Status::kBlockedByPolicy;
+    case account_manager::AccountAdditionResult::Status::
+        kMojoRemoteDisconnected:
+    case account_manager::AccountAdditionResult::Status::
+        kIncompatibleMojoVersions:
+      // `kMojoRemoteDisconnected` and `kIncompatibleMojoVersions` are generated
+      // entirely on the remote side when the receiver can't even be reached.
+      // They do not have any Mojo equivalent since they are never passed over
+      // the wire in the first place.
+      NOTREACHED() << "These statuses should not be passed over the wire";
+      // Return something to make the compiler happy. This should never happen
+      // in production.
+      return cm::AccountAdditionResult::Status::kUnexpectedResponse;
   }
 }
 
@@ -239,6 +254,9 @@ absl::optional<GoogleServiceAuthError> FromMojoGoogleServiceAuthError(
     case cm::GoogleServiceAuthError::State::kRequestCanceled:
       return GoogleServiceAuthError(
           GoogleServiceAuthError::State::REQUEST_CANCELED);
+    case cm::GoogleServiceAuthError::State::kScopeLimitedUnrecoverableError:
+      return GoogleServiceAuthError(
+          GoogleServiceAuthError::State::SCOPE_LIMITED_UNRECOVERABLE_ERROR);
     default:
       LOG(WARNING) << "Unknown crosapi::mojom::GoogleServiceAuthError::State: "
                    << mojo_error->state;
@@ -292,6 +310,10 @@ FromMojoAccountAdditionResult(
     case account_manager::AccountAdditionResult::Status::kAlreadyInProgress:
     case account_manager::AccountAdditionResult::Status::kCancelledByUser:
     case account_manager::AccountAdditionResult::Status::kUnexpectedResponse:
+    case account_manager::AccountAdditionResult::Status::
+        kMojoRemoteDisconnected:
+    case account_manager::AccountAdditionResult::Status::
+        kIncompatibleMojoVersions:
       return account_manager::AccountAdditionResult::FromStatus(status.value());
     case account_manager::AccountAdditionResult::Status::kBlockedByPolicy:
       return account_manager::AccountAdditionResult::FromStatus(status.value());

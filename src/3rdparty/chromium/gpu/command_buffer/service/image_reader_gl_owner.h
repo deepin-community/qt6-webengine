@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,11 +10,12 @@
 #include "base/android/android_image_reader_compat.h"
 #include "base/containers/flat_map.h"
 #include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ref.h"
+#include "base/threading/thread_checker.h"
 #include "gpu/command_buffer/service/ref_counted_lock.h"
 #include "gpu/command_buffer/service/texture_owner.h"
 #include "gpu/gpu_gles2_export.h"
 #include "ui/gl/gl_fence_egl.h"
-#include "ui/gl/gl_image_ahardwarebuffer.h"
 
 namespace base {
 namespace android {
@@ -63,6 +64,7 @@ class GPU_GLES2_EXPORT ImageReaderGLOwner : public TextureOwner,
 
  private:
   friend class TextureOwner;
+  friend class ImageReaderGLOwnerTest;
   class ScopedHardwareBufferImpl;
 
   // Manages ownership of the latest image retrieved from AImageReader and
@@ -79,21 +81,17 @@ class GPU_GLES2_EXPORT ImageReaderGLOwner : public TextureOwner,
     ~ScopedCurrentImageRef();
     AImage* image() const { return image_; }
     base::ScopedFD GetReadyFence() const;
-    void EnsureBound(GLuint service_id);
 
    private:
     ImageReaderGLOwner* texture_owner_;
     AImage* image_;
     base::ScopedFD ready_fence_;
-
-    // Set to true if the current image is bound to |texture_id_|.
-    bool image_bound_ = false;
   };
 
-  ImageReaderGLOwner(std::unique_ptr<gles2::AbstractTexture> texture,
+  ImageReaderGLOwner(std::unique_ptr<AbstractTextureAndroid> texture,
                      Mode secure_mode,
                      scoped_refptr<SharedContextState> context_state,
-                     scoped_refptr<RefCountedLock> drdc_lock = nullptr);
+                     scoped_refptr<RefCountedLock> drdc_lock);
   ~ImageReaderGLOwner() override;
 
   // Registers and releases a ref on the image. Once the ref-count for an image
@@ -142,7 +140,7 @@ class GPU_GLES2_EXPORT ImageReaderGLOwner : public TextureOwner,
 
   // reference to the class instance which is used to dynamically
   // load the functions in android libraries at runtime.
-  base::android::AndroidImageReader& loader_;
+  const raw_ref<base::android::AndroidImageReader> loader_;
 
   // The context and surface that were used to create |texture_id_|.
   scoped_refptr<gl::GLContext> context_;

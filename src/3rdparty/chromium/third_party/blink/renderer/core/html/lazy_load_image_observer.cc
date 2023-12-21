@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -205,7 +205,7 @@ bool LazyLoadImageObserver::LoadAllImagesAndBlockLoadEvent() {
 
 void LazyLoadImageObserver::LoadIfNearViewport(
     const HeapVector<Member<IntersectionObserverEntry>>& entries) {
-  DCHECK(!entries.IsEmpty());
+  DCHECK(!entries.empty());
 
   for (auto entry : entries) {
     Element* element = entry->target();
@@ -224,14 +224,14 @@ void LazyLoadImageObserver::LoadIfNearViewport(
         // Check that style was null because it was not computed since the
         // element was in an invisible subtree.
         DCHECK(style || IsElementInInvisibleSubTree(*element));
-        image_element->LoadDeferredImage();
+        image_element->LoadDeferredImageFromMicrotask();
         lazy_load_intersection_observer_->unobserve(element);
       }
     }
     if (!entry->isIntersecting())
       continue;
     if (image_element)
-      image_element->LoadDeferredImage();
+      image_element->LoadDeferredImageFromMicrotask();
 
     // Load the background image if the element has one deferred.
     if (const ComputedStyle* style = element->GetComputedStyle())
@@ -281,7 +281,7 @@ void LazyLoadImageObserver::OnLoadFinished(HTMLImageElement* image_element) {
 
 void LazyLoadImageObserver::OnVisibilityChanged(
     const HeapVector<Member<IntersectionObserverEntry>>& entries) {
-  DCHECK(!entries.IsEmpty());
+  DCHECK(!entries.empty());
 
   for (auto entry : entries) {
     auto* image_element = DynamicTo<HTMLImageElement>(entry->target());

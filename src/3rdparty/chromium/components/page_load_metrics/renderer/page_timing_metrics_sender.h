@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -50,15 +50,17 @@ class PageTimingMetricsSender {
   ~PageTimingMetricsSender();
 
   void DidObserveLoadingBehavior(blink::LoadingBehaviorFlag behavior);
+  void DidObserveSubresourceLoad(
+      uint32_t number_of_subresources_loaded,
+      uint32_t number_of_subresource_loads_handled_by_service_worker,
+      bool pervasive_payload_requested,
+      int64_t pervasive_bytes_fetched,
+      int64_t total_bytes_fetched);
   void DidObserveNewFeatureUsage(const blink::UseCounterFeature& feature);
+  void DidObserveSoftNavigation(uint32_t count);
   void DidObserveLayoutShift(double score, bool after_input_or_scroll);
-  void DidObserveLayoutNg(uint32_t all_block_count,
-                          uint32_t ng_block_count,
-                          uint32_t all_call_count,
-                          uint32_t ng_call_count);
-  void DidObserveMobileFriendlinessChanged(const blink::MobileFriendliness&);
 
-  void DidStartResponse(const GURL& response_url,
+  void DidStartResponse(const url::SchemeHostPort& final_response_url,
                         int resource_id,
                         const network::mojom::URLResponseHead& response_head,
                         network::mojom::RequestDestination request_destination);
@@ -70,7 +72,12 @@ class PageTimingMetricsSender {
                                       int request_id,
                                       int64_t encoded_body_length,
                                       const std::string& mime_type);
-  void OnMainFrameIntersectionChanged(const gfx::Rect& intersect_rect);
+  void OnMainFrameIntersectionChanged(
+      const gfx::Rect& main_frame_intersection_rect);
+  void OnMainFrameViewportRectangleChanged(
+      const gfx::Rect& main_frame_viewport_rect);
+  void OnMainFrameImageAdRectangleChanged(int element_id,
+                                          const gfx::Rect& image_ad_rect);
 
   void DidObserveInputDelay(base::TimeDelta input_delay);
   void DidObserveUserInteraction(base::TimeDelta max_event_duration,
@@ -107,7 +114,7 @@ class PageTimingMetricsSender {
   mojom::PageLoadTimingPtr last_timing_;
   mojom::CpuTimingPtr last_cpu_timing_;
   mojom::InputTimingPtr input_timing_delta_;
-  absl::optional<blink::MobileFriendliness> mobile_friendliness_;
+  mojom::SubresourceLoadMetricsPtr subresource_load_metrics_;
 
   // The the sender keep track of metadata as it comes in, because the sender is
   // scoped to a single committed load.
@@ -118,6 +125,8 @@ class PageTimingMetricsSender {
   mojom::FrameRenderDataUpdate render_data_;
 
   blink::UseCounterFeatureTracker feature_tracker_;
+
+  uint32_t soft_navigation_count_ = 0;
 
   bool have_sent_ipc_ = false;
 

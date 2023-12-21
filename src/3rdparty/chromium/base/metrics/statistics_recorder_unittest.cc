@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,7 +10,7 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/json/json_reader.h"
 #include "base/logging.h"
 #include "base/memory/weak_ptr.h"
@@ -232,10 +232,27 @@ TEST_P(StatisticsRecorderTest, WithName) {
 
   const auto histograms = StatisticsRecorder::GetHistograms();
   EXPECT_THAT(histograms, SizeIs(3));
-  EXPECT_THAT(StatisticsRecorder::WithName(histograms, ""), SizeIs(3));
-  EXPECT_THAT(StatisticsRecorder::WithName(histograms, "Test"), SizeIs(3));
-  EXPECT_THAT(StatisticsRecorder::WithName(histograms, "1"), SizeIs(1));
-  EXPECT_THAT(StatisticsRecorder::WithName(histograms, "hello"), IsEmpty());
+  EXPECT_THAT(
+      StatisticsRecorder::WithName(histograms, "", /*case_sensitive=*/true),
+      SizeIs(3));
+  EXPECT_THAT(
+      StatisticsRecorder::WithName(histograms, "Test", /*case_sensitive=*/true),
+      SizeIs(3));
+  EXPECT_THAT(
+      StatisticsRecorder::WithName(histograms, "1", /*case_sensitive=*/true),
+      SizeIs(1));
+  EXPECT_THAT(StatisticsRecorder::WithName(histograms, "hello",
+                                           /*case_sensitive=*/true),
+              IsEmpty());
+  EXPECT_THAT(StatisticsRecorder::WithName(histograms, "hello",
+                                           /*case_sensitive=*/false),
+              IsEmpty());
+  EXPECT_THAT(
+      StatisticsRecorder::WithName(histograms, "test", /*case_sensitive=*/true),
+      IsEmpty());
+  EXPECT_THAT(StatisticsRecorder::WithName(histograms, "test",
+                                           /*case_sensitive=*/false),
+              SizeIs(3));
 }
 
 TEST_P(StatisticsRecorderTest, RegisterHistogramWithFactoryGet) {
@@ -328,42 +345,44 @@ TEST_P(StatisticsRecorderTest, ToJSON) {
   // Check for valid JSON.
   absl::optional<Value> root = JSONReader::Read(json);
   ASSERT_TRUE(root);
-  ASSERT_TRUE(root->is_dict());
+  Value::Dict* root_dict = root->GetIfDict();
+  ASSERT_TRUE(root_dict);
 
   // No query should be set.
-  ASSERT_FALSE(root->FindKey("query"));
+  ASSERT_FALSE(root_dict->Find("query"));
 
-  const Value* histogram_list = root->FindListKey("histograms");
+  const Value::List* histogram_list = root_dict->FindList("histograms");
 
   ASSERT_TRUE(histogram_list);
-  ASSERT_EQ(2u, histogram_list->GetListDeprecated().size());
+  ASSERT_EQ(2u, histogram_list->size());
 
   // Examine the first histogram.
-  const Value& histogram_dict = histogram_list->GetListDeprecated()[0];
-  ASSERT_TRUE(histogram_dict.is_dict());
+  const Value::Dict* histogram_dict = (*histogram_list)[0].GetIfDict();
+  ASSERT_TRUE(histogram_dict);
 
-  auto sample_count = histogram_dict.FindIntKey("count");
+  auto sample_count = histogram_dict->FindInt("count");
   ASSERT_TRUE(sample_count);
   EXPECT_EQ(2, *sample_count);
 
-  const Value* buckets_list = histogram_dict.FindListKey("buckets");
+  const Value::List* buckets_list = histogram_dict->FindList("buckets");
   ASSERT_TRUE(buckets_list);
-  EXPECT_EQ(2u, buckets_list->GetListDeprecated().size());
+  EXPECT_EQ(2u, buckets_list->size());
 
   // Check the serialized JSON with a different verbosity level.
   json = StatisticsRecorder::ToJSON(JSON_VERBOSITY_LEVEL_OMIT_BUCKETS);
   root = JSONReader::Read(json);
   ASSERT_TRUE(root);
-  ASSERT_TRUE(root->is_dict());
-  histogram_list = root->FindListKey("histograms");
+  root_dict = root->GetIfDict();
+  ASSERT_TRUE(root_dict);
+  histogram_list = root_dict->FindList("histograms");
   ASSERT_TRUE(histogram_list);
-  ASSERT_EQ(2u, histogram_list->GetListDeprecated().size());
-  const Value& histogram_dict2 = histogram_list->GetListDeprecated()[0];
-  ASSERT_TRUE(histogram_dict2.is_dict());
-  sample_count = histogram_dict2.FindIntKey("count");
+  ASSERT_EQ(2u, histogram_list->size());
+  const Value::Dict* histogram_dict2 = (*histogram_list)[0].GetIfDict();
+  ASSERT_TRUE(histogram_dict2);
+  sample_count = histogram_dict2->FindInt("count");
   ASSERT_TRUE(sample_count);
   EXPECT_EQ(2, *sample_count);
-  buckets_list = histogram_dict2.FindListKey("buckets");
+  buckets_list = histogram_dict2->FindList("buckets");
   // Bucket information should be omitted.
   ASSERT_FALSE(buckets_list);
 }
@@ -374,7 +393,7 @@ TEST_P(StatisticsRecorderTest, IterationTest) {
 
   auto histograms = StatisticsRecorder::GetHistograms();
   EXPECT_THAT(histograms, SizeIs(2));
-  histograms = StatisticsRecorder::NonPersistent(std::move(histograms));
+  histograms = StatisticsRecorder::GetHistograms(/*include_persistent=*/false);
   EXPECT_THAT(histograms, SizeIs(use_persistent_histogram_allocator_ ? 0 : 2));
 
   // Create a new global allocator using the same memory as the old one. Any
@@ -393,7 +412,7 @@ TEST_P(StatisticsRecorderTest, IterationTest) {
 
   histograms = StatisticsRecorder::GetHistograms();
   EXPECT_THAT(histograms, SizeIs(use_persistent_histogram_allocator_ ? 2 : 0));
-  histograms = StatisticsRecorder::NonPersistent(std::move(histograms));
+  histograms = StatisticsRecorder::GetHistograms(/*include_persistent=*/false);
   EXPECT_THAT(histograms, IsEmpty());
 }
 
@@ -703,6 +722,14 @@ TEST_P(StatisticsRecorderTest, GlobalCallbackCalled) {
   EXPECT_EQ(callback_callcount, 1u);
 }
 
+#if BUILDFLAG(USE_RUNTIME_VLOG)
+// The following check that StatisticsRecorder::InitLogOnShutdownWhileLocked
+// dumps the histogram graph to vlog if VLOG_IS_ON(1) at runtime. When
+// USE_RUNTIME_VLOG is not set, all vlog levels are determined at build time
+// and default to off. Since we do not want StatisticsRecorder to dump all the
+// time, VLOG in its code stays off. As a result, the following tests would
+// fail.
+
 TEST_P(StatisticsRecorderTest, LogOnShutdownNotInitialized) {
   ResetVLogInitialized();
   logging::SetMinLogLevel(logging::LOG_WARNING);
@@ -732,6 +759,7 @@ TEST_P(StatisticsRecorderTest, LogOnShutdownInitialized) {
   EXPECT_TRUE(VLOG_IS_ON(1));
   EXPECT_TRUE(IsVLogInitialized());
 }
+#endif  // BUILDFLAG(USE_RUNTIME_VLOG)
 
 class TestHistogramProvider : public StatisticsRecorder::HistogramProvider {
  public:

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2020 The Chromium Authors. All rights reserved.
+# Copyright 2020 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 """Builds and runs a test by filename.
@@ -49,6 +49,7 @@ DEBUG = False
 # Those test suites should be manually added here.
 _OTHER_TEST_TARGETS = [
     '//chrome/test:browser_tests',
+    '//chrome/test:interactive_ui_tests',
     '//chrome/test:unit_tests',
 ]
 
@@ -61,7 +62,8 @@ TEST_FILE_NAME_REGEX = re.compile(r'(.*Test\.java)|(.*_[a-z]*test\.cc)')
 # Some tests don't directly include gtest.h and instead include it via gmock.h
 # or a test_utils.h file, so make sure these cases are captured. Also include
 # files that use <...> for #includes instead of quotes.
-GTEST_INCLUDE_REGEX = re.compile(r'#include.*(gtest|gmock|_test_utils)\.h("|>)')
+GTEST_INCLUDE_REGEX = re.compile(
+    r'#include.*(gtest|gmock|_test_utils|browser_test)\.h("|>)')
 
 
 def ExitWithMessage(*args):
@@ -413,8 +415,11 @@ def main():
   parser.add_argument('--line',
                       type=int,
                       help='run only the test on this line number. c++ only.')
-  parser.add_argument(
-      '--gtest_filter', '-f', metavar='FILTER', help='test filter')
+  parser.add_argument('--gtest_filter',
+                      '--gtest-filter',
+                      '-f',
+                      metavar='FILTER',
+                      help='test filter')
   parser.add_argument(
       '--dry-run',
       '-n',

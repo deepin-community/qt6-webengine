@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,14 +8,14 @@
 #include <fuchsia/accessibility/semantics/cpp/fidl.h>
 #include <lib/inspect/cpp/vmo/types.h>
 
+#include "base/component_export.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
-#include "ui/accessibility/ax_export.h"
 
 namespace ui {
 
 // Interface for clients to interact with fuchsia's platform accessibility
 // framework.
-class AX_EXPORT AccessibilityBridgeFuchsia {
+class COMPONENT_EXPORT(AX_PLATFORM) AccessibilityBridgeFuchsia {
  public:
   virtual ~AccessibilityBridgeFuchsia() = default;
 

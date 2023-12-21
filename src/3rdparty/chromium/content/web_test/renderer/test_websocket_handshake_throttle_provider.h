@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,6 +6,7 @@
 #define CONTENT_WEB_TEST_RENDERER_TEST_WEBSOCKET_HANDSHAKE_THROTTLE_PROVIDER_H_
 
 #include <memory>
+#include "base/task/single_thread_task_runner.h"
 #include "third_party/blink/public/platform/websocket_handshake_throttle.h"
 #include "third_party/blink/public/platform/websocket_handshake_throttle_provider.h"
 

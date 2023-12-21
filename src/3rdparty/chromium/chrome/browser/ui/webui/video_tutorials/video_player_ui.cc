@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -26,7 +26,8 @@ VideoPlayerUIConfig::CreateWebUIController(content::WebUI* web_ui) {
 
 VideoPlayerUI::VideoPlayerUI(content::WebUI* web_ui)
     : ui::UntrustedWebUIController(web_ui) {
-  content::WebUIDataSource* source = content::WebUIDataSource::Create(
+  content::WebUIDataSource* source = content::WebUIDataSource::CreateAndAdd(
+      web_ui->GetWebContents()->GetBrowserContext(),
       chrome::kChromeUIUntrustedVideoPlayerUrl);
   source->AddResourcePath("", IDR_VIDEO_PLAYER_HTML);
   source->AddResourcePath("video_player.css", IDR_VIDEO_PLAYER_CSS);
@@ -40,9 +41,6 @@ VideoPlayerUI::VideoPlayerUI(content::WebUI* web_ui)
       network::mojom::CSPDirectiveName::MediaSrc, "media-src https:;");
   source->OverrideContentSecurityPolicy(
       network::mojom::CSPDirectiveName::StyleSrc, "style-src 'self';");
-
-  auto* browser_context = web_ui->GetWebContents()->GetBrowserContext();
-  content::WebUIDataSource::Add(browser_context, source);
 }
 
 VideoPlayerUI::~VideoPlayerUI() = default;

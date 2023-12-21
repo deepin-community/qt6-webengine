@@ -1,8 +1,10 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "base/notreached.h"
+#include "base/task/sequenced_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "components/wifi/wifi_service.h"
 
 namespace wifi {
@@ -24,35 +26,35 @@ class WifiServiceFuchsia : public WiFiService {
   void UnInitialize() override { NOTIMPLEMENTED_LOG_ONCE(); }
 
   void GetProperties(const std::string& network_guid,
-                     base::DictionaryValue* properties,
+                     base::Value::Dict* properties,
                      std::string* error) override {
     *error = kErrorNotImplemented;
     NOTIMPLEMENTED_LOG_ONCE();
   }
 
   void GetManagedProperties(const std::string& network_guid,
-                            base::DictionaryValue* managed_properties,
+                            base::Value::Dict* managed_properties,
                             std::string* error) override {
     *error = kErrorNotImplemented;
     NOTIMPLEMENTED_LOG_ONCE();
   }
 
   void GetState(const std::string& network_guid,
-                base::DictionaryValue* properties,
+                base::Value::Dict* properties,
                 std::string* error) override {
     *error = kErrorNotImplemented;
     NOTIMPLEMENTED_LOG_ONCE();
   }
 
   void SetProperties(const std::string& network_guid,
-                     std::unique_ptr<base::DictionaryValue> properties,
+                     base::Value::Dict properties,
                      std::string* error) override {
     *error = kErrorNotImplemented;
     NOTIMPLEMENTED_LOG_ONCE();
   }
 
   void CreateNetwork(bool shared,
-                     std::unique_ptr<base::DictionaryValue> properties,
+                     base::Value::Dict properties,
                      std::string* network_guid,
                      std::string* error) override {
     *error = kErrorNotImplemented;
@@ -60,8 +62,8 @@ class WifiServiceFuchsia : public WiFiService {
   }
 
   void GetVisibleNetworks(const std::string& network_type,
-                          base::ListValue* network_list,
-                          bool include_details) override {
+                          bool include_details,
+                          base::Value::List* network_list) override {
     NOTIMPLEMENTED_LOG_ONCE();
   }
 

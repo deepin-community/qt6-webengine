@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -19,6 +19,7 @@
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "net/base/net_errors.h"
+#include "net/base/network_interfaces.h"
 #include "net/log/net_log_with_source.h"
 #include "net/socket/stream_socket.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
@@ -89,10 +90,6 @@ class FakeSocket : public net::StreamSocket {
   bool WasAlpnNegotiated() const override;
   net::NextProto GetNegotiatedProtocol() const override;
   bool GetSSLInfo(net::SSLInfo* ssl_info) override;
-  void GetConnectionAttempts(net::ConnectionAttempts* out) const override;
-  void ClearConnectionAttempts() override {}
-  void AddConnectionAttempts(const net::ConnectionAttempts& attempts) override {
-  }
   int64_t GetTotalReceivedBytes() const override;
   void ApplySocketTag(const net::SocketTag& tag) override {}
 
@@ -132,7 +129,7 @@ class FakeSocketClient : public mojom::P2PSocketClient {
   MOCK_METHOD1(SendComplete, void(const P2PSendPacketMetrics&));
   MOCK_METHOD3(DataReceived,
                void(const net::IPEndPoint&,
-                    const std::vector<int8_t>&,
+                    base::span<const uint8_t>,
                     base::TimeTicks));
 
   bool connection_error() { return disconnect_error_; }
@@ -143,10 +140,32 @@ class FakeSocketClient : public mojom::P2PSocketClient {
   bool disconnect_error_ = false;
 };
 
-void CreateRandomPacket(std::vector<int8_t>* packet);
-void CreateStunRequest(std::vector<int8_t>* packet);
-void CreateStunResponse(std::vector<int8_t>* packet);
-void CreateStunError(std::vector<int8_t>* packet);
+class FakeNetworkNotificationClient
+    : public mojom::P2PNetworkNotificationClient {
+ public:
+  FakeNetworkNotificationClient(
+      base::OnceClosure closure,
+      mojo::PendingReceiver<mojom::P2PNetworkNotificationClient>
+          notification_client);
+  ~FakeNetworkNotificationClient() override;
+
+  void NetworkListChanged(
+      const std::vector<::net::NetworkInterface>& networks,
+      const ::net::IPAddress& default_ipv4_local_address,
+      const ::net::IPAddress& default_ipv6_local_address) override;
+
+  bool get_network_list_changed() { return network_list_changed_; }
+
+ private:
+  mojo::Receiver<mojom::P2PNetworkNotificationClient> notification_client_;
+  bool network_list_changed_ = false;
+  base::OnceClosure closure_;
+};
+
+void CreateRandomPacket(std::vector<uint8_t>* packet);
+void CreateStunRequest(std::vector<uint8_t>* packet);
+void CreateStunResponse(std::vector<uint8_t>* packet);
+void CreateStunError(std::vector<uint8_t>* packet);
 
 net::IPEndPoint ParseAddress(const std::string& ip_str, uint16_t port);
 

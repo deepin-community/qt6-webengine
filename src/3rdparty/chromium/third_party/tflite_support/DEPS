@@ -5,7 +5,6 @@ include_rules = [
     "+include",
     "+knowledge",
     "+lib",
-    "+libutf",
     "+pybind11",
     "+re2",
     "+src",
@@ -13,4 +12,8 @@ include_rules = [
     "+tensorflow_lite_support",
     "+tensorflow_text",
     "+tflite",
+]
+
+skip_child_includes = [
+    "src",
 ]

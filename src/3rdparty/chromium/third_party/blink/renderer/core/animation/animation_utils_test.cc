@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,8 +10,10 @@
 #include "third_party/blink/renderer/core/animation/keyframe_effect_model.h"
 #include "third_party/blink/renderer/core/animation/string_keyframe.h"
 #include "third_party/blink/renderer/core/css/properties/css_property_ref.h"
+#include "third_party/blink/renderer/core/css/properties/longhands.h"
 #include "third_party/blink/renderer/core/css/resolver/style_resolver.h"
 #include "third_party/blink/renderer/core/dom/document.h"
+#include "third_party/blink/renderer/core/execution_context/security_context.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
 #include "third_party/blink/renderer/core/testing/core_unit_test_helper.h"
 #include "third_party/googletest/src/googletest/include/gtest/gtest.h"
@@ -117,9 +119,6 @@ TEST_F(AnimationUtilsTest, ForEachInterpolatedPropertyValue) {
 }
 
 TEST_F(AnimationUtilsTest, ForEachInterpolatedPropertyValueWithContainerQuery) {
-  ScopedCSSContainerQueriesForTest enable_cq(true);
-  ScopedLayoutNGForTest enable_ng(true);
-
   SetBodyInnerHTML(R"HTML(
     <style>
       #container { container-type: inline-size; }

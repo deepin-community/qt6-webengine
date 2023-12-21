@@ -1,11 +1,10 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/modules/webgl/webgl_video_texture.h"
 
 #include "build/build_config.h"
-#include "media/base/video_frame.h"
 #include "media/renderers/paint_canvas_video_renderer.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_video_frame_metadata.h"
 #include "third_party/blink/renderer/core/html/media/html_video_element.h"
@@ -85,7 +84,7 @@ VideoFrameMetadata* WebGLVideoTexture::shareVideoImageWEBGL(
   media::PaintCanvasVideoRenderer* video_renderer = nullptr;
   scoped_refptr<media::VideoFrame> media_video_frame;
   if (auto* wmp = video->GetWebMediaPlayer()) {
-    media_video_frame = wmp->GetCurrentFrame();
+    media_video_frame = wmp->GetCurrentFrameThenUpdate();
     video_renderer = wmp->GetPaintCanvasVideoRenderer();
   }
 
@@ -158,7 +157,7 @@ bool WebGLVideoTexture::releaseVideoImageWEBGL(
 // static
 WebGLVideoFrameUploadMetadata WebGLVideoTexture::CreateVideoFrameUploadMetadata(
     const media::VideoFrame* frame,
-    int already_uploaded_id) {
+    media::VideoFrame::ID already_uploaded_id) {
   DCHECK(frame);
   WebGLVideoFrameUploadMetadata metadata = {};
   if (!RuntimeEnabledFeatures::ExtraWebGLVideoTextureMetadataEnabled())

@@ -1,9 +1,11 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef COMPONENTS_CRASH_CORE_APP_CRASH_REPORTER_CLIENT_H_
 #define COMPONENTS_CRASH_CORE_APP_CRASH_REPORTER_CLIENT_H_
+
+#include <stdint.h>
 
 #include <string>
 
@@ -82,6 +84,11 @@ class CrashReporterClient {
   // Returns the result code to return when breakpad failed to respawn a
   // crashed process.
   virtual int GetResultCodeRespawnFailed();
+
+  // Returns the fully-qualified path for a registered out of process exception
+  // helper module. The module is optional. Return an empty string to indicate
+  // that no module should be registered.
+  virtual std::wstring GetWerRuntimeExceptionModule();
 #endif
 
 #if BUILDFLAG(IS_WIN) || (BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_MAC))

@@ -1,10 +1,10 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "gpu/vulkan/vulkan_util.h"
 
-#include "base/callback_helpers.h"
+#include "base/functional/callback_helpers.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/pattern.h"
@@ -73,7 +73,7 @@ bool SubmitSignalVkSemaphore(VkQueue vk_queue,
                              VkSemaphore vk_semaphore,
                              VkFence vk_fence) {
   return SubmitSignalVkSemaphores(
-      vk_queue, base::span<VkSemaphore>(&vk_semaphore, 1), vk_fence);
+      vk_queue, base::span<VkSemaphore>(&vk_semaphore, 1u), vk_fence);
 }
 
 bool SubmitWaitVkSemaphores(VkQueue vk_queue,
@@ -97,17 +97,21 @@ bool SubmitWaitVkSemaphore(VkQueue vk_queue,
                            VkSemaphore vk_semaphore,
                            VkFence vk_fence) {
   return SubmitWaitVkSemaphores(
-      vk_queue, base::span<VkSemaphore>(&vk_semaphore, 1), vk_fence);
+      vk_queue, base::span<VkSemaphore>(&vk_semaphore, 1u), vk_fence);
 }
 
 VkSemaphore CreateExternalVkSemaphore(
     VkDevice vk_device,
     VkExternalSemaphoreHandleTypeFlags handle_types) {
-  VkExportSemaphoreCreateInfo export_info = {VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO};
-      export_info.handleTypes = handle_types;
+  VkExportSemaphoreCreateInfo export_info = {
+      .sType = VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO,
+      .handleTypes = handle_types,
+  };
 
-  VkSemaphoreCreateInfo sem_info = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
-      sem_info.pNext = &export_info;
+  VkSemaphoreCreateInfo sem_info = {
+      .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+      .pNext = &export_info,
+  };
 
   VkSemaphore semaphore = VK_NULL_HANDLE;
   VkResult result =
@@ -194,9 +198,14 @@ bool CheckVulkanCompabilities(const VulkanInfo& vulkan_info,
         return false;
     }
   }
-#endif  // !BUILDFLAG(IS_ANDROID)
 
-#if BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(IS_LINUX) && !defined(OZONE_PLATFORM_IS_X11)
+  // Vulkan is only supported with X11 on Linux for now.
+  return false;
+#else
+  return true;
+#endif
+#else   // BUILDFLAG(IS_ANDROID)
   if (vulkan_info.physical_devices.empty())
     return false;
 
@@ -251,9 +260,9 @@ bool CheckVulkanCompabilities(const VulkanInfo& vulkan_info,
   // Imagination GPUs.
   if (device_info.properties.vendorID == kVendorImagination)
     return false;
-#endif  // BUILDFLAG(IS_ANDROID)
 
   return true;
+#endif  // BUILDFLAG(IS_ANDROID)
 }
 
 VkImageLayout GLImageLayoutToVkImageLayout(uint32_t layout) {

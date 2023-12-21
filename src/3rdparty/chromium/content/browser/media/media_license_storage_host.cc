@@ -1,4 +1,4 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,11 +9,12 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
 #include "base/containers/contains.h"
+#include "base/functional/bind.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/notreached.h"
 #include "base/sequence_checker.h"
-#include "base/threading/sequenced_task_runner_handle.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/types/pass_key.h"
 #include "components/services/storage/public/cpp/buckets/bucket_locator.h"
 #include "content/browser/media/cdm_file_impl.h"
@@ -28,6 +29,24 @@
 namespace content {
 
 using CdmFileId = MediaLicenseManager::CdmFileId;
+
+// static
+void MediaLicenseStorageHost::ReportDatabaseOpenError(
+    MediaLicenseStorageHostOpenError error,
+    bool is_incognito) {
+  DCHECK_NE(error, MediaLicenseStorageHostOpenError::kOk);
+  const std::string kDatabaseOpenErrorUmaName =
+      "Media.EME.MediaLicenseStorageHostOpenError";
+  base::UmaHistogramEnumeration(kDatabaseOpenErrorUmaName, error);
+
+  if (is_incognito) {
+    base::UmaHistogramEnumeration(kDatabaseOpenErrorUmaName + ".Incognito",
+                                  error);
+  } else {
+    base::UmaHistogramEnumeration(kDatabaseOpenErrorUmaName + ".NotIncognito",
+                                  error);
+  }
+}
 
 MediaLicenseStorageHost::MediaLicenseStorageHost(
     MediaLicenseManager* manager,
@@ -54,17 +73,23 @@ void MediaLicenseStorageHost::Open(const std::string& file_name,
 
   if (bucket_locator_.id.is_null()) {
     DVLOG(1) << "Could not retrieve valid bucket.";
+    ReportDatabaseOpenError(MediaLicenseStorageHostOpenError::kInvalidBucket,
+                            in_memory());
     std::move(callback).Run(Status::kFailure, mojo::NullAssociatedRemote());
     return;
   }
 
   if (file_name.empty()) {
     DVLOG(1) << "No file specified.";
+    ReportDatabaseOpenError(MediaLicenseStorageHostOpenError::kNoFileSpecified,
+                            in_memory());
     std::move(callback).Run(Status::kFailure, mojo::NullAssociatedRemote());
     return;
   }
 
   if (!CdmFileImpl::IsValidName(file_name)) {
+    ReportDatabaseOpenError(MediaLicenseStorageHostOpenError::kInvalidFileName,
+                            in_memory());
     std::move(callback).Run(Status::kFailure, mojo::NullAssociatedRemote());
     return;
   }
@@ -86,13 +111,15 @@ void MediaLicenseStorageHost::BindReceiver(
   receivers_.Add(this, std::move(receiver), binding_context);
 }
 
-void MediaLicenseStorageHost::DidOpenFile(const std::string& file_name,
-                                          BindingContext binding_context,
-                                          OpenCallback callback,
-                                          bool success) {
+void MediaLicenseStorageHost::DidOpenFile(
+    const std::string& file_name,
+    BindingContext binding_context,
+    OpenCallback callback,
+    MediaLicenseStorageHostOpenError error) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  if (!success) {
+  if (error != MediaLicenseStorageHostOpenError::kOk) {
+    ReportDatabaseOpenError(error, in_memory());
     std::move(callback).Run(Status::kFailure, mojo::NullAssociatedRemote());
     return;
   }
@@ -115,9 +142,9 @@ void MediaLicenseStorageHost::DidOpenFile(const std::string& file_name,
   // We don't actually touch the database here, but notify the quota system
   // anyways since conceptually we're creating an empty file.
   manager_->quota_manager_proxy()->NotifyBucketModified(
-      storage::QuotaClientType::kMediaLicense, bucket_locator_.id, /*delta=*/0,
+      storage::QuotaClientType::kMediaLicense, bucket_locator_, /*delta=*/0,
       /*modification_time=*/base::Time::Now(),
-      base::SequencedTaskRunnerHandle::Get(),
+      base::SequencedTaskRunner::GetCurrentDefault(),
       base::BindOnce(std::move(callback), Status::kSuccess,
                      std::move(cdm_file)));
 }
@@ -128,7 +155,7 @@ void MediaLicenseStorageHost::ReadFile(const media::CdmType& cdm_type,
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   manager_->quota_manager_proxy()->NotifyBucketAccessed(
-      bucket_locator_.id,
+      bucket_locator_,
       /*access_time=*/base::Time::Now());
 
   db_.AsyncCall(&MediaLicenseDatabase::ReadFile)
@@ -161,9 +188,9 @@ void MediaLicenseStorageHost::DidWriteFile(WriteFileCallback callback,
   // Pass `delta`=0 since media license data does not count against quota.
   // TODO(crbug.com/1305441): Consider counting this data against quota.
   manager_->quota_manager_proxy()->NotifyBucketModified(
-      storage::QuotaClientType::kMediaLicense, bucket_locator_.id, /*delta=*/0,
+      storage::QuotaClientType::kMediaLicense, bucket_locator_, /*delta=*/0,
       /*modification_time=*/base::Time::Now(),
-      base::SequencedTaskRunnerHandle::Get(),
+      base::SequencedTaskRunner::GetCurrentDefault(),
       base::BindOnce(std::move(callback), success));
 }
 

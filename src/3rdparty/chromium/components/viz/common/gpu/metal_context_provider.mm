@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,17 +6,14 @@
 
 #import <Metal/Metal.h>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/mac/scoped_nsobject.h"
 #include "base/memory/ref_counted.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/synchronization/waitable_event.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "components/metal_util/device.h"
-#include "components/metal_util/test_shader.h"
-#include "components/viz/common/gpu/metal_api_proxy.h"
 #include "third_party/skia/include/gpu/GrDirectContext.h"
 
 namespace viz {
@@ -27,7 +24,7 @@ struct MetalContextProviderImpl : public MetalContextProvider {
  public:
   explicit MetalContextProviderImpl(id<MTLDevice> device,
                                     const GrContextOptions& context_options) {
-    device_.reset([[MTLDeviceProxy alloc] initWithDevice:device]);
+    device_.reset(device, base::scoped_policy::RETAIN);
     command_queue_.reset([device_ newCommandQueue]);
 
     gr_context_ =
@@ -37,20 +34,14 @@ struct MetalContextProviderImpl : public MetalContextProvider {
 
   MetalContextProviderImpl(const MetalContextProviderImpl&) = delete;
   MetalContextProviderImpl& operator=(const MetalContextProviderImpl&) = delete;
+  ~MetalContextProviderImpl() override = default;
 
-  ~MetalContextProviderImpl() override {
-    // Because there are no guarantees that |device_| will not outlive |this|,
-    // un-set the progress reporter on |device_|.
-    [device_ setProgressReporter:nullptr];
-  }
-  void SetProgressReporter(gl::ProgressReporter* progress_reporter) override {
-    [device_ setProgressReporter:progress_reporter];
-  }
+  void SetProgressReporter(gl::ProgressReporter* progress_reporter) override {}
   GrDirectContext* GetGrContext() override { return gr_context_.get(); }
   metal::MTLDevicePtr GetMTLDevice() override { return device_.get(); }
 
  private:
-  base::scoped_nsobject<MTLDeviceProxy> device_;
+  base::scoped_nsprotocol<id<MTLDevice>> device_;
   base::scoped_nsprotocol<id<MTLCommandQueue>> command_queue_;
   sk_sp<GrDirectContext> gr_context_;
 };

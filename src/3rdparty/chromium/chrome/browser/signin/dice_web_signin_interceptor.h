@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,9 +7,9 @@
 
 #include <memory>
 
-#include "base/callback_forward.h"
 #include "base/cancelable_callback.h"
 #include "base/feature_list.h"
+#include "base/functional/callback_forward.h"
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/scoped_observation.h"
@@ -72,8 +72,9 @@ enum class SigninInterceptionHeuristicOutcome {
   kAbortProfileCreationDisallowed = 9,
   // The interceptor was shut down before the heuristic completed.
   kAbortShutdown = 10,
-  // The interceptor is not offered when WebContents has no browser associated.
-  kAbortNoBrowser = 11,
+  // The interceptor is not offered when  the `WebContents` has no browser
+  // associated, or its browser does not support displaying the interception UI.
+  kAbortNoSupportedBrowser = 11,
   // A password update is required for the account, and this takes priority over
   // signin interception.
   kAbortPasswordUpdate = 12,
@@ -171,7 +172,8 @@ class DiceWebSigninInterceptor : public KeyedService,
                        AccountInfo primary_account,
                        SkColor profile_highlight_color = SkColor(),
                        bool show_guest_option = false,
-                       bool show_link_data_option = false);
+                       bool show_link_data_option = false,
+                       bool show_managed_disclaimer = false);
 
       BubbleParameters(const BubbleParameters& copy);
       BubbleParameters& operator=(const BubbleParameters&);
@@ -183,9 +185,14 @@ class DiceWebSigninInterceptor : public KeyedService,
       SkColor profile_highlight_color;
       bool show_guest_option;
       bool show_link_data_option;
+      bool show_managed_disclaimer;
     };
 
     virtual ~Delegate() = default;
+
+    // Returns whether the `web_contents` supports signin interception.
+    virtual bool IsSigninInterceptionSupported(
+        const content::WebContents& web_contents) = 0;
 
     // Shows the signin interception bubble and calls |callback| to indicate
     // whether the user should continue in a new profile.

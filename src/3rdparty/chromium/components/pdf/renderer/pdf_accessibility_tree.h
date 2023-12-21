@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,17 +10,20 @@
 #include <vector>
 
 #include "base/memory/weak_ptr.h"
+#include "components/services/screen_ai/buildflags/buildflags.h"
 #include "content/public/renderer/plugin_ax_tree_source.h"
 #include "content/public/renderer/render_frame_observer.h"
 #include "pdf/pdf_accessibility_data_handler.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/accessibility/ax_node.h"
 #include "ui/accessibility/ax_tree.h"
+#include "ui/accessibility/ax_tree_id.h"
 #include "ui/accessibility/ax_tree_source.h"
 #include "ui/gfx/geometry/rect_f.h"
 #include "ui/gfx/geometry/vector2d_f.h"
 
 namespace chrome_pdf {
+
 class PdfAccessibilityActionHandler;
 struct AccessibilityActionData;
 struct AccessibilityCharInfo;
@@ -30,6 +33,7 @@ struct AccessibilityPageObjects;
 struct AccessibilityTextRunInfo;
 struct AccessibilityViewportInfo;
 struct PageCharacterIndex;
+
 }  // namespace chrome_pdf
 
 namespace content {
@@ -39,9 +43,13 @@ class RenderFrame;
 
 namespace gfx {
 class Transform;
-}
+}  // namespace gfx
 
 namespace pdf {
+
+#if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
+class PdfOcrService;
+#endif  // BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
 
 class PdfAccessibilityTree : public content::PluginAXTreeSource,
                              public content::RenderFrameObserver,
@@ -69,14 +77,14 @@ class PdfAccessibilityTree : public content::PluginAXTreeSource,
 
   // chrome_pdf::PdfAccessibilityDataHandler:
   void SetAccessibilityViewportInfo(
-      const chrome_pdf::AccessibilityViewportInfo& viewport_info) override;
+      chrome_pdf::AccessibilityViewportInfo viewport_info) override;
   void SetAccessibilityDocInfo(
-      const chrome_pdf::AccessibilityDocInfo& doc_info) override;
+      chrome_pdf::AccessibilityDocInfo doc_info) override;
   void SetAccessibilityPageInfo(
-      const chrome_pdf::AccessibilityPageInfo& page_info,
-      const std::vector<chrome_pdf::AccessibilityTextRunInfo>& text_runs,
-      const std::vector<chrome_pdf::AccessibilityCharInfo>& chars,
-      const chrome_pdf::AccessibilityPageObjects& page_objects) override;
+      chrome_pdf::AccessibilityPageInfo page_info,
+      std::vector<chrome_pdf::AccessibilityTextRunInfo> text_runs,
+      std::vector<chrome_pdf::AccessibilityCharInfo> chars,
+      chrome_pdf::AccessibilityPageObjects page_objects) override;
 
   void HandleAction(const chrome_pdf::AccessibilityActionData& action_data);
   absl::optional<AnnotationInfo> GetPdfAnnotationInfoFromAXNode(
@@ -96,27 +104,49 @@ class PdfAccessibilityTree : public content::PluginAXTreeSource,
   ui::AXNode* GetRoot() const override;
   ui::AXNode* GetFromId(int32_t id) const override;
   int32_t GetId(const ui::AXNode* node) const override;
-  void GetChildren(const ui::AXNode* node,
-                   std::vector<const ui::AXNode*>* out_children) const override;
+  void CacheChildrenIfNeeded(const ui::AXNode*) override {}
+  size_t GetChildCount(const ui::AXNode*) const override;
+  const ui::AXNode* ChildAt(const ui::AXNode* node, size_t) const override;
+  void ClearChildCache(const ui::AXNode*) override {}
   ui::AXNode* GetParent(const ui::AXNode* node) const override;
   bool IsIgnored(const ui::AXNode* node) const override;
   bool IsValid(const ui::AXNode* node) const override;
   bool IsEqual(const ui::AXNode* node1, const ui::AXNode* node2) const override;
   const ui::AXNode* GetNull() const override;
-  void SerializeNode(const ui::AXNode* node, ui::AXNodeData* out_data)
-      const override;
+  void SerializeNode(const ui::AXNode* node,
+                     ui::AXNodeData* out_data) const override;
   std::unique_ptr<ui::AXActionTarget> CreateActionTarget(
       const ui::AXNode& target_node) override;
 
   // content::RenderFrameObserver:
-  void AccessibilityModeChanged(const ui::AXMode& /*mode*/) override;
+  void AccessibilityModeChanged(const ui::AXMode& mode) override;
   void OnDestruct() override;
+
+#if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
+  // Removes the image node in the accessibility tree with the specified ID, and
+  // adds a page node hosting a child tree containing the page contents which
+  // will later be provided by the OCR Service.
+  void OnOcrDataReceived(const ui::AXNodeID& image_node_id,
+                         const gfx::RectF& image_bounds,
+                         const ui::AXNodeID& parent_node_id,
+                         const ui::AXTreeID& child_tree_id);
+#endif  // BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
 
   bool ShowContextMenu();
 
  private:
   // Update the AXTreeData when the selected range changed.
   void UpdateAXTreeDataFromSelection();
+
+  void DoSetAccessibilityViewportInfo(
+      const chrome_pdf::AccessibilityViewportInfo& viewport_info);
+  void DoSetAccessibilityDocInfo(
+      const chrome_pdf::AccessibilityDocInfo& doc_info);
+  void DoSetAccessibilityPageInfo(
+      const chrome_pdf::AccessibilityPageInfo& page_info,
+      const std::vector<chrome_pdf::AccessibilityTextRunInfo>& text_runs,
+      const std::vector<chrome_pdf::AccessibilityCharInfo>& chars,
+      const chrome_pdf::AccessibilityPageObjects& page_objects);
 
   // Given a 0-based page index and 0-based character index within a page,
   // find the node ID of the associated static text AXNode, and the character
@@ -155,8 +185,18 @@ class PdfAccessibilityTree : public content::PluginAXTreeSource,
   // `RenderAccessibility` for the frame.
   void MaybeHandleAccessibilityChange();
 
+  // Returns a weak pointer for an instance of this class.
+  base::WeakPtr<PdfAccessibilityTree> GetWeakPtr() {
+    return weak_ptr_factory_.GetWeakPtr();
+  }
+
   ui::AXTreeData tree_data_;
   ui::AXTree tree_;
+
+  // ‌PdfAccessibilityTree belongs to the PDF plugin which is created by the
+  // renderer. `render_frame_` is reset when renderer sends OnDestruct() to its
+  // observers.
+  content::RenderFrame* render_frame_;
 
   // Unowned. Must outlive `this`.
   chrome_pdf::PdfAccessibilityActionHandler* const action_handler_;
@@ -199,6 +239,10 @@ class PdfAccessibilityTree : public content::PluginAXTreeSource,
   uint32_t next_page_index_ = 0;
 
   bool did_get_a_text_run_ = false;
+
+#if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
+  std::unique_ptr<PdfOcrService> ocr_service_;
+#endif  // BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
 
   base::WeakPtrFactory<PdfAccessibilityTree> weak_ptr_factory_{this};
 };

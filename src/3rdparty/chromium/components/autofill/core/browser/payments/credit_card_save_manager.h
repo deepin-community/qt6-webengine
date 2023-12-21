@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -18,11 +18,12 @@
 #include "components/autofill/core/browser/data_model/credit_card.h"
 #include "components/autofill/core/browser/form_structure.h"
 #include "components/autofill/core/browser/metrics/autofill_metrics.h"
-#include "components/autofill/core/browser/payments/credit_card_save_strike_database.h"
+#include "components/autofill/core/browser/metrics/payments/credit_card_save_metrics.h"
 #include "components/autofill/core/browser/payments/legal_message_line.h"
-#include "components/autofill/core/browser/payments/local_card_migration_strike_database.h"
 #include "components/autofill/core/browser/payments/payments_client.h"
 #include "components/autofill/core/browser/personal_data_manager.h"
+#include "components/autofill/core/browser/strike_databases/payments/credit_card_save_strike_database.h"
+#include "components/autofill/core/browser/strike_databases/payments/local_card_migration_strike_database.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/origin.h"
 
@@ -189,7 +190,7 @@ class CreditCardSaveManager {
   void OnDidGetUploadDetails(
       AutofillClient::PaymentsRpcResult result,
       const std::u16string& context_token,
-      std::unique_ptr<base::Value> legal_message,
+      std::unique_ptr<base::Value::Dict> legal_message,
       std::vector<std::pair<int, int>> supported_card_bin_ranges);
 
   // Logs the number of strikes that a card had when save succeeded.
@@ -282,8 +283,7 @@ class CreditCardSaveManager {
   // |found_cvc_field_|, |found_value_in_cvc_field_| and
   // |found_cvc_value_in_non_cvc_field_|. Only called when a valid CVC was NOT
   // found.
-  AutofillMetrics::CardUploadDecisionMetric GetCVCCardUploadDecisionMetric()
-      const;
+  autofill_metrics::CardUploadDecision GetCVCCardUploadDecisionMetric() const;
 
   // Logs the card upload decisions in UKM and UMA.
   // |upload_decision_metrics| is a bitmask of
@@ -303,8 +303,8 @@ class CreditCardSaveManager {
 
   const raw_ptr<AutofillClient> client_;
 
-  // Handles Payments service requests.
-  // Owned by BrowserAutofillManager.
+  // Handles Payments service requests. Weak ref. In Chrome, it's owned by
+  // ChromeAutofillClient and ChromeAutofillClientIOS.
   raw_ptr<payments::PaymentsClient> payments_client_;
 
   std::string app_locale_;

@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,13 +11,8 @@
 
 namespace content {
 
-bool IsFedCmEnabled() {
-  return base::FeatureList::IsEnabled(features::kFedCm);
-}
-
-bool IsFedCmAutoSigninEnabled() {
-  return GetFieldTrialParamByFeatureAsBool(
-      features::kFedCm, features::kFedCmAutoSigninFieldTrialParamName, false);
+bool IsFedCmAutoReauthnEnabled() {
+  return base::FeatureList::IsEnabled(features::kFedCmAutoReauthn);
 }
 
 bool IsFedCmIdpSignoutEnabled() {
@@ -25,8 +20,48 @@ bool IsFedCmIdpSignoutEnabled() {
       features::kFedCm, features::kFedCmIdpSignoutFieldTrialParamName, false);
 }
 
-bool IsFedCmManifestValidationEnabled() {
-  return base::FeatureList::IsEnabled(features::kFedCmManifestValidation);
+bool IsFedCmMultipleIdentityProvidersEnabled() {
+  return base::FeatureList::IsEnabled(
+      features::kFedCmMultipleIdentityProviders);
+}
+
+FedCmIdpSigninStatusMode GetFedCmIdpSigninStatusMode() {
+  if (GetFieldTrialParamByFeatureAsBool(
+          features::kFedCm, features::kFedCmIdpSigninStatusFieldTrialParamName,
+          false)) {
+    return FedCmIdpSigninStatusMode::ENABLED;
+  }
+  if (GetFieldTrialParamByFeatureAsBool(
+          features::kFedCm,
+          features::kFedCmIdpSigninStatusMetricsOnlyFieldTrialParamName,
+          true)) {
+    return FedCmIdpSigninStatusMode::METRICS_ONLY;
+  }
+  return FedCmIdpSigninStatusMode::DISABLED;
+}
+
+bool IsFedCmMetricsEndpointEnabled() {
+  return base::FeatureList::IsEnabled(features::kFedCmMetricsEndpoint);
+}
+
+bool IsFedCmRpContextEnabled() {
+  return base::FeatureList::IsEnabled(features::kFedCmRpContext);
+}
+
+bool IsFedCmUserInfoEnabled() {
+  return base::FeatureList::IsEnabled(features::kFedCmUserInfo);
+}
+
+bool IsFedCmSelectiveDisclosureEnabled() {
+  return base::FeatureList::IsEnabled(features::kFedCmSelectiveDisclosure);
+}
+
+bool IsFedCmLoginHintEnabled() {
+  return base::FeatureList::IsEnabled(features::kFedCmLoginHint);
+}
+
+bool IsFedCmIdPRegistrationEnabled() {
+  return base::FeatureList::IsEnabled(features::kFedCmIdPRegistration);
 }
 
 }  // namespace content

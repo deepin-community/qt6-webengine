@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -18,6 +18,7 @@
  *     children that haven't been loaded in yet.
  * @property {?TreeNode} parent - Parent tree node, null if this is a root node.
  * @property {string} idPath - Full path to this node.
+ * @property {string} objPath - Path to the object file containing this symbol.
  * @property {string} srcPath - Path to the source containing this symbol.
  * @property {string} disassembly - The disassembly for the node.
  * @property {string} container - The container for the node.
@@ -27,13 +28,45 @@
  *     `idPath`. This index indicates where to start to slice the `idPath` to
  *     read the name.
  * @property {number} size - Byte size of this node and its children.
+ * @property {number|undefined} padding - Padding bytes used by this node.
+ * @property {number|undefined} beforeSize - Diff mode only: Byte size of the
+ *     node and its children in the "before" binary.
+ * @property {number|undefined} address - Start address of this node.
+ * @property {number} flags - A bit field to store symbol properties.
  * @property {number} numAliases - Number of aliases for the symbol.
  * @property {string} type - Type of this node. If this node has children, the
  *     string may have a second character to denote the most common child.
- * @property {number} flags - A bit field to store symbol properties.
  * @property {_DIFF_STATUSES} diffStatus
  * @property {Object<string, !TreeNodeChildStats>} childStats - Stats about
  *     this node's descendants, keyed by symbol type.
+ */
+
+/**
+ * @typedef {Object} MetricsItem
+ * @property {string} name - Item name, used for UI and grouping for total.
+ * @property {number} value - Metrics value, can be bytes or count.
+ * @property {number|undefined} beforeValue - Optional value for "before".
+ */
+
+/**
+ * @typedef {Object} MetricsTreeNode
+ * @property {string|undefined} name - The full name of the node, and is shown
+ *     in the UI.
+ * @property {?MetricsTreeNode} parent - Parent tree node, null if this is a
+ *     root node.
+ * @property {!Array<!MetricsTreeNode>|undefined} children - Child nodes.
+ *     Non-existent or null indicates this is a leaf node.
+ * @property {!Array<!MetricsItem>|undefined} items - For leaf nodes only, a
+ *     list of named values for a metric. Mutually exclusive with |liveItems|.
+ * @property {?function(function(string): boolean): !Array<!MetricsItem>|
+ *            undefined} liveItems - For leaf nodes only, function to return a
+ *     list of named values for a metric, taking a filtering function. To be
+ *     included, the filter is eithe rnull, or needs to return true for names of
+ *     all ancestor with |isFiltered| true. Mutually exclusive with |item|.
+ * @property {boolean|undefined} isFiltered - For group nodes only, whether
+ *     filtering is applied to the node.
+ * @property {string|undefined} iconKey - For group nodes only, input for
+ *     getMetricsIconTemplate() to retrieve icon.
  */
 
 /**
@@ -87,6 +120,20 @@
  * @property {?MetadataType} metadata
  */
 
+/**
+ * @typedef {Object} BuildOptions
+ * @property {string} loadUrl
+ * @property {string} beforeUrl
+ * @property {boolean} methodCountMode
+ * @property {string} groupBy
+ * @property {string} includeRegex
+ * @property {string} excludeRegex
+ * @property {string} includeSections
+ * @property {number} minSymbolSize
+ * @property {number} flagToFilter
+ * @property {boolean} nonOverhead
+ * @property {boolean} disassemblyMode
+ */
 
 /**
  * @typedef {Object} BuildTreeResults
@@ -112,6 +159,14 @@ const _FLAGS = {
   UNCOMPRESSED:     1 << 9,
 };
 
+/** @type {Object<string, _FLAGS>} */
+const _NAMES_TO_FLAGS = Object.freeze({
+  hot: _FLAGS.HOT,
+  generated: _FLAGS.GENERATED_SOURCE,
+  coverage: _FLAGS.COVERAGE,
+  uncompressed: _FLAGS.UNCOMPRESSED,
+});
+
 /**
  * @enum {number} Various byte units and the corresponding amount of bytes that
  *     one unit represents.
@@ -136,7 +191,7 @@ const _DIFF_STATUSES = {
  */
 const _ARTIFACT_TYPES = {
   DIRECTORY:  'D',
-  COMPONENT:  'C',
+  GROUP:      'G',
   FILE:       'F',
   JAVA_CLASS: 'J',
 };
@@ -154,12 +209,45 @@ const _OTHER_SYMBOL_TYPE = 'o';
 const _SYMBOL_TYPE_SET =
     new Set(/** @type {Iterable<string>} */ ('bdrtRxmopP'));
 
-/** @type {string} Key where type is stored in the query string state. */
-const _TYPE_STATE_KEY = 'type';
-
 /** @type {Array<string> | string} */
 const _LOCALE = /** @type {Array<string>} */ (navigator.languages) ||
     navigator.language;
+
+/** @enum {string} Keys in query string and names of input elements. */
+const STATE_KEY = {
+  LOAD_URL: 'load_url',
+  BEFORE_URL: 'before_url',
+  BYTE_UNIT: 'byteunit',
+  METHOD_COUNT: 'method_count',
+  MIN_SIZE: 'min_size',
+  GROUP_BY: 'group_by',
+  INCLUDE: 'include',
+  EXCLUDE: 'exclude',
+  TYPE: 'type',
+  FLAG_FILTER: 'flag_filter',
+};
+
+/**
+ * Throws error if |cond| is falsey.
+ * @param {boolean} cond The condition to check.
+ * @param {string=} msg Message on assert failure.
+ */
+function assert(cond, msg = 'Assert fail.') {
+  if (!cond)
+    throw new Error(msg);
+}
+
+/**
+ * Throws error if |obj| is null or undefined; returns |obj| otherwise.
+ * @param {?Object} obj The (non-primitive) object to check.
+ * @param {string=} msg Message on assert failure.
+ * @return {!Object}
+ */
+function assertNotNull(obj, msg = 'Assert fail: Object is null.') {
+  if (obj == null)  // Using == to also include undefined.
+    throw new Error(msg);
+  return obj;
+}
 
 /**
  * Iterates over each type in the query string. Types can be expressed as
@@ -169,7 +257,7 @@ const _LOCALE = /** @type {Array<string>} */ (navigator.languages) ||
  * @param {Array<string>} typesList All values associated with the "type" key
  *     in the query string.
  */
-function* types(typesList) {
+function* translateTypes(typesList) {
   for (const typeOrTypes of typesList) {
     for (const typeChar of typeOrTypes) {
       yield typeChar;
@@ -211,4 +299,59 @@ function shortName(treeNode) {
  */
 function hasFlag(flag, symbolNode) {
   return (symbolNode.flags & flag) === flag;
+}
+
+/**
+ * Returns a formatted number with grouping, taking an optional range for number
+ * of digits after the decimal point (default 0, i.e., assume integer).
+ * @param {number} num
+ * @param {number=} lo
+ * @param {number=} hi
+ * @return {string}
+ */
+function formatNumber(num, lo = 0, hi = 0) {
+  return num.toLocaleString(_LOCALE, {
+    useGrouping: true,
+    minimumFractionDigits: lo,
+    maximumFractionDigits: hi
+  });
+}
+
+/**
+ * Same as formatNumber(), but returns percentage instead.
+ * @param {number} num
+ * @param {number=} lo
+ * @param {number=} hi
+ * @return {string}
+ */
+function formatPercent(num, lo = 0, hi = 0) {
+  return num.toLocaleString(_LOCALE, {
+    style: 'percent',
+    minimumFractionDigits: lo,
+    maximumFractionDigits: hi,
+  });
+}
+
+/**
+ * Combines multiple iterators (if non-null) into a single iterator.
+ * @param {...?Iterable<*>} itList
+ * @generator
+ */
+function* joinIter(...itList) {
+  for (const it of itList) {
+    if (it) {
+      for (const v of it) {
+        yield v;
+      }
+    }
+  }
+}
+
+/**
+ * Returns a sorted list of disstinct strings taken from an iterator.
+ * @param {!Iterable<string>} it
+ * @return {!Array<string>}
+ */
+function uniquifyIterToString(it) {
+  return Array.from(new Set(it)).sort();
 }

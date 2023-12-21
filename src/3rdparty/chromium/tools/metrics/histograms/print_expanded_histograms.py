@@ -1,5 +1,5 @@
-#!/usr/bin/env python
-# Copyright 2020 The Chromium Authors. All rights reserved.
+#!/usr/bin/env python3
+# Copyright 2020 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 """Prints expanded histograms."""
@@ -26,14 +26,14 @@ def ConstructHistogram(doc, name, histogram_dict):
   if 'expires_after' in histogram_dict:
     histogram.setAttribute('expires_after', histogram_dict['expires_after'])
   if histogram_dict.get('base', False):
-    histogram.setAttribute('base', 'True')
+    histogram.setAttribute('base', 'true')
   # Populate the obsolete node.
   if 'obsolete' in histogram_dict:
     obsolete_node = doc.createElement('obsolete')
     obsolete_node.appendChild(doc.createTextNode(histogram_dict['obsolete']))
     histogram.appendChild(obsolete_node)
   # Populate owner nodes.
-  for owner in histogram_dict['owners']:
+  for owner in histogram_dict.get('owners', []):
     owner_node = doc.createElement('owner')
     owner_node.appendChild(doc.createTextNode(owner))
     histogram.appendChild(owner_node)

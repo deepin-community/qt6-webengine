@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,18 +6,19 @@
 
 #include <stddef.h>
 
-#include <algorithm>
 #include <set>
 #include <type_traits>
 #include <utility>
 
 #include "base/containers/cxx20_erase.h"
 #include "base/no_destructor.h"
+#include "base/ranges/algorithm.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "ui/accessibility/ax_enum_util.h"
+#include "ui/accessibility/ax_enums.mojom-shared.h"
 #include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/accessibility/ax_role_properties.h"
 #include "ui/accessibility/ax_tree_id.h"
@@ -87,16 +88,6 @@ std::string IntVectorToString(const std::vector<int32_t>& items) {
       items, [](const int32_t item) { return base::NumberToString(item); });
 }
 
-// Predicate that returns true if the first value of a pair is |first|.
-template <typename FirstType, typename SecondType>
-struct FirstIs {
-  explicit FirstIs(FirstType first) : first_(first) {}
-  bool operator()(std::pair<FirstType, SecondType> const& p) {
-    return p.first == first_;
-  }
-  FirstType first_;
-};
-
 // Helper function that finds a key in a vector of pairs by matching on the
 // first value, and returns an iterator.
 template <typename FirstType, typename SecondType>
@@ -104,8 +95,8 @@ typename std::vector<std::pair<FirstType, SecondType>>::const_iterator
 FindInVectorOfPairs(
     FirstType first,
     const std::vector<std::pair<FirstType, SecondType>>& vector) {
-  return std::find_if(vector.begin(), vector.end(),
-                      FirstIs<FirstType, SecondType>(first));
+  return base::ranges::find(vector, first,
+                            &std::pair<FirstType, SecondType>::first);
 }
 
 }  // namespace
@@ -126,6 +117,8 @@ bool IsNodeIdIntAttribute(ax::mojom::IntAttribute attr) {
     case ax::mojom::IntAttribute::kTableRowHeaderId:
     case ax::mojom::IntAttribute::kNextFocusId:
     case ax::mojom::IntAttribute::kPreviousFocusId:
+    case ax::mojom::IntAttribute::kNextWindowFocusId:
+    case ax::mojom::IntAttribute::kPreviousWindowFocusId:
       return true;
 
     // Note: all of the attributes are included here explicitly,
@@ -159,6 +152,7 @@ bool IsNodeIdIntAttribute(ax::mojom::IntAttribute attr) {
     case ax::mojom::IntAttribute::kColorValue:
     case ax::mojom::IntAttribute::kAriaCurrentState:
     case ax::mojom::IntAttribute::kHasPopup:
+    case ax::mojom::IntAttribute::kIsPopup:
     case ax::mojom::IntAttribute::kBackgroundColor:
     case ax::mojom::IntAttribute::kColor:
     case ax::mojom::IntAttribute::kInvalidState:
@@ -257,9 +251,14 @@ AXNodeData::AXNodeData(AXNodeData&& other) {
   html_attributes.swap(other.html_attributes);
   child_ids.swap(other.child_ids);
   relative_bounds = other.relative_bounds;
+
+  other.id = kInvalidAXNodeID;
+  other.role = ax::mojom::Role::kUnknown;
+  other.state = 0U;
+  other.actions = 0ULL;
 }
 
-AXNodeData& AXNodeData::operator=(AXNodeData other) {
+AXNodeData& AXNodeData::operator=(const AXNodeData& other) {
   id = other.id;
   role = other.role;
   state = other.state;
@@ -450,12 +449,18 @@ bool AXNodeData::GetHtmlAttribute(const char* attribute,
   for (const std::pair<std::string, std::string>& html_attribute :
        html_attributes) {
     const std::string& attr = html_attribute.first;
-    if (base::LowerCaseEqualsASCII(attr, attribute)) {
+    if (base::EqualsCaseInsensitiveASCII(attr, attribute)) {
       *value = html_attribute.second;
       return true;
     }
   }
   return false;
+}
+
+std::u16string AXNodeData::GetHtmlAttribute(const char* attribute) const {
+  std::u16string value_utf16;
+  GetHtmlAttribute(attribute, &value_utf16);
+  return value_utf16;
 }
 
 bool AXNodeData::GetHtmlAttribute(const char* attribute,
@@ -607,20 +612,33 @@ AXTextAttributes AXNodeData::GetTextAttributes() const {
 }
 
 void AXNodeData::SetName(const std::string& name) {
-  DCHECK_NE(role, ax::mojom::Role::kNone)
-      << "A valid role is required before setting the name attribute, because "
-         "the role is used for setting the required NameFrom attribute.";
+  // Elements with role='presentation' have Role::kNone. They should not be
+  // named. Objects with Role::kUnknown were never given a role. This check
+  // is only relevant if the name is not empty.
+  // TODO(crbug.com/1361972): It would be nice to have a means to set the name
+  // and role at the same time to avoid this ordering requirement.
+  DCHECK(name.empty() ||
+         (role != ax::mojom::Role::kNone && role != ax::mojom::Role::kUnknown))
+      << "Cannot set name to '" << name << "' on class: '"
+      << GetStringAttribute(ax::mojom::StringAttribute::kClassName)
+      << "' because a valid role is needed to set the default NameFrom "
+         "attribute. Set the role first.";
 
-  auto iter = std::find_if(string_attributes.begin(), string_attributes.end(),
-                           [](const auto& string_attribute) {
-                             return string_attribute.first ==
-                                    ax::mojom::StringAttribute::kName;
-                           });
+  auto iter = base::ranges::find(
+      string_attributes, ax::mojom::StringAttribute::kName,
+      &std::pair<ax::mojom::StringAttribute, std::string>::first);
 
   if (iter == string_attributes.end()) {
     string_attributes.emplace_back(ax::mojom::StringAttribute::kName, name);
   } else {
     iter->second = name;
+  }
+
+  // It is possible for `SetName`/`SetNameChecked` to be called after
+  // `SetNameExplicitlyEmpty`.
+  if (!name.empty() &&
+      GetNameFrom() == ax::mojom::NameFrom::kAttributeExplicitlyEmpty) {
+    RemoveIntAttribute(ax::mojom::IntAttribute::kNameFrom);
   }
 
   if (HasIntAttribute(ax::mojom::IntAttribute::kNameFrom))
@@ -648,16 +666,61 @@ void AXNodeData::SetName(const std::u16string& name) {
   SetName(base::UTF16ToUTF8(name));
 }
 
+void AXNodeData::SetNameChecked(const std::string& name) {
+  SetName(name);
+
+  // We do this check after calling `SetName` because `SetName` handles the
+  // case where it is called after `SetNameExplicitlyEmpty` by removing the
+  // existing `NameFrom::kAttributeExplicitlyEmpty`.
+  DCHECK_EQ(name.empty(),
+            GetNameFrom() == ax::mojom::NameFrom::kAttributeExplicitlyEmpty)
+      << "If the accessible name of Role::" << role << " class: '"
+      << GetStringAttribute(ax::mojom::StringAttribute::kClassName)
+      << "' is being set to an empty string to improve the "
+         "user experience, call `SetNameExplicitlyEmpty` instead of `SetName`.";
+}
+
+void AXNodeData::SetNameChecked(const std::u16string& name) {
+  SetNameChecked(base::UTF16ToUTF8(name));
+}
+
 void AXNodeData::SetNameExplicitlyEmpty() {
   SetNameFrom(ax::mojom::NameFrom::kAttributeExplicitlyEmpty);
+  SetName(std::string());
 }
 
 void AXNodeData::SetDescription(const std::string& description) {
   AddStringAttribute(ax::mojom::StringAttribute::kDescription, description);
+
+  // It is possible for `SetDescription` to be called after
+  // `SetDescriptionExplicitlyEmpty`.
+  if (!description.empty() &&
+      GetDescriptionFrom() ==
+          ax::mojom::DescriptionFrom::kAttributeExplicitlyEmpty) {
+    RemoveIntAttribute(ax::mojom::IntAttribute::kDescriptionFrom);
+  }
+
+  DCHECK_EQ(description.empty(),
+            GetDescriptionFrom() ==
+                ax::mojom::DescriptionFrom::kAttributeExplicitlyEmpty)
+      << "If the accessible description of Role::" << role << " class: '"
+      << GetStringAttribute(ax::mojom::StringAttribute::kClassName)
+      << "' is being set to an empty string to improve the user experience, "
+         "call SetDescriptionExplicitlyEmpty instead of SetDescription.";
+
+  if (HasIntAttribute(ax::mojom::IntAttribute::kDescriptionFrom))
+    return;
+
+  SetDescriptionFrom(ax::mojom::DescriptionFrom::kAriaDescription);
 }
 
 void AXNodeData::SetDescription(const std::u16string& description) {
   SetDescription(base::UTF16ToUTF8(description));
+}
+
+void AXNodeData::SetDescriptionExplicitlyEmpty() {
+  SetDescriptionFrom(ax::mojom::DescriptionFrom::kAttributeExplicitlyEmpty);
+  SetDescription(std::string());
 }
 
 void AXNodeData::SetValue(const std::string& value) {
@@ -735,9 +798,9 @@ void AXNodeData::AddAction(ax::mojom::Action action_enum) {
     case ax::mojom::Action::kInternalInvalidateTree:
     case ax::mojom::Action::kLoadInlineTextBoxes:
     case ax::mojom::Action::kReplaceSelectedText:
-    case ax::mojom::Action::kRunScreenAi:
     case ax::mojom::Action::kScrollToMakeVisible:
     case ax::mojom::Action::kScrollToPoint:
+    case ax::mojom::Action::kScrollToPositionAtRowColumn:
     case ax::mojom::Action::kSetAccessibilityFocus:
     case ax::mojom::Action::kSetScrollOffset:
     case ax::mojom::Action::kSetSelection:
@@ -759,6 +822,7 @@ void AXNodeData::AddAction(ax::mojom::Action action_enum) {
     case ax::mojom::Action::kStartDuckingMedia:
     case ax::mojom::Action::kStopDuckingMedia:
     case ax::mojom::Action::kSuspendMedia:
+    case ax::mojom::Action::kLongClick:
       break;
   }
 
@@ -833,6 +897,21 @@ void AXNodeData::SetHasPopup(ax::mojom::HasPopup has_popup) {
   if (has_popup != ax::mojom::HasPopup::kFalse) {
     AddIntAttribute(ax::mojom::IntAttribute::kHasPopup,
                     static_cast<int32_t>(has_popup));
+  }
+}
+
+ax::mojom::IsPopup AXNodeData::GetIsPopup() const {
+  return static_cast<ax::mojom::IsPopup>(
+      GetIntAttribute(ax::mojom::IntAttribute::kIsPopup));
+}
+
+void AXNodeData::SetIsPopup(ax::mojom::IsPopup is_popup) {
+  if (HasIntAttribute(ax::mojom::IntAttribute::kIsPopup)) {
+    RemoveIntAttribute(ax::mojom::IntAttribute::kIsPopup);
+  }
+  if (is_popup != ax::mojom::IsPopup::kNone) {
+    AddIntAttribute(ax::mojom::IntAttribute::kIsPopup,
+                    static_cast<int32_t>(is_popup));
   }
 }
 
@@ -1051,7 +1130,10 @@ bool AXNodeData::IsMenuButton() const {
 }
 
 bool AXNodeData::IsTextField() const {
-  return IsAtomicTextField() || IsNonAtomicTextField() || IsSpinnerTextField();
+  if (HasState(ax::mojom::State::kIgnored)) {
+    return false;
+  }
+  return IsAtomicTextField() || IsNonAtomicTextField();
 }
 
 bool AXNodeData::IsPasswordField() const {
@@ -1076,30 +1158,19 @@ bool AXNodeData::IsNonAtomicTextField() const {
 }
 
 bool AXNodeData::IsSpinnerTextField() const {
-  // TODO(accessibility) Should an editable spin button be it's own role?
-  // This would allow this method to go away, by instead adding the editable
-  // spinbutton role to AXRoleProperties::IsTextField().
-  return role == ax::mojom::Role::kSpinButton &&
-         GetStringAttribute(ax::mojom::StringAttribute::kInputType) == "number";
-}
-
-bool AXNodeData::IsReadOnlyOrDisabled() const {
-  switch (GetRestriction()) {
-    case ax::mojom::Restriction::kReadOnly:
-    case ax::mojom::Restriction::kDisabled:
-      return true;
-    case ax::mojom::Restriction::kNone: {
-      if (HasState(ax::mojom::State::kEditable) ||
-          HasState(ax::mojom::State::kRichlyEditable)) {
-        return false;
-      }
-
-      // By default, when readonly is not supported, we assume the node is never
-      // editable - then always readonly.
-      return ShouldHaveReadonlyStateByDefault(role) ||
-             !IsReadOnlySupported(role);
-    }
-  }
+  // All root editable nodes that have the role `spinbutton` should be treated
+  // as spinner text fields, this is so that the node does not lose
+  // TextField characteristics that are exposed so that ATs can interact with
+  // the node appropriately. Like for example, using left and right arrow keys
+  // to scan and read out the characters in the text field.
+  if (role != ax::mojom::Role::kSpinButton)
+    return false;
+  if (!HasState(ax::mojom::State::kEditable))
+    return false;
+  // Nodes that inherited their editable state should not be included.
+  return !(
+      HasState(ax::mojom::State::kRichlyEditable) &&
+      !GetBoolAttribute(ax::mojom::BoolAttribute::kNonAtomicTextFieldRoot));
 }
 
 bool AXNodeData::IsRangeValueSupported() const {
@@ -1120,14 +1191,88 @@ bool AXNodeData::SupportsExpandCollapse() const {
   return ui::SupportsExpandCollapse(role);
 }
 
-std::string AXNodeData::ToString() const {
+// TODO(accessibility) Consider reusing code from AXTreeFormatterBlink, where
+// the |verbose| parameter alters the property filter. Would remove ~800 lines.
+std::string AXNodeData::ToString(bool verbose) const {
   std::string result;
 
+  // Most important properties are provided first.
   result += "id=" + base::NumberToString(id);
   result += " ";
   result += ui::ToString(role);
 
   result += StateBitfieldToString(state);
+
+  if (HasStringAttribute(ax::mojom::StringAttribute::kHtmlTag)) {
+    result += base::StringPrintf(
+        " <%s",
+        GetStringAttribute(ax::mojom::StringAttribute::kHtmlTag).c_str());
+    if (HasStringAttribute(ax::mojom::StringAttribute::kClassName)) {
+      result += base::StringPrintf(
+          ".%s",
+          GetStringAttribute(ax::mojom::StringAttribute::kClassName).c_str());
+    }
+    std::string id_attr;
+    if (GetHtmlAttribute("id", &id_attr)) {
+      result += base::StringPrintf("#%s", id_attr.c_str());
+    }
+    result += ">";
+  } else if (HasStringAttribute(ax::mojom::StringAttribute::kClassName)) {
+    result += " class_name=" +
+              GetStringAttribute(ax::mojom::StringAttribute::kClassName);
+  }
+
+  if (HasStringAttribute(ax::mojom::StringAttribute::kRole)) {
+    result += " aria_role=";
+    result += GetStringAttribute(ax::mojom::StringAttribute::kRole);
+  }
+
+  if (HasStringAttribute(ax::mojom::StringAttribute::kName)) {
+    result += " name=";
+    result += GetStringAttribute(ax::mojom::StringAttribute::kName);
+  }
+
+  // TODO(accessibility) Blink a11y shouldn't serialize name_from field for
+  // text, because it's always contents, and is just adding noise.
+  if (!ui::IsText(role) &&
+      HasIntAttribute(ax::mojom::IntAttribute::kNameFrom)) {
+    result += " name_from=";
+    result += ui::ToString(static_cast<ax::mojom::NameFrom>(
+        GetIntAttribute(ax::mojom::IntAttribute::kNameFrom)));
+  }
+
+  if (HasStringAttribute(ax::mojom::StringAttribute::kUrl)) {
+    result += " url=";
+    result += GetStringAttribute(ax::mojom::StringAttribute::kUrl);
+  }
+
+  if (HasStringAttribute(ax::mojom::StringAttribute::kChildTreeId)) {
+    result += " has_child_tree";
+  }
+
+  if (GetBoolAttribute(ax::mojom::BoolAttribute::kClipsChildren)) {
+    result += " clips_children";
+  }
+
+  if (GetBoolAttribute(ax::mojom::BoolAttribute::kBusy)) {
+    result += " busy";
+  }
+
+  if (HasStringAttribute(ax::mojom::StringAttribute::kDisplay)) {
+    result += " display=";
+    result +=
+        GetStringAttribute(ax::mojom::StringAttribute::kDisplay).substr(0, 30);
+  }
+
+  if (!child_ids.empty()) {
+    result += " child_ids=" + IntVectorToString(child_ids);
+  }
+
+  if (!verbose) {
+    return result;
+  }
+
+  // Properties of lesser importance are provided if verbose is set to true.
 
   result += " " + relative_bounds.ToString();
 
@@ -1237,9 +1382,7 @@ std::string AXNodeData::ToString() const {
         }
         break;
       case ax::mojom::IntAttribute::kNameFrom:
-        result += " name_from=";
-        result += ui::ToString(
-            static_cast<ax::mojom::NameFrom>(int_attribute.second));
+        // Already provided in default (non-verbose) section above.
         break;
       case ax::mojom::IntAttribute::kDescriptionFrom:
         result += " description_from=";
@@ -1429,6 +1572,18 @@ std::string AXNodeData::ToString() const {
             break;
         }
         break;
+      case ax::mojom::IntAttribute::kIsPopup:
+        switch (static_cast<ax::mojom::IsPopup>(int_attribute.second)) {
+          case ax::mojom::IsPopup::kNone:
+            break;
+          case ax::mojom::IsPopup::kAuto:
+            result += " ispopup=auto";
+            break;
+          case ax::mojom::IsPopup::kManual:
+            result += " ispopup=manual";
+            break;
+        }
+        break;
       case ax::mojom::IntAttribute::kInvalidState:
         switch (static_cast<ax::mojom::InvalidState>(int_attribute.second)) {
           case ax::mojom::InvalidState::kFalse:
@@ -1474,6 +1629,12 @@ std::string AXNodeData::ToString() const {
       case ax::mojom::IntAttribute::kPreviousFocusId:
         result += " previous_focus_id=" + value;
         break;
+      case ax::mojom::IntAttribute::kNextWindowFocusId:
+        result += " next_window_focus_id=" + value;
+        break;
+      case ax::mojom::IntAttribute::kPreviousWindowFocusId:
+        result += " previous_window_focus_id=" + value;
+        break;
       case ax::mojom::IntAttribute::kImageAnnotationStatus:
         result += std::string(" image_annotation_status=") +
                   ui::ToString(static_cast<ax::mojom::ImageAnnotationStatus>(
@@ -1500,6 +1661,12 @@ std::string AXNodeData::ToString() const {
       case ax::mojom::StringAttribute::kAriaInvalidValue:
         result += " aria_invalid_value=" + value;
         break;
+      case ax::mojom::StringAttribute::kAriaBrailleLabel:
+        result += " aria_braille_label=" + value;
+        break;
+      case ax::mojom::StringAttribute::kAriaBrailleRoleDescription:
+        result += " aria_braille_role_description=" + value;
+        break;
       case ax::mojom::StringAttribute::kCheckedStateDescription:
         result += " checked_state_description=" + value;
         break;
@@ -1512,20 +1679,16 @@ std::string AXNodeData::ToString() const {
       case ax::mojom::StringAttribute::kChildTreeNodeAppId:
         result += " child_tree_node_app_id=" + value.substr(0, 8);
         break;
-      case ax::mojom::StringAttribute::kClassName:
-        result += " class_name=" + value;
-        break;
       case ax::mojom::StringAttribute::kDescription:
         result += " description=" + value;
         break;
       case ax::mojom::StringAttribute::kDisplay:
-        result += " display=" + value;
+        break;
+      case ax::mojom::StringAttribute::kDoDefaultLabel:
+        result += " doDefaultLabel=" + value;
         break;
       case ax::mojom::StringAttribute::kFontFamily:
         result += " font-family=" + value;
-        break;
-      case ax::mojom::StringAttribute::kHtmlTag:
-        result += " html_tag=" + value;
         break;
       case ax::mojom::StringAttribute::kImageAnnotation:
         result += " image_annotation=" + value;
@@ -1565,26 +1728,27 @@ std::string AXNodeData::ToString() const {
       case ax::mojom::StringAttribute::kPlaceholder:
         result += " placeholder=" + value;
         break;
-      case ax::mojom::StringAttribute::kRole:
-        result += " role=" + value;
-        break;
       case ax::mojom::StringAttribute::kRoleDescription:
         result += " role_description=" + value;
         break;
+      case ax::mojom::StringAttribute::kLongClickLabel:
+        result += " longClickLabel=" + value;
+        break;
       case ax::mojom::StringAttribute::kTooltip:
         result += " tooltip=" + value;
-        break;
-      case ax::mojom::StringAttribute::kUrl:
-        result += " url=" + value;
-        break;
-      case ax::mojom::StringAttribute::kName:
-        result += " name=" + value;
         break;
       case ax::mojom::StringAttribute::kValue:
         result += " value=" + value;
         break;
       case ax::mojom::StringAttribute::kVirtualContent:
         result += " virtual_content=" + value;
+        break;
+      case ax::mojom::StringAttribute::kClassName:
+      case ax::mojom::StringAttribute::kHtmlTag:
+      case ax::mojom::StringAttribute::kRole:
+      case ax::mojom::StringAttribute::kUrl:
+      case ax::mojom::StringAttribute::kName:
+        // Already provided in default (non-verbose) section above.
         break;
       case ax::mojom::StringAttribute::kNone:
         break;
@@ -1635,7 +1799,7 @@ std::string AXNodeData::ToString() const {
         result += " atomic=" + value;
         break;
       case ax::mojom::BoolAttribute::kBusy:
-        result += " busy=" + value;
+        // Already provided in default (non-verbose) section above.
         break;
       case ax::mojom::BoolAttribute::kContainerLiveAtomic:
         result += " container_atomic=" + value;
@@ -1659,7 +1823,7 @@ std::string AXNodeData::ToString() const {
         result += " clickable=" + value;
         break;
       case ax::mojom::BoolAttribute::kClipsChildren:
-        result += " clips_children=" + value;
+        // Already provided in default (non-verbose) section above.
         break;
       case ax::mojom::BoolAttribute::kNotUserSelectableStyle:
         result += " not_user_selectable=" + value;
@@ -1687,6 +1851,9 @@ std::string AXNodeData::ToString() const {
         break;
       case ax::mojom::BoolAttribute::kTouchPassthrough:
         result += " touch_passthrough=" + value;
+        break;
+      case ax::mojom::BoolAttribute::kLongClickable:
+        result += " long_clickable=" + value;
         break;
       case ax::mojom::BoolAttribute::kNone:
         break;
@@ -1822,10 +1989,47 @@ std::string AXNodeData::ToString() const {
   if (actions)
     result += " actions=" + ActionsBitfieldToString(actions);
 
-  if (!child_ids.empty())
-    result += " child_ids=" + IntVectorToString(child_ids);
-
   return result;
+}
+
+size_t AXNodeData::ByteSize() const {
+  // Simple fields.
+  size_t total_size = sizeof(id) + sizeof(role) + sizeof(state) +
+                      sizeof(actions) + sizeof(relative_bounds);
+
+  // Less simple collections.
+  total_size += int_attributes.size() *
+                    (sizeof(ax::mojom::IntAttribute) + sizeof(int32_t)) +
+                float_attributes.size() *
+                    (sizeof(ax::mojom::FloatAttribute) + sizeof(float)) +
+                bool_attributes.size() *
+                    (sizeof(ax::mojom::BoolAttribute) + sizeof(bool)) +
+                child_ids.size() * sizeof(int32_t);
+
+  // Complex collections.
+  for (const auto& pair : string_attributes) {
+    total_size +=
+        sizeof(ax::mojom::StringAttribute) + pair.second.size() * sizeof(char);
+  }
+
+  for (const auto& pair : intlist_attributes) {
+    total_size += sizeof(ax::mojom::IntListAttribute) +
+                  pair.second.size() * sizeof(int32_t);
+  }
+
+  for (const auto& pair : stringlist_attributes) {
+    total_size += sizeof(ax::mojom::StringListAttribute);
+    for (const auto& value : pair.second) {
+      total_size += value.size() * sizeof(char);
+    }
+  }
+
+  for (const auto& pair : html_attributes) {
+    total_size +=
+        pair.first.size() * sizeof(char) + pair.second.size() * sizeof(char);
+  }
+
+  return total_size;
 }
 
 std::string AXNodeData::DropeffectBitfieldToString() const {

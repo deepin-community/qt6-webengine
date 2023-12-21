@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,17 +6,19 @@
 
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback.h"
-#include "base/callback_helpers.h"
 #include "base/compiler_specific.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/rand_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/lock.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/task/single_thread_task_runner.h"
+#include "base/types/pass_key.h"
 #include "base/values.h"
 #include "net/base/auth.h"
+#include "net/base/io_buffer.h"
 #include "net/base/load_flags.h"
 #include "net/base/load_timing_info.h"
 #include "net/base/net_errors.h"
@@ -45,9 +47,6 @@
 #include "net/url_request/url_request_redirect_job.h"
 #include "url/gurl.h"
 #include "url/origin.h"
-
-using base::Time;
-using std::string;
 
 namespace net {
 
@@ -105,12 +104,12 @@ void ConvertRealLoadTimesToBlockingTimes(LoadTimingInfo* load_timing_info) {
 
   LoadTimingInfo::ConnectTiming* connect_timing =
       &load_timing_info->connect_timing;
-  if (!connect_timing->dns_start.is_null()) {
-    DCHECK(!connect_timing->dns_end.is_null());
-    if (connect_timing->dns_start < block_on_connect)
-      connect_timing->dns_start = block_on_connect;
-    if (connect_timing->dns_end < block_on_connect)
-      connect_timing->dns_end = block_on_connect;
+  if (!connect_timing->domain_lookup_start.is_null()) {
+    DCHECK(!connect_timing->domain_lookup_end.is_null());
+    if (connect_timing->domain_lookup_start < block_on_connect)
+      connect_timing->domain_lookup_start = block_on_connect;
+    if (connect_timing->domain_lookup_end < block_on_connect)
+      connect_timing->domain_lookup_end = block_on_connect;
   }
 
   if (!connect_timing->connect_start.is_null()) {
@@ -224,8 +223,8 @@ bool URLRequest::has_upload() const {
   return upload_data_stream_.get() != nullptr;
 }
 
-void URLRequest::SetExtraRequestHeaderByName(const string& name,
-                                             const string& value,
+void URLRequest::SetExtraRequestHeaderByName(base::StringPiece name,
+                                             base::StringPiece value,
                                              bool overwrite) {
   DCHECK(!is_pending_ || is_redirecting_);
   if (overwrite) {
@@ -235,7 +234,7 @@ void URLRequest::SetExtraRequestHeaderByName(const string& name,
   }
 }
 
-void URLRequest::RemoveRequestHeaderByName(const string& name) {
+void URLRequest::RemoveRequestHeaderByName(base::StringPiece name) {
   DCHECK(!is_pending_ || is_redirecting_);
   extra_request_headers_.RemoveHeader(name);
 }
@@ -283,42 +282,43 @@ LoadStateWithParam URLRequest::GetLoadState() const {
 }
 
 base::Value URLRequest::GetStateAsValue() const {
-  base::Value dict(base::Value::Type::DICTIONARY);
-  dict.SetStringKey("url", original_url().possibly_invalid_spec());
+  base::Value::Dict dict;
+  dict.Set("url", original_url().possibly_invalid_spec());
 
   if (url_chain_.size() > 1) {
-    base::Value list(base::Value::Type::LIST);
+    base::Value::List list;
     for (const GURL& url : url_chain_) {
       list.Append(url.possibly_invalid_spec());
     }
-    dict.SetKey("url_chain", std::move(list));
+    dict.Set("url_chain", std::move(list));
   }
 
-  dict.SetIntKey("load_flags", load_flags_);
+  dict.Set("load_flags", load_flags_);
 
   LoadStateWithParam load_state = GetLoadState();
-  dict.SetIntKey("load_state", load_state.state);
+  dict.Set("load_state", load_state.state);
   if (!load_state.param.empty())
-    dict.SetStringKey("load_state_param", load_state.param);
+    dict.Set("load_state_param", load_state.param);
   if (!blocked_by_.empty())
-    dict.SetStringKey("delegate_blocked_by", blocked_by_);
+    dict.Set("delegate_blocked_by", blocked_by_);
 
-  dict.SetStringKey("method", method_);
-  dict.SetStringKey("network_isolation_key",
-                    isolation_info_.network_isolation_key().ToDebugString());
-  dict.SetBoolKey("has_upload", has_upload());
-  dict.SetBoolKey("is_pending", is_pending_);
+  dict.Set("method", method_);
+  // TODO(https://crbug.com/1343856): Update "network_isolation_key" to
+  // "network_anonymization_key" and change NetLog viewer.
+  dict.Set("network_isolation_key",
+           isolation_info_.network_isolation_key().ToDebugString());
+  dict.Set("has_upload", has_upload());
+  dict.Set("is_pending", is_pending_);
 
-  dict.SetIntKey("traffic_annotation", traffic_annotation_.unique_id_hash_code);
+  dict.Set("traffic_annotation", traffic_annotation_.unique_id_hash_code);
 
   if (status_ != OK)
-    dict.SetIntKey("net_error", status_);
-  return dict;
+    dict.Set("net_error", status_);
+  return base::Value(std::move(dict));
 }
 
-void URLRequest::LogBlockedBy(const char* blocked_by) {
-  DCHECK(blocked_by);
-  DCHECK_GT(strlen(blocked_by), 0u);
+void URLRequest::LogBlockedBy(base::StringPiece blocked_by) {
+  DCHECK(!blocked_by.empty());
 
   // Only log information to NetLog during startup and certain deferring calls
   // to delegates.  For all reads but the first, do nothing.
@@ -326,14 +326,14 @@ void URLRequest::LogBlockedBy(const char* blocked_by) {
     return;
 
   LogUnblocked();
-  blocked_by_ = blocked_by;
+  blocked_by_ = std::string(blocked_by);
   use_blocked_by_as_load_param_ = false;
 
   net_log_.BeginEventWithStringParams(NetLogEventType::DELEGATE_INFO,
                                       "delegate_blocked_by", blocked_by_);
 }
 
-void URLRequest::LogAndReportBlockedBy(const char* source) {
+void URLRequest::LogAndReportBlockedBy(base::StringPiece source) {
   LogBlockedBy(source);
   use_blocked_by_as_load_param_ = true;
 }
@@ -365,8 +365,8 @@ UploadProgress URLRequest::GetUploadProgress() const {
   return UploadProgress();
 }
 
-void URLRequest::GetResponseHeaderByName(const string& name,
-                                         string* value) const {
+void URLRequest::GetResponseHeaderByName(base::StringPiece name,
+                                         std::string* value) const {
   DCHECK(value);
   if (response_info_.headers.get()) {
     response_info_.headers->GetNormalizedHeader(name, value);
@@ -406,12 +406,12 @@ bool URLRequest::GetTransactionRemoteEndpoint(IPEndPoint* endpoint) const {
   return job_->GetTransactionRemoteEndpoint(endpoint);
 }
 
-void URLRequest::GetMimeType(string* mime_type) const {
+void URLRequest::GetMimeType(std::string* mime_type) const {
   DCHECK(job_.get());
   job_->GetMimeType(mime_type);
 }
 
-void URLRequest::GetCharset(string* charset) const {
+void URLRequest::GetCharset(std::string* charset) const {
   DCHECK(job_.get());
   job_->GetCharset(charset);
 }
@@ -476,6 +476,14 @@ void URLRequest::set_site_for_cookies(const SiteForCookies& site_for_cookies) {
   site_for_cookies_ = site_for_cookies;
 }
 
+void URLRequest::set_isolation_info_from_network_anonymization_key(
+    const NetworkAnonymizationKey& network_anonymization_key) {
+  set_isolation_info(URLRequest::CreateIsolationInfoFromNetworkAnonymizationKey(
+      network_anonymization_key));
+
+  is_created_from_network_anonymization_key_ = true;
+}
+
 void URLRequest::set_first_party_url_policy(
     RedirectInfo::FirstPartyURLPolicy first_party_url_policy) {
   DCHECK(!is_pending_);
@@ -489,9 +497,9 @@ void URLRequest::set_initiator(const absl::optional<url::Origin>& initiator) {
   initiator_ = initiator;
 }
 
-void URLRequest::set_method(const std::string& method) {
+void URLRequest::set_method(base::StringPiece method) {
   DCHECK(!is_pending_);
-  method_ = method;
+  method_ = std::string(method);
 }
 
 #if BUILDFLAG(ENABLE_REPORTING)
@@ -501,13 +509,13 @@ void URLRequest::set_reporting_upload_depth(int reporting_upload_depth) {
 }
 #endif
 
-void URLRequest::SetReferrer(const std::string& referrer) {
+void URLRequest::SetReferrer(base::StringPiece referrer) {
   DCHECK(!is_pending_);
   GURL referrer_url(referrer);
   if (referrer_url.is_valid()) {
     referrer_ = referrer_url.GetAsReferrer().spec();
   } else {
-    referrer_ = referrer;
+    referrer_ = std::string(referrer);
   }
 }
 
@@ -567,7 +575,8 @@ void URLRequest::Start() {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-URLRequest::URLRequest(const GURL& url,
+URLRequest::URLRequest(base::PassKey<URLRequestContext> pass_key,
+                       const GURL& url,
                        RequestPriority priority,
                        Delegate* delegate,
                        const URLRequestContext* context,
@@ -577,37 +586,15 @@ URLRequest::URLRequest(const GURL& url,
     : context_(context),
       net_log_(CreateNetLogWithSource(context->net_log(), net_log_source)),
       url_chain_(1, url),
-      force_ignore_site_for_cookies_(false),
-      force_ignore_top_frame_party_for_cookies_(false),
-      force_main_frame_for_same_site_cookies_(false),
       method_("GET"),
-      referrer_policy_(
-          ReferrerPolicy::CLEAR_ON_TRANSITION_FROM_SECURE_TO_INSECURE),
-      first_party_url_policy_(
-          RedirectInfo::FirstPartyURLPolicy::NEVER_CHANGE_URL),
-      load_flags_(LOAD_NORMAL),
-      allow_credentials_(true),
-      secure_dns_policy_(SecureDnsPolicy::kAllow),
-#if BUILDFLAG(ENABLE_REPORTING)
-      reporting_upload_depth_(0),
-#endif
       delegate_(delegate),
       is_for_websockets_(is_for_websockets),
-      status_(OK),
-      is_pending_(false),
-      is_redirecting_(false),
       redirect_limit_(kMaxRedirects),
       priority_(priority),
-      delegate_event_type_(NetLogEventType::FAILED),
-      calling_delegate_(false),
-      use_blocked_by_as_load_param_(false),
-      has_notified_completion_(false),
-      received_response_content_length_(0),
       creation_time_(base::TimeTicks::Now()),
-      traffic_annotation_(traffic_annotation),
-      upgrade_if_insecure_(false) {
+      traffic_annotation_(traffic_annotation) {
   // Sanity check out environment.
-  DCHECK(base::ThreadTaskRunnerHandle::IsSet());
+  DCHECK(base::SingleThreadTaskRunner::HasCurrentDefault());
 
   context->url_requests()->insert(this);
   net_log_.BeginEvent(NetLogEventType::REQUEST_ALIVE, [&] {
@@ -646,6 +633,10 @@ void URLRequest::BeforeRequestComplete(int error) {
 void URLRequest::StartJob(std::unique_ptr<URLRequestJob> job) {
   DCHECK(!is_pending_);
   DCHECK(!job_);
+  if (is_created_from_network_anonymization_key_) {
+    DCHECK(load_flags_ & LOAD_DISABLE_CACHE);
+    DCHECK(!allow_credentials_);
+  }
 
   net_log_.BeginEvent(NetLogEventType::URL_REQUEST_START_JOB, [&] {
     return NetLogURLRequestStartParams(
@@ -789,6 +780,9 @@ int URLRequest::Read(IOBuffer* dest, int dest_size) {
     return OK;
   }
 
+  // Caller should provide a buffer.
+  DCHECK(dest && dest->data());
+
   int rv = job_->Read(dest, dest_size);
   if (rv == ERR_IO_PENDING) {
     set_status(ERR_IO_PENDING);
@@ -829,6 +823,7 @@ int URLRequest::NotifyConnected(const TransportInfo& info,
 
 void URLRequest::NotifyReceivedRedirect(const RedirectInfo& redirect_info,
                                         bool* defer_redirect) {
+  DCHECK_EQ(OK, status_);
   is_redirecting_ = true;
   OnCallToDelegate(NetLogEventType::URL_REQUEST_DELEGATE_RECEIVED_REDIRECT);
   delegate_->OnReceivedRedirect(this, redirect_info, defer_redirect);
@@ -1036,8 +1031,13 @@ void URLRequest::SetPriority(RequestPriority priority) {
     job_->SetPriority(priority_);
 }
 
+void URLRequest::SetPriorityIncremental(bool priority_incremental) {
+  priority_incremental_ = priority_incremental;
+}
+
 void URLRequest::NotifyAuthRequired(
     std::unique_ptr<AuthChallengeInfo> auth_info) {
+  DCHECK_EQ(OK, status_);
   DCHECK(auth_info);
   // Check that there are no callbacks to already failed or cancelled requests.
   DCHECK(!failed());
@@ -1066,9 +1066,7 @@ bool URLRequest::CanSetCookie(const net::CanonicalCookie& cookie,
   DCHECK(!(load_flags_ & LOAD_DO_NOT_SAVE_COOKIES));
   bool can_set_cookies = g_default_can_use_cookies;
   if (network_delegate()) {
-    can_set_cookies =
-        network_delegate()->CanSetCookie(*this, cookie, options,
-                                         /*allowed_from_caller=*/true);
+    can_set_cookies = network_delegate()->CanSetCookie(*this, cookie, options);
   }
   if (!can_set_cookies)
     net_log_.AddEvent(NetLogEventType::COOKIE_SET_BLOCKED_BY_NETWORK_DELEGATE);
@@ -1099,6 +1097,10 @@ void URLRequest::NotifyReadCompleted(int bytes_read) {
 }
 
 void URLRequest::OnHeadersComplete() {
+  // The URLRequest status should still be IO_PENDING, which it was set to
+  // before the URLRequestJob was started.  On error or cancellation, this
+  // method should not be called.
+  DCHECK_EQ(ERR_IO_PENDING, status_);
   set_status(OK);
   // Cache load timing information now, as information will be lost once the
   // socket is closed and the ClientSocketHandle is Reset, which will happen
@@ -1174,6 +1176,41 @@ void URLRequest::RecordReferrerGranularityMetrics(
         "Net.URLRequest.ReferrerHasInformativePath.CrossOrigin",
         referrer_more_descriptive_than_its_origin);
   }
+}
+
+IsolationInfo URLRequest::CreateIsolationInfoFromNetworkAnonymizationKey(
+    const NetworkAnonymizationKey& network_anonymization_key) {
+  if (!network_anonymization_key.IsFullyPopulated()) {
+    return IsolationInfo();
+  }
+
+  url::Origin top_frame_origin =
+      network_anonymization_key.GetTopFrameSite()->site_as_origin_;
+
+  absl::optional<url::Origin> frame_origin;
+  if (NetworkAnonymizationKey::IsCrossSiteFlagSchemeEnabled() &&
+      network_anonymization_key.GetIsCrossSite().value()) {
+    // If we know that the origin is cross site to the top level site, create an
+    // empty origin to use as the frame origin for the isolation info. This
+    // should be cross site with the top level origin.
+    frame_origin = url::Origin();
+  } else {
+    // If we don't know that it's cross site to the top level site, use the top
+    // frame site to set the frame origin.
+    frame_origin = top_frame_origin;
+  }
+
+  const base::UnguessableToken* nonce =
+      network_anonymization_key.GetNonce()
+          ? &network_anonymization_key.GetNonce().value()
+          : nullptr;
+
+  auto isolation_info = IsolationInfo::Create(
+      IsolationInfo::RequestType::kOther, top_frame_origin,
+      frame_origin.value(), SiteForCookies(),
+      /*party_context=*/absl::nullopt, nonce);
+  // TODO(crbug/1343856): DCHECK isolation info is fully populated.
+  return isolation_info;
 }
 
 ConnectionAttempts URLRequest::GetConnectionAttempts() const {

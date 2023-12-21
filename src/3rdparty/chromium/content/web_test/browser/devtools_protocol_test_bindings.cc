@@ -1,12 +1,12 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "content/web_test/browser/devtools_protocol_test_bindings.h"
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/command_line.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/json/json_reader.h"
 #include "base/json/string_escape.h"
 #include "base/strings/string_number_conversions.h"
@@ -90,17 +90,15 @@ void DevToolsProtocolTestBindings::WebContentsDestroyed() {
   }
 }
 
-void DevToolsProtocolTestBindings::HandleMessageFromTest(base::Value message) {
-  const std::string* method = nullptr;
-  if (!message.is_dict() || !(method = message.FindStringKey("method"))) {
+void DevToolsProtocolTestBindings::HandleMessageFromTest(
+    base::Value::Dict message) {
+  const std::string* method = message.FindString("method");
+  if (!method)
     return;
-  }
 
-  const base::Value* params = message.FindListKey("params");
-  if (*method == "dispatchProtocolMessage" && params &&
-      params->GetListDeprecated().size() == 1) {
-    const std::string* protocol_message =
-        params->GetListDeprecated()[0].GetIfString();
+  const base::Value::List* params = message.FindList("params");
+  if (*method == "dispatchProtocolMessage" && params && params->size() == 1) {
+    const std::string* protocol_message = (*params)[0].GetIfString();
     if (!protocol_message)
       return;
 
@@ -122,7 +120,7 @@ void DevToolsProtocolTestBindings::DispatchProtocolMessage(
     base::EscapeJSONString(str_message, true, &param);
     std::string code = "DevToolsAPI.dispatchMessage(" + param + ");";
     std::u16string javascript = base::UTF8ToUTF16(code);
-    web_contents()->GetMainFrame()->ExecuteJavaScriptForTests(
+    web_contents()->GetPrimaryMainFrame()->ExecuteJavaScriptForTests(
         javascript, base::NullCallback());
     return;
   }
@@ -136,7 +134,7 @@ void DevToolsProtocolTestBindings::DispatchProtocolMessage(
     std::string code = "DevToolsAPI.dispatchMessageChunk(" + param + "," +
                        base::NumberToString(pos ? 0 : total_size) + ");";
     std::u16string javascript = base::UTF8ToUTF16(code);
-    web_contents()->GetMainFrame()->ExecuteJavaScriptForTests(
+    web_contents()->GetPrimaryMainFrame()->ExecuteJavaScriptForTests(
         javascript, base::NullCallback());
   }
 }

@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,10 +11,12 @@
 
 #include "base/synchronization/lock.h"
 #include "base/threading/platform_thread.h"
+#include "base/values.h"
 #include "content/public/renderer/render_thread_observer.h"
 #include "content/public/renderer/worker_thread.h"
 #include "extensions/common/activation_sequence.h"
 #include "extensions/common/extension_id.h"
+#include "extensions/common/extension_messages.h"
 #include "extensions/common/mojom/event_dispatcher.mojom.h"
 #include "extensions/common/mojom/event_router.mojom.h"
 #include "ipc/ipc_sync_message_filter.h"
@@ -118,7 +120,7 @@ class WorkerThreadDispatcher : public content::RenderThreadObserver,
                                     const std::string& event_name,
                                     int64_t service_worker_version_id,
                                     int worker_thread_id,
-                                    base::Value filter,
+                                    base::Value::Dict filter,
                                     bool add_lazy_listener);
 
   // Posts mojom::EventRouter::RemoveListenerForServiceWorker to the IO thread
@@ -142,7 +144,7 @@ class WorkerThreadDispatcher : public content::RenderThreadObserver,
                                        const std::string& event_name,
                                        int64_t service_worker_version_id,
                                        int worker_thread_id,
-                                       base::Value filter,
+                                       base::Value::Dict filter,
                                        bool remove_lazy_listener);
 
   // NOTE: This must be called on the IO thread because it can call
@@ -170,7 +172,7 @@ class WorkerThreadDispatcher : public content::RenderThreadObserver,
   void OnResponseWorker(int worker_thread_id,
                         int request_id,
                         bool succeeded,
-                        const base::Value::List& response,
+                        ExtensionMsg_ResponseWorkerData response,
                         const std::string& error);
   void OnValidateMessagePort(int worker_thread_id, const PortId& id);
   void OnDispatchOnConnect(int worker_thread_id,

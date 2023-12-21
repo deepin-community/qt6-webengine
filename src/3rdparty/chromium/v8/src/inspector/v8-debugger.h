@@ -54,12 +54,15 @@ class V8Debugger : public v8::debug::DebugDelegate,
   v8::Isolate* isolate() const { return m_isolate; }
 
   void setBreakpointsActive(bool);
+  void removeBreakpoint(v8::debug::BreakpointId id);
 
   v8::debug::ExceptionBreakState getPauseOnExceptionsState();
   void setPauseOnExceptionsState(v8::debug::ExceptionBreakState);
   bool canBreakProgram();
+  bool isInInstrumentationPause() const;
   void breakProgram(int targetContextGroupId);
   void interruptAndBreak(int targetContextGroupId);
+  void requestPauseAfterInstrumentation();
   void continueProgram(int targetContextGroupId,
                        bool terminateOnResume = false);
   void breakProgramOnAssert(int targetContextGroupId);
@@ -69,12 +72,14 @@ class V8Debugger : public v8::debug::DebugDelegate,
   void stepOverStatement(int targetContextGroupId);
   void stepOutOfFunction(int targetContextGroupId);
 
-  void terminateExecution(std::unique_ptr<TerminateExecutionCallback> callback);
+  void terminateExecution(v8::Local<v8::Context> context,
+                          std::unique_ptr<TerminateExecutionCallback> callback);
 
   Response continueToLocation(int targetContextGroupId,
                               V8DebuggerScript* script,
                               std::unique_ptr<protocol::Debugger::Location>,
                               const String16& targetCallFramess);
+  bool restartFrame(int targetContextGroupId, int callFrameOrdinal);
 
   // Each script inherits debug data from v8::Context where it has been
   // compiled.
@@ -190,8 +195,8 @@ class V8Debugger : public v8::debug::DebugDelegate,
       v8::Local<v8::Context> paused_context,
       const std::vector<v8::debug::BreakpointId>& break_points_hit,
       v8::debug::BreakReasons break_reasons) override;
-  void BreakOnInstrumentation(v8::Local<v8::Context> paused_context,
-                              v8::debug::BreakpointId) override;
+  ActionAfterInstrumentation BreakOnInstrumentation(
+      v8::Local<v8::Context> paused_context, v8::debug::BreakpointId) override;
   void ExceptionThrown(v8::Local<v8::Context> paused_context,
                        v8::Local<v8::Value> exception,
                        v8::Local<v8::Value> promise, bool is_uncaught,
@@ -202,10 +207,16 @@ class V8Debugger : public v8::debug::DebugDelegate,
 
   bool ShouldBeSkipped(v8::Local<v8::debug::Script> script, int line,
                        int column) override;
+  void BreakpointConditionEvaluated(v8::Local<v8::Context> context,
+                                    v8::debug::BreakpointId breakpoint_id,
+                                    bool exception_thrown,
+                                    v8::Local<v8::Value> exception) override;
 
   int currentContextGroupId();
 
   bool hasScheduledBreakOnNextFunctionCall() const;
+
+  void quitMessageLoopIfAgentsFinishedInstrumentation();
 
   v8::Isolate* m_isolate;
   V8InspectorImpl* m_inspector;
@@ -217,6 +228,8 @@ class V8Debugger : public v8::debug::DebugDelegate,
   bool m_scheduledOOMBreak = false;
   int m_targetContextGroupId = 0;
   int m_pausedContextGroupId = 0;
+  bool m_instrumentationPause = false;
+  bool m_requestedPauseAfterInstrumentation = false;
   int m_continueToLocationBreakpointId;
   String16 m_continueToLocationTargetCallFrames;
   std::unique_ptr<V8StackTraceImpl> m_continueToLocationStack;
@@ -292,6 +305,13 @@ class V8Debugger : public v8::debug::DebugDelegate,
   std::unordered_map<int, internal::V8DebuggerId> m_contextGroupIdToDebuggerId;
 
   std::unique_ptr<TerminateExecutionCallback> m_terminateExecutionCallback;
+  v8::Global<v8::Context> m_terminateExecutionCallbackContext;
+
+  // Throwing conditional breakpoints for which we already have logged an error
+  // message to the console. The intention is to reduce console spam.
+  // Removing the breakpoint or a non-throwing evaluation of the breakpoint
+  // clears it out of the set.
+  std::unordered_set<v8::debug::BreakpointId> m_throwingConditionReported;
 };
 
 }  // namespace v8_inspector

@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -55,7 +55,8 @@ class FormJsTest : public AutofillTestWithWebState {
   web::WebFrame* WaitForMainFrame() {
     __block web::WebFrame* main_frame = nullptr;
     EXPECT_TRUE(WaitUntilConditionOrTimeout(kWaitForJSCompletionTimeout, ^bool {
-      main_frame = web_state()->GetWebFramesManager()->GetMainWebFrame();
+      main_frame =
+          web_state()->GetPageWorldWebFramesManager()->GetMainWebFrame();
       return main_frame != nullptr;
     }));
     return main_frame;

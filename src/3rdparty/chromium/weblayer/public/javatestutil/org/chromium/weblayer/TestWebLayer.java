@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,16 +6,18 @@ package org.chromium.weblayer;
 
 import android.content.Context;
 import android.content.pm.PackageManager;
+import android.os.Bundle;
 import android.os.IBinder;
 import android.os.RemoteException;
 import android.util.AndroidRuntimeException;
 import android.view.View;
 import android.webkit.ValueCallback;
-import android.widget.ImageView;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
+import org.chromium.base.Callback;
+import org.chromium.weblayer_private.interfaces.BrowserFragmentArgs;
 import org.chromium.weblayer_private.interfaces.ObjectWrapper;
 import org.chromium.weblayer_private.test_interfaces.ITestWebLayer;
 
@@ -47,6 +49,10 @@ public final class TestWebLayer {
         } catch (PackageManager.NameNotFoundException | ReflectiveOperationException e) {
             throw new AndroidRuntimeException(e);
         }
+    }
+
+    public static WebLayer loadSync(Context context) {
+        return WebLayer.loadSync(context);
     }
 
     public boolean isNetworkChangeAutoDetectOn() throws RemoteException {
@@ -102,10 +108,6 @@ public final class TestWebLayer {
         mITestWebLayer.setAccessibilityEnabled(enabled);
     }
 
-    public boolean canBrowserControlsScroll(Tab tab) throws RemoteException {
-        return mITestWebLayer.canBrowserControlsScroll(tab.getITab());
-    }
-
     public void addInfoBar(Tab tab, Runnable runnable) throws RemoteException {
         mITestWebLayer.addInfoBar(tab.getITab(), ObjectWrapper.wrap(runnable));
     }
@@ -127,16 +129,31 @@ public final class TestWebLayer {
         return mITestWebLayer.canInfoBarContainerScroll(tab.getITab());
     }
 
-    public String getDisplayedUrl(View urlBarView) throws RemoteException {
-        return mITestWebLayer.getDisplayedUrl(ObjectWrapper.wrap(urlBarView));
-    }
-
     public String getTranslateInfoBarTargetLanguage(Tab tab) throws RemoteException {
         return mITestWebLayer.getTranslateInfoBarTargetLanguage(tab.getITab());
     }
 
     public static void disableWebViewCompatibilityMode() {
         WebLayer.disableWebViewCompatibilityMode();
+    }
+
+    public static void setupWeblayerForBrowserTest(Context application, Callback<View> callback) {
+        WebLayer.loadAsync(application, webLayer -> {
+            Bundle args = new Bundle();
+            args.putString(BrowserFragmentArgs.PROFILE_NAME, "browsertest");
+            args.putBoolean(BrowserFragmentArgs.IS_INCOGNITO, true);
+
+            Browser browser = new Browser(webLayer.createBrowser(application, args));
+            browser.initializeState();
+
+            WebFragmentEventHandler eventHandler = new WebFragmentEventHandler(browser);
+            eventHandler.onAttach(application);
+            eventHandler.onCreate();
+            eventHandler.onStart();
+            eventHandler.onResume();
+
+            callback.onResult(eventHandler.getContentViewRenderView());
+        });
     }
 
     public boolean didShowFullscreenToast(Tab tab) throws RemoteException {
@@ -160,11 +177,6 @@ public final class TestWebLayer {
 
     public boolean isWindowOnSmallDevice(Browser browser) throws RemoteException {
         return mITestWebLayer.isWindowOnSmallDevice(browser.getIBrowser());
-    }
-
-    public ImageView getSecurityButton(View urlBarView) throws RemoteException {
-        return (ImageView) ObjectWrapper.unwrap(
-                mITestWebLayer.getSecurityButton(ObjectWrapper.wrap(urlBarView)), ImageView.class);
     }
 
     public void fetchAccessToken(Profile profile, Set<String> scopes,

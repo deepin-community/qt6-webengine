@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -196,9 +196,6 @@ BASE_EXPORT bool GetLoadedModulesSnapshot(HANDLE process,
 // disable pen flick gestures for the given HWND.
 BASE_EXPORT void EnableFlicks(HWND hwnd);
 BASE_EXPORT void DisableFlicks(HWND hwnd);
-
-// Returns true if the process is per monitor DPI aware.
-BASE_EXPORT bool IsProcessPerMonitorDpiAware();
 
 // Enable high-DPI support for the current process.
 BASE_EXPORT void EnableHighDPISupport();

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,9 +9,9 @@
 #include <functional>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/containers/contains.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
 #include "base/observer_list.h"
 #include "base/strings/utf_string_conversions.h"
@@ -25,6 +25,8 @@
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/navigation_handle.h"
+#include "content/public/browser/preloading.h"
+#include "content/public/browser/preloading_data.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
@@ -35,6 +37,7 @@
 #include "net/http/http_response_headers.h"
 #include "services/resource_coordinator/public/cpp/memory_instrumentation/memory_instrumentation.h"
 #include "services/service_manager/public/cpp/binder_registry.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
 #include "ui/base/page_transition_types.h"
 #include "ui/gfx/geometry/size.h"
@@ -63,6 +66,22 @@ class NoStatePrefetchContentsFactoryImpl
         referrer, initiator_origin, origin);
   }
 };
+
+void SetPreloadingTriggeringOutcome(
+    content::PreloadingAttempt* attempt,
+    content::PreloadingTriggeringOutcome outcome) {
+  if (!attempt)
+    return;
+
+  attempt->SetTriggeringOutcome(outcome);
+}
+
+content::PreloadingFailureReason ToPreloadingFailureReason(FinalStatus status) {
+  return static_cast<content::PreloadingFailureReason>(
+      static_cast<int>(status) +
+      static_cast<int>(content::PreloadingFailureReason::
+                           kPreloadingFailureReasonContentEnd));
+}
 
 // WebContentsDelegateImpl -----------------------------------------------------
 
@@ -177,9 +196,62 @@ NoStatePrefetchContents::Factory* NoStatePrefetchContents::CreateFactory() {
   return new NoStatePrefetchContentsFactoryImpl();
 }
 
+void NoStatePrefetchContents::SetPreloadingFailureReason(FinalStatus status) {
+  if (!attempt_)
+    return;
+
+  switch (status) {
+    case FINAL_STATUS_USED:
+    case FINAL_STATUS_NOSTATE_PREFETCH_FINISHED:
+      // When adding a new failure reason, consider whether it should be
+      // propagated to `attempt_`. Most values should be propagated, but we
+      // explicitly do not propagate failure reasons if:
+      // the no state prefetch was actually successful (USED OR
+      // PREFETCH_FINISHED).
+      return;
+    case FINAL_STATUS_TIMED_OUT:
+    case FINAL_STATUS_PROFILE_DESTROYED:
+    case FINAL_STATUS_APP_TERMINATING:
+    case FINAL_STATUS_AUTH_NEEDED:
+    case FINAL_STATUS_DOWNLOAD:
+    case FINAL_STATUS_MEMORY_LIMIT_EXCEEDED:
+    case FINAL_STATUS_TOO_MANY_PROCESSES:
+    case FINAL_STATUS_RATE_LIMIT_EXCEEDED:
+    case FINAL_STATUS_RENDERER_CRASHED:
+    case FINAL_STATUS_UNSUPPORTED_SCHEME:
+    case FINAL_STATUS_RECENTLY_VISITED:
+    case FINAL_STATUS_SAFE_BROWSING:
+    case FINAL_STATUS_SSL_CLIENT_CERTIFICATE_REQUESTED:
+    case FINAL_STATUS_CACHE_OR_HISTORY_CLEARED:
+    case FINAL_STATUS_CANCELLED:
+    case FINAL_STATUS_SSL_ERROR:
+    case FINAL_STATUS_DUPLICATE:
+    case FINAL_STATUS_OPEN_URL:
+    case FINAL_STATUS_NAVIGATION_INTERCEPTED:
+    case FINAL_STATUS_PRERENDERING_DISABLED:
+    case FINAL_STATUS_BLOCK_THIRD_PARTY_COOKIES:
+    case FINAL_STATUS_LOW_END_DEVICE:
+    case FINAL_STATUS_BROWSER_SWITCH:
+    case FINAL_STATUS_GWS_HOLDBACK:
+    case FINAL_STATUS_UNKNOWN:
+    case FINAL_STATUS_NAVIGATION_PREDICTOR_HOLDBACK:
+    case FINAL_STATUS_SINGLE_PROCESS:
+    case FINAL_STATUS_LINK_REL_NEXT_NOT_ALLOWED:
+    case FINAL_STATUS_PREFETCH_HOLDBACK:
+    case FINAL_STATUS_MAX:
+      attempt_->SetFailureReason(ToPreloadingFailureReason(status));
+      // We reset the attempt to ensure we don't update once we have reported it
+      // as failure or accidentally use it for any other prerender attempts as
+      // PrerenderHost deletion is async.
+      attempt_.reset();
+      return;
+  }
+}
+
 void NoStatePrefetchContents::StartPrerendering(
     const gfx::Rect& bounds,
-    SessionStorageNamespace* session_storage_namespace) {
+    SessionStorageNamespace* session_storage_namespace,
+    base::WeakPtr<content::PreloadingAttempt> attempt) {
   DCHECK(browser_context_);
   DCHECK(!bounds.IsEmpty());
   DCHECK(!prerendering_has_started_);
@@ -194,6 +266,9 @@ void NoStatePrefetchContents::StartPrerendering(
   load_start_time_ = base::TimeTicks::Now();
 
   prerendering_has_started_ = true;
+  attempt_ = std::move(attempt);
+  SetPreloadingTriggeringOutcome(
+      attempt_.get(), content::PreloadingTriggeringOutcome::kRunning);
 
   no_state_prefetch_contents_ = CreateWebContents(session_storage_namespace);
   content::WebContentsObserver::Observe(no_state_prefetch_contents_.get());
@@ -210,7 +285,7 @@ void NoStatePrefetchContents::StartPrerendering(
   // TODO(davidben): This logic assumes each prerender has at most one
   // process. https://crbug.com/440544
   no_state_prefetch_manager()->AddPrerenderProcessHost(
-      GetMainFrame()->GetProcess());
+      GetPrimaryMainFrame()->GetProcess());
 
   NotifyPrefetchStart();
 
@@ -236,6 +311,8 @@ void NoStatePrefetchContents::SetFinalStatus(FinalStatus final_status) {
   DCHECK_EQ(FINAL_STATUS_UNKNOWN, final_status_);
 
   final_status_ = final_status;
+
+  SetPreloadingFailureReason(final_status);
 }
 
 NoStatePrefetchContents::~NoStatePrefetchContents() {
@@ -282,6 +359,11 @@ void NoStatePrefetchContents::NotifyPrefetchStart() {
 }
 
 void NoStatePrefetchContents::NotifyPrefetchStopLoading() {
+  // Set the status to Ready once the prefetch stops loading. For
+  // NoStatePrefetch we don't know if the final resource was used from cache
+  // later on or not. kReady doesn't mean it is a success.
+  SetPreloadingTriggeringOutcome(attempt_.get(),
+                                 content::PreloadingTriggeringOutcome::kReady);
   for (Observer& observer : observer_list_)
     observer.OnPrefetchStopLoading(this);
 }
@@ -385,7 +467,7 @@ void NoStatePrefetchContents::DidRedirectNavigation(
 void NoStatePrefetchContents::DidFinishLoad(
     content::RenderFrameHost* render_frame_host,
     const GURL& validated_url) {
-  if (!render_frame_host->GetParent())
+  if (render_frame_host->IsInPrimaryMainFrame())
     has_finished_loading_ = true;
 }
 
@@ -437,7 +519,7 @@ void NoStatePrefetchContents::Destroy(FinalStatus final_status) {
 
 void NoStatePrefetchContents::DestroyWhenUsingTooManyResources() {
   if (process_pid_ == base::kNullProcessId) {
-    RenderFrameHost* rfh = GetMainFrame();
+    RenderFrameHost* rfh = GetPrimaryMainFrame();
     if (!rfh)
       return;
 
@@ -484,25 +566,23 @@ void NoStatePrefetchContents::DidGetMemoryUsage(
   }
 }
 
-RenderFrameHost* NoStatePrefetchContents::GetMainFrame() {
+RenderFrameHost* NoStatePrefetchContents::GetPrimaryMainFrame() {
   return no_state_prefetch_contents_
-             ? no_state_prefetch_contents_->GetMainFrame()
+             ? no_state_prefetch_contents_->GetPrimaryMainFrame()
              : nullptr;
 }
 
-std::unique_ptr<base::DictionaryValue> NoStatePrefetchContents::GetAsValue()
-    const {
+absl::optional<base::Value::Dict> NoStatePrefetchContents::GetAsDict() const {
   if (!no_state_prefetch_contents_)
-    return nullptr;
-  auto dict_value = std::make_unique<base::DictionaryValue>();
-  dict_value->SetStringKey("url", prerender_url_.spec());
+    return absl::nullopt;
+  base::Value::Dict dict;
+  dict.Set("url", prerender_url_.spec());
   base::TimeTicks current_time = base::TimeTicks::Now();
   base::TimeDelta duration = current_time - load_start_time_;
-  dict_value->SetIntKey("duration", duration.InSeconds());
-  dict_value->SetBoolKey(
-      "is_loaded",
-      no_state_prefetch_contents_ && !no_state_prefetch_contents_->IsLoading());
-  return dict_value;
+  dict.Set("duration", static_cast<int>(duration.InSeconds()));
+  dict.Set("is_loaded", no_state_prefetch_contents_ &&
+                            !no_state_prefetch_contents_->IsLoading());
+  return dict;
 }
 
 void NoStatePrefetchContents::MarkAsUsedForTesting() {

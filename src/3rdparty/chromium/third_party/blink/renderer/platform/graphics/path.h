@@ -32,13 +32,13 @@
 #include "third_party/blink/renderer/platform/geometry/float_rounded_rect.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_types.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
-#include "third_party/blink/renderer/platform/transforms/transformation_matrix.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
 #include "third_party/blink/renderer/platform/wtf/ref_counted.h"
 #include "third_party/skia/include/core/SkPath.h"
 #include "third_party/skia/include/core/SkPathBuilder.h"
 #include "third_party/skia/include/core/SkPathMeasure.h"
+#include "ui/gfx/geometry/transform.h"
 
 namespace gfx {
 class PointF;
@@ -193,7 +193,7 @@ class PLATFORM_EXPORT Path {
 
   void Apply(void* info, PathApplierFunction) const;
   Path& Transform(const AffineTransform&);
-  Path& Transform(const TransformationMatrix&);
+  Path& Transform(const gfx::Transform&);
 
   bool SubtractPath(const Path&);
 
@@ -210,15 +210,6 @@ class PLATFORM_EXPORT Path {
   SkPath StrokePath(const StrokeData&, float stroke_precision) const;
 
   SkPath path_;
-};
-
-class PLATFORM_EXPORT RefCountedPath : public blink::Path,
-                                       public RefCounted<RefCountedPath> {
-  USING_FAST_MALLOC(RefCountedPath);
-
- public:
-  template <typename... Args>
-  RefCountedPath(Args&&... args) : blink::Path(std::forward<Args>(args)...) {}
 };
 
 // Only used for DCHECKs

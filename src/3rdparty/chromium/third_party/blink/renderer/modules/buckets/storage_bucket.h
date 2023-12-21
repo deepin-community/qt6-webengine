@@ -1,32 +1,36 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_BUCKETS_STORAGE_BUCKET_H_
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_BUCKETS_STORAGE_BUCKET_H_
 
+#include "base/memory/weak_ptr.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "third_party/blink/public/mojom/buckets/bucket_manager_host.mojom-blink.h"
-#include "third_party/blink/renderer/bindings/core/v8/active_script_wrappable.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
-#include "third_party/blink/renderer/core/dom/dom_time_stamp.h"
+#include "third_party/blink/renderer/core/dom/dom_high_res_time_stamp.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_observer.h"
+#include "third_party/blink/renderer/core/execution_context/navigator_base.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
+#include "third_party/blink/renderer/platform/wtf/gc_plugin.h"
 
 namespace blink {
 
+class CacheStorage;
+class IDBFactory;
+class LockManager;
 class ScriptState;
 
 class StorageBucket final : public ScriptWrappable,
-                            public ActiveScriptWrappable<StorageBucket>,
                             public ExecutionContextLifecycleObserver {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  StorageBucket(ExecutionContext* context,
+  StorageBucket(NavigatorBase* navigator,
                 mojo::PendingRemote<mojom::blink::BucketHost> remote);
 
   ~StorageBucket() override = default;
@@ -35,11 +39,12 @@ class StorageBucket final : public ScriptWrappable,
   ScriptPromise persisted(ScriptState*);
   ScriptPromise estimate(ScriptState*);
   ScriptPromise durability(ScriptState*);
-  ScriptPromise setExpires(ScriptState*, const DOMTimeStamp&);
+  ScriptPromise setExpires(ScriptState*, const DOMHighResTimeStamp&);
   ScriptPromise expires(ScriptState*);
-
-  // ActiveScriptWrappable
-  bool HasPendingActivity() const final;
+  IDBFactory* indexedDB();
+  LockManager* locks();
+  CacheStorage* caches(ExceptionState&);
+  ScriptPromise getDirectory(ScriptState*, ExceptionState&);
 
   // GarbageCollected
   void Trace(Visitor*) const override;
@@ -62,12 +67,21 @@ class StorageBucket final : public ScriptWrappable,
   void DidGetExpires(ScriptPromiseResolver* resolver,
                      const absl::optional<base::Time> expires,
                      bool success);
+  void GetSandboxedFileSystem(ScriptPromiseResolver* resolver);
 
   // ExecutionContextLifecycleObserver
   void ContextDestroyed() override;
 
   // BucketHost in the browser process.
+  GC_PLUGIN_IGNORE("https://crbug.com/1381979")
   mojo::Remote<mojom::blink::BucketHost> remote_;
+
+  Member<IDBFactory> idb_factory_;
+  Member<LockManager> lock_manager_;
+  Member<CacheStorage> caches_;
+  Member<NavigatorBase> navigator_base_;
+
+  base::WeakPtrFactory<StorageBucket> weak_factory_{this};
 };
 
 }  // namespace blink

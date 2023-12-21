@@ -1,10 +1,10 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/remote_cocoa/app_shim/alert.h"
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/i18n/rtl.h"
 #import "base/mac/foundation_util.h"
 #include "base/strings/sys_string_conversions.h"
@@ -146,7 +146,7 @@ const int kMessageTextMaxSlots = 2000;
   if (message_has_rtl && message_text_field) {
     base::scoped_nsobject<NSMutableParagraphStyle> alignment(
         [[NSParagraphStyle defaultParagraphStyle] mutableCopy]);
-    [alignment setAlignment:NSRightTextAlignment];
+    [alignment setAlignment:NSTextAlignmentRight];
 
     NSDictionary* alignment_attributes =
         @{NSParagraphStyleAttributeName : alignment};
@@ -164,8 +164,8 @@ const int kMessageTextMaxSlots = 2000;
     base::scoped_nsobject<NSMutableParagraphStyle> alignment(
         [[NSParagraphStyle defaultParagraphStyle] mutableCopy]);
     [alignment setAlignment:(direction == base::i18n::RIGHT_TO_LEFT)
-                                ? NSRightTextAlignment
-                                : NSLeftTextAlignment];
+                                ? NSTextAlignmentRight
+                                : NSTextAlignmentLeft];
 
     NSDictionary* alignment_attributes =
         @{NSParagraphStyleAttributeName : alignment};
@@ -248,7 +248,7 @@ const int kMessageTextMaxSlots = 2000;
 
 - (bool)shouldSuppress {
   if ([[self alert] showsSuppressionButton])
-    return [[[self alert] suppressionButton] state] == NSOnState;
+    return [[[self alert] suppressionButton] state] == NSControlStateValueOn;
   return false;
 }
 

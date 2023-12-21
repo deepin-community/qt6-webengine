@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,7 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_WEBTRANSPORT_TEST_UTILS_H_
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_WEBTRANSPORT_TEST_UTILS_H_
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/memory/weak_ptr.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/receiver.h"

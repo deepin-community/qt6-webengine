@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,6 +14,7 @@
 #include "base/files/scoped_file.h"
 #include "base/memory/unsafe_shared_memory_region.h"
 #include "base/process/process_handle.h"
+#include "base/ranges/algorithm.h"
 #include "build/build_config.h"
 #include "mojo/core/test/mojo_test_base.h"
 #include "mojo/public/c/system/platform_handle.h"
@@ -111,7 +112,8 @@ DEFINE_TEST_CLIENT_TEST_WITH_PIPE(ReadPlatformFile, PlatformWrapperTest, h) {
   std::vector<char> data(message.size());
   EXPECT_EQ(file.ReadAtCurrentPos(data.data(), static_cast<int>(data.size())),
             static_cast<int>(data.size()));
-  EXPECT_TRUE(std::equal(message.begin(), message.end(), data.begin()));
+  EXPECT_TRUE(base::ranges::equal(message, data));
+  EXPECT_EQ(MOJO_RESULT_OK, MojoClose(h));
 }
 
 TEST_F(PlatformWrapperTest, WrapPlatformSharedMemoryRegion) {
@@ -189,8 +191,9 @@ DEFINE_TEST_CLIENT_TEST_WITH_PIPE(ReadPlatformSharedBuffer,
   EXPECT_EQ(MOJO_PLATFORM_SHARED_MEMORY_REGION_ACCESS_MODE_UNSAFE, access_mode);
 
   auto mode = base::subtle::PlatformSharedMemoryRegion::Mode::kUnsafe;
-  base::UnguessableToken guid =
+  absl::optional<base::UnguessableToken> guid =
       base::UnguessableToken::Deserialize(mojo_guid.high, mojo_guid.low);
+  ASSERT_TRUE(guid.has_value());
 #if BUILDFLAG(IS_WIN)
   ASSERT_EQ(MOJO_PLATFORM_HANDLE_TYPE_WINDOWS_HANDLE, os_buffer.type);
   auto platform_handle =
@@ -208,7 +211,7 @@ DEFINE_TEST_CLIENT_TEST_WITH_PIPE(ReadPlatformSharedBuffer,
 #endif
   base::subtle::PlatformSharedMemoryRegion platform_region =
       base::subtle::PlatformSharedMemoryRegion::Take(std::move(platform_handle),
-                                                     mode, size, guid);
+                                                     mode, size, guid.value());
   base::UnsafeSharedMemoryRegion region =
       base::UnsafeSharedMemoryRegion::Deserialize(std::move(platform_region));
   ASSERT_TRUE(region.IsValid());
@@ -229,6 +232,7 @@ DEFINE_TEST_CLIENT_TEST_WITH_PIPE(ReadPlatformSharedBuffer,
       reinterpret_cast<MojoSharedBufferGuid*>(guid_bytes.data());
   EXPECT_EQ(expected_guid->high, mojo_guid.high);
   EXPECT_EQ(expected_guid->low, mojo_guid.low);
+  EXPECT_EQ(MOJO_RESULT_OK, MojoClose(h));
 }
 
 TEST_F(PlatformWrapperTest, InvalidHandle) {

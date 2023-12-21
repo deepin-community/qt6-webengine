@@ -14,7 +14,7 @@
 
 #include "src/tint/sem/for_loop_statement.h"
 
-#include "src/tint/program_builder.h"
+#include "src/tint/ast/for_loop_statement.h"
 
 TINT_INSTANTIATE_TYPEINFO(tint::sem::ForLoopStatement);
 
@@ -28,7 +28,7 @@ ForLoopStatement::ForLoopStatement(const ast::ForLoopStatement* declaration,
 ForLoopStatement::~ForLoopStatement() = default;
 
 const ast::ForLoopStatement* ForLoopStatement::Declaration() const {
-  return static_cast<const ast::ForLoopStatement*>(Base::Declaration());
+    return static_cast<const ast::ForLoopStatement*>(Base::Declaration());
 }
 
 }  // namespace tint::sem

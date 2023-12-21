@@ -34,14 +34,17 @@
 #include <memory>
 #include <utility>
 
+#include "base/functional/function_ref.h"
 #include "base/i18n/rtl.h"
 #include "base/notreached.h"
 #include "base/unguessable_token.h"
 #include "media/base/audio_processing.h"
 #include "media/base/speech_recognition_client.h"
 #include "media/mojo/mojom/audio_processing.mojom-shared.h"
+#include "services/metrics/public/cpp/ukm_source_id.h"
 #include "services/network/public/mojom/web_sandbox_flags.mojom-shared.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
+#include "third_party/blink/public/common/dom_storage/session_storage_namespace_id.h"
 #include "third_party/blink/public/common/frame/frame_owner_element_type.h"
 #include "third_party/blink/public/common/loader/loading_behavior_flag.h"
 #include "third_party/blink/public/common/loader/url_loader_factory_bundle.h"
@@ -59,7 +62,6 @@
 #include "third_party/blink/public/mojom/loader/same_document_navigation_type.mojom-shared.h"
 #include "third_party/blink/public/mojom/media/renderer_audio_input_stream_factory.mojom-shared.h"
 #include "third_party/blink/public/mojom/portal/portal.mojom-shared.h"
-#include "third_party/blink/public/platform/blame_context.h"
 #include "third_party/blink/public/platform/cross_variant_mojo_util.h"
 #include "third_party/blink/public/platform/modules/service_worker/web_service_worker_provider.h"
 #include "third_party/blink/public/platform/resource_load_info_notifier_wrapper.h"
@@ -72,12 +74,10 @@
 #include "third_party/blink/public/platform/web_set_sink_id_callbacks.h"
 #include "third_party/blink/public/platform/web_source_location.h"
 #include "third_party/blink/public/platform/web_url_error.h"
-#include "third_party/blink/public/platform/web_url_loader_factory.h"
 #include "third_party/blink/public/platform/web_url_request.h"
 #include "third_party/blink/public/platform/web_worker_fetch_context.h"
 #include "third_party/blink/public/web/web_ax_object.h"
 #include "third_party/blink/public/web/web_document_loader.h"
-#include "third_party/blink/public/web/web_form_element.h"
 #include "third_party/blink/public/web/web_frame.h"
 #include "third_party/blink/public/web/web_frame_load_type.h"
 #include "third_party/blink/public/web/web_frame_owner_properties.h"
@@ -100,6 +100,10 @@ class LayerTreeSettings;
 namespace gfx {
 class Rect;
 }  // namespace gfx
+
+namespace network {
+class SharedURLLoaderFactory;
+}  // namespace network
 
 namespace blink {
 namespace mojom {
@@ -127,12 +131,17 @@ class WebServiceWorkerProvider;
 class WebSocketHandshakeThrottle;
 class WebString;
 class WebURL;
+class URLLoader;
+class WebURLRequest;
 class WebURLResponse;
+class WebView;
 struct FramePolicy;
-struct MobileFriendliness;
+struct Impression;
 struct WebConsoleMessage;
 struct ContextMenuData;
+struct WebPictureInPictureWindowOptions;
 struct WebPluginParams;
+struct WebWindowFeatures;
 
 enum class SyncCondition {
   kNotForced,  // Sync only if the value has changed since the last call.
@@ -164,7 +173,8 @@ class BLINK_EXPORT WebLocalFrameClient {
       WebMediaPlayerEncryptedMediaClient*,
       WebContentDecryptionModule*,
       const WebString& sink_id,
-      const cc::LayerTreeSettings& settings) {
+      const cc::LayerTreeSettings* settings,
+      scoped_refptr<base::TaskRunner> compositor_worker_task_runner) {
     return nullptr;
   }
 
@@ -215,9 +225,6 @@ class BLINK_EXPORT WebLocalFrameClient {
 
   // Services ------------------------------------------------------------
 
-  // Returns a blame context for attributing work belonging to this frame.
-  virtual BlameContext* GetFrameBlameContext() { return nullptr; }
-
   // Returns a BrowserInterfaceBrokerProxy the frame can use to request
   // interfaces from the browser.
   virtual blink::BrowserInterfaceBrokerProxy* GetBrowserInterfaceBroker();
@@ -232,8 +239,17 @@ class BLINK_EXPORT WebLocalFrameClient {
 
   // Request the creation of a new child frame. Embedders may return nullptr
   // to prevent the new child frame from being attached. Otherwise, embedders
-  // should create a new WebLocalFrame, insert it into the frame tree, and
-  // return the created frame.
+  // should create a new WebLocalFrame, insert it into the frame tree, call
+  // `complete_creation()`, and return the created frame.
+  //
+  // `complete_creation` takes the newly-created `WebLocalFrame` and the
+  // `DocumentToken` to use for its initial empty document as arguments.
+  //
+  // `document_ukm_source_id` is the UKM source id to be used for the new
+  // document in the frame. If `ukm::kInvalidSourceId` is passed, a new UKM
+  // source id will be generated.
+  using FinishChildFrameCreationFn =
+      base::FunctionRef<void(WebLocalFrame*, const DocumentToken&)>;
   virtual WebLocalFrame* CreateChildFrame(
       mojom::TreeScopeType,
       const WebString& name,
@@ -241,41 +257,14 @@ class BLINK_EXPORT WebLocalFrameClient {
       const FramePolicy&,
       const WebFrameOwnerProperties&,
       FrameOwnerElementType,
-      WebPolicyContainerBindParams policy_container_bind_params) {
-    return nullptr;
-  }
-  // When CreateChildFrame() returns there is no core LocalFrame backing the
-  // WebFrame yet so using the WebLocalFrame is not entirely valid. This is
-  // called after finishing the initialization of WebLocalFrame so that the
-  // client can complete its initialization making use of it.
-  virtual void InitializeAsChildFrame(WebLocalFrame* parent) {}
-
-  // Request the creation of a new portal.
-  virtual std::pair<WebRemoteFrame*, PortalToken> CreatePortal(
-      CrossVariantMojoAssociatedReceiver<mojom::PortalInterfaceBase>
-          portal_endpoint,
-      CrossVariantMojoAssociatedRemote<mojom::PortalClientInterfaceBase>
-          client_endpoint,
-      const WebElement& portal_element) {
-    return std::pair<WebRemoteFrame*, PortalToken>(nullptr, PortalToken());
-  }
-
-  // Request the creation of a remote frame which corresponds to an existing
-  // portal.
-  virtual blink::WebRemoteFrame* AdoptPortal(const PortalToken& portal_token,
-                                             const WebElement& portal_element) {
+      WebPolicyContainerBindParams policy_container_bind_params,
+      ukm::SourceId document_ukm_source_id,
+      FinishChildFrameCreationFn complete_creation) {
     return nullptr;
   }
 
-  // Request the creation of a new fenced frame, and return the WebRemoteFrame*
-  // associated with it.
-  virtual WebRemoteFrame* CreateFencedFrame(
-      const WebElement& fenced_frame_element,
-      CrossVariantMojoAssociatedReceiver<
-          mojom::FencedFrameOwnerHostInterfaceBase> receiver,
-      blink::mojom::FencedFrameMode mode) {
-    return nullptr;
-  }
+  // Notification a new fenced frame was created.
+  virtual void DidCreateFencedFrame(const blink::RemoteFrameToken& token) {}
 
   // Called when Blink cannot find a frame with the given name in the frame's
   // browsing instance.  This gives the embedder a chance to return a frame
@@ -349,10 +338,6 @@ class BLINK_EXPORT WebLocalFrameClient {
   // These notifications bracket any loading that occurs in the WebFrame.
   virtual void DidStartLoading() {}
   virtual void DidStopLoading() {}
-
-  // A form submission has been requested, but the page's submit event handler
-  // hasn't yet had a chance to run (and possibly alter/interrupt the submit.)
-  virtual void WillSendSubmitEvent(const WebFormElement&) {}
 
   // A datasource has been created for a new navigation.  The given
   // datasource will become the provisional datasource for the frame.
@@ -452,6 +437,10 @@ class BLINK_EXPORT WebLocalFrameClient {
   // Called when a frame's page lifecycle state gets updated.
   virtual void DidSetPageLifecycleState() {}
 
+  // Immediately notifies the browser of a change in the current HistoryItem.
+  // Prefer DidUpdateCurrentHistoryItem().
+  virtual void NotifyCurrentHistoryItemChanged() {}
+
   // Called upon update to scroll position, document state, and other
   // non-navigational events related to the data held by WebHistoryItem.
   // WARNING: This method may be called very frequently.
@@ -506,9 +495,29 @@ class BLINK_EXPORT WebLocalFrameClient {
   // focused element, |to_element| is the newly focused one. Either can be null.
   virtual void FocusedElementChanged(const WebElement& element) {}
 
-  // Called when a frame's intersection with the main frame has changed.
+  // For the main frame, called when the main frame's dimensions have changed,
+  // e.g. resizing a tab causes the document width to change; loading additional
+  // content causes the document height to increase; explicitly changing the
+  // height of the body element.
+  //
+  // For a subframe, called when the intersection rect between the main frame
+  // and the subframe has changed, e.g. the subframe is initially added; the
+  // subframe's position is updated explicitly or inherently (e.g. sticky
+  // position while the page is being scrolled).
   virtual void OnMainFrameIntersectionChanged(
-      const gfx::Rect& intersection_rect) {}
+      const gfx::Rect& main_frame_intersection_rect) {}
+
+  // Called when the main frame's viewport rectangle (the viewport dimensions
+  // and the scroll position) changed, e.g. the user scrolled the main frame or
+  // the viewport dimensions themselves changed. Only invoked on the main frame.
+  virtual void OnMainFrameViewportRectangleChanged(
+      const gfx::Rect& main_frame_viewport_rect) {}
+
+  // Called when an image ad rectangle changed. An empty `image_ad_rect` is used
+  // to signal the removal of the rectangle. Only invoked on the main frame.
+  virtual void OnMainFrameImageAdRectangleChanged(
+      int element_id,
+      const gfx::Rect& image_ad_rect) {}
 
   // Called when an overlay interstitial pop up ad is detected.
   virtual void OnOverlayPopupAdDetected() {}
@@ -559,22 +568,28 @@ class BLINK_EXPORT WebLocalFrameClient {
   // use for segregated histograms.
   virtual void DidObserveLoadingBehavior(LoadingBehaviorFlag) {}
 
+  // A subresource load is observed.
+  // It is called when there is a subresouce load. The reported values via
+  // arguments are cumulative. They are NOT a difference from the previous call.
+  virtual void DidObserveSubresourceLoad(
+      uint32_t number_of_subresources_loaded,
+      uint32_t number_of_subresource_loads_handled_by_service_worker,
+      bool pervasive_payload_requested,
+      int64_t pervasive_bytes_fetched,
+      int64_t total_bytes_fetched) {}
+
   // Blink hits the code path for a certain UseCounterFeature for the first time
   // on this frame. As a performance optimization, features already hit on other
   // frames associated with the same page in the renderer are not currently
   // reported.
   virtual void DidObserveNewFeatureUsage(const UseCounterFeature&) {}
 
+  // A new soft navigation was observed.
+  virtual void DidObserveSoftNavigation(uint32_t count) {}
+
   // Reports that visible elements in the frame shifted (bit.ly/lsm-explainer).
   virtual void DidObserveLayoutShift(double score, bool after_input_or_scroll) {
   }
-
-  // Reports the number of LayoutBlock creation, and LayoutObject::UpdateLayout
-  // calls. All values are deltas since the last calls of this function.
-  virtual void DidObserveLayoutNg(uint32_t all_block_count,
-                                  uint32_t ng_block_count,
-                                  uint32_t all_call_count,
-                                  uint32_t ng_call_count) {}
 
   // Script notifications ------------------------------------------------
 
@@ -602,9 +617,6 @@ class BLINK_EXPORT WebLocalFrameClient {
     return nullptr;
   }
 
-  // WebRTC
-  virtual bool AllowRTCLegacyTLSProtocols() { return false; }
-
   // Encrypted Media -------------------------------------------------
 
   virtual WebEncryptedMediaClient* EncryptedMediaClient() { return nullptr; }
@@ -623,12 +635,6 @@ class BLINK_EXPORT WebLocalFrameClient {
     return absl::nullopt;
   }
 
-  // Do not track ----------------------------------------------------
-
-  // Asks the embedder what value the network stack will send for the DNT
-  // header. An empty string indicates that no DNT header will be send.
-  virtual WebString DoNotTrackValue() { return WebString(); }
-
   //
   // Accessibility -------------------------------------------------------
   //
@@ -636,16 +642,12 @@ class BLINK_EXPORT WebLocalFrameClient {
   // Notifies the embedder about an accessibility event on a WebAXObject.
   virtual void PostAccessibilityEvent(const ui::AXEvent& event) {}
 
-  // Notifies the embedder that a WebAXObject is dirty and its state needs
-  // to be serialized again. If |subtree| is true, the entire subtree is
-  // dirty.
-  // |event_from| and |event_from_action| annotate this node change with info
-  // about the event which caused the change. For example, an event from a user
-  // or an event from a focus action.
-  virtual void MarkWebAXObjectDirty(const WebAXObject&,
-                                    bool subtree,
-                                    ax::mojom::EventFrom event_from,
-                                    ax::mojom::Action event_from_action) {}
+  // Notifies tests that a WebAXObject is dirty and its state needs
+  // to be serialized again.
+  virtual void NotifyWebAXObjectMarkedDirty(const WebAXObject&) {}
+
+  // Called when accessibility is ready to serialize.
+  virtual void AXReadyCallback() {}
 
   // Audio Output Devices API --------------------------------------------
 
@@ -667,10 +669,12 @@ class BLINK_EXPORT WebLocalFrameClient {
 
   // Loading --------------------------------------------------------------
 
-  virtual std::unique_ptr<blink::WebURLLoaderFactory> CreateURLLoaderFactory() {
+  virtual scoped_refptr<network::SharedURLLoaderFactory> GetURLLoaderFactory() {
     NOTREACHED();
     return nullptr;
   }
+
+  virtual std::unique_ptr<URLLoader> CreateURLLoaderForTesting();
 
   virtual void OnStopLoading() {}
 
@@ -753,9 +757,6 @@ class BLINK_EXPORT WebLocalFrameClient {
   // compositor (thread) and submitted to the display compositor.
   virtual void DidCommitAndDrawCompositorFrame() {}
 
-  // Notification that MobileFriendliness metrics changed.
-  virtual void DidChangeMobileFriendliness(const MobileFriendliness&) {}
-
   // Inform the widget that it was hidden.
   virtual void WasHidden() {}
 
@@ -775,6 +776,26 @@ class BLINK_EXPORT WebLocalFrameClient {
   // Called when script in the frame (and it subframes) wishes to be printed via
   // a window.print() call.
   virtual void ScriptedPrint() {}
+
+  // Create a new related WebView.  This method must clone its session storage
+  // so any subsequent calls to createSessionStorageNamespace conform to the
+  // WebStorage specification.
+  // The request parameter is only for the client to check if the request
+  // could be fulfilled.  The client should not load the request.
+  // The policy parameter indicates how the new view will be displayed in
+  // LocalMainFrameHost::ShowCreatedWidget.
+  virtual WebView* CreateNewWindow(
+      const WebURLRequest& request,
+      const WebWindowFeatures& features,
+      const WebString& name,
+      WebNavigationPolicy policy,
+      network::mojom::WebSandboxFlags,
+      const SessionStorageNamespaceId& session_storage_namespace_id,
+      bool& consumed_user_gesture,
+      const absl::optional<Impression>&,
+      const absl::optional<WebPictureInPictureWindowOptions>& pip_options) {
+    return nullptr;
+  }
 };
 
 }  // namespace blink

@@ -1,4 +1,4 @@
-# Copyright 2019 The Chromium Authors. All rights reserved.
+# Copyright 2019 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 """
@@ -67,6 +67,11 @@ def parse_options(valid_tasks):
                         nargs='+',
                         choices=valid_tasks,
                         help='types to generate')
+    parser.add_argument(
+        '--keep_shorter_filenames',
+        action="store_true",
+        default=False,
+        help='workaround to not generate long file names')
 
     options = parser.parse_args()
 
@@ -82,6 +87,7 @@ def main():
         'interface': bind_gen.generate_interfaces,
         'namespace': bind_gen.generate_namespaces,
         'observable_array': bind_gen.generate_observable_arrays,
+        'sync_iterator': bind_gen.generate_sync_iterators,
         'typedef': bind_gen.generate_typedefs,
         'union': bind_gen.generate_unions,
     }
@@ -98,7 +104,9 @@ def main():
                   root_src_dir=options.root_src_dir,
                   root_gen_dir=options.root_gen_dir,
                   component_reldirs=component_reldirs,
-                  enable_style_format=options.format_generated_files)
+                  enable_style_format=options.format_generated_files,
+                  enable_shorter_filenames=options.keep_shorter_filenames
+                  )
 
     task_queue = bind_gen.TaskQueue(single_process=options.single_process)
 

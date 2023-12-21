@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,9 +10,9 @@
 #include <memory>
 #include <vector>
 
-#include "base/bind.h"
-#include "base/callback.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
@@ -21,12 +21,12 @@
 #include "media/base/fake_single_thread_task_runner.h"
 #include "media/base/video_frame.h"
 #include "media/cast/cast_environment.h"
+#include "media/cast/common/video_frame_factory.h"
 #include "media/cast/constants.h"
 #include "media/cast/logging/simple_event_subscriber.h"
 #include "media/cast/net/cast_transport_config.h"
 #include "media/cast/net/cast_transport_impl.h"
 #include "media/cast/net/pacing/paced_sender.h"
-#include "media/cast/sender/video_frame_factory.h"
 #include "media/cast/test/fake_video_encode_accelerator_factory.h"
 #include "media/cast/test/utility/default_config.h"
 #include "media/cast/test/utility/video_utility.h"
@@ -34,8 +34,7 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-namespace media {
-namespace cast {
+namespace media::cast {
 
 namespace {
 static const uint8_t kPixelValue = 123;
@@ -126,8 +125,11 @@ class PeerVideoSender : public VideoSender {
                     base::BindRepeating(&PeerVideoSender::ProcessFeedback,
                                         base::Unretained(this))) {}
 
-  using VideoSender::OnReceivedCastFeedback;
-  using VideoSender::OnReceivedPli;
+  void OnReceivedCastFeedback(const RtcpCastMessage& cast_feedback) {
+    frame_sender_for_testing()->OnReceivedCastFeedback(cast_feedback);
+  }
+
+  void OnReceivedPli() { frame_sender_for_testing()->OnReceivedPli(); }
 
   void ProcessFeedback(const media::VideoCaptureFeedback& feedback) {
     feedback_ = feedback;
@@ -191,7 +193,7 @@ class VideoSenderTest : public ::testing::Test {
   // |expect_init_success| is true if initialization is expected to succeed.
   void InitEncoder(bool external, bool expect_init_success) {
     FrameSenderConfig video_config = GetDefaultVideoSenderConfig();
-    video_config.use_external_encoder = external;
+    video_config.use_hardware_encoder = external;
 
     ASSERT_EQ(operational_status_, STATUS_UNINITIALIZED);
 
@@ -640,5 +642,4 @@ TEST_F(VideoSenderTest, CancelSendingOnReceivingPli) {
   EXPECT_EQ(2, transport_->number_of_rtp_packets());
 }
 
-}  // namespace cast
-}  // namespace media
+}  // namespace media::cast

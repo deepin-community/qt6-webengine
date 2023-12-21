@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,15 +10,15 @@
 #include "net/base/net_errors.h"
 #include "net/cert/cert_status_flags.h"
 #include "net/cert/ev_root_ca_metadata.h"
-#include "net/cert/internal/cert_errors.h"
-#include "net/cert/internal/parsed_certificate.h"
+#include "net/cert/pki/cert_errors.h"
+#include "net/cert/pki/parsed_certificate.h"
 #include "net/cert/x509_util.h"
 
 namespace net {
 
 namespace {
 
-scoped_refptr<ParsedCertificate> ParsedCertificateFromBuffer(
+std::shared_ptr<const ParsedCertificate> ParsedCertificateFromBuffer(
     CRYPTO_BUFFER* cert_handle,
     CertErrors* errors) {
   return ParsedCertificate::Create(bssl::UpRef(cert_handle),
@@ -31,14 +31,14 @@ ParsedCertificateList ParsedCertificateListFromX509Certificate(
   CertErrors parsing_errors;
 
   ParsedCertificateList certs;
-  scoped_refptr<ParsedCertificate> target =
+  std::shared_ptr<const ParsedCertificate> target =
       ParsedCertificateFromBuffer(cert->cert_buffer(), &parsing_errors);
   if (!target)
     return {};
   certs.push_back(target);
 
   for (const auto& buf : cert->intermediate_buffers()) {
-    scoped_refptr<ParsedCertificate> intermediate =
+    std::shared_ptr<const ParsedCertificate> intermediate =
         ParsedCertificateFromBuffer(buf.get(), &parsing_errors);
     if (!intermediate)
       return {};
@@ -61,8 +61,8 @@ bool CertHasMultipleEVPoliciesAndOneMatchesRoot(const X509Certificate* cert) {
   if (certs.empty())
     return false;
 
-  ParsedCertificate* leaf = certs.front().get();
-  ParsedCertificate* root = certs.back().get();
+  const ParsedCertificate* leaf = certs.front().get();
+  const ParsedCertificate* root = certs.back().get();
 
   if (!leaf->has_policy_oids())
     return false;

@@ -7,26 +7,65 @@
 
 #include "modules/skottie/src/text/TextAdapter.h"
 
+#include "include/core/SkCanvas.h"
 #include "include/core/SkContourMeasure.h"
 #include "include/core/SkFontMgr.h"
 #include "include/core/SkM44.h"
-#include "include/private/SkTPin.h"
+#include "include/private/base/SkTPin.h"
 #include "modules/skottie/src/SkottieJson.h"
 #include "modules/skottie/src/text/RangeSelector.h"
 #include "modules/skottie/src/text/TextAnimator.h"
 #include "modules/sksg/include/SkSGDraw.h"
+#include "modules/sksg/include/SkSGGeometryNode.h"
 #include "modules/sksg/include/SkSGGroup.h"
 #include "modules/sksg/include/SkSGPaint.h"
 #include "modules/sksg/include/SkSGPath.h"
 #include "modules/sksg/include/SkSGRect.h"
 #include "modules/sksg/include/SkSGRenderEffect.h"
-#include "modules/sksg/include/SkSGText.h"
+#include "modules/sksg/include/SkSGRenderNode.h"
 #include "modules/sksg/include/SkSGTransform.h"
+#include "modules/sksg/src/SkSGTransformPriv.h"
 
 // Enable for text layout debugging.
 #define SHOW_LAYOUT_BOXES 0
 
 namespace skottie::internal {
+
+namespace {
+
+class GlyphTextNode final : public sksg::GeometryNode {
+public:
+    explicit GlyphTextNode(Shaper::ShapedGlyphs&& glyphs) : fGlyphs(std::move(glyphs)) {}
+
+    ~GlyphTextNode() override = default;
+
+    const Shaper::ShapedGlyphs* glyphs() const { return &fGlyphs; }
+
+protected:
+    SkRect onRevalidate(sksg::InvalidationController*, const SkMatrix&) override {
+        return fGlyphs.computeBounds(Shaper::ShapedGlyphs::BoundsType::kConservative);
+    }
+
+    void onDraw(SkCanvas* canvas, const SkPaint& paint) const override {
+        fGlyphs.draw(canvas, {0,0}, paint);
+    }
+
+    void onClip(SkCanvas* canvas, bool antiAlias) const override {
+        canvas->clipPath(this->asPath(), antiAlias);
+    }
+
+    bool onContains(const SkPoint& p) const override {
+        return this->asPath().contains(p.x(), p.y());
+    }
+
+    SkPath onAsPath() const override {
+        // TODO
+        return SkPath();
+    }
+
+private:
+    const Shaper::ShapedGlyphs fGlyphs;
+};
 
 static float align_factor(SkTextUtils::Align a) {
     switch (a) {
@@ -36,6 +75,70 @@ static float align_factor(SkTextUtils::Align a) {
     }
 
     SkUNREACHABLE;
+}
+
+} // namespace
+
+class TextAdapter::GlyphDecoratorNode final : public sksg::Group {
+public:
+    GlyphDecoratorNode(sk_sp<GlyphDecorator> decorator)
+        : fDecorator(std::move(decorator))
+    {}
+
+    ~GlyphDecoratorNode() override = default;
+
+    void updateFragmentData(const std::vector<TextAdapter::FragmentRec>& recs) {
+        fFragCount = recs.size();
+
+        SkASSERT(!fFragInfo);
+        fFragInfo = std::make_unique<FragmentInfo[]>(recs.size());
+
+        for (size_t i = 0; i < recs.size(); ++i) {
+            const auto& rec = recs[i];
+            fFragInfo[i] = {rec.fOrigin, rec.fGlyphs, rec.fMatrixNode};
+        }
+
+        SkASSERT(!fDecoratorInfo);
+        fDecoratorInfo = std::make_unique<GlyphDecorator::GlyphInfo[]>(recs.size());
+    }
+
+    SkRect onRevalidate(sksg::InvalidationController* ic, const SkMatrix& ctm) override {
+        const auto child_bounds = INHERITED::onRevalidate(ic, ctm);
+
+        for (size_t i = 0; i < fFragCount; ++i) {
+            const auto* glyphs = fFragInfo[i].fGlyphs;
+            fDecoratorInfo[i].fBounds =
+                    glyphs->computeBounds(Shaper::ShapedGlyphs::BoundsType::kTight);
+            fDecoratorInfo[i].fMatrix = sksg::TransformPriv::As<SkMatrix>(fFragInfo[i].fMatrixNode);
+
+            fDecoratorInfo[i].fCluster = glyphs->fClusters.empty() ? 0 : glyphs->fClusters.front();
+        }
+
+        return child_bounds;
+    }
+
+    void onRender(SkCanvas* canvas, const RenderContext* ctx) const override {
+        auto local_ctx = ScopedRenderContext(canvas, ctx).setIsolation(this->bounds(),
+                                                                       canvas->getTotalMatrix(),
+                                                                       true);
+        this->INHERITED::onRender(canvas, local_ctx);
+
+        fDecorator->onDecorate(canvas, fDecoratorInfo.get(), fFragCount);
+    }
+
+private:
+    struct FragmentInfo {
+        SkPoint                     fOrigin;
+        const Shaper::ShapedGlyphs* fGlyphs;
+        sk_sp<sksg::Matrix<SkM44>>  fMatrixNode;
+    };
+
+    const sk_sp<GlyphDecorator>                  fDecorator;
+    std::unique_ptr<FragmentInfo[]>              fFragInfo;
+    std::unique_ptr<GlyphDecorator::GlyphInfo[]> fDecoratorInfo;
+    size_t                                       fFragCount;
+
+    using INHERITED = Group;
 };
 
 // Text path semantics
@@ -159,7 +262,9 @@ private:
 
 sk_sp<TextAdapter> TextAdapter::Make(const skjson::ObjectValue& jlayer,
                                      const AnimationBuilder* abuilder,
-                                     sk_sp<SkFontMgr> fontmgr, sk_sp<Logger> logger) {
+                                     sk_sp<SkFontMgr> fontmgr,
+                                     sk_sp<CustomFont::GlyphCompMapper> custom_glyph_mapper,
+                                     sk_sp<Logger> logger) {
     // General text node format:
     // "t": {
     //    "a": [], // animators (see TextAnimator)
@@ -216,10 +321,11 @@ sk_sp<TextAdapter> TextAdapter::Make(const skjson::ObjectValue& jlayer,
         AnchorPointGrouping::kAll,       // 'g': 4
     };
     const auto apg = jm
-            ? SkTPin<int>(ParseDefault<int>((*jm)["g"], 1), 1, SK_ARRAY_COUNT(gGroupingMap))
+            ? SkTPin<int>(ParseDefault<int>((*jm)["g"], 1), 1, std::size(gGroupingMap))
             : 1;
 
     auto adapter = sk_sp<TextAdapter>(new TextAdapter(std::move(fontmgr),
+                                                      std::move(custom_glyph_mapper),
                                                       std::move(logger),
                                                       gGroupingMap[SkToSizeT(apg - 1)]));
 
@@ -289,9 +395,13 @@ sk_sp<TextAdapter> TextAdapter::Make(const skjson::ObjectValue& jlayer,
     return adapter;
 }
 
-TextAdapter::TextAdapter(sk_sp<SkFontMgr> fontmgr, sk_sp<Logger> logger, AnchorPointGrouping apg)
+TextAdapter::TextAdapter(sk_sp<SkFontMgr> fontmgr,
+                         sk_sp<CustomFont::GlyphCompMapper> custom_glyph_mapper,
+                         sk_sp<Logger> logger,
+                         AnchorPointGrouping apg)
     : fRoot(sksg::Group::Make())
     , fFontMgr(std::move(fontmgr))
+    , fCustomGlyphMapper(std::move(custom_glyph_mapper))
     , fLogger(std::move(logger))
     , fAnchorPointGrouping(apg)
     , fHasBlurAnimator(false)
@@ -300,26 +410,61 @@ TextAdapter::TextAdapter(sk_sp<SkFontMgr> fontmgr, sk_sp<Logger> logger, AnchorP
 
 TextAdapter::~TextAdapter() = default;
 
-void TextAdapter::addFragment(const Shaper::Fragment& frag, float scale) {
+std::vector<sk_sp<sksg::RenderNode>>
+TextAdapter::buildGlyphCompNodes(Shaper::Fragment& frag) const {
+    std::vector<sk_sp<sksg::RenderNode>> draws;
+
+    if (fCustomGlyphMapper) {
+        size_t offset = 0;
+        for (const auto& run : frag.fGlyphs.fRuns) {
+            for (size_t i = 0; i < run.fSize; ++i) {
+                const SkGlyphID gid = frag.fGlyphs.fGlyphIDs[offset + i];
+
+                if (auto gcomp = fCustomGlyphMapper->getGlyphComp(run.fFont.getTypeface(), gid)) {
+                    // Position and scale the "glyph".
+                    const auto m = SkMatrix::Translate(frag.fGlyphs.fGlyphPos[offset + i])
+                                 * SkMatrix::Scale(fText->fTextSize, fText->fTextSize);
+
+                    draws.push_back(sksg::TransformEffect::Make(std::move(gcomp), m));
+                }
+            }
+            offset += run.fSize;
+        }
+    }
+
+    return draws;
+}
+
+void TextAdapter::addFragment(Shaper::Fragment& frag, sksg::Group* container) {
     // For a given shaped fragment, build a corresponding SG fragment:
     //
     //   [TransformEffect] -> [Transform]
     //     [Group]
-    //       [Draw] -> [TextBlob*] [FillPaint]
-    //       [Draw] -> [TextBlob*] [StrokePaint]
+    //       [Draw] -> [GlyphTextNode*] [FillPaint]    // SkTypeface-based glyph.
+    //       [Draw] -> [GlyphTextNode*] [StrokePaint]  // SkTypeface-based glyph.
+    //       [CompRenderTree]                          // Comp glyph.
+    //       ...
     //
-    // * where the blob node is shared
-
-    auto blob_node = sksg::TextBlob::Make(frag.fBlob);
 
     FragmentRec rec;
-    rec.fOrigin     = frag.fPos;
+    rec.fOrigin     = frag.fOrigin;
     rec.fAdvance    = frag.fAdvance;
     rec.fAscent     = frag.fAscent;
-    rec.fMatrixNode = sksg::Matrix<SkM44>::Make(SkM44::Translate(frag.fPos.x(), frag.fPos.y()));
+    rec.fMatrixNode = sksg::Matrix<SkM44>::Make(SkM44::Translate(frag.fOrigin.x(),
+                                                                 frag.fOrigin.y()));
 
-    std::vector<sk_sp<sksg::RenderNode>> draws;
-    draws.reserve(static_cast<size_t>(fText->fHasFill) + static_cast<size_t>(fText->fHasStroke));
+    // Start off substituting existing comp nodes for all composition-based glyphs.
+    std::vector<sk_sp<sksg::RenderNode>> draws = this->buildGlyphCompNodes(frag);
+
+    // Use a regular GlyphTextNode for the remaining glyphs (backed by a real SkTypeface).
+    // Note: comp glyph IDs are still present in the list, but they don't draw anything
+    //       (using empty path in SkCustomTypeface).
+    auto text_node = sk_make_sp<GlyphTextNode>(std::move(frag.fGlyphs));
+    rec.fGlyphs = text_node->glyphs();
+
+    draws.reserve(draws.size() +
+                  static_cast<size_t>(fText->fHasFill) +
+                  static_cast<size_t>(fText->fHasStroke));
 
     SkASSERT(fText->fHasFill || fText->fHasStroke);
 
@@ -327,7 +472,7 @@ void TextAdapter::addFragment(const Shaper::Fragment& frag, float scale) {
         if (fText->fHasFill) {
             rec.fFillColorNode = sksg::Color::Make(fText->fFillColor);
             rec.fFillColorNode->setAntiAlias(true);
-            draws.push_back(sksg::Draw::Make(blob_node, rec.fFillColorNode));
+            draws.push_back(sksg::Draw::Make(text_node, rec.fFillColorNode));
         }
     };
     auto add_stroke = [&] {
@@ -335,9 +480,9 @@ void TextAdapter::addFragment(const Shaper::Fragment& frag, float scale) {
             rec.fStrokeColorNode = sksg::Color::Make(fText->fStrokeColor);
             rec.fStrokeColorNode->setAntiAlias(true);
             rec.fStrokeColorNode->setStyle(SkPaint::kStroke_Style);
-            rec.fStrokeColorNode->setStrokeWidth(fText->fStrokeWidth * scale);
+            rec.fStrokeColorNode->setStrokeWidth(fText->fStrokeWidth * fTextShapingScale);
             rec.fStrokeColorNode->setStrokeJoin(fText->fStrokeJoin);
-            draws.push_back(sksg::Draw::Make(blob_node, rec.fStrokeColorNode));
+            draws.push_back(sksg::Draw::Make(text_node, rec.fStrokeColorNode));
         }
     };
 
@@ -361,6 +506,8 @@ void TextAdapter::addFragment(const Shaper::Fragment& frag, float scale) {
         draws.push_back(sksg::Draw::Make(sksg::Rect::Make(box), std::move(box_color)));
     }
 
+    draws.shrink_to_fit();
+
     auto draws_node = (draws.size() > 1)
             ? sksg::Group::Make(std::move(draws))
             : std::move(draws[0]);
@@ -371,7 +518,7 @@ void TextAdapter::addFragment(const Shaper::Fragment& frag, float scale) {
         draws_node = sksg::ImageFilterEffect::Make(std::move(draws_node), rec.fBlur);
     }
 
-    fRoot->addChild(sksg::TransformEffect::Make(std::move(draws_node), rec.fMatrixNode));
+    container->addChild(sksg::TransformEffect::Make(std::move(draws_node), rec.fMatrixNode));
     fFragments.push_back(std::move(rec));
 }
 
@@ -447,7 +594,8 @@ uint32_t TextAdapter::shaperFlags() const {
     //   - when animating
     //   - when positioning on a path
     //   - when clamping the number or lines (for accurate line count)
-    if (!fAnimators.empty() || fPathInfo || fText->fMaxLines) {
+    //   - when a text decorator is present
+    if (!fAnimators.empty() || fPathInfo || fText->fMaxLines || fText->fDecorator) {
         flags |= Shaper::Flags::kFragmentGlyphs;
     }
 
@@ -455,15 +603,23 @@ uint32_t TextAdapter::shaperFlags() const {
         flags |= Shaper::Flags::kTrackFragmentAdvanceAscent;
     }
 
+    if (fText->fDecorator) {
+        flags |= Shaper::Flags::kClusters;
+    }
+
     return flags;
 }
 
 void TextAdapter::reshape() {
+    // AE clamps the font size to a reasonable range.
+    // We do the same, since HB is susceptible to int overflows for degenerate values.
+    static constexpr float kMinSize =    0.1f,
+                           kMaxSize = 1296.0f;
     const Shaper::TextDesc text_desc = {
         fText->fTypeface,
-        fText->fTextSize,
-        fText->fMinTextSize,
-        fText->fMaxTextSize,
+        SkTPin(fText->fTextSize,    kMinSize, kMaxSize),
+        SkTPin(fText->fMinTextSize, kMinSize, kMaxSize),
+        SkTPin(fText->fMaxTextSize, kMinSize, kMaxSize),
         fText->fLineHeight,
         fText->fLineShift,
         fText->fAscent,
@@ -476,7 +632,7 @@ void TextAdapter::reshape() {
         fText->fMaxLines,
         this->shaperFlags(),
     };
-    const auto shape_result = Shaper::Shape(fText->fText, text_desc, fText->fBox, fFontMgr);
+    auto shape_result = Shaper::Shape(fText->fText, text_desc, fText->fBox, fFontMgr);
 
     if (fLogger) {
         if (shape_result.fFragments.empty() && fText->fText.size() > 0) {
@@ -498,20 +654,14 @@ void TextAdapter::reshape() {
         }
     }
 
+    // Save the text shaping scale for later adjustments.
+    fTextShapingScale = shape_result.fScale;
+
     // Rebuild all fragments.
     // TODO: we can be smarter here and try to reuse the existing SG structure if needed.
 
     fRoot->clear();
     fFragments.clear();
-
-    for (const auto& frag : shape_result.fFragments) {
-        this->addFragment(frag, shape_result.fScale);
-    }
-
-    if (!fAnimators.empty() || fPathInfo) {
-        // Range selectors and text paths require fragment domain maps.
-        this->buildDomainMaps(shape_result);
-    }
 
     if (SHOW_LAYOUT_BOXES) {
         auto box_color = sksg::Color::Make(0xffff0000);
@@ -540,6 +690,31 @@ void TextAdapter::reshape() {
                                          std::move(path_color)));
         }
     }
+
+    // Depending on whether a GlyphDecorator is present, we either add the glyph render nodes
+    // directly to the root group, or to an intermediate GlyphDecoratorNode container.
+    sksg::Group* container = fRoot.get();
+    sk_sp<GlyphDecoratorNode> decorator_node;
+    if (fText->fDecorator) {
+        decorator_node = sk_make_sp<GlyphDecoratorNode>(fText->fDecorator);
+        container = decorator_node.get();
+    }
+
+    // N.B. addFragment moves shaped glyph data out of the fragment, so only the fragment
+    // metrics are valid after this block.
+    for (size_t i = 0; i < shape_result.fFragments.size(); ++i) {
+        this->addFragment(shape_result.fFragments[i], container);
+    }
+
+    if (decorator_node) {
+        decorator_node->updateFragmentData(fFragments);
+        fRoot->addChild(std::move(decorator_node));
+    }
+
+    if (!fAnimators.empty() || fPathInfo) {
+        // Range selectors and text paths require fragment domain maps.
+        this->buildDomainMaps(shape_result);
+    }
 }
 
 void TextAdapter::onSync() {
@@ -564,6 +739,7 @@ void TextAdapter::onSync() {
     TextAnimator::ResolvedProps seed_props;
     seed_props.fill_color   = fText->fFillColor;
     seed_props.stroke_color = fText->fStrokeColor;
+    seed_props.stroke_width = fText->fStrokeWidth;
 
     TextAnimator::ModulatorBuffer buf;
     buf.resize(fFragments.size(), { seed_props, 0 });
@@ -591,7 +767,7 @@ void TextAdapter::onSync() {
         float total_tracking = 0;
 
         // Only compute these when needed.
-        if (fRequiresLineAdjustments) {
+        if (fRequiresLineAdjustments && line_span.fCount) {
             for (size_t i = line_span.fOffset; i < line_span.fOffset + line_span.fCount; ++i) {
                 const auto& props = buf[i].props;
                 total_spacing  += props.line_spacing;
@@ -768,6 +944,7 @@ void TextAdapter::pushPropsToFragment(const TextAnimator::ResolvedProps& props,
     }
     if (rec.fStrokeColorNode) {
         rec.fStrokeColorNode->setColor(scale_alpha(props.stroke_color, props.opacity));
+        rec.fStrokeColorNode->setStrokeWidth(props.stroke_width * fTextShapingScale);
     }
     if (rec.fBlur) {
         rec.fBlur->setSigma({ props.blur.x * kBlurSizeToSigma,

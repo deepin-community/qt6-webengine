@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -65,7 +65,7 @@ bool CSPSourceListAllows(
   if (source_list.allow_star) {
     if (url.ProtocolIsInHTTPFamily() || url.ProtocolIs("ftp") ||
         url.ProtocolIs("ws") || url.ProtocolIs("wss") ||
-        (!url.Protocol().IsEmpty() &&
+        (!url.Protocol().empty() &&
          EqualIgnoringASCIICase(url.Protocol(), self_source.scheme)))
       return true;
 
@@ -121,7 +121,7 @@ bool CSPSourceListIsSelf(
 
 bool CSPSourceListIsHashOrNoncePresent(
     const network::mojom::blink::CSPSourceList& source_list) {
-  return !source_list.nonces.IsEmpty() || !source_list.hashes.IsEmpty();
+  return !source_list.nonces.empty() || !source_list.hashes.empty();
 }
 
 bool CSPSourceListAllowsURLBasedMatching(
@@ -133,16 +133,21 @@ bool CSPSourceListAllowsURLBasedMatching(
 
 bool CSPSourceListAllowAllInline(
     CSPDirectiveName directive_type,
+    ContentSecurityPolicy::InlineType inline_type,
     const network::mojom::blink::CSPSourceList& source_list) {
   if (!IsScriptDirective(directive_type) &&
       !IsStyleDirective(directive_type)) {
     return false;
   }
 
-  return source_list.allow_inline &&
-         !CSPSourceListIsHashOrNoncePresent(source_list) &&
-         (!IsScriptDirective(directive_type) ||
-          !source_list.allow_dynamic);
+  bool allow_inline = source_list.allow_inline;
+  if (inline_type ==
+      ContentSecurityPolicy::InlineType::kScriptSpeculationRules) {
+    allow_inline |= source_list.allow_inline_speculation_rules;
+  }
+
+  return allow_inline && !CSPSourceListIsHashOrNoncePresent(source_list) &&
+         (!IsScriptDirective(directive_type) || !source_list.allow_dynamic);
 }
 
 }  // namespace blink

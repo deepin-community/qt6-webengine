@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,11 +13,12 @@
 
 #include "base/containers/flat_map.h"
 #include "base/memory/raw_ptr.h"
-#include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observation.h"
+#include "base/values.h"
 #include "extensions/browser/api/declarative_net_request/action_tracker.h"
 #include "extensions/browser/api/declarative_net_request/composite_matcher.h"
+#include "extensions/browser/api/declarative_net_request/declarative_net_request_prefs_helper.h"
 #include "extensions/browser/api/declarative_net_request/global_rules_tracker.h"
 #include "extensions/browser/api/declarative_net_request/ruleset_manager.h"
 #include "extensions/browser/browser_context_keyed_api_factory.h"
@@ -56,6 +57,8 @@ class RulesMonitorService : public BrowserContextKeyedAPI,
  public:
   using ApiCallback =
       base::OnceCallback<void(absl::optional<std::string> error)>;
+  using ApiCallbackToGetDisabledRuleIds =
+      base::OnceCallback<void(std::vector<int> disabled_rule_ids)>;
 
   // An observer used in tests.
   class TestObserver {
@@ -100,9 +103,24 @@ class RulesMonitorService : public BrowserContextKeyedAPI,
                                    std::set<RulesetID> ids_to_enable,
                                    ApiCallback callback);
 
+  // Updates the set of disabled rule ids for the |ruleset_id| of the
+  // |extension| and then invokes |callback| with an optional error.
+  using RuleIdsToUpdate = DeclarativeNetRequestPrefsHelper::RuleIdsToUpdate;
+  void UpdateStaticRules(const Extension& extension,
+                         RulesetID ruleset_id,
+                         RuleIdsToUpdate rule_ids_to_update,
+                         ApiCallback callback);
+
+  // Get the set of disabled rule ids for the |ruleset_id| of the
+  // |extension|. The disabled rule ids will be passed though the argument of
+  // the |callback|.
+  void GetDisabledRuleIds(const Extension& extension,
+                          RulesetID ruleset_id,
+                          ApiCallbackToGetDisabledRuleIds callback);
+
   // Returns the list of session scoped rules for |extension_id| as a
-  // base::ListValue.
-  const base::ListValue& GetSessionRulesValue(
+  // base::Value::List.
+  const base::Value::List& GetSessionRulesValue(
       const ExtensionId& extension_id) const;
 
   // Returns a copy of the session scoped rules for the given |extension_id|.
@@ -174,6 +192,17 @@ class RulesMonitorService : public BrowserContextKeyedAPI,
                                            std::set<RulesetID> ids_to_disable,
                                            std::set<RulesetID> ids_to_enable,
                                            ApiCallback callback);
+
+  // Internal helper for UpdateStaticRules.
+  void UpdateStaticRulesInternal(const ExtensionId& extension_id,
+                                 RulesetID ruleset_id,
+                                 RuleIdsToUpdate rule_ids_to_update,
+                                 ApiCallback callback);
+
+  // Internal helper for GetDisabledRuleIds.
+  void GetDisabledRuleIdsInternal(const ExtensionId& extension_id,
+                                  RulesetID ruleset_id,
+                                  ApiCallbackToGetDisabledRuleIds callback);
 
   // Internal helper for UpdateSessionRules.
   void UpdateSessionRulesInternal(
@@ -252,10 +281,10 @@ class RulesMonitorService : public BrowserContextKeyedAPI,
 
   // Session scoped rules value corresponding to extensions.
   // TODO(crbug.com/1152430): Currently we are storing session scoped rules in
-  // two forms: one as a base::ListValue and second in the indexed format as
+  // two forms: one as a base::Value::List and second in the indexed format as
   // part of RulesetMatcher, leading to double memory usage. We should be able
-  // to do away with the base::ListValue representation.
-  base::flat_map<ExtensionId, base::ListValue> session_rules_;
+  // to do away with the base::Value::List representation.
+  base::flat_map<ExtensionId, base::Value::List> session_rules_;
 
   // Must be the last member variable. See WeakPtrFactory documentation for
   // details.

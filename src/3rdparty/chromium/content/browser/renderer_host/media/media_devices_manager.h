@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,8 +12,8 @@
 #include <utility>
 #include <vector>
 
-#include "base/callback.h"
 #include "base/containers/flat_map.h"
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/system/system_monitor.h"
@@ -126,9 +126,6 @@ class CONTENT_EXPORT MediaDevicesManager
   // Stops device monitoring and disables caching for all device types.
   void StopMonitoring();
 
-  // Returns true if device monitoring is active, false otherwise.
-  bool IsMonitoringStarted();
-
   // Implements base::SystemMonitor::DevicesChangedObserver.
   // This function is only called in response to physical audio/video device
   // changes.
@@ -147,8 +144,6 @@ class CONTENT_EXPORT MediaDevicesManager
   // See http://crbug.com/648155.
   blink::WebMediaDeviceInfoArray GetCachedDeviceInfo(
       MediaDeviceType type) const;
-
-  MediaDevicesPermissionChecker* media_devices_permission_checker();
 
   const MediaDeviceSaltAndOriginCallback& salt_and_origin_callback() const {
     return salt_and_origin_callback_;
@@ -269,6 +264,7 @@ class CONTENT_EXPORT MediaDevicesManager
 
   // Callback for VideoCaptureManager::EnumerateDevices.
   void VideoInputDevicesEnumerated(
+      media::mojom::DeviceEnumerationResult result_code,
       const media::VideoCaptureDeviceDescriptors& descriptors);
 
   // Callback for AudioSystem::GetDeviceDescriptions.

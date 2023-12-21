@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,14 +9,18 @@
 
 #include <utility>
 
-#include "base/bind.h"
 #include "base/check_op.h"
 #include "base/containers/contains.h"
 #include "base/containers/queue.h"
+#include "base/feature_list.h"
+#include "base/functional/bind.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/observer_list.h"
+#include "base/task/sequenced_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
+#include "components/viz/common/features.h"
 #include "components/viz/common/surfaces/subtree_capture_id.h"
 #include "components/viz/common/surfaces/video_capture_target.h"
 #include "components/viz/service/display/shared_bitmap_manager.h"
@@ -70,7 +74,9 @@ FrameSinkManagerImpl::FrameSinkManagerImpl(const InitParams& params)
     : shared_bitmap_manager_(params.shared_bitmap_manager),
       output_surface_provider_(params.output_surface_provider),
       gmb_context_provider_(params.gmb_context_provider),
-      surface_manager_(this, params.activation_deadline_in_frames),
+      surface_manager_(this,
+                       params.activation_deadline_in_frames,
+                       params.max_uncommitted_frames),
       hit_test_manager_(surface_manager()),
       restart_id_(params.restart_id),
       run_all_compositor_stages_before_draw_(
@@ -280,7 +286,7 @@ void FrameSinkManagerImpl::UnregisterFrameSinkHierarchy(
   }
 
   auto iter = frame_sink_source_map_.find(parent_frame_sink_id);
-  DCHECK(iter != frame_sink_source_map_.end());
+  CHECK(iter != frame_sink_source_map_.end());
 
   // Remove |child_frame_sink_id| from parents list of children.
   auto& mapping = iter->second;
@@ -339,6 +345,11 @@ void FrameSinkManagerImpl::EvictSurfaces(
     if (root_it != root_sink_map_.end())
       root_it->second->DidEvictSurface(surface_id);
   }
+
+  // Trigger garbage collection immediately, otherwise the surface may not be
+  // evicted for a long time (e.g. not before a frame is produced).
+  if (base::FeatureList::IsEnabled(features::kEagerSurfaceGarbageCollection))
+    surface_manager_.GarbageCollectSurfaces();
 }
 
 void FrameSinkManagerImpl::RequestCopyOfOutput(
@@ -414,6 +425,16 @@ void FrameSinkManagerImpl::RegisterCompositorFrameSinkSupport(
 
   for (auto& observer : observer_list_)
     observer.OnCreatedCompositorFrameSink(frame_sink_id, support->is_root());
+
+  if (global_throttle_interval_) {
+    UpdateThrottlingRecursively(frame_sink_id,
+                                global_throttle_interval_.value());
+  }
+
+  if (frame_counter_) {
+    frame_counter_->AddFrameSink(frame_sink_id, support->frame_sink_type(),
+                                 support->is_root());
+  }
 }
 
 void FrameSinkManagerImpl::UnregisterCompositorFrameSinkSupport(
@@ -676,6 +697,8 @@ void FrameSinkManagerImpl::OnCaptureStarted(const FrameSinkId& id) {
   if (captured_frame_sink_ids_.insert(id).second) {
     ClearThrottling(id);
   }
+  for (auto& observer : observer_list_)
+    observer.OnCaptureStarted(id);
 }
 
 void FrameSinkManagerImpl::OnCaptureStopped(const FrameSinkId& id) {
@@ -733,16 +756,41 @@ void FrameSinkManagerImpl::Throttle(const std::vector<FrameSinkId>& ids,
   UpdateThrottling();
 }
 
+void FrameSinkManagerImpl::StartThrottlingAllFrameSinks(
+    base::TimeDelta interval) {
+  global_throttle_interval_ = interval;
+  UpdateThrottling();
+}
+
+void FrameSinkManagerImpl::StopThrottlingAllFrameSinks() {
+  global_throttle_interval_ = absl::nullopt;
+  UpdateThrottling();
+}
+
 void FrameSinkManagerImpl::UpdateThrottling() {
   // Clear previous throttling effect on all frame sinks.
   for (auto& support_map_item : support_map_) {
     support_map_item.second->ThrottleBeginFrame(base::TimeDelta());
   }
-  if (throttle_interval_.is_zero())
+  if (throttle_interval_.is_zero() &&
+      (!global_throttle_interval_ ||
+       global_throttle_interval_.value().is_zero()))
     return;
 
-  for (const auto& id : frame_sink_ids_to_throttle_) {
-    UpdateThrottlingRecursively(id, throttle_interval_);
+  if (global_throttle_interval_) {
+    for (const auto& support : support_map_) {
+      support.second->ThrottleBeginFrame(global_throttle_interval_.value());
+    }
+  }
+
+  // If the per-frame sink throttle interval is more aggressive than the global
+  // throttling interval, apply it to those frame sinks effectively always
+  // throttling a frame sink as much as possible.
+  if (!global_throttle_interval_ ||
+      throttle_interval_ > global_throttle_interval_) {
+    for (const auto& id : frame_sink_ids_to_throttle_) {
+      UpdateThrottlingRecursively(id, throttle_interval_);
+    }
   }
   // Clear throttling on frame sinks currently being captured.
   for (const auto& id : captured_frame_sink_ids_) {
@@ -752,6 +800,60 @@ void FrameSinkManagerImpl::UpdateThrottling() {
 
 void FrameSinkManagerImpl::ClearThrottling(const FrameSinkId& id) {
   UpdateThrottlingRecursively(id, base::TimeDelta());
+}
+
+void FrameSinkManagerImpl::CacheSurfaceAnimationManager(
+    NavigationID navigation_id,
+    std::unique_ptr<SurfaceAnimationManager> manager) {
+  if (navigation_to_animation_manager_.contains(navigation_id)) {
+    LOG(ERROR)
+        << "SurfaceAnimationManager already exists for |navigation_id| : "
+        << navigation_id;
+    return;
+  }
+
+  navigation_to_animation_manager_[navigation_id] = std::move(manager);
+}
+
+std::unique_ptr<SurfaceAnimationManager>
+FrameSinkManagerImpl::TakeSurfaceAnimationManager(NavigationID navigation_id) {
+  auto it = navigation_to_animation_manager_.find(navigation_id);
+  if (it == navigation_to_animation_manager_.end()) {
+    LOG(ERROR) << "SurfaceAnimationManager missing for |navigation_id| : "
+               << navigation_id;
+    return nullptr;
+  }
+
+  auto manager = std::move(it->second);
+  navigation_to_animation_manager_.erase(it);
+  return manager;
+}
+
+void FrameSinkManagerImpl::StartFrameCountingForTest(
+    base::TimeTicks start_time,
+    base::TimeDelta bucket_size) {
+  DCHECK(!frame_counter_.has_value());
+  frame_counter_.emplace(start_time, bucket_size);
+
+  for (auto& [sink_id, support] : support_map_) {
+    DCHECK_EQ(sink_id, support->frame_sink_id());
+    frame_counter_->AddFrameSink(sink_id, support->frame_sink_type(),
+                                 support->is_root());
+  }
+}
+
+void FrameSinkManagerImpl::StopFrameCountingForTest(
+    StopFrameCountingForTestCallback callback) {
+  // Returns empty data if `frame_counter_` has no value. This could happen
+  // when gpu-process is restarted in middle of test and test scripts still
+  // calls this at the end.
+  if (!frame_counter_.has_value()) {
+    std::move(callback).Run(nullptr);
+    return;
+  }
+
+  std::move(callback).Run(frame_counter_->TakeData());
+  frame_counter_.reset();
 }
 
 }  // namespace viz

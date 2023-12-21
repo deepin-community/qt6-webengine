@@ -35,6 +35,7 @@
 
 #include "base/allocator/partition_allocator/page_allocator.h"
 #include "base/command_line.h"
+#include "base/task/single_thread_task_runner.h"
 #include "build/build_config.h"
 #include "mojo/public/cpp/bindings/binder_map.h"
 #include "third_party/blink/public/common/features.h"
@@ -49,15 +50,16 @@
 #include "third_party/blink/renderer/controller/performance_manager/renderer_resource_coordinator_impl.h"
 #include "third_party/blink/renderer/controller/performance_manager/v8_detailed_memory_reporter_impl.h"
 #include "third_party/blink/renderer/core/animation/animation_clock.h"
+#include "third_party/blink/renderer/core/annotation/annotation_agent_container_impl.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/execution_context/agent.h"
 #include "third_party/blink/renderer/core/frame/display_cutout_client_impl.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
-#include "third_party/blink/renderer/platform/bindings/microtask.h"
+#include "third_party/blink/renderer/core/loader/loader_factory_for_frame.h"
 #include "third_party/blink/renderer/platform/bindings/v8_per_isolate_data.h"
 #include "third_party/blink/renderer/platform/disk_data_allocator.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
-#include "third_party/blink/renderer/platform/scheduler/public/thread.h"
+#include "third_party/blink/renderer/platform/scheduler/public/main_thread.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 #include "third_party/blink/renderer/platform/wtf/wtf.h"
 #include "v8/include/v8.h"
@@ -69,6 +71,7 @@
 #if BUILDFLAG(IS_ANDROID)
 #include "third_party/blink/renderer/controller/crash_memory_metrics_reporter_impl.h"
 #include "third_party/blink/renderer/controller/oom_intervention_impl.h"
+#include "third_party/blink/renderer/controller/private_memory_footprint_provider.h"
 #endif
 
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
@@ -122,13 +125,20 @@ void InitializeCommon(Platform* platform, mojo::BinderMap* binders) {
     // Try to reserve as much address space as we reasonably can.
     const size_t kMB = 1024 * 1024;
     for (size_t size = 512 * kMB; size >= 32 * kMB; size -= 16 * kMB) {
-      if (base::ReserveAddressSpace(size)) {
+      if (partition_alloc::ReserveAddressSpace(size)) {
         break;
       }
     }
   }
 #endif  // !defined(ARCH_CPU_X86_64) && !defined(ARCH_CPU_ARM64) &&
         // BUILDFLAG(IS_WIN)
+
+#if defined(USE_BLINK_EXTENSIONS_CHROMEOS)
+  // ChromeOSExtensions::Initialize() initializes strings which must be done
+  // before calling CoreInitializer::Initialize() which is called by
+  // GetBlinkInitializer().Initialize() below.
+  ChromeOSExtensions::Initialize();
+#endif
 
   // BlinkInitializer::Initialize() must be called before InitializeMainThread
   GetBlinkInitializer().Initialize();
@@ -145,26 +155,7 @@ void InitializeCommon(Platform* platform, mojo::BinderMap* binders) {
   g_end_of_task_runner = new EndOfTaskRunner;
   Thread::Current()->AddTaskObserver(g_end_of_task_runner);
 
-#if defined(USE_BLINK_EXTENSIONS_CHROMEOS)
-  ChromeOSExtensions::Initialize();
-#endif
-
-#if BUILDFLAG(IS_ANDROID)
-  // Initialize CrashMemoryMetricsReporterImpl in order to assure that memory
-  // allocation does not happen in OnOOMCallback.
-  CrashMemoryMetricsReporterImpl::Instance();
-#endif
-
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID) || \
-    BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
-  // Initialize UserLevelMemoryPressureSignalGenerator so it starts monitoring.
-  if (UserLevelMemoryPressureSignalGenerator::Enabled())
-    UserLevelMemoryPressureSignalGenerator::Instance();
-
-  // Start reporting the highest private memory footprint after the first
-  // navigation.
-  HighestPmfReporter::Instance();
-#endif
+  GetBlinkInitializer().RegisterMemoryWatchers();
 
   // Initialize performance manager.
   RendererResourceCoordinatorImpl::MaybeInitialize();
@@ -195,55 +186,89 @@ void SetIsCrossOriginIsolated(bool value) {
 }
 
 // Function defined in third_party/blink/public/web/blink.h.
-bool IsCrossOriginIsolated() {
-  return Agent::IsCrossOriginIsolated();
+void SetIsIsolatedContext(bool value) {
+  Agent::SetIsIsolatedContext(value);
 }
 
 // Function defined in third_party/blink/public/web/blink.h.
-void SetIsDirectSocketEnabled(bool value) {
-  Agent::SetIsDirectSocketEnabled(value);
-}
-
-// Function defined in third_party/blink/public/web/blink.h.
-bool IsDirectSocketEnabled() {
-  return Agent::IsDirectSocketEnabled();
+void SetCorsExemptHeaderList(
+    const WebVector<WebString>& web_cors_exempt_header_list) {
+  Vector<String> cors_exempt_header_list(
+      base::checked_cast<wtf_size_t>(web_cors_exempt_header_list.size()));
+  std::transform(web_cors_exempt_header_list.begin(),
+                 web_cors_exempt_header_list.end(),
+                 cors_exempt_header_list.begin(),
+                 [](const WebString& h) { return WTF::String(h); });
+  LoaderFactoryForFrame::SetCorsExemptHeaderList(
+      std::move(cors_exempt_header_list));
 }
 
 void BlinkInitializer::RegisterInterfaces(mojo::BinderMap& binders) {
   ModulesInitializer::RegisterInterfaces(binders);
-  Thread* main_thread = Thread::MainThread();
-  // GetSingleThreadTaskRunner() uses GetTaskRunner() internally.
-  // crbug.com/781664
-  if (!main_thread->GetTaskRunner())
-    return;
+  scoped_refptr<base::SingleThreadTaskRunner> main_thread_task_runner =
+      Thread::MainThread()->GetTaskRunner(MainThreadTaskRunnerRestricted());
+  CHECK(main_thread_task_runner);
 
 #if BUILDFLAG(IS_ANDROID)
-  binders.Add(ConvertToBaseRepeatingCallback(
-                  CrossThreadBindRepeating(&OomInterventionImpl::BindReceiver)),
-              main_thread->GetTaskRunner());
+  binders.Add<mojom::blink::OomIntervention>(
+      ConvertToBaseRepeatingCallback(
+          CrossThreadBindRepeating(&OomInterventionImpl::BindReceiver,
+                                   WTF::RetainedRef(main_thread_task_runner))),
+      main_thread_task_runner);
 
-  binders.Add(ConvertToBaseRepeatingCallback(CrossThreadBindRepeating(
-                  &CrashMemoryMetricsReporterImpl::Bind)),
-              main_thread->GetTaskRunner());
+  binders.Add<mojom::blink::CrashMemoryMetricsReporter>(
+      ConvertToBaseRepeatingCallback(
+          CrossThreadBindRepeating(&CrashMemoryMetricsReporterImpl::Bind)),
+      main_thread_task_runner);
 #endif
 
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
-  binders.Add(ConvertToBaseRepeatingCallback(
-                  CrossThreadBindRepeating(&MemoryUsageMonitorPosix::Bind)),
-              main_thread->GetTaskRunner());
+  binders.Add<mojom::blink::MemoryUsageMonitorLinux>(
+      ConvertToBaseRepeatingCallback(
+          CrossThreadBindRepeating(&MemoryUsageMonitorPosix::Bind)),
+      main_thread_task_runner);
 #endif
 
-  binders.Add(ConvertToBaseRepeatingCallback(
-                  CrossThreadBindRepeating(&BlinkLeakDetector::Bind)),
-              main_thread->GetTaskRunner());
+  binders.Add<mojom::blink::LeakDetector>(
+      ConvertToBaseRepeatingCallback(CrossThreadBindRepeating(
+          &BlinkLeakDetector::Bind, WTF::RetainedRef(main_thread_task_runner))),
+      main_thread_task_runner);
 
-  binders.Add(ConvertToBaseRepeatingCallback(
-                  CrossThreadBindRepeating(&DiskDataAllocator::Bind)),
-              main_thread->GetTaskRunner());
+  binders.Add<mojom::blink::DiskAllocator>(
+      ConvertToBaseRepeatingCallback(
+          CrossThreadBindRepeating(&DiskDataAllocator::Bind)),
+      main_thread_task_runner);
 
-  binders.Add(ConvertToBaseRepeatingCallback(CrossThreadBindRepeating(
-                  &V8DetailedMemoryReporterImpl::Bind)),
-              main_thread->GetTaskRunner());
+  binders.Add<mojom::blink::V8DetailedMemoryReporter>(
+      ConvertToBaseRepeatingCallback(
+          CrossThreadBindRepeating(&V8DetailedMemoryReporterImpl::Bind)),
+      main_thread_task_runner);
+}
+
+void BlinkInitializer::RegisterMemoryWatchers() {
+  scoped_refptr<base::SingleThreadTaskRunner> main_thread_task_runner =
+      Thread::MainThread()->GetTaskRunner(MainThreadTaskRunnerRestricted());
+#if BUILDFLAG(IS_ANDROID)
+  // Initialize CrashMemoryMetricsReporterImpl in order to assure that memory
+  // allocation does not happen in OnOOMCallback.
+  CrashMemoryMetricsReporterImpl::Instance();
+#endif
+
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID) || \
+    BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
+  // Initialize UserLevelMemoryPressureSignalGenerator so it starts monitoring.
+  UserLevelMemoryPressureSignalGenerator::Initialize(main_thread_task_runner);
+
+  // Start reporting the highest private memory footprint after the first
+  // navigation.
+  HighestPmfReporter::Initialize(main_thread_task_runner);
+#endif
+
+#if BUILDFLAG(IS_ANDROID) && !defined(ARCH_CPU_64_BITS)
+  // Initialize PrivateMemoryFootprintProvider to start providing the value
+  // for the browser process.
+  PrivateMemoryFootprintProvider::Initialize(main_thread_task_runner);
+#endif
 }
 
 void BlinkInitializer::InitLocalFrame(LocalFrame& frame) const {
@@ -257,7 +282,17 @@ void BlinkInitializer::InitLocalFrame(LocalFrame& frame) const {
 
   frame.GetInterfaceRegistry()->AddInterface(WTF::BindRepeating(
       &LocalFrame::PauseSubresourceLoading, WrapWeakPersistent(&frame)));
+
+  frame.GetInterfaceRegistry()->AddInterface(WTF::BindRepeating(
+      &AnnotationAgentContainerImpl::BindReceiver, WrapWeakPersistent(&frame)));
   ModulesInitializer::InitLocalFrame(frame);
+}
+
+void BlinkInitializer::InitServiceWorkerGlobalScope(
+    ServiceWorkerGlobalScope& worker_global_scope) const {
+#if defined(USE_BLINK_EXTENSIONS_CHROMEOS)
+  ChromeOSExtensions::InitServiceWorkerGlobalScope(worker_global_scope);
+#endif
 }
 
 void BlinkInitializer::OnClearWindowObjectInMainWorld(

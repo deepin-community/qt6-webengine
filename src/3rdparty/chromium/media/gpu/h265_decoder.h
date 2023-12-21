@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,7 +12,7 @@
 #include <vector>
 
 #include "base/containers/span.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "media/base/decrypt_config.h"
 #include "media/base/subsample_entry.h"
 #include "media/base/video_codecs.h"
@@ -150,6 +150,10 @@ class MEDIA_GPU_EXPORT H265Decoder final : public AcceleratedVideoDecoder {
     // kNotSupported.
     virtual Status SetStream(base::span<const uint8_t> stream,
                              const DecryptConfig* decrypt_config);
+
+    // Indicates whether the accelerator supports bitstreams with
+    // specific chroma subsampling format.
+    virtual bool IsChromaSamplingSupported(VideoChromaSampling format) = 0;
   };
 
   H265Decoder(std::unique_ptr<H265Accelerator> accelerator,
@@ -170,6 +174,8 @@ class MEDIA_GPU_EXPORT H265Decoder final : public AcceleratedVideoDecoder {
   gfx::Rect GetVisibleRect() const override;
   VideoCodecProfile GetProfile() const override;
   uint8_t GetBitDepth() const override;
+  VideoChromaSampling GetChromaSampling() const override;
+  absl::optional<gfx::HDRMetadata> GetHDRMetadata() const override;
   size_t GetRequiredNumOfPictures() const override;
   size_t GetNumReferenceFrames() const override;
 
@@ -329,6 +335,10 @@ class MEDIA_GPU_EXPORT H265Decoder final : public AcceleratedVideoDecoder {
   VideoCodecProfile profile_;
   // Bit depth of input bitstream.
   uint8_t bit_depth_ = 0;
+  // Chroma sampling format of input bitstream
+  VideoChromaSampling chroma_sampling_ = VideoChromaSampling::kUnknown;
+  // HDR metadata in the bitstream.
+  absl::optional<gfx::HDRMetadata> hdr_metadata_;
 
   const std::unique_ptr<H265Accelerator> accelerator_;
 };

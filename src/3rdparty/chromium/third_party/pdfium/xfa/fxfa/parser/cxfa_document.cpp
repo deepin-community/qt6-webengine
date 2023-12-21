@@ -1,4 +1,4 @@
-// Copyright 2014 PDFium Authors. All rights reserved.
+// Copyright 2014 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -15,10 +15,10 @@
 #include "core/fxcrt/xml/cfx_xmlelement.h"
 #include "fxjs/gc/container_trace.h"
 #include "fxjs/xfa/cfxjse_engine.h"
+#include "fxjs/xfa/cfxjse_resolveprocessor.h"
 #include "fxjs/xfa/cjx_object.h"
 #include "third_party/base/check.h"
 #include "third_party/base/check_op.h"
-#include "third_party/base/compiler_specific.h"
 #include "third_party/base/notreached.h"
 #include "xfa/fxfa/cxfa_ffdoc.h"
 #include "xfa/fxfa/cxfa_ffnotify.h"
@@ -454,7 +454,7 @@ CXFA_Node* FindMatchingDataNode(
           pResult = pGlobalBindNode;
           break;
         }
-        FALLTHROUGH;
+        [[fallthrough]];
       case XFA_AttributeValue::Once: {
         bAccessedDataDOM = true;
         CXFA_Node* pOnceBindNode = FindOnceDataNode(
@@ -1451,7 +1451,7 @@ CXFA_LocaleMgr* CXFA_Document::GetLocaleMgr() {
 }
 
 cppgc::Heap* CXFA_Document::GetHeap() const {
-  return heap_.Get();
+  return heap_;
 }
 
 CFXJSE_Engine* CXFA_Document::InitScriptContext(CJS_Runtime* fxjs_runtime) {

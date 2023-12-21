@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -97,8 +97,6 @@ void BackgroundImageGeometry::SetNoRepeatX(const FillLayer& fill_layer,
 
     // Reduce the width of the dest rect to draw only the portion of the
     // tile that remains visible after offsetting the image.
-    // TODO(schenney): This might grow the dest rect if the dest rect has
-    // been adjusted for opaque borders.
     unsnapped_dest_rect_.SetWidth(tile_size_.width + x_offset);
     snapped_dest_rect_.SetWidth(tile_size_.width + snapped_x_offset);
   }
@@ -138,8 +136,6 @@ void BackgroundImageGeometry::SetNoRepeatY(const FillLayer& fill_layer,
 
     // Reduce the height of the dest rect to draw only the portion of the
     // tile that remains visible after offsetting the image.
-    // TODO(schenney): This might grow the dest rect if the dest rect has
-    // been adjusted for opaque borders.
     unsnapped_dest_rect_.SetHeight(tile_size_.height + y_offset);
     snapped_dest_rect_.SetHeight(tile_size_.height + snapped_y_offset);
   }
@@ -341,6 +337,39 @@ PhysicalRect FixedAttachmentPositioningArea(const PaintInfo& paint_info,
       PhysicalSize(layout_viewport->VisibleContentRect().size()));
 }
 
+// Computes the stitched table-grid rect relative to the current fragment.
+PhysicalRect ComputeStitchedTableGridRect(
+    const NGPhysicalBoxFragment& fragment) {
+  const auto writing_direction = fragment.Style().GetWritingDirection();
+  LogicalRect table_grid_rect;
+  LogicalRect fragment_local_grid_rect;
+  LayoutUnit stitched_block_size;
+
+  for (const NGPhysicalBoxFragment& walker :
+       To<LayoutBox>(fragment.GetLayoutObject())->PhysicalFragments()) {
+    LogicalRect local_grid_rect = walker.TableGridRect();
+    local_grid_rect.offset.block_offset += stitched_block_size;
+    if (table_grid_rect.IsEmpty())
+      table_grid_rect = local_grid_rect;
+    else
+      table_grid_rect.Unite(local_grid_rect);
+
+    if (&walker == &fragment)
+      fragment_local_grid_rect = local_grid_rect;
+
+    stitched_block_size += NGFragment(writing_direction, walker).BlockSize();
+  }
+
+  // Make the rect relative to the fragment we are currently painting.
+  table_grid_rect.offset.block_offset -=
+      fragment_local_grid_rect.offset.block_offset;
+
+  WritingModeConverter converter(
+      writing_direction, ToPhysicalSize(fragment_local_grid_rect.size,
+                                        writing_direction.GetWritingMode()));
+  return converter.ToPhysical(table_grid_rect);
+}
+
 }  // Anonymous namespace
 
 BackgroundImageGeometry::BackgroundImageGeometry(
@@ -400,7 +429,12 @@ BackgroundImageGeometry::BackgroundImageGeometry(
           To<LayoutBoxModelObject>(fragment.GetLayoutObject())) {
   DCHECK(box_->IsBox());
 
-  if (!fragment.IsOnlyForNode()) {
+  if (fragment.IsTableNG()) {
+    auto stitched_background_rect = ComputeStitchedTableGridRect(fragment);
+    positioning_size_override_ = stitched_background_rect.size;
+    element_positioning_area_offset_ = -stitched_background_rect.offset;
+    box_has_multiple_fragments_ = !fragment.IsOnlyForNode();
+  } else if (!fragment.IsOnlyForNode()) {
     // The element is block-fragmented. We need to calculate the correct
     // background offset within an imaginary box where all the fragments have
     // been stitched together.
@@ -429,9 +463,10 @@ BackgroundImageGeometry::BackgroundImageGeometry(
          layer && !layer->IsRootLayer(); layer = layer->Parent()) {
       // Check LayoutObject::HasTransformRelatedProperty() first to exclude
       // non-applicable transforms and will-change: transform.
-      if (layer->GetLayoutObject().HasTransformRelatedProperty() &&
+      LayoutObject& object = layer->GetLayoutObject();
+      if (object.HasTransformRelatedProperty() &&
           (layer->Transform() ||
-           layer->GetLayoutObject().StyleRef().HasWillChangeTransformHint())) {
+           object.StyleRef().HasWillChangeHintForAnyTransformProperty())) {
         has_background_fixed_to_viewport_ = false;
         break;
       }
@@ -466,7 +501,7 @@ void BackgroundImageGeometry::ComputeDestRectAdjustments(
       } else {
         // Force the snapped dest rect to match the inner border to
         // avoid gaps between the background and border.
-        // TODO(schenney) The LayoutUnit(float) constructor always
+        // TODO(rendering-core) The LayoutUnit(float) constructor always
         // rounds down. We should FromFloatFloor or FromFloatCeil to
         // move toward the border.
         gfx::RectF inner_border_rect =
@@ -501,9 +536,6 @@ void BackgroundImageGeometry::ComputeDestRectAdjustments(
       // the size and position of the borders, sometimes adjusting the inner
       // border by more than a pixel when done (particularly under magnifying
       // zoom).
-      // TODO(schenney) The LayoutUnit(float) constructor always
-      // rounds down. We should FromFloatFloor or FromFloatCeil to
-      // move toward the border.
       BorderEdge edges[4];
       positioning_box_->StyleRef().GetBorderEdgeInfo(edges);
       gfx::RectF inner_border_rect =
@@ -674,9 +706,6 @@ void BackgroundImageGeometry::ComputePositioningArea(
 
     // Offset of the positioning area from the corner of the
     // positioning_box_->
-    // TODO(schenney): Could we enable dest adjust for collapsed
-    // borders if we computed this based on the actual offset between
-    // the rects?
     unsnapped_box_offset = PhysicalOffset(
         unsnapped_box_outset.Left() - unsnapped_dest_adjust.Left(),
         unsnapped_box_outset.Top() - unsnapped_dest_adjust.Top());

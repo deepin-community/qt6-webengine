@@ -17,28 +17,31 @@
 
 #include <cstdint>
 #include <functional>
+#include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "connections/advertising_options.h"
 #include "connections/discovery_options.h"
+#include "connections/implementation/analytics/analytics_recorder.h"
+#include "connections/implementation/proto/offline_wire_formats.pb.h"
 #include "connections/listeners.h"
 #include "connections/status.h"
 #include "connections/strategy.h"
+#include "internal/analytics/event_logger.h"
+#include "internal/device.h"
 #include "internal/platform/byte_array.h"
+#include "internal/platform/cancelable_alarm.h"
 #include "internal/platform/cancellation_flag.h"
 #include "internal/platform/error_code_recorder.h"
-#include "internal/platform/prng.h"
-#include "internal/platform/cancelable_alarm.h"
 #include "internal/platform/mutex.h"
-#include "internal/analytics/analytics_recorder.h"
 // Prefer using absl:: versions of a set and a map; they tend to be more
 // efficient: implementation is using open-addressing hash tables.
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/types/span.h"
 
-namespace location {
 namespace nearby {
 namespace connections {
 
@@ -50,7 +53,8 @@ class ClientProxy final {
   static constexpr absl::Duration
       kHighPowerAdvertisementEndpointIdCacheTimeout = absl::Seconds(30);
 
-  explicit ClientProxy(analytics::EventLogger* event_logger = nullptr);
+  explicit ClientProxy(
+      ::nearby::analytics::EventLogger* event_logger = nullptr);
   ~ClientProxy();
   ClientProxy(ClientProxy&&) = default;
   ClientProxy& operator=(ClientProxy&&) = default;
@@ -72,22 +76,18 @@ class ClientProxy final {
   void StartedAdvertising(
       const std::string& service_id, Strategy strategy,
       const ConnectionListener& connection_lifecycle_listener,
-      absl::Span<proto::connections::Medium> mediums,
+      absl::Span<location::nearby::proto::connections::Medium> mediums,
       const AdvertisingOptions& advertising_options = AdvertisingOptions{});
   // Marks this client as not advertising.
   void StoppedAdvertising();
   bool IsAdvertising() const;
   std::string GetAdvertisingServiceId() const;
 
-  // Get service ID of a surrently active link (either advertising, or
-  // discovering).
-  std::string GetServiceId() const;
-
   // Marks this client as discovering with the given callback.
   void StartedDiscovery(
       const std::string& service_id, Strategy strategy,
       const DiscoveryListener& discovery_listener,
-      absl::Span<proto::connections::Medium> mediums,
+      absl::Span<location::nearby::proto::connections::Medium> mediums,
       const DiscoveryOptions& discovery_options = DiscoveryOptions{});
   // Marks this client as not discovering at all.
   void StoppedDiscovery();
@@ -99,17 +99,16 @@ class ClientProxy final {
   void OnEndpointFound(const std::string& service_id,
                        const std::string& endpoint_id,
                        const ByteArray& endpoint_info,
-                       proto::connections::Medium medium);
+                       location::nearby::proto::connections::Medium medium);
   // Proxies to the client's DiscoveryListener::OnEndpointLost() callback.
   void OnEndpointLost(const std::string& service_id,
                       const std::string& endpoint_id);
 
   // Proxies to the client's ConnectionListener::OnInitiated() callback.
-  void OnConnectionInitiated(const std::string& endpoint_id,
-                             const ConnectionResponseInfo& info,
-                             const ConnectionOptions& connection_options,
-                             const ConnectionListener& listener,
-                             const std::string& connection_token);
+  void OnConnectionInitiated(
+      const std::string& endpoint_id, const ConnectionResponseInfo& info,
+      const ConnectionOptions& connection_options,
+      const ConnectionListener& listener, const std::string& connection_token);
 
   // Proxies to the client's ConnectionListener::OnAccepted() callback.
   void OnConnectionAccepted(const std::string& endpoint_id);
@@ -126,6 +125,14 @@ class ClientProxy final {
 
   // Returns all mediums eligible for upgrade.
   BooleanMediumSelector GetUpgradeMediums(const std::string& endpoint_id) const;
+  // Returns if this endpoint support 5G for WIFI.
+  bool Is5GHzSupported(const std::string& endpoint_id) const;
+  // Returns BSSID for this endpoint.
+  std::string GetBssid(const std::string& endpoint_id) const;
+  // Returns WIFI Frequency for this endpoint.
+  std::int32_t GetApFrequency(const std::string& endpoint_id) const;
+  // Returns IP Address in 4 bytes format for this endpoint.
+  std::string GetIPAddress(const std::string& endpoint_id) const;
   // Returns true if it's safe to send payloads to this endpoint.
   bool IsConnectedToEndpoint(const std::string& endpoint_id) const;
   // Returns all endpoints that can safely be sent payloads.
@@ -190,6 +197,62 @@ class ClientProxy final {
   // rotates.
   void ExitHighVisibilityMode();
 
+  std::string Dump();
+
+  //********************************** V2 **********************************
+  void OnDeviceFound(const absl::string_view service_id,
+                     const NearbyDevice& device,
+                     location::nearby::proto::connections::Medium medium);
+  // Proxies to the client's DiscoveryListener::OnEndpointLost() callback.
+  void OnEndpointLost(absl::string_view service_id, const NearbyDevice& device);
+
+  // Proxies to the client's ConnectionListener::OnInitiated() callback.
+  void OnConnectionInitiated(const NearbyDevice& device,
+                             const ConnectionResponseInfo& info,
+                             const ConnectionOptions& connection_options,
+                             const ConnectionListener& listener,
+                             absl::string_view connection_token);
+
+  void OnConnectionAccepted(const NearbyDevice& device);
+  void OnConnectionRejected(const NearbyDevice& device, const Status& status);
+
+  void OnBandwidthChanged(const NearbyDevice& device, Medium new_medium);
+
+  // If notify is true, also calls the client's
+  // ConnectionListener.disconnected_cb() callback.
+  void OnDisconnected(const NearbyDevice& device, bool notify);
+
+  BooleanMediumSelector GetUpgradableMediums(const NearbyDevice& device) const;
+  bool IsConnectedToEndpoint(const NearbyDevice& device) const;
+  // No payloads should be sent until isConnectedToEndpoint()
+  // returns true.
+  bool HasPendingConnectionToEndpoint(const NearbyDevice& device) const;
+  bool HasLocalEndpointResponded(const NearbyDevice& device) const;
+  bool HasRemoteEndpointResponded(const NearbyDevice& device) const;
+  void LocalEndpointAcceptedConnection(const NearbyDevice& device,
+                                       const PayloadListener& listener);
+  void LocalEndpointRejectedConnection(const NearbyDevice& device);
+  void RemoteEndpointAcceptedConnection(const NearbyDevice& device);
+  void RemoteEndpointRejectedConnection(const NearbyDevice& device);
+  bool IsConnectionAccepted(const NearbyDevice& device) const;
+  bool IsConnectionRejected(const NearbyDevice& device) const;
+
+  void OnPayload(const NearbyDevice& device, Payload payload);
+  void OnPayloadProgress(const NearbyDevice& device,
+                         const PayloadProgressInfo& info);
+  bool LocalConnectionIsAccepted(const NearbyDevice& device) const;
+  bool RemoteConnectionIsAccepted(const NearbyDevice& device) const;
+  void AddCancellationFlag(const NearbyDevice& device);
+  CancellationFlag* GetCancellationFlag(const NearbyDevice& device);
+  void CancelEndpoint(const NearbyDevice& device);
+
+  const location::nearby::connections::OsInfo& GetLocalOsInfo() const;
+  std::optional<location::nearby::connections::OsInfo> GetRemoteOsInfo(
+      absl::string_view endpoint_id) const;
+  void SetRemoteOsInfo(
+      absl::string_view endpoint_id,
+      const location::nearby::connections::OsInfo& remote_os_info);
+
  private:
   struct Connection {
     // Status: may be either:
@@ -219,6 +282,7 @@ class ClientProxy final {
     DiscoveryOptions discovery_options;
     AdvertisingOptions advertising_options;
     std::string connection_token;
+    std::optional<location::nearby::connections::OsInfo> os_info;
   };
 
   struct AdvertisingInfo {
@@ -236,14 +300,14 @@ class ClientProxy final {
   };
 
   void RemoveAllEndpoints();
-  void ResetLocalEndpointIdIfNeeded();
+  void OnSessionComplete();
   bool ConnectionStatusesContains(const std::string& endpoint_id,
                                   Connection::Status status_to_match) const;
   void AppendConnectionStatus(const std::string& endpoint_id,
                               Connection::Status status_to_append);
 
-  const Connection* LookupConnection(const std::string& endpoint_id) const;
-  Connection* LookupConnection(const std::string& endpoint_id);
+  const Connection* LookupConnection(absl::string_view endpoint_id) const;
+  Connection* LookupConnection(absl::string_view endpoint_id);
   bool ConnectionStatusMatches(const std::string& endpoint_id,
                                Connection::Status status) const;
   std::vector<std::string> GetMatchingEndpoints(
@@ -253,10 +317,12 @@ class ClientProxy final {
   void ScheduleClearLocalHighVisModeCacheEndpointIdAlarm();
   void CancelClearLocalHighVisModeCacheEndpointIdAlarm();
 
+  location::nearby::connections::OsInfo::OsType OSNameToOsInfoType(
+      api::OSName osName);
+
   std::string ToString(PayloadProgressInfo::Status status) const;
 
   mutable RecursiveMutex mutex_;
-  Prng prng_;
   std::int64_t client_id_;
   std::string local_endpoint_id_;
   // If currently is advertising in high visibility mode is true: high power and
@@ -274,7 +340,8 @@ class ClientProxy final {
   // expires.
   std::string local_high_vis_mode_cache_endpoint_id_;
   ScheduledExecutor single_thread_executor_;
-  CancelableAlarm clear_local_high_vis_mode_cache_endpoint_id_alarm_;
+  std::unique_ptr<CancelableAlarm>
+      clear_local_high_vis_mode_cache_endpoint_id_alarm_;
 
   // If not empty, we are currently advertising and accepting connection
   // requests for the given service_id.
@@ -317,10 +384,11 @@ class ClientProxy final {
   // nullptr as no-op.
   std::unique_ptr<analytics::AnalyticsRecorder> analytics_recorder_;
   std::unique_ptr<ErrorCodeRecorder> error_code_recorder_;
+  // Local device OS information.
+  location::nearby::connections::OsInfo local_os_info_;
 };
 
 }  // namespace connections
 }  // namespace nearby
-}  // namespace location
 
 #endif  // CORE_INTERNAL_CLIENT_PROXY_H_

@@ -14,12 +14,11 @@
 
 #include "connections/implementation/mediums/webrtc/signaling_frames.h"
 
-namespace location {
 namespace nearby {
 namespace connections {
 namespace mediums {
 namespace webrtc_frames {
-using WebRtcSignalingFrame = location::nearby::mediums::WebRtcSignalingFrame;
+using WebRtcSignalingFrame = ::location::nearby::mediums::WebRtcSignalingFrame;
 
 namespace {
 
@@ -131,4 +130,3 @@ location::nearby::mediums::IceCandidate EncodeIceCandidate(
 }  // namespace mediums
 }  // namespace connections
 }  // namespace nearby
-}  // namespace location

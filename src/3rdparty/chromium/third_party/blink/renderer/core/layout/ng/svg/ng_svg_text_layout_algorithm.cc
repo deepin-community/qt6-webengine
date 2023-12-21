@@ -1,9 +1,13 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/core/layout/ng/svg/ng_svg_text_layout_algorithm.h"
 
+#include <algorithm>
+
+#include "base/containers/contains.h"
+#include "base/ranges/algorithm.h"
 #include "base/trace_event/trace_event.h"
 #include "third_party/blink/renderer/core/layout/ng/svg/resolved_text_layout_attributes_iterator.h"
 #include "third_party/blink/renderer/core/layout/ng/svg/svg_inline_node_data.h"
@@ -12,6 +16,7 @@
 #include "third_party/blink/renderer/core/svg/svg_animated_length.h"
 #include "third_party/blink/renderer/core/svg/svg_length_context.h"
 #include "third_party/blink/renderer/core/svg/svg_text_content_element.h"
+#include "third_party/blink/renderer/platform/wtf/text/code_point_iterator.h"
 #include "third_party/blink/renderer/platform/wtf/wtf_size_t.h"
 #include "ui/gfx/geometry/rect_conversions.h"
 
@@ -28,7 +33,7 @@ NGSvgTextLayoutAlgorithm::NGSvgTextLayoutAlgorithm(NGInlineNode node,
   DCHECK(node.IsSvgText());
 }
 
-void NGSvgTextLayoutAlgorithm::Layout(
+PhysicalSize NGSvgTextLayoutAlgorithm::Layout(
     const String& ifc_text_content,
     NGFragmentItemsBuilder::ItemWithOffsetList& items) {
   TRACE_EVENT0("blink", "NGSvgTextLayoutAlgorithm::Layout");
@@ -40,12 +45,12 @@ void NGSvgTextLayoutAlgorithm::Layout(
 
   // 1. Setup
   if (!Setup(ifc_text_content.length()))
-    return;
+    return PhysicalSize();
 
   // 2. Set flags and assign initial positions
   SetFlags(ifc_text_content, items);
   if (addressable_count_ == 0)
-    return;
+    return PhysicalSize();
 
   // 3. Resolve character positioning
   // This was already done in PrepareLayout() step. See
@@ -76,7 +81,7 @@ void NGSvgTextLayoutAlgorithm::Layout(
   // 8. Position on path
   PositionOnPath(items);
 
-  WriteBackToFragmentItems(items);
+  return WriteBackToFragmentItems(items);
 }
 
 bool NGSvgTextLayoutAlgorithm::Setup(wtf_size_t approximate_count) {
@@ -90,13 +95,13 @@ bool NGSvgTextLayoutAlgorithm::Setup(wtf_size_t approximate_count) {
   if (approximate_count == 0)
     return false;
   // ==> We don't fill |result| here. We do it in the step 2.
-  result_.ReserveCapacity(approximate_count);
+  result_.reserve(approximate_count);
 
   // 1.4. Let CSS_positions be an array of length count whose entries will be
   // filled with the x and y positions of the corresponding typographic
   // character in root. The array entries are initialized to (0, 0).
   // ==> We don't fill |CSS_positions| here. We do it in the step 2.
-  css_positions_.ReserveCapacity(approximate_count);
+  css_positions_.reserve(approximate_count);
   return true;
 }
 
@@ -107,7 +112,7 @@ void NGSvgTextLayoutAlgorithm::SetFlags(
   // This function collects information per an "addressable" character in DOM
   // order. So we need to access NGFragmentItems in the logical order.
   Vector<wtf_size_t> sorted_item_indexes;
-  sorted_item_indexes.ReserveCapacity(items.size());
+  sorted_item_indexes.reserve(items.size());
   for (wtf_size_t i = 0; i < items.size(); ++i) {
     if (items[i]->Type() == NGFragmentItem::kText)
       sorted_item_indexes.push_back(i);
@@ -154,9 +159,9 @@ void NGSvgTextLayoutAlgorithm::SetFlags(
                            item.TextLength());
     // 2.2. Set middle to true if the character at index i is the second or
     // later character that corresponds to a typographic character.
-    for (unsigned text_offset = item_string.NextCodePointOffset(0);
-         text_offset < item_string.length();
-         text_offset = item_string.NextCodePointOffset(text_offset)) {
+    WTF::CodePointIterator iterator = item_string.begin();
+    const WTF::CodePointIterator end = item_string.end();
+    for (++iterator; iterator != end; ++iterator) {
       SvgPerCharacterInfo middle_info;
       middle_info.middle = true;
       middle_info.item_index = info.item_index;
@@ -203,8 +208,10 @@ void NGSvgTextLayoutAlgorithm::AdjustPositionsDxDy(
     // 2.3. Let result[i].x = CSS_positions[i].x + shift.x and
     // result[i].y = CSS_positions[i].y + shift.y.
     const float scaling_factor = ScalingFactorAt(items, i);
-    result_[i].x = css_positions_[i].x() + shift.x() * scaling_factor;
-    result_[i].y = css_positions_[i].y() + shift.y() * scaling_factor;
+    result_[i].x =
+        ClampTo<float>(css_positions_[i].x() + shift.x() * scaling_factor);
+    result_[i].y =
+        ClampTo<float>(css_positions_[i].y() + shift.y() * scaling_factor);
   }
 }
 
@@ -236,9 +243,9 @@ void NGSvgTextLayoutAlgorithm::ResolveTextLength(
   const unsigned i = range.start_index;
   const unsigned j_plus_1 = range.end_index + 1;
   auto* element = To<SVGTextContentElement>(range.layout_object->GetNode());
-  const float text_length =
+  const float text_length = ClampTo<float>(
       element->textLength()->CurrentValue()->Value(SVGLengthContext(element)) *
-      ScalingFactorAt(items, i);
+      ScalingFactorAt(items, i));
   const SVGLengthAdjustType length_adjust =
       element->lengthAdjust()->CurrentEnumValue();
 
@@ -308,20 +315,22 @@ void NGSvgTextLayoutAlgorithm::ResolveTextLength(
                              return !info.middle && !info.text_length_resolved;
                            });
     // 2.4.3. Let n = n + number of resolved descendant nodes − 1.
-    n += std::count_if(resolved_descendant_node_starts.begin(),
-                       resolved_descendant_node_starts.end(),
-                       [i, j_plus_1](const auto& start_index) {
-                         return i <= start_index && start_index < j_plus_1;
-                       }) -
+    n += base::ranges::count_if(resolved_descendant_node_starts,
+                                [i, j_plus_1](const auto& start_index) {
+                                  return i <= start_index &&
+                                         start_index < j_plus_1;
+                                }) -
          1;
     // 2.4.4. Find the per-character adjustment small-delta = delta/n.
-    float character_delta = n != 0 ? delta / n : delta;
+    // character_delta should be 0 if n==0 because it means we have no
+    // adjustable characters for this textLength.
+    float character_delta = n != 0 ? delta / n : 0;
     // 2.4.5. Let shift = 0.
     shift = 0.0f;
     // 2.4.6. For each index k in the range [i,j]:
     //  ==> This loop should run in visual order.
     Vector<wtf_size_t> visual_indexes;
-    visual_indexes.ReserveCapacity(j_plus_1 - i);
+    visual_indexes.reserve(j_plus_1 - i);
     for (wtf_size_t k = i; k < j_plus_1; ++k)
       visual_indexes.push_back(k);
     if (inline_node_.IsBidiEnabled()) {
@@ -345,11 +354,8 @@ void NGSvgTextLayoutAlgorithm::ResolveTextLength(
       // 2.4.6.2. If the "middle" flag for result[k] is not true and k is not a
       // character in a resolved descendant node other than the first character
       // then shift = shift + small-delta.
-      if (!info.middle &&
-          (std::any_of(resolved_descendant_node_starts.begin(),
-                       resolved_descendant_node_starts.end(),
-                       [k](auto offset) { return offset == k; }) ||
-           !info.text_length_resolved))
+      if (!info.middle && (base::Contains(resolved_descendant_node_starts, k) ||
+                           !info.text_length_resolved))
         shift += character_delta;
       info.text_length_resolved = true;
     }
@@ -409,6 +415,7 @@ void NGSvgTextLayoutAlgorithm::AdjustPositionsXY(
       // Take into account of baseline-shift.
       if (!horizontal_)
         shift.set_x(shift.x() + css_positions_[i].x());
+      shift.set_x(ClampTo<float>(shift.x()));
     }
     // 3.2. If resolved_y[index] is set, then let
     // shift.y = resolved_y[index] − result.y[index].
@@ -419,6 +426,7 @@ void NGSvgTextLayoutAlgorithm::AdjustPositionsXY(
       // Take into account of baseline-shift.
       if (horizontal_)
         shift.set_y(shift.y() + css_positions_[i].y());
+      shift.set_y(ClampTo<float>(shift.y()));
     }
 
     // If this character is the first one in a <textPath>, reset the
@@ -465,10 +473,9 @@ void NGSvgTextLayoutAlgorithm::ApplyAnchoring(
 
     const auto& text_path_ranges = inline_node_.SvgTextPathRangeList();
     const auto* text_path_iter =
-        std::find_if(text_path_ranges.begin(), text_path_ranges.end(),
-                     [i](const auto& range) {
-                       return range.start_index <= i && i <= range.end_index;
-                     });
+        base::ranges::find_if(text_path_ranges, [i](const auto& range) {
+          return range.start_index <= i && i <= range.end_index;
+        });
     if (text_path_iter != text_path_ranges.end()) {
       // Anchoring should be scoped within the <textPath>.
       // Non-anchored text following <textPath> will be handled in
@@ -548,7 +555,7 @@ void NGSvgTextLayoutAlgorithm::ApplyAnchoring(
 void NGSvgTextLayoutAlgorithm::PositionOnPath(
     const NGFragmentItemsBuilder::ItemWithOffsetList& items) {
   const auto& ranges = inline_node_.SvgTextPathRangeList();
-  if (ranges.IsEmpty())
+  if (ranges.empty())
     return;
 
   wtf_size_t range_index = 0;
@@ -662,6 +669,8 @@ void NGSvgTextLayoutAlgorithm::PositionOnPath(
               info.x = point_tangent.point.x() * scaling_factor;
               info.y = point_tangent.point.y() * scaling_factor;
             }
+            info.x = ClampTo<float>(*info.x);
+            info.y = ClampTo<float>(*info.y);
           }
         }
       } else {
@@ -695,8 +704,10 @@ void NGSvgTextLayoutAlgorithm::PositionOnPath(
           PointAndTangent point_tangent;
           path_mapper->PointAndNormalAtLength(path_mapper->length(),
                                               point_tangent);
-          path_end_x = point_tangent.point.x() * scaling_factor - *info.x;
-          path_end_y = point_tangent.point.y() * scaling_factor - *info.y;
+          path_end_x = ClampTo<float>(point_tangent.point.x() * scaling_factor -
+                                      *info.x);
+          path_end_y = ClampTo<float>(point_tangent.point.y() * scaling_factor -
+                                      *info.y);
         } else {
           // The 'current text position' should be at the next to the last
           // drawn character.
@@ -741,7 +752,7 @@ void NGSvgTextLayoutAlgorithm::PositionOnPath(
   }
 }
 
-void NGSvgTextLayoutAlgorithm::WriteBackToFragmentItems(
+PhysicalSize NGSvgTextLayoutAlgorithm::WriteBackToFragmentItems(
     NGFragmentItemsBuilder::ItemWithOffsetList& items) {
   gfx::RectF unscaled_visual_rect;
   for (const SvgPerCharacterInfo& info : result_) {
@@ -802,11 +813,11 @@ void NGSvgTextLayoutAlgorithm::WriteBackToFragmentItems(
         PhysicalRect(gfx::ToEnclosingRect(unscaled_visual_rect)));
   }
   // |items| should not have kLine items other than the first one.
-  DCHECK_EQ(std::find_if(items.begin() + 1, items.end(),
-                         [](const auto& item) {
-                           return item->Type() == NGFragmentItem::kLine;
-                         }),
+  DCHECK_EQ(base::ranges::find(items.begin() + 1, items.end(),
+                               NGFragmentItem::kLine, &NGFragmentItem::Type),
             items.end());
+  return {LayoutUnit(unscaled_visual_rect.right()),
+          LayoutUnit(unscaled_visual_rect.bottom())};
 }
 
 float NGSvgTextLayoutAlgorithm::ScalingFactorAt(
@@ -822,11 +833,8 @@ bool NGSvgTextLayoutAlgorithm::IsFirstCharacterInTextPath(
   // This implementation is O(N) where N is the number of <textPath>s in
   // a <text>. If this function is a performance bottleneck, we should add
   // |first_in_text_path| flag to NGSvgCharacterData.
-  const auto& text_path_ranges = inline_node_.SvgTextPathRangeList();
-  return std::find_if(text_path_ranges.begin(), text_path_ranges.end(),
-                      [index](const auto& range) {
-                        return range.start_index == index;
-                      }) != text_path_ranges.end();
+  return base::Contains(inline_node_.SvgTextPathRangeList(), index,
+                        &SvgTextContentRange::start_index);
 }
 
 }  // namespace blink

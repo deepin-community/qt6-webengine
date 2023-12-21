@@ -1,4 +1,4 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,8 +7,8 @@
 #include <memory>
 #include <utility>
 
+#include "base/task/sequenced_task_runner.h"
 #include "base/test/task_environment.h"
-#include "base/threading/sequenced_task_runner_handle.h"
 #include "base/time/time.h"
 #include "components/reporting/util/status.h"
 #include "components/reporting/util/statusor.h"
@@ -33,7 +33,7 @@ class MockDelegate : public DisconnectableClient::Delegate {
   ~MockDelegate() override = default;
 
   void DoCall(base::OnceClosure cb) override {
-    base::SequencedTaskRunnerHandle::Get()->PostDelayedTask(
+    base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
         FROM_HERE, std::move(cb), delay_);
   }
 
@@ -62,7 +62,7 @@ class FailDelegate : public DisconnectableClient::Delegate {
   ~FailDelegate() override = default;
 
   void DoCall(base::OnceClosure cb) override {
-    base::SequencedTaskRunnerHandle::Get()->PostDelayedTask(
+    base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
         FROM_HERE, std::move(cb), delay_);
   }
 
@@ -85,7 +85,7 @@ class DisconnectableClientTest : public ::testing::Test {
   base::test::TaskEnvironment task_environment_{
       base::test::TaskEnvironment::TimeSource::MOCK_TIME};
 
-  DisconnectableClient client_{base::SequencedTaskRunnerHandle::Get()};
+  DisconnectableClient client_{base::SequencedTaskRunner::GetCurrentDefault()};
 };
 
 TEST_F(DisconnectableClientTest, NormalConnection) {

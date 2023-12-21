@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "base/i18n/number_formatting.h"
+#include "base/logging.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/values.h"
 #include "components/app_constants/constants.h"
@@ -17,9 +18,12 @@ namespace app_restore {
 
 namespace {
 
-// Used to generate unique window IDs for desk template launches. Numbers lower
-// than this are reserved for full restore.
-int32_t g_desk_template_window_restore_id = 1000000000;
+// Used to generate unique restore window IDs for desk template launches. These
+// IDs will all be negative in order to avoid clashes with full restore (which
+// are all positive). The first generated ID will be one lower than the starting
+// point and then proceed down. The starting point is a special case value that
+// a valid RWID should not use.
+int32_t g_desk_template_window_restore_id = -1;
 
 }  // namespace
 
@@ -69,12 +73,12 @@ std::unique_ptr<RestoreData> RestoreData::Clone() const {
 }
 
 base::Value RestoreData::ConvertToValue() const {
-  base::Value restore_data_dict(base::Value::Type::DICTIONARY);
+  base::Value restore_data_dict(base::Value::Type::DICT);
   for (const auto& it : app_id_to_launch_list_) {
     if (it.second.empty())
       continue;
 
-    base::Value info_dict(base::Value::Type::DICTIONARY);
+    base::Value info_dict(base::Value::Type::DICT);
     for (const auto& data : it.second) {
       info_dict.SetKey(base::NumberToString(data.first),
                        data.second->ConvertToValue());
@@ -263,16 +267,27 @@ void RestoreData::SetDeskIndex(int desk_index) {
 
 void RestoreData::MakeWindowIdsUniqueForDeskTemplate() {
   for (auto& [app_id, launch_list] : app_id_to_launch_list_) {
-    // We don't want to do in-place updates of the launch list since we could
-    // have collisions. We'll therefore build a new LaunchList and pilfer the
-    // old one for AppRestoreData.
+    // We don't want to do in-place updates of the launch list since it
+    // complicates traversal. We'll therefore build a new LaunchList and pilfer
+    // the old one for AppRestoreData.
     LaunchList new_launch_list;
     for (auto& [window_id, app_restore_data] : launch_list) {
-      new_launch_list[g_desk_template_window_restore_id++] =
+      new_launch_list[--g_desk_template_window_restore_id] =
           std::move(app_restore_data);
     }
     launch_list = std::move(new_launch_list);
   }
+}
+
+void RestoreData::UpdateBrowserAppIdToLacros() {
+  auto app_launch_list_iter =
+      app_id_to_launch_list_.find(app_constants::kChromeAppId);
+  if (app_launch_list_iter == app_id_to_launch_list_.end()) {
+    return;
+  }
+  app_id_to_launch_list_[app_constants::kLacrosAppId] =
+      std::move(app_launch_list_iter->second);
+  RemoveApp(app_constants::kChromeAppId);
 }
 
 std::string RestoreData::ToString() const {

@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,7 @@ import "sandbox/policy/mojom/sandbox.mojom";
 import "services/data_decoder/public/mojom/gzipper.mojom";
 import "services/data_decoder/public/mojom/image_decoder.mojom";
 import "services/data_decoder/public/mojom/json_parser.mojom";
-import "services/data_decoder/public/mojom/web_bundler.mojom";
+import "services/data_decoder/public/mojom/structured_headers_parser.mojom";
 import "services/data_decoder/public/mojom/xml_parser.mojom";
 
 [EnableIf=is_chromeos_ash]
@@ -40,9 +40,6 @@ interface DataDecoderService {
   BindWebBundleParserFactory(
       pending_receiver<web_package.mojom.WebBundleParserFactory> receiver);
 
-  // Binds an interface which can be used to generate a Web Bundle.
-  BindWebBundler(pending_receiver<WebBundler> receiver);
-
   // Binds an interface which can be used to compress and decompress data using
   // gzip.
   BindGzipper(pending_receiver<Gzipper> receiver);
@@ -51,4 +48,7 @@ interface DataDecoderService {
   // data.
   [EnableIf=is_chromeos_ash]
   BindBleScanParser(pending_receiver<BleScanParser> receiver);
+
+  // Binds an interface which can be used to parse structured headers.
+  BindStructuredHeadersParser(pending_receiver<StructuredHeadersParser> receiver);
 };

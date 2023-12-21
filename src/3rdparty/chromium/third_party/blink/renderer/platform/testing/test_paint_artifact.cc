@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -90,7 +90,7 @@ TestPaintArtifact& TestPaintArtifact::RectDrawing(DisplayItemClient& client,
                                                   const gfx::Rect& bounds,
                                                   Color color) {
   PaintRecorder recorder;
-  cc::PaintCanvas* canvas = recorder.beginRecording(gfx::RectToSkRect(bounds));
+  cc::PaintCanvas* canvas = recorder.beginRecording();
   if (!bounds.IsEmpty()) {
     cc::PaintFlags flags;
     flags.setColor(color.Rgb());
@@ -104,6 +104,9 @@ TestPaintArtifact& TestPaintArtifact::RectDrawing(DisplayItemClient& client,
           client.GetPaintInvalidationReason());
   paint_artifact_->RecordDebugInfo(client.Id(), client.DebugName(),
                                    client.OwnerNodeId());
+  auto& chunk = paint_artifact_->PaintChunks().back();
+  chunk.background_color = color;
+  chunk.background_color_area = bounds.size().GetArea();
   DidAddDisplayItem();
   return *this;
 }

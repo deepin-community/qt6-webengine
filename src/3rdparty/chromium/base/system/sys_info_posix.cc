@@ -1,4 +1,4 @@
-// Copyright (c) 2011 The Chromium Authors. All rights reserved.
+// Copyright 2011 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,14 +14,19 @@
 #include <sys/utsname.h>
 #include <unistd.h>
 
+#include <algorithm>
+
+#include "base/check.h"
 #include "base/files/file_util.h"
 #include "base/lazy_instance.h"
 #include "base/notreached.h"
+#include "base/numerics/safe_conversions.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/system/sys_info_internal.h"
 #include "base/threading/scoped_blocking_call.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 
 #if BUILDFLAG(IS_ANDROID)
 #include <sys/vfs.h>
@@ -35,10 +40,93 @@
 #include <sys/vfs.h>
 #endif
 
+#if BUILDFLAG(IS_MAC)
+#include "third_party/abseil-cpp/absl/types/optional.h"
+#endif
+
 namespace {
 
-#if !BUILDFLAG(IS_OPENBSD)
+uint64_t AmountOfVirtualMemory() {
+  struct rlimit limit;
+  int result = getrlimit(RLIMIT_DATA, &limit);
+  if (result != 0) {
+    NOTREACHED();
+    return 0;
+  }
+  return limit.rlim_cur == RLIM_INFINITY ? 0 : limit.rlim_cur;
+}
+
+base::LazyInstance<
+    base::internal::LazySysInfoValue<uint64_t, AmountOfVirtualMemory>>::Leaky
+    g_lazy_virtual_memory = LAZY_INSTANCE_INITIALIZER;
+
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+bool IsStatsZeroIfUnlimited(const base::FilePath& path) {
+  struct statfs stats;
+
+  if (HANDLE_EINTR(statfs(path.value().c_str(), &stats)) != 0)
+    return false;
+
+  // This static_cast is here because various libcs disagree about the size
+  // and signedness of statfs::f_type. In particular, glibc has it as either a
+  // signed long or a signed int depending on platform, and other libcs
+  // (following the statfs(2) man page) use unsigned int instead. To avoid
+  // either an unsigned -> signed cast, or a narrowing cast, we always upcast
+  // statfs::f_type to unsigned long. :(
+  switch (static_cast<unsigned long>(stats.f_type)) {
+    case TMPFS_MAGIC:
+    case HUGETLBFS_MAGIC:
+    case RAMFS_MAGIC:
+      return true;
+  }
+  return false;
+}
+#endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+
+bool GetDiskSpaceInfo(const base::FilePath& path,
+                      int64_t* available_bytes,
+                      int64_t* total_bytes) {
+  struct statvfs stats;
+  if (HANDLE_EINTR(statvfs(path.value().c_str(), &stats)) != 0)
+    return false;
+
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+  const bool zero_size_means_unlimited =
+      stats.f_blocks == 0 && IsStatsZeroIfUnlimited(path);
+#else
+  const bool zero_size_means_unlimited = false;
+#endif
+
+  if (available_bytes) {
+    *available_bytes =
+        zero_size_means_unlimited
+            ? std::numeric_limits<int64_t>::max()
+            : base::saturated_cast<int64_t>(stats.f_bavail * stats.f_frsize);
+  }
+
+  if (total_bytes) {
+    *total_bytes =
+        zero_size_means_unlimited
+            ? std::numeric_limits<int64_t>::max()
+            : base::saturated_cast<int64_t>(stats.f_blocks * stats.f_frsize);
+  }
+  return true;
+}
+
+}  // namespace
+
+namespace base {
+
+namespace internal {
+
 int NumberOfProcessors() {
+#if BUILDFLAG(IS_MAC)
+  absl::optional<int> number_of_physical_cores =
+      NumberOfProcessorsWhenCpuSecurityMitigationEnabled();
+  if (number_of_physical_cores.has_value())
+    return number_of_physical_cores.value();
+#endif  // BUILDFLAG(IS_MAC)
+
   // sysconf returns the number of "logical" (not "physical") processors on both
   // Mac and Linux.  So we get the number of max available "logical" processors.
   //
@@ -75,82 +163,17 @@ int NumberOfProcessors() {
   return num_cpus;
 }
 
-base::LazyInstance<base::internal::LazySysInfoValue<int, NumberOfProcessors>>::
-    Leaky g_lazy_number_of_processors = LAZY_INSTANCE_INITIALIZER;
-#endif  // !BUILDFLAG(IS_OPENBSD)
-
-int64_t AmountOfVirtualMemory() {
-  struct rlimit limit;
-  int result = getrlimit(RLIMIT_DATA, &limit);
-  if (result != 0) {
-    NOTREACHED();
-    return 0;
-  }
-  return limit.rlim_cur == RLIM_INFINITY ? 0 : limit.rlim_cur;
-}
-
-base::LazyInstance<
-    base::internal::LazySysInfoValue<int64_t, AmountOfVirtualMemory>>::Leaky
-    g_lazy_virtual_memory = LAZY_INSTANCE_INITIALIZER;
-
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
-bool IsStatsZeroIfUnlimited(const base::FilePath& path) {
-  struct statfs stats;
-
-  if (HANDLE_EINTR(statfs(path.value().c_str(), &stats)) != 0)
-    return false;
-
-  switch (stats.f_type) {
-    case TMPFS_MAGIC:
-    case static_cast<int>(HUGETLBFS_MAGIC):
-    case static_cast<int>(RAMFS_MAGIC):
-      return true;
-  }
-  return false;
-}
-#endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
-
-bool GetDiskSpaceInfo(const base::FilePath& path,
-                      int64_t* available_bytes,
-                      int64_t* total_bytes) {
-  struct statvfs stats;
-  if (HANDLE_EINTR(statvfs(path.value().c_str(), &stats)) != 0)
-    return false;
-
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
-  const bool zero_size_means_unlimited =
-      stats.f_blocks == 0 && IsStatsZeroIfUnlimited(path);
-#else
-  const bool zero_size_means_unlimited = false;
-#endif
-
-  if (available_bytes) {
-    *available_bytes =
-        zero_size_means_unlimited
-            ? std::numeric_limits<int64_t>::max()
-            : static_cast<int64_t>(stats.f_bavail) * stats.f_frsize;
-  }
-
-  if (total_bytes) {
-    *total_bytes = zero_size_means_unlimited
-                       ? std::numeric_limits<int64_t>::max()
-                       : static_cast<int64_t>(stats.f_blocks) * stats.f_frsize;
-  }
-  return true;
-}
-
-}  // namespace
-
-namespace base {
+}  // namespace internal
 
 #if !BUILDFLAG(IS_OPENBSD)
 int SysInfo::NumberOfProcessors() {
-  return g_lazy_number_of_processors.Get().value();
+  static int number_of_processors = internal::NumberOfProcessors();
+  return number_of_processors;
 }
 #endif  // !BUILDFLAG(IS_OPENBSD)
 
 // static
-int64_t SysInfo::AmountOfVirtualMemory() {
+uint64_t SysInfo::AmountOfVirtualMemory() {
   return g_lazy_virtual_memory.Get().value();
 }
 
@@ -188,8 +211,7 @@ std::string SysInfo::OperatingSystemName() {
 }
 #endif  //! BUILDFLAG(IS_APPLE) && !BUILDFLAG(IS_ANDROID)
 
-#if !BUILDFLAG(IS_APPLE) && !BUILDFLAG(IS_ANDROID) && \
-    !BUILDFLAG(IS_CHROMEOS_ASH) && !BUILDFLAG(IS_CHROMEOS_LACROS)
+#if !BUILDFLAG(IS_APPLE) && !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_CHROMEOS)
 // static
 std::string SysInfo::OperatingSystemVersion() {
   struct utsname info;
@@ -201,8 +223,7 @@ std::string SysInfo::OperatingSystemVersion() {
 }
 #endif
 
-#if !BUILDFLAG(IS_APPLE) && !BUILDFLAG(IS_ANDROID) && \
-    !BUILDFLAG(IS_CHROMEOS_ASH) && !BUILDFLAG(IS_CHROMEOS_LACROS)
+#if !BUILDFLAG(IS_APPLE) && !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_CHROMEOS)
 // static
 void SysInfo::OperatingSystemVersionNumbers(int32_t* major_version,
                                             int32_t* minor_version,
@@ -248,7 +269,46 @@ std::string SysInfo::OperatingSystemArchitecture() {
 
 // static
 size_t SysInfo::VMAllocationGranularity() {
-  return getpagesize();
+  return checked_cast<size_t>(getpagesize());
 }
+
+#if !BUILDFLAG(IS_APPLE)
+// static
+int SysInfo::NumberOfEfficientProcessorsImpl() {
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID)
+  // Try to guess the CPU architecture and cores of each cluster by comparing
+  // the maximum frequencies of the available (online and offline) cores.
+  int num_cpus = SysInfo::NumberOfProcessors();
+  DCHECK_GE(num_cpus, 0);
+  std::vector<uint32_t> max_core_frequencies_khz(static_cast<size_t>(num_cpus),
+                                                 0);
+  for (int core_index = 0; core_index < num_cpus; ++core_index) {
+    std::string content;
+    auto path = StringPrintf(
+        "/sys/devices/system/cpu/cpu%d/cpufreq/cpuinfo_max_freq", core_index);
+    if (!ReadFileToStringNonBlocking(FilePath(path), &content))
+      return 0;
+    if (!StringToUint(
+            content,
+            &max_core_frequencies_khz[static_cast<size_t>(core_index)]))
+      return 0;
+  }
+
+  auto [min_max_core_frequencies_khz_it, max_max_core_frequencies_khz_it] =
+      std::minmax_element(max_core_frequencies_khz.begin(),
+                          max_core_frequencies_khz.end());
+
+  if (*min_max_core_frequencies_khz_it == *max_max_core_frequencies_khz_it)
+    return 0;
+
+  return static_cast<int>(std::count(max_core_frequencies_khz.begin(),
+                                     max_core_frequencies_khz.end(),
+                                     *min_max_core_frequencies_khz_it));
+#else
+  NOTIMPLEMENTED();
+  return 0;
+#endif
+}
+#endif  // !BUILDFLAG(IS_APPLE)
 
 }  // namespace base

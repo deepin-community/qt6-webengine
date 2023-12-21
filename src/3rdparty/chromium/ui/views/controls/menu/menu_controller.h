@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -35,10 +35,15 @@
 #include "ui/views/controls/menu/menu_cocoa_watcher_mac.h"
 #endif
 
+namespace gfx {
+class RoundedCornersF;
+}  // namespace gfx
+
 namespace ui {
 class OSExchangeData;
 struct OwnedWindowAnchor;
-}
+}  // namespace ui
+
 namespace views {
 
 class Button;
@@ -96,6 +101,9 @@ class VIEWS_EXPORT MenuController
 
   // If a menu is currently active, this returns the controller for it.
   static MenuController* GetActiveInstance();
+
+  MenuController(const MenuController&) = delete;
+  MenuController& operator=(const MenuController&) = delete;
 
   // Runs the menu at the specified location.
   void Run(Widget* parent,
@@ -232,6 +240,11 @@ class VIEWS_EXPORT MenuController
   }
   bool use_ash_system_ui_layout() const { return use_ash_system_ui_layout_; }
 
+  // The rounded corners of the context menu.
+  absl::optional<gfx::RoundedCornersF> rounded_corners() const {
+    return rounded_corners_;
+  }
+
   // Notifies |this| that |menu_item| is being destroyed.
   void OnMenuItemDestroying(MenuItemView* menu_item);
 
@@ -245,6 +258,15 @@ class VIEWS_EXPORT MenuController
 
   // gfx::AnimationDelegate:
   void AnimationProgressed(const gfx::Animation* animation) override;
+
+  // Called from MenuScrollViewContainer when either end of the menu is reached
+  void OnMenuEdgeReached();
+
+  // Enables/disables scrolling via scroll buttons
+  void SetEnabledScrollButtons(bool enabled);
+
+  // Sets the customized rounded corners of the context menu.
+  void SetMenuRoundedCorners(absl::optional<gfx::RoundedCornersF> corners);
 
  private:
   friend class internal::MenuRunnerImpl;
@@ -335,14 +357,14 @@ class VIEWS_EXPORT MenuController
     //       but is over a menu (for example, the mouse is over a separator or
     //       empty menu), this is null and parent is the menu the mouse was
     //       clicked on.
-    MenuItemView* menu = nullptr;
+    raw_ptr<MenuItemView, DanglingUntriaged> menu = nullptr;
 
     // If type is kMenuItem but the mouse is not over a menu item this is the
     // parent of the menu item the user clicked on. Otherwise this is null.
-    MenuItemView* parent = nullptr;
+    raw_ptr<MenuItemView, DanglingUntriaged> parent = nullptr;
 
     // This is the submenu the mouse is over.
-    SubmenuView* submenu = nullptr;
+    raw_ptr<SubmenuView, DanglingUntriaged> submenu = nullptr;
 
     // Whether the controller should apply SELECTION_OPEN_SUBMENU to this item.
     bool should_submenu_show = false;
@@ -367,9 +389,6 @@ class VIEWS_EXPORT MenuController
   // Creates a MenuController. See |for_drop_| member for details on |for_drop|.
   MenuController(bool for_drop, internal::MenuControllerDelegate* delegate);
 
-  MenuController(const MenuController&) = delete;
-  MenuController& operator=(const MenuController&) = delete;
-
   ~MenuController() override;
 
   // Invokes AcceleratorPressed() on the hot tracked view if there is one.
@@ -389,7 +408,7 @@ class VIEWS_EXPORT MenuController
   // Invoked when the user accepts the selected item. This is only used
   // when blocking. This schedules the loop to quit.
   void Accept(MenuItemView* item, int event_flags);
-  void ReallyAccept(MenuItemView* item, int event_flags);
+  void ReallyAccept();
 
   bool ShowSiblingMenu(SubmenuView* source, const gfx::Point& mouse_location);
 
@@ -521,7 +540,7 @@ class VIEWS_EXPORT MenuController
                                       ui::OwnedWindowAnchor* anchor);
 
   // Returns the depth of the menu.
-  static int MenuDepth(MenuItemView* item);
+  static size_t MenuDepth(MenuItemView* item);
 
   // Selects the next or previous (depending on |direction|) menu item.
   void IncrementSelection(SelectionIncrementDirectionType direction);
@@ -544,15 +563,6 @@ class VIEWS_EXPORT MenuController
   MenuItemView* FindInitialSelectableMenuItem(
       MenuItemView* parent,
       SelectionIncrementDirectionType direction);
-
-  // Returns the next or previous selectable child menu item of |parent|
-  // starting at |index| and incrementing or decrementing index by 1 depending
-  // on |direction|. If there are no more selectable items NULL is returned.
-  MenuItemView* FindNextSelectableMenuItem(
-      MenuItemView* parent,
-      int index,
-      SelectionIncrementDirectionType direction,
-      bool is_initial);
 
   // If the selected item has a submenu and it isn't currently open, the
   // the selection is changed such that the menu opens immediately.
@@ -812,6 +822,13 @@ class VIEWS_EXPORT MenuController
 
   // Currently showing alerted menu items. Updated when submenus open and close.
   base::flat_set<MenuItemView*> alerted_items_;
+
+  // Whether scroll buttons are currently enabled (as they are temporarily
+  // disabled when either end of the menu is reached)
+  bool scroll_buttons_enabled = true;
+
+  // The rounded corners of the context menu.
+  absl::optional<gfx::RoundedCornersF> rounded_corners_ = absl::nullopt;
 };
 
 }  // namespace views

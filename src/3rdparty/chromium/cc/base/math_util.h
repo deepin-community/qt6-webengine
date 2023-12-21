@@ -1,26 +1,22 @@
-// Copyright 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef CC_BASE_MATH_UTIL_H_
 #define CC_BASE_MATH_UTIL_H_
 
+#include <cmath>
 #include <limits>
-#include <memory>
-#include <vector>
 
 #include "base/check.h"
 #include "base/cxx17_backports.h"
 #include "build/build_config.h"
 #include "cc/base/base_export.h"
 #include "third_party/skia/include/core/SkM44.h"
+#include "third_party/skia/include/core/SkScalar.h"
 #include "ui/gfx/geometry/box_f.h"
 #include "ui/gfx/geometry/point3_f.h"
 #include "ui/gfx/geometry/point_f.h"
-#include "ui/gfx/geometry/rounded_corners_f.h"
-#include "ui/gfx/geometry/size.h"
-#include "ui/gfx/geometry/transform.h"
-#include "ui/gfx/geometry/vector2d_f.h"
 
 namespace base {
 class Value;
@@ -34,6 +30,7 @@ class QuadF;
 class Rect;
 class RectF;
 class RRectF;
+class Size;
 class SizeF;
 class Transform;
 class Vector2dF;
@@ -121,7 +118,7 @@ class CC_BASE_EXPORT MathUtil {
  public:
   // Returns true if rounded up value does not overflow, false otherwise.
   template <typename T>
-  static bool VerifyRoundup(T n, T mul) {
+  static constexpr bool VerifyRoundup(T n, T mul) {
     return mul && (n <= (std::numeric_limits<T>::max() -
                          (std::numeric_limits<T>::max() % mul)));
   }
@@ -131,7 +128,7 @@ class CC_BASE_EXPORT MathUtil {
   //    - RoundUp(123, 50) returns 150.
   //    - RoundUp(-123, 50) returns -100.
   template <typename T>
-  static T UncheckedRoundUp(T n, T mul) {
+  static constexpr T UncheckedRoundUp(T n, T mul) {
     static_assert(std::numeric_limits<T>::is_integer,
                   "T must be an integer type");
     return RoundUpInternal(n, mul);
@@ -140,7 +137,7 @@ class CC_BASE_EXPORT MathUtil {
   // Similar to UncheckedRoundUp(), but dies with a CRASH() if rounding up a
   // given |n| overflows T.
   template <typename T>
-  static T CheckedRoundUp(T n, T mul) {
+  static constexpr T CheckedRoundUp(T n, T mul) {
     static_assert(std::numeric_limits<T>::is_integer,
                   "T must be an integer type");
     CHECK(VerifyRoundup(n, mul));
@@ -149,7 +146,7 @@ class CC_BASE_EXPORT MathUtil {
 
   // Returns true if rounded down value does not underflow, false otherwise.
   template <typename T>
-  static bool VerifyRoundDown(T n, T mul) {
+  static constexpr bool VerifyRoundDown(T n, T mul) {
     return mul && (n >= (std::numeric_limits<T>::min() -
                          (std::numeric_limits<T>::min() % mul)));
   }
@@ -159,7 +156,7 @@ class CC_BASE_EXPORT MathUtil {
   //    - RoundDown(123, 50) returns 100.
   //    - RoundDown(-123, 50) returns -150.
   template <typename T>
-  static T UncheckedRoundDown(T n, T mul) {
+  static constexpr T UncheckedRoundDown(T n, T mul) {
     static_assert(std::numeric_limits<T>::is_integer,
                   "T must be an integer type");
     return RoundDownInternal(n, mul);
@@ -168,7 +165,7 @@ class CC_BASE_EXPORT MathUtil {
   // Similar to UncheckedRoundDown(), but dies with a CRASH() if rounding down a
   // given |n| underflows T.
   template <typename T>
-  static T CheckedRoundDown(T n, T mul) {
+  static constexpr T CheckedRoundDown(T n, T mul) {
     static_assert(std::numeric_limits<T>::is_integer,
                   "T must be an integer type");
     CHECK(VerifyRoundDown(n, mul));
@@ -176,7 +173,7 @@ class CC_BASE_EXPORT MathUtil {
   }
 
   template <typename T>
-  static bool IsWithinEpsilon(T a, T b) {
+  static constexpr bool IsWithinEpsilon(T a, T b) {
     return std::abs(a - b) < std::numeric_limits<T>::epsilon();
   }
 
@@ -341,12 +338,12 @@ class CC_BASE_EXPORT MathUtil {
 
  private:
   template <typename T>
-  static T RoundUpInternal(T n, T mul) {
+  static constexpr T RoundUpInternal(T n, T mul) {
     return (n > 0) ? ((n + mul - 1) / mul) * mul : (n / mul) * mul;
   }
 
   template <typename T>
-  static T RoundDownInternal(T n, T mul) {
+  static constexpr T RoundDownInternal(T n, T mul) {
     return (n > 0) ? (n / mul) * mul : (n == 0) ? 0
                                                 : ((n - mul + 1) / mul) * mul;
   }

@@ -1,4 +1,4 @@
-// Copyright 2016 PDFium Authors. All rights reserved.
+// Copyright 2016 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -19,27 +19,24 @@
 #include "core/fxcrt/unowned_ptr.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 
+class CPDF_Array;
 class CPDF_Dictionary;
 class CPDF_Document;
-class CPDF_Image;
 class CPDF_Object;
+class CPDF_PageImageCache;
 
 class CPDF_Page final : public IPDF_Page, public CPDF_PageObjectHolder {
  public:
-  // Caller implements as desired, empty here due to layering.
-  class View : public Observable {};
+  // Caller implements as desired, exists here due to layering.
+  class View : public Observable {
+   public:
+    virtual void ClearPage(CPDF_Page* pPage) = 0;
+  };
 
   // Data for the render layer to attach to this page.
   class RenderContextIface {
    public:
     virtual ~RenderContextIface() = default;
-  };
-
-  // Cache for the render layer to attach to this page.
-  class RenderCacheIface {
-   public:
-    virtual ~RenderCacheIface() = default;
-    virtual void ResetBitmapForImage(const RetainPtr<CPDF_Image>& pImage) = 0;
   };
 
   class RenderContextClearer {
@@ -77,14 +74,14 @@ class CPDF_Page final : public IPDF_Page, public CPDF_PageObjectHolder {
   const CFX_SizeF& GetPageSize() const { return m_PageSize; }
   const CFX_Matrix& GetPageMatrix() const { return m_PageMatrix; }
   int GetPageRotation() const;
-  RenderCacheIface* GetRenderCache() const { return m_pRenderCache.get(); }
-  void SetRenderCache(std::unique_ptr<RenderCacheIface> pCache) {
-    m_pRenderCache = std::move(pCache);
-  }
 
-  RenderContextIface* GetRenderContext() const {
-    return m_pRenderContext.get();
-  }
+  RetainPtr<CPDF_Array> GetOrCreateAnnotsArray();
+  RetainPtr<CPDF_Array> GetMutableAnnotsArray();
+  RetainPtr<const CPDF_Array> GetAnnotsArray() const;
+
+  void AddPageImageCache();
+  CPDF_PageImageCache* GetPageImageCache() { return m_pPageImageCache.get(); }
+  RenderContextIface* GetRenderContext() { return m_pRenderContext.get(); }
 
   // `pContext` cannot be null. `SetRenderContext()` cannot be called if the
   // page already has a render context. Use `ClearRenderContext()` to reset the
@@ -92,22 +89,22 @@ class CPDF_Page final : public IPDF_Page, public CPDF_PageObjectHolder {
   void SetRenderContext(std::unique_ptr<RenderContextIface> pContext);
   void ClearRenderContext();
 
-  CPDF_Document* GetPDFDocument() const { return m_pPDFDocument.Get(); }
-  View* GetView() const { return m_pView.Get(); }
   void SetView(View* pView) { m_pView.Reset(pView); }
+  void ClearView();
   void UpdateDimensions();
 
  private:
-  CPDF_Page(CPDF_Document* pDocument, CPDF_Dictionary* pPageDict);
+  CPDF_Page(CPDF_Document* pDocument, RetainPtr<CPDF_Dictionary> pPageDict);
   ~CPDF_Page() override;
 
-  CPDF_Object* GetPageAttr(const ByteString& name) const;
+  RetainPtr<CPDF_Object> GetMutablePageAttr(const ByteString& name);
+  RetainPtr<const CPDF_Object> GetPageAttr(const ByteString& name) const;
   CFX_FloatRect GetBox(const ByteString& name) const;
 
   CFX_SizeF m_PageSize;
   CFX_Matrix m_PageMatrix;
-  UnownedPtr<CPDF_Document> m_pPDFDocument;
-  std::unique_ptr<RenderCacheIface> m_pRenderCache;
+  UnownedPtr<CPDF_Document> const m_pPDFDocument;
+  std::unique_ptr<CPDF_PageImageCache> m_pPageImageCache;
   std::unique_ptr<RenderContextIface> m_pRenderContext;
   ObservedPtr<View> m_pView;
 };

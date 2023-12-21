@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -24,7 +24,7 @@ class FormFieldDataAndroid {
   virtual ~FormFieldDataAndroid();
 
   base::android::ScopedJavaLocalRef<jobject> GetJavaPeer();
-  void GetValue();
+  void UpdateFromJava();
   void OnFormFieldDidChange(const std::u16string& value);
   bool SimilarFieldAs(const FormFieldData& field) const;
   void UpdateAutofillTypes(const AutofillType& heuristic_type,

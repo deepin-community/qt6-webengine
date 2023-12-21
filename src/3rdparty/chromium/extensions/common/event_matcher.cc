@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,7 +6,7 @@
 
 #include <utility>
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "extensions/common/mojom/event_dispatcher.mojom.h"
 
 namespace {
@@ -18,7 +18,7 @@ namespace extensions {
 
 const char kEventFilterServiceTypeKey[] = "serviceType";
 
-EventMatcher::EventMatcher(std::unique_ptr<base::DictionaryValue> filter,
+EventMatcher::EventMatcher(std::unique_ptr<base::Value::Dict> filter,
                            int routing_id)
     : filter_(std::move(filter)), routing_id_(routing_id) {}
 
@@ -58,26 +58,17 @@ bool EventMatcher::MatchNonURLCriteria(
 }
 
 int EventMatcher::GetURLFilterCount() const {
-  base::ListValue* url_filters = nullptr;
-  if (filter_->GetList(kUrlFiltersKey, &url_filters))
-    return url_filters->GetListDeprecated().size();
+  base::Value::List* url_filters = filter_->FindList(kUrlFiltersKey);
+  if (url_filters)
+    return url_filters->size();
   return 0;
 }
 
-bool EventMatcher::GetURLFilter(int i,
-                                const base::DictionaryValue** url_filter_out) {
-  base::ListValue* url_filters = nullptr;
-  if (filter_->GetList(kUrlFiltersKey, &url_filters)) {
-    base::Value& dict = url_filters->GetListDeprecated()[i];
-    if (!dict.is_dict()) {
-      return false;
-    }
-    if (url_filter_out) {
-      *url_filter_out = &base::Value::AsDictionaryValue(dict);
-    }
-    return true;
-  }
-  return false;
+const base::Value::Dict* EventMatcher::GetURLFilter(int i) {
+  base::Value::List* url_filters = filter_->FindList(kUrlFiltersKey);
+  if (url_filters)
+    return (*url_filters)[i].GetIfDict();
+  return nullptr;
 }
 
 bool EventMatcher::HasURLFilters() const {
@@ -87,7 +78,7 @@ bool EventMatcher::HasURLFilters() const {
 std::string EventMatcher::GetServiceTypeFilter() const {
   std::string service_type_filter;
   if (const std::string* ptr =
-          filter_->FindStringKey(kEventFilterServiceTypeKey)) {
+          filter_->FindString(kEventFilterServiceTypeKey)) {
     if (base::IsStringASCII(*ptr))
       service_type_filter = *ptr;
   }
@@ -95,23 +86,22 @@ std::string EventMatcher::GetServiceTypeFilter() const {
 }
 
 int EventMatcher::GetInstanceID() const {
-  return filter_->FindIntKey("instanceId").value_or(0);
+  return filter_->FindInt("instanceId").value_or(0);
 }
 
 int EventMatcher::GetWindowTypeCount() const {
-  base::ListValue* window_type_filters = nullptr;
-  if (filter_->GetList(kWindowTypesKey, &window_type_filters))
-    return window_type_filters->GetListDeprecated().size();
+  base::Value::List* window_type_filters = filter_->FindList(kWindowTypesKey);
+  if (window_type_filters)
+    return window_type_filters->size();
   return 0;
 }
 
 bool EventMatcher::GetWindowType(int i, std::string* window_type_out) const {
-  base::ListValue* window_types = nullptr;
-  if (filter_->GetList(kWindowTypesKey, &window_types)) {
-    base::Value::ConstListView types_list = window_types->GetListDeprecated();
-    if (i >= 0 && static_cast<size_t>(i) < types_list.size() &&
-        types_list[i].is_string()) {
-      *window_type_out = types_list[i].GetString();
+  base::Value::List* window_types = filter_->FindList(kWindowTypesKey);
+  if (window_types) {
+    if (i >= 0 && static_cast<size_t>(i) < window_types->size() &&
+        (*window_types)[i].is_string()) {
+      *window_type_out = (*window_types)[i].GetString();
       return true;
     }
   }

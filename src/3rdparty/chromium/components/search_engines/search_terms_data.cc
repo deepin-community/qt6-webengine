@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -150,11 +150,13 @@ std::string SearchTermsData::GetSearchClient() const {
   return std::string();
 }
 
-std::string SearchTermsData::GetSuggestClient() const {
+std::string SearchTermsData::GetSuggestClient(
+    RequestSource request_source) const {
   return std::string();
 }
 
-std::string SearchTermsData::GetSuggestRequestIdentifier() const {
+std::string SearchTermsData::GetSuggestRequestIdentifier(
+    RequestSource request_source) const {
   return std::string();
 }
 

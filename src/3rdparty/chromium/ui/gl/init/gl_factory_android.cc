@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,6 +7,7 @@
 #include "base/check_op.h"
 #include "base/notreached.h"
 #include "base/trace_event/trace_event.h"
+#include "ui/gl/android/scoped_a_native_window.h"
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_context.h"
 #include "ui/gl/gl_context_egl.h"
@@ -72,8 +73,8 @@ bool GLNonOwnedContext::IsCurrent(GLSurface* surface) {
 
 std::vector<GLImplementationParts> GetAllowedGLImplementations() {
   std::vector<GLImplementationParts> impls;
-  impls.emplace_back(GLImplementationParts(kGLImplementationEGLGLES2));
-  impls.emplace_back(GLImplementationParts(kGLImplementationEGLANGLE));
+  impls.emplace_back(kGLImplementationEGLGLES2);
+  impls.emplace_back(kGLImplementationEGLANGLE);
   return impls;
 }
 
@@ -116,14 +117,17 @@ scoped_refptr<GLContext> CreateGLContext(GLShareGroup* share_group,
   }
 }
 
-scoped_refptr<GLSurface> CreateViewGLSurface(gfx::AcceleratedWidget window) {
+scoped_refptr<GLSurface> CreateViewGLSurface(GLDisplay* display,
+                                             gfx::AcceleratedWidget window) {
   TRACE_EVENT0("gpu", "gl::init::CreateViewGLSurface");
   CHECK_NE(kGLImplementationNone, GetGLImplementation());
   switch (GetGLImplementation()) {
     case kGLImplementationEGLGLES2:
     case kGLImplementationEGLANGLE:
       if (window != gfx::kNullAcceleratedWidget) {
-        return InitializeGLSurface(new NativeViewGLSurfaceEGL(window, nullptr));
+        return InitializeGLSurface(new NativeViewGLSurfaceEGL(
+            display->GetAs<gl::GLDisplayEGL>(),
+            ScopedANativeWindow::Wrap(window), nullptr));
       } else {
         return InitializeGLSurface(new GLSurfaceStub());
       }
@@ -134,18 +138,22 @@ scoped_refptr<GLSurface> CreateViewGLSurface(gfx::AcceleratedWidget window) {
 }
 
 scoped_refptr<GLSurface> CreateOffscreenGLSurfaceWithFormat(
-    const gfx::Size& size, GLSurfaceFormat format) {
+    GLDisplay* display,
+    const gfx::Size& size,
+    GLSurfaceFormat format) {
   TRACE_EVENT0("gpu", "gl::init::CreateOffscreenGLSurface");
   CHECK_NE(kGLImplementationNone, GetGLImplementation());
   switch (GetGLImplementation()) {
     case kGLImplementationEGLGLES2:
     case kGLImplementationEGLANGLE: {
-      if (GLSurfaceEGL::IsEGLSurfacelessContextSupported() &&
+      GLDisplayEGL* display_egl = display->GetAs<gl::GLDisplayEGL>();
+      if (display_egl->IsEGLSurfacelessContextSupported() &&
           (size.width() == 0 && size.height() == 0)) {
-        return InitializeGLSurfaceWithFormat(new SurfacelessEGL(size), format);
+        return InitializeGLSurfaceWithFormat(
+            new SurfacelessEGL(display_egl, size), format);
       } else {
-        return InitializeGLSurfaceWithFormat(new PbufferGLSurfaceEGL(size),
-                                             format);
+        return InitializeGLSurfaceWithFormat(
+            new PbufferGLSurfaceEGL(display_egl, size), format);
       }
     }
     case kGLImplementationMockGL:
@@ -173,13 +181,14 @@ void SetDisabledExtensionsPlatform(const std::string& disabled_extensions) {
   }
 }
 
-bool InitializeExtensionSettingsOneOffPlatform() {
+bool InitializeExtensionSettingsOneOffPlatform(GLDisplay* display) {
   GLImplementation implementation = GetGLImplementation();
   DCHECK_NE(kGLImplementationNone, implementation);
   switch (implementation) {
     case kGLImplementationEGLGLES2:
     case kGLImplementationEGLANGLE:
-      return InitializeExtensionSettingsOneOffEGL();
+      return InitializeExtensionSettingsOneOffEGL(
+          static_cast<GLDisplayEGL*>(display));
     case kGLImplementationMockGL:
     case kGLImplementationStubGL:
       return true;

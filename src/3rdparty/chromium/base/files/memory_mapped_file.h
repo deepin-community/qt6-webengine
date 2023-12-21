@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,6 +12,7 @@
 
 #include "base/base_export.h"
 #include "base/files/file.h"
+#include "base/memory/raw_ptr.h"
 #include "build/build_config.h"
 
 #if BUILDFLAG(IS_WIN)
@@ -138,8 +139,9 @@ class BASE_EXPORT MemoryMappedFile {
   void CloseHandles();
 
   File file_;
-  uint8_t* data_;
-  size_t length_;
+
+  raw_ptr<uint8_t, DanglingUntriaged | AllowPtrArithmetic> data_ = nullptr;
+  size_t length_ = 0;
 
 #if BUILDFLAG(IS_WIN)
   win::ScopedHandle file_mapping_;

@@ -1,10 +1,11 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_WTF_VECTOR_BACKED_LINKED_LIST_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_WTF_VECTOR_BACKED_LINKED_LIST_H_
 
+#include "base/check_op.h"
 #include "base/dcheck_is_on.h"
 #include "base/gtest_prod_util.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/partition_allocator.h"
@@ -143,7 +144,7 @@ class ConstructTraits<VectorBackedLinkedListNode<ValueType, Allocator>,
       static_assert(VectorTraits<Node>::kCanMoveWithMemcpy,
                     "Garbage collected types used in VectorBackedLinkedList "
                     "should be movable with memcpy");
-      AtomicWriteMemcpy<sizeof(Node)>(location, &element);
+      AtomicWriteMemcpy<sizeof(Node), alignof(Node)>(location, &element);
       return reinterpret_cast<Node*>(location);
     }
   };
@@ -327,7 +328,7 @@ class VectorBackedLinkedList {
   wtf_size_t free_head_index_ = anchor_index_;
   wtf_size_t size_ = 0;
 
-  template <typename T, typename U, typename V, typename W>
+  template <typename T, typename U, typename V>
   friend class LinkedHashSet;
   FRIEND_TEST_ALL_PREFIXES(VectorBackedLinkedListTest, Insert);
   FRIEND_TEST_ALL_PREFIXES(VectorBackedLinkedListTest, PushFront);

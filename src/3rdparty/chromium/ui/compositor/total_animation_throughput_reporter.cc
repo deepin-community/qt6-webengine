@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,6 +9,19 @@
 #include "ui/compositor/compositor.h"
 
 namespace ui {
+
+TotalAnimationThroughputReporter::ScopedThroughputReporterBlocker::
+    ScopedThroughputReporterBlocker(
+        base::WeakPtr<TotalAnimationThroughputReporter> reporter)
+    : reporter_(std::move(reporter)) {
+  reporter_->scoped_blocker_count_++;
+}
+
+TotalAnimationThroughputReporter::ScopedThroughputReporterBlocker::
+    ~ScopedThroughputReporterBlocker() {
+  if (reporter_)
+    reporter_->scoped_blocker_count_--;
+}
 
 TotalAnimationThroughputReporter::TotalAnimationThroughputReporter(
     ui::Compositor* compositor,
@@ -36,13 +49,18 @@ TotalAnimationThroughputReporter::~TotalAnimationThroughputReporter() {
 
 void TotalAnimationThroughputReporter::OnFirstAnimationStarted(
     ui::Compositor* compositor) {
-  throughput_tracker_ = compositor->RequestNewThroughputTracker();
-  throughput_tracker_->Start(base::BindRepeating(
-      &TotalAnimationThroughputReporter::Report, ptr_factory_.GetWeakPtr()));
+  if (!throughput_tracker_) {
+    throughput_tracker_ = compositor->RequestNewThroughputTracker();
+    throughput_tracker_->Start(base::BindRepeating(
+        &TotalAnimationThroughputReporter::Report, ptr_factory_.GetWeakPtr()));
+  }
 }
 
-void TotalAnimationThroughputReporter::OnLastAnimationEnded(
+void TotalAnimationThroughputReporter::OnFirstNonAnimatedFrameStarted(
     ui::Compositor* compositor) {
+  if (IsBlocked())
+    return;
+
   throughput_tracker_->Stop();
   throughput_tracker_.reset();
   // Stop observing if no need to report multiple times.
@@ -60,6 +78,19 @@ void TotalAnimationThroughputReporter::OnCompositingShuttingDown(
   compositor_ = nullptr;
   if (should_delete_)
     delete this;
+}
+
+base::WeakPtr<ui::TotalAnimationThroughputReporter>
+TotalAnimationThroughputReporter::GetWeakPtr() {
+  return ptr_factory_.GetWeakPtr();
+}
+
+std::unique_ptr<
+    TotalAnimationThroughputReporter::ScopedThroughputReporterBlocker>
+TotalAnimationThroughputReporter::NewScopedBlocker() {
+  return std::make_unique<
+      ui::TotalAnimationThroughputReporter::ScopedThroughputReporterBlocker>(
+      ptr_factory_.GetWeakPtr());
 }
 
 TotalAnimationThroughputReporter::TotalAnimationThroughputReporter(
@@ -90,6 +121,10 @@ void TotalAnimationThroughputReporter::Report(
   }
   if (!report_repeating_callback_.is_null())
     report_repeating_callback_.Run(data);
+}
+
+bool TotalAnimationThroughputReporter::IsBlocked() const {
+  return scoped_blocker_count_;
 }
 
 }  // namespace ui

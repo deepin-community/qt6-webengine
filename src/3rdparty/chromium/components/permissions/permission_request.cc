@@ -1,9 +1,10 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/permissions/permission_request.h"
 
+#include "base/no_destructor.h"
 #include "base/notreached.h"
 #include "build/build_config.h"
 #include "components/permissions/permission_util.h"
@@ -11,10 +12,6 @@
 #include "components/strings/grit/components_strings.h"
 #include "components/url_formatter/elide_url.h"
 #include "ui/base/l10n/l10n_util.h"
-
-#if BUILDFLAG(IS_ANDROID)
-#include "media/base/android/media_drm_bridge.h"
-#endif
 
 namespace permissions {
 
@@ -37,6 +34,10 @@ PermissionRequest::~PermissionRequest() {
 bool PermissionRequest::IsDuplicateOf(PermissionRequest* other_request) const {
   return request_type() == other_request->request_type() &&
          requesting_origin() == other_request->requesting_origin();
+}
+
+base::WeakPtr<PermissionRequest> PermissionRequest::GetWeakPtr() {
+  return weak_factory_.GetWeakPtr();
 }
 
 #if BUILDFLAG(IS_ANDROID)
@@ -82,11 +83,10 @@ std::u16string PermissionRequest::GetDialogMessageText() const {
       break;
     case RequestType::kProtectedMediaIdentifier:
       message_id =
-          media::MediaDrmBridge::IsPerOriginProvisioningSupported()
-              ? IDS_PROTECTED_MEDIA_IDENTIFIER_PER_ORIGIN_PROVISIONING_INFOBAR_TEXT
-              : IDS_PROTECTED_MEDIA_IDENTIFIER_PER_DEVICE_PROVISIONING_INFOBAR_TEXT;
+          IDS_PROTECTED_MEDIA_IDENTIFIER_PER_ORIGIN_PROVISIONING_INFOBAR_TEXT;
       break;
     case RequestType::kStorageAccess:
+    case RequestType::kTopLevelStorageAccess:
       // Handled by `PermissionPromptAndroid::GetMessageText` directly.
       NOTREACHED();
       break;
@@ -103,6 +103,11 @@ std::u16string PermissionRequest::GetDialogMessageText() const {
 #endif
 
 #if !BUILDFLAG(IS_ANDROID)
+
+bool PermissionRequest::IsConfirmationChipSupported() {
+  return permissions::IsConfirmationChipSupported(request_type_);
+}
+
 IconId PermissionRequest::GetIconForChip() {
   return permissions::GetIconId(request_type_);
 }
@@ -111,58 +116,50 @@ IconId PermissionRequest::GetBlockedIconForChip() {
   return permissions::GetBlockedIconId(request_type_);
 }
 
-absl::optional<std::u16string> PermissionRequest::GetRequestChipText() const {
-  int message_id;
-  switch (request_type_) {
-    case RequestType::kArSession:
-      message_id = IDS_AR_PERMISSION_CHIP;
-      break;
-    case RequestType::kCameraStream:
-      message_id = IDS_MEDIA_CAPTURE_VIDEO_ONLY_PERMISSION_CHIP;
-      break;
-    case RequestType::kClipboard:
-      message_id = IDS_CLIPBOARD_PERMISSION_CHIP;
-      break;
-    case RequestType::kGeolocation:
-      message_id = IDS_GEOLOCATION_PERMISSION_CHIP;
-      break;
-    case RequestType::kIdleDetection:
-      message_id = IDS_IDLE_DETECTION_PERMISSION_CHIP;
-      break;
-    case RequestType::kMicStream:
-      message_id = IDS_MEDIA_CAPTURE_AUDIO_ONLY_PERMISSION_CHIP;
-      break;
-    case RequestType::kMidiSysex:
-      message_id = IDS_MIDI_SYSEX_PERMISSION_CHIP;
-      break;
-    case RequestType::kNotifications:
-      message_id = IDS_NOTIFICATION_PERMISSIONS_CHIP;
-      break;
-    case RequestType::kVrSession:
-      message_id = IDS_VR_PERMISSION_CHIP;
-      break;
-    default:
-      // TODO(bsep): We don't actually want to support having no string in the
-      // long term, but writing them takes time. In the meantime, we fall back
-      // to the existing UI when the string is missing.
-      return absl::nullopt;
-  }
-  return l10n_util::GetStringUTF16(message_id);
-}
+absl::optional<std::u16string> PermissionRequest::GetRequestChipText(
+    ChipTextType type) const {
+  static base::NoDestructor<std::map<RequestType, std::vector<int>>> kMessageIds(
+      {{RequestType::kArSession, {IDS_AR_PERMISSION_CHIP, -1, -1, -1, -1, -1}},
+       {RequestType::kCameraStream,
+        {IDS_MEDIA_CAPTURE_VIDEO_ONLY_PERMISSION_CHIP, -1,
+         IDS_PERMISSIONS_PERMISSION_ALLOWED_CONFIRMATION,
+         IDS_PERMISSIONS_PERMISSION_NOT_ALLOWED_CONFIRMATION,
+         IDS_PERMISSIONS_CAMERA_ALLOWED_CONFIRMATION_SCREENREADER_ANNOUNCEMENT,
+         IDS_PERMISSIONS_CAMERA_NOT_ALLOWED_CONFIRMATION_SCREENREADER_ANNOUNCEMENT}},
+       {RequestType::kClipboard,
+        {IDS_CLIPBOARD_PERMISSION_CHIP, -1, -1, -1, -1, -1}},
+       {RequestType::kGeolocation,
+        {IDS_GEOLOCATION_PERMISSION_CHIP,
+         IDS_GEOLOCATION_PERMISSION_BLOCKED_CHIP,
+         IDS_PERMISSIONS_PERMISSION_ALLOWED_CONFIRMATION,
+         IDS_PERMISSIONS_PERMISSION_NOT_ALLOWED_CONFIRMATION,
+         IDS_PERMISSIONS_GEOLOCATION_ALLOWED_CONFIRMATION_SCREENREADER_ANNOUNCEMENT,
+         IDS_PERMISSIONS_GEOLOCATION_NOT_ALLOWED_CONFIRMATION_SCREENREADER_ANNOUNCEMENT}},
+       {RequestType::kIdleDetection,
+        {IDS_IDLE_DETECTION_PERMISSION_CHIP, -1, -1, -1, -1, -1}},
+       {RequestType::kMicStream,
+        {IDS_MEDIA_CAPTURE_AUDIO_ONLY_PERMISSION_CHIP, -1,
+         IDS_PERMISSIONS_PERMISSION_ALLOWED_CONFIRMATION,
+         IDS_PERMISSIONS_PERMISSION_NOT_ALLOWED_CONFIRMATION,
+         IDS_PERMISSIONS_MICROPHONE_ALLOWED_CONFIRMATION_SCREENREADER_ANNOUNCEMENT,
+         IDS_PERMISSIONS_MICROPHONE_NOT_ALLOWED_CONFIRMATION_SCREENREADER_ANNOUNCEMENT}},
+       {RequestType::kMidiSysex,
+        {IDS_MIDI_SYSEX_PERMISSION_CHIP, -1, -1, -1, -1, -1}},
+       {RequestType::kNotifications,
+        {IDS_NOTIFICATION_PERMISSIONS_CHIP,
+         IDS_NOTIFICATION_PERMISSIONS_BLOCKED_CHIP,
+         IDS_PERMISSIONS_PERMISSION_ALLOWED_CONFIRMATION,
+         IDS_PERMISSIONS_PERMISSION_NOT_ALLOWED_CONFIRMATION,
+         IDS_PERMISSIONS_NOTIFICATION_ALLOWED_CONFIRMATION_SCREENREADER_ANNOUNCEMENT,
+         IDS_PERMISSIONS_NOTIFICATION_NOT_ALLOWED_CONFIRMATION_SCREENREADER_ANNOUNCEMENT}},
+       {RequestType::kVrSession,
+        {IDS_VR_PERMISSION_CHIP, -1, -1, -1, -1, -1}}});
 
-absl::optional<std::u16string> PermissionRequest::GetQuietChipText() const {
-  int message_id;
-  switch (request_type_) {
-    case RequestType::kGeolocation:
-      message_id = IDS_GEOLOCATION_PERMISSION_BLOCKED_CHIP;
-      break;
-    case RequestType::kNotifications:
-      message_id = IDS_NOTIFICATION_PERMISSIONS_BLOCKED_CHIP;
-      break;
-    default:
-      return absl::nullopt;
-  }
-  return l10n_util::GetStringUTF16(message_id);
+  auto messages = kMessageIds->find(request_type_);
+  if (messages != kMessageIds->end() && messages->second[type] != -1)
+    return l10n_util::GetStringUTF16(messages->second[type]);
+
+  return absl::nullopt;
 }
 
 std::u16string PermissionRequest::GetMessageTextFragment() const {
@@ -217,6 +214,7 @@ std::u16string PermissionRequest::GetMessageTextFragment() const {
       NOTREACHED();
       return std::u16string();
     case RequestType::kStorageAccess:
+    case RequestType::kTopLevelStorageAccess:
       message_id = IDS_STORAGE_ACCESS_PERMISSION_FRAGMENT;
       break;
     case RequestType::kSecurityAttestation:
@@ -228,8 +226,8 @@ std::u16string PermissionRequest::GetMessageTextFragment() const {
     case RequestType::kVrSession:
       message_id = IDS_VR_PERMISSION_FRAGMENT;
       break;
-    case RequestType::kWindowPlacement:
-      message_id = IDS_WINDOW_PLACEMENT_PERMISSION_FRAGMENT;
+    case RequestType::kWindowManagement:
+      message_id = IDS_WINDOW_MANAGEMENT_PERMISSION_FRAGMENT;
       break;
   }
   DCHECK_NE(0, message_id);
@@ -239,17 +237,19 @@ std::u16string PermissionRequest::GetMessageTextFragment() const {
 
 void PermissionRequest::PermissionGranted(bool is_one_time) {
   std::move(permission_decided_callback_)
-      .Run(CONTENT_SETTING_ALLOW, is_one_time);
+      .Run(CONTENT_SETTING_ALLOW, is_one_time,
+           /*is_final_decision=*/true);
 }
 
 void PermissionRequest::PermissionDenied() {
   std::move(permission_decided_callback_)
-      .Run(CONTENT_SETTING_BLOCK, /*is_one_time=*/false);
+      .Run(CONTENT_SETTING_BLOCK, /*is_one_time=*/false,
+           /*is_final_decision=*/true);
 }
 
-void PermissionRequest::Cancelled() {
-  std::move(permission_decided_callback_)
-      .Run(CONTENT_SETTING_DEFAULT, /*is_one_time=*/false);
+void PermissionRequest::Cancelled(bool is_final_decision) {
+  permission_decided_callback_.Run(CONTENT_SETTING_DEFAULT,
+                                   /*is_one_time=*/false, is_final_decision);
 }
 
 void PermissionRequest::RequestFinished() {

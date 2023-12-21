@@ -39,8 +39,20 @@
 #include "third_party/blink/renderer/core/animation/keyframe_effect.h"
 #include "third_party/blink/renderer/core/animation/timing_calculations.h"
 #include "third_party/blink/renderer/core/animation/timing_input.h"
+#include "third_party/blink/renderer/core/dom/document.h"
+#include "third_party/blink/renderer/core/frame/web_feature.h"
 
 namespace blink {
+
+namespace {
+
+void UseCountEffectTimingDelayZero(Document& document, const Timing& timing) {
+  if (timing.iteration_duration == AnimationTimeDelta()) {
+    UseCounter::Count(document, WebFeature::kGetEffectTimingDelayZero);
+  }
+}
+
+}  // namespace
 
 AnimationEffect::AnimationEffect(const Timing& timing,
                                  EventDelegate* event_delegate)
@@ -54,6 +66,7 @@ AnimationEffect::AnimationEffect(const Timing& timing,
 }
 
 // Scales all timing values so that end_time == timeline_duration
+// https://drafts.csswg.org/web-animations-2/#time-based-animation-to-a-proportional-animation
 void AnimationEffect::EnsureNormalizedTiming() const {
   // Only run the normalization process if needed
   if (normalized_)
@@ -65,6 +78,10 @@ void AnimationEffect::EnsureNormalizedTiming() const {
     // Normalize timings for progress based timelines
     normalized_->timeline_duration = TimelineDuration();
 
+    // TODO(crbug.com/1216527): Refactor for animation-range + delays. Still
+    // some details to sort out in the spec when mixing delays and range
+    // offsets. What happens if you have an animation range and time based
+    // delays?
     if (timing_.iteration_duration) {
       // Scaling up iteration_duration allows animation effect to be able to
       // handle values produced by progress based timelines. At this point it
@@ -77,7 +94,8 @@ void AnimationEffect::EnsureNormalizedTiming() const {
       // Per the spec, the end time has a lower bound of 0.0:
       // https://w3.org/TR/web-animations-1/#end-time
       const AnimationTimeDelta end_time =
-          std::max(timing_.start_delay + active_duration + timing_.end_delay,
+          std::max(timing_.start_delay.AsTimeValue() + active_duration +
+                       timing_.end_delay.AsTimeValue(),
                    AnimationTimeDelta());
 
       // Negative start_delay that is >= iteration_duration or iteration_count
@@ -106,11 +124,13 @@ void AnimationEffect::EnsureNormalizedTiming() const {
             (1.0 / timing_.iteration_count) *
             normalized_->timeline_duration.value();
       } else {
-        // convert to percentages then multiply by the timeline_duration
-        normalized_->start_delay = (timing_.start_delay / end_time) *
-                                   normalized_->timeline_duration.value();
+        // End time is not 0 or infinite.
+        // Convert to percentages then multiply by the timeline_duration
+        normalized_->start_delay =
+            (timing_.start_delay.AsTimeValue() / end_time) *
+            normalized_->timeline_duration.value();
 
-        normalized_->end_delay = (timing_.end_delay / end_time) *
+        normalized_->end_delay = (timing_.end_delay.AsTimeValue() / end_time) *
                                  normalized_->timeline_duration.value();
 
         normalized_->iteration_duration =
@@ -118,24 +138,22 @@ void AnimationEffect::EnsureNormalizedTiming() const {
             normalized_->timeline_duration.value();
       }
     } else {
-      // Handle iteration_duration value of "auto"
-
-      // TODO(crbug.com/1216527)
-      // this will change to support percentage delays and possibly mixed
-      // delays.
-      DCHECK(normalized_->start_delay.is_zero() &&
-             normalized_->end_delay.is_zero());
-
+      // Default (auto) duration with a non-monotonic timeline case.
+      // TODO(crbug.com/1216527): Update timing once ratified in the spec.
+      // Normalized timing is purely used internally in order to keep the bulk
+      // of the animation code time-based. Range start and end is combined with
+      // delay and endDelay.
       normalized_->iteration_duration = IntrinsicIterationDuration();
-
-      // TODO: add support for progress based timelines and "auto" duration
-      // effects
+      std::pair<AnimationTimeDelta, AnimationTimeDelta> delay_pair =
+          ComputeEffectiveAnimationDelays();
+      normalized_->start_delay = delay_pair.first;
+      normalized_->end_delay = delay_pair.second;
     }
   } else {
     // Monotonic timeline case.
     // Populates normalized values for use with time based timelines.
-    normalized_->start_delay = timing_.start_delay;
-    normalized_->end_delay = timing_.end_delay;
+    normalized_->start_delay = timing_.start_delay.AsTimeValue();
+    normalized_->end_delay = timing_.end_delay.AsTimeValue();
     normalized_->iteration_duration =
         timing_.iteration_duration.value_or(AnimationTimeDelta());
   }
@@ -191,12 +209,23 @@ void AnimationEffect::SetIgnoreCssTimingProperties() {
 }
 
 EffectTiming* AnimationEffect::getTiming() const {
-  if (const Animation* animation = GetAnimation())
+  if (const Animation* animation = GetAnimation()) {
     animation->FlushPendingUpdates();
+    UseCountEffectTimingDelayZero(*animation->GetDocument(), SpecifiedTiming());
+  }
   return SpecifiedTiming().ConvertToEffectTiming();
 }
 
-ComputedEffectTiming* AnimationEffect::getComputedTiming() const {
+ComputedEffectTiming* AnimationEffect::getComputedTiming() {
+  // A composited animation does not need to tick main frame updates, and
+  // the cached state for localTime can become stale.
+  if (Animation* animation = GetAnimation()) {
+    absl::optional<AnimationTimeDelta> current_time =
+        animation->CurrentTimeInternal();
+    if (current_time != last_update_time_)
+      animation->Update(kTimingUpdateOnDemand);
+  }
+
   return SpecifiedTiming().getComputedTiming(
       EnsureCalculated(), NormalizedTiming(), IsA<KeyframeEffect>(this));
 }
@@ -224,12 +253,12 @@ void AnimationEffect::updateTiming(OptionalEffectTiming* optional_timing,
         // here to allow for percentage values but not time values.
 
         // If either delay or end_delay are non-zero, we can't handle "auto"
-        if (!SpecifiedTiming().start_delay.is_zero() ||
-            !SpecifiedTiming().end_delay.is_zero()) {
+        if (SpecifiedTiming().start_delay.IsNonzeroTimeBasedDelay() ||
+            SpecifiedTiming().end_delay.IsNonzeroTimeBasedDelay()) {
           exception_state.ThrowDOMException(
               DOMExceptionCode::kNotSupportedError,
-              "Effect duration \"auto\" with delays is not yet implemented "
-              "when used with Scroll Timelines");
+              "Effect duration \"auto\" with time delays is not yet "
+              "implemented when used with Scroll Timelines");
           return;
         }
       }
@@ -255,51 +284,32 @@ void AnimationEffect::updateTiming(OptionalEffectTiming* optional_timing,
   InvalidateAndNotifyOwner();
 }
 
-absl::optional<Timing::Phase> TimelinePhaseToTimingPhase(
-    absl::optional<TimelinePhase> phase) {
-  absl::optional<Timing::Phase> result;
-  if (phase) {
-    switch (phase.value()) {
-      case TimelinePhase::kBefore:
-        result = Timing::Phase::kPhaseBefore;
-        break;
-      case TimelinePhase::kActive:
-        result = Timing::Phase::kPhaseActive;
-        break;
-      case TimelinePhase::kAfter:
-        result = Timing::Phase::kPhaseAfter;
-        break;
-      case TimelinePhase::kInactive:
-        // Timing::Phase does not have an inactive phase.
-        break;
-    }
-  }
-  return result;
-}
-
 void AnimationEffect::UpdateInheritedTime(
     absl::optional<AnimationTimeDelta> inherited_time,
-    absl::optional<TimelinePhase> inherited_timeline_phase,
     bool at_progress_timeline_boundary,
+    bool is_idle,
     double inherited_playback_rate,
     TimingUpdateReason reason) const {
   const Timing::AnimationDirection direction =
       (inherited_playback_rate < 0) ? Timing::AnimationDirection::kBackwards
                                     : Timing::AnimationDirection::kForwards;
 
-  absl::optional<Timing::Phase> timeline_phase =
-      TimelinePhaseToTimingPhase(inherited_timeline_phase);
-
-  bool needs_update = needs_update_ || last_update_time_ != inherited_time ||
-                      (owner_ && owner_->EffectSuppressed()) ||
-                      last_update_phase_ != timeline_phase;
+  bool needs_update =
+      needs_update_ || last_update_time_ != inherited_time ||
+      last_at_progress_timeline_boundary_ != at_progress_timeline_boundary ||
+      last_is_idle_ != is_idle || (owner_ && owner_->EffectSuppressed());
   needs_update_ = false;
   last_update_time_ = inherited_time;
-  last_update_phase_ = timeline_phase;
+  last_is_idle_ = is_idle;
+  // A finished animation saturates inherited time at 0 or effect end.
+  // If we hit a progress timeline boundary and then enter the after phase
+  // timeline time doesn't change. Thus, we need to track boundary transitions
+  // as well since this can affect the phase (active vs after).
+  last_at_progress_timeline_boundary_ = at_progress_timeline_boundary;
 
   if (needs_update) {
     Timing::CalculatedTiming calculated = SpecifiedTiming().CalculateTimings(
-        inherited_time, timeline_phase, at_progress_timeline_boundary,
+        inherited_time, at_progress_timeline_boundary, is_idle,
         NormalizedTiming(), direction, IsA<KeyframeEffect>(this),
         inherited_playback_rate);
 
@@ -353,6 +363,15 @@ Animation* AnimationEffect::GetAnimation() {
 }
 const Animation* AnimationEffect::GetAnimation() const {
   return owner_ ? owner_->GetAnimation() : nullptr;
+}
+
+AnimationEffect::TimeDelayPair
+AnimationEffect::ComputeEffectiveAnimationDelays() const {
+  if (GetAnimation() && GetAnimation()->timeline()) {
+    return GetAnimation()->timeline()->ComputeEffectiveAnimationDelays(
+        owner_->GetAnimation(), timing_);
+  }
+  return std::make_pair(AnimationTimeDelta(), AnimationTimeDelta());
 }
 
 void AnimationEffect::Trace(Visitor* visitor) const {

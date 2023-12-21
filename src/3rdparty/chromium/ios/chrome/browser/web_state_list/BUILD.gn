@@ -1,4 +1,4 @@
-# Copyright 2017 The Chromium Authors. All rights reserved.
+# Copyright 2017 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -47,9 +47,9 @@ source_set("web_state_list") {
     "//components/favicon/core",
     "//components/favicon/ios",
     "//ios/chrome/browser/browser_state",
-    "//ios/chrome/browser/sessions:features",
     "//ios/chrome/browser/sessions:restoration_observer",
     "//ios/chrome/browser/sessions:serialisation",
+    "//ios/chrome/browser/tabs:features",
     "//ios/web",
     "//ios/web/public/session",
   ]
@@ -73,7 +73,6 @@ source_set("agents") {
     "//base",
     "//components/navigation_metrics",
     "//components/profile_metrics",
-    "//ios/chrome/browser:chrome_url_constants",
     "//ios/chrome/browser/browser_state",
     "//ios/chrome/browser/browser_state_metrics",
     "//ios/chrome/browser/crash_report",
@@ -83,6 +82,8 @@ source_set("agents") {
     "//ios/chrome/browser/sessions:restoration_observer",
     "//ios/chrome/browser/snapshots",
     "//ios/chrome/browser/ui/util",
+    "//ios/chrome/browser/url:constants",
+    "//ios/chrome/browser/url_loading:new_tab_animation_tab_helper",
     "//ios/chrome/browser/web",
     "//ios/chrome/browser/web:tab_helper_delegates",
     "//ios/components/security_interstitials:security_interstitials",
@@ -134,8 +135,8 @@ source_set("unit_tests") {
     "//ios/chrome/browser/browser_state:test_support",
     "//ios/chrome/browser/main",
     "//ios/chrome/browser/main:test_support",
-    "//ios/chrome/browser/sessions:features",
     "//ios/chrome/browser/sessions:serialisation",
+    "//ios/chrome/browser/url_loading:new_tab_animation_tab_helper",
     "//ios/chrome/browser/web",
     "//ios/web",
     "//ios/web/public/session",

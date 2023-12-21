@@ -1,4 +1,4 @@
-// Copyright 2014 PDFium Authors. All rights reserved.
+// Copyright 2014 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,17 +7,17 @@
 #include "core/fxcodec/jpeg/jpegmodule.h"
 
 #include <setjmp.h>
+#include <stdint.h>
 #include <string.h>
 
 #include <memory>
 #include <utility>
-#include <vector>
 
 #include "build/build_config.h"
 #include "core/fxcodec/cfx_codec_memory.h"
 #include "core/fxcodec/jpeg/jpeg_common.h"
 #include "core/fxcodec/scanlinedecoder.h"
-#include "core/fxcrt/fx_memory_wrappers.h"
+#include "core/fxcrt/data_vector.h"
 #include "core/fxcrt/fx_safe_types.h"
 #include "core/fxge/dib/cfx_dibbase.h"
 #include "core/fxge/dib/fx_dib.h"
@@ -130,16 +130,6 @@ class JpegDecoder final : public ScanlineDecoder {
 
   bool InitDecode(bool bAcceptKnownBadHeader);
 
-  jmp_buf m_JmpBuf;
-  jpeg_decompress_struct m_Cinfo;
-  jpeg_error_mgr m_Jerr;
-  jpeg_source_mgr m_Src;
-  pdfium::span<const uint8_t> m_SrcSpan;
-  std::vector<uint8_t, FxAllocAllocator<uint8_t>> m_ScanlineBuf;
-  bool m_bInited = false;
-  bool m_bStarted = false;
-  bool m_bJpegTransform = false;
-
  private:
   void CalcPitch();
   void InitDecompressSrc();
@@ -163,6 +153,15 @@ class JpegDecoder final : public ScanlineDecoder {
   // be this many bytes before that.
   static constexpr size_t kSofMarkerByteOffset = 5;
 
+  jmp_buf m_JmpBuf;
+  jpeg_decompress_struct m_Cinfo;
+  jpeg_error_mgr m_Jerr;
+  jpeg_source_mgr m_Src;
+  pdfium::span<const uint8_t> m_SrcSpan;
+  DataVector<uint8_t> m_ScanlineBuf;
+  bool m_bInited = false;
+  bool m_bStarted = false;
+  bool m_bJpegTransform = false;
   uint32_t m_nDefaultScaleDenom = 1;
 };
 
@@ -265,7 +264,7 @@ bool JpegDecoder::Create(pdfium::span<const uint8_t> src_span,
     return false;
 
   CalcPitch();
-  m_ScanlineBuf = std::vector<uint8_t, FxAllocAllocator<uint8_t>>(m_Pitch);
+  m_ScanlineBuf = DataVector<uint8_t>(m_Pitch);
   m_nComps = m_Cinfo.num_components;
   m_bpc = 8;
   m_bStarted = false;
@@ -469,23 +468,25 @@ bool JpegModule::JpegEncode(const RetainPtr<CFX_DIBBase>& pSource,
   JSAMPROW row_pointer[1];
   JDIMENSION row;
   while (cinfo.next_scanline < cinfo.image_height) {
-    const uint8_t* src_scan = pSource->GetScanline(cinfo.next_scanline).data();
+    pdfium::span<const uint8_t> src_scan =
+        pSource->GetScanline(cinfo.next_scanline);
     if (nComponents > 1) {
       uint8_t* dest_scan = line_buf;
       if (nComponents == 3) {
         for (uint32_t i = 0; i < width; i++) {
-          ReverseCopy3Bytes(dest_scan, src_scan);
+          ReverseCopy3Bytes(dest_scan, src_scan.data());
           dest_scan += 3;
-          src_scan += Bpp;
+          src_scan = src_scan.subspan(Bpp);
         }
       } else {
         for (uint32_t i = 0; i < pitch; i++) {
-          *dest_scan++ = ~*src_scan++;
+          *dest_scan++ = ~src_scan.front();
+          src_scan = src_scan.subspan(1);
         }
       }
       row_pointer[0] = line_buf;
     } else {
-      row_pointer[0] = const_cast<uint8_t*>(src_scan);
+      row_pointer[0] = const_cast<uint8_t*>(src_scan.data());
     }
     row = cinfo.next_scanline;
     jpeg_write_scanlines(&cinfo, row_pointer, 1);

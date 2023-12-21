@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,6 @@
 
 #include "base/compiler_specific.h"
 #include "base/memory/raw_ptr.h"
-#include "base/supports_user_data.h"
 #include "components/autofill/content/common/mojom/autofill_driver.mojom.h"
 #include "components/password_manager/core/browser/password_autofill_manager.h"
 #include "components/password_manager/core/browser/password_generation_frame_helper.h"
@@ -73,8 +72,8 @@ class ContentPasswordManagerDriverFactory
   std::map<content::RenderFrameHost*, ContentPasswordManagerDriver>
       frame_driver_map_;
 
-  raw_ptr<PasswordManagerClient> password_client_;
-  raw_ptr<autofill::AutofillClient> autofill_client_;
+  raw_ptr<PasswordManagerClient, DanglingUntriaged> password_client_;
+  raw_ptr<autofill::AutofillClient, DanglingUntriaged> autofill_client_;
 
   WEB_CONTENTS_USER_DATA_KEY_DECL();
 };

@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -72,22 +72,6 @@ TEST_F(WidgetDelegateTest, ClientViewFactoryCanReplaceClientView) {
   EXPECT_EQ(tracker.view(), client.get());
 }
 
-TEST_F(WidgetDelegateTest,
-       NonClientFrameViewFactoryCanReplaceNonClientFrameView) {
-  ViewTracker tracker;
-
-  auto delegate = std::make_unique<WidgetDelegate>();
-  delegate->SetNonClientFrameViewFactory(
-      base::BindLambdaForTesting([&tracker](Widget* widget) {
-        auto view = std::make_unique<NonClientFrameView>();
-        tracker.SetView(view.get());
-        return view;
-      }));
-
-  auto nonclient = delegate->CreateNonClientFrameView(nullptr);
-  EXPECT_EQ(tracker.view(), nonclient.get());
-}
-
 TEST_F(WidgetDelegateTest, OverlayViewFactoryCanReplaceOverlayView) {
   ViewTracker tracker;
 
@@ -106,9 +90,9 @@ TEST_F(WidgetDelegateTest, AppIconCanDifferFromWindowIcon) {
   auto delegate = std::make_unique<WidgetDelegate>();
 
   gfx::ImageSkia window_icon = gfx::test::CreateImageSkia(16, 16);
-  delegate->SetIcon(window_icon);
+  delegate->SetIcon(ui::ImageModel::FromImageSkia(window_icon));
   gfx::ImageSkia app_icon = gfx::test::CreateImageSkia(48, 48);
-  delegate->SetAppIcon(app_icon);
+  delegate->SetAppIcon(ui::ImageModel::FromImageSkia(app_icon));
   EXPECT_TRUE(delegate->GetWindowIcon().Rasterize(nullptr).BackedBySameObjectAs(
       window_icon));
   EXPECT_TRUE(
@@ -120,7 +104,7 @@ TEST_F(WidgetDelegateTest, AppIconFallsBackToWindowIcon) {
   auto delegate = std::make_unique<WidgetDelegate>();
 
   gfx::ImageSkia window_icon = gfx::test::CreateImageSkia(16, 16);
-  delegate->SetIcon(window_icon);
+  delegate->SetIcon(ui::ImageModel::FromImageSkia(window_icon));
   // Don't set an independent app icon.
   EXPECT_TRUE(
       delegate->GetWindowAppIcon().Rasterize(nullptr).BackedBySameObjectAs(

@@ -1,4 +1,4 @@
-// Copyright 2016 PDFium Authors. All rights reserved.
+// Copyright 2016 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -21,10 +21,11 @@
 
 #include "fxbarcode/cbc_qrcode.h"
 
-#include <memory>
-#include <vector>
+#include <stdint.h>
 
-#include "core/fxcrt/fx_memory_wrappers.h"
+#include <memory>
+
+#include "core/fxcrt/data_vector.h"
 #include "fxbarcode/qrcode/BC_QRCodeWriter.h"
 
 CBC_QRCode::CBC_QRCode() : CBC_CodeBase(std::make_unique<CBC_QRCodeWriter>()) {}
@@ -35,7 +36,7 @@ bool CBC_QRCode::Encode(WideStringView contents) {
   int32_t width;
   int32_t height;
   CBC_QRCodeWriter* pWriter = GetQRCodeWriter();
-  std::vector<uint8_t, FxAllocAllocator<uint8_t>> data = pWriter->Encode(
+  DataVector<uint8_t> data = pWriter->Encode(
       contents, pWriter->error_correction_level(), &width, &height);
   return pWriter->RenderResult(data, width, height);
 }

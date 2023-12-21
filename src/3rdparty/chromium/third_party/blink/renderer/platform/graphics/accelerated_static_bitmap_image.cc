@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,6 +7,7 @@
 #include <memory>
 #include <utility>
 
+#include "base/task/single_thread_task_runner.h"
 #include "components/viz/common/resources/release_callback.h"
 #include "components/viz/common/resources/resource_format_utils.h"
 #include "gpu/GLES2/gl2extchromium.h"
@@ -146,8 +147,10 @@ bool AcceleratedStaticBitmapImage::CopyToTexture(
       source_texture_id, 0, dest_target, dest_texture_id, dest_level,
       dest_point.x(), dest_point.y(), source_sub_rectangle.x(),
       source_sub_rectangle.y(), source_sub_rectangle.width(),
-      source_sub_rectangle.height(), unpack_flip_y ? GL_FALSE : GL_TRUE,
-      GL_FALSE, unpack_premultiply_alpha ? GL_FALSE : GL_TRUE);
+      source_sub_rectangle.height(), unpack_flip_y,
+      /*unpack_premultiply_alpha=*/GL_FALSE,
+      /*unpack_unmultiply_alpha=*/
+      unpack_premultiply_alpha ? GL_FALSE : GL_TRUE);
   dest_gl->EndSharedImageAccessDirectCHROMIUM(source_texture_id);
   dest_gl->DeleteTextures(1, &source_texture_id);
 
@@ -162,6 +165,12 @@ bool AcceleratedStaticBitmapImage::CopyToTexture(
 
 bool AcceleratedStaticBitmapImage::CopyToResourceProvider(
     CanvasResourceProvider* resource_provider) {
+  return CopyToResourceProvider(resource_provider, Rect());
+}
+
+bool AcceleratedStaticBitmapImage::CopyToResourceProvider(
+    CanvasResourceProvider* resource_provider,
+    const gfx::Rect& copy_rect) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DCHECK(resource_provider);
 
@@ -188,9 +197,9 @@ bool AcceleratedStaticBitmapImage::CopyToResourceProvider(
   auto* ri = shared_context_wrapper->ContextProvider()->RasterInterface();
   DCHECK(ri);
   ri->WaitSyncTokenCHROMIUM(mailbox_ref_->sync_token().GetConstData());
-  ri->CopySubTexture(mailbox_, dst_mailbox, dst_target, 0, 0, 0, 0,
-                     Size().width(), Size().height(), unpack_flip_y,
-                     unpack_premultiply_alpha);
+  ri->CopySharedImage(mailbox_, dst_mailbox, dst_target, 0, 0, copy_rect.x(),
+                      copy_rect.y(), copy_rect.width(), copy_rect.height(),
+                      unpack_flip_y, unpack_premultiply_alpha);
   // We need to update the texture holder's sync token to ensure that when this
   // mailbox is recycled or deleted, it is done after the copy operation above.
   gpu::SyncToken sync_token;
@@ -225,10 +234,13 @@ void AcceleratedStaticBitmapImage::Draw(cc::PaintCanvas* canvas,
     return;
   auto paint_image_decoding_mode =
       ToPaintImageDecodingMode(draw_options.decode_mode);
-  if (paint_image.decoding_mode() != paint_image_decoding_mode) {
-    paint_image = PaintImageBuilder::WithCopy(std::move(paint_image))
-                      .set_decoding_mode(paint_image_decoding_mode)
-                      .TakePaintImage();
+  if (paint_image.decoding_mode() != paint_image_decoding_mode ||
+      paint_image.may_be_lcp_candidate() != draw_options.may_be_lcp_candidate) {
+    paint_image =
+        PaintImageBuilder::WithCopy(std::move(paint_image))
+            .set_decoding_mode(paint_image_decoding_mode)
+            .set_may_be_lcp_candidate(draw_options.may_be_lcp_candidate)
+            .TakePaintImage();
   }
   StaticBitmapImage::DrawHelper(canvas, flags, dst_rect, src_rect, draw_options,
                                 paint_image);

@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,57 +8,52 @@
 #include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/renderer/core/animation/scroll_timeline.h"
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/core/dom/id_target_observer.h"
+#include "third_party/blink/renderer/core/style/computed_style_constants.h"
+#include "third_party/blink/renderer/core/style/scoped_css_name.h"
 
 namespace blink {
 
 class Document;
 class Element;
-class StyleRuleScrollTimeline;
 
 // A CSSScrollTimeline is like a ScrollTimeline, except it originates from
-// an @scroll-timeline rule.
+// the scroll-timeline-* properties.
 class CORE_EXPORT CSSScrollTimeline : public ScrollTimeline {
  public:
   struct Options {
     STACK_ALLOCATED();
 
    public:
-    Options(Document&, StyleRuleScrollTimeline&);
+    Options(Document&,
+            ScrollTimeline::ReferenceType reference_type,
+            absl::optional<Element*> reference_element,
+            const ScopedCSSName& name,
+            TimelineAxis axis);
+
+    static ScrollAxis ComputeAxis(TimelineAxis);
 
    private:
     friend class CSSScrollTimeline;
 
-    absl::optional<Element*> source_;
-    ScrollTimeline::ScrollDirection direction_;
-    HeapVector<Member<ScrollTimelineOffset>> offsets_;
-    StyleRuleScrollTimeline* rule_;
+    ScrollTimeline::ReferenceType reference_type_;
+    absl::optional<Element*> reference_element_;
+    ScrollAxis axis_;
+    const ScopedCSSName& name_;
   };
 
   CSSScrollTimeline(Document*, Options&&);
 
-  const AtomicString& Name() const;
+  void Trace(Visitor*) const override;
 
-  StyleRuleScrollTimeline* GetRule() const { return rule_; }
+  const ScopedCSSName& Name() const { return *name_; }
 
-  bool Matches(const Options&) const;
+  bool Matches(Document&, const Options&) const;
 
   // AnimationTimeline implementation.
   bool IsCSSScrollTimeline() const override { return true; }
-  void AnimationAttached(Animation*) override;
-  void AnimationDetached(Animation*) override;
-
-  // If a CSSScrollTimeline matching |options| already exists, return that
-  // timeline. Otherwise returns nullptr.
-  static CSSScrollTimeline* FindMatchingTimeline(const Options&);
-
-  void Trace(Visitor*) const override;
 
  private:
-  void SetObservers(HeapVector<Member<IdTargetObserver>>);
-
-  Member<StyleRuleScrollTimeline> rule_;
-  HeapVector<Member<IdTargetObserver>> observers_;
+  Member<const ScopedCSSName> name_;
 };
 
 template <>

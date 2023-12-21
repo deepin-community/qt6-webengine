@@ -1,10 +1,10 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/ukm/ios/ukm_url_recorder.h"
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #import "base/test/ios/wait_util.h"
 #include "components/ukm/test_ukm_recorder.h"
 #import "ios/web/public/navigation/navigation_manager.h"

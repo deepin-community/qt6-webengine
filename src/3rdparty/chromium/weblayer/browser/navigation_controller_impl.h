@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,6 +8,7 @@
 #include <map>
 
 #include <memory>
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "build/build_config.h"
@@ -164,6 +165,9 @@ class NavigationControllerImpl : public NavigationController,
       std::unique_ptr<content::NavigationController::LoadURLParams> params);
   void CancelDelayedLoad();
   void ProcessDelayedLoad();
+
+  // |tab_| owns |this|.
+  raw_ptr<TabImpl> tab_;
 
   base::ObserverList<NavigationObserver>::Unchecked observers_;
   std::map<content::NavigationHandle*, std::unique_ptr<NavigationImpl>>

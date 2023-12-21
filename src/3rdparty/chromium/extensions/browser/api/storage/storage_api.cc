@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,8 +10,9 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/strings/stringprintf.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/trace_event/trace_event.h"
 #include "base/values.h"
 #include "content/public/browser/browser_context.h"
@@ -38,35 +39,34 @@ constexpr PrefMap kPrefSessionStorageAccessLevel = {
     PrefScope::kExtensionSpecific};
 
 // Returns a vector of any strings within the given list.
-std::vector<std::string> GetKeysFromList(const base::Value& list) {
-  DCHECK(list.is_list());
+std::vector<std::string> GetKeysFromList(const base::Value::List& list) {
   std::vector<std::string> keys;
-  keys.reserve(list.GetListDeprecated().size());
-  for (const auto& value : list.GetListDeprecated()) {
+  keys.reserve(list.size());
+  for (const auto& value : list) {
     auto* as_string = value.GetIfString();
-    if (as_string)
+    if (as_string) {
       keys.push_back(*as_string);
+    }
   }
   return keys;
 }
 
 // Returns a vector of keys within the given dict.
-std::vector<std::string> GetKeysFromDict(const base::Value& dict) {
-  DCHECK(dict.is_dict());
+std::vector<std::string> GetKeysFromDict(const base::Value::Dict& dict) {
   std::vector<std::string> keys;
-  keys.reserve(dict.DictSize());
-  for (auto value : dict.DictItems()) {
+  keys.reserve(dict.size());
+  for (auto value : dict) {
     keys.push_back(value.first);
   }
   return keys;
 }
 
-// Converts a map to a Value::Type::DICTIONARY.
-base::Value MapAsValueDict(
+// Converts a map to a Value::Dict.
+base::Value::Dict MapAsValueDict(
     const std::map<std::string, const base::Value*>& values) {
-  base::Value dict(base::Value::Type::DICTIONARY);
+  base::Value::Dict dict;
   for (const auto& value : values)
-    dict.SetKey(value.first, value.second->Clone());
+    dict.Set(value.first, value.second->Clone());
   return dict;
 }
 
@@ -90,16 +90,16 @@ void GetModificationQuotaLimitHeuristics(QuotaLimitHeuristics* heuristics) {
 // Returns a nested dictionary Value converted from a ValueChange.
 base::Value ValueChangeToValue(
     std::vector<SessionStorageManager::ValueChange> changes) {
-  base::Value changes_value(base::Value::Type::DICTIONARY);
+  base::Value::Dict changes_value;
   for (auto& change : changes) {
-    base::Value change_value(base::Value::Type::DICTIONARY);
+    base::Value::Dict change_value;
     if (change.old_value.has_value())
-      change_value.SetKey("oldValue", std::move(change.old_value.value()));
+      change_value.Set("oldValue", std::move(change.old_value.value()));
     if (change.new_value)
-      change_value.SetKey("newValue", change.new_value->Clone());
-    changes_value.SetKey(change.key, std::move(change_value));
+      change_value.Set("newValue", change.new_value->Clone());
+    changes_value.Set(change.key, std::move(change_value));
   }
-  return changes_value;
+  return base::Value(std::move(changes_value));
 }
 
 }  // namespace
@@ -168,7 +168,7 @@ ExtensionFunction::ResponseAction SettingsFunction::Run() {
   }
 
   observer_ = GetSequenceBoundSettingsChangedCallback(
-      base::SequencedTaskRunnerHandle::Get(), frontend->GetObserver());
+      base::SequencedTaskRunner::GetCurrentDefault(), frontend->GetObserver());
 
   frontend->RunWithStorage(
       extension(), settings_namespace_,
@@ -190,9 +190,7 @@ ExtensionFunction::ResponseValue SettingsFunction::UseReadResult(
   if (!result.status().ok())
     return Error(result.status().message);
 
-  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
-  dict->Swap(&result.settings());
-  return OneArgument(base::Value::FromUniquePtrValue(std::move(dict)));
+  return OneArgument(base::Value(result.PassSettings()));
 }
 
 ExtensionFunction::ResponseValue SettingsFunction::UseWriteResult(
@@ -219,7 +217,7 @@ void SettingsFunction::OnSessionSettingsChanged(
     // This used to dispatch asynchronously as a result of a
     // ObserverListThreadSafe. Ideally, we'd just run this synchronously, but it
     // appears at least some tests rely on the asynchronous behavior.
-    base::SequencedTaskRunnerHandle::Get()->PostTask(
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(observer, extension_id(), storage_area_,
                                   ValueChangeToValue(std::move(changes))));
   }
@@ -258,16 +256,16 @@ ExtensionFunction::ResponseValue StorageStorageAreaGetFunction::RunWithStorage(
       return UseReadResult(storage->Get(input.GetString()));
 
     case base::Value::Type::LIST:
-      return UseReadResult(storage->Get(GetKeysFromList(input)));
+      return UseReadResult(storage->Get(GetKeysFromList(input.GetList())));
 
-    case base::Value::Type::DICTIONARY: {
-      ValueStore::ReadResult result = storage->Get(GetKeysFromDict(input));
+    case base::Value::Type::DICT: {
+      ValueStore::ReadResult result =
+          storage->Get(GetKeysFromDict(input.GetDict()));
       if (!result.status().ok()) {
         return UseReadResult(std::move(result));
       }
-      std::unique_ptr<base::DictionaryValue> with_default_values =
-          base::Value::AsDictionaryValue(input).CreateDeepCopy();
-      with_default_values->MergeDictionary(&result.settings());
+      base::Value::Dict with_default_values = input.GetDict().Clone();
+      with_default_values.Merge(result.PassSettings());
       return UseReadResult(ValueStore::ReadResult(
           std::move(with_default_values), result.PassStatus()));
     }
@@ -282,7 +280,7 @@ ExtensionFunction::ResponseValue StorageStorageAreaGetFunction::RunInSession() {
     return BadMessage();
   base::Value& input = mutable_args()[0];
 
-  base::Value value_dict(base::Value::Type::DICTIONARY);
+  base::Value::Dict value_dict;
   SessionStorageManager* session_manager =
       SessionStorageManager::GetForBrowserContext(browser_context());
 
@@ -297,20 +295,20 @@ ExtensionFunction::ResponseValue StorageStorageAreaGetFunction::RunInSession() {
       break;
 
     case base::Value::Type::LIST:
-      value_dict = MapAsValueDict(
-          session_manager->Get(extension_id(), GetKeysFromList(input)));
+      value_dict = MapAsValueDict(session_manager->Get(
+          extension_id(), GetKeysFromList(input.GetList())));
       break;
 
-    case base::Value::Type::DICTIONARY: {
-      std::map<std::string, const base::Value*> values =
-          session_manager->Get(extension_id(), GetKeysFromDict(input));
+    case base::Value::Type::DICT: {
+      std::map<std::string, const base::Value*> values = session_manager->Get(
+          extension_id(), GetKeysFromDict(input.GetDict()));
 
-      for (auto default_value : input.DictItems()) {
+      for (auto default_value : input.GetDict()) {
         auto value_it = values.find(default_value.first);
-        value_dict.SetKey(default_value.first,
-                          value_it != values.end()
-                              ? value_it->second->Clone()
-                              : std::move(default_value.second));
+        value_dict.Set(default_value.first,
+                       value_it != values.end()
+                           ? value_it->second->Clone()
+                           : std::move(default_value.second));
       }
       break;
     }
@@ -318,7 +316,7 @@ ExtensionFunction::ResponseValue StorageStorageAreaGetFunction::RunInSession() {
       return BadMessage();
   }
 
-  return OneArgument(std::move(value_dict));
+  return OneArgument(base::Value(std::move(value_dict)));
 }
 
 ExtensionFunction::ResponseValue
@@ -343,7 +341,7 @@ StorageStorageAreaGetBytesInUseFunction::RunWithStorage(ValueStore* storage) {
       break;
 
     case base::Value::Type::LIST:
-      bytes_in_use = storage->GetBytesInUse(GetKeysFromList(input));
+      bytes_in_use = storage->GetBytesInUse(GetKeysFromList(input.GetList()));
       break;
 
     default:
@@ -374,8 +372,8 @@ StorageStorageAreaGetBytesInUseFunction::RunInSession() {
       break;
 
     case base::Value::Type::LIST:
-      bytes_in_use = session_manager->GetBytesInUse(extension_id(),
-                                                    GetKeysFromList(input));
+      bytes_in_use = session_manager->GetBytesInUse(
+          extension_id(), GetKeysFromList(input.GetList()));
       break;
 
     default:
@@ -394,9 +392,8 @@ ExtensionFunction::ResponseValue StorageStorageAreaSetFunction::RunWithStorage(
                "extension_id", extension_id());
   if (args().empty() || !args()[0].is_dict())
     return BadMessage();
-  const base::DictionaryValue& input =
-      base::Value::AsDictionaryValue(args()[0]);
-  return UseWriteResult(storage->Set(ValueStore::DEFAULTS, input));
+  return UseWriteResult(
+      storage->Set(ValueStore::DEFAULTS, args()[0].GetDict()));
 }
 
 ExtensionFunction::ResponseValue StorageStorageAreaSetFunction::RunInSession() {
@@ -407,7 +404,7 @@ ExtensionFunction::ResponseValue StorageStorageAreaSetFunction::RunInSession() {
   mutable_args().erase(args().begin());
 
   std::map<std::string, base::Value> values;
-  for (auto item : input.DictItems()) {
+  for (auto item : input.GetDict()) {
     values.emplace(std::move(item.first), std::move(item.second));
   }
 
@@ -443,7 +440,7 @@ StorageStorageAreaRemoveFunction::RunWithStorage(ValueStore* storage) {
       return UseWriteResult(storage->Remove(input.GetString()));
 
     case base::Value::Type::LIST:
-      return UseWriteResult(storage->Remove(GetKeysFromList(input)));
+      return UseWriteResult(storage->Remove(GetKeysFromList(input.GetList())));
 
     default:
       return BadMessage();
@@ -466,7 +463,8 @@ StorageStorageAreaRemoveFunction::RunInSession() {
       break;
 
     case base::Value::Type::LIST:
-      session_manager->Remove(extension_id(), GetKeysFromList(input), changes);
+      session_manager->Remove(extension_id(), GetKeysFromList(input.GetList()),
+                              changes);
       break;
 
     default:

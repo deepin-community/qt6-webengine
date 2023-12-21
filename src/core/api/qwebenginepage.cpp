@@ -17,7 +17,6 @@
 #include "qwebenginenewwindowrequest_p.h"
 #include "qwebengineprofile.h"
 #include "qwebengineprofile_p.h"
-#include "qwebenginequotarequest.h"
 #include "qwebengineregisterprotocolhandlerrequest.h"
 #include "qwebenginescript.h"
 #include "qwebenginescriptcollection_p.h"
@@ -34,6 +33,7 @@
 #include "render_widget_host_view_qt_delegate.h"
 #include "render_widget_host_view_qt_delegate_client.h"
 #include "render_widget_host_view_qt_delegate_item.h"
+#include "touch_selection_menu_controller.h"
 #include "web_contents_adapter.h"
 
 #include <QAction>
@@ -103,7 +103,9 @@ QWebEnginePagePrivate::QWebEnginePagePrivate(QWebEngineProfile *_profile)
 {
     memset(actions, 0, sizeof(actions));
 
+#if QT_DEPRECATED_SINCE(6, 5)
     qRegisterMetaType<QWebEngineQuotaRequest>();
+#endif
     qRegisterMetaType<QWebEngineRegisterProtocolHandlerRequest>();
     qRegisterMetaType<QWebEngineFileSystemAccessRequest>();
     qRegisterMetaType<QWebEngineFindTextResult>();
@@ -329,6 +331,109 @@ void QWebEnginePagePrivate::createNewWindow(WindowOpenDisposition disposition, b
     Q_EMIT q->newWindowRequested(request);
 }
 
+QString QWebEnginePagePrivate::actionText(int action)
+{
+    switch (action) {
+    case QWebEnginePage::Back:
+        return RenderViewContextMenuQt::getMenuItemName(RenderViewContextMenuQt::ContextMenuItem::Back);
+    case QWebEnginePage::Forward:
+        return RenderViewContextMenuQt::getMenuItemName(RenderViewContextMenuQt::ContextMenuItem::Forward);
+    case QWebEnginePage::Stop:
+        return QWebEnginePage::tr("Stop");
+    case QWebEnginePage::Reload:
+        return RenderViewContextMenuQt::getMenuItemName(RenderViewContextMenuQt::ContextMenuItem::Reload);
+    case QWebEnginePage::ReloadAndBypassCache:
+        return QWebEnginePage::tr("Reload and Bypass Cache");
+    case QWebEnginePage::Cut:
+        return RenderViewContextMenuQt::getMenuItemName(RenderViewContextMenuQt::ContextMenuItem::Cut);
+    case QWebEnginePage::Copy:
+        return RenderViewContextMenuQt::getMenuItemName(RenderViewContextMenuQt::ContextMenuItem::Copy);
+    case QWebEnginePage::Paste:
+        return RenderViewContextMenuQt::getMenuItemName(RenderViewContextMenuQt::ContextMenuItem::Paste);
+    case QWebEnginePage::Undo:
+        return RenderViewContextMenuQt::getMenuItemName(RenderViewContextMenuQt::ContextMenuItem::Undo);
+    case QWebEnginePage::Redo:
+        return RenderViewContextMenuQt::getMenuItemName(RenderViewContextMenuQt::ContextMenuItem::Redo);
+    case QWebEnginePage::SelectAll:
+        return RenderViewContextMenuQt::getMenuItemName(RenderViewContextMenuQt::ContextMenuItem::SelectAll);
+    case QWebEnginePage::PasteAndMatchStyle:
+        return RenderViewContextMenuQt::getMenuItemName(RenderViewContextMenuQt::ContextMenuItem::PasteAndMatchStyle);
+    case QWebEnginePage::OpenLinkInThisWindow:
+        return QWebEnginePage::tr("Open link in this window");
+    case QWebEnginePage::OpenLinkInNewWindow:
+        return RenderViewContextMenuQt::getMenuItemName(RenderViewContextMenuQt::ContextMenuItem::OpenLinkInNewWindow);
+    case QWebEnginePage::OpenLinkInNewTab:
+        return RenderViewContextMenuQt::getMenuItemName(RenderViewContextMenuQt::ContextMenuItem::OpenLinkInNewTab);
+    case QWebEnginePage::OpenLinkInNewBackgroundTab:
+        return QWebEnginePage::tr("Open link in new background tab");
+    case QWebEnginePage::CopyLinkToClipboard:
+        return RenderViewContextMenuQt::getMenuItemName(RenderViewContextMenuQt::ContextMenuItem::CopyLinkToClipboard);
+    case QWebEnginePage::DownloadLinkToDisk:
+        return RenderViewContextMenuQt::getMenuItemName(RenderViewContextMenuQt::ContextMenuItem::DownloadLinkToDisk);
+    case QWebEnginePage::CopyImageToClipboard:
+        return RenderViewContextMenuQt::getMenuItemName(RenderViewContextMenuQt::ContextMenuItem::CopyImageToClipboard);
+    case QWebEnginePage::CopyImageUrlToClipboard:
+        return RenderViewContextMenuQt::getMenuItemName(RenderViewContextMenuQt::ContextMenuItem::CopyImageUrlToClipboard);
+    case QWebEnginePage::DownloadImageToDisk:
+        return RenderViewContextMenuQt::getMenuItemName(RenderViewContextMenuQt::ContextMenuItem::DownloadImageToDisk);
+    case QWebEnginePage::CopyMediaUrlToClipboard:
+        return RenderViewContextMenuQt::getMenuItemName(RenderViewContextMenuQt::ContextMenuItem::CopyMediaUrlToClipboard);
+    case QWebEnginePage::ToggleMediaControls:
+        return RenderViewContextMenuQt::getMenuItemName(RenderViewContextMenuQt::ContextMenuItem::ToggleMediaControls);
+    case QWebEnginePage::ToggleMediaLoop:
+        return RenderViewContextMenuQt::getMenuItemName(RenderViewContextMenuQt::ContextMenuItem::ToggleMediaLoop);
+    case QWebEnginePage::ToggleMediaPlayPause:
+        return QWebEnginePage::tr("Toggle Play/Pause");
+    case QWebEnginePage::ToggleMediaMute:
+        return QWebEnginePage::tr("Toggle Mute");
+    case QWebEnginePage::DownloadMediaToDisk:
+        return RenderViewContextMenuQt::getMenuItemName(RenderViewContextMenuQt::ContextMenuItem::DownloadMediaToDisk);
+    case QWebEnginePage::InspectElement:
+        return RenderViewContextMenuQt::getMenuItemName(RenderViewContextMenuQt::ContextMenuItem::InspectElement);
+    case QWebEnginePage::ExitFullScreen:
+        return RenderViewContextMenuQt::getMenuItemName(RenderViewContextMenuQt::ContextMenuItem::ExitFullScreen);
+    case QWebEnginePage::RequestClose:
+        return QWebEnginePage::tr("Close Page");
+    case QWebEnginePage::Unselect:
+        return QWebEnginePage::tr("Unselect");
+    case QWebEnginePage::SavePage:
+        return RenderViewContextMenuQt::getMenuItemName(RenderViewContextMenuQt::ContextMenuItem::SavePage);
+    case QWebEnginePage::ViewSource:
+        return RenderViewContextMenuQt::getMenuItemName(RenderViewContextMenuQt::ContextMenuItem::ViewSource);
+    case QWebEnginePage::ToggleBold:
+        return QWebEnginePage::tr("&Bold");
+    case QWebEnginePage::ToggleItalic:
+        return QWebEnginePage::tr("&Italic");
+    case QWebEnginePage::ToggleUnderline:
+        return QWebEnginePage::tr("&Underline");
+    case QWebEnginePage::ToggleStrikethrough:
+        return QWebEnginePage::tr("&Strikethrough");
+    case QWebEnginePage::AlignLeft:
+        return QWebEnginePage::tr("Align &Left");
+    case QWebEnginePage::AlignCenter:
+        return QWebEnginePage::tr("Align &Center");
+    case QWebEnginePage::AlignRight:
+        return QWebEnginePage::tr("Align &Right");
+    case QWebEnginePage::AlignJustified:
+        return QWebEnginePage::tr("Align &Justified");
+    case QWebEnginePage::Indent:
+        return QWebEnginePage::tr("&Indent");
+    case QWebEnginePage::Outdent:
+        return QWebEnginePage::tr("&Outdent");
+    case QWebEnginePage::InsertOrderedList:
+        return QWebEnginePage::tr("Insert &Ordered List");
+    case QWebEnginePage::InsertUnorderedList:
+        return QWebEnginePage::tr("Insert &Unordered List");
+    case QWebEnginePage::ChangeTextDirectionLTR:
+        return QWebEnginePage::tr("Change text direction left to right");
+    case QWebEnginePage::ChangeTextDirectionRTL:
+        return QWebEnginePage::tr("Change text direction right to left");
+    default:
+        break;
+    }
+    return {};
+}
+
 class WebContentsAdapterOwner : public QObject
 {
 public:
@@ -350,6 +455,8 @@ bool QWebEnginePagePrivate::adoptWebContents(WebContentsAdapter *webContents)
     }
 
     m_isBeingAdopted = true;
+
+    webContents->setRequestInterceptor(adapter->requestInterceptor());
 
     // This throws away the WebContentsAdapter that has been used until now.
     // All its states, particularly the loading URL, are replaced by the adopted WebContentsAdapter.
@@ -502,17 +609,20 @@ void QWebEnginePagePrivate::runMouseLockPermissionRequest(const QUrl &securityOr
     Q_EMIT q->featurePermissionRequested(securityOrigin, QWebEnginePage::MouseLock);
 }
 
-void QWebEnginePagePrivate::runQuotaRequest(QWebEngineQuotaRequest request)
-{
-    Q_Q(QWebEnginePage);
-    Q_EMIT q->quotaRequested(request);
-}
-
 void QWebEnginePagePrivate::runRegisterProtocolHandlerRequest(QWebEngineRegisterProtocolHandlerRequest request)
 {
     Q_Q(QWebEnginePage);
     Q_EMIT q->registerProtocolHandlerRequested(request);
 }
+
+/*!
+    \fn void QWebEnginePage::fileSystemAccessRequested(QWebEngineFileSystemAccessRequest request)
+    \since 6.4
+
+    This signal is emitted when the web page requests access to local files or directories.
+
+    The request object \a request can be used to accept or reject the request.
+*/
 
 void QWebEnginePagePrivate::runFileSystemAccessRequest(QWebEngineFileSystemAccessRequest request)
 {
@@ -742,12 +852,13 @@ QWebEnginePage::QWebEnginePage(QObject* parent)
 /*!
     \fn QWebEnginePage::quotaRequested(QWebEngineQuotaRequest quotaRequest)
     \since 5.11
+    \deprecated [6.5] This signal is no longer emitted.
 
-    This signal is emitted when the web page requests larger persistent storage
-    than the application's current allocation in File System API. The default quota
-    is 0 bytes.
+    Requesting host quota is no longer supported by Chromium.
+    The behavior of navigator.webkitPersistentStorage
+    is identical to navigator.webkitTemporaryStorage.
 
-    The request object \a quotaRequest can be used to accept or reject the request.
+    For further details, see https://crbug.com/1233525
 */
 
 /*!
@@ -1047,148 +1158,7 @@ QAction *QWebEnginePage::action(WebAction action) const
     if (d->actions[action])
         return d->actions[action];
 
-    QString text;
-    switch (action) {
-    case Back:
-        text = RenderViewContextMenuQt::getMenuItemName(RenderViewContextMenuQt::ContextMenuItem::Back);
-        break;
-    case Forward:
-        text = RenderViewContextMenuQt::getMenuItemName(RenderViewContextMenuQt::ContextMenuItem::Forward);
-        break;
-    case Stop:
-        text = tr("Stop");
-        break;
-    case Reload:
-        text = RenderViewContextMenuQt::getMenuItemName(RenderViewContextMenuQt::ContextMenuItem::Reload);
-        break;
-    case ReloadAndBypassCache:
-        text = tr("Reload and Bypass Cache");
-        break;
-    case Cut:
-        text = RenderViewContextMenuQt::getMenuItemName(RenderViewContextMenuQt::ContextMenuItem::Cut);
-        break;
-    case Copy:
-        text = RenderViewContextMenuQt::getMenuItemName(RenderViewContextMenuQt::ContextMenuItem::Copy);
-        break;
-    case Paste:
-        text = RenderViewContextMenuQt::getMenuItemName(RenderViewContextMenuQt::ContextMenuItem::Paste);
-        break;
-    case Undo:
-        text = RenderViewContextMenuQt::getMenuItemName(RenderViewContextMenuQt::ContextMenuItem::Undo);
-        break;
-    case Redo:
-        text = RenderViewContextMenuQt::getMenuItemName(RenderViewContextMenuQt::ContextMenuItem::Redo);
-        break;
-    case SelectAll:
-        text = RenderViewContextMenuQt::getMenuItemName(RenderViewContextMenuQt::ContextMenuItem::SelectAll);
-        break;
-    case PasteAndMatchStyle:
-        text = RenderViewContextMenuQt::getMenuItemName(RenderViewContextMenuQt::ContextMenuItem::PasteAndMatchStyle);
-        break;
-    case OpenLinkInThisWindow:
-        text = tr("Open link in this window");
-        break;
-    case OpenLinkInNewWindow:
-        text = RenderViewContextMenuQt::getMenuItemName(RenderViewContextMenuQt::ContextMenuItem::OpenLinkInNewWindow);
-        break;
-    case OpenLinkInNewTab:
-        text = RenderViewContextMenuQt::getMenuItemName(RenderViewContextMenuQt::ContextMenuItem::OpenLinkInNewTab);
-        break;
-    case OpenLinkInNewBackgroundTab:
-        text = tr("Open link in new background tab");
-        break;
-    case CopyLinkToClipboard:
-        text = RenderViewContextMenuQt::getMenuItemName(RenderViewContextMenuQt::ContextMenuItem::CopyLinkToClipboard);
-        break;
-    case DownloadLinkToDisk:
-        text = RenderViewContextMenuQt::getMenuItemName(RenderViewContextMenuQt::ContextMenuItem::DownloadLinkToDisk);
-        break;
-    case CopyImageToClipboard:
-        text = RenderViewContextMenuQt::getMenuItemName(RenderViewContextMenuQt::ContextMenuItem::CopyImageToClipboard);
-        break;
-    case CopyImageUrlToClipboard:
-        text = RenderViewContextMenuQt::getMenuItemName(RenderViewContextMenuQt::ContextMenuItem::CopyImageUrlToClipboard);
-        break;
-    case DownloadImageToDisk:
-        text = RenderViewContextMenuQt::getMenuItemName(RenderViewContextMenuQt::ContextMenuItem::DownloadImageToDisk);
-        break;
-    case CopyMediaUrlToClipboard:
-        text = RenderViewContextMenuQt::getMenuItemName(RenderViewContextMenuQt::ContextMenuItem::CopyMediaUrlToClipboard);
-        break;
-    case ToggleMediaControls:
-        text = RenderViewContextMenuQt::getMenuItemName(RenderViewContextMenuQt::ContextMenuItem::ToggleMediaControls);
-        break;
-    case ToggleMediaLoop:
-        text = RenderViewContextMenuQt::getMenuItemName(RenderViewContextMenuQt::ContextMenuItem::ToggleMediaLoop);
-        break;
-    case ToggleMediaPlayPause:
-        text = tr("Toggle Play/Pause");
-        break;
-    case ToggleMediaMute:
-        text = tr("Toggle Mute");
-        break;
-    case DownloadMediaToDisk:
-        text = RenderViewContextMenuQt::getMenuItemName(RenderViewContextMenuQt::ContextMenuItem::DownloadMediaToDisk);
-        break;
-    case InspectElement:
-        text = RenderViewContextMenuQt::getMenuItemName(RenderViewContextMenuQt::ContextMenuItem::InspectElement);
-        break;
-    case ExitFullScreen:
-        text = RenderViewContextMenuQt::getMenuItemName(RenderViewContextMenuQt::ContextMenuItem::ExitFullScreen);
-        break;
-    case RequestClose:
-        text = tr("Close Page");
-        break;
-    case Unselect:
-        text = tr("Unselect");
-        break;
-    case SavePage:
-        text = RenderViewContextMenuQt::getMenuItemName(RenderViewContextMenuQt::ContextMenuItem::SavePage);
-        break;
-    case ViewSource:
-        text = RenderViewContextMenuQt::getMenuItemName(RenderViewContextMenuQt::ContextMenuItem::ViewSource);
-        break;
-    case ToggleBold:
-        text = tr("&Bold");
-        break;
-    case ToggleItalic:
-        text = tr("&Italic");
-        break;
-    case ToggleUnderline:
-        text = tr("&Underline");
-        break;
-    case ToggleStrikethrough:
-        text = tr("&Strikethrough");
-        break;
-    case AlignLeft:
-        text = tr("Align &Left");
-        break;
-    case AlignCenter:
-        text = tr("Align &Center");
-        break;
-    case AlignRight:
-        text = tr("Align &Right");
-        break;
-    case AlignJustified:
-        text = tr("Align &Justified");
-        break;
-    case Indent:
-        text = tr("&Indent");
-        break;
-    case Outdent:
-        text = tr("&Outdent");
-        break;
-    case InsertOrderedList:
-        text = tr("Insert &Ordered List");
-        break;
-    case InsertUnorderedList:
-        text = tr("Insert &Unordered List");
-        break;
-    case NoWebAction:
-    case WebActionCount:
-        Q_UNREACHABLE();
-        break;
-    }
+    const QString text = QWebEnginePagePrivate::actionText(action);
 
     QAction *a = new QAction(const_cast<QWebEnginePage*>(this));
     a->setText(text);
@@ -1457,6 +1427,12 @@ void QWebEnginePage::triggerAction(WebAction action, bool)
     case InsertUnorderedList:
         runJavaScript(QStringLiteral("document.execCommand('insertUnorderedList');"), QWebEngineScript::ApplicationWorld);
         break;
+    case ChangeTextDirectionLTR:
+        d->adapter->changeTextDirection(true /*left to right*/);
+        break;
+    case ChangeTextDirectionRTL:
+        d->adapter->changeTextDirection(false /*left to right*/);
+        break;
     case NoWebAction:
         break;
     case WebActionCount:
@@ -1507,7 +1483,7 @@ void QWebEnginePagePrivate::contextMenuRequested(QWebEngineContextMenuRequest *d
 }
 
 /*!
-    \fn bool QWebEnginePage::navigationRequested(QWebEngineNavigationRequest &request)
+    \fn void QWebEnginePage::navigationRequested(QWebEngineNavigationRequest &request)
     \since 6.2
 
     This signal is emitted on navigation together with the call the acceptNavigationRequest().
@@ -1648,6 +1624,17 @@ void QWebEnginePagePrivate::setToolTip(const QString &toolTipText)
         view->setToolTip(toolTipText);
 }
 
+/*!
+    \fn void QWebEnginePage::printRequested()
+    \since 5.12
+
+    This signal is emitted when the JavaScript \c{window.print()} method is called or the user pressed the print
+    button of PDF viewer plugin.
+    Typically, the signal handler can simply call printToPdf().
+
+    \sa printToPdf()
+*/
+
 void QWebEnginePagePrivate::printRequested()
 {
     Q_Q(QWebEnginePage);
@@ -1656,6 +1643,31 @@ void QWebEnginePagePrivate::printRequested()
     });
     if (view)
         view->printRequested();
+}
+
+QtWebEngineCore::TouchHandleDrawableDelegate *
+QWebEnginePagePrivate::createTouchHandleDelegate(const QMap<int, QImage> &images)
+{
+    return view->createTouchHandleDelegate(images);
+}
+
+void QWebEnginePagePrivate::showTouchSelectionMenu(
+        QtWebEngineCore::TouchSelectionMenuController *controller, const QRect &selectionBounds,
+        const QSize &handleSize)
+{
+    Q_UNUSED(handleSize);
+
+    if (controller->buttonCount() == 1) {
+        controller->runContextMenu();
+        return;
+    }
+
+    view->showTouchSelectionMenu(controller, selectionBounds);
+}
+
+void QWebEnginePagePrivate::hideTouchSelectionMenu()
+{
+    view->hideTouchSelectionMenu();
 }
 
 void QWebEnginePagePrivate::lifecycleStateChanged(LifecycleState state)
@@ -1685,7 +1697,9 @@ void QWebEnginePagePrivate::visibleChanged(bool visible)
 
     The page does not take ownership of the pointer. This interceptor is called
     after any interceptors on the profile, and unlike profile interceptors, only
-    URL requests from this page are intercepted.
+    URL requests from this page are intercepted. If the original request was
+    already blocked or redirected by the profile interceptor, it will not be
+    intercepted by this.
 
     To unset the request interceptor, set a \c nullptr.
 
@@ -1979,7 +1993,10 @@ void QWebEnginePage::runJavaScript(const QString& scriptSource, const std::funct
         return;
     }
     quint64 requestId = d->adapter->runJavaScriptCallbackResult(scriptSource, QWebEngineScript::MainWorld);
-    d->m_variantCallbacks.insert(requestId, resultCallback);
+    if (requestId)
+        d->m_variantCallbacks.insert(requestId, resultCallback);
+    else if (resultCallback)
+        resultCallback(QVariant());
 }
 
 void QWebEnginePage::runJavaScript(const QString& scriptSource, quint32 worldId, const std::function<void(const QVariant &)> &resultCallback)
@@ -1994,7 +2011,10 @@ void QWebEnginePage::runJavaScript(const QString& scriptSource, quint32 worldId,
     }
     if (resultCallback) {
         quint64 requestId = d->adapter->runJavaScriptCallbackResult(scriptSource, worldId);
-        d->m_variantCallbacks.insert(requestId, resultCallback);
+        if (requestId)
+            d->m_variantCallbacks.insert(requestId, resultCallback);
+        else
+            resultCallback(QVariant());
     } else {
         d->adapter->runJavaScript(scriptSource, worldId);
     }
@@ -2108,6 +2128,24 @@ void QWebEnginePage::setDevToolsPage(QWebEnginePage *devToolsPage)
         else
             d->adapter->closeDevToolsFrontend();
     }
+}
+
+/*!
+    \since 6.6
+    Returns the id of the developer tools host associated with this page.
+
+    If remote debugging is enabled (see \l{Qt WebEngine Developer Tools}), the id can be used to
+   build the URL to connect to the developer tool websocket:
+   \c{ws://localhost:<debugggin-port>/devtools/page/<id>)}. The websocket can be used to to interact
+   with the page using the \l{https://chromedevtools.github.io/devtools-protocol/}{DevTools
+   Protocol}.
+*/
+
+QString QWebEnginePage::devToolsId() const
+{
+    Q_D(const QWebEnginePage);
+    d->ensureInitialized();
+    return d->adapter->devToolsId();
 }
 
 ASSERT_ENUMS_MATCH(FilePickerController::Open, QWebEnginePage::FileSelectOpen)
@@ -2228,6 +2266,9 @@ QSizeF QWebEnginePage::contentsSize() const
     To be informed about the result of the request, connect to the signal
     pdfPrintingFinished().
 
+    \note The \l QWebEnginePage::Stop web action can be used to interrupt
+    this asynchronous operation.
+
     If a file already exists at the provided file path, it will be overwritten.
     \sa pdfPrintingFinished()
 */
@@ -2252,6 +2293,8 @@ void QWebEnginePage::printToPdf(const QString &filePath, const QPageLayout &layo
 
     The \a resultCallback must take a const reference to a QByteArray as parameter. If printing was successful, this byte array
     will contain the PDF data, otherwise, the byte array will be empty.
+
+    \note The \l QWebEnginePage::Stop web action can be used to interrupt this operation.
 
     \warning We guarantee that the callback (\a resultCallback) is always called, but it might be done
     during page destruction. When QWebEnginePage is deleted, the callback is triggered with an invalid

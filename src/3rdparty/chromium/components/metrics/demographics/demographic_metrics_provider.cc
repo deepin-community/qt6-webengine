@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -35,8 +35,9 @@ bool CanUploadDemographicsToGoogle(syncer::SyncService* sync_service) {
 }  // namespace
 
 // static
-const base::Feature DemographicMetricsProvider::kDemographicMetricsReporting = {
-    "DemographicMetricsReporting", base::FEATURE_ENABLED_BY_DEFAULT};
+BASE_FEATURE(kDemographicMetricsReporting,
+             "DemographicMetricsReporting",
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 DemographicMetricsProvider::DemographicMetricsProvider(
     std::unique_ptr<ProfileClient> profile_client,
@@ -88,7 +89,8 @@ DemographicMetricsProvider::ProvideSyncedUserNoisedBirthYearAndGender() {
 
   UserDemographicsResult demographics_result =
       GetUserNoisedBirthYearAndGenderFromPrefs(
-          profile_client_->GetNetworkTime(), profile_client_->GetPrefService());
+          profile_client_->GetNetworkTime(), profile_client_->GetLocalState(),
+          profile_client_->GetProfilePrefs());
   LogUserDemographicsStatusInHistogram(demographics_result.status());
 
   if (demographics_result.IsSuccess())

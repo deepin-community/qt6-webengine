@@ -148,7 +148,7 @@ typedef struct {
   // tile in the frame.
   SgrprojInfo sgrproj;
   WienerInfo wiener;
-  AV1PixelRect tile_rect;
+  PixelRect tile_rect;
 } RestSearchCtxt;
 
 static AOM_INLINE void rsc_on_tile(void *priv) {
@@ -191,7 +191,7 @@ static AOM_INLINE void init_rsc(const YV12_BUFFER_CONFIG *src,
 
 static int64_t try_restoration_unit(const RestSearchCtxt *rsc,
                                     const RestorationTileLimits *limits,
-                                    const AV1PixelRect *tile_rect,
+                                    const PixelRect *tile_rect,
                                     const RestorationUnitInfo *rui) {
   const AV1_COMMON *const cm = rsc->cm;
   const int plane = rsc->plane;
@@ -873,9 +873,8 @@ static int count_sgrproj_bits(SgrprojInfo *sgrproj_info,
 }
 
 static AOM_INLINE void search_sgrproj(const RestorationTileLimits *limits,
-                                      const AV1PixelRect *tile,
-                                      int rest_unit_idx, void *priv,
-                                      int32_t *tmpbuf,
+                                      const PixelRect *tile, int rest_unit_idx,
+                                      void *priv, int32_t *tmpbuf,
                                       RestorationLineBuffers *rlbs) {
   (void)rlbs;
   RestSearchCtxt *rsc = (RestSearchCtxt *)priv;
@@ -1081,7 +1080,7 @@ static INLINE int wrap_index(int i, int wiener_win) {
 // Solve linear equations to find Wiener filter tap values
 // Taps are output scaled by WIENER_FILT_STEP
 static int linsolve_wiener(int n, int64_t *A, int stride, int64_t *b,
-                           int32_t *x) {
+                           int64_t *x) {
   for (int k = 0; k < n - 1; k++) {
     // Partial pivoting: bring the row with the largest pivot to the top
     for (int i = n - 1; i > k; i--) {
@@ -1105,7 +1104,7 @@ static int linsolve_wiener(int n, int64_t *A, int stride, int64_t *b,
       for (int j = 0; j < n; j++) {
         A[(i + 1) * stride + j] -= c / 256 * A[k * stride + j] / cd * 256;
       }
-      b[i + 1] -= c * b[k] / cd;
+      b[i + 1] -= c / 256 * b[k] / cd * 256;
     }
   }
   // Back-substitution
@@ -1116,7 +1115,7 @@ static int linsolve_wiener(int n, int64_t *A, int stride, int64_t *b,
       c += A[i * stride + j] * x[j] / WIENER_TAP_SCALE_FACTOR;
     }
     // Store filter taps x in scaled form.
-    x[i] = (int32_t)(WIENER_TAP_SCALE_FACTOR * (b[i] - c) / A[i * stride + i]);
+    x[i] = WIENER_TAP_SCALE_FACTOR * (b[i] - c) / A[i * stride + i];
   }
 
   return 1;
@@ -1126,7 +1125,7 @@ static int linsolve_wiener(int n, int64_t *A, int stride, int64_t *b,
 static AOM_INLINE void update_a_sep_sym(int wiener_win, int64_t **Mc,
                                         int64_t **Hc, int32_t *a, int32_t *b) {
   int i, j;
-  int32_t S[WIENER_WIN];
+  int64_t S[WIENER_WIN];
   int64_t A[WIENER_HALFWIN1], B[WIENER_HALFWIN1 * WIENER_HALFWIN1];
   const int wiener_win2 = wiener_win * wiener_win;
   const int wiener_halfwin1 = (wiener_win >> 1) + 1;
@@ -1174,7 +1173,10 @@ static AOM_INLINE void update_a_sep_sym(int wiener_win, int64_t **Mc,
       S[i] = S[wiener_win - 1 - i];
       S[wiener_halfwin1 - 1] -= 2 * S[i];
     }
-    memcpy(a, S, wiener_win * sizeof(*a));
+    for (i = 0; i < wiener_win; ++i) {
+      a[i] = (int32_t)CLIP(S[i], -(1 << (WIENER_FILT_BITS - 1)),
+                           (1 << (WIENER_FILT_BITS - 1)) - 1);
+    }
   }
 }
 
@@ -1182,7 +1184,7 @@ static AOM_INLINE void update_a_sep_sym(int wiener_win, int64_t **Mc,
 static AOM_INLINE void update_b_sep_sym(int wiener_win, int64_t **Mc,
                                         int64_t **Hc, int32_t *a, int32_t *b) {
   int i, j;
-  int32_t S[WIENER_WIN];
+  int64_t S[WIENER_WIN];
   int64_t A[WIENER_HALFWIN1], B[WIENER_HALFWIN1 * WIENER_HALFWIN1];
   const int wiener_win2 = wiener_win * wiener_win;
   const int wiener_halfwin1 = (wiener_win >> 1) + 1;
@@ -1231,7 +1233,10 @@ static AOM_INLINE void update_b_sep_sym(int wiener_win, int64_t **Mc,
       S[i] = S[wiener_win - 1 - i];
       S[wiener_halfwin1 - 1] -= 2 * S[i];
     }
-    memcpy(b, S, wiener_win * sizeof(*b));
+    for (i = 0; i < wiener_win; ++i) {
+      b[i] = (int32_t)CLIP(S[i], -(1 << (WIENER_FILT_BITS - 1)),
+                           (1 << (WIENER_FILT_BITS - 1)) - 1);
+    }
   }
 }
 
@@ -1383,7 +1388,7 @@ static int count_wiener_bits(int wiener_win, WienerInfo *wiener_info,
 #define USE_WIENER_REFINEMENT_SEARCH 1
 static int64_t finer_tile_search_wiener(const RestSearchCtxt *rsc,
                                         const RestorationTileLimits *limits,
-                                        const AV1PixelRect *tile,
+                                        const PixelRect *tile,
                                         RestorationUnitInfo *rui,
                                         int wiener_win) {
   const int plane_off = (WIENER_WIN - wiener_win) >> 1;
@@ -1489,7 +1494,7 @@ static int64_t finer_tile_search_wiener(const RestSearchCtxt *rsc,
 }
 
 static AOM_INLINE void search_wiener(const RestorationTileLimits *limits,
-                                     const AV1PixelRect *tile_rect,
+                                     const PixelRect *tile_rect,
                                      int rest_unit_idx, void *priv,
                                      int32_t *tmpbuf,
                                      RestorationLineBuffers *rlbs) {
@@ -1624,7 +1629,7 @@ static AOM_INLINE void search_wiener(const RestorationTileLimits *limits,
 }
 
 static AOM_INLINE void search_norestore(const RestorationTileLimits *limits,
-                                        const AV1PixelRect *tile_rect,
+                                        const PixelRect *tile_rect,
                                         int rest_unit_idx, void *priv,
                                         int32_t *tmpbuf,
                                         RestorationLineBuffers *rlbs) {
@@ -1643,7 +1648,7 @@ static AOM_INLINE void search_norestore(const RestorationTileLimits *limits,
 }
 
 static AOM_INLINE void search_switchable(const RestorationTileLimits *limits,
-                                         const AV1PixelRect *tile_rect,
+                                         const PixelRect *tile_rect,
                                          int rest_unit_idx, void *priv,
                                          int32_t *tmpbuf,
                                          RestorationLineBuffers *rlbs) {
@@ -1750,8 +1755,10 @@ void av1_pick_filter_restoration(const YV12_BUFFER_CONFIG *src, AV1_COMP *cpi) {
     ntiles[is_uv] = rest_tiles_in_plane(cm, is_uv);
 
   assert(ntiles[1] <= ntiles[0]);
-  RestUnitSearchInfo *rusi =
-      (RestUnitSearchInfo *)aom_memalign(16, sizeof(*rusi) * ntiles[0]);
+  RestUnitSearchInfo *rusi;
+  CHECK_MEM_ERROR(
+      cm, rusi,
+      (RestUnitSearchInfo *)aom_memalign(16, sizeof(*rusi) * ntiles[0]));
 
   // If the restoration unit dimensions are not multiples of
   // rsi->restoration_unit_size then some elements of the rusi array may be
@@ -1768,7 +1775,7 @@ void av1_pick_filter_restoration(const YV12_BUFFER_CONFIG *src, AV1_COMP *cpi) {
           cm->superres_upscaled_height, seq_params->subsampling_x,
           seq_params->subsampling_y, seq_params->use_highbitdepth,
           AOM_RESTORATION_FRAME_BORDER, cm->features.byte_alignment, NULL, NULL,
-          NULL, 0))
+          NULL, 0, 0))
     aom_internal_error(cm->error, AOM_CODEC_MEM_ERROR,
                        "Failed to allocate trial restored frame buffer");
 

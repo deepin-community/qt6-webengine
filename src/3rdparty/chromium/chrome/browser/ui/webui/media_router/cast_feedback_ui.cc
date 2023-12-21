@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -41,8 +41,8 @@ CastFeedbackUI::CastFeedbackUI(content::WebUI* web_ui)
     : content::WebUIController(web_ui),
       profile_(Profile::FromWebUI(web_ui)),
       web_contents_(web_ui->GetWebContents()) {
-  content::WebUIDataSource* source =
-      content::WebUIDataSource::Create(chrome::kChromeUICastFeedbackHost);
+  content::WebUIDataSource* source = content::WebUIDataSource::CreateAndAdd(
+      profile_, chrome::kChromeUICastFeedbackHost);
 
   static constexpr webui::LocalizedString kStrings[] = {
       {"additionalComments", IDS_MEDIA_ROUTER_FEEDBACK_ADDITIONAL_COMMENTS},
@@ -173,9 +173,7 @@ CastFeedbackUI::CastFeedbackUI(content::WebUI* web_ui)
                       kMediaRouterFeedbackResourcesSize),
       IDR_MEDIA_ROUTER_FEEDBACK_FEEDBACK_HTML);
 
-  content::WebUIDataSource::Add(profile_, source);
-
-  web_ui->RegisterDeprecatedMessageCallback(
+  web_ui->RegisterMessageCallback(
       "close", base::BindRepeating(&CastFeedbackUI::OnCloseMessage,
                                    base::Unretained(this)));
   web_ui->AddMessageHandler(std::make_unique<MetricsHandler>());
@@ -185,7 +183,7 @@ WEB_UI_CONTROLLER_TYPE_IMPL(CastFeedbackUI)
 
 CastFeedbackUI::~CastFeedbackUI() = default;
 
-void CastFeedbackUI::OnCloseMessage(const base::ListValue*) {
+void CastFeedbackUI::OnCloseMessage(const base::Value::List&) {
   web_contents_->GetDelegate()->CloseContents(web_contents_);
 }
 

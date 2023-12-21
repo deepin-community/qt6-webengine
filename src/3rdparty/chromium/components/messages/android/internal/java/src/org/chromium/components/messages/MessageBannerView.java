@@ -1,9 +1,10 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 package org.chromium.components.messages;
 
+import android.animation.LayoutTransition;
 import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.res.ColorStateList;
@@ -13,15 +14,18 @@ import android.text.TextUtils;
 import android.util.AttributeSet;
 import android.view.MotionEvent;
 import android.view.View;
+import android.widget.FrameLayout;
 import android.widget.ImageView;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import androidx.annotation.ColorInt;
 import androidx.annotation.Nullable;
 import androidx.appcompat.content.res.AppCompatResources;
 import androidx.core.graphics.drawable.RoundedBitmapDrawable;
+import androidx.core.widget.ImageViewCompat;
 
-import org.chromium.base.ApiCompatibilityUtils;
+import org.chromium.base.SysUtils;
 import org.chromium.components.browser_ui.widget.BoundedLinearLayout;
 import org.chromium.components.browser_ui.widget.gesture.SwipeGestureListener;
 import org.chromium.components.browser_ui.widget.gesture.SwipeGestureListener.SwipeHandler;
@@ -43,7 +47,10 @@ public class MessageBannerView extends BoundedLinearLayout {
     private ImageView mIconView;
     private TextView mTitle;
     private TextViewWithCompoundDrawables mDescription;
+    private @PrimaryWidgetAppearance int mPrimaryWidgetAppearance =
+            PrimaryWidgetAppearance.BUTTON_IF_TEXT_IS_SET;
     private TextView mPrimaryButton;
+    private View mPrimaryProgressSpinner;
     private ListMenuButton mSecondaryButton;
     private View mDivider;
     private String mSecondaryButtonMenuText;
@@ -65,10 +72,22 @@ public class MessageBannerView extends BoundedLinearLayout {
         mTitle = findViewById(R.id.message_title);
         mDescription = findViewById(R.id.message_description);
         mPrimaryButton = findViewById(R.id.message_primary_button);
+        mPrimaryProgressSpinner = findViewById(R.id.message_primary_progress_spinner);
         mIconView = findViewById(R.id.message_icon);
         mSecondaryButton = findViewById(R.id.message_secondary_button);
         mDivider = findViewById(R.id.message_divider);
         mSecondaryButton.setOnClickListener((View v) -> { handleSecondaryButtonClick(); });
+        LinearLayout mainContent = findViewById(R.id.message_main_content);
+        mainContent.getLayoutTransition().enableTransitionType(LayoutTransition.CHANGING);
+        // Elevation does not work on low end device.
+        if (SysUtils.isLowEndDevice()) {
+            setBackgroundResource(R.drawable.popup_bg);
+        }
+    }
+
+    void enableA11y(boolean enabled) {
+        setImportantForAccessibility(enabled ? IMPORTANT_FOR_ACCESSIBILITY_AUTO
+                                             : IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
     }
 
     void setTitle(String title) {
@@ -122,9 +141,9 @@ public class MessageBannerView extends BoundedLinearLayout {
 
     void setIconTint(@ColorInt int color) {
         if (color == MessageBannerProperties.TINT_NONE) {
-            ApiCompatibilityUtils.setImageTintList(mIconView, null);
+            ImageViewCompat.setImageTintList(mIconView, null);
         } else {
-            ApiCompatibilityUtils.setImageTintList(mIconView, ColorStateList.valueOf(color));
+            ImageViewCompat.setImageTintList(mIconView, ColorStateList.valueOf(color));
         }
     }
 
@@ -139,9 +158,25 @@ public class MessageBannerView extends BoundedLinearLayout {
         mIconView.setImageDrawable(bitmap);
     }
 
+    void setPrimaryWidgetAppearance(@PrimaryWidgetAppearance int primaryWidgetAppearance) {
+        mPrimaryWidgetAppearance = primaryWidgetAppearance;
+        updatePrimaryWidgetAppearance();
+    }
+
     void setPrimaryButtonText(String text) {
-        mPrimaryButton.setVisibility(VISIBLE);
         mPrimaryButton.setText(text);
+        updatePrimaryWidgetAppearance();
+    }
+
+    private void updatePrimaryWidgetAppearance() {
+        mPrimaryButton.setVisibility(
+                mPrimaryWidgetAppearance == PrimaryWidgetAppearance.BUTTON_IF_TEXT_IS_SET
+                                && !TextUtils.isEmpty(mPrimaryButton.getText())
+                        ? VISIBLE
+                        : GONE);
+        mPrimaryProgressSpinner.setVisibility(
+                mPrimaryWidgetAppearance == PrimaryWidgetAppearance.PROGRESS_SPINNER ? VISIBLE
+                                                                                     : GONE);
     }
 
     void setPrimaryButtonClickListener(OnClickListener listener) {
@@ -191,6 +226,10 @@ public class MessageBannerView extends BoundedLinearLayout {
         mOnTitleChanged = runnable;
     }
 
+    void dismissSecondaryMenuIfShown() {
+        mSecondaryButton.dismiss();
+    }
+
     void enableLargeIcon(boolean enabled) {
         int smallSize = getResources().getDimensionPixelSize(R.dimen.message_icon_size);
         int largeSize = getResources().getDimensionPixelSize(R.dimen.message_icon_size_large);
@@ -227,6 +266,87 @@ public class MessageBannerView extends BoundedLinearLayout {
             mSecondaryButton.addPopupListener(mPopupMenuShownListener);
         }
         mSecondaryButton.showMenu();
+    }
+
+    void setMarginTop(int val) {
+        FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) getLayoutParams();
+        params.topMargin = val;
+        setLayoutParams(params);
+    }
+
+    int getTitleHeightForAnimation() {
+        return mTitle.getHeight();
+    }
+
+    int getTitleMeasuredHeightForAnimation() {
+        return mTitle.getMeasuredHeight();
+    }
+
+    int getDescriptionHeightForAnimation() {
+        return mDescription.getHeight();
+    }
+
+    int getDescriptionMeasuredHeightForAnimation() {
+        return mDescription.getMeasuredHeight();
+    }
+
+    int getPrimaryButtonLineCountForAnimation() {
+        return mPrimaryButton.getLineCount();
+    }
+
+    void resizeForStackingAnimation(
+            int titleHeight, int descriptionHeight, int primaryButtonLineCount) {
+        if (titleHeight != mTitle.getMeasuredHeight()) {
+            LinearLayout.LayoutParams params = (LinearLayout.LayoutParams) mTitle.getLayoutParams();
+            params.height = titleHeight;
+            mTitle.setLayoutParams(params);
+        }
+
+        if (descriptionHeight != mDescription.getMeasuredHeight()) {
+            var params = (LinearLayout.LayoutParams) mDescription.getLayoutParams();
+            params.height = descriptionHeight;
+            mDescription.setLayoutParams(params);
+        }
+
+        mPrimaryButton.setMaxLines(primaryButtonLineCount);
+        mPrimaryButton.setEllipsize(TextUtils.TruncateAt.END);
+    }
+
+    void resetForStackingAnimation() {
+        LinearLayout.LayoutParams params = (LinearLayout.LayoutParams) mTitle.getLayoutParams();
+        if (params.height != LayoutParams.WRAP_CONTENT) {
+            params.height = LayoutParams.WRAP_CONTENT;
+            mTitle.setLayoutParams(params);
+        }
+
+        params = (LinearLayout.LayoutParams) mDescription.getLayoutParams();
+        if (params.height != LayoutParams.WRAP_CONTENT) {
+            params.height = LayoutParams.WRAP_CONTENT;
+            mDescription.setLayoutParams(params);
+        }
+
+        mPrimaryButton.setMaxLines(Integer.MAX_VALUE);
+        mPrimaryButton.setEllipsize(null);
+    }
+
+    /**
+     * Overriding onMeasure for set a proper height for primary button. By design, the primary
+     * button should fill all the remaining vertical space. If it includes very long text which
+     * makes its height larger than the main content (title + description), we should manually
+     * increase its height to prevent its text from being clipped.
+     */
+    @Override
+    protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+        mPrimaryButton.setMinHeight(0); // Reset min height for measuring.
+        super.onMeasure(widthMeasureSpec, heightMeasureSpec);
+        int containerHeight = getMeasuredHeight();
+        int btnWidth = mPrimaryButton.getMeasuredWidth();
+        int wSpec = MeasureSpec.makeMeasureSpec(btnWidth, MeasureSpec.EXACTLY);
+        int hSpec = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED);
+        mPrimaryButton.measure(wSpec, hSpec);
+        int measuredHeight = mPrimaryButton.getMeasuredHeight();
+        mPrimaryButton.setMinHeight(Math.max(measuredHeight, containerHeight));
+        super.onMeasure(widthMeasureSpec, heightMeasureSpec);
     }
 
     private ListMenuButtonDelegate buildDelegateForSingleMenuItem() {

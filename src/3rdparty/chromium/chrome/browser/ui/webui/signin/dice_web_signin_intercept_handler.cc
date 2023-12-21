@@ -1,11 +1,13 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "chrome/browser/ui/webui/signin/dice_web_signin_intercept_handler.h"
 
-#include "base/bind.h"
+#include <string>
+
 #include "base/feature_list.h"
+#include "base/functional/bind.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/browser_process.h"
@@ -17,10 +19,14 @@
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/signin/signin_features.h"
+#include "chrome/browser/ui/managed_ui.h"
 #include "chrome/browser/ui/signin/profile_colors_util.h"
+#include "chrome/common/url_constants.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
+#include "components/google/core/common/google_util.h"
 #include "components/policy/core/common/management/management_service.h"
+#include "components/signin/public/identity_manager/account_info.h"
 #include "content/public/browser/web_ui.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkColor.h"
@@ -52,9 +58,13 @@ SkColor GetProfileHighlightColor(Profile* profile) {
 DiceWebSigninInterceptHandler::DiceWebSigninInterceptHandler(
     const DiceWebSigninInterceptor::Delegate::BubbleParameters&
         bubble_parameters,
-    base::OnceCallback<void(SigninInterceptionUserChoice)> callback)
-    : bubble_parameters_(bubble_parameters), callback_(std::move(callback)) {
-  DCHECK(callback_);
+    base::OnceCallback<void(int)> show_widget_with_height_callback,
+    base::OnceCallback<void(SigninInterceptionUserChoice)> completion_callback)
+    : bubble_parameters_(bubble_parameters),
+      show_widget_with_height_callback_(
+          std::move(show_widget_with_height_callback)),
+      completion_callback_(std::move(completion_callback)) {
+  DCHECK(completion_callback_);
 }
 
 DiceWebSigninInterceptHandler::~DiceWebSigninInterceptHandler() = default;
@@ -75,6 +85,11 @@ void DiceWebSigninInterceptHandler::RegisterMessages() {
       "pageLoaded",
       base::BindRepeating(&DiceWebSigninInterceptHandler::HandlePageLoaded,
                           base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "initializedWithHeight",
+      base::BindRepeating(
+          &DiceWebSigninInterceptHandler::HandleInitializedWithHeight,
+          base::Unretained(this)));
 }
 
 void DiceWebSigninInterceptHandler::OnJavascriptAllowed() {
@@ -117,19 +132,22 @@ const AccountInfo& DiceWebSigninInterceptHandler::intercepted_account() {
 
 void DiceWebSigninInterceptHandler::HandleAccept(
     const base::Value::List& args) {
-  if (callback_)
-    std::move(callback_).Run(SigninInterceptionUserChoice::kAccept);
+  if (completion_callback_) {
+    std::move(completion_callback_).Run(SigninInterceptionUserChoice::kAccept);
+  }
 }
 
 void DiceWebSigninInterceptHandler::HandleCancel(
     const base::Value::List& args) {
-  if (callback_)
-    std::move(callback_).Run(SigninInterceptionUserChoice::kDecline);
+  if (completion_callback_) {
+    std::move(completion_callback_).Run(SigninInterceptionUserChoice::kDecline);
+  }
 }
 
 void DiceWebSigninInterceptHandler::HandleGuest(const base::Value::List& args) {
-  if (callback_)
-    std::move(callback_).Run(SigninInterceptionUserChoice::kGuest);
+  if (completion_callback_) {
+    std::move(completion_callback_).Run(SigninInterceptionUserChoice::kGuest);
+  }
 }
 
 void DiceWebSigninInterceptHandler::HandlePageLoaded(
@@ -160,58 +178,56 @@ void DiceWebSigninInterceptHandler::HandlePageLoaded(
   ResolveJavascriptCallback(callback_id, GetInterceptionParametersValue());
 }
 
-base::Value DiceWebSigninInterceptHandler::GetAccountInfoValue(
+void DiceWebSigninInterceptHandler::HandleInitializedWithHeight(
+    const base::Value::List& args) {
+  AllowJavascript();
+  CHECK_EQ(1u, args.size());
+  int height = args[0].GetInt();
+  CHECK_GE(height, 0);
+
+  if (show_widget_with_height_callback_) {
+    std::move(show_widget_with_height_callback_).Run(height);
+  }
+}
+
+base::Value::Dict DiceWebSigninInterceptHandler::GetAccountInfoValue(
     const AccountInfo& info) {
   std::string picture_url_to_load =
       info.account_image.IsEmpty()
           ? profiles::GetPlaceholderAvatarIconUrl()
           : webui::GetBitmapDataUrl(info.account_image.AsBitmap());
-  base::Value account_info_value(base::Value::Type::DICTIONARY);
-  account_info_value.SetBoolKey("isManaged", IsManaged(info));
-  account_info_value.SetStringKey("pictureUrl", picture_url_to_load);
+  base::Value::Dict account_info_value;
+  account_info_value.Set("isManaged", IsManaged(info));
+  account_info_value.Set("pictureUrl", picture_url_to_load);
   return account_info_value;
 }
 
-base::Value DiceWebSigninInterceptHandler::GetInterceptionParametersValue() {
-  bool is_switch =
-      bubble_parameters_.interception_type ==
-      DiceWebSigninInterceptor::SigninInterceptionType::kProfileSwitch;
-  int confirmButtonStringID =
-      is_switch
-          ? IDS_SIGNIN_DICE_WEB_INTERCEPT_BUBBLE_CONFIRM_SWITCH_BUTTON_LABEL
-          : IDS_SIGNIN_DICE_WEB_INTERCEPT_BUBBLE_NEW_PROFILE_BUTTON_LABEL;
-  int cancelButtonStringID =
-      is_switch
-          ? IDS_SIGNIN_DICE_WEB_INTERCEPT_BUBBLE_CANCEL_SWITCH_BUTTON_LABEL
-          : IDS_SIGNIN_DICE_WEB_INTERCEPT_BUBBLE_CANCEL_BUTTON_LABEL;
-  base::Value parameters(base::Value::Type::DICTIONARY);
-  parameters.SetStringKey("headerText", GetHeaderText());
-  parameters.SetStringKey("bodyTitle", GetBodyTitle());
-  parameters.SetStringKey("bodyText", GetBodyText());
-  parameters.SetStringKey("confirmButtonLabel",
-                          l10n_util::GetStringUTF8(confirmButtonStringID));
-  parameters.SetStringKey("cancelButtonLabel",
-                          l10n_util::GetStringUTF8(cancelButtonStringID));
-  parameters.SetBoolKey("showGuestOption",
-                        bubble_parameters_.show_guest_option);
-  parameters.SetKey("interceptedAccount",
-                    GetAccountInfoValue(intercepted_account()));
-  parameters.SetKey("primaryAccount", GetAccountInfoValue(primary_account()));
-  parameters.SetStringKey("interceptedProfileColor",
-                          color_utils::SkColorToRgbaString(
-                              bubble_parameters_.profile_highlight_color));
-  parameters.SetStringKey(
-      "primaryProfileColor",
-      color_utils::SkColorToRgbaString(
-          GetProfileHighlightColor(Profile::FromWebUI(web_ui()))));
-  parameters.SetBoolKey("useV2Design",
-                        !is_switch && base::FeatureList::IsEnabled(
-                                          kSyncPromoAfterSigninIntercept));
+base::Value::Dict
+DiceWebSigninInterceptHandler::GetInterceptionParametersValue() {
+  base::Value::Dict parameters;
+  parameters.Set("headerText", GetHeaderText());
+  parameters.Set("bodyTitle", GetBodyTitle());
+  parameters.Set("bodyText", GetBodyText());
+  parameters.Set("confirmButtonLabel", GetConfirmButtonLabel());
+  parameters.Set("cancelButtonLabel", GetCancelButtonLabel());
+  parameters.Set("managedDisclaimerText", GetManagedDisclaimerText());
+  parameters.Set("showGuestOption", bubble_parameters_.show_guest_option);
+  parameters.Set("interceptedAccount",
+                 GetAccountInfoValue(intercepted_account()));
+  parameters.Set("primaryAccount", GetAccountInfoValue(primary_account()));
+  parameters.Set("interceptedProfileColor",
+                 color_utils::SkColorToRgbaString(
+                     bubble_parameters_.profile_highlight_color));
+  parameters.Set("primaryProfileColor",
+                 color_utils::SkColorToRgbaString(
+                     GetProfileHighlightColor(Profile::FromWebUI(web_ui()))));
+  parameters.Set("useV2Design", GetShouldUseV2Design());
+  parameters.Set("showManagedDisclaimer",
+                 bubble_parameters_.show_managed_disclaimer);
 
-  parameters.SetStringKey(
-      "headerTextColor",
-      color_utils::SkColorToRgbaString(GetProfileForegroundTextColor(
-          bubble_parameters_.profile_highlight_color)));
+  parameters.Set("headerTextColor",
+                 color_utils::SkColorToRgbaString(GetProfileForegroundTextColor(
+                     bubble_parameters_.profile_highlight_color)));
   return parameters;
 }
 
@@ -233,21 +249,21 @@ bool DiceWebSigninInterceptHandler::ShouldShowManagedDeviceVersion() {
 }
 
 std::string DiceWebSigninInterceptHandler::GetHeaderText() {
-  switch (bubble_parameters_.interception_type) {
-    case DiceWebSigninInterceptor::SigninInterceptionType::kEnterprise:
-      return IsManaged(intercepted_account())
-                 ? intercepted_account().hosted_domain
-                 : intercepted_account().given_name;
-    case DiceWebSigninInterceptor::SigninInterceptionType::kMultiUser:
-    case DiceWebSigninInterceptor::SigninInterceptionType::kProfileSwitch:
-      return intercepted_account().given_name;
-    case DiceWebSigninInterceptor::SigninInterceptionType::kEnterpriseForced:
-    case DiceWebSigninInterceptor::SigninInterceptionType::
-        kEnterpriseAcceptManagement:
-    case DiceWebSigninInterceptor::SigninInterceptionType::kProfileSwitchForced:
-      NOTREACHED() << "This interception type is not handled by a bubble";
-      return std::string();
+  if (bubble_parameters_.interception_type ==
+      DiceWebSigninInterceptor::SigninInterceptionType::kProfileSwitch) {
+    return intercepted_account().given_name;
   }
+
+  if (base::FeatureList::IsEnabled(kSigninInterceptBubbleV2))
+    return std::string();
+
+  if (bubble_parameters_.interception_type ==
+          DiceWebSigninInterceptor::SigninInterceptionType::kEnterprise &&
+      IsManaged(intercepted_account())) {
+    return intercepted_account().hosted_domain;
+  }
+
+  return intercepted_account().given_name;
 }
 
 std::string DiceWebSigninInterceptHandler::GetBodyTitle() {
@@ -256,11 +272,18 @@ std::string DiceWebSigninInterceptHandler::GetBodyTitle() {
     return l10n_util::GetStringUTF8(
         IDS_SIGNIN_DICE_WEB_INTERCEPT_SWITCH_BUBBLE_TITLE);
   }
+
   return l10n_util::GetStringUTF8(
       IDS_SIGNIN_DICE_WEB_INTERCEPT_CREATE_BUBBLE_TITLE);
 }
 
 std::string DiceWebSigninInterceptHandler::GetBodyText() {
+  if (bubble_parameters_.interception_type ==
+      DiceWebSigninInterceptor::SigninInterceptionType::kProfileSwitch) {
+    return l10n_util::GetStringUTF8(
+        IDS_SIGNIN_DICE_WEB_INTERCEPT_SWITCH_BUBBLE_DESC);
+  }
+
   switch (bubble_parameters_.interception_type) {
     case DiceWebSigninInterceptor::SigninInterceptionType::kEnterprise:
       return ShouldShowManagedDeviceVersion()
@@ -280,8 +303,7 @@ std::string DiceWebSigninInterceptHandler::GetBodyText() {
                        IDS_SIGNIN_DICE_WEB_INTERCEPT_CONSUMER_BUBBLE_DESC,
                        base::UTF8ToUTF16(primary_account().given_name));
     case DiceWebSigninInterceptor::SigninInterceptionType::kProfileSwitch:
-      return l10n_util::GetStringUTF8(
-          IDS_SIGNIN_DICE_WEB_INTERCEPT_SWITCH_BUBBLE_DESC);
+      // Already handled.
     case DiceWebSigninInterceptor::SigninInterceptionType::
         kEnterpriseAcceptManagement:
     case DiceWebSigninInterceptor::SigninInterceptionType::kEnterpriseForced:
@@ -289,4 +311,54 @@ std::string DiceWebSigninInterceptHandler::GetBodyText() {
       NOTREACHED() << "This interception type is not handled by a bubble";
       return std::string();
   }
+}
+
+std::string DiceWebSigninInterceptHandler::GetConfirmButtonLabel() {
+  if (bubble_parameters_.interception_type ==
+      DiceWebSigninInterceptor::SigninInterceptionType::kProfileSwitch) {
+    return l10n_util::GetStringUTF8(
+        IDS_SIGNIN_DICE_WEB_INTERCEPT_BUBBLE_CONFIRM_SWITCH_BUTTON_LABEL);
+  }
+
+  return l10n_util::GetStringUTF8(
+      IDS_SIGNIN_DICE_WEB_INTERCEPT_BUBBLE_NEW_PROFILE_BUTTON_LABEL);
+}
+
+std::string DiceWebSigninInterceptHandler::GetCancelButtonLabel() {
+  return l10n_util::GetStringUTF8(
+      bubble_parameters_.interception_type ==
+              DiceWebSigninInterceptor::SigninInterceptionType::kProfileSwitch
+          ? IDS_SIGNIN_DICE_WEB_INTERCEPT_BUBBLE_CANCEL_SWITCH_BUTTON_LABEL
+          : IDS_SIGNIN_DICE_WEB_INTERCEPT_BUBBLE_CANCEL_BUTTON_LABEL);
+}
+
+std::string DiceWebSigninInterceptHandler::GetManagedDisclaimerText() {
+  std::string learn_more_url =
+      google_util::AppendGoogleLocaleParam(
+          GURL(chrome::kSigninInterceptManagedDisclaimerLearnMoreURL),
+          g_browser_process->GetApplicationLocale())
+          .spec();
+  std::string manager_domain = intercepted_account().IsManaged()
+                                   ? intercepted_account().hosted_domain
+                                   : std::string();
+  if (manager_domain.empty())
+    manager_domain = chrome::GetDeviceManagerIdentity().value_or(std::string());
+
+  if (manager_domain.empty()) {
+    return l10n_util::GetStringFUTF8(
+        IDS_SIGNIN_DICE_WEB_INTERCEPT_MANAGED_DISCLAIMER,
+        base::ASCIIToUTF16(learn_more_url));
+  }
+
+  return l10n_util::GetStringFUTF8(
+      IDS_SIGNIN_DICE_WEB_INTERCEPT_MANAGED_BY_DISCLAIMER,
+      base::ASCIIToUTF16(manager_domain), base::ASCIIToUTF16(learn_more_url));
+}
+
+bool DiceWebSigninInterceptHandler::GetShouldUseV2Design() {
+  if (bubble_parameters_.interception_type ==
+      DiceWebSigninInterceptor::SigninInterceptionType::kProfileSwitch)
+    return false;
+
+  return base::FeatureList::IsEnabled(kSigninInterceptBubbleV2);
 }

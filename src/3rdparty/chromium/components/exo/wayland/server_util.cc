@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -30,11 +30,15 @@ DEFINE_UI_CLASS_PROPERTY_KEY(wl_resource*, kSurfaceResourceKey, nullptr)
 DEFINE_UI_CLASS_PROPERTY_KEY(wl_resource*, kDataOfferResourceKey, nullptr)
 
 // Wayland provides no convenient way to annotate a wl_display with arbitrary
-// data. Therefore, to map displays to their capabilities, we maintain this
+// data. Therefore, to map displays to their security_delegate, we maintain this
 // mapping.
-base::flat_map<wl_display*, Capabilities*> g_display_capability_map;
+base::flat_map<wl_display*, SecurityDelegate*> g_display_security_map;
 
 }  // namespace
+
+void SetImplementation(wl_resource* resource, const void* implementation) {
+  wl_resource_set_implementation(resource, implementation, nullptr, nullptr);
+}
 
 uint32_t TimeTicksToMilliseconds(base::TimeTicks ticks) {
   return (ticks - base::TimeTicks()).InMilliseconds();
@@ -61,23 +65,25 @@ void SetDataOfferResource(DataOffer* data_offer,
   data_offer->SetProperty(kDataOfferResourceKey, data_offer_resource);
 }
 
-void SetCapabilities(wl_display* display, Capabilities* capabilities) {
-  auto emplace_result = g_display_capability_map.emplace(display, capabilities);
+void SetSecurityDelegate(wl_display* display,
+                         SecurityDelegate* security_delegate) {
+  auto emplace_result =
+      g_display_security_map.emplace(display, security_delegate);
   DCHECK(emplace_result.second);
 }
 
-void RemoveCapabilities(wl_display* display) {
-  DCHECK(g_display_capability_map.contains(display));
-  g_display_capability_map.erase(display);
+void RemoveSecurityDelegate(wl_display* display) {
+  DCHECK(g_display_security_map.contains(display));
+  g_display_security_map.erase(display);
 }
 
-Capabilities* GetCapabilities(wl_display* display) {
-  DCHECK(g_display_capability_map.contains(display));
-  return g_display_capability_map[display];
+SecurityDelegate* GetSecurityDelegate(wl_display* display) {
+  DCHECK(g_display_security_map.contains(display));
+  return g_display_security_map[display];
 }
 
-Capabilities* GetCapabilities(wl_client* client) {
-  return GetCapabilities(wl_client_get_display(client));
+SecurityDelegate* GetSecurityDelegate(wl_client* client) {
+  return GetSecurityDelegate(wl_client_get_display(client));
 }
 
 }  // namespace wayland

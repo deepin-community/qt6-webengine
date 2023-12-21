@@ -13,8 +13,12 @@ import {HiddenIssuesRow} from './HiddenIssuesRow.js';
 import issuesPaneStyles from './issuesPane.css.js';
 import issuesTreeStyles from './issuesTree.css.js';
 
-import type {AggregatedIssue, AggregationKey} from './IssueAggregator.js';
-import {Events as IssueAggregatorEvents, IssueAggregator} from './IssueAggregator.js';
+import {
+  Events as IssueAggregatorEvents,
+  IssueAggregator,
+  type AggregatedIssue,
+  type AggregationKey,
+} from './IssueAggregator.js';
 import {IssueView} from './IssueView.js';
 import {IssueKindView, getGroupIssuesByKindSetting, issueKindViewSortPriority} from './IssueKindView.js';
 
@@ -67,12 +71,12 @@ const UIStrings = {
    */
   groupByCategory: 'Group by category',
   /**
-  * @description Title for a checkbox which toggles grouping by kind in the issues tab
-    */
+   * @description Title for a checkbox which toggles grouping by kind in the issues tab
+   */
   groupDisplayedIssuesUnderKind: 'Group displayed issues as Page errors, Breaking changes and Improvements',
   /**
-  * @description Label for a checkbox which toggles grouping by kind in the issues tab
-    */
+   * @description Label for a checkbox which toggles grouping by kind in the issues tab
+   */
   groupByKind: 'Group by kind',
   /**
    * @description Title for a checkbox. Whether the issues tab should include third-party issues or not.

@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -31,7 +31,8 @@ class CORE_EXPORT PerformanceElementTiming final : public PerformanceEntry {
                                           int naturalWidth,
                                           int naturalHeight,
                                           const AtomicString& id,
-                                          Element*);
+                                          Element*,
+                                          DOMWindow* source);
   PerformanceElementTiming(const AtomicString& name,
                            DOMHighResTimeStamp start_time,
                            const String& url,
@@ -42,11 +43,12 @@ class CORE_EXPORT PerformanceElementTiming final : public PerformanceEntry {
                            int naturalWidth,
                            int naturalHeight,
                            const AtomicString& id,
-                           Element*);
+                           Element*,
+                           DOMWindow* source);
 
   ~PerformanceElementTiming() override;
 
-  AtomicString entryType() const override;
+  const AtomicString& entryType() const override;
   PerformanceEntryType EntryTypeEnum() const override;
 
   DOMRectReadOnly* intersectionRect() const { return intersection_rect_; }

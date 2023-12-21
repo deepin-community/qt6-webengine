@@ -1,6 +1,7 @@
 load("@org_tensorflow//tensorflow/lite/core/shims:cc_library_with_tflite.bzl", "cc_library_with_tflite")
 
 package(
+    default_applicable_licenses = ["//tensorflow_lite_support:license"],
     default_visibility = [
         "//visibility:public",
     ],
@@ -169,6 +170,41 @@ cc_library_with_tflite(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
+        "@org_tensorflow//tensorflow/lite/c:common",
+        "@org_tensorflow//tensorflow/lite/core/api:op_resolver",
+    ],
+)
+
+# IMPORTANT: in order to use hardware acceleration delegates, configurable through the
+# `compute_settings` field of the ImageSearcherOptions, you must additionally link to
+# the appropriate delegate plugin target (e.g. `gpu_plugin` for GPU) from:
+# https://github.com/tensorflow/tensorflow/blob/master/tensorflow/lite/experimental/acceleration/configuration/BUILD
+# To use EDGETPU_CORAL, link to `edgetpu_coral_plugin` from:
+# https://github.com/tensorflow/tflite-support/blob/a58a4f9225c411fa9ba29f821523e6e283988d23/tensorflow_lite_support/acceleration/configuration/BUILD#L11
+cc_library_with_tflite(
+    name = "image_searcher",
+    srcs = ["image_searcher.cc"],
+    hdrs = ["image_searcher.h"],
+    tflite_deps = [
+        "@org_tensorflow//tensorflow/lite/core/shims:builtin_ops",
+        "//tensorflow_lite_support/cc/task/core:task_api_factory",
+        "//tensorflow_lite_support/cc/task/core:tflite_engine",
+        "//tensorflow_lite_support/cc/task/processor:search_postprocessor",
+        "//tensorflow_lite_support/cc/task/vision/core:base_vision_task_api",
+    ],
+    deps = [
+        "//tensorflow_lite_support/cc/port:status_macros",
+        "//tensorflow_lite_support/cc/port:statusor",
+        "//tensorflow_lite_support/cc/task/processor/proto:embedding_options_cc_proto",
+        "//tensorflow_lite_support/cc/task/processor/proto:search_options_cc_proto",
+        "//tensorflow_lite_support/cc/task/processor/proto:search_result_cc_proto",
+        "//tensorflow_lite_support/cc/task/vision/core:frame_buffer",
+        "//tensorflow_lite_support/cc/task/vision/proto:bounding_box_proto_inc",
+        "//tensorflow_lite_support/cc/task/vision/proto:image_searcher_options_cc_proto",
+        "//tensorflow_lite_support/cc/task/vision/utils:frame_buffer_utils",
+        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
         "@org_tensorflow//tensorflow/lite/c:common",
         "@org_tensorflow//tensorflow/lite/core/api:op_resolver",
     ],

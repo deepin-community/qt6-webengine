@@ -2,13 +2,19 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+visibility = [ "./*" ]
+
 source_set("util") {
   testonly = true
-  sources = [
-    "read_file.cc",
+
+  visibility += [ "../../*" ]
+
+  public = [
     "read_file.h",
     "task_util.h",
   ]
+
+  sources = [ "read_file.cc" ]
 
   public_deps = [
     "../../platform",

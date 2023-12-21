@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,8 +7,8 @@
 #include <map>
 #include <vector>
 
-#include "base/bind.h"
 #include "base/containers/cxx20_erase.h"
+#include "base/functional/bind.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/no_destructor.h"
 #include "base/observer_list.h"
@@ -25,10 +25,10 @@
 #include "content/browser/devtools/service_worker_devtools_manager.h"
 #include "content/browser/devtools/shared_worker_devtools_agent_host.h"
 #include "content/browser/devtools/shared_worker_devtools_manager.h"
+#include "content/browser/devtools/web_contents_devtools_agent_host.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/devtools_external_agent_proxy_delegate.h"
-#include "content/public/browser/devtools_manager_delegate.h"
 #include "content/public/browser/devtools_socket_factory.h"
 #include "services/network/public/mojom/network_context.mojom.h"
 
@@ -61,6 +61,7 @@ void SetDevToolsPipeHandler(std::unique_ptr<DevToolsPipeHandler> handler) {
 
 }  // namespace
 
+const char DevToolsAgentHost::kTypeTab[] = "tab";
 const char DevToolsAgentHost::kTypePage[] = "page";
 const char DevToolsAgentHost::kTypeFrame[] = "iframe";
 const char DevToolsAgentHost::kTypeDedicatedWorker[] = "worker";
@@ -86,6 +87,15 @@ bool DevToolsAgentHost::IsSupportedProtocolVersion(const std::string& version) {
 }
 
 // static
+DevToolsAgentHost::List DevToolsAgentHost::GetAll() {
+  DevToolsAgentHost::List result;
+  for (auto& instance : GetDevtoolsInstances()) {
+    result.push_back(instance.second);
+  }
+  return result;
+}
+
+// static
 DevToolsAgentHost::List DevToolsAgentHost::GetOrCreateAll() {
   List result;
   SharedWorkerDevToolsAgentHost::List shared_list;
@@ -101,6 +111,7 @@ DevToolsAgentHost::List DevToolsAgentHost::GetOrCreateAll() {
   // TODO(dgozman): we should add dedicated workers here, but clients are not
   // ready.
   RenderFrameDevToolsAgentHost::AddAllAgentHosts(&result);
+  WebContentsDevToolsAgentHost::AddAllAgentHosts(&result);
 
   AuctionWorkletDevToolsAgentHostManager::GetInstance().GetAll(&result);
 
@@ -218,7 +229,7 @@ bool DevToolsAgentHostImpl::AttachClient(DevToolsAgentHostClient* client) {
   if (SessionByClient(client))
     return false;
   return AttachInternal(
-      std::make_unique<DevToolsSession>(client, /*session_id=*/""),
+      std::make_unique<DevToolsSession>(client, GetSessionMode()),
       /*acquire_wake_lock=*/true);
 }
 
@@ -227,7 +238,7 @@ bool DevToolsAgentHostImpl::AttachClientWithoutWakeLock(
   if (SessionByClient(client))
     return false;
   return AttachInternal(
-      std::make_unique<DevToolsSession>(client, /*session_id=*/""),
+      std::make_unique<DevToolsSession>(client, GetSessionMode()),
       /*acquire_wake_lock=*/false);
 }
 
@@ -333,6 +344,10 @@ void DevToolsAgentHostImpl::DisconnectWebContents() {
 void DevToolsAgentHostImpl::ConnectWebContents(WebContents* wc) {
 }
 
+DevToolsSession::Mode DevToolsAgentHostImpl::GetSessionMode() {
+  return DevToolsSession::Mode::kDoesNotSupportTabTarget;
+}
+
 bool DevToolsAgentHostImpl::Inspect() {
   DevToolsManager* manager = DevToolsManager::GetInstance();
   if (manager->delegate()) {
@@ -343,12 +358,18 @@ bool DevToolsAgentHostImpl::Inspect() {
 }
 
 void DevToolsAgentHostImpl::ForceDetachAllSessions() {
-  scoped_refptr<DevToolsAgentHostImpl> protect(this);
+  std::ignore = ForceDetachAllSessionsImpl();
+}
+
+scoped_refptr<DevToolsAgentHost>
+DevToolsAgentHostImpl::ForceDetachAllSessionsImpl() {
+  scoped_refptr<DevToolsAgentHost> retain_this(this);
   while (!sessions_.empty()) {
     DevToolsAgentHostClient* client = (*sessions_.begin())->GetClient();
     DetachClient(client);
     client->AgentHostClosed(this);
   }
+  return retain_this;
 }
 
 void DevToolsAgentHostImpl::ForceDetachRestrictedSessions(
@@ -409,6 +430,10 @@ void DevToolsAgentHost::RemoveObserver(DevToolsAgentHostObserver* observer) {
 // static
 bool DevToolsAgentHostImpl::ShouldForceCreation() {
   return !!s_force_creation_count_;
+}
+
+std::string DevToolsAgentHostImpl::GetSubtype() {
+  return "";
 }
 
 void DevToolsAgentHostImpl::NotifyCreated() {

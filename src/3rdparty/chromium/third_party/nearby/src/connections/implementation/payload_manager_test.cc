@@ -23,7 +23,6 @@
 #include "internal/platform/pipe.h"
 #include "internal/platform/system_clock.h"
 
-namespace location {
 namespace nearby {
 namespace connections {
 namespace {
@@ -37,6 +36,9 @@ constexpr absl::Duration kDefaultTimeout = absl::Milliseconds(1000);
 
 constexpr BooleanMediumSelector kTestCases[] = {
     BooleanMediumSelector{
+        .ble = true,
+    },
+    BooleanMediumSelector{
         .bluetooth = true,
     },
     BooleanMediumSelector{
@@ -44,6 +46,19 @@ constexpr BooleanMediumSelector kTestCases[] = {
     },
     BooleanMediumSelector{
         .bluetooth = true,
+        .ble = true,
+    },
+    BooleanMediumSelector{
+        .bluetooth = true,
+        .wifi_lan = true,
+    },
+    BooleanMediumSelector{
+        .ble = true,
+        .wifi_lan = true,
+    },
+    BooleanMediumSelector{
+        .bluetooth = true,
+        .ble = true,
         .wifi_lan = true,
     },
 };
@@ -84,8 +99,6 @@ class PayloadSimulationUser : public SimulationUser {
 class PayloadManagerTest
     : public ::testing::TestWithParam<BooleanMediumSelector> {
  protected:
-  PayloadManagerTest() { env_.Stop(); }
-
   bool SetupConnection(PayloadSimulationUser& user_a,
                        PayloadSimulationUser& user_b) {
     user_a.StartAdvertising(std::string(kServiceId), &connection_latch_);
@@ -371,4 +384,3 @@ INSTANTIATE_TEST_SUITE_P(ParametrisedPayloadManagerTest, PayloadManagerTest,
 }  // namespace
 }  // namespace connections
 }  // namespace nearby
-}  // namespace location

@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -46,6 +46,14 @@ class UrlCheckerDelegateImpl : public safe_browsing::UrlCheckerDelegate {
   void StartObservingInteractionsForDelayedBlockingPageHelper(
       const security_interstitials::UnsafeResource& resource,
       bool is_main_frame) override;
+  void CheckLookupMechanismExperimentEligibility(
+      const security_interstitials::UnsafeResource& resource,
+      base::OnceCallback<void(bool)> callback,
+      scoped_refptr<base::SequencedTaskRunner> callback_task_runner) override;
+  void CheckExperimentEligibilityAndStartBlockingPage(
+      const security_interstitials::UnsafeResource& resource,
+      base::OnceCallback<void(bool)> callback,
+      scoped_refptr<base::SequencedTaskRunner> callback_task_runner) override;
   bool IsUrlAllowlisted(const GURL& url) override;
   void SetPolicyAllowlistDomains(
       const std::vector<std::string>& allowlist_domains) override;

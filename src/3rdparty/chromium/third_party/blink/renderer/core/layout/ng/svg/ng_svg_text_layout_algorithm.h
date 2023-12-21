@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -20,8 +20,8 @@ class NGSvgTextLayoutAlgorithm {
 
   // Apply SVG specific text layout algorithm to |items|.
   // Text items in |items| will be converted to kSVGText type.
-  void Layout(const String& ifc_text_content,
-              NGFragmentItemsBuilder::ItemWithOffsetList& items);
+  PhysicalSize Layout(const String& ifc_text_content,
+                      NGFragmentItemsBuilder::ItemWithOffsetList& items);
 
  private:
   // Returns false if we should skip the following steps.
@@ -41,7 +41,7 @@ class NGSvgTextLayoutAlgorithm {
   void ApplyAnchoring(const NGFragmentItemsBuilder::ItemWithOffsetList& items);
   void PositionOnPath(const NGFragmentItemsBuilder::ItemWithOffsetList& items);
 
-  void WriteBackToFragmentItems(
+  PhysicalSize WriteBackToFragmentItems(
       NGFragmentItemsBuilder::ItemWithOffsetList& items);
 
   float ScalingFactorAt(const NGFragmentItemsBuilder::ItemWithOffsetList& items,
@@ -76,6 +76,13 @@ class NGSvgTextLayoutAlgorithm {
   };
   // This data member represents "result" defined in the specification, but it
   // contains only addressable characters.
+  //
+  // This is built from NGFragmentItem text sequence. For example, if the input
+  // is two NGFragmenItems like:
+  //  0: <code point 1>, <a lead surrogate>
+  //  1: <a trail surrogate>, <code point 2>
+  // it produces four entries for <code point 1>, <a lead surroagte>,
+  // <a trail surrogate>, and <code point 2>.
   Vector<SvgPerCharacterInfo> result_;
 
   // This data member represents "CSS_positions" defined in the specification,

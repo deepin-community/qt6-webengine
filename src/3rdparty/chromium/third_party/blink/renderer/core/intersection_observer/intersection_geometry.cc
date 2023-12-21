@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -56,7 +56,7 @@ void ApplyMargin(
     const Vector<Length>& margin,
     float zoom,
     const absl::optional<PhysicalRect>& resolution_rect = absl::nullopt) {
-  if (margin.IsEmpty())
+  if (margin.empty())
     return;
 
   // TODO(szager): Make sure the spec is clear that left/right margins are
@@ -75,10 +75,10 @@ void ApplyMargin(
 //   https://w3c.github.io/IntersectionObserver/#intersectionobserver-root-intersection-rectangle
 PhysicalRect InitializeRootRect(const LayoutObject* root,
                                 const Vector<Length>& margin) {
-  DCHECK(margin.IsEmpty() || margin.size() == 4);
+  DCHECK(margin.empty() || margin.size() == 4);
   PhysicalRect result;
   auto* layout_view = DynamicTo<LayoutView>(root);
-  if (layout_view && root->GetDocument().IsInMainFrame()) {
+  if (layout_view && root->GetDocument().GetFrame()->IsOutermostMainFrame()) {
     // The main frame is a bit special as the scrolling viewport can differ in
     // size from the LayoutView itself. There's two situations this occurs in:
     // 1) The ForceZeroLayoutHeight quirk setting is used in Android WebView for
@@ -260,7 +260,7 @@ IntersectionGeometry::IntersectionGeometry(const Node* root_node,
       intersection_ratio_(0),
       threshold_index_(0) {
   // Only one of root_margin or target_margin can be specified.
-  DCHECK(root_margin.IsEmpty() || target_margin.IsEmpty());
+  DCHECK(root_margin.empty() || target_margin.empty());
 
   if (cached_rects)
     cached_rects->valid = false;
@@ -354,17 +354,16 @@ void IntersectionGeometry::ComputeGeometry(const RootGeometry& root_geometry,
           ? target->GetPropertyContainer(nullptr, &container_properties)
           : nullptr;
   if (property_container) {
-    LayoutRect target_layout_rect = target_rect_.ToLayoutRect();
-    target_layout_rect.Move(
-        target->FirstFragment().PaintOffset().ToLayoutSize());
+    gfx::RectF target_rect(target_rect_);
+    target_rect.Offset(gfx::Vector2dF(target->FirstFragment().PaintOffset()));
     GeometryMapper::SourceToDestinationRect(container_properties.Transform(),
                                             target->GetDocument()
                                                 .GetLayoutView()
                                                 ->FirstFragment()
                                                 .LocalBorderBoxProperties()
                                                 .Transform(),
-                                            target_layout_rect);
-    target_rect_ = PhysicalRect(target_layout_rect);
+                                            target_rect);
+    target_rect_ = PhysicalRect::EnclosingRect(target_rect);
   } else {
     target_rect_ = target->LocalToAncestorRect(target_rect_, nullptr);
   }
@@ -377,9 +376,9 @@ void IntersectionGeometry::ComputeGeometry(const RootGeometry& root_geometry,
       target->GetDocument().GetLayoutView()->MapAncestorToLocal(
           nullptr, implicit_root_to_target_document_transform,
           kTraverseDocumentBoundaries | kApplyRemoteMainFrameTransform);
-      TransformationMatrix matrix =
+      gfx::Transform matrix =
           implicit_root_to_target_document_transform.AccumulatedTransform()
-              .Inverse();
+              .InverseOrIdentity();
       intersection_rect_ = PhysicalRect::EnclosingRect(
           matrix.ProjectQuad(gfx::QuadF(gfx::RectF(intersection_rect_)))
               .BoundingBox());

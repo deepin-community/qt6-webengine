@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,12 +14,18 @@
 #include "base/trace_event/trace_event.h"
 #include "ui/gfx/gpu_fence.h"
 #include "ui/gfx/swap_result.h"
-#include "ui/gl/dc_renderer_layer_params.h"
 #include "ui/gl/gl_context.h"
-#include "ui/gl/gl_image.h"
 #include "ui/gl/gl_implementation.h"
 #include "ui/gl/gl_surface_format.h"
 #include "ui/gl/gl_switches.h"
+
+#if BUILDFLAG(IS_WIN)
+#include "ui/gl/dc_layer_overlay_params.h"
+#else
+namespace gl {
+struct DCLayerOverlayParams {};
+}  // namespace gl
+#endif
 
 namespace gl {
 
@@ -81,13 +87,15 @@ unsigned int GLSurface::GetBackingFramebufferObject() {
 }
 
 void GLSurface::SwapBuffersAsync(SwapCompletionCallback completion_callback,
-                                 PresentationCallback presentation_callback) {
+                                 PresentationCallback presentation_callback,
+                                 gfx::FrameData data) {
   NOTREACHED();
 }
 
 gfx::SwapResult GLSurface::SwapBuffersWithBounds(
     const std::vector<gfx::Rect>& rects,
-    PresentationCallback callback) {
+    PresentationCallback callback,
+    gfx::FrameData data) {
   return gfx::SwapResult::SWAP_FAILED;
 }
 
@@ -95,7 +103,8 @@ gfx::SwapResult GLSurface::PostSubBuffer(int x,
                                          int y,
                                          int width,
                                          int height,
-                                         PresentationCallback callback) {
+                                         PresentationCallback callback,
+                                         gfx::FrameData data) {
   return gfx::SwapResult::SWAP_FAILED;
 }
 
@@ -104,18 +113,21 @@ void GLSurface::PostSubBufferAsync(int x,
                                    int width,
                                    int height,
                                    SwapCompletionCallback completion_callback,
-                                   PresentationCallback presentation_callback) {
+                                   PresentationCallback presentation_callback,
+                                   gfx::FrameData data) {
   NOTREACHED();
 }
 
-gfx::SwapResult GLSurface::CommitOverlayPlanes(PresentationCallback callback) {
+gfx::SwapResult GLSurface::CommitOverlayPlanes(PresentationCallback callback,
+                                               gfx::FrameData data) {
   NOTREACHED();
   return gfx::SwapResult::SWAP_FAILED;
 }
 
 void GLSurface::CommitOverlayPlanesAsync(
     SwapCompletionCallback completion_callback,
-    PresentationCallback presentation_callback) {
+    PresentationCallback presentation_callback,
+    gfx::FrameData data) {
   NOTREACHED();
 }
 
@@ -152,7 +164,7 @@ gfx::VSyncProvider* GLSurface::GetVSyncProvider() {
 void GLSurface::SetVSyncEnabled(bool enabled) {}
 
 bool GLSurface::ScheduleOverlayPlane(
-    GLImage* image,
+    OverlayImage image,
     std::unique_ptr<gfx::GpuFence> gpu_fence,
     const gfx::OverlayPlaneData& overlay_plane_data) {
   NOTIMPLEMENTED();
@@ -164,13 +176,7 @@ bool GLSurface::ScheduleCALayer(const ui::CARendererLayerParams& params) {
   return false;
 }
 
-void GLSurface::ScheduleCALayerInUseQuery(
-    std::vector<CALayerInUseQuery> queries) {
-  NOTIMPLEMENTED();
-}
-
-bool GLSurface::ScheduleDCLayer(
-    std::unique_ptr<ui::DCRendererLayerParams> params) {
+bool GLSurface::ScheduleDCLayer(std::unique_ptr<DCLayerOverlayParams> params) {
   NOTIMPLEMENTED();
   return false;
 }
@@ -217,12 +223,6 @@ gfx::Vector2d GLSurface::GetDrawOffset() const {
 }
 
 void GLSurface::SetRelyOnImplicitSync() {
-  // Some GLSurface derived classes might not implement this workaround while
-  // still being allocated on devices where the workaround is enabled.
-  // It is fine to ignore this call in those cases.
-}
-
-void GLSurface::SetForceGlFlushOnSwapBuffers() {
   // Some GLSurface derived classes might not implement this workaround while
   // still being allocated on devices where the workaround is enabled.
   // It is fine to ignore this call in those cases.
@@ -351,29 +351,34 @@ bool GLSurfaceAdapter::IsOffscreen() {
   return surface_->IsOffscreen();
 }
 
-gfx::SwapResult GLSurfaceAdapter::SwapBuffers(PresentationCallback callback) {
-  return surface_->SwapBuffers(std::move(callback));
+gfx::SwapResult GLSurfaceAdapter::SwapBuffers(PresentationCallback callback,
+                                              gfx::FrameData data) {
+  return surface_->SwapBuffers(std::move(callback), data);
 }
 
 void GLSurfaceAdapter::SwapBuffersAsync(
     SwapCompletionCallback completion_callback,
-    PresentationCallback presentation_callback) {
+    PresentationCallback presentation_callback,
+    gfx::FrameData data) {
   surface_->SwapBuffersAsync(std::move(completion_callback),
-                             std::move(presentation_callback));
+                             std::move(presentation_callback), data);
 }
 
 gfx::SwapResult GLSurfaceAdapter::SwapBuffersWithBounds(
     const std::vector<gfx::Rect>& rects,
-    PresentationCallback callback) {
-  return surface_->SwapBuffersWithBounds(rects, std::move(callback));
+    PresentationCallback callback,
+    gfx::FrameData data) {
+  return surface_->SwapBuffersWithBounds(rects, std::move(callback), data);
 }
 
 gfx::SwapResult GLSurfaceAdapter::PostSubBuffer(int x,
                                                 int y,
                                                 int width,
                                                 int height,
-                                                PresentationCallback callback) {
-  return surface_->PostSubBuffer(x, y, width, height, std::move(callback));
+                                                PresentationCallback callback,
+                                                gfx::FrameData data) {
+  return surface_->PostSubBuffer(x, y, width, height, std::move(callback),
+                                 data);
 }
 
 void GLSurfaceAdapter::PostSubBufferAsync(
@@ -382,22 +387,25 @@ void GLSurfaceAdapter::PostSubBufferAsync(
     int width,
     int height,
     SwapCompletionCallback completion_callback,
-    PresentationCallback presentation_callback) {
+    PresentationCallback presentation_callback,
+    gfx::FrameData data) {
   surface_->PostSubBufferAsync(x, y, width, height,
                                std::move(completion_callback),
-                               std::move(presentation_callback));
+                               std::move(presentation_callback), data);
 }
 
 gfx::SwapResult GLSurfaceAdapter::CommitOverlayPlanes(
-    PresentationCallback callback) {
-  return surface_->CommitOverlayPlanes(std::move(callback));
+    PresentationCallback callback,
+    gfx::FrameData data) {
+  return surface_->CommitOverlayPlanes(std::move(callback), data);
 }
 
 void GLSurfaceAdapter::CommitOverlayPlanesAsync(
     SwapCompletionCallback completion_callback,
-    PresentationCallback presentation_callback) {
+    PresentationCallback presentation_callback,
+    gfx::FrameData data) {
   surface_->CommitOverlayPlanesAsync(std::move(completion_callback),
-                                     std::move(presentation_callback));
+                                     std::move(presentation_callback), data);
 }
 
 bool GLSurfaceAdapter::SupportsSwapBuffersWithBounds() {
@@ -469,15 +477,15 @@ void GLSurfaceAdapter::SetVSyncEnabled(bool enabled) {
 }
 
 bool GLSurfaceAdapter::ScheduleOverlayPlane(
-    GLImage* image,
+    OverlayImage image,
     std::unique_ptr<gfx::GpuFence> gpu_fence,
     const gfx::OverlayPlaneData& overlay_plane_data) {
-  return surface_->ScheduleOverlayPlane(image, std::move(gpu_fence),
+  return surface_->ScheduleOverlayPlane(std::move(image), std::move(gpu_fence),
                                         overlay_plane_data);
 }
 
 bool GLSurfaceAdapter::ScheduleDCLayer(
-    std::unique_ptr<ui::DCRendererLayerParams> params) {
+    std::unique_ptr<DCLayerOverlayParams> params) {
   return surface_->ScheduleDCLayer(std::move(params));
 }
 
@@ -523,10 +531,6 @@ gfx::Vector2d GLSurfaceAdapter::GetDrawOffset() const {
 
 void GLSurfaceAdapter::SetRelyOnImplicitSync() {
   surface_->SetRelyOnImplicitSync();
-}
-
-void GLSurfaceAdapter::SetForceGlFlushOnSwapBuffers() {
-  surface_->SetForceGlFlushOnSwapBuffers();
 }
 
 bool GLSurfaceAdapter::SupportsSwapTimestamps() const {
@@ -601,10 +605,5 @@ scoped_refptr<GLSurface> InitializeGLSurfaceWithFormat(
 scoped_refptr<GLSurface> InitializeGLSurface(scoped_refptr<GLSurface> surface) {
   return InitializeGLSurfaceWithFormat(surface, GLSurfaceFormat());
 }
-
-GLSurface::CALayerInUseQuery::CALayerInUseQuery() = default;
-GLSurface::CALayerInUseQuery::CALayerInUseQuery(const CALayerInUseQuery&) =
-    default;
-GLSurface::CALayerInUseQuery::~CALayerInUseQuery() = default;
 
 }  // namespace gl

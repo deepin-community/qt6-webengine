@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -21,6 +21,7 @@
     atomicChanged,
     autoCompleteChanged,
     autocorrectionOccured,
+    autofillAvailabilityChanged,
     blur,
     busyChanged,
     caretBoundsChanged,
@@ -62,7 +63,7 @@
     labeledByChanged,
     languageChanged,
     layoutComplete,
-    layoutInvalidated,   // fired when aria-busy goes false
+    layoutInvalidated,  // fired when aria-busy goes false
     liveRegionChanged,
     liveRegionCreated,
     liveRegionNodeChanged,  // fired on a node within a live region.
@@ -75,7 +76,6 @@
     mediaStoppedPlaying,
     menuEnd,
     menuItemSelected,
-    menuListItemSelected,
     menuListValueChanged,
     menuPopupEnd,
     menuPopupStart,
@@ -114,7 +114,6 @@
     selectedValueChanged,
     selection,
     selectionAdd,
-    selectionInTextFieldChanged,
     selectionRemove,
     setSizeChanged,
     show,
@@ -122,7 +121,7 @@
     stateChanged,
     subtreeCreated,
     textAttributeChanged,
-    textSelectionChanged,  // Deprecated.
+    textSelectionChanged,
     textChanged,
     tooltipClosed,
     tooltipOpened,
@@ -157,6 +156,7 @@
     columnHeader,
     comboBoxGrouping,
     comboBoxMenuButton,
+    comboBoxSelect,
     comment,
     complementary,
     contentDeletion,
@@ -398,9 +398,9 @@
     increment,
     internalInvalidateTree,
     loadInlineTextBoxes,
+    longClick,
     replaceSelectedText,
     resumeMedia,
-    runScreenAi,
     scrollBackward,
     scrollDown,
     scrollForward,
@@ -409,6 +409,7 @@
     scrollUp,
     scrollToMakeVisible,
     scrollToPoint,
+    scrollToPositionAtRowColumn,
     setAccessibilityFocus,
     setScrollOffset,
     setSelection,
@@ -464,7 +465,6 @@
 
   // Where the node's name is from.
   enum NameFromType {
-    uninitialized,
     attribute,
     attributeExplicitlyEmpty,
     caption,
@@ -477,7 +477,9 @@
 
   enum DescriptionFromType {
     ariaDescription,
+    attributeExplicitlyEmpty,
     buttonLabel,
+    popoverAttribute,
     relatedElement,
     rubyAnnotation,
     summary,
@@ -644,6 +646,13 @@ enum SortDirectionType {
   ascending,
   descending,
   other
+};
+
+// A type of AutomationPosition.
+enum PositionType {
+  null,
+  text,
+  tree
 };
 
   dictionary Rect {
@@ -887,7 +896,7 @@ enum SortDirectionType {
 
     // The rendered location (as a bounding box) of this node in global
     // screen coordinates.
-    Rect? location;
+    Rect location;
 
     // Determines the location of the text within the node specified by
     // |startIndex| and |endIndex|, inclusively. Invokes |callback| with the
@@ -926,6 +935,12 @@ enum SortDirectionType {
     // <a href="http://www.w3.org/TR/wai-aria/#namecalculation">
     // Accessible Name Calculation</a> process.
     DOMString? name;
+
+    // Explains what will happen when the doDefault action is performed.
+    DOMString? doDefaultLabel;
+
+    // Explains what will happen when the long click action is performed.
+    DOMString? longClickLabel;
 
     // The tooltip of the node, if any.
     DOMString? tooltip;
@@ -1370,6 +1385,8 @@ enum SortDirectionType {
     AutomationNode? nextOnLine;
     AutomationNode? previousFocus;
     AutomationNode? nextFocus;
+    AutomationNode? previousWindowFocus;
+    AutomationNode? nextWindowFocus;
 
     // The index of this node in its parent node's list of children. If this is
     // the root node, this will be undefined.
@@ -1377,6 +1394,9 @@ enum SortDirectionType {
 
     // The sort direction of this node.
     SortDirectionType sortDirection;
+
+    // Explicitly set to true when this node is clickable.
+    boolean clickable;
 
     //
     // Actions.
@@ -1455,6 +1475,9 @@ enum SortDirectionType {
     // Suspend any media playing within this tree.
     static void suspendMedia();
 
+    // Simulates long click on node.
+    static void longClick();
+
     // Scrolls this scrollable container backward.
     static void scrollBackward(optional PerformActionCallback callback);
 
@@ -1529,7 +1552,7 @@ enum SortDirectionType {
         DOMString attribute);
 
     // Creates a position object backed by Chrome's accessibility position support.
-    static AutomationPosition createPosition(long offset, optional boolean isUpstream);
+    static AutomationPosition createPosition(PositionType type, long offset, optional boolean isUpstream);
   };
 
   // Called when the <code>AutomationNode</code> for the page is available.

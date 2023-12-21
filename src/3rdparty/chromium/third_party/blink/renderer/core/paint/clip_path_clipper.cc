@@ -1,9 +1,10 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/core/paint/clip_path_clipper.h"
 
+#include "third_party/blink/renderer/core/animation/element_animations.h"
 #include "third_party/blink/renderer/core/css/clip_path_paint_image_generator.h"
 #include "third_party/blink/renderer/core/display_lock/display_lock_utilities.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
@@ -17,14 +18,18 @@
 #include "third_party/blink/renderer/core/style/clip_path_operation.h"
 #include "third_party/blink/renderer/core/style/reference_clip_path_operation.h"
 #include "third_party/blink/renderer/core/style/shape_clip_path_operation.h"
+#include "third_party/blink/renderer/platform/graphics/graphics_context.h"
 #include "third_party/blink/renderer/platform/graphics/image.h"
 #include "third_party/blink/renderer/platform/graphics/paint/drawing_display_item.h"
 #include "third_party/blink/renderer/platform/graphics/paint/drawing_recorder.h"
 #include "third_party/blink/renderer/platform/graphics/paint/paint_controller.h"
 #include "third_party/blink/renderer/platform/graphics/paint/paint_record_builder.h"
 #include "third_party/blink/renderer/platform/graphics/paint/scoped_paint_chunk_properties.h"
+#include "ui/gfx/geometry/rect_conversions.h"
 
 namespace blink {
+
+using CompositedPaintStatus = ElementAnimations::CompositedPaintStatus;
 
 namespace {
 
@@ -61,7 +66,32 @@ LayoutSVGResourceClipper* ResolveElementReference(
 // Is the reference box (as returned by LocalReferenceBox) for |clip_path_owner|
 // zoomed with EffectiveZoom()?
 static bool UsesZoomedReferenceBox(const LayoutObject& clip_path_owner) {
-  return !clip_path_owner.IsSVGChild() || clip_path_owner.IsSVGForeignObject();
+  return !clip_path_owner.IsSVGChild() ||
+         clip_path_owner.IsSVGForeignObjectIncludingNG();
+}
+
+CompositedPaintStatus CompositeClipPathStatus(Node* node) {
+  Element* element = DynamicTo<Element>(node);
+  if (!element)
+    return CompositedPaintStatus::kNotComposited;
+
+  ElementAnimations* element_animations = element->GetElementAnimations();
+  DCHECK(element_animations);
+  return element_animations->CompositedClipPathStatus();
+}
+
+void SetCompositeClipPathStatus(Node* node, bool is_compositable) {
+  Element* element = DynamicTo<Element>(node);
+  if (!element)
+    return;
+
+  ElementAnimations* element_animations = element->GetElementAnimations();
+  DCHECK(element_animations || !is_compositable);
+  if (element_animations) {
+    element_animations->SetCompositedClipPathStatus(
+        is_compositable ? CompositedPaintStatus::kComposited
+                        : CompositedPaintStatus::kNotComposited);
+  }
 }
 
 static bool HasCompositeClipPathAnimation(const LayoutObject& layout_object) {
@@ -69,15 +99,33 @@ static bool HasCompositeClipPathAnimation(const LayoutObject& layout_object) {
       !layout_object.StyleRef().HasCurrentClipPathAnimation())
     return false;
 
+  CompositedPaintStatus status =
+      CompositeClipPathStatus(layout_object.GetNode());
+
+  if (status == CompositedPaintStatus::kComposited) {
+    return true;
+  } else if (status == CompositedPaintStatus::kNotComposited) {
+    return false;
+  }
+
   ClipPathPaintImageGenerator* generator =
       layout_object.GetFrame()->GetClipPathPaintImageGenerator();
   // TODO(crbug.com/686074): The generator may be null in tests.
   // Fix and remove this test-only branch.
-  if (generator) {
-    const Element* element = To<Element>(layout_object.GetNode());
-    return generator->GetAnimationIfCompositable(element);
+  if (!generator) {
+    SetCompositeClipPathStatus(layout_object.GetNode(), false);
+    return false;
   }
-  return false;
+
+  const Element* element = To<Element>(layout_object.GetNode());
+  const Animation* animation = generator->GetAnimationIfCompositable(element);
+
+  bool has_compositable_clip_path_animation =
+      animation && (animation->CheckCanStartAnimationOnCompositor(nullptr) ==
+                    CompositorAnimations::kNoFailure);
+  SetCompositeClipPathStatus(layout_object.GetNode(),
+                             has_compositable_clip_path_animation);
+  return has_compositable_clip_path_animation;
 }
 
 static void PaintWorkletBasedClip(GraphicsContext& context,
@@ -94,19 +142,36 @@ static void PaintWorkletBasedClip(GraphicsContext& context,
   ClipPathPaintImageGenerator* generator =
       clip_path_owner.GetFrame()->GetClipPathPaintImageGenerator();
 
-  scoped_refptr<Image> paint_worklet_image =
-      generator->Paint(zoom, reference_box, *clip_path_owner.GetNode());
-
-  // TODO(crbug.com/1248610): Fix bounding box. It should enclose affected area
-  // of the animation.
+  // The bounding rect of the clip-path animation, relative to the layout
+  // object.
   absl::optional<gfx::RectF> bounding_box =
       ClipPathClipper::LocalClipPathBoundingBox(clip_path_owner);
   DCHECK(bounding_box);
-  gfx::RectF src_rect = bounding_box.value();
+
+  // Pixel snap bounding rect to allow for the proper painting of partially
+  // opaque pixels
+  *bounding_box = gfx::RectF(gfx::ToEnclosingRect(*bounding_box));
+
+  // The mask image should be the same size as the bounding rect, but will have
+  // an origin of 0,0 as it has its own coordinate space.
+  gfx::RectF src_rect = gfx::RectF(bounding_box.value().size());
+  gfx::RectF dst_rect = bounding_box.value();
+
+  scoped_refptr<Image> paint_worklet_image = generator->Paint(
+      zoom,
+      /* Translate the reference box such that it is relative to the origin of
+         the mask image, and not the origin of the layout object. This ensures
+         the clip path remains within the bounds of the mask image and has the
+         correct translation. */
+      gfx::RectF(reference_box.origin() - dst_rect.origin().OffsetFromOrigin(),
+                 reference_box.size()),
+
+      dst_rect.size(), *clip_path_owner.GetNode());
   // Dark mode should always be disabled for clip mask.
-  context.DrawImage(paint_worklet_image.get(), Image::kSyncDecode,
-                    ImageAutoDarkMode::Disabled(), src_rect, &src_rect,
-                    SkBlendMode::kSrcOver, kRespectImageOrientation);
+  context.DrawImage(*paint_worklet_image, Image::kSyncDecode,
+                    ImageAutoDarkMode::Disabled(), ImagePaintTimingInfo(),
+                    dst_rect, &src_rect, SkBlendMode::kSrcOver,
+                    kRespectImageOrientation);
 }
 
 gfx::RectF ClipPathClipper::LocalReferenceBox(const LayoutObject& object) {
@@ -128,16 +193,27 @@ absl::optional<gfx::RectF> ClipPathClipper::LocalClipPathBoundingBox(
   ClipPathOperation& clip_path = *object.StyleRef().ClipPath();
   if (clip_path.GetType() == ClipPathOperation::kShape) {
     auto zoom = object.StyleRef().EffectiveZoom();
+
+    bool uses_zoomed_reference_box = UsesZoomedReferenceBox(object);
+    gfx::RectF adjusted_reference_box =
+        uses_zoomed_reference_box ? reference_box
+                                  : gfx::ScaleRect(reference_box, zoom);
+
     gfx::RectF bounding_box;
-    auto& shape = To<ShapeClipPathOperation>(clip_path);
-    if (UsesZoomedReferenceBox(object)) {
-      bounding_box = shape.GetPath(reference_box, zoom).BoundingRect();
+    if (HasCompositeClipPathAnimation(object)) {
+      // For composite clip path animations, the bounding rect needs to contain
+      // the *entire* animation, or the animation may be clipped.
+      ClipPathPaintImageGenerator* generator =
+          object.GetFrame()->GetClipPathPaintImageGenerator();
+      bounding_box = generator->ClipAreaRect(*object.GetNode(),
+                                             adjusted_reference_box, zoom);
     } else {
-      bounding_box = gfx::ScaleRect(
-          shape.GetPath(gfx::ScaleRect(reference_box, zoom), zoom)
-              .BoundingRect(),
-          1.f / zoom);
+      auto& shape = To<ShapeClipPathOperation>(clip_path);
+      bounding_box = shape.GetPath(adjusted_reference_box, zoom).BoundingRect();
     }
+
+    if (!uses_zoomed_reference_box)
+      bounding_box = gfx::ScaleRect(bounding_box, 1.f / zoom);
     bounding_box.Intersect(gfx::RectF(LayoutRect::InfiniteIntRect()));
     return bounding_box;
   }
@@ -175,7 +251,7 @@ static AffineTransform MaskToContentTransform(
     }
   }
 
-  mask_to_content.Multiply(
+  mask_to_content.PreConcat(
       resource_clipper.CalculateClipTransform(reference_box));
   return mask_to_content;
 }
@@ -214,11 +290,11 @@ void ClipPathClipper::PaintClipPathAsMaskImage(
     const DisplayItemClient& display_item_client) {
   const auto* properties = layout_object.FirstFragment().PaintProperties();
   DCHECK(properties);
-  DCHECK(properties->MaskClip());
   DCHECK(properties->ClipPathMask());
+  DCHECK(properties->ClipPathMask()->OutputClip());
   PropertyTreeStateOrAlias property_tree_state(
-      properties->MaskClip()->LocalTransformSpace(), *properties->MaskClip(),
-      *properties->ClipPathMask());
+      properties->ClipPathMask()->LocalTransformSpace(),
+      *properties->ClipPathMask()->OutputClip(), *properties->ClipPathMask());
   ScopedPaintChunkProperties scoped_properties(
       context.GetPaintController(), property_tree_state, display_item_client,
       DisplayItem::kSVGClip);
@@ -227,8 +303,6 @@ void ClipPathClipper::PaintClipPathAsMaskImage(
                                                   DisplayItem::kSVGClip))
     return;
 
-  // TODO(crbug.com/1248610): Fix paint rectangle for
-  // CompositeClipPathAnimation.
   DrawingRecorder recorder(
       context, display_item_client, DisplayItem::kSVGClip,
       gfx::ToEnclosingRect(properties->MaskClip()->PaintClipRect().Rect()));
@@ -242,6 +316,7 @@ void ClipPathClipper::PaintClipPathAsMaskImage(
   if (HasCompositeClipPathAnimation(layout_object)) {
     if (!layout_object.GetFrame())
       return;
+
     PaintWorkletBasedClip(context, layout_object, reference_box,
                           uses_zoomed_reference_box);
   } else {
@@ -260,10 +335,11 @@ void ClipPathClipper::PaintClipPathAsMaskImage(
       if (!resource_clipper)
         break;
 
-      if (is_first)
+      if (is_first) {
         context.Save();
-      else
-        context.BeginLayer(1.f, SkBlendMode::kDstIn);
+      } else {
+        context.BeginLayer(SkBlendMode::kDstIn);
+      }
 
       if (resource_clipper->StyleRef().HasClipPath()) {
         // Try to apply nested clip-path as path-based clip.
@@ -306,12 +382,20 @@ bool ClipPathClipper::ShouldUseMaskBasedClip(const LayoutObject& object) {
 }
 
 absl::optional<Path> ClipPathClipper::PathBasedClip(
-    const LayoutObject& clip_path_owner) {
+    const LayoutObject& clip_path_owner,
+    const bool is_in_block_fragmentation) {
   // TODO(crbug.com/1248622): Currently HasCompositeClipPathAnimation is called
   // multiple times, which is not efficient. Cache
   // HasCompositeClipPathAnimation value as part of fragment_data, similarly to
   // FragmentData::ClipPathPath().
-  if (HasCompositeClipPathAnimation(clip_path_owner))
+
+  // If not all the fragments of this layout object have been populated yet, it
+  // will be impossible to tell if a composited clip path animation is possible
+  // or not based only on the layout object. Exclude the possibility if we're
+  // fragmented.
+  if (is_in_block_fragmentation)
+    SetCompositeClipPathStatus(clip_path_owner.GetNode(), false);
+  else if (HasCompositeClipPathAnimation(clip_path_owner))
     return absl::nullopt;
 
   return PathBasedClipInternal(clip_path_owner,

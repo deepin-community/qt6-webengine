@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2023 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,9 +7,12 @@
 // NOTE: The format of types has changed. 'FooType' is now
 //   'chrome.management.FooType'.
 // Please run the closure compiler before committing changes.
-// See https://chromium.googlesource.com/chromium/src/+/master/docs/closure_compilation.md
+// See https://chromium.googlesource.com/chromium/src/+/main/docs/closure_compilation.md
 
-/** @fileoverview Externs generated from namespace: management */
+/**
+ * @fileoverview Externs generated from namespace: management
+ * @externs
+ */
 
 /** @const */
 chrome.management = {};
@@ -169,7 +172,9 @@ chrome.management.setEnabled = function(id, enabled, callback) {};
 /**
  * Uninstalls a currently installed app or extension. Note: This function does
  * not work in managed environments when the user is not allowed to uninstall
- * the specified extension/app.
+ * the specified extension/app. If the uninstall fails (e.g. the user cancels
+ * the dialog) the promise will be rejected or the callback will be called with
+ * $(ref:runtime.lastError) set.
  * @param {string} id This should be the id from an item of
  *     $(ref:management.ExtensionInfo).
  * @param {!chrome.management.UninstallOptions=} options

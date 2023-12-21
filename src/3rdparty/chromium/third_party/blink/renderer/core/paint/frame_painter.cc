@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,9 +11,9 @@
 #include "third_party/blink/renderer/core/layout/layout_embedded_content.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
 #include "third_party/blink/renderer/core/page/page.h"
-#include "third_party/blink/renderer/core/paint/frame_paint_timing.h"
 #include "third_party/blink/renderer/core/paint/paint_layer.h"
 #include "third_party/blink/renderer/core/paint/paint_layer_painter.h"
+#include "third_party/blink/renderer/core/paint/timing/frame_paint_timing.h"
 #include "third_party/blink/renderer/platform/bindings/v8_per_isolate_data.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_context.h"
 #include "third_party/blink/renderer/platform/graphics/paint/drawing_recorder.h"
@@ -29,8 +29,7 @@ gfx::QuadF GetQuadForTraceEvent(const LocalFrameView& frame_view,
   gfx::QuadF quad(gfx::RectF(cull_rect.Rect()));
   if (auto* owner = frame_view.GetFrame().OwnerLayoutObject()) {
     quad += gfx::Vector2dF(owner->PhysicalContentBoxOffset());
-    owner->LocalToAbsoluteQuad(
-        quad, kTraverseDocumentBoundaries | kUseGeometryMapperMode);
+    owner->LocalToAbsoluteQuad(quad, kTraverseDocumentBoundaries);
   }
   return quad;
 }
@@ -99,7 +98,7 @@ void FramePainter::Paint(GraphicsContext& context, PaintFlags paint_flags) {
   if (is_top_level_painter) {
     // Everything that happens after paintContents completions is considered
     // to be part of the next frame.
-    GetMemoryCache()->UpdateFramePaintTimestamp();
+    MemoryCache::Get()->UpdateFramePaintTimestamp();
     in_paint_contents_ = false;
   }
 }

@@ -7,11 +7,15 @@
 
 #include <string>
 
+#include "absl/status/status.h"
 #include "quiche/quic/core/web_transport_interface.h"
 #include "quiche/quic/platform/api/quic_logging.h"
+#include "quiche/common/platform/api/quiche_logging.h"
 #include "quiche/common/platform/api/quiche_mem_slice.h"
 #include "quiche/common/quiche_circular_deque.h"
+#include "quiche/common/quiche_stream.h"
 #include "quiche/common/simple_buffer_allocator.h"
+#include "quiche/spdy/core/http2_header_block.h"
 
 namespace quic {
 
@@ -61,20 +65,21 @@ class WebTransportBidirectionalEchoVisitor : public WebTransportStreamVisitor {
     }
 
     if (!buffer_.empty()) {
-      bool success = stream_->Write(buffer_);
+      absl::Status status = quiche::WriteIntoStream(*stream_, buffer_);
       QUIC_DVLOG(1) << "Attempted writing on WebTransport bidirectional stream "
-                    << stream_->GetStreamId()
-                    << ", success: " << (success ? "yes" : "no");
-      if (!success) {
+                    << stream_->GetStreamId() << ", success: " << status;
+      if (!status.ok()) {
         return;
       }
 
       buffer_ = "";
     }
 
-    if (send_fin_) {
-      bool success = stream_->SendFin();
-      QUICHE_DCHECK(success);
+    if (send_fin_ && !fin_sent_) {
+      absl::Status status = quiche::SendFinOnStream(*stream_);
+      if (status.ok()) {
+        fin_sent_ = true;
+      }
     }
   }
 
@@ -97,6 +102,7 @@ class WebTransportBidirectionalEchoVisitor : public WebTransportStreamVisitor {
   WebTransportStream* stream_;
   std::string buffer_;
   bool send_fin_ = false;
+  bool fin_sent_ = false;
   bool stop_sending_received_ = false;
 };
 
@@ -123,7 +129,7 @@ class WebTransportUnidirectionalEchoReadVisitor
     }
   }
 
-  void OnCanWrite() override { QUIC_NOTREACHED(); }
+  void OnCanWrite() override { QUICHE_NOTREACHED(); }
 
   void OnResetStreamReceived(WebTransportStreamError /*error*/) override {}
   void OnStopSendingReceived(WebTransportStreamError /*error*/) override {}
@@ -143,19 +149,22 @@ class WebTransportUnidirectionalEchoWriteVisitor
                                              const std::string& data)
       : stream_(stream), data_(data) {}
 
-  void OnCanRead() override { QUIC_NOTREACHED(); }
+  void OnCanRead() override { QUICHE_NOTREACHED(); }
   void OnCanWrite() override {
     if (data_.empty()) {
       return;
     }
-    if (!stream_->Write(data_)) {
+    absl::Status write_status = quiche::WriteIntoStream(*stream_, data_);
+    if (!write_status.ok()) {
+      QUICHE_DLOG_IF(WARNING, !absl::IsUnavailable(write_status))
+          << "Failed to write into stream: " << write_status;
       return;
     }
     data_ = "";
-    bool fin_sent = stream_->SendFin();
+    absl::Status fin_status = quiche::SendFinOnStream(*stream_);
     QUICHE_DVLOG(1)
         << "WebTransportUnidirectionalEchoWriteVisitor finished sending data.";
-    QUICHE_DCHECK(fin_sent);
+    QUICHE_DCHECK(fin_status.ok());
   }
 
   void OnResetStreamReceived(WebTransportStreamError /*error*/) override {}
@@ -174,7 +183,7 @@ class EchoWebTransportSessionVisitor : public WebTransportVisitor {
   EchoWebTransportSessionVisitor(WebTransportSession* session)
       : session_(session) {}
 
-  void OnSessionReady(const spdy::SpdyHeaderBlock&) override {
+  void OnSessionReady(const spdy::Http2HeaderBlock&) override {
     if (session_->CanOpenNextOutgoingBidirectionalStream()) {
       OnCanCreateNewOutgoingBidirectionalStream();
     }
@@ -219,9 +228,7 @@ class EchoWebTransportSessionVisitor : public WebTransportVisitor {
   }
 
   void OnDatagramReceived(absl::string_view datagram) override {
-    quiche::QuicheMemSlice slice(
-        quiche::QuicheBuffer::Copy(&allocator_, datagram));
-    session_->SendOrQueueDatagram(std::move(slice));
+    session_->SendOrQueueDatagram(datagram);
   }
 
   void OnCanCreateNewOutgoingBidirectionalStream() override {

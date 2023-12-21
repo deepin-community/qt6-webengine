@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -42,10 +42,13 @@ class GESTURE_DETECTION_EXPORT TouchDispositionGestureFilter {
   // touch event. It is imperative that a single packet is received for
   // *each* touch event, even those that did not produce a gesture.
   enum PacketResult {
-    SUCCESS,              // Packet successfully queued.
-    INVALID_PACKET_ORDER, // Packets were received in the wrong order, i.e.,
-                          // TOUCH_BEGIN should always precede other packets.
-    INVALID_PACKET_TYPE,  // Packet had an invalid type.
+    SUCCESS,                // Packet successfully queued.
+    INVALID_PACKET_ORDER,   // Packets were received in the wrong order, i.e.,
+                            // TOUCH_BEGIN should always precede other packets.
+                            // CANCEL results in EMPTY_GESTURE_SEQ as it is
+                            // allowed without a corresponding TOUCH_BEGIN.
+    INVALID_PACKET_TYPE,    // Packet had an invalid type.
+    EMPTY_GESTURE_SEQUENCE  // CANCEL received without a TOUCH_BEGIN.
   };
   PacketResult OnGesturePacket(const GestureEventDataPacket& packet);
 

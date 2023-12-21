@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,16 +10,17 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
 #include "base/check_op.h"
 #include "base/cpu.h"
 #include "base/feature_list.h"
+#include "base/functional/bind.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/notreached.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/system/sys_info.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
@@ -59,7 +60,7 @@
 #endif
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "chromeos/system/statistics_provider.h"
+#include "chromeos/ash/components/system/statistics_provider.h"
 #endif
 
 using base::NumberToString;
@@ -126,7 +127,9 @@ std::string IPAddressToSensitiveString(const net::IPAddress& address) {
       sensitive_address = net::IPAddress(stripped).ToString();
       break;
     }
-    default: { break; }
+    default: {
+      break;
+    }
   }
   return sensitive_address;
 #else
@@ -383,7 +386,7 @@ void WebRtcTextLogHandler::FireGenericDoneCallback(
 
   if (error_message.empty()) {
     DCHECK(success);
-    base::SequencedTaskRunnerHandle::Get()->PostTask(
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(std::move(callback), success, error_message));
     return;
   }
@@ -412,7 +415,7 @@ void WebRtcTextLogHandler::FireGenericDoneCallback(
       base::StrCat({error_message, ". State=", state_string(), ". Channel is ",
                     channel_is_closing_ ? "" : "not ", "closing."});
 
-  base::SequencedTaskRunnerHandle::Get()->PostTask(
+  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE,
       base::BindOnce(std::move(callback), success, error_message_with_state));
 }
@@ -493,8 +496,11 @@ void WebRtcTextLogHandler::OnGetNetworkInterfaceListFinish(
 #if BUILDFLAG(IS_MAC)
   computer_model = base::mac::GetModelIdentifier();
 #elif BUILDFLAG(IS_CHROMEOS_ASH)
-  chromeos::system::StatisticsProvider::GetInstance()->GetMachineStatistic(
-      chromeos::system::kHardwareClassKey, &computer_model);
+  if (const absl::optional<base::StringPiece> computer_model_statistic =
+          ash::system::StatisticsProvider::GetInstance()->GetMachineStatistic(
+              ash::system::kHardwareClassKey)) {
+    computer_model = std::string(computer_model_statistic.value());
+  }
 #endif
   LogToCircularBuffer("Computer model: " + computer_model);
 
@@ -541,7 +547,10 @@ void WebRtcTextLogHandler::OnGetNetworkInterfaceListFinish(
          NumberToString(
              media::kChromeWideEchoCancellationProcessingFifoSize.Get()),
          ", minimize_resampling = ",
-         media::kChromeWideEchoCancellationMinimizeResampling.Get()
+         media::kChromeWideEchoCancellationMinimizeResampling.Get() ? "true"
+                                                                    : "false",
+         ", allow_all_sample_rates = ",
+         media::kChromeWideEchoCancellationAllowAllSampleRates.Get()
              ? "true"
              : "false"}));
   } else {
@@ -583,10 +592,11 @@ void WebRtcTextLogHandler::OnGetNetworkInterfaceListFinish(
 
   // TODO(darin): Change SetLogMessageCallback to run on the UI thread.
 
-  auto log_message_callback = base::BindRepeating(
-      &ForwardMessageViaTaskRunner, base::SequencedTaskRunnerHandle::Get(),
-      base::BindRepeating(&WebRtcTextLogHandler::LogMessage,
-                          weak_factory_.GetWeakPtr()));
+  auto log_message_callback =
+      base::BindRepeating(&ForwardMessageViaTaskRunner,
+                          base::SequencedTaskRunner::GetCurrentDefault(),
+                          base::BindRepeating(&WebRtcTextLogHandler::LogMessage,
+                                              weak_factory_.GetWeakPtr()));
   content::GetIOThreadTaskRunner({})->PostTask(
       FROM_HERE,
       base::BindOnce(&content::WebRtcLog::SetLogMessageCallback,

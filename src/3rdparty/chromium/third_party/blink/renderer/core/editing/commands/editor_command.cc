@@ -261,8 +261,8 @@ static bool ExecuteApplyParagraphStyle(LocalFrame& frame,
                                        const String& property_value) {
   auto* style =
       MakeGarbageCollected<MutableCSSPropertyValueSet>(kHTMLQuirksMode);
-  style->SetProperty(property_id, property_value, /* important */ false,
-                     frame.DomWindow()->GetSecureContextMode());
+  style->ParseAndSetProperty(property_id, property_value, /* important */ false,
+                             frame.DomWindow()->GetSecureContextMode());
   // FIXME: We don't call shouldApplyStyle when the source is DOM; is there a
   // good reason for that?
   switch (source) {
@@ -350,7 +350,7 @@ static bool ExecuteCreateLink(LocalFrame& frame,
                               Event*,
                               EditorCommandSource,
                               const String& value) {
-  if (value.IsEmpty())
+  if (value.empty())
     return false;
   DCHECK(frame.GetDocument());
   return MakeGarbageCollected<CreateLinkCommand>(*frame.GetDocument(), value)
@@ -2064,7 +2064,7 @@ int EditorCommand::IdForHistogram() const {
 
 const StaticRangeVector* EditorCommand::GetTargetRanges() const {
   const Node* target = EventTargetNodeForDocument(frame_->GetDocument());
-  if (!IsSupported() || !frame_ || !target || !HasRichlyEditableStyle(*target))
+  if (!IsSupported() || !frame_ || !target || !IsRichlyEditable(*target))
     return nullptr;
 
   switch (command_->command_type) {

@@ -17,13 +17,37 @@
 #ifndef SRC_TRACE_PROCESSOR_DYNAMIC_ANCESTOR_GENERATOR_H_
 #define SRC_TRACE_PROCESSOR_DYNAMIC_ANCESTOR_GENERATOR_H_
 
-#include "src/trace_processor/sqlite/db_sqlite_table.h"
-
 #include "perfetto/ext/base/optional.h"
+#include "src/trace_processor/dynamic/dynamic_table_generator.h"
 #include "src/trace_processor/storage/trace_storage.h"
 
 namespace perfetto {
 namespace trace_processor {
+namespace tables {
+
+#define PERFETTO_TP_ANCESTOR_SLICE_TABLE_DEF(NAME, PARENT, C) \
+  NAME(AncestorSliceTable, "ancestor_slice")                  \
+  PARENT(PERFETTO_TP_SLICE_TABLE_DEF, C)                      \
+  C(tables::SliceTable::Id, start_id, Column::Flag::kHidden)
+
+PERFETTO_TP_TABLE(PERFETTO_TP_ANCESTOR_SLICE_TABLE_DEF);
+
+#define PERFETTO_TP_ANCESTOR_STACK_PROFILE_CALLSITE_TABLE_DEF(NAME, PARENT, C) \
+  NAME(AncestorStackProfileCallsiteTable,                                      \
+       "experimental_ancestor_stack_profile_callsite")                         \
+  PARENT(PERFETTO_TP_STACK_PROFILE_CALLSITE_DEF, C)                            \
+  C(tables::StackProfileCallsiteTable::Id, start_id, Column::Flag::kHidden)
+
+PERFETTO_TP_TABLE(PERFETTO_TP_ANCESTOR_STACK_PROFILE_CALLSITE_TABLE_DEF);
+
+#define PERFETTO_TP_ANCESTOR_SLICE_BY_STACK_TABLE_DEF(NAME, PARENT, C) \
+  NAME(AncestorSliceByStackTable, "ancestor_slice_by_stack")           \
+  PARENT(PERFETTO_TP_SLICE_TABLE_DEF, C)                               \
+  C(int64_t, start_stack_id, Column::Flag::kHidden)
+
+PERFETTO_TP_TABLE(PERFETTO_TP_ANCESTOR_SLICE_BY_STACK_TABLE_DEF);
+
+}  // namespace tables
 
 class TraceProcessorContext;
 
@@ -33,7 +57,7 @@ class TraceProcessorContext;
 // * ancestor_slice_by_stack
 //
 // See docs/analysis/trace-processor for usage.
-class AncestorGenerator : public DbSqliteTable::DynamicTableGenerator {
+class AncestorGenerator : public DynamicTableGenerator {
  public:
   enum class Ancestor {
     kSlice = 1,
@@ -41,7 +65,7 @@ class AncestorGenerator : public DbSqliteTable::DynamicTableGenerator {
     kSliceByStack = 3
   };
 
-  AncestorGenerator(Ancestor type, TraceProcessorContext* context);
+  AncestorGenerator(Ancestor type, const TraceStorage* storage);
 
   Table::Schema CreateSchema() override;
   std::string TableName() override;
@@ -52,16 +76,15 @@ class AncestorGenerator : public DbSqliteTable::DynamicTableGenerator {
                             const BitVector& cols_used,
                             std::unique_ptr<Table>& table_return) override;
 
-  // Returns a RowMap of slice IDs which are ancestors of |slice_id|. Returns
-  // NULL if an invalid |slice_id| is given. This is used by
+  // Returns a vector of rows numbers which are ancestors of |slice_id|.
+  // Returns base::nullopt if an invalid |slice_id| is given. This is used by
   // ConnectedFlowGenerator to traverse flow indirectly connected flow events.
-  static base::Optional<RowMap> GetAncestorSlices(
-      const tables::SliceTable& slices,
-      SliceId slice_id);
+  static base::Optional<std::vector<tables::SliceTable::RowNumber>>
+  GetAncestorSlices(const tables::SliceTable& slices, SliceId slice_id);
 
  private:
   Ancestor type_;
-  TraceProcessorContext* context_ = nullptr;
+  const TraceStorage* storage_ = nullptr;
 };
 
 }  // namespace trace_processor

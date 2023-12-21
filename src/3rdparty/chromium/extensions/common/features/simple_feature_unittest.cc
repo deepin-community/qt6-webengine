@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -338,11 +338,11 @@ TEST_F(SimpleFeatureTest, Context) {
   feature.set_min_manifest_version(21);
   feature.set_max_manifest_version(25);
 
-  base::DictionaryValue manifest;
-  manifest.SetStringKey("name", "test");
-  manifest.SetStringKey("version", "1");
-  manifest.SetIntKey("manifest_version", 21);
-  manifest.SetStringPath("app.launch.local_path", "foo.html");
+  base::Value::Dict manifest;
+  manifest.Set("name", "test");
+  manifest.Set("version", "1");
+  manifest.Set("manifest_version", 21);
+  manifest.SetByDottedPath("app.launch.local_path", "foo.html");
 
   std::string error;
   scoped_refptr<const Extension> extension(
@@ -456,11 +456,11 @@ TEST_F(SimpleFeatureTest, Context) {
 }
 
 TEST_F(SimpleFeatureTest, SessionType) {
-  base::DictionaryValue manifest;
-  manifest.SetStringKey("name", "test");
-  manifest.SetStringKey("version", "1");
-  manifest.SetIntKey("manifest_version", 2);
-  manifest.SetStringPath("app.launch.local_path", "foo.html");
+  base::Value::Dict manifest;
+  manifest.Set("name", "test");
+  manifest.Set("version", "1");
+  manifest.Set("manifest_version", 2);
+  manifest.SetByDottedPath("app.launch.local_path", "foo.html");
 
   std::string error;
   scoped_refptr<const Extension> extension(
@@ -748,28 +748,30 @@ TEST_F(SimpleFeatureTest, CommandLineSwitch) {
 }
 
 TEST_F(SimpleFeatureTest, FeatureFlags) {
-  const std::vector<base::Feature> features(
-      {{"stub_feature_1", base::FEATURE_ENABLED_BY_DEFAULT},
-       {"stub_feature_2", base::FEATURE_DISABLED_BY_DEFAULT}});
+  static BASE_FEATURE(kStubFeature1, "StubFeature1",
+                      base::FEATURE_ENABLED_BY_DEFAULT);
+  static BASE_FEATURE(kStubFeature2, "StubFeature2",
+                      base::FEATURE_DISABLED_BY_DEFAULT);
+  const base::Feature* kOverriddenFeatures[] = {&kStubFeature1, &kStubFeature2};
   auto scoped_feature_override =
-      CreateScopedFeatureFlagsOverrideForTesting(&features);
+      CreateScopedFeatureFlagsOverrideForTesting(kOverriddenFeatures);
 
   SimpleFeature simple_feature_1;
-  simple_feature_1.set_feature_flag(features[0].name);
+  simple_feature_1.set_feature_flag(kStubFeature1.name);
   EXPECT_EQ(Feature::IS_AVAILABLE,
             simple_feature_1.IsAvailableToEnvironment(kUnspecifiedContextId)
                 .result());
 
   SimpleFeature simple_feature_2;
-  simple_feature_2.set_feature_flag(features[1].name);
+  simple_feature_2.set_feature_flag(kStubFeature2.name);
   EXPECT_EQ(Feature::FEATURE_FLAG_DISABLED,
             simple_feature_2.IsAvailableToEnvironment(kUnspecifiedContextId)
                 .result());
 
   // Ensure we take any base::Feature overrides into account.
   base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitWithFeatures({features[1]} /* enabled_features */,
-                                       {features[0]} /* disabled_features */);
+  scoped_feature_list.InitWithFeatures({kStubFeature2} /* enabled_features */,
+                                       {kStubFeature1} /* disabled_features */);
   EXPECT_EQ(Feature::FEATURE_FLAG_DISABLED,
             simple_feature_1.IsAvailableToEnvironment(kUnspecifiedContextId)
                 .result());

@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -32,23 +32,18 @@ extern const char kHistogramFirstInputDelay[];
 extern const char kHistogramFirstInputTimestamp[];
 extern const char kHistogramFirstInputDelay4[];
 extern const char kHistogramFirstInputTimestamp4[];
-extern const char kHistogramLongestInputDelay[];
-extern const char kHistogramLongestInputTimestamp[];
 extern const char kHistogramFirstPaint[];
 extern const char kHistogramFirstImagePaint[];
 extern const char kHistogramDomContentLoaded[];
 extern const char kHistogramLoad[];
 extern const char kHistogramFirstContentfulPaint[];
-extern const char kHistogramFirstMeaningfulPaint[];
 extern const char kHistogramLargestContentfulPaint[];
 extern const char kHistogramLargestContentfulPaintContentType[];
 extern const char kHistogramLargestContentfulPaintMainFrame[];
 extern const char kHistogramLargestContentfulPaintMainFrameContentType[];
 extern const char kHistogramLargestContentfulPaintCrossSiteSubFrame[];
-extern const char kHistogramParseDuration[];
 extern const char kHistogramParseBlockedOnScriptLoad[];
 extern const char kHistogramParseBlockedOnScriptExecution[];
-extern const char kHistogramParseStartToFirstMeaningfulPaint[];
 
 extern const char kBackgroundHistogramFirstImagePaint[];
 extern const char kBackgroundHistogramDomContentLoaded[];
@@ -68,8 +63,6 @@ extern const char kHistogramUserGestureNavigationToForwardBack[];
 extern const char kHistogramPageTimingForegroundDuration[];
 extern const char kHistogramPageTimingForegroundDurationNoCommit[];
 
-extern const char kHistogramFirstMeaningfulPaintStatus[];
-
 extern const char kHistogramCachedResourceLoadTimePrefix[];
 extern const char kHistogramCommitSentToFirstSubresourceLoadStart[];
 extern const char kHistogramNavigationToFirstSubresourceLoadStart[];
@@ -77,9 +70,6 @@ extern const char kHistogramResourceLoadTimePrefix[];
 extern const char kHistogramTotalSubresourceLoadTimeAtFirstContentfulPaint[];
 extern const char kHistogramFirstEligibleToPaint[];
 extern const char kHistogramFirstEligibleToPaintToFirstPaint[];
-
-extern const char kHistogramFirstNonScrollInputAfterFirstPaint[];
-extern const char kHistogramFirstScrollInputAfterFirstPaint[];
 
 extern const char kHistogramPageLoadTotalBytes[];
 extern const char kHistogramPageLoadNetworkBytes[];
@@ -146,15 +136,6 @@ extern const char kHistogramMemorySubframeAggregate[];
 extern const char kHistogramMemoryTotal[];
 extern const char kHistogramMemoryUpdateReceived[];
 
-enum FirstMeaningfulPaintStatus {
-  FIRST_MEANINGFUL_PAINT_RECORDED,
-  FIRST_MEANINGFUL_PAINT_BACKGROUNDED,
-  FIRST_MEANINGFUL_PAINT_DID_NOT_REACH_NETWORK_STABLE,
-  FIRST_MEANINGFUL_PAINT_USER_INTERACTION_BEFORE_FMP,
-  FIRST_MEANINGFUL_PAINT_DID_NOT_REACH_FIRST_CONTENTFUL_PAINT,
-  FIRST_MEANINGFUL_PAINT_LAST_ENTRY
-};
-
 // Please keep in sync with PageLoadBackForwardCacheEvent in
 // tools/metrics/histograms/enums.xml. These values should not be renumbered.
 enum class PageLoadBackForwardCacheEvent {
@@ -180,6 +161,12 @@ class UmaPageLoadMetricsObserver
   ~UmaPageLoadMetricsObserver() override;
 
   // page_load_metrics::PageLoadMetricsObserver:
+  const char* GetObserverName() const override;
+  ObservePolicy OnFencedFramesStart(
+      content::NavigationHandle* navigation_handle,
+      const GURL& currently_committed_url) override;
+  ObservePolicy OnPrerenderStart(content::NavigationHandle* navigation_handle,
+                                 const GURL& currently_committed_url) override;
   ObservePolicy OnRedirect(
       content::NavigationHandle* navigation_handle) override;
   ObservePolicy OnCommit(content::NavigationHandle* navigation_handle) override;
@@ -192,8 +179,6 @@ class UmaPageLoadMetricsObserver
   void OnFirstImagePaintInPage(
       const page_load_metrics::mojom::PageLoadTiming& timing) override;
   void OnFirstContentfulPaintInPage(
-      const page_load_metrics::mojom::PageLoadTiming& timing) override;
-  void OnFirstMeaningfulPaintInMainFrameDocument(
       const page_load_metrics::mojom::PageLoadTiming& timing) override;
   void OnFirstInputInPage(
       const page_load_metrics::mojom::PageLoadTiming& timing) override;
@@ -271,16 +256,6 @@ class UmaPageLoadMetricsObserver
   // The CPU usage attributed to this page.
   base::TimeDelta total_cpu_usage_;
   base::TimeDelta foreground_cpu_usage_;
-
-  // Size of the redirect chain, which excludes the first URL.
-  int redirect_chain_size_;
-
-  // True if we've received a non-scroll input (touch tap or mouse up)
-  // after first paint has happened.
-  bool received_non_scroll_input_after_first_paint_ = false;
-
-  // True if we've received a scroll input after first paint has happened.
-  bool received_scroll_input_after_first_paint_ = false;
 
   base::TimeTicks first_paint_;
 

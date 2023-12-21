@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,9 +6,10 @@
 
 #include <utility>
 
-#include "base/bind.h"
 #include "base/containers/contains.h"
 #include "base/cxx17_backports.h"
+#include "base/functional/bind.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/trace_event/typed_macros.h"
 #include "media/capture/video/chromeos/camera_metadata_utils.h"
 #include "media/capture/video/chromeos/camera_trace_utils.h"
@@ -108,11 +109,10 @@ Camera3AController::Camera3AController(
     if (available_modes.empty()) {
       return false;
     }
-    if (std::find(
-            available_modes.begin(), available_modes.end(),
+    if (!base::Contains(
+            available_modes,
             base::checked_cast<uint8_t>(
-                cros::mojom::AndroidControlMode::ANDROID_CONTROL_MODE_AUTO)) ==
-        available_modes.end()) {
+                cros::mojom::AndroidControlMode::ANDROID_CONTROL_MODE_AUTO))) {
       return false;
     }
     if (!available_ae_modes_.count(

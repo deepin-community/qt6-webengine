@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,12 +7,19 @@
 #include <cmath>
 
 #include "base/strings/stringprintf.h"
+#include "base/trace_event/typed_macros.h"
 #include "build/build_config.h"
 
 namespace gfx {
 
 std::string Vector2dF::ToString() const {
   return base::StringPrintf("[%g %g]", x_, y_);
+}
+
+void Vector2dF::WriteIntoTrace(perfetto::TracedValue ctx) const {
+  perfetto::TracedDictionary dict = std::move(ctx).WriteDictionary();
+  dict.Add("x", x_);
+  dict.Add("y", y_);
 }
 
 bool Vector2dF::IsZero() const {
@@ -40,6 +47,11 @@ float Vector2dF::Length() const {
 void Vector2dF::Scale(float x_scale, float y_scale) {
   x_ *= x_scale;
   y_ *= y_scale;
+}
+
+void Vector2dF::InvScale(float inv_x_scale, float inv_y_scale) {
+  x_ /= inv_x_scale;
+  y_ /= inv_y_scale;
 }
 
 double CrossProduct(const Vector2dF& lhs, const Vector2dF& rhs) {

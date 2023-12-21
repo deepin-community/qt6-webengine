@@ -1,4 +1,4 @@
-// Copyright (c) 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -32,6 +32,8 @@ std::atomic<PartitionAllocHooks::FreeOverrideHook*>
     PartitionAllocHooks::free_override_hook_(nullptr);
 std::atomic<PartitionAllocHooks::ReallocOverrideHook*>
     PartitionAllocHooks::realloc_override_hook_(nullptr);
+std::atomic<PartitionAllocHooks::QuarantineOverrideHook*>
+    PartitionAllocHooks::quarantine_override_hook_(nullptr);
 
 void PartitionAllocHooks::SetObserverHooks(AllocationObserverHook* alloc_hook,
                                            FreeObserverHook* free_hook) {
@@ -75,7 +77,7 @@ void PartitionAllocHooks::AllocationObserverHookIfEnabled(
 
 bool PartitionAllocHooks::AllocationOverrideHookIfEnabled(
     void** out,
-    int flags,
+    unsigned int flags,
     size_t size,
     const char* type_name) {
   if (auto* hook = allocation_override_hook_.load(std::memory_order_relaxed))
@@ -116,6 +118,11 @@ bool PartitionAllocHooks::ReallocOverrideHookIfEnabled(size_t* out,
     return hook(out, address);
   }
   return false;
+}
+
+void PartitionAllocHooks::SetQuarantineOverrideHook(
+    QuarantineOverrideHook* hook) {
+  quarantine_override_hook_.store(hook, std::memory_order_release);
 }
 
 }  // namespace partition_alloc

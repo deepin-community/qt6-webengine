@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,13 +10,13 @@
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
 #include "base/android/scoped_java_ref.h"
-#include "base/bind.h"
 #include "base/check_op.h"
 #include "base/cxx17_backports.h"
+#include "base/functional/bind.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/notreached.h"
 #include "base/strings/string_util.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/task/single_thread_task_runner.h"
 #include "media/base/android/media_common_android.h"
 #include "media/base/android/media_jni_headers/MediaPlayerBridge_jni.h"
 #include "media/base/android/media_resource_getter.h"
@@ -101,7 +101,8 @@ MediaPlayerBridge::MediaPlayerBridge(
                                        base::Unretained(this))),
       client_(client) {
   listener_ = std::make_unique<MediaPlayerListener>(
-      base::ThreadTaskRunnerHandle::Get(), weak_factory_.GetWeakPtr());
+      base::SingleThreadTaskRunner::GetCurrentDefault(),
+      weak_factory_.GetWeakPtr());
 }
 
 MediaPlayerBridge::~MediaPlayerBridge() {
@@ -169,6 +170,11 @@ void MediaPlayerBridge::SetVideoSurface(gl::ScopedJavaSurface surface) {
 }
 
 void MediaPlayerBridge::SetPlaybackRate(double playback_rate) {
+  if (!prepared_) {
+    pending_playback_rate_ = playback_rate;
+    return;
+  }
+
   if (j_media_player_bridge_.is_null())
     return;
 
@@ -480,6 +486,11 @@ void MediaPlayerBridge::OnMediaPrepared() {
   if (pending_play_) {
     StartInternal();
     pending_play_ = false;
+  }
+
+  if (pending_playback_rate_) {
+    SetPlaybackRate(pending_playback_rate_.value());
+    pending_playback_rate_.reset();
   }
 }
 

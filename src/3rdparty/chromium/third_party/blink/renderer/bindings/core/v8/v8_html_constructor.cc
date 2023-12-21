@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -59,9 +59,8 @@ void V8HTMLConstructor::HtmlConstructor(
   // NewTarget.
   // If there is no such definition, then throw a TypeError and abort these
   // steps.
-  ScriptCustomElementDefinition* definition =
-      ScriptCustomElementDefinition::ForConstructor(script_state, registry,
-                                                    new_target);
+  CustomElementDefinition* definition =
+      registry->DefinitionForConstructor(new_target.As<v8::Object>());
   if (!definition) {
     V8ThrowException::ThrowTypeError(isolate, "Illegal constructor");
     return;
@@ -83,7 +82,7 @@ void V8HTMLConstructor::HtmlConstructor(
   } else {
     // Customized built-in element
     // 5. If local name is not valid for interface, throw TypeError
-    if (htmlElementTypeForTag(local_name, window->document()) !=
+    if (HtmlElementTypeForTag(local_name, window->document()) !=
         element_interface_name) {
       V8ThrowException::ThrowTypeError(isolate,
                                        "Illegal constructor: localName does "
@@ -116,7 +115,7 @@ void V8HTMLConstructor::HtmlConstructor(
 
   // 8. If definition's construction stack is empty...
   Element* element;
-  if (definition->GetConstructionStack().IsEmpty()) {
+  if (definition->GetConstructionStack().empty()) {
     // This is an element being created with 'new' from script
     element = definition->CreateElementForConstructor(*window->document());
   } else {

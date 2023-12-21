@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,8 +7,10 @@
 
 #include <string>
 
+#include "base/containers/enum_set.h"
 #include "components/content_settings/core/common/content_settings.h"
 #include "net/cookies/cookie_constants.h"
+#include "net/cookies/cookie_setting_override.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace net {
@@ -45,7 +47,7 @@ namespace content_settings {
 //      </html>
 //    </iframe>
 //  </body>
-//</html>
+// </html>
 //
 // When each of these resources get fetched, |top_frame_origin| will always be
 // "https://a.com" and |site_for_cookies| is set the following:
@@ -66,7 +68,7 @@ namespace content_settings {
 // |top_frame_origin|. This is done inconsistently and needs to be fixed.
 class CookieSettingsBase {
  public:
-  CookieSettingsBase() = default;
+  CookieSettingsBase();
 
   CookieSettingsBase(const CookieSettingsBase&) = delete;
   CookieSettingsBase& operator=(const CookieSettingsBase&) = delete;
@@ -87,25 +89,19 @@ class CookieSettingsBase {
       const std::string& domain,
       bool is_https) const;
 
-  // Returns true if the page identified by (|url|, |first_party_url|) is
-  // allowed to access (i.e., read or write) cookies. |first_party_url|
-  // is used to determine third-party-ness of |url|.
+  // Returns true if the page identified by (`url`, `site_for_cookies`,
+  // `top_frame_origin`) is allowed to access (i.e., read or write) cookies.
+  // `site_for_cookies` is used to determine third-party-ness of `url`.
+  // `top_frame_origin` is used to check if there are any content_settings
+  // exceptions. `top_frame_origin` should at least be specified when
+  // `site_for_cookies` is non-empty.
   //
   // This may be called on any thread.
-  // DEPRECATED: Replace with IsFullCookieAccessAllowed(GURL, GURL, Origin).
-  bool IsFullCookieAccessAllowed(const GURL& url,
-                                 const GURL& first_party_url) const;
-
-  // Similar to IsFullCookieAccessAllowed(GURL, GURL) but provides a mechanism
-  // to specify a separate `site_for_cookies`, which is used to determine
-  // whether a request is in a third_party context and `top_frame_origin`, which
-  // is used to check if there are any content_settings exceptions.
-  // `top_frame_origin` should at least be specified when `site_for_cookies` is
-  // non-empty.
   bool IsFullCookieAccessAllowed(
       const GURL& url,
       const net::SiteForCookies& site_for_cookies,
-      const absl::optional<url::Origin>& top_frame_origin) const;
+      const absl::optional<url::Origin>& top_frame_origin,
+      net::CookieSettingOverrides overrides) const;
 
   // Returns true if the cookie set by a page identified by |url| should be
   // session only. Querying this only makes sense if |IsFullCookieAccessAllowed|
@@ -118,14 +114,13 @@ class CookieSettingsBase {
   ContentSetting GetCookieSetting(
       const GURL& url,
       const GURL& first_party_url,
+      net::CookieSettingOverrides overrides,
       content_settings::SettingSource* source) const;
 
   // Returns the cookie access semantics (legacy or nonlegacy) to be applied for
   // cookies on the given domain. The |cookie_domain| can be provided as the
   // direct output of CanonicalCookie::Domain(), i.e. any leading dot does not
   // have to be removed.
-  //
-  // This may be called on any thread.
   //
   // Legacy access means we treat "SameSite unspecified" as if it were
   // SameSite=None. Also, we don't require SameSite=None cookies to be Secure.
@@ -143,9 +138,8 @@ class CookieSettingsBase {
   // cookie domain. The |cookie_domain| can be provided as the direct output of
   // CanonicalCookie::Domain(), i.e. any leading dot does not have to be
   // removed.
-  virtual void GetSettingForLegacyCookieAccess(
-      const std::string& cookie_domain,
-      ContentSetting* setting) const = 0;
+  virtual ContentSetting GetSettingForLegacyCookieAccess(
+      const std::string& cookie_domain) const = 0;
 
   // Returns whether a cookie should be attached regardless of its SameSite
   // value vs the request context.
@@ -178,6 +172,30 @@ class CookieSettingsBase {
   // access.
   static bool IsValidSettingForLegacyAccess(ContentSetting setting);
 
+  // Returns a set of overrides that includes Storage Access API and Top-Level
+  // Storage Access API overrides iff the config booleans indicate that Storage
+  // Access API and Top-Level Storage Access API should unlock access to DOM
+  // storage.
+  net::CookieSettingOverrides SettingOverridesForStorage() const;
+
+  // Returns true iff the query should consider Storage Access API permission
+  // grants.
+  bool ShouldConsiderStorageAccessGrants(
+      net::CookieSettingOverrides overrides) const;
+
+  // Returns true iff the query should consider top-level Storage Access API
+  // permission grants. Note that this is handled similarly to storage access
+  // grants, but applies to subresources more broadly (at the top-level rather
+  // than only for a single frame).
+  bool ShouldConsiderTopLevelStorageAccessGrants(
+      net::CookieSettingOverrides overrides) const;
+
+  // Controls whether Storage Access API grants allow access to unpartitioned
+  // *storage*, in addition to unpartitioned cookies. This is static so that all
+  // instances behave consistently.
+  static void SetStorageAccessAPIGrantsUnpartitionedStorageForTesting(
+      bool grants);
+
  protected:
   // Returns true iff the request is considered third-party.
   static bool IsThirdPartyRequest(const GURL& url,
@@ -194,7 +212,12 @@ class CookieSettingsBase {
       const GURL& url,
       const GURL& first_party_url,
       bool is_third_party_request,
+      net::CookieSettingOverrides overrides,
       content_settings::SettingSource* source) const = 0;
+
+  static bool storage_access_api_grants_unpartitioned_storage_;
+  const bool is_storage_partitioned_;
+  const bool is_privacy_sandbox_v4_enabled_;
 };
 
 }  // namespace content_settings

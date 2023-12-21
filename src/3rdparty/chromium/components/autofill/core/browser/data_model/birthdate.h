@@ -1,4 +1,4 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -25,7 +25,7 @@ class Birthdate : public FormGroup {
 
   // Convenience accessor to the day, month and 4 digit year components.
   static ServerFieldTypeSet GetRawComponents() {
-    return {BIRTHDATE_DAY, BIRTHDATE_MONTH, BIRTHDATE_YEAR_4_DIGITS};
+    return {BIRTHDATE_DAY, BIRTHDATE_MONTH, BIRTHDATE_4_DIGIT_YEAR};
   }
 
   // FormGroup:
@@ -34,15 +34,14 @@ class Birthdate : public FormGroup {
   // All |GetRawComponents()| are stored as integers and directly accessible.
   int GetRawInfoAsInt(ServerFieldType type) const override;
 
-  void SetRawInfoWithVerificationStatus(
-      ServerFieldType type,
-      const std::u16string& value,
-      structured_address::VerificationStatus status) override;
+  void SetRawInfoWithVerificationStatus(ServerFieldType type,
+                                        const std::u16string& value,
+                                        VerificationStatus status) override;
 
   void SetRawInfoAsIntWithVerificationStatus(
       ServerFieldType type,
       int value,
-      structured_address::VerificationStatus status) override;
+      VerificationStatus status) override;
 
  private:
   // FormGroup:

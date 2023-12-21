@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,7 +6,7 @@
 
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/run_loop.h"
 #include "base/test/gtest_util.h"
 #include "base/test/mock_callback.h"
@@ -83,7 +83,9 @@ class AccessTokenFetcherTest
                                   const std::string& email,
                                   ConsentLevel consent_level) {
     CoreAccountInfo account_info = AddAccount(gaia_id, email);
-    primary_account_manager_.SetPrimaryAccountInfo(account_info, consent_level);
+    primary_account_manager_.SetPrimaryAccountInfo(
+        account_info, consent_level,
+        signin_metrics::AccessPoint::ACCESS_POINT_UNKNOWN);
 
     return account_info.account_id;
   }

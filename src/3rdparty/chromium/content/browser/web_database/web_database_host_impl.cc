@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,10 +7,11 @@
 #include <string>
 #include <utility>
 
-#include "base/bind.h"
 #include "base/check_op.h"
+#include "base/functional/bind.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/sequenced_task_runner.h"
 #include "components/services/storage/public/cpp/buckets/bucket_info.h"
 #include "components/services/storage/public/cpp/buckets/constants.h"
 #include "content/browser/child_process_security_policy_impl.h"
@@ -124,9 +125,11 @@ void WebDatabaseHostImpl::OpenFileValidated(const std::u16string& vfs_file_name,
       !db_tracker_->IsDatabaseScheduledForDeletion(origin_identifier,
                                                    database_name)) {
     DCHECK(db_tracker_->quota_manager_proxy());
-    db_tracker_->quota_manager_proxy()->GetOrCreateBucket(
-        blink::StorageKey(storage::GetOriginFromIdentifier(origin_identifier)),
-        storage::kDefaultBucketName, db_tracker_->task_runner(),
+    db_tracker_->quota_manager_proxy()->UpdateOrCreateBucket(
+        storage::BucketInitParams::ForDefaultBucket(
+            blink::StorageKey::CreateFirstParty(
+                storage::GetOriginFromIdentifier(origin_identifier))),
+        db_tracker_->task_runner(),
         base::BindOnce(&WebDatabaseHostImpl::OpenFileWithBucketCreated,
                        weak_ptr_factory_.GetWeakPtr(), vfs_file_name,
                        desired_flags, std::move(callback)));
@@ -146,7 +149,11 @@ void WebDatabaseHostImpl::OpenFileWithBucketCreated(
     int32_t desired_flags,
     OpenFileCallback callback,
     storage::QuotaErrorOr<storage::BucketInfo> bucket) {
-  DCHECK(bucket.ok());
+  // Return invalid file path on `UpdateOrCreateBucket` error.
+  if (!bucket.ok()) {
+    std::move(callback).Run(base::File());
+    return;
+  }
 
   base::File file;
   const base::File* tracked_file = nullptr;
@@ -266,8 +273,8 @@ void WebDatabaseHostImpl::GetSpaceAvailableValidated(
 
   DCHECK(db_tracker_->quota_manager_proxy());
   db_tracker_->quota_manager_proxy()->GetUsageAndQuota(
-      blink::StorageKey(origin), blink::mojom::StorageType::kTemporary,
-      db_tracker_->task_runner(),
+      blink::StorageKey::CreateFirstParty(origin),
+      blink::mojom::StorageType::kTemporary, db_tracker_->task_runner(),
       base::BindOnce(
           [](GetSpaceAvailableCallback callback,
              blink::mojom::QuotaStatusCode status, int64_t usage,

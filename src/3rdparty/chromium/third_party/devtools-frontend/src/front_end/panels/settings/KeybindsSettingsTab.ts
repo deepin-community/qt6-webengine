@@ -5,6 +5,7 @@
 import * as Common from '../../core/common/common.js';
 import * as Host from '../../core/host/host.js';
 import * as i18n from '../../core/i18n/i18n.js';
+import * as Platform from '../../core/platform/platform.js';
 import * as Root from '../../core/root/root.js';
 import * as UI from '../../ui/legacy/legacy.js';
 
@@ -12,66 +13,66 @@ import keybindsSettingsTabStyles from './keybindsSettingsTab.css.js';
 
 const UIStrings = {
   /**
-  *@description Text for keyboard shortcuts
-  */
+   *@description Text for keyboard shortcuts
+   */
   shortcuts: 'Shortcuts',
   /**
-  *@description Text appearing before a select control offering users their choice of keyboard shortcut presets.
-  */
+   *@description Text appearing before a select control offering users their choice of keyboard shortcut presets.
+   */
   matchShortcutsFromPreset: 'Match shortcuts from preset',
   /**
-  *@description Screen reader label for list of keyboard shortcuts in settings
-  */
+   *@description Screen reader label for list of keyboard shortcuts in settings
+   */
   keyboardShortcutsList: 'Keyboard shortcuts list',
   /**
-  *@description Screen reader label for an icon denoting a shortcut that has been changed from its default
-  */
+   *@description Screen reader label for an icon denoting a shortcut that has been changed from its default
+   */
   shortcutModified: 'Shortcut modified',
   /**
-  *@description Screen reader label for an empty shortcut cell in custom shortcuts settings tab
-  */
+   *@description Screen reader label for an empty shortcut cell in custom shortcuts settings tab
+   */
   noShortcutForAction: 'No shortcut for action',
   /**
-  *@description Link text in the settings pane to add another shortcut for an action
-  */
+   *@description Link text in the settings pane to add another shortcut for an action
+   */
   addAShortcut: 'Add a shortcut',
   /**
-  *@description Label for a button in the settings pane that confirms changes to a keyboard shortcut
-  */
+   *@description Label for a button in the settings pane that confirms changes to a keyboard shortcut
+   */
   confirmChanges: 'Confirm changes',
   /**
-  *@description Label for a button in the settings pane that discards changes to the shortcut being edited
-  */
+   *@description Label for a button in the settings pane that discards changes to the shortcut being edited
+   */
   discardChanges: 'Discard changes',
   /**
-  *@description Label for a button in the settings pane that removes a keyboard shortcut.
-  */
+   *@description Label for a button in the settings pane that removes a keyboard shortcut.
+   */
   removeShortcut: 'Remove shortcut',
   /**
-  *@description Label for a button in the settings pane that edits a keyboard shortcut
-  */
+   *@description Label for a button in the settings pane that edits a keyboard shortcut
+   */
   editShortcut: 'Edit shortcut',
   /**
-  *@description Message shown in settings when the user inputs a modifier-only shortcut such as Ctrl+Shift.
-  */
+   *@description Message shown in settings when the user inputs a modifier-only shortcut such as Ctrl+Shift.
+   */
   shortcutsCannotContainOnly: 'Shortcuts cannot contain only modifier keys.',
   /**
-  *@description Messages shown in shortcuts settings when the user inputs a shortcut that is already in use.
-  *@example {Performance} PH1
-  *@example {Start/stop recording} PH2
-  */
+   *@description Messages shown in shortcuts settings when the user inputs a shortcut that is already in use.
+   *@example {Performance} PH1
+   *@example {Start/stop recording} PH2
+   */
   thisShortcutIsInUseByS: 'This shortcut is in use by {PH1}: {PH2}.',
   /**
-  *@description Message shown in settings when to restore default shortcuts.
-  */
+   *@description Message shown in settings when to restore default shortcuts.
+   */
   RestoreDefaultShortcuts: 'Restore default shortcuts',
   /**
-  *@description Message shown in settings to show the full list of keyboard shortcuts.
-  */
+   *@description Message shown in settings to show the full list of keyboard shortcuts.
+   */
   FullListOfDevtoolsKeyboard: 'Full list of DevTools keyboard shortcuts and gestures',
   /**
    *@description Label for a button in the shortcut editor that resets all shortcuts for the current action.
-  */
+   */
   ResetShortcutsForAction: 'Reset shortcuts for action',
 };
 const str_ = i18n.i18n.registerUIStrings('panels/settings/KeybindsSettingsTab.ts', UIStrings);
@@ -263,7 +264,7 @@ export class KeybindsSettingsTab extends UI.Widget.VBox implements UI.ListContro
   }
 
   onEscapeKeyPressed(event: Event): void {
-    const deepActiveElement = document.deepActiveElement();
+    const deepActiveElement = Platform.DOMUtilities.deepActiveElement(document);
     if (this.editingRow && deepActiveElement && deepActiveElement.nodeName === 'INPUT') {
       this.editingRow.onEscapeKeyPressed(event);
     }
@@ -380,7 +381,7 @@ export class ShortcutListItem {
         i18nString(UIStrings.discardChanges), 'largeicon-delete', 'keybinds-cancel-button',
         () => this.settingsTab.stopEditing(this.item)));
     this.element.addEventListener('keydown', event => {
-      if (isEscKey(event)) {
+      if (Platform.KeyboardUtilities.isEscKey(event)) {
         this.settingsTab.stopEditing(this.item);
         event.consume(true);
       }
@@ -460,6 +461,7 @@ export class ShortcutListItem {
   private createIconButton(label: string, iconName: string, className: string, listener: () => void):
       HTMLButtonElement {
     const button = document.createElement('button') as HTMLButtonElement;
+    button.setAttribute('title', label);
     button.appendChild(UI.Icon.Icon.create(iconName));
     button.addEventListener('click', listener);
     UI.ARIAUtils.setAccessibleName(button, label);
@@ -545,7 +547,7 @@ export class ShortcutListItem {
   }
 
   onEscapeKeyPressed(event: Event): void {
-    const activeElement = document.deepActiveElement();
+    const activeElement = Platform.DOMUtilities.deepActiveElement(document);
     for (const [shortcut, shortcutInput] of this.shortcutInputs.entries()) {
       if (activeElement === shortcutInput) {
         this.onShortcutInputKeyDown(

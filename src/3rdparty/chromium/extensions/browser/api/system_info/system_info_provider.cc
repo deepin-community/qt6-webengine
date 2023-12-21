@@ -1,12 +1,11 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "extensions/browser/api/system_info/system_info_provider.h"
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task/task_runner_util.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
 #include "components/storage_monitor/storage_info.h"
@@ -87,9 +86,8 @@ void SystemInfoProvider::StartQueryInfoPostInitialization() {
   PrepareQueryOnUIThread();
   // Post the custom query info task to blocking pool for information querying
   // and reply with OnQueryCompleted.
-  base::PostTaskAndReplyWithResult(
-      task_runner_.get(), FROM_HERE,
-      base::BindOnce(&SystemInfoProvider::QueryInfo, this),
+  task_runner_->PostTaskAndReplyWithResult(
+      FROM_HERE, base::BindOnce(&SystemInfoProvider::QueryInfo, this),
       base::BindOnce(&SystemInfoProvider::OnQueryCompleted, this));
 }
 

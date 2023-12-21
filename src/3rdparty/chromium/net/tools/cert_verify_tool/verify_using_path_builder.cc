@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,17 +13,19 @@
 #include "crypto/sha2.h"
 #include "net/cert/cert_net_fetcher.h"
 #include "net/cert/internal/cert_issuer_source_aia.h"
-#include "net/cert/internal/cert_issuer_source_static.h"
-#include "net/cert/internal/parse_name.h"
-#include "net/cert/internal/parsed_certificate.h"
-#include "net/cert/internal/path_builder.h"
-#include "net/cert/internal/simple_path_builder_delegate.h"
 #include "net/cert/internal/system_trust_store.h"
-#include "net/cert/internal/trust_store_collection.h"
-#include "net/cert/internal/trust_store_in_memory.h"
+#include "net/cert/pki/cert_issuer_source_static.h"
+#include "net/cert/pki/parse_name.h"
+#include "net/cert/pki/parsed_certificate.h"
+#include "net/cert/pki/path_builder.h"
+#include "net/cert/pki/simple_path_builder_delegate.h"
+#include "net/cert/pki/trust_store_collection.h"
+#include "net/cert/pki/trust_store_in_memory.h"
 #include "net/cert/x509_certificate.h"
 #include "net/cert/x509_util.h"
 #include "net/tools/cert_verify_tool/cert_verify_tool_util.h"
+#include "third_party/boringssl/src/include/openssl/bytestring.h"
+#include "third_party/boringssl/src/include/openssl/mem.h"
 
 namespace {
 
@@ -100,6 +102,21 @@ void PrintResultPath(const net::CertPathBuilderResultPath* result_path,
               << SubjectFromParsedCertificate(cert.get()) << "\n";
   }
 
+  // Print the certificate policies.
+  if (!result_path->user_constrained_policy_set.empty()) {
+    std::cout << "Certificate policies:\n";
+    for (const auto& policy : result_path->user_constrained_policy_set) {
+      CBS cbs;
+      CBS_init(&cbs, policy.UnsafeData(), policy.Length());
+      bssl::UniquePtr<char> policy_text(CBS_asn1_oid_to_text(&cbs));
+      if (policy_text) {
+        std::cout << " " << policy_text.get() << "\n";
+      } else {
+        std::cout << " (invalid OID)\n";
+      }
+    }
+  }
+
   // Print the errors/warnings if there were any.
   std::string errors_str =
       result_path->errors.ToDebugString(result_path->certs);
@@ -109,10 +126,12 @@ void PrintResultPath(const net::CertPathBuilderResultPath* result_path,
   }
 }
 
-scoped_refptr<net::ParsedCertificate> ParseCertificate(const CertInput& input) {
+std::shared_ptr<const net::ParsedCertificate> ParseCertificate(
+    const CertInput& input) {
   net::CertErrors errors;
-  scoped_refptr<net::ParsedCertificate> cert = net::ParsedCertificate::Create(
-      net::x509_util::CreateCryptoBuffer(input.der_cert), {}, &errors);
+  std::shared_ptr<const net::ParsedCertificate> cert =
+      net::ParsedCertificate::Create(
+          net::x509_util::CreateCryptoBuffer(input.der_cert), {}, &errors);
   if (!cert) {
     PrintCertError("ERROR: ParsedCertificate failed:", input);
     std::cout << errors.ToDebugString() << "\n";
@@ -130,7 +149,7 @@ scoped_refptr<net::ParsedCertificate> ParseCertificate(const CertInput& input) {
 bool VerifyUsingPathBuilder(
     const CertInput& target_der_cert,
     const std::vector<CertInput>& intermediate_der_certs,
-    const std::vector<CertInput>& root_der_certs,
+    const std::vector<CertInputWithTrustSetting>& der_certs_with_trust_settings,
     const base::Time at_time,
     const base::FilePath& dump_prefix_path,
     scoped_refptr<net::CertNetFetcher> cert_net_fetcher,
@@ -140,28 +159,32 @@ bool VerifyUsingPathBuilder(
   net::der::GeneralizedTime time = ConvertExplodedTime(exploded_time);
 
   net::TrustStoreInMemory additional_roots;
-  for (const auto& der_cert : root_der_certs) {
-    scoped_refptr<net::ParsedCertificate> cert = ParseCertificate(der_cert);
+  for (const auto& cert_input_with_trust : der_certs_with_trust_settings) {
+    std::shared_ptr<const net::ParsedCertificate> cert =
+        ParseCertificate(cert_input_with_trust.cert_input);
     if (cert) {
-      additional_roots.AddTrustAnchor(std::move(cert));
+      additional_roots.AddCertificate(std::move(cert),
+                                      cert_input_with_trust.trust);
     }
   }
   net::TrustStoreCollection trust_store;
   trust_store.AddTrustStore(&additional_roots);
   trust_store.AddTrustStore(system_trust_store->GetTrustStore());
 
-  if (!system_trust_store->UsesSystemTrustStore() && root_der_certs.empty()) {
+  if (!system_trust_store->UsesSystemTrustStore() &&
+      der_certs_with_trust_settings.empty()) {
     std::cerr << "NOTE: CertPathBuilder does not currently use OS trust "
                  "settings (--roots must be specified).\n";
   }
   net::CertIssuerSourceStatic intermediate_cert_issuer_source;
   for (const auto& der_cert : intermediate_der_certs) {
-    scoped_refptr<net::ParsedCertificate> cert = ParseCertificate(der_cert);
+    std::shared_ptr<const net::ParsedCertificate> cert =
+        ParseCertificate(der_cert);
     if (cert)
       intermediate_cert_issuer_source.AddCert(cert);
   }
 
-  scoped_refptr<net::ParsedCertificate> target_cert =
+  std::shared_ptr<const net::ParsedCertificate> target_cert =
       ParseCertificate(target_der_cert);
   if (!target_cert)
     return false;

@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,8 +8,8 @@
 #include <utility>
 #include <vector>
 
-#include "base/callback_helpers.h"
 #include "base/containers/contains.h"
+#include "base/functional/callback_helpers.h"
 #include "base/guid.h"
 #include "base/observer_list.h"
 #include "base/run_loop.h"
@@ -415,10 +415,11 @@ void TestServiceWorkerContext::StartServiceWorker(int64_t version_id,
   GURL scope_url;
   for (auto& observer : observer_list_) {
     observer.OnVersionStartedRunning(
-        version_id, content::ServiceWorkerRunningInfo(
-                        worker_url, scope_url,
-                        blink::StorageKey(url::Origin::Create(scope_url)),
-                        worker_process_id, blink::ServiceWorkerToken()));
+        version_id,
+        content::ServiceWorkerRunningInfo(
+            worker_url, scope_url,
+            blink::StorageKey::CreateFirstParty(url::Origin::Create(scope_url)),
+            worker_process_id, blink::ServiceWorkerToken()));
   }
 }
 
@@ -535,8 +536,8 @@ int TestProcessNodeSource::CreateProcessNode() {
   int render_process_id = GenerateNextId();
 
   // Create the process node and insert it into the map.
-  auto process_node = PerformanceManagerImpl::CreateProcessNode(
-      content::PROCESS_TYPE_RENDERER, RenderProcessHostProxy());
+  auto process_node =
+      PerformanceManagerImpl::CreateProcessNode(RenderProcessHostProxy());
   bool inserted =
       process_node_map_.insert({render_process_id, std::move(process_node)})
           .second;
@@ -566,7 +567,7 @@ class TestFrameNodeSource : public FrameNodeSource {
   void UnsubscribeFromFrameNode(
       content::GlobalRenderFrameHostId render_frame_host_id) override;
 
-  // Creates a frame node and returns its generated render frame host id.
+  // Creates a frame node and returns its generated RenderFrameHost id.
   content::GlobalRenderFrameHostId CreateFrameNode(
       int render_process_id,
       ProcessNodeImpl* process_node);
@@ -582,7 +583,7 @@ class TestFrameNodeSource : public FrameNodeSource {
   // The page node that hosts all frames.
   std::unique_ptr<PageNodeImpl> page_node_;
 
-  // Maps each frame's render frame host id with their associated frame node.
+  // Maps each frame's RenderFrameHost id with their associated frame node.
   base::flat_map<content::GlobalRenderFrameHostId,
                  std::unique_ptr<FrameNodeImpl>>
       frame_node_map_;
@@ -892,7 +893,7 @@ TEST_F(WorkerWatcherTest, ServiceWorkerFrameClient) {
         EXPECT_EQ(worker_node->process_node(), process_node);
 
         // The frame can not be connected to the service worker until its
-        // render frame host is available, which happens when the navigation
+        // RenderFrameHost is available, which happens when the navigation
         // commits.
         EXPECT_TRUE(worker_node->client_frames().empty());
       }));

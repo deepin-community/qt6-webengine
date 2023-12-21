@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,7 +6,7 @@
 
 #include <memory>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/lazy_instance.h"
 #include "components/guest_view/common/guest_view_constants.h"
 #include "components/guest_view/renderer/guest_view_request.h"
@@ -173,8 +173,9 @@ void GuestViewContainer::RunDestructionCallback(bool embedder_frame_destroyed) {
       return;
 
     v8::Context::Scope context_scope(context);
-    v8::MicrotasksScope microtasks(
-        destruction_isolate_, v8::MicrotasksScope::kDoNotRunMicrotasks);
+    v8::MicrotasksScope microtasks(destruction_isolate_,
+                                   context->GetMicrotaskQueue(),
+                                   v8::MicrotasksScope::kDoNotRunMicrotasks);
 
     callback->Call(context, context->Global(), 0 /* argc */, nullptr)
         .FromMaybe(v8::Local<v8::Value>());
@@ -242,8 +243,9 @@ void GuestViewContainer::CallElementResizeCallback(
       v8::Integer::New(element_resize_isolate_, new_size.height())};
 
   v8::Context::Scope context_scope(context);
-  v8::MicrotasksScope microtasks(
-      element_resize_isolate_, v8::MicrotasksScope::kDoNotRunMicrotasks);
+  v8::MicrotasksScope microtasks(element_resize_isolate_,
+                                 context->GetMicrotaskQueue(),
+                                 v8::MicrotasksScope::kDoNotRunMicrotasks);
 
   callback->Call(context, context->Global(), argc, argv)
       .FromMaybe(v8::Local<v8::Value>());

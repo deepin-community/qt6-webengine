@@ -1,3 +1,6 @@
+# Copyright (C) 2022 The Qt Company Ltd.
+# SPDX-License-Identifier: BSD-3-Clause
+
 # Require the Qt (not WebEngine) minimum supported CMake version.
 # Another WebEngine-specific version check will be done in configure.cmake
 # and reported in the configure summary.
@@ -17,10 +20,12 @@ project(QtWebEngine
     HOMEPAGE_URL "https://qt.io/"
     LANGUAGES CXX C
 )
+qt_internal_project_setup()
 
 find_package(Qt6 ${PROJECT_VERSION} CONFIG QUIET OPTIONAL_COMPONENTS
     Gui Widgets Network OpenGL Quick Qml PrintSupport
-    WebChannel Positioning QuickControls2 Test QuickWidgets QuickTest WebSockets Designer
+    WebChannel WebChannelQuick Positioning QuickControls2
+    Test QuickWidgets QuickTest WebSockets Designer
     JpegPrivate PngPrivate HarfbuzzPrivate FreetypePrivate ZlibPrivate
 )
 

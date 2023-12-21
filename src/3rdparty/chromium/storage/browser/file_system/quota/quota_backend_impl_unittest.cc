@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,14 +10,15 @@
 #include <string>
 #include <utility>
 
-#include "base/bind.h"
 #include "base/check.h"
+#include "base/files/file_error_or.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/functional/bind.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/run_loop.h"
 #include "base/task/sequenced_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/test/task_environment.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "storage/browser/file_system/file_system_usage_cache.h"
 #include "storage/browser/file_system/obfuscated_file_util.h"
 #include "storage/browser/quota/quota_manager_proxy.h"
@@ -45,7 +46,7 @@ class MockQuotaManagerProxy : public QuotaManagerProxy {
  public:
   MockQuotaManagerProxy()
       : QuotaManagerProxy(/*quota_manager_impl=*/nullptr,
-                          base::ThreadTaskRunnerHandle::Get(),
+                          base::SingleThreadTaskRunner::GetCurrentDefault(),
                           /*profile_path=*/base::FilePath()),
         storage_modified_count_(0),
         usage_(0),
@@ -60,10 +61,9 @@ class MockQuotaManagerProxy : public QuotaManagerProxy {
                             blink::mojom::StorageType type,
                             bool enabled) override {}
 
-  void NotifyStorageModified(
+  void NotifyBucketModified(
       QuotaClientType client_id,
-      const blink::StorageKey& storage_key,
-      blink::mojom::StorageType type,
+      const BucketLocator& bucket,
       int64_t delta,
       base::Time modification_time,
       scoped_refptr<base::SequencedTaskRunner> callback_task_runner,
@@ -116,7 +116,7 @@ class QuotaBackendImplTest : public testing::Test,
     in_memory_env_ = leveldb_chrome::NewMemEnv("quota");
     file_util_ = ObfuscatedFileUtil::CreateForTesting(
         /*special_storage_policy=*/nullptr, data_dir_.GetPath(),
-        data_dir_.GetPath(), in_memory_env_.get(), is_incognito());
+        in_memory_env_.get(), is_incognito());
     backend_ = std::make_unique<QuotaBackendImpl>(
         file_task_runner(), file_util_.get(), &file_system_usage_cache_,
         quota_manager_proxy_.get());
@@ -137,28 +137,27 @@ class QuotaBackendImplTest : public testing::Test,
     ASSERT_TRUE(file_util_->InitOriginDatabase(origin, true /* create */));
     ASSERT_TRUE(file_util_->origin_database_ != nullptr);
 
-    std::string type_string =
-        SandboxFileSystemBackendDelegate::GetTypeString(type);
-    base::File::Error error = base::File::FILE_ERROR_FAILED;
-    base::FilePath path = file_util_->GetDirectoryForStorageKeyAndType(
-        blink::StorageKey(origin), type_string, true /* create */, &error);
-    ASSERT_EQ(base::File::FILE_OK, error);
+    base::FileErrorOr<base::FilePath> path =
+        file_util_->GetDirectoryForStorageKeyAndType(
+            blink::StorageKey::CreateFirstParty(origin), type,
+            true /* create */);
+    ASSERT_TRUE(path.has_value());
 
     ASSERT_TRUE(file_system_usage_cache_.UpdateUsage(
         GetUsageCachePath(origin, type), 0));
   }
 
   base::SequencedTaskRunner* file_task_runner() {
-    return base::ThreadTaskRunnerHandle::Get().get();
+    return base::SingleThreadTaskRunner::GetCurrentDefault().get();
   }
 
   base::FilePath GetUsageCachePath(const url::Origin& origin,
                                    FileSystemType type) {
-    base::FilePath path;
-    base::File::Error error = backend_->GetUsageCachePath(origin, type, &path);
-    EXPECT_EQ(base::File::FILE_OK, error);
-    EXPECT_FALSE(path.empty());
-    return path;
+    base::FileErrorOr<base::FilePath> path =
+        backend_->GetUsageCachePath(origin, type);
+    EXPECT_TRUE(path.has_value());
+    EXPECT_FALSE(path->empty());
+    return path.value();
   }
 
   base::test::SingleThreadTaskEnvironment task_environment_;

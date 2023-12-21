@@ -1,16 +1,17 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "base/allocator/partition_allocator/extended_api.h"
 
-#include "base/allocator/allocator_shim_default_dispatch_to_partition_alloc.h"
-#include "base/allocator/buildflags.h"
+#include "base/allocator/partition_allocator/partition_alloc_buildflags.h"
+#include "base/allocator/partition_allocator/partition_alloc_config.h"
+#include "base/allocator/partition_allocator/shim/allocator_shim_default_dispatch_to_partition_alloc.h"
 #include "base/allocator/partition_allocator/thread_cache.h"
 
 namespace partition_alloc::internal {
 
-#if defined(PA_THREAD_CACHE_SUPPORTED)
+#if PA_CONFIG(THREAD_CACHE_SUPPORTED)
 
 namespace {
 
@@ -36,23 +37,24 @@ void EnablePartitionAllocThreadCacheForRootIfDisabled(
 
 #if BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
 void DisablePartitionAllocThreadCacheForProcess() {
-  auto* regular_allocator = ::base::internal::PartitionAllocMalloc::Allocator();
+  auto* regular_allocator =
+      allocator_shim::internal::PartitionAllocMalloc::Allocator();
   auto* aligned_allocator =
-      ::base::internal::PartitionAllocMalloc::AlignedAllocator();
+      allocator_shim::internal::PartitionAllocMalloc::AlignedAllocator();
   DisableThreadCacheForRootIfEnabled(regular_allocator);
   if (aligned_allocator != regular_allocator)
     DisableThreadCacheForRootIfEnabled(aligned_allocator);
   DisableThreadCacheForRootIfEnabled(
-      ::base::internal::PartitionAllocMalloc::OriginalAllocator());
+      allocator_shim::internal::PartitionAllocMalloc::OriginalAllocator());
 }
-#endif  // defined(USE_PARTITION_ALLOC_AS_MALLOC)
+#endif  // BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
 
 }  // namespace
 
-#endif  // defined(PA_THREAD_CACHE_SUPPORTED)
+#endif  // PA_CONFIG(THREAD_CACHE_SUPPORTED)
 
 void SwapOutProcessThreadCacheForTesting(ThreadSafePartitionRoot* root) {
-#if defined(PA_THREAD_CACHE_SUPPORTED)
+#if PA_CONFIG(THREAD_CACHE_SUPPORTED)
 
 #if BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
   DisablePartitionAllocThreadCacheForProcess();
@@ -63,17 +65,18 @@ void SwapOutProcessThreadCacheForTesting(ThreadSafePartitionRoot* root) {
   ThreadCache::SwapForTesting(root);
   EnablePartitionAllocThreadCacheForRootIfDisabled(root);
 
-#endif  // defined(PA_THREAD_CACHE_SUPPORTED)
+#endif  // PA_CONFIG(THREAD_CACHE_SUPPORTED)
 }
 
 void SwapInProcessThreadCacheForTesting(ThreadSafePartitionRoot* root) {
-#if defined(PA_THREAD_CACHE_SUPPORTED)
+#if PA_CONFIG(THREAD_CACHE_SUPPORTED)
 
   // First, disable the test thread cache we have.
   DisableThreadCacheForRootIfEnabled(root);
 
 #if BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
-  auto* regular_allocator = ::base::internal::PartitionAllocMalloc::Allocator();
+  auto* regular_allocator =
+      allocator_shim::internal::PartitionAllocMalloc::Allocator();
   EnablePartitionAllocThreadCacheForRootIfDisabled(regular_allocator);
 
   ThreadCache::SwapForTesting(regular_allocator);
@@ -81,7 +84,14 @@ void SwapInProcessThreadCacheForTesting(ThreadSafePartitionRoot* root) {
   ThreadCache::SwapForTesting(nullptr);
 #endif  // BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
 
-#endif  // defined(PA_THREAD_CACHE_SUPPORTED)
+#endif  // PA_CONFIG(THREAD_CACHE_SUPPORTED)
+}
+
+ThreadAllocStats GetAllocStatsForCurrentThread() {
+  ThreadCache* thread_cache = ThreadCache::Get();
+  if (ThreadCache::IsValid(thread_cache))
+    return thread_cache->thread_alloc_stats();
+  return {};
 }
 
 }  // namespace partition_alloc::internal

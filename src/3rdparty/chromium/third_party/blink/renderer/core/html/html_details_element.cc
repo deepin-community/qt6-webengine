@@ -82,11 +82,14 @@ LayoutObject* HTMLDetailsElement::CreateLayoutObject(const ComputedStyle& style,
   return LayoutObjectFactory::CreateBlockFlow(*this, style, legacy);
 }
 
-// Creates shadow DOM
-// <SLOT id="details-summary">
-//   <SUMMARY>#text "Details"</SUMMARY>
-// <SLOT id="details-content" style="display: none;">
-// <STYLE>...
+// Creates shadow DOM:
+// #shadowroot
+//   <SLOT id="details-summary">
+//     <SUMMARY>Details</SUMMARY>
+//   </SLOT>
+//   <SLOT id="details-content"
+//         style="content-visibility: hidden; display:block;"></SLOT>
+//   <STYLE>...
 void HTMLDetailsElement::DidAddUserAgentShadowRoot(ShadowRoot& root) {
   auto* default_summary =
       MakeGarbageCollected<HTMLSummaryElement>(GetDocument());
@@ -101,16 +104,11 @@ void HTMLDetailsElement::DidAddUserAgentShadowRoot(ShadowRoot& root) {
 
   content_slot_ = MakeGarbageCollected<HTMLSlotElement>(GetDocument());
   content_slot_->SetIdAttribute(shadow_element_names::kIdDetailsContent);
-  if (RuntimeEnabledFeatures::AutoExpandDetailsElementEnabled()) {
-    content_slot_->SetInlineStyleProperty(CSSPropertyID::kContentVisibility,
-                                          CSSValueID::kHidden);
-    content_slot_->EnsureDisplayLockContext().SetIsDetailsSlotElement(true);
-    content_slot_->SetInlineStyleProperty(CSSPropertyID::kDisplay,
-                                          CSSValueID::kBlock);
-  } else {
-    content_slot_->SetInlineStyleProperty(CSSPropertyID::kDisplay,
-                                          CSSValueID::kNone);
-  }
+  content_slot_->SetInlineStyleProperty(CSSPropertyID::kContentVisibility,
+                                        CSSValueID::kHidden);
+  content_slot_->EnsureDisplayLockContext().SetIsDetailsSlotElement(true);
+  content_slot_->SetInlineStyleProperty(CSSPropertyID::kDisplay,
+                                        CSSValueID::kBlock);
   root.AppendChild(content_slot_);
 
   auto* default_summary_style = MakeGarbageCollected<HTMLStyleElement>(
@@ -176,31 +174,22 @@ void HTMLDetailsElement::ParseAttribute(
     // Dispatch toggle event asynchronously.
     pending_event_ = PostCancellableTask(
         *GetDocument().GetTaskRunner(TaskType::kDOMManipulation), FROM_HERE,
-        WTF::Bind(&HTMLDetailsElement::DispatchPendingEvent,
-                  WrapPersistent(this), params.reason));
+        WTF::BindOnce(&HTMLDetailsElement::DispatchPendingEvent,
+                      WrapPersistent(this), params.reason));
 
     Element* content = EnsureUserAgentShadowRoot().getElementById(
         shadow_element_names::kIdDetailsContent);
     DCHECK(content);
 
-    if (RuntimeEnabledFeatures::AutoExpandDetailsElementEnabled()) {
-      if (is_open_) {
-        content->RemoveInlineStyleProperty(CSSPropertyID::kContentVisibility);
-        content->RemoveInlineStyleProperty(CSSPropertyID::kDisplay);
-      } else {
-        content->SetInlineStyleProperty(CSSPropertyID::kDisplay,
-                                        CSSValueID::kBlock);
-        content->SetInlineStyleProperty(CSSPropertyID::kContentVisibility,
-                                        CSSValueID::kHidden);
-        content->EnsureDisplayLockContext().SetIsDetailsSlotElement(true);
-      }
+    if (is_open_) {
+      content->RemoveInlineStyleProperty(CSSPropertyID::kContentVisibility);
+      content->RemoveInlineStyleProperty(CSSPropertyID::kDisplay);
     } else {
-      if (is_open_) {
-        content->RemoveInlineStyleProperty(CSSPropertyID::kDisplay);
-      } else {
-        content->SetInlineStyleProperty(CSSPropertyID::kDisplay,
-                                        CSSValueID::kNone);
-      }
+      content->SetInlineStyleProperty(CSSPropertyID::kDisplay,
+                                      CSSValueID::kBlock);
+      content->SetInlineStyleProperty(CSSPropertyID::kContentVisibility,
+                                      CSSValueID::kHidden);
+      content->EnsureDisplayLockContext().SetIsDetailsSlotElement(true);
     }
 
     return;

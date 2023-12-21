@@ -12,14 +12,16 @@ import * as ThemeSupport from '../../ui/legacy/theme_support/theme_support.js';
 import {Bounds, formatMillisecondsToSeconds} from './TickingFlameChartHelpers.js';
 
 const defaultFont = '11px ' + Host.Platform.fontFamily();
-const defaultColor = ThemeSupport.ThemeSupport.instance().getComputedValue('--color-text-primary');
+function getGroupDefaultTextColor(): string {
+  return ThemeSupport.ThemeSupport.instance().getComputedValue('--color-text-primary');
+}
 
 const DefaultStyle = {
   height: 20,
   padding: 2,
   collapsible: false,
   font: defaultFont,
-  color: defaultColor,
+  color: getGroupDefaultTextColor(),
   backgroundColor: 'rgba(100 0 0 / 10%)',
   nestingLevel: 0,
   itemsHeight: 20,
@@ -32,9 +34,9 @@ export const HotColorScheme = ['#ffba08', '#faa307', '#f48c06', '#e85d04', '#dc2
 export const ColdColorScheme = ['#7400b8', '#6930c3', '#5e60ce', '#5390d9', '#4ea8de', '#48bfe3', '#56cfe1', '#64dfdf'];
 
 function calculateFontColor(backgroundColor: string): string {
-  const parsedColor = Common.Color.Color.parse(backgroundColor);
+  const parsedColor = Common.Color.parse(backgroundColor)?.as(Common.Color.Format.HSL);
   // Dark background needs a light font.
-  if (parsedColor && parsedColor.hsla()[2] < 0.5) {
+  if (parsedColor && parsedColor.l < 0.5) {
     return '#eee';
   }
   return '#444';
@@ -390,13 +392,17 @@ class TickingFlameChartDataProvider implements PerfUI.FlameChart.FlameChartDataP
    */
   addGroup(name: Common.UIString.LocalizedString, depth: number): void {
     if (this.timelineDataInternal.groups) {
-      this.timelineDataInternal.groups.push({
+      const newGroup = {
         name: name,
         startLevel: this.maxLevel,
         expanded: true,
         selectable: false,
         style: DefaultStyle,
         track: null,
+      };
+      this.timelineDataInternal.groups.push(newGroup);
+      ThemeSupport.ThemeSupport.instance().addEventListener(ThemeSupport.ThemeChangeEvent.eventName, () => {
+        newGroup.style.color = getGroupDefaultTextColor();
       });
     }
     this.maxLevel += depth;
@@ -449,7 +455,7 @@ class TickingFlameChartDataProvider implements PerfUI.FlameChart.FlameChartDataP
   }
 
   /** time in milliseconds
-     */
+   */
   minimumBoundary(): number {
     return this.bounds.low;
   }

@@ -28,7 +28,9 @@
  */
 
 import * as Common from '../../core/common/common.js';
+import * as Host from '../../core/host/host.js';
 import * as i18n from '../../core/i18n/i18n.js';
+import * as Platform from '../../core/platform/platform.js';
 import * as SDK from '../../core/sdk/sdk.js';
 // eslint-disable-next-line rulesdir/es_modules_import
 import objectValueStyles from '../../ui/legacy/components/object_ui/objectValue.css.js';
@@ -38,44 +40,65 @@ import heapProfilerStyles from './heapProfiler.css.js';
 import profilesPanelStyles from './profilesPanel.css.js';
 import profilesSidebarTreeStyles from './profilesSidebarTree.css.js';
 
-import type {DataDisplayDelegate, ProfileHeader, ProfileType} from './ProfileHeader.js';
-import {ProfileEvents as ProfileTypeEvents} from './ProfileHeader.js';
+import {
+  ProfileEvents as ProfileTypeEvents,
+  type DataDisplayDelegate,
+  type ProfileHeader,
+  type ProfileType,
+} from './ProfileHeader.js';
 import {Events as ProfileLauncherEvents, ProfileLauncherView} from './ProfileLauncherView.js';
 import {ProfileSidebarTreeElement, setSharedFileSelectorElement} from './ProfileSidebarTreeElement.js';
 import {instance} from './ProfileTypeRegistry.js';
 
 const UIStrings = {
   /**
-  *@description Tooltip text that appears when hovering over the largeicon clear button in the Profiles Panel of a profiler tool
-  */
+   *@description Tooltip text that appears when hovering over the largeicon clear button in the Profiles Panel of a profiler tool
+   */
   clearAllProfiles: 'Clear all profiles',
   /**
-  *@description Text in Profiles Panel of a profiler tool
-  *@example {'.js', '.json'} PH1
-  */
+   *@description Text in Profiles Panel of a profiler tool
+   *@example {'.js', '.json'} PH1
+   */
   cantLoadFileSupportedFile: 'Can’t load file. Supported file extensions: \'\'{PH1}\'\'.',
   /**
-  *@description Text in Profiles Panel of a profiler tool
-  */
+   *@description Text in Profiles Panel of a profiler tool
+   */
   cantLoadProfileWhileAnother: 'Can’t load profile while another profile is being recorded.',
   /**
-  *@description Text in Profiles Panel of a profiler tool
-  *@example {cannot open file} PH1
-  */
+   *@description Text in Profiles Panel of a profiler tool
+   *@example {cannot open file} PH1
+   */
   profileLoadingFailedS: 'Profile loading failed: {PH1}.',
   /**
-  *@description A context menu item in the Profiles Panel of a profiler tool
-  */
+   *@description A context menu item in the Profiles Panel of a profiler tool
+   */
   load: 'Load…',
   /**
-  *@description Text in Profiles Panel of a profiler tool
-  *@example {2} PH1
-  */
+   *@description Text in Profiles Panel of a profiler tool
+   *@example {2} PH1
+   */
   runD: 'Run {PH1}',
   /**
-  *@description Text in Profiles Panel of a profiler tool
-  */
+   *@description Text in Profiles Panel of a profiler tool
+   */
   profiles: 'Profiles',
+  /**
+   *@description Text in the JS Profiler panel to show warning to user that JS profiler will be deprecated.
+   */
+  deprecationWarnMsg:
+      'This panel will be deprecated in the upcoming version. Use the Performance panel to record JavaScript CPU profiles.',
+  /**
+   *@description Text of a button in the JS Profiler panel to show more information about deprecation.
+   */
+  learnMore: 'Learn more',
+  /**
+   *@description Text of a button in the JS Profiler panel to let user give feedback.
+   */
+  feedback: 'Feedback',
+  /**
+   *@description Text of a button in the JS Profiler panel to let user go to Performance panel.
+   */
+  goToPerformancePanel: 'Go to Performance Panel',
 };
 const str_ = i18n.i18n.registerUIStrings('panels/profiler/ProfilesPanel.ts', UIStrings);
 const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
@@ -235,7 +258,7 @@ export class ProfilesPanel extends UI.Panel.PanelWithSidebar implements DataDisp
     if (!this.toggleRecordAction.enabled()) {
       return true;
     }
-    const toggleButton = this.element.ownerDocument.deepActiveElement();
+    const toggleButton = Platform.DOMUtilities.deepActiveElement(this.element.ownerDocument);
     const type = this.selectedProfileType;
     if (!type) {
       return true;
@@ -674,6 +697,8 @@ export class JSProfilerPanel extends ProfilesPanel implements UI.ActionRegistrat
   constructor() {
     const registry = instance;
     super('js_profiler', [registry.cpuProfileType], 'profiler.js-toggle-recording');
+    this.splitWidget().mainWidget()?.setMinimumSize(350, 0);
+    this.#showDeprecationInfobar();
   }
 
   static instance(opts: {
@@ -685,6 +710,44 @@ export class JSProfilerPanel extends ProfilesPanel implements UI.ActionRegistrat
     }
     return jsProfilerPanelInstance;
   }
+
+  #showDeprecationInfobar(): void {
+    function openRFC(): void {
+      Host.InspectorFrontendHost.InspectorFrontendHostInstance.openInNewTab(
+          'https://github.com/ChromeDevTools/rfcs/discussions/2' as Platform.DevToolsPath.UrlString);
+    }
+
+    async function openPerformancePanel(): Promise<void> {
+      await UI.InspectorView.InspectorView.instance().showPanel('timeline');
+    }
+
+    const infobar = new UI.Infobar.Infobar(
+        UI.Infobar.Type.Warning, /* text */ i18nString(UIStrings.deprecationWarnMsg), /* actions? */
+        [
+          {
+            text: i18nString(UIStrings.learnMore),
+            highlight: false,
+            delegate: openRFC,
+            dismiss: false,
+          },
+          {
+            text: i18nString(UIStrings.feedback),
+            highlight: false,
+            delegate: openRFC,
+            dismiss: false,
+          },
+          {
+            text: i18nString(UIStrings.goToPerformancePanel),
+            highlight: true,
+            delegate: openPerformancePanel,
+            dismiss: false,
+          },
+        ],
+        /* disableSetting? */ undefined);
+    infobar.setParentView(this);
+    this.splitWidget().mainWidget()?.element.prepend(infobar.element);
+  }
+
   wasShown(): void {
     super.wasShown();
     UI.Context.Context.instance().setFlavor(JSProfilerPanel, this);

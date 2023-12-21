@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,7 @@
 #include <string>
 
 #include "base/component_export.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/pickle.h"
 #include "ipc/ipc_param_traits.h"
 #include "ipc/param_traits_macros.h"
@@ -20,7 +20,6 @@
 #include "net/base/proxy_server.h"
 #include "net/base/request_priority.h"
 #include "net/base/schemeful_site.h"
-#include "net/cert/cert_verify_result.h"
 #include "net/cert/ct_policy_status.h"
 #include "net/cert/signed_certificate_timestamp.h"
 #include "net/cert/signed_certificate_timestamp_and_status.h"
@@ -48,6 +47,10 @@
 
 #undef IPC_MESSAGE_EXPORT
 #define IPC_MESSAGE_EXPORT COMPONENT_EXPORT(NETWORK_CPP_NETWORK_PARAM)
+
+namespace net {
+class CertVerifyResult;
+}
 
 namespace IPC {
 

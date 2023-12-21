@@ -128,6 +128,9 @@ class QuicPacketPrinter : public QuicFramerVisitorInterface {
               << timestamp.ToDebuggingValue() << ")";
     return true;
   }
+  void OnAckEcnCounts(const QuicEcnCounts& ecn_counts) override {
+    std::cerr << "OnAckEcnCounts: " << ecn_counts.ToString();
+  }
   bool OnAckFrameEnd(QuicPacketNumber start) override {
     std::cerr << "OnAckFrameEnd, start: " << start;
     return true;
@@ -271,8 +274,8 @@ int main(int argc, char* argv[]) {
   quic::QuicTime start(quic::QuicTime::Zero());
   quic::QuicFramer framer(versions, start, perspective,
                           quic::kQuicDefaultConnectionIdLength);
-  const quic::ParsedQuicVersion& version =
-      quic::ParseQuicVersionString(GetQuicFlag(FLAGS_quic_version));
+  const quic::ParsedQuicVersion& version = quic::ParseQuicVersionString(
+      quiche::GetQuicheCommandLineFlag(FLAGS_quic_version));
   if (version != quic::ParsedQuicVersion::Unsupported()) {
     framer.set_version(version);
   }

@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -61,16 +61,8 @@ void PrintCertStatus(int cert_status) {
 void PrintCertVerifyResult(const net::CertVerifyResult& result) {
   PrintDebugData(&result);
   PrintCertStatus(result.cert_status);
-  if (result.has_md2)
-    std::cout << "has_md2\n";
-  if (result.has_md4)
-    std::cout << "has_md4\n";
-  if (result.has_md5)
-    std::cout << "has_md5\n";
   if (result.has_sha1)
     std::cout << "has_sha1\n";
-  if (result.has_sha1_leaf)
-    std::cout << "has_sha1_leaf\n";
   if (result.is_issued_by_known_root)
     std::cout << "is_issued_by_known_root\n";
   if (result.is_issued_by_additional_trust_anchor)
@@ -94,7 +86,7 @@ bool VerifyUsingCertVerifyProc(
     const CertInput& target_der_cert,
     const std::string& hostname,
     const std::vector<CertInput>& intermediate_der_certs,
-    const std::vector<CertInput>& root_der_certs,
+    const std::vector<CertInputWithTrustSetting>& der_certs_with_trust_settings,
     net::CRLSet* crl_set,
     const base::FilePath& dump_path) {
   std::vector<base::StringPiece> der_cert_chain;
@@ -114,47 +106,34 @@ bool VerifyUsingCertVerifyProc(
     return false;
   }
 
-  net::CertificateList x509_additional_trust_anchors;
-  for (const auto& cert : root_der_certs) {
-    scoped_refptr<net::X509Certificate> x509_root =
-        net::X509Certificate::CreateFromBytes(
-            base::as_bytes(base::make_span(cert.der_cert)));
+  net::TestRootCerts* test_root_certs = net::TestRootCerts::GetInstance();
+  CHECK(test_root_certs->IsEmpty());
 
-    if (!x509_root)
-      PrintCertError("ERROR: X509Certificate::CreateFromBytes failed:", cert);
-    else
-      x509_additional_trust_anchors.push_back(x509_root);
+  std::vector<net::ScopedTestRoot> scoped_test_roots;
+  for (const auto& cert_input_with_trust : der_certs_with_trust_settings) {
+    scoped_refptr<net::X509Certificate> x509_root =
+        net::X509Certificate::CreateFromBytes(base::as_bytes(
+            base::make_span(cert_input_with_trust.cert_input.der_cert)));
+
+    if (!x509_root) {
+      PrintCertError("ERROR: X509Certificate::CreateFromBytes failed:",
+                     cert_input_with_trust.cert_input);
+    } else {
+      scoped_test_roots.emplace_back(x509_root.get(),
+                                     cert_input_with_trust.trust);
+    }
   }
 
   // TODO(mattm): add command line flags to configure VerifyFlags.
   int flags = 0;
-
-  // Not all platforms support providing additional trust anchors to the
-  // verifier. To workaround this, use TestRootCerts to modify the
-  // system trust store globally.
-  net::TestRootCerts* test_root_certs = net::TestRootCerts::GetInstance();
-  CHECK(test_root_certs->IsEmpty());
-
-  if (!x509_additional_trust_anchors.empty() &&
-      !cert_verify_proc->SupportsAdditionalTrustAnchors()) {
-    std::cerr << "NOTE: Additional trust anchors not supported on this "
-                 "platform. Using TestRootCerts instead.\n";
-
-    for (const auto& trust_anchor : x509_additional_trust_anchors)
-      test_root_certs->Add(trust_anchor.get());
-
-    x509_additional_trust_anchors.clear();
-  }
 
   // TODO(crbug.com/634484): use a real netlog and print the results?
   net::CertVerifyResult result;
   int rv = cert_verify_proc->Verify(
       x509_target_and_intermediates.get(), hostname,
       /*ocsp_response=*/std::string(), /*sct_list=*/std::string(), flags,
-      crl_set, x509_additional_trust_anchors, &result, net::NetLogWithSource());
-
-  // Remove any temporary trust anchors.
-  test_root_certs->Clear();
+      crl_set, /*additional_trust_anchors=*/{}, &result,
+      net::NetLogWithSource());
 
   std::cout << "CertVerifyProc result: " << net::ErrorToShortString(rv) << "\n";
   PrintCertVerifyResult(result);

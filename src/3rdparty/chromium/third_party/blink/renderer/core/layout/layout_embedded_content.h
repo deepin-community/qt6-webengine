@@ -47,7 +47,7 @@ class CORE_EXPORT LayoutEmbeddedContent : public LayoutReplaced {
   bool NodeAtPoint(HitTestResult&,
                    const HitTestLocation&,
                    const PhysicalOffset& accumulated_offset,
-                   HitTestAction) override;
+                   HitTestPhase) override;
 
   // LayoutEmbeddedContent::ChildFrameView returns the LocalFrameView associated
   // with the current Node, if Node is HTMLFrameOwnerElement. This is different
@@ -65,7 +65,9 @@ class CORE_EXPORT LayoutEmbeddedContent : public LayoutReplaced {
   PhysicalOffset BorderBoxFromEmbeddedContent(const PhysicalOffset&) const;
   gfx::Rect BorderBoxFromEmbeddedContent(const gfx::Rect&) const;
 
-  PhysicalRect ReplacedContentRect() const final;
+  PhysicalRect ReplacedContentRectFrom(
+      const LayoutSize size,
+      const NGPhysicalBoxStrut& border_padding) const final;
 
   void UpdateOnEmbeddedContentViewChange();
   void UpdateGeometry(EmbeddedContentView&);
@@ -111,7 +113,11 @@ class CORE_EXPORT LayoutEmbeddedContent : public LayoutReplaced {
       HitTestResult&,
       const HitTestLocation&,
       const PhysicalOffset& accumulated_offset,
-      HitTestAction);
+      HitTestPhase);
+
+  bool PointOverResizer(const HitTestResult&,
+                        const HitTestLocation&,
+                        const PhysicalOffset& accumulated_offset) const;
 };
 
 template <>

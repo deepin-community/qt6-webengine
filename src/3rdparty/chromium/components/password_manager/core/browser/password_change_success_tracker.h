@@ -1,4 +1,4 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,6 +7,7 @@
 
 #include <string>
 
+#include "base/time/time.h"
 #include "components/keyed_service/core/keyed_service.h"
 
 class GURL;
@@ -14,64 +15,117 @@ class GURL;
 namespace password_manager {
 
 // Abstract interface to track whether a change password flow leads to a
-// successful password update.
+// successful update of a credential.
 // Usage notes:
-// - |OnChangePasswordFlowStarted| is supposed to be called when a change flow
-// starts.
-// - |OnChangePasswordFlowSucceeded| is supposed to be called when a compromised
-// password is updated or at the end of kAutomatedResetLinkRequestFlow when
-// the email with the reset link or code was requested.
-// - |url| param is the url of the current page. The tracker is supposed to
-// normalize it to eTLD+1 for matching.
+// - The type of a change password flow is defined by three enums, a
+//   |StartEvent| defining how the flow was started, an |EndEvent| defining
+//   how the flow terminated and an |EntryPoint| defining from where in the
+//   browser the flow was started. See the enum definitions for details.
+// - URL parameters in the passed to the tracker are the URLs of the current
+//   page. The tracker normalizes these to eTLD+1 for matching.
 class PasswordChangeSuccessTracker : public KeyedService {
  public:
-  // Start and end events for automated (i.e. Autofill Assistant-driven) and
-  // manual flows (i.e. Chrome opens a CCT and a user updates a password on
-  // their own).
-  enum class StartEvent {
-    // Some automated flow started. A specific type will be known only at the
-    // end.
-    kAutomatedFlow = 0,
+  // Timeout length between the start and end events of a password change flow.
+  // Since the flows include password reset for which reset emails may be
+  // delayed, a somewhat lengthy timeout is chosen.
+  static constexpr base::TimeDelta kFlowTimeout = base::Minutes(60);
 
-    // Flow started with opening an origin of a stored credential (which is
-    // supposed to be the homepage).
-    kManualHomepageFlow = 1,
-    // Flow started with opening the .well-known/change-password path.
-    KManualWellKnownUrlFlow = 2,
-    // Flow started with opening a domain-specific URL.
+  // Timeout length between the start of a manual change flow and its type
+  // refinement. The expectation is that this should be near instant and
+  // the timeout is just a safe-keeping measure.
+  static constexpr base::TimeDelta kFlowTypeRefinementTimeout =
+      base::Seconds(30);
+
+  // Start and end events for flows (i.e. Chrome opens a CCT and a user updates
+  // a password on their own).
+  // These values are persisted to prefs and used in enums.xml; do not reorder
+  // or renumber entries!
+  enum class StartEvent {
+    // Deprecated as a part of APC removal (crbug.com/1386065).
+    kDeprecatedAutomatedFlow = 0,
+
+    // A manual password change flow of unknown type since no navigation has
+    // been attempted yet.
+    kManualUnknownFlow = 1,
+
+    // A manual password change flow for a domain that supports
+    // /.well-known/change-password.
+    kManualWellKnownUrlFlow = 2,
+
+    // A manual password change flow with a domain-specific URL.
     kManualChangePasswordUrlFlow = 3,
 
-    // Flow started as an automated flow that requested a reset link, now a user
-    // is supposed to open the link and update the password manually. Should be
-    // used only internally when kAutomatedResetLinkRequestFlow ends.
-    kManualResetLinkOpenningFlow = 4,
+    // A manual password change flow that starts at the origin of a stored
+    // credential (supposed to be the homepage).
+    kManualHomepageFlow = 4,
+
+    // Deprecated as a part of APC removal (crbug.com/1386065).
+    kDeprecatedManualResetLinkFlow = 5,
+
+    kMaxValue = kDeprecatedManualResetLinkFlow
   };
+
+  // These values are persisted to prefs and used in enums.xml; do not reorder
+  // or renumber entries!
   enum class EndEvent {
-    // Fully automated flow completed.
-    kAutomatedGeneratedPasswordFlow = 0,
-    // Flow started as an automated flow, but a user chose to create their own
-    // password.
-    kAutomatedOwnPasswordFlow = 1,
-    // Password-reset link was requested. Autofill Assistant's part is done and
-    // a user is supposed to continue the flow on their own.
-    kAutomatedResetLinkRequestFlow = 2,
+    // Deprecated as a part of APC removal (crbug.com/1386065).
+    kDeprecatedAutomatedFlowGeneratedPasswordChosen = 0,
 
-    // Some manual flow completed. A specific type is known only at the start.
-    kManualFlow = 3,
+    // Deprecated as a part of APC removal (crbug.com/1386065).
+    kDeprecatedAutomatedFlowOwnPasswordChosen = 1,
+
+    // Deprecated as a part of APC removal (crbug.com/1386065).
+    kDeprecatedAutomatedFlowResetLinkRequested = 2,
+
+    // A manual password change flow or password reset flow completed with a
+    // generated password.
+    kManualFlowGeneratedPasswordChosen = 3,
+
+    // A manual password change flow or password reset flow completed with a
+    // user-chosen password.
+    kManualFlowOwnPasswordChosen = 4,
+
+    // The password change flow timed out.
+    kTimeout = 5,
+
+    kMaxValue = kTimeout
   };
 
-  // Called when a change flow starts. Emits a report that a flow has started
-  // and stores an entry to wait for a matching FlowSucceeded call. If there is
-  // no matching call for a while, the entry will expire.
-  virtual void OnChangePasswordFlowStarted(const GURL& url,
-                                           const std::string& username,
-                                           StartEvent event_type) = 0;
+  // The place in Chrome where the password change flow originated.
+  // These values are persisted to prefs and used in enums.xml; do not reorder
+  // or renumber entries!
+  enum class EntryPoint {
+    // Started after performing a password check in settings / the password
+    // manager.
+    kLeakCheckInSettings = 0,
 
-  // Called when a change flow succeeds. If there is a recent matching
-  // FlowStarted call, it emits a report about a successful password change.
+    // Deprecated as part of APC removal (crbug.com/1386065). If change password
+    // URLs will be used in the leak warning, this entry should be used again.
+    kDeprecatedLeakWarningDialog = 1,
+
+    kMaxValue = kDeprecatedLeakWarningDialog
+  };
+
+  // Called when a manual change flow is started. At that point, the
+  // exact |StartEvent| (i.e. whether it supports .well-known/change-password)
+  // is not yet known and the flow is stored temporarily
+  // with |StartEvent::kManualUnknownFlow|.
+  virtual void OnManualChangePasswordFlowStarted(const GURL& url,
+                                                 const std::string& username,
+                                                 EntryPoint entry_point) = 0;
+
+  // Called when a change flow with an unknown username is refined, e.g. the
+  // exact |StartEvent| of a manual flow is specified.
+  virtual void OnChangePasswordFlowModified(const GURL& url,
+                                            StartEvent new_event_type) = 0;
+
+  // Called when a change flow succeeds and a password is updated.
+  // If there is a matching flow that for which a start was registered,
+  // it emits a report about a successful password change.
   virtual void OnChangePasswordFlowCompleted(const GURL& url,
                                              const std::string& username,
-                                             EndEvent event_type) = 0;
+                                             EndEvent event_type,
+                                             bool phished) = 0;
 };
 }  // namespace password_manager
 

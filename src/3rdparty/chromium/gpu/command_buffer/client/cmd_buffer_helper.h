@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -272,6 +272,7 @@ class GPU_EXPORT CommandBufferHelper {
   CommandBuffer* command_buffer() const { return command_buffer_; }
 
   scoped_refptr<Buffer> get_ring_buffer() const { return ring_buffer_; }
+  int32_t get_ring_buffer_id() const { return ring_buffer_id_; }
 
   uint32_t flush_generation() const { return flush_generation_; }
 

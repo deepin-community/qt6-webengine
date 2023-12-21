@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,13 +13,13 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
 #include "base/containers/contains.h"
 #include "base/feature_list.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/format_macros.h"
+#include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/metrics/field_trial.h"
@@ -50,10 +50,12 @@
 #include "content/public/common/content_features.h"
 #include "content/public/common/content_paths.h"
 #include "content/public/common/content_switches.h"
+#include "content/public/common/url_constants.h"
 #include "content/public/common/webplugininfo.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
+#include "content/public/test/content_browser_test_content_browser_client.h"
 #include "content/public/test/content_browser_test_utils.h"
 #include "content/public/test/download_test_observer.h"
 #include "content/public/test/fenced_frame_test_util.h"
@@ -69,7 +71,6 @@
 #include "content/shell/browser/shell_download_manager_delegate.h"
 #include "content/test/content_browser_test_utils_internal.h"
 #include "content/test/fake_network_url_loader_factory.h"
-#include "content/test/test_content_browser_client.h"
 #include "net/base/features.h"
 #include "net/base/filename_util.h"
 #include "net/dns/mock_host_resolver.h"
@@ -151,7 +152,8 @@ void ExpectRequestIsolationInfo(
 
 // Implementation of TestContentBrowserClient that overrides
 // AllowRenderingMhtmlOverHttp() and allows consumers to set a value.
-class DownloadTestContentBrowserClient : public TestContentBrowserClient {
+class DownloadTestContentBrowserClient
+    : public ContentBrowserTestContentBrowserClient {
  public:
   DownloadTestContentBrowserClient() {
 #if BUILDFLAG(IS_ANDROID)
@@ -601,7 +603,7 @@ class ErrorInjectionDownloadFileFactory : public download::DownloadFileFactory {
     download_file_ = nullptr;
   }
 
-  raw_ptr<ErrorInjectionDownloadFile> download_file_;
+  raw_ptr<ErrorInjectionDownloadFile, DanglingUntriaged> download_file_;
   int64_t injected_error_offset_ = -1;
   int64_t injected_error_length_ = 0;
   base::WeakPtrFactory<ErrorInjectionDownloadFileFactory> weak_ptr_factory_{
@@ -1349,8 +1351,7 @@ class ParallelDownloadTest : public DownloadContentTest {
             parameters.size, std::string(), download::DownloadItem::INTERRUPTED,
             download::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
             download::DOWNLOAD_INTERRUPT_REASON_NETWORK_FAILED, false,
-            base::Time(), false, parallel_slices,
-            download::DownloadItemRerouteInfo());
+            base::Time(), false, parallel_slices);
     ClearAutoResumptionCount(download);
     return download;
   }
@@ -1486,22 +1487,10 @@ class DownloadPrerenderTest : public DownloadContentTest {
   test::PrerenderTestHelper prerender_helper_;
 };
 
-class DownloadFencedFrameTest
-    : public ::testing::WithParamInterface<
-          blink::features::FencedFramesImplementationType>,
-      public DownloadContentTest {
+class DownloadFencedFrameTest : public DownloadContentTest {
  public:
   DownloadFencedFrameTest() {
-    if (GetParam() ==
-        blink::features::FencedFramesImplementationType::kMPArch) {
-      fenced_frame_helper_ = std::make_unique<test::FencedFrameTestHelper>();
-    } else {
-      feature_list_.InitWithFeaturesAndParameters(
-          {{blink::features::kFencedFrames,
-            {{"implementation_type", "shadow_dom"}}},
-           {features::kPrivacySandboxAdsAPIsOverride, {}}},
-          {/* disabled_features */});
-    }
+    fenced_frame_helper_ = std::make_unique<test::FencedFrameTestHelper>();
   }
 
   ~DownloadFencedFrameTest() override = default;
@@ -1537,7 +1526,7 @@ class DownloadFencedFrameTest
     TestNavigationManager navigation(shell()->web_contents(), url);
     EXPECT_EQ(url.spec(),
               EvalJs(rfh, JsReplace(kNavigateInFencedFrameScript, url)));
-    navigation.WaitForNavigationFinished();
+    EXPECT_TRUE(navigation.WaitForNavigationFinished());
 
     EXPECT_FALSE(target_node->current_frame_host()->IsErrorDocument());
     return target_node->current_frame_host();
@@ -3196,8 +3185,7 @@ IN_PROC_BROWSER_TEST_F(DownloadContentTest, ResumeRestoredDownload_NoFile) {
           download::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
           download::DOWNLOAD_INTERRUPT_REASON_NETWORK_FAILED, false,
           base::Time(), false,
-          std::vector<download::DownloadItem::ReceivedSlice>(),
-          download::DownloadItemRerouteInfo());
+          std::vector<download::DownloadItem::ReceivedSlice>());
   ClearAutoResumptionCount(download);
 
   download->Resume(false);
@@ -3266,8 +3254,7 @@ IN_PROC_BROWSER_TEST_F(DownloadContentTest, ResumeRestoredDownload_NoHash) {
           download::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
           download::DOWNLOAD_INTERRUPT_REASON_NETWORK_FAILED, false,
           base::Time(), false,
-          std::vector<download::DownloadItem::ReceivedSlice>(),
-          download::DownloadItemRerouteInfo());
+          std::vector<download::DownloadItem::ReceivedSlice>());
   ClearAutoResumptionCount(download);
 
   download->Resume(false);
@@ -3323,8 +3310,7 @@ IN_PROC_BROWSER_TEST_F(DownloadContentTest,
           download::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
           download::DOWNLOAD_INTERRUPT_REASON_NETWORK_FAILED, false,
           base::Time(), false,
-          std::vector<download::DownloadItem::ReceivedSlice>(),
-          download::DownloadItemRerouteInfo());
+          std::vector<download::DownloadItem::ReceivedSlice>());
   ClearAutoResumptionCount(download);
 
   download->Resume(false);
@@ -3387,8 +3373,7 @@ IN_PROC_BROWSER_TEST_F(DownloadContentTest,
           download::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
           download::DOWNLOAD_INTERRUPT_REASON_NETWORK_FAILED, false,
           base::Time(), false,
-          std::vector<download::DownloadItem::ReceivedSlice>(),
-          download::DownloadItemRerouteInfo());
+          std::vector<download::DownloadItem::ReceivedSlice>());
   ClearAutoResumptionCount(download);
 
   download->Resume(false);
@@ -3457,8 +3442,7 @@ IN_PROC_BROWSER_TEST_F(DownloadContentTest, ResumeRestoredDownload_WrongHash) {
           download::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
           download::DOWNLOAD_INTERRUPT_REASON_NETWORK_FAILED, false,
           base::Time(), false,
-          std::vector<download::DownloadItem::ReceivedSlice>(),
-          download::DownloadItemRerouteInfo());
+          std::vector<download::DownloadItem::ReceivedSlice>());
   ClearAutoResumptionCount(download);
 
   download->Resume(false);
@@ -3536,8 +3520,7 @@ IN_PROC_BROWSER_TEST_F(DownloadContentTest, ResumeRestoredDownload_ShortFile) {
           download::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
           download::DOWNLOAD_INTERRUPT_REASON_NETWORK_FAILED, false,
           base::Time(), false,
-          std::vector<download::DownloadItem::ReceivedSlice>(),
-          download::DownloadItemRerouteInfo());
+          std::vector<download::DownloadItem::ReceivedSlice>());
   ClearAutoResumptionCount(download);
 
   download->Resume(false);
@@ -3613,8 +3596,7 @@ IN_PROC_BROWSER_TEST_F(DownloadContentTest, ResumeRestoredDownload_LongFile) {
           download::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
           download::DOWNLOAD_INTERRUPT_REASON_NETWORK_FAILED, false,
           base::Time(), false,
-          std::vector<download::DownloadItem::ReceivedSlice>(),
-          download::DownloadItemRerouteInfo());
+          std::vector<download::DownloadItem::ReceivedSlice>());
   ClearAutoResumptionCount(download);
 
   download->Resume(false);
@@ -4120,14 +4102,14 @@ IN_PROC_BROWSER_TEST_F(DownloadContentTest,
   mouse_event.click_count = 1;
   shell()
       ->web_contents()
-      ->GetMainFrame()
+      ->GetPrimaryMainFrame()
       ->GetRenderViewHost()
       ->GetWidget()
       ->ForwardMouseEvent(mouse_event);
   mouse_event.SetType(blink::WebInputEvent::Type::kMouseUp);
   shell()
       ->web_contents()
-      ->GetMainFrame()
+      ->GetPrimaryMainFrame()
       ->GetRenderViewHost()
       ->GetWidget()
       ->ForwardMouseEvent(mouse_event);
@@ -4215,8 +4197,8 @@ IN_PROC_BROWSER_TEST_F(DownloadContentTest, DownloadAttributeNetworkError) {
   content::TestNavigationManager navigation_document(content, document_url);
   content::TestNavigationManager navigation_download(content, server_url);
   shell()->LoadURL(document_url);
-  navigation_document.WaitForNavigationFinished();
-  navigation_download.WaitForNavigationFinished();
+  ASSERT_TRUE(navigation_document.WaitForNavigationFinished());
+  ASSERT_TRUE(navigation_download.WaitForNavigationFinished());
 
   EXPECT_TRUE(navigation_document.was_successful());
   EXPECT_FALSE(navigation_download.was_successful());
@@ -4733,8 +4715,8 @@ IN_PROC_BROWSER_TEST_F(ParallelDownloadTest, MiddleSliceDelayedError) {
 // initiates a download in an iframe and expects it to succeed.
 // See https://crbug.com/717971.
 IN_PROC_BROWSER_TEST_F(DownloadContentTest, DownloadIgnoresXFO) {
-  GURL main_url(
-      embedded_test_server()->GetURL("/cross_site_iframe_factory.html?a(b)"));
+  GURL main_url(embedded_test_server()->GetURL(
+      "a.test", "/cross_site_iframe_factory.html?a.test(b.test)"));
   GURL download_url(
       embedded_test_server()->GetURL("/download/download-with-xfo-deny.html"));
   WebContentsImpl* web_contents =
@@ -4891,8 +4873,7 @@ IN_PROC_BROWSER_TEST_F(DownloadContentTest, FetchErrorResponseBodyResumption) {
 
 // Verify WebUI download will success with an associated renderer process.
 IN_PROC_BROWSER_TEST_F(DownloadContentTest, DownloadFromWebUI) {
-  GURL webui_url(
-      GetWebUIURL("resources/images/apps/topbar_button_maximize.png"));
+  GURL webui_url(GetWebUIURL("resources/images/error.svg"));
   EXPECT_TRUE(NavigateToURL(shell(), webui_url));
   SetupEnsureNoPendingDownloads();
 
@@ -4915,7 +4896,7 @@ IN_PROC_BROWSER_TEST_F(DownloadContentTest, DownloadFromWebUI) {
 // Verify WebUI download will gracefully fail without an associated renderer
 // process.
 IN_PROC_BROWSER_TEST_F(DownloadContentTest, DownloadFromWebUIWithoutRenderer) {
-  GURL webui_url("chrome://resources/images/apps/topbar_button_maximize.png");
+  GURL webui_url("chrome://resources/images/error.svg");
   EXPECT_TRUE(NavigateToURL(shell(), webui_url));
   SetupEnsureNoPendingDownloads();
 
@@ -4933,7 +4914,7 @@ IN_PROC_BROWSER_TEST_F(DownloadContentTest, DownloadFromWebUIWithoutRenderer) {
   ASSERT_EQ(1u, downloads.size());
 
   // WebUI or other UrlLoaderFacotry will not handle request without a valid
-  // render frame host, download should gracefully fail without triggering
+  // RenderFrameHost, download should gracefully fail without triggering
   // crash.
   ASSERT_EQ(download::DownloadItem::INTERRUPTED, downloads[0]->GetState());
 }
@@ -4946,7 +4927,7 @@ IN_PROC_BROWSER_TEST_F(DownloadContentTest, SaveImageAt) {
 
   // Ask the frame to save a data-URL image at the given coordinates.
   std::unique_ptr<DownloadTestObserver> observer(CreateWaiter(shell(), 1));
-  shell()->web_contents()->GetMainFrame()->SaveImageAt(100, 100);
+  shell()->web_contents()->GetPrimaryMainFrame()->SaveImageAt(100, 100);
   observer->WaitForFinished();
   EXPECT_EQ(
       1u, observer->NumDownloadsSeenInState(download::DownloadItem::COMPLETE));
@@ -4975,23 +4956,22 @@ class MhtmlDownloadTest : public DownloadContentTest {
   void SetUpOnMainThread() override {
     DownloadContentTest::SetUpOnMainThread();
 
+    browser_client_ = std::make_unique<DownloadTestContentBrowserClient>();
     // Force downloading the MHTML.
-    new_client_.set_allowed_rendering_mhtml_over_http(false);
+    browser_client_->set_allowed_rendering_mhtml_over_http(false);
     // Enable RegisterNonNetworkNavigationURLLoaderFactories for
     // test white list for non http shemes which should not trigger
     // download.
-    new_client_.enable_register_non_network_url_loader(true);
-    old_client_ = SetBrowserClientForTesting(&new_client_);
+    browser_client_->enable_register_non_network_url_loader(true);
   }
 
   void TearDownOnMainThread() override {
-    SetBrowserClientForTesting(old_client_);
+    browser_client_.reset();
     DownloadContentTest::TearDownOnMainThread();
   }
 
  private:
-  DownloadTestContentBrowserClient new_client_;
-  raw_ptr<ContentBrowserClient> old_client_;
+  std::unique_ptr<DownloadTestContentBrowserClient> browser_client_;
 };
 
 // Test allow list for non http schemes which should not trigger
@@ -5203,7 +5183,7 @@ IN_PROC_BROWSER_TEST_F(DownloadPrerenderTest, DiscardNonNavigationDownload) {
 
 // Verify that downloads not triggered by navigation are discarded when
 // initiated from a fenced frame.
-IN_PROC_BROWSER_TEST_P(DownloadFencedFrameTest, DiscardNonNavigationDownload) {
+IN_PROC_BROWSER_TEST_F(DownloadFencedFrameTest, DiscardNonNavigationDownload) {
   const GURL kInitialUrl = embedded_test_server()->GetURL("/empty.html");
   const GURL kFencedFrameUrl =
       embedded_test_server()->GetURL("/fenced_frames/title1.html");
@@ -5213,9 +5193,9 @@ IN_PROC_BROWSER_TEST_P(DownloadFencedFrameTest, DiscardNonNavigationDownload) {
   // Create fenced frame
   EXPECT_TRUE(NavigateToURL(shell(), kInitialUrl));
   RenderFrameHost* fenced_frame_host = CreateFencedFrame(
-      shell()->web_contents()->GetMainFrame(), kFencedFrameUrl);
+      shell()->web_contents()->GetPrimaryMainFrame(), kFencedFrameUrl);
 
-  // Do a download without navigation from the fenced frame render frame host.
+  // Do a download without navigation from the fenced frame RenderFrameHost.
   // The download will be dropped.
   auto* download_manager =
       fenced_frame_host->GetBrowserContext()->GetDownloadManager();
@@ -5234,13 +5214,6 @@ IN_PROC_BROWSER_TEST_P(DownloadFencedFrameTest, DiscardNonNavigationDownload) {
   download_manager->GetAllDownloads(&downloads);
   EXPECT_TRUE(downloads.empty());
 }
-
-INSTANTIATE_TEST_SUITE_P(
-    DownloadFencedFrameTest,
-    DownloadFencedFrameTest,
-    ::testing::Values(
-        blink::features::FencedFramesImplementationType::kShadowDOM,
-        blink::features::FencedFramesImplementationType::kMPArch));
 
 // A download triggered by clicking on a link with a |download| attribute should
 // have the user-gesture flag set.

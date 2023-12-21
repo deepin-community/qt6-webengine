@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,12 +7,12 @@
 
 #include <utility>
 
-#include "base/bind.h"
 #include "base/feature_list.h"
+#include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/task/single_thread_task_runner.h"
 #include "build/chromeos_buildflags.h"
 #include "content/browser/media/capture/mouse_cursor_overlay_controller.h"
 #include "content/public/browser/browser_task_traits.h"
@@ -41,7 +41,7 @@ class AuraWindowVideoCaptureDevice::WindowTracker final
                 MouseCursorOverlayController* cursor_controller,
                 const DesktopMediaID& source_id)
       : device_(std::move(device)),
-        device_task_runner_(base::ThreadTaskRunnerHandle::Get()),
+        device_task_runner_(base::SingleThreadTaskRunner::GetCurrentDefault()),
         cursor_controller_(cursor_controller),
         target_type_(source_id.type) {
     DCHECK(device_task_runner_);
@@ -96,7 +96,7 @@ class AuraWindowVideoCaptureDevice::WindowTracker final
 
     if (target_) {
       video_capture_lock_ = target_window_->GetHost()->CreateVideoCaptureLock();
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
       force_visible_.emplace(target_window_);
 #endif
       target_window_->AddObserver(this);
@@ -126,7 +126,7 @@ class AuraWindowVideoCaptureDevice::WindowTracker final
     target_window_->RemoveObserver(this);
     target_window_ = nullptr;
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
     force_visible_.reset();
 #endif
 
@@ -137,7 +137,7 @@ class AuraWindowVideoCaptureDevice::WindowTracker final
     cursor_controller_->SetTargetView(gfx::NativeView());
   }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   void OnWindowAddedToRootWindow(aura::Window* window) final {
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
     DCHECK_EQ(window, target_window_);
@@ -171,7 +171,7 @@ class AuraWindowVideoCaptureDevice::WindowTracker final
   const DesktopMediaID::Type target_type_;
 
   raw_ptr<aura::Window> target_window_ = nullptr;
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   absl::optional<aura::WindowOcclusionTracker::ScopedForceVisible>
       force_visible_;
 #endif

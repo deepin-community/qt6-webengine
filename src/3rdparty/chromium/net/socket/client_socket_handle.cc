@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,10 +6,10 @@
 
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/check_op.h"
 #include "base/compiler_specific.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/notreached.h"
 #include "base/trace_event/trace_event.h"
 #include "net/base/net_errors.h"
@@ -21,13 +21,7 @@
 namespace net {
 
 ClientSocketHandle::ClientSocketHandle()
-    : is_initialized_(false),
-      pool_(nullptr),
-      higher_pool_(nullptr),
-      reuse_type_(ClientSocketHandle::UNUSED),
-      group_generation_(-1),
-      resolve_error_info_(ResolveErrorInfo(OK)),
-      is_ssl_error_(false) {}
+    : resolve_error_info_(ResolveErrorInfo(OK)) {}
 
 ClientSocketHandle::~ClientSocketHandle() {
   Reset();

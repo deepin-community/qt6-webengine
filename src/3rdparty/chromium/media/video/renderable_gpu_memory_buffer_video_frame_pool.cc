@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,10 +10,11 @@
 #include <list>
 #include <utility>
 
-#include "base/bind.h"
+#include "base/bits.h"
+#include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/task/bind_post_task.h"
-#include "base/threading/sequenced_task_runner_handle.h"
+#include "base/task/sequenced_task_runner.h"
 #include "build/build_config.h"
 #include "gpu/GLES2/gl2extchromium.h"
 #include "gpu/command_buffer/client/gpu_memory_buffer_manager.h"
@@ -169,15 +170,25 @@ bool FrameResources::Initialize() {
   constexpr gfx::BufferFormat kBufferFormat =
       gfx::BufferFormat::YUV_420_BIPLANAR;
 
+  // Align number of rows to 2, because it's required by YUV_420_BIPLANAR
+  // buffer allocation code.
+  // Align buffer stride to 4, because our rendering code at
+  // GLImageMemory::Initialize() requires it, since it sometimes treats
+  // Y-planes are 4 bytes per pixel textures.
+  gfx::Size buffer_size_in_pixels(base::bits::AlignUp(coded_size_.width(), 4),
+                                  base::bits::AlignUp(coded_size_.height(), 2));
+
   // Create the GpuMemoryBuffer.
-  gpu_memory_buffer_ =
-      context->CreateGpuMemoryBuffer(coded_size_, kBufferFormat, kBufferUsage);
+  gpu_memory_buffer_ = context->CreateGpuMemoryBuffer(
+      buffer_size_in_pixels, kBufferFormat, kBufferUsage);
   if (!gpu_memory_buffer_) {
     DLOG(ERROR) << "Failed to allocate GpuMemoryBuffer for frame: coded_size="
                 << coded_size_.ToString()
                 << ", usage=" << static_cast<int>(kBufferUsage);
     return false;
   }
+
+  gpu_memory_buffer_->SetColorSpace(color_space_);
 
   // Bind SharedImages to each plane.
   constexpr size_t kNumPlanes = 2;
@@ -188,7 +199,7 @@ bool FrameResources::Initialize() {
       gpu::SHARED_IMAGE_USAGE_MACOS_VIDEO_TOOLBOX |
 #endif
       gpu::SHARED_IMAGE_USAGE_GLES2 | gpu::SHARED_IMAGE_USAGE_RASTER |
-      gpu::SHARED_IMAGE_USAGE_DISPLAY | gpu::SHARED_IMAGE_USAGE_SCANOUT;
+      gpu::SHARED_IMAGE_USAGE_DISPLAY_READ | gpu::SHARED_IMAGE_USAGE_SCANOUT;
 
   uint32_t texture_target = GL_TEXTURE_2D;
 #if BUILDFLAG(IS_MAC)
@@ -288,8 +299,8 @@ scoped_refptr<VideoFrame> InternalRefCountedPool::MaybeCreateVideoFrame(
   // this on the calling thread.
   auto callback = base::BindOnce(&InternalRefCountedPool::OnVideoFrameDestroyed,
                                  this, std::move(frame_resources));
-  video_frame->SetReleaseMailboxAndGpuMemoryBufferCB(base::BindPostTask(
-      base::SequencedTaskRunnerHandle::Get(), std::move(callback), FROM_HERE));
+  video_frame->SetReleaseMailboxAndGpuMemoryBufferCB(
+      base::BindPostTaskToCurrentDefault(std::move(callback), FROM_HERE));
   return video_frame;
 }
 

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -37,18 +37,19 @@ class MODULES_EXPORT MediaStreamDeviceObserver
   // being shown to the user.
   blink::MediaStreamDevices GetNonScreenCaptureDevices();
 
-  void AddStream(
+  void AddStreams(
       const String& label,
-      const blink::MediaStreamDevices& audio_devices,
-      const blink::MediaStreamDevices& video_devices,
+      const mojom::blink::StreamDevicesSet& stream_devices_set,
       WebMediaStreamDeviceObserver::OnDeviceStoppedCb on_device_stopped_cb,
       WebMediaStreamDeviceObserver::OnDeviceChangedCb on_device_changed_cb,
       WebMediaStreamDeviceObserver::OnDeviceRequestStateChangeCb
           on_device_request_state_change_cb,
+      WebMediaStreamDeviceObserver::OnDeviceCaptureConfigurationChangeCb
+          on_device_capture_configuration_change_cb,
       WebMediaStreamDeviceObserver::OnDeviceCaptureHandleChangeCb
           on_device_capture_handle_change_cb);
   void AddStream(const String& label, const blink::MediaStreamDevice& device);
-  bool RemoveStream(const String& label);
+  bool RemoveStreams(const String& label);
   void RemoveStreamDevice(const blink::MediaStreamDevice& device);
 
   // Get the video session_id given a label. The label identifies a stream.
@@ -61,6 +62,7 @@ class MODULES_EXPORT MediaStreamDeviceObserver
   base::UnguessableToken GetAudioSessionId(const String& label);
 
  private:
+  friend class MediaStreamDeviceObserverTest;
   FRIEND_TEST_ALL_PREFIXES(MediaStreamDeviceObserverTest,
                            GetNonScreenCaptureDevices);
   FRIEND_TEST_ALL_PREFIXES(MediaStreamDeviceObserverTest, OnDeviceStopped);
@@ -69,6 +71,14 @@ class MODULES_EXPORT MediaStreamDeviceObserver
                            OnDeviceChangedChangesDeviceAfterRebind);
   FRIEND_TEST_ALL_PREFIXES(MediaStreamDeviceObserverTest,
                            OnDeviceRequestStateChange);
+  FRIEND_TEST_ALL_PREFIXES(MediaStreamDeviceObserverTest,
+                           MultiCaptureAddAndRemoveStreams);
+  FRIEND_TEST_ALL_PREFIXES(MediaStreamDeviceObserverTest,
+                           MultiCaptureChangeDevices);
+  FRIEND_TEST_ALL_PREFIXES(MediaStreamDeviceObserverTest,
+                           MultiCaptureChangeDeviceRequestState);
+  FRIEND_TEST_ALL_PREFIXES(MediaStreamDeviceObserverTest,
+                           MultiCaptureRemoveStreamDevice);
 
   // Private class for keeping track of opened devices and who have
   // opened it.
@@ -77,10 +87,14 @@ class MODULES_EXPORT MediaStreamDeviceObserver
     WebMediaStreamDeviceObserver::OnDeviceChangedCb on_device_changed_cb;
     WebMediaStreamDeviceObserver::OnDeviceRequestStateChangeCb
         on_device_request_state_change_cb;
+    WebMediaStreamDeviceObserver::OnDeviceCaptureConfigurationChangeCb
+        on_device_capture_configuration_change_cb;
     WebMediaStreamDeviceObserver::OnDeviceCaptureHandleChangeCb
         on_device_capture_handle_change_cb;
     MediaStreamDevices audio_devices;
     MediaStreamDevices video_devices;
+
+    bool ContainsDevice(const MediaStreamDevice& device) const;
   };
 
   // mojom::MediaStreamDeviceObserver implementation.
@@ -93,6 +107,9 @@ class MODULES_EXPORT MediaStreamDeviceObserver
       const String& label,
       const MediaStreamDevice& device,
       const mojom::blink::MediaStreamStateChange new_state) override;
+  void OnDeviceCaptureConfigurationChange(
+      const String& label,
+      const MediaStreamDevice& device) override;
   void OnDeviceCaptureHandleChange(const String& label,
                                    const MediaStreamDevice& device) override;
 
@@ -104,7 +121,7 @@ class MODULES_EXPORT MediaStreamDeviceObserver
   // Used for DCHECKs so methods calls won't execute in the wrong thread.
   THREAD_CHECKER(thread_checker_);
 
-  using LabelStreamMap = HashMap<String, Stream>;
+  using LabelStreamMap = HashMap<String, Vector<Stream>>;
   LabelStreamMap label_stream_map_;
 };
 

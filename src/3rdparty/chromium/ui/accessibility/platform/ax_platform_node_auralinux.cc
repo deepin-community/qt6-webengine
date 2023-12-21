@@ -1,13 +1,13 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "ui/accessibility/platform/ax_platform_node_auralinux.h"
+#include "base/memory/raw_ptr.h"
 
 #include <dlfcn.h>
 #include <stdint.h>
 
-#include <algorithm>
 #include <memory>
 #include <set>
 #include <string>
@@ -19,6 +19,7 @@
 #include "base/debug/leak_annotations.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/no_destructor.h"
+#include "base/ranges/algorithm.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
@@ -31,10 +32,12 @@
 #include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/accessibility/ax_role_properties.h"
+#include "ui/accessibility/ax_selection.h"
 #include "ui/accessibility/platform/atk_util_auralinux.h"
 #include "ui/accessibility/platform/ax_platform_atk_hyperlink.h"
 #include "ui/accessibility/platform/ax_platform_node_delegate.h"
 #include "ui/accessibility/platform/ax_platform_text_boundary.h"
+#include "ui/accessibility/platform/child_iterator.h"
 #include "ui/gfx/geometry/rect_conversions.h"
 
 #if defined(ATK_CHECK_VERSION) && ATK_CHECK_VERSION(2, 10, 0)
@@ -125,7 +128,7 @@ typedef struct _AXPlatformNodeAuraLinuxClass AXPlatformNodeAuraLinuxClass;
 
 struct _AXPlatformNodeAuraLinuxObject {
   AtkObject parent;
-  AXPlatformNodeAuraLinux* m_object;
+  raw_ptr<AXPlatformNodeAuraLinux> m_object;
 };
 
 struct _AXPlatformNodeAuraLinuxClass {
@@ -138,12 +141,6 @@ AXPlatformNode* g_root_application = nullptr;
 // The last AtkObject with keyboard focus. Tracking this is required to emit the
 // ATK_STATE_FOCUSED change to false.
 AtkObject* g_current_focused = nullptr;
-
-// The last AtkObject which was the active descendant in the currently-focused
-// object (example: The highlighted option within a focused select element).
-// As with g_current_focused, we track this to emit events when this object is
-// no longer the active descendant.
-AtkObject* g_current_active_descendant = nullptr;
 
 // The last object which was selected. Tracking this is required because
 // widgets in the browser UI only emit notifications upon becoming selected,
@@ -330,8 +327,10 @@ const char* BuildDescriptionFromHeaders(AXPlatformNodeDelegate* delegate,
   std::vector<std::string> names;
   for (const auto& node_id : ids) {
     if (AXPlatformNode* header = delegate->GetFromNodeID(node_id)) {
-      if (AtkObject* atk_header = header->GetNativeViewAccessible())
-        names.push_back(atk_object_get_name(atk_header));
+      if (AtkObject* atk_header = header->GetNativeViewAccessible()) {
+        if (const gchar* name = atk_object_get_name(atk_header))
+          names.push_back(name);
+      }
     }
   }
 
@@ -358,22 +357,6 @@ AtkAttributeSet* PrependAtkAttributeToAtkAttributeSet(
   attribute->name = g_strdup(name);
   attribute->value = g_strdup(value);
   return g_slist_prepend(attribute_set, attribute);
-}
-
-AtkObject* GetActiveDescendantOfCurrentFocused() {
-  if (!g_current_focused)
-    return nullptr;
-
-  auto* node = AXPlatformNodeAuraLinux::FromAtkObject(g_current_focused);
-  if (!node)
-    return nullptr;
-
-  int32_t id =
-      node->GetIntAttribute(ax::mojom::IntAttribute::kActivedescendantId);
-  if (auto* descendant = node->GetDelegate()->GetFromNodeID(id))
-    return descendant->GetNativeViewAccessible();
-
-  return nullptr;
 }
 
 void PrependTextAttributeToSet(const std::string& attribute,
@@ -606,13 +589,10 @@ gboolean DoAction(AtkAction* atk_action, gint index) {
   if (!obj)
     return FALSE;
 
-  const std::vector<ax::mojom::Action> actions = obj->GetSupportedActions();
+  const std::vector<ax::mojom::Action> actions =
+      obj->GetDelegate()->GetSupportedActions();
   g_return_val_if_fail(index < static_cast<gint>(actions.size()), FALSE);
 
-  if (index == 0 && obj->HasDefaultActionVerb()) {
-    // If there is a default action, it will always be at index 0.
-    return obj->DoDefaultAction();
-  }
   AXActionData data;
   data.action = actions[index];
   return obj->GetDelegate()->AccessibilityPerformAction(data);
@@ -627,7 +607,7 @@ gint GetNActions(AtkAction* atk_action) {
   if (!obj)
     return 0;
 
-  return static_cast<gint>(obj->GetSupportedActions().size());
+  return static_cast<gint>(obj->GetDelegate()->GetSupportedActions().size());
 }
 
 const gchar* GetDescription(AtkAction*, gint) {
@@ -645,10 +625,11 @@ const gchar* GetName(AtkAction* atk_action, gint index) {
   if (!obj)
     return nullptr;
 
-  const std::vector<ax::mojom::Action> actions = obj->GetSupportedActions();
+  const std::vector<ax::mojom::Action> actions =
+      obj->GetDelegate()->GetSupportedActions();
   g_return_val_if_fail(index < static_cast<gint>(actions.size()), nullptr);
 
-  if (index == 0 && obj->HasDefaultActionVerb()) {
+  if (index == 0 && obj->GetDelegate()->HasDefaultActionVerb()) {
     // If there is a default action, it will always be at index 0.
     return obj->GetDefaultActionName();
   }
@@ -664,10 +645,11 @@ const gchar* GetKeybinding(AtkAction* atk_action, gint index) {
   if (!obj)
     return nullptr;
 
-  const std::vector<ax::mojom::Action> actions = obj->GetSupportedActions();
+  const std::vector<ax::mojom::Action> actions =
+      obj->GetDelegate()->GetSupportedActions();
   g_return_val_if_fail(index < static_cast<gint>(actions.size()), nullptr);
 
-  if (index == 0 && obj->HasDefaultActionVerb()) {
+  if (index == 0 && obj->GetDelegate()->HasDefaultActionVerb()) {
     // If there is a default action, it will always be at index 0. Only the
     // default action has a key binding.
     return obj->GetStringAttribute(ax::mojom::StringAttribute::kAccessKey)
@@ -915,7 +897,7 @@ AtkHyperlink* GetLink(AtkHypertext* hypertext, int index) {
     return nullptr;
 
   const AXLegacyHypertext& ax_hypertext = obj->GetAXHypertext();
-  if (index > static_cast<int>(ax_hypertext.hyperlinks.size()) || index < 0)
+  if (index >= static_cast<int>(ax_hypertext.hyperlinks.size()) || index < 0)
     return nullptr;
 
   int32_t id = ax_hypertext.hyperlinks[index];
@@ -1013,12 +995,13 @@ gunichar GetCharacterAtOffset(AtkText* atk_text, int offset) {
     return 0;
 
   std::u16string text = obj->GetHypertext();
-  int32_t text_length = text.length();
+  size_t text_length = text.length();
 
   offset = obj->UnicodeToUTF16OffsetInText(offset);
-  int32_t limited_offset = base::clamp(offset, 0, text_length);
+  offset = std::max(offset, 0);
+  size_t limited_offset = std::min(static_cast<size_t>(offset), text_length);
 
-  uint32_t code_point;
+  base_icu::UChar32 code_point;
   base::ReadUnicodeCharacter(text.c_str(), text_length + 1, &limited_offset,
                              &code_point);
   return code_point;
@@ -1508,7 +1491,7 @@ gboolean AddSelection(AtkSelection* selection, gint index) {
       AXPlatformNodeAuraLinux::FromAtkObject(ATK_OBJECT(selection));
   if (!obj)
     return FALSE;
-  if (index < 0 || index >= obj->GetChildCount())
+  if (index < 0 || static_cast<size_t>(index) >= obj->GetChildCount())
     return FALSE;
 
   AXPlatformNodeAuraLinux* child =
@@ -1596,7 +1579,7 @@ gboolean IsChildSelected(AtkSelection* selection, gint index) {
       AXPlatformNodeAuraLinux::FromAtkObject(ATK_OBJECT(selection));
   if (!obj)
     return FALSE;
-  if (index < 0 || index >= obj->GetChildCount())
+  if (index < 0 || static_cast<size_t>(index) >= obj->GetChildCount())
     return FALSE;
 
   AXPlatformNodeAuraLinux* child =
@@ -2117,7 +2100,7 @@ AtkObject* RefChild(AtkObject* atk_object, gint index) {
   if (!obj)
     return nullptr;
 
-  if (index < 0 || index >= obj->GetChildCount())
+  if (index < 0 || static_cast<size_t>(index) >= obj->GetChildCount())
     return nullptr;
 
   AtkObject* result = obj->ChildAtIndex(index);
@@ -2139,7 +2122,10 @@ gint GetIndexInParent(AtkObject* atk_object) {
   if (!obj)
     return -1;
 
-  return obj->GetIndexInParent().value_or(-1);
+  auto index_in_parent = obj->GetIndexInParent();
+  return index_in_parent.has_value()
+             ? static_cast<gint>(index_in_parent.value())
+             : -1;
 }
 
 gint AtkGetIndexInParent(AtkObject* atk_object) {
@@ -2275,8 +2261,8 @@ void ClassInit(gpointer class_pointer, gpointer /* class_data */) {
 GType GetType() {
   AXPlatformNodeAuraLinux::EnsureGTypeInit();
 
-  static volatile gsize type_volatile = 0;
-  if (g_once_init_enter(&type_volatile)) {
+  static gsize type_id = 0;
+  if (g_once_init_enter(&type_id)) {
     static const GTypeInfo type_info = {
         sizeof(AXPlatformNodeAuraLinuxClass),  // class_size
         nullptr,                               // base_init
@@ -2292,10 +2278,10 @@ GType GetType() {
 
     GType type = g_type_register_static(
         ATK_TYPE_OBJECT, "AXPlatformNodeAuraLinux", &type_info, GTypeFlags(0));
-    g_once_init_leave(&type_volatile, type);
+    g_once_init_leave(&type_id, type);
   }
 
-  return type_volatile;
+  return type_id;
 }
 
 void Detach(AXPlatformNodeAuraLinuxObject* atk_object) {
@@ -2570,12 +2556,10 @@ void AXPlatformNodeAuraLinux::DestroyAtkObjects() {
   }
 
   if (atk_object_) {
-    // We explicitly clear g_current_focused and g_current_active_descendant
-    // just in case there is another reference to atk_object_ somewhere.
+    // We explicitly clear g_current_focused just in case there is another
+    // reference to atk_object_ somewhere.
     if (atk_object_ == g_current_focused)
       SetWeakGPtrToAtkObject(&g_current_focused, nullptr);
-    if (atk_object_ == g_current_active_descendant)
-      SetWeakGPtrToAtkObject(&g_current_active_descendant, nullptr);
     atk_object::Detach(AX_PLATFORM_NODE_AURALINUX(atk_object_));
 
     g_object_unref(atk_object_);
@@ -2684,6 +2668,8 @@ AtkRole AXPlatformNodeAuraLinux::GetAtkRole() const {
     case ax::mojom::Role::kComboBoxGrouping:
       return ATK_ROLE_COMBO_BOX;
     case ax::mojom::Role::kComboBoxMenuButton:
+      return ATK_ROLE_COMBO_BOX;
+    case ax::mojom::Role::kComboBoxSelect:
       return ATK_ROLE_COMBO_BOX;
     case ax::mojom::Role::kComplementary:
       return ATK_ROLE_LANDMARK;
@@ -2929,13 +2915,8 @@ AtkRole AXPlatformNodeAuraLinux::GetAtkRole() const {
       return ATK_ROLE_DOCUMENT_FRAME;
     case ax::mojom::Role::kPluginObject:
       return ATK_ROLE_EMBEDDED;
-    case ax::mojom::Role::kPopUpButton: {
-      std::string html_tag =
-          GetStringAttribute(ax::mojom::StringAttribute::kHtmlTag);
-      if (html_tag == "select")
-        return ATK_ROLE_COMBO_BOX;
+    case ax::mojom::Role::kPopUpButton:
       return ATK_ROLE_PUSH_BUTTON;
-    }
     case ax::mojom::Role::kPortal:
       return ATK_ROLE_PUSH_BUTTON;
     case ax::mojom::Role::kPre:
@@ -3099,9 +3080,10 @@ void AXPlatformNodeAuraLinux::GetAtkState(AtkStateSet* atk_state_set) {
     atk_state_set_add_state(atk_state_set, ATK_STATE_EXPANDABLE);
     atk_state_set_add_state(atk_state_set, ATK_STATE_EXPANDED);
   }
-  if (HasState(ax::mojom::State::kFocusable) || SelectionAndFocusAreTheSame()) {
+  if (IsFocused())
+    atk_state_set_add_state(atk_state_set, ATK_STATE_FOCUSED);
+  if (IsFocusable())
     atk_state_set_add_state(atk_state_set, ATK_STATE_FOCUSABLE);
-  }
   if (HasState(ax::mojom::State::kHorizontal))
     atk_state_set_add_state(atk_state_set, ATK_STATE_HORIZONTAL);
   if (!IsInvisibleOrIgnored()) {
@@ -3171,7 +3153,8 @@ void AXPlatformNodeAuraLinux::GetAtkState(AtkStateSet* atk_state_set) {
   }
 
   if (GetData().GetRestriction() != ax::mojom::Restriction::kDisabled) {
-    if (IsReadOnlySupported(GetRole()) && GetData().IsReadOnlyOrDisabled()) {
+    if (GetDelegate()->IsReadOnlySupported() &&
+        GetDelegate()->IsReadOnlyOrDisabled()) {
 #if defined(ATK_216)
       // Runtime check in case we were compiled with a newer version of ATK.
       if (PlatformSupportsState(ATK_STATE_READ_ONLY))
@@ -3182,21 +3165,6 @@ void AXPlatformNodeAuraLinux::GetAtkState(AtkStateSet* atk_state_set) {
       atk_state_set_add_state(atk_state_set, ATK_STATE_SENSITIVE);
     }
   }
-
-  AtkObject* atk_object = GetOrCreateAtkObject();
-  if (!atk_object)
-    return;
-
-  if (delegate_->GetFocus() == atk_object)
-    atk_state_set_add_state(atk_state_set, ATK_STATE_FOCUSED);
-
-  // It is insufficient to compare with g_current_activedescendant due to both
-  // timing and event ordering for objects which implement AtkSelection and also
-  // have an active descendant. For instance, if we check the state set of a
-  // selectable child, it will only have ATK_STATE_FOCUSED if we've processed
-  // the activedescendant change.
-  if (GetActiveDescendantOfCurrentFocused() == atk_object)
-    atk_state_set_add_state(atk_state_set, ATK_STATE_FOCUSED);
 }
 
 struct AtkIntRelation {
@@ -3301,7 +3269,7 @@ AtkRelationSet* AXPlatformNodeAuraLinux::GetAtkRelations() {
       continue;
 
     std::set<AXPlatformNode*> target_ids =
-        GetDelegate()->GetReverseRelations(relation.attribute);
+        GetDelegate()->GetSourceNodesForReverseRelations(relation.attribute);
     for (AXPlatformNode* target : target_ids) {
       AddRelationToSet(relation_set, relation.reverse_relation.value(), target);
     }
@@ -3320,7 +3288,7 @@ AtkRelationSet* AXPlatformNodeAuraLinux::GetAtkRelations() {
       continue;
 
     std::set<AXPlatformNode*> reverse_target_ids =
-        GetDelegate()->GetReverseRelations(relation.attribute);
+        GetDelegate()->GetSourceNodesForReverseRelations(relation.attribute);
     for (AXPlatformNode* target : reverse_target_ids) {
       AddRelationToSet(relation_set, relation.reverse_relation.value(), target);
     }
@@ -3364,7 +3332,7 @@ bool AXPlatformNodeAuraLinux::IsPlatformCheckable() const {
   return AXPlatformNodeBase::IsPlatformCheckable();
 }
 
-absl::optional<int> AXPlatformNodeAuraLinux::GetIndexInParent() {
+absl::optional<size_t> AXPlatformNodeAuraLinux::GetIndexInParent() {
   AXPlatformNode* parent =
       AXPlatformNode::FromNativeViewAccessible(GetParent());
   // Even though the node doesn't have its parent, GetParent() could return the
@@ -3403,51 +3371,6 @@ gfx::NativeViewAccessible AXPlatformNodeAuraLinux::GetOrCreateAtkObject() {
     atk_object_ = CreateAtkObject();
   }
   return atk_object_;
-}
-
-void AXPlatformNodeAuraLinux::OnActiveDescendantChanged() {
-  AtkObject* atk_object = GetOrCreateAtkObject();
-  if (!atk_object)
-    return;
-
-  // Active-descendant-changed notifications are typically only relevant when
-  // the change is within the focused widget.
-  if (!g_current_focused)
-    return;
-  if (auto* focused_node = FromAtkObject(g_current_focused)) {
-    if (!focused_node->IsDescendantOf(this))
-      return;
-  }
-
-  AtkObject* descendant = GetActiveDescendantOfCurrentFocused();
-  if (descendant == g_current_active_descendant)
-    return;
-
-  // If selection and focus are the same, when the active descendant changes
-  // as a result of selection, a focus event will be emitted. We don't want to
-  // emit duplicate notifications.
-  {
-    auto* node = FromAtkObject(descendant);
-    if (node && node->SelectionAndFocusAreTheSame())
-      return;
-  }
-
-  // While there is an ATK active-descendant-changed event, it is meant for
-  // objects which manage their descendants (and claim to do so). The Core-AAM
-  // specification states that focus events should be emitted when the active
-  // descendant changes. This behavior is also consistent with Gecko.
-  if (g_current_active_descendant) {
-    g_signal_emit_by_name(g_current_active_descendant, "focus-event", false);
-    atk_object_notify_state_change(ATK_OBJECT(g_current_active_descendant),
-                                   ATK_STATE_FOCUSED, false);
-  }
-
-  SetWeakGPtrToAtkObject(&g_current_active_descendant, descendant);
-  if (g_current_active_descendant) {
-    g_signal_emit_by_name(g_current_active_descendant, "focus-event", true);
-    atk_object_notify_state_change(ATK_OBJECT(g_current_active_descendant),
-                                   ATK_STATE_FOCUSED, true);
-  }
 }
 
 void AXPlatformNodeAuraLinux::OnCheckedStateChanged() {
@@ -3706,24 +3629,16 @@ void AXPlatformNodeAuraLinux::OnFocused() {
 
   SetActiveViewsDialog();
 
-  AtkObject* old_effective_focus = g_current_active_descendant
-                                       ? g_current_active_descendant
-                                       : g_current_focused;
-  if (old_effective_focus) {
-    g_signal_emit_by_name(old_effective_focus, "focus-event", false);
-    atk_object_notify_state_change(ATK_OBJECT(old_effective_focus),
+  if (g_current_focused) {
+    g_signal_emit_by_name(g_current_focused, "focus-event", false);
+    atk_object_notify_state_change(ATK_OBJECT(g_current_focused),
                                    ATK_STATE_FOCUSED, false);
   }
 
   SetWeakGPtrToAtkObject(&g_current_focused, atk_object);
-  AtkObject* descendant = GetActiveDescendantOfCurrentFocused();
-  SetWeakGPtrToAtkObject(&g_current_active_descendant, descendant);
 
-  AtkObject* new_effective_focus = g_current_active_descendant
-                                       ? g_current_active_descendant
-                                       : g_current_focused;
-  g_signal_emit_by_name(new_effective_focus, "focus-event", true);
-  atk_object_notify_state_change(ATK_OBJECT(new_effective_focus),
+  g_signal_emit_by_name(g_current_focused, "focus-event", true);
+  atk_object_notify_state_change(ATK_OBJECT(g_current_focused),
                                  ATK_STATE_FOCUSED, true);
 }
 
@@ -3743,9 +3658,6 @@ void AXPlatformNodeAuraLinux::OnSelected() {
     atk_object_notify_state_change(ATK_OBJECT(atk_object), ATK_STATE_SELECTED,
                                    true);
   }
-
-  if (SelectionAndFocusAreTheSame())
-    OnFocused();
 }
 
 void AXPlatformNodeAuraLinux::OnSelectedChildrenChanged() {
@@ -3754,36 +3666,6 @@ void AXPlatformNodeAuraLinux::OnSelectedChildrenChanged() {
     return;
 
   g_signal_emit_by_name(obj, "selection-changed", true);
-}
-
-bool AXPlatformNodeAuraLinux::SelectionAndFocusAreTheSame() {
-  if (AXPlatformNodeBase* container = GetSelectionContainer()) {
-    ax::mojom::Role role = container->GetRole();
-
-    // In the browser UI, menus and their descendants emit selection-related
-    // events only, but we also want to emit platform focus-related events,
-    // so we treat selection and focus the same for browser UI.
-    if (role == ax::mojom::Role::kMenuBar || role == ax::mojom::Role::kMenu)
-      return !GetDelegate()->IsWebContent();
-    if (role == ax::mojom::Role::kListBox &&
-        !container->HasState(ax::mojom::State::kMultiselectable)) {
-      return container->GetDelegate()->GetFocus() ==
-             container->GetNativeViewAccessible();
-    }
-  }
-
-  // TODO(accessibility): `GetSelectionContainer()` returns nullptr when the
-  // current object is a descendant of a select element with a size of 1.
-  // Intentional? For now, handle that scenario here.
-  //
-  // If the selection is changing on a collapsed select element, focus remains
-  // on the select element and not the newly-selected descendant.
-  if (AXPlatformNodeBase* parent = FromAtkObject(GetParent())) {
-    if (parent->GetRole() == ax::mojom::Role::kMenuListPopup)
-      return !parent->IsInvisibleOrIgnored();
-  }
-
-  return false;
 }
 
 bool AXPlatformNodeAuraLinux::EmitsAtkTextEvents() const {
@@ -3826,7 +3708,7 @@ void AXPlatformNodeAuraLinux::GetFullSelection(int32_t* anchor_node_id,
     return;
   }
 
-  AXTree::Selection selection = GetDelegate()->GetUnignoredSelection();
+  AXSelection selection = GetDelegate()->GetUnignoredSelection();
   *anchor_node_id = selection.anchor_object_id;
   *anchor_offset = selection.anchor_offset;
   *focus_node_id = selection.focus_object_id;
@@ -3888,14 +3770,7 @@ void AXPlatformNodeAuraLinux::EmitCaretChangedSignal() {
     return;
   }
 
-#if DCHECK_IS_ON()
-  AXTree::Selection unignored_selection =
-      GetDelegate()->GetUnignoredSelection();
-  DCHECK(HasCaret(&unignored_selection));
-#endif
-
   std::pair<int, int> selection = GetSelectionOffsetsForAtk();
-
   AtkObject* atk_object = GetOrCreateAtkObject();
   if (!atk_object)
     return;
@@ -4056,8 +3931,12 @@ void AXPlatformNodeAuraLinux::OnSubtreeCreated() {
   if (!atk_object)
     return;
 
-  g_signal_emit_by_name(GetParent(), "children-changed::add",
-                        GetIndexInParent().value_or(-1), atk_object);
+  auto index_in_parent = GetIndexInParent();
+  gint index_gint = index_in_parent.has_value()
+                        ? static_cast<gint>(index_in_parent.value())
+                        : -1;
+  g_signal_emit_by_name(GetParent(), "children-changed::add", index_gint,
+                        atk_object);
 }
 
 void AXPlatformNodeAuraLinux::OnSubtreeWillBeDeleted() {
@@ -4070,8 +3949,12 @@ void AXPlatformNodeAuraLinux::OnSubtreeWillBeDeleted() {
   if (!atk_object)
     return;
 
-  g_signal_emit_by_name(GetParent(), "children-changed::remove",
-                        GetIndexInParent().value_or(-1), atk_object);
+  auto index_in_parent = GetIndexInParent();
+  gint index_gint = index_in_parent.has_value()
+                        ? static_cast<gint>(index_in_parent.value())
+                        : -1;
+  g_signal_emit_by_name(GetParent(), "children-changed::remove", index_gint,
+                        atk_object);
 }
 
 void AXPlatformNodeAuraLinux::OnParentChanged() {
@@ -4157,9 +4040,6 @@ void AXPlatformNodeAuraLinux::NotifyAccessibilityEvent(
     case ax::mojom::Event::kMenuPopupEnd:
       OnMenuPopupEnd();
       break;
-    case ax::mojom::Event::kActiveDescendantChanged:
-      OnActiveDescendantChanged();
-      break;
     case ax::mojom::Event::kCheckedStateChanged:
       OnCheckedStateChanged();
       break;
@@ -4238,17 +4118,14 @@ void AXPlatformNodeAuraLinux::NotifyAccessibilityEvent(
 
 absl::optional<std::pair<int, int>>
 AXPlatformNodeAuraLinux::GetEmbeddedObjectIndicesForId(int id) {
-  auto iterator =
-      std::find(hypertext_.hyperlinks.begin(), hypertext_.hyperlinks.end(), id);
+  auto iterator = base::ranges::find(hypertext_.hyperlinks, id);
   if (iterator == hypertext_.hyperlinks.end())
     return absl::nullopt;
   int hyperlink_index = std::distance(hypertext_.hyperlinks.begin(), iterator);
 
-  auto offset = std::find_if(hypertext_.hyperlink_offset_to_index.begin(),
-                             hypertext_.hyperlink_offset_to_index.end(),
-                             [&](const std::pair<int32_t, int32_t>& pair) {
-                               return pair.second == hyperlink_index;
-                             });
+  auto offset =
+      base::ranges::find(hypertext_.hyperlink_offset_to_index, hyperlink_index,
+                         &AXLegacyHypertext::OffsetToIndex::value_type::second);
   if (offset == hypertext_.hyperlink_offset_to_index.end())
     return absl::nullopt;
 
@@ -4331,9 +4208,9 @@ AXPlatformNodeAuraLinux::GetHypertextAdjustments() {
   text_unicode_adjustments_.emplace();
 
   std::u16string text = GetHypertext();
-  int32_t text_length = text.size();
-  for (int32_t i = 0; i < text_length; i++) {
-    uint32_t code_point;
+  size_t text_length = text.size();
+  for (size_t i = 0; i < text_length; i++) {
+    base_icu::UChar32 code_point;
     size_t original_i = i;
     base::ReadUnicodeCharacter(text.c_str(), text_length + 1, &i, &code_point);
 
@@ -4527,7 +4404,7 @@ bool AXPlatformNodeAuraLinux::FocusFirstFocusableAncestorInWebContent() {
   if (!atk_object)
     return false;
 
-  if (HasState(ax::mojom::State::kFocusable) || SelectionAndFocusAreTheSame()) {
+  if (IsFocusable()) {
     if (g_current_focused != atk_object)
       GrabFocus();
     return true;
@@ -4547,10 +4424,8 @@ bool AXPlatformNodeAuraLinux::FocusFirstFocusableAncestorInWebContent() {
     if (!child || child == this)
       continue;
 
-    if (child->HasState(ax::mojom::State::kFocusable) ||
-        child->SelectionAndFocusAreTheSame()) {
+    if (child->IsFocusable())
       return false;
-    }
   }
 
   return parent->FocusFirstFocusableAncestorInWebContent();
@@ -4606,19 +4481,26 @@ bool AXPlatformNodeAuraLinux::
   return false;
 }
 
-bool AXPlatformNodeAuraLinux::DoDefaultAction() {
-  AXActionData action_data;
-  action_data.action = ax::mojom::Action::kDoDefault;
-  return delegate_->AccessibilityPerformAction(action_data);
-}
-
 const gchar* AXPlatformNodeAuraLinux::GetDefaultActionName() {
   int action;
   if (!GetIntAttribute(ax::mojom::IntAttribute::kDefaultActionVerb, &action))
     return nullptr;
 
+  // If this object cannot receive focus and has a button role, use click as
+  // the default action. On the AuraLinux platform, the press action is a
+  // signal to users that they can trigger the action using the keyboard, while
+  // a click action means the user should trigger the action via a simulated
+  // click. If this object cannot receive focus, it's impossible to trigger it
+  // with a key press.
+  if (GetRole() == ax::mojom::Role::kButton &&
+      action == static_cast<int>(ax::mojom::DefaultActionVerb::kPress) &&
+      !IsFocusable()) {
+    action = static_cast<int>(ax::mojom::DefaultActionVerb::kClick);
+  }
+
   std::string action_verb =
       ui::ToString(static_cast<ax::mojom::DefaultActionVerb>(action));
+
   ATK_AURALINUX_RETURN_STRING(action_verb);
 }
 
@@ -4720,9 +4602,7 @@ bool AXPlatformNodeAuraLinux::IsNameExposed() {
 }
 
 int AXPlatformNodeAuraLinux::GetCaretOffset() {
-  AXTree::Selection unignored_selection =
-      GetDelegate()->GetUnignoredSelection();
-  if (!HasCaret(&unignored_selection)) {
+  if (!HasVisibleCaretOrSelection()) {
     absl::optional<FindInPageResultInfo> result =
         GetSelectionOffsetsFromFindInPage();
     AtkObject* atk_object = GetOrCreateAtkObject();
@@ -5199,38 +5079,13 @@ std::pair<int, int> AXPlatformNodeAuraLinux::GetSelectionOffsetsForAtk() {
   // no longer part of the visual selection.
   std::pair<int, int> selection;
   if (GetDelegate()->IsWebContent()) {
-    AXTree::Selection unignored_selection =
-        GetDelegate()->GetUnignoredSelection();
+    AXSelection unignored_selection = GetDelegate()->GetUnignoredSelection();
     GetSelectionOffsetsFromTree(&unignored_selection, &selection.first,
                                 &selection.second);
   } else {
     GetSelectionOffsets(&selection.first, &selection.second);
   }
   return selection;
-}
-
-bool AXPlatformNodeAuraLinux::HasDefaultActionVerb() const {
-  return GetData().GetDefaultActionVerb() !=
-         ax::mojom::DefaultActionVerb::kNone;
-}
-
-std::vector<ax::mojom::Action> AXPlatformNodeAuraLinux::GetSupportedActions()
-    const {
-  static const base::NoDestructor<std::vector<ax::mojom::Action>>
-      kActionsThatCanBeExposedViaAtkAction{
-          {ax::mojom::Action::kDecrement, ax::mojom::Action::kIncrement}};
-  std::vector<ax::mojom::Action> supported_actions;
-
-  // The default action, if it exists, must be listed at index 0.
-  if (HasDefaultActionVerb())
-    supported_actions.push_back(ax::mojom::Action::kDoDefault);
-
-  for (const auto& item : *kActionsThatCanBeExposedViaAtkAction) {
-    if (HasAction(item))
-      supported_actions.push_back(item);
-  }
-
-  return supported_actions;
 }
 
 }  // namespace ui

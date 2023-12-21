@@ -1,4 +1,4 @@
-// Copyright 2017 PDFium Authors. All rights reserved.
+// Copyright 2017 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -525,7 +525,7 @@ bool CXFA_TextLayout::LayoutInternal(size_t szBlockIndex) {
       if (!pContainerNode)
         return true;
 
-      const CFX_XMLNode* pXMLNode = m_pLoader->pXMLNode.Get();
+      const CFX_XMLNode* pXMLNode = m_pLoader->pXMLNode;
       if (!pXMLNode)
         return true;
 
@@ -690,8 +690,8 @@ void CXFA_TextLayout::Loader(float textWidth,
     m_pTextParser->DoParse(pXMLContainer, m_pTextProvider);
 
   auto pRootStyle = m_pTextParser->CreateRootStyle(m_pTextProvider);
-  LoadRichText(pXMLContainer, textWidth, pLinePos, pRootStyle, bSavePieces,
-               nullptr, true, false, 0);
+  LoadRichText(pXMLContainer, textWidth, pLinePos, std::move(pRootStyle),
+               bSavePieces, nullptr, true, false, 0);
 }
 
 void CXFA_TextLayout::LoadText(CXFA_Node* pNode,
@@ -729,16 +729,15 @@ void CXFA_TextLayout::LoadText(CXFA_Node* pNode,
     EndBreak(CFGAS_Char::BreakType::kParagraph, pLinePos, bSavePieces);
 }
 
-bool CXFA_TextLayout::LoadRichText(
-    const CFX_XMLNode* pXMLNode,
-    float textWidth,
-    float* pLinePos,
-    const RetainPtr<CFX_CSSComputedStyle>& pParentStyle,
-    bool bSavePieces,
-    RetainPtr<CFGAS_LinkUserData> pLinkData,
-    bool bEndBreak,
-    bool bIsOl,
-    int32_t iLiCount) {
+bool CXFA_TextLayout::LoadRichText(const CFX_XMLNode* pXMLNode,
+                                   float textWidth,
+                                   float* pLinePos,
+                                   RetainPtr<CFX_CSSComputedStyle> pParentStyle,
+                                   bool bSavePieces,
+                                   RetainPtr<CFGAS_LinkUserData> pLinkData,
+                                   bool bEndBreak,
+                                   bool bIsOl,
+                                   int32_t iLiCount) {
   if (!pXMLNode)
     return false;
 
@@ -772,7 +771,7 @@ bool CXFA_TextLayout::LoadRichText(
         return true;
       }
 
-      pStyle = m_pTextParser->ComputeStyle(pXMLNode, pParentStyle.Get());
+      pStyle = m_pTextParser->ComputeStyle(pXMLNode, pParentStyle);
       InitBreak(bContentNode ? pParentStyle.Get() : pStyle.Get(), eDisplay,
                 textWidth, pXMLNode, pParentStyle.Get());
       if ((eDisplay == CFX_CSSDisplay::Block ||
@@ -1029,18 +1028,18 @@ void CXFA_TextLayout::AppendTextLine(CFGAS_Char::BreakType dwStatus,
     int32_t i = 0;
     for (i = 0; i < iPieces; i++) {
       const CFGAS_BreakPiece* pPiece = m_pBreak->GetBreakPieceUnstable(i);
-      CFGAS_TextUserData* pUserData = pPiece->m_pUserData.Get();
+      const CFGAS_TextUserData* pUserData = pPiece->GetUserData();
       if (pUserData)
         pStyle = pUserData->m_pStyle;
-      float fVerScale = pPiece->m_iVerticalScale / 100.0f;
+      float fVerScale = pPiece->GetVerticalScale() / 100.0f;
 
       auto pTP = std::make_unique<TextPiece>();
-      pTP->iChars = pPiece->m_iCharCount;
+      pTP->iChars = pPiece->GetCharCount();
       pTP->szText = pPiece->GetString();
       pTP->Widths = pPiece->GetWidths();
-      pTP->iBidiLevel = pPiece->m_iBidiLevel;
-      pTP->iHorScale = pPiece->m_iHorizontalScale;
-      pTP->iVerScale = pPiece->m_iVerticalScale;
+      pTP->iBidiLevel = pPiece->GetBidiLevel();
+      pTP->iHorScale = pPiece->GetHorizontalScale();
+      pTP->iVerScale = pPiece->GetVerticalScale();
       pTP->iUnderline =
           m_pTextParser->GetUnderline(m_pTextProvider, pStyle.Get());
       pTP->iPeriod =
@@ -1052,10 +1051,10 @@ void CXFA_TextLayout::AppendTextLine(CFGAS_Char::BreakType dwStatus,
           m_pTextParser->GetFont(m_pDoc.Get(), m_pTextProvider, pStyle.Get());
       pTP->fFontSize =
           m_pTextParser->GetFontSize(m_pTextProvider, pStyle.Get());
-      pTP->rtPiece.left = pPiece->m_iStartPos / 20000.0f;
-      pTP->rtPiece.width = pPiece->m_iWidth / 20000.0f;
+      pTP->rtPiece.left = pPiece->GetStartPos() / 20000.0f;
+      pTP->rtPiece.width = pPiece->GetWidth() / 20000.0f;
       pTP->rtPiece.height =
-          static_cast<float>(pPiece->m_iFontSize) * fVerScale / 20.0f;
+          static_cast<float>(pPiece->GetFontSize()) * fVerScale / 20.0f;
       float fBaseLineTemp =
           m_pTextParser->GetBaseline(m_pTextProvider, pStyle.Get());
       pTP->rtPiece.top = fBaseLineTemp;
@@ -1084,10 +1083,10 @@ void CXFA_TextLayout::AppendTextLine(CFGAS_Char::BreakType dwStatus,
     float fLineWidth = 0;
     for (int32_t i = 0; i < iPieces; i++) {
       const CFGAS_BreakPiece* pPiece = m_pBreak->GetBreakPieceUnstable(i);
-      CFGAS_TextUserData* pUserData = pPiece->m_pUserData.Get();
+      const CFGAS_TextUserData* pUserData = pPiece->GetUserData();
       if (pUserData)
         pStyle = pUserData->m_pStyle;
-      float fVerScale = pPiece->m_iVerticalScale / 100.0f;
+      float fVerScale = pPiece->GetVerticalScale() / 100.0f;
       float fBaseLine =
           m_pTextParser->GetBaseline(m_pTextProvider, pStyle.Get());
       float fLineHeight = m_pTextParser->GetLineHeight(
@@ -1095,13 +1094,13 @@ void CXFA_TextLayout::AppendTextLine(CFGAS_Char::BreakType dwStatus,
       if (fBaseLine > 0) {
         float fLineHeightTmp =
             fBaseLine +
-            static_cast<float>(pPiece->m_iFontSize) * fVerScale / 20.0f;
+            static_cast<float>(pPiece->GetFontSize()) * fVerScale / 20.0f;
         if (fLineHeight < fLineHeightTmp) {
           fLineHeight = fLineHeightTmp;
         }
       }
       fLineStep = std::max(fLineStep, fLineHeight);
-      fLineWidth += pPiece->m_iWidth / 20000.0f;
+      fLineWidth += pPiece->GetWidth() / 20000.0f;
     }
     *pLinePos += fLineStep;
     m_fMaxWidth = std::max(m_fMaxWidth, fLineWidth);

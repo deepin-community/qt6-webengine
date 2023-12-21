@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -45,17 +45,18 @@ class SBNavigationObserverTest : public content::RenderViewHostTestHarness {
     HostContentSettingsMap::RegisterProfilePrefs(pref_service_.registry());
     settings_map_ = base::MakeRefCounted<HostContentSettingsMap>(
         &pref_service_, false /* is_off_the_record */,
-        false /* store_last_modified */, false /* restore_session*/);
+        false /* store_last_modified */, false /* restore_session*/,
+        false /* should_record_metrics */);
 
     navigation_observer_manager_ =
         std::make_unique<SafeBrowsingNavigationObserverManager>(&pref_service_);
 
-    navigation_observer_ =
-        new SafeBrowsingNavigationObserver(web_contents(), settings_map_.get(),
-                                           navigation_observer_manager_.get());
+    navigation_observer_ = std::make_unique<SafeBrowsingNavigationObserver>(
+        web_contents(), settings_map_.get(),
+        navigation_observer_manager_.get());
   }
   void TearDown() override {
-    delete navigation_observer_;
+    navigation_observer_.reset();
     settings_map_->ShutdownOnUIThread();
     content::RenderViewHostTestHarness::TearDown();
   }
@@ -184,7 +185,7 @@ class SBNavigationObserverTest : public content::RenderViewHostTestHarness {
   scoped_refptr<HostContentSettingsMap> settings_map_;
   std::unique_ptr<SafeBrowsingNavigationObserverManager>
       navigation_observer_manager_;
-  raw_ptr<SafeBrowsingNavigationObserver> navigation_observer_;
+  std::unique_ptr<SafeBrowsingNavigationObserver> navigation_observer_;
 
  private:
   base::test::ScopedFeatureList scoped_feature_list_;
@@ -375,7 +376,7 @@ TEST_F(SBNavigationObserverTest, BasicNavigationAndCommit) {
 
 TEST_F(SBNavigationObserverTest, ServerRedirect) {
   auto navigation = content::NavigationSimulator::CreateRendererInitiated(
-      GURL("http://foo/3"), web_contents()->GetMainFrame());
+      GURL("http://foo/3"), web_contents()->GetPrimaryMainFrame());
   auto* nav_list = navigation_event_list();
   SessionID tab_id = sessions::SessionTabHelper::IdForTab(web_contents());
 
@@ -446,8 +447,10 @@ TEST_F(SBNavigationObserverTest, TestCleanUpStaleNavigationEvents) {
       base::Time::FromDoubleT(now.ToDoubleT() + 60.0 * 60.0);  // Invalid
   GURL url_0("http://foo/0");
   GURL url_1("http://foo/1");
-  content::MockNavigationHandle handle_0(url_0, web_contents()->GetMainFrame());
-  content::MockNavigationHandle handle_1(url_1, web_contents()->GetMainFrame());
+  content::MockNavigationHandle handle_0(url_0,
+                                         web_contents()->GetPrimaryMainFrame());
+  content::MockNavigationHandle handle_1(url_1,
+                                         web_contents()->GetPrimaryMainFrame());
   navigation_event_list()->RecordNavigationEvent(
       CreateNavigationEventUniquePtr(url_0, in_an_hour));
   navigation_event_list()->RecordNavigationEvent(
@@ -875,9 +878,12 @@ TEST_F(SBNavigationObserverTest, TestGetLatestPendingNavigationEvent) {
   base::Time one_minute_ago = base::Time::FromDoubleT(now.ToDoubleT() - 60.0);
   base::Time two_minute_ago = base::Time::FromDoubleT(now.ToDoubleT() - 120.0);
   GURL url("http://foo/0");
-  content::MockNavigationHandle handle_0(url, web_contents()->GetMainFrame());
-  content::MockNavigationHandle handle_1(url, web_contents()->GetMainFrame());
-  content::MockNavigationHandle handle_2(url, web_contents()->GetMainFrame());
+  content::MockNavigationHandle handle_0(url,
+                                         web_contents()->GetPrimaryMainFrame());
+  content::MockNavigationHandle handle_1(url,
+                                         web_contents()->GetPrimaryMainFrame());
+  content::MockNavigationHandle handle_2(url,
+                                         web_contents()->GetPrimaryMainFrame());
   navigation_event_list()->RecordPendingNavigationEvent(
       &handle_0, CreateNavigationEventUniquePtr(url, one_minute_ago));
   navigation_event_list()->RecordPendingNavigationEvent(
@@ -892,6 +898,52 @@ TEST_F(SBNavigationObserverTest, TestGetLatestPendingNavigationEvent) {
   // FindPendingNavigationEvent should return the event for handle_1 because it
   // has the latest updated timestamp.
   EXPECT_EQ(now, event->last_updated);
+}
+
+TEST_F(SBNavigationObserverTest, SanitizesDataUrls) {
+  base::Time now = base::Time::Now();
+  base::Time one_hour_ago =
+      base::Time::FromDoubleT(now.ToDoubleT() - 60.0 * 60.0);
+
+  SessionID tab_id = SessionID::NewUnique();
+
+  // Add two navigations. The first is renderer initiated from A to a data://
+  // URL. The second is from the data:// URL to B.
+  std::unique_ptr<NavigationEvent> first_navigation =
+      std::make_unique<NavigationEvent>();
+  first_navigation->source_url = GURL("http://a.com/");
+  first_navigation->original_request_url = GURL("data://private_data");
+  first_navigation->last_updated = one_hour_ago;
+  first_navigation->navigation_initiation =
+      ReferrerChainEntry::RENDERER_INITIATED_WITH_USER_GESTURE;
+  first_navigation->source_tab_id = tab_id;
+  first_navigation->target_tab_id = tab_id;
+  navigation_event_list()->RecordNavigationEvent(std::move(first_navigation));
+
+  std::unique_ptr<NavigationEvent> second_navigation =
+      std::make_unique<NavigationEvent>();
+  second_navigation->source_url = GURL("data://private_data");
+  second_navigation->original_request_url = GURL("http://b.com/");
+  second_navigation->last_updated = now;
+  second_navigation->navigation_initiation =
+      ReferrerChainEntry::RENDERER_INITIATED_WITH_USER_GESTURE;
+  second_navigation->source_tab_id = tab_id;
+  second_navigation->target_tab_id = tab_id;
+  navigation_event_list()->RecordNavigationEvent(std::move(second_navigation));
+
+  ReferrerChain referrer_chain;
+  navigation_observer_manager_->IdentifyReferrerChainByEventURL(
+      GURL("http://b.com/"), SessionID::InvalidValue(),
+      content::GlobalRenderFrameHostId(), 10, &referrer_chain);
+
+  SafeBrowsingNavigationObserverManager::SanitizeReferrerChain(&referrer_chain);
+  ASSERT_EQ(2, referrer_chain.size());
+  EXPECT_EQ(referrer_chain[0].referrer_url(),
+            "data://"
+            "A2368FB9B5FF3EDDF2860EF4998750024F7E4C6E2697F77269A13ADC84DCAD0E");
+  EXPECT_EQ(referrer_chain[1].url(),
+            "data://"
+            "A2368FB9B5FF3EDDF2860EF4998750024F7E4C6E2697F77269A13ADC84DCAD0E");
 }
 
 }  // namespace safe_browsing

@@ -21,9 +21,8 @@
 #include "internal/platform/input_stream.h"
 #include "internal/platform/listeners.h"
 #include "internal/platform/output_stream.h"
-#include "internal/platform/wifi_hotspot_credential.h"
+#include "internal/platform/wifi_credential.h"
 
-namespace location {
 namespace nearby {
 namespace api {
 
@@ -74,6 +73,9 @@ class WifiHotspotMedium {
  public:
   virtual ~WifiHotspotMedium() = default;
 
+  // If the WiFi Adaptor supports to start a Hotspot interface.
+  virtual bool IsInterfaceValid() const = 0;
+
   // Connects to a WifiHotspot service by ip address and port.
   // On success, returns a new WifiHotspotSocket.
   // On error, returns nullptr.
@@ -92,7 +94,7 @@ class WifiHotspotMedium {
       int port) = 0;
 
   // Start a softAP as Hotspot with platform dependent APIs and set the
-  // SSID/password pair back to the credentials. BWU module will retieve these
+  // SSID/password pair back to the credentials. BWU module will retrieve these
   // credentials and send to the client device through established channel and
   // then client may connect to this Hotspot with these credentials.
   virtual bool StartWifiHotspot(HotspotCredentials* hotspot_credentials) = 0;
@@ -109,6 +111,5 @@ class WifiHotspotMedium {
 
 }  // namespace api
 }  // namespace nearby
-}  // namespace location
 
 #endif  // PLATFORM_API_WIFI_HOTSPOT_H_

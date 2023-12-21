@@ -1,3 +1,6 @@
+# Copyright (C) 2022 The Qt Company Ltd.
+# SPDX-License-Identifier: BSD-3-Clause
+
 add_subdirectory(defaultsurfaceformat)
 add_subdirectory(qwebenginepage)
 add_subdirectory(qwebengineprofile)
@@ -13,6 +16,7 @@ add_subdirectory(qwebenginehistory)
 add_subdirectory(qwebenginescript)
 if(LINUX)
     add_subdirectory(offscreen)
+    add_subdirectory(qtbug_110287)
 endif()
 if(NOT MACOS)
     add_subdirectory(touchinput)

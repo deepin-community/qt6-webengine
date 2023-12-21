@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -37,8 +37,11 @@ struct HttpVersion {
   uint16 minor_value;
 };
 
-[Native]
-struct HostPortPair;
+// Mirror of net::HostPortPair.
+struct HostPortPair {
+  string host;
+  uint16 port;
+};
 
 [Native]
 struct ProxyServer;

@@ -1,9 +1,10 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/core/layout/ng/layout_ng_fieldset.h"
 
+#include "third_party/blink/renderer/core/css/properties/longhands.h"
 #include "third_party/blink/renderer/core/dom/layout_tree_builder_traversal.h"
 #include "third_party/blink/renderer/core/layout/layout_fieldset.h"
 #include "third_party/blink/renderer/core/layout/layout_object_factory.h"
@@ -59,116 +60,117 @@ void LayoutNGFieldset::AddChild(LayoutObject* new_child,
     return;
   }
   LayoutBlock* fieldset_content = FindAnonymousFieldsetContentBox();
-  if (!fieldset_content) {
-    // We wrap everything inside an anonymous child, which will take care of the
-    // fieldset contents. This parent will only be responsible for the fieldset
-    // border and the rendered legend, if there is one. Everything else will be
-    // done by the anonymous child. This includes display type, multicol,
-    // scrollbars, and even padding. Note that the rendered legend (if any) will
-    // also be a child of the anonymous object, although it'd be more natural to
-    // have it as the first child of this object. The reason is that our layout
-    // object tree builder cannot handle such discrepancies between DOM tree and
-    // layout tree. Inserting anonymous wrappers is one thing (that is
-    // supported). Removing it from its actual DOM siblings and putting it
-    // elsewhere, on the other hand, does not work well.
-
-    // TODO(crbug.com/875235): Consider other display types not mentioned in the
-    // spec (ex. EDisplay::kLayoutCustom).
-    EDisplay display = EDisplay::kFlowRoot;
-    switch (StyleRef().Display()) {
-      case EDisplay::kFlex:
-      case EDisplay::kInlineFlex:
-        display = EDisplay::kFlex;
-        break;
-      case EDisplay::kGrid:
-      case EDisplay::kInlineGrid:
-        display = EDisplay::kGrid;
-        break;
-      default:
-        break;
-    }
-
-    fieldset_content =
-        LayoutBlock::CreateAnonymousWithParentAndDisplay(this, display);
-    LayoutBox::AddChild(fieldset_content);
-  }
+  DCHECK(fieldset_content);
   fieldset_content->AddChild(new_child, before_child);
 }
 
-// TODO(mstensho): Should probably remove the anonymous child if it becomes
-// childless. While an empty anonymous child should have no effect, it doesn't
-// seem right to leave it around.
+void LayoutNGFieldset::InsertedIntoTree() {
+  LayoutNGBlockFlow::InsertedIntoTree();
+
+  if (FindAnonymousFieldsetContentBox())
+    return;
+
+  // We wrap everything inside an anonymous child, which will take care of the
+  // fieldset contents. This parent will only be responsible for the fieldset
+  // border and the rendered legend, if there is one. Everything else will be
+  // done by the anonymous child. This includes display type, multicol,
+  // scrollbars, and even padding.
+
+  // TODO(crbug.com/875235): Consider other display types not mentioned in the
+  // spec (ex. EDisplay::kLayoutCustom).
+  EDisplay display = EDisplay::kFlowRoot;
+  switch (StyleRef().Display()) {
+    case EDisplay::kFlex:
+    case EDisplay::kInlineFlex:
+      display = EDisplay::kFlex;
+      break;
+    case EDisplay::kGrid:
+    case EDisplay::kInlineGrid:
+      display = EDisplay::kGrid;
+      break;
+    default:
+      break;
+  }
+
+  LayoutBlock* fieldset_content =
+      LayoutBlock::CreateAnonymousWithParentAndDisplay(this, display);
+  LayoutBox::AddChild(fieldset_content);
+  // Update CanContain*PositionObjects flag again though
+  // CreateAnonymousWithParentAndDisplay() already called them because
+  // ComputeIs*Container() depends on Parent().
+  fieldset_content->SetCanContainAbsolutePositionObjects(
+      fieldset_content->ComputeIsAbsoluteContainer(fieldset_content->Style()));
+  fieldset_content->SetCanContainFixedPositionObjects(
+      fieldset_content->ComputeIsFixedContainer(fieldset_content->Style()));
+}
 
 void LayoutNGFieldset::UpdateAnonymousChildStyle(
     const LayoutObject*,
-    ComputedStyle& child_style) const {
+    ComputedStyleBuilder& child_style_builder) const {
   // Inherit all properties listed here:
   // https://html.spec.whatwg.org/C/#anonymous-fieldset-content-box
 
-  child_style.SetAlignContent(StyleRef().AlignContent());
-  child_style.SetAlignItems(StyleRef().AlignItems());
+  child_style_builder.SetAlignContent(StyleRef().AlignContent());
+  child_style_builder.SetAlignItems(StyleRef().AlignItems());
 
-  child_style.SetBorderBottomLeftRadius(StyleRef().BorderBottomLeftRadius());
-  child_style.SetBorderBottomRightRadius(StyleRef().BorderBottomRightRadius());
-  child_style.SetBorderTopLeftRadius(StyleRef().BorderTopLeftRadius());
-  child_style.SetBorderTopRightRadius(StyleRef().BorderTopRightRadius());
+  child_style_builder.SetBorderBottomLeftRadius(
+      StyleRef().BorderBottomLeftRadius());
+  child_style_builder.SetBorderBottomRightRadius(
+      StyleRef().BorderBottomRightRadius());
+  child_style_builder.SetBorderTopLeftRadius(StyleRef().BorderTopLeftRadius());
+  child_style_builder.SetBorderTopRightRadius(
+      StyleRef().BorderTopRightRadius());
 
-  child_style.SetPaddingTop(StyleRef().PaddingTop());
-  child_style.SetPaddingRight(StyleRef().PaddingRight());
-  child_style.SetPaddingBottom(StyleRef().PaddingBottom());
-  child_style.SetPaddingLeft(StyleRef().PaddingLeft());
+  child_style_builder.SetPaddingTop(StyleRef().PaddingTop());
+  child_style_builder.SetPaddingRight(StyleRef().PaddingRight());
+  child_style_builder.SetPaddingBottom(StyleRef().PaddingBottom());
+  child_style_builder.SetPaddingLeft(StyleRef().PaddingLeft());
 
   if (StyleRef().SpecifiesColumns() && AllowsColumns()) {
-    child_style.SetColumnCount(StyleRef().ColumnCount());
-    child_style.SetColumnWidth(StyleRef().ColumnWidth());
+    child_style_builder.SetColumnCount(StyleRef().ColumnCount());
+    child_style_builder.SetColumnWidth(StyleRef().ColumnWidth());
   } else {
-    child_style.SetHasAutoColumnCount();
-    child_style.SetHasAutoColumnWidth();
+    child_style_builder.SetHasAutoColumnCount();
+    child_style_builder.SetHasAutoColumnWidth();
   }
-  child_style.SetColumnGap(StyleRef().ColumnGap());
-  child_style.SetColumnFill(StyleRef().GetColumnFill());
-  child_style.SetColumnRuleColor(StyleColor(
+  child_style_builder.SetColumnGap(StyleRef().ColumnGap());
+  child_style_builder.SetColumnFill(StyleRef().GetColumnFill());
+  child_style_builder.SetColumnRuleColor(StyleColor(
       LayoutObject::ResolveColor(StyleRef(), GetCSSPropertyColumnRuleColor())));
-  child_style.SetColumnRuleStyle(StyleRef().ColumnRuleStyle());
-  child_style.SetColumnRuleWidth(StyleRef().ColumnRuleWidth());
+  child_style_builder.SetColumnRuleStyle(StyleRef().ColumnRuleStyle());
+  child_style_builder.SetColumnRuleWidth(StyleRef().ColumnRuleWidth());
 
-  child_style.SetFlexDirection(StyleRef().FlexDirection());
-  child_style.SetFlexWrap(StyleRef().FlexWrap());
+  child_style_builder.SetFlexDirection(StyleRef().FlexDirection());
+  child_style_builder.SetFlexWrap(StyleRef().FlexWrap());
 
-  child_style.SetGridAutoColumns(StyleRef().GridAutoColumns());
-  child_style.SetGridAutoFlow(StyleRef().GetGridAutoFlow());
-  child_style.SetGridAutoRows(StyleRef().GridAutoRows());
-  child_style.SetGridColumnEnd(StyleRef().GridColumnEnd());
-  child_style.SetGridColumnStart(StyleRef().GridColumnStart());
-  child_style.SetGridRowEnd(StyleRef().GridRowEnd());
-  child_style.SetGridRowStart(StyleRef().GridRowStart());
+  child_style_builder.SetGridAutoColumns(StyleRef().GridAutoColumns());
+  child_style_builder.SetGridAutoFlow(StyleRef().GetGridAutoFlow());
+  child_style_builder.SetGridAutoRows(StyleRef().GridAutoRows());
+  child_style_builder.SetGridColumnEnd(StyleRef().GridColumnEnd());
+  child_style_builder.SetGridColumnStart(StyleRef().GridColumnStart());
+  child_style_builder.SetGridRowEnd(StyleRef().GridRowEnd());
+  child_style_builder.SetGridRowStart(StyleRef().GridRowStart());
 
   // grid-template-columns, grid-template-rows
-  child_style.SetGridTemplateColumns(StyleRef().GridTemplateColumns());
-  child_style.SetGridTemplateRows(StyleRef().GridTemplateRows());
-  child_style.SetNamedGridArea(StyleRef().NamedGridArea());
-  child_style.SetNamedGridAreaColumnCount(
+  child_style_builder.SetGridTemplateColumns(StyleRef().GridTemplateColumns());
+  child_style_builder.SetGridTemplateRows(StyleRef().GridTemplateRows());
+  child_style_builder.SetNamedGridArea(StyleRef().NamedGridArea());
+  child_style_builder.SetNamedGridAreaColumnCount(
       StyleRef().NamedGridAreaColumnCount());
-  child_style.SetNamedGridAreaRowCount(StyleRef().NamedGridAreaRowCount());
-  child_style.SetImplicitNamedGridColumnLines(
+  child_style_builder.SetNamedGridAreaRowCount(
+      StyleRef().NamedGridAreaRowCount());
+  child_style_builder.SetImplicitNamedGridColumnLines(
       StyleRef().ImplicitNamedGridColumnLines());
-  child_style.SetImplicitNamedGridRowLines(
+  child_style_builder.SetImplicitNamedGridRowLines(
       StyleRef().ImplicitNamedGridRowLines());
 
-  child_style.SetRowGap(StyleRef().RowGap());
+  child_style_builder.SetRowGap(StyleRef().RowGap());
 
-  child_style.SetJustifyContent(StyleRef().JustifyContent());
-  child_style.SetJustifyItems(StyleRef().JustifyItems());
-  child_style.SetOverflowX(StyleRef().OverflowX());
-  child_style.SetOverflowY(StyleRef().OverflowY());
-  child_style.SetUnicodeBidi(StyleRef().GetUnicodeBidi());
-
-  // If the FIELDSET is an OOF container, the anonymous content box should be
-  // an OOF container to steal OOF objects under the FIELDSET.
-  if (CanContainFixedPositionObjects())
-    child_style.SetContain(kContainsPaint);
-  else if (StyleRef().CanContainAbsolutePositionObjects())
-    child_style.SetPosition(EPosition::kRelative);
+  child_style_builder.SetJustifyContent(StyleRef().JustifyContent());
+  child_style_builder.SetJustifyItems(StyleRef().JustifyItems());
+  child_style_builder.SetOverflowX(StyleRef().OverflowX());
+  child_style_builder.SetOverflowY(StyleRef().OverflowY());
+  child_style_builder.SetUnicodeBidi(StyleRef().GetUnicodeBidi());
 }
 
 bool LayoutNGFieldset::IsOfType(LayoutObjectType type) const {
@@ -179,9 +181,9 @@ void LayoutNGFieldset::InvalidatePaint(
     const PaintInvalidatorContext& context) const {
   // Fieldset's box decoration painting depends on the legend geometry.
   const LayoutBox* legend_box = LayoutFieldset::FindInFlowLegend(*this);
-  if (legend_box && legend_box->ShouldCheckGeometryForPaintInvalidation()) {
+  if (legend_box && legend_box->ShouldCheckLayoutForPaintInvalidation()) {
     GetMutableForPainting().SetShouldDoFullPaintInvalidation(
-        PaintInvalidationReason::kGeometry);
+        PaintInvalidationReason::kLayout);
   }
   LayoutNGBlockFlow::InvalidatePaint(context);
 }

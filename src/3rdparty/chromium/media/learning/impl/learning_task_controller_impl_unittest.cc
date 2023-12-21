@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,10 +6,10 @@
 
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/test/task_environment.h"
-#include "base/threading/sequenced_task_runner_handle.h"
 #include "media/learning/impl/distribution_reporter.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -221,7 +221,7 @@ TEST_F(LearningTaskControllerImplTest, FeatureProviderIsUsed) {
   task_.feature_descriptions.push_back({"AddedByFeatureProvider"});
   SequenceBoundFeatureProvider feature_provider =
       base::SequenceBound<FakeFeatureProvider>(
-          base::SequencedTaskRunnerHandle::Get());
+          base::SequencedTaskRunner::GetCurrentDefault());
   CreateController(std::move(feature_provider));
   LabelledExample example;
   example.features.push_back(FeatureValue(123));

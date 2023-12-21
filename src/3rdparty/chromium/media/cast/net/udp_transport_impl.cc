@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,9 +9,11 @@
 #include <string>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/logging.h"
+#include "base/task/sequenced_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "build/build_config.h"
 #include "media/cast/net/transport_util.h"
 #include "media/cast/net/udp_packet_pipe.h"
@@ -38,7 +40,7 @@ bool IsEmpty(const net::IPEndPoint& addr) {
   return (addr.address().empty() || addr.address().IsZero()) && !addr.port();
 }
 
-int32_t GetTransportSendBufferSize(const base::DictionaryValue& options) {
+int32_t GetTransportSendBufferSize(const base::Value::Dict& options) {
   // Socket send buffer size needs to be at least greater than one burst
   // size.
   int32_t max_burst_size =
@@ -330,15 +332,15 @@ void UdpTransportImpl::OnSent(const scoped_refptr<net::IOBuffer>& buf,
   }
 }
 
-void UdpTransportImpl::SetUdpOptions(const base::DictionaryValue& options) {
+void UdpTransportImpl::SetUdpOptions(const base::Value::Dict& options) {
   SetSendBufferSize(GetTransportSendBufferSize(options));
-  if (options.FindKey(kOptionDscp)) {
+  if (options.contains(kOptionDscp)) {
     // The default DSCP value for cast is AF41. Which gives it a higher
     // priority over other traffic.
     SetDscp(net::DSCP_AF41);
   }
 #if BUILDFLAG(IS_WIN)
-  if (!options.HasKey(kOptionDisableNonBlockingIO)) {
+  if (!options.contains(kOptionDisableNonBlockingIO)) {
     UseNonBlockingIO();
   }
 #endif
@@ -372,7 +374,7 @@ void UdpTransportImpl::OnPacketReadFromDataPipe(
     return;  // Waiting for the packet to be sent out.
   }
   // Force a post task to prevent the stack from growing too deep.
-  base::SequencedTaskRunnerHandle::Get()->PostTask(
+  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(&UdpTransportImpl::ReadNextPacketToSend,
                                 base::Unretained(this)));
 }

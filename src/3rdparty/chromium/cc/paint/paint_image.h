@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,6 +13,7 @@
 #include "cc/paint/frame_metadata.h"
 #include "cc/paint/image_animation_count.h"
 #include "cc/paint/paint_export.h"
+#include "cc/paint/paint_record.h"
 #include "gpu/command_buffer/common/mailbox.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/skia/include/core/SkImage.h"
@@ -22,6 +23,7 @@
 #include "ui/gfx/display_color_spaces.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
+#include "ui/gfx/hdr_metadata.h"
 
 class SkBitmap;
 class SkColorSpace;
@@ -34,22 +36,10 @@ class VideoFrame;
 namespace cc {
 
 class PaintImageGenerator;
-class PaintOpBuffer;
 class PaintWorkletInput;
 class TextureBacking;
-using PaintRecord = PaintOpBuffer;
 
-enum class ImageType {
-  kPNG,
-  kJPEG,
-  kWEBP,
-  kGIF,
-  kICO,
-  kBMP,
-  kAVIF,
-  kJXL,
-  kInvalid
-};
+enum class ImageType { kPNG, kJPEG, kWEBP, kGIF, kICO, kBMP, kAVIF, kInvalid };
 
 enum class YUVSubsampling { k410, k411, k420, k422, k440, k444, kUnknown };
 
@@ -70,6 +60,9 @@ struct CC_PAINT_EXPORT ImageHeaderMetadata {
 
   // The subsampling format used for the chroma planes, e.g., YUV 4:2:0.
   YUVSubsampling yuv_subsampling = YUVSubsampling::kUnknown;
+
+  // The HDR metadata included with the image, if present.
+  absl::optional<gfx::HDRMetadata> hdr_metadata;
 
   // The visible size of the image (i.e., the area that contains meaningful
   // pixels).
@@ -205,8 +198,10 @@ class CC_PAINT_EXPORT PaintImage {
   PaintImage& operator=(const PaintImage& other);
   PaintImage& operator=(PaintImage&& other);
 
-  bool operator==(const PaintImage& other) const;
-  bool operator!=(const PaintImage& other) const { return !(*this == other); }
+  // For testing only. Checks if `this` and `other` are the same image, i.e.
+  // share the same underlying image. `a.IsSameForTesting(b)` will be true after
+  // `PaintImage b = a;`.
+  bool IsSameForTesting(const PaintImage& other) const;
 
   // Returns the smallest size that is at least as big as the requested_size
   // such that we can decode to exactly that scale. If the requested size is
@@ -216,17 +211,10 @@ class CC_PAINT_EXPORT PaintImage {
   // GetSupportedDecodeSize(size).
   SkISize GetSupportedDecodeSize(const SkISize& requested_size) const;
 
-  // Decode the image into RGBX into the given memory for the given SkImageInfo.
-  // - Size in |info| must be supported.
-  // - The amount of memory allocated must be at least
-  //   |info|.minRowBytes() * |info|.height()
-  // Returns true on success and false on failure. Updates |info| to match the
-  // requested color space, if provided.
-  // Note that for non-lazy images this will do a copy or readback if the image
-  // is texture backed.
-  bool Decode(void* memory,
-              SkImageInfo* info,
-              sk_sp<SkColorSpace> color_space,
+  // Decode the image into RGBX into the pixels of the specified SkPixmap.
+  // Returns true on success and false on failure. Note that for non-lazy images
+  // this will do a copy or readback if the image is texture backed.
+  bool Decode(SkPixmap pixmap,
               size_t frame_index,
               GeneratorClientId client_id) const;
 
@@ -264,6 +252,7 @@ class CC_PAINT_EXPORT PaintImage {
   CompletionState completion_state() const { return completion_state_; }
   bool is_multipart() const { return is_multipart_; }
   bool is_high_bit_depth() const { return is_high_bit_depth_; }
+  bool may_be_lcp_candidate() const { return may_be_lcp_candidate_; }
   int repetition_count() const { return repetition_count_; }
   bool ShouldAnimate() const;
   AnimationSequenceId reset_animation_sequence_id() const {
@@ -350,14 +339,10 @@ class CC_PAINT_EXPORT PaintImage {
   friend class PaintShader;
   friend class blink::VideoFrame;
 
-  bool DecodeFromGenerator(void* memory,
-                           SkImageInfo* info,
-                           sk_sp<SkColorSpace> color_space,
+  bool DecodeFromGenerator(SkPixmap pixmap,
                            size_t frame_index,
                            GeneratorClientId client_id) const;
-  bool DecodeFromSkImage(void* memory,
-                         SkImageInfo* info,
-                         sk_sp<SkColorSpace> color_space,
+  bool DecodeFromSkImage(SkPixmap pixmap,
                          size_t frame_index,
                          GeneratorClientId client_id) const;
   void CreateSkImage();
@@ -370,7 +355,7 @@ class CC_PAINT_EXPORT PaintImage {
   const sk_sp<SkImage>& GetSkImage() const;
 
   sk_sp<SkImage> sk_image_;
-  sk_sp<PaintRecord> paint_record_;
+  absl::optional<PaintRecord> paint_record_;
   gfx::Rect paint_record_rect_;
 
   ContentId content_id_ = kInvalidContentId;
@@ -388,6 +373,12 @@ class CC_PAINT_EXPORT PaintImage {
 
   // Whether this image has more than 8 bits per color channel.
   bool is_high_bit_depth_ = false;
+
+  // Whether this image may untimately be a candidate for Largest Contentful
+  // Paint. The final LCP contribution of an image is unknown until we present
+  // it, but this flag is intended for metrics on when we do not present the
+  // image when the system claims.
+  bool may_be_lcp_candidate_ = false;
 
   // An incrementing sequence number maintained by the painter to indicate if
   // this animation should be reset in the compositor. Incrementing this number

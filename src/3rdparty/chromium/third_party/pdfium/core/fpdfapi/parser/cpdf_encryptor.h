@@ -1,4 +1,4 @@
-// Copyright 2017 PDFium Authors. All rights reserved.
+// Copyright 2017 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,9 +9,7 @@
 
 #include <stdint.h>
 
-#include <vector>
-
-#include "core/fxcrt/fx_memory_wrappers.h"
+#include "core/fxcrt/data_vector.h"
 #include "core/fxcrt/unowned_ptr.h"
 #include "third_party/base/span.h"
 
@@ -22,8 +20,7 @@ class CPDF_Encryptor {
   CPDF_Encryptor(const CPDF_CryptoHandler* pHandler, int objnum);
   ~CPDF_Encryptor();
 
-  std::vector<uint8_t, FxAllocAllocator<uint8_t>> Encrypt(
-      pdfium::span<const uint8_t> src_data) const;
+  DataVector<uint8_t> Encrypt(pdfium::span<const uint8_t> src_data) const;
 
  private:
   UnownedPtr<const CPDF_CryptoHandler> const m_pHandler;

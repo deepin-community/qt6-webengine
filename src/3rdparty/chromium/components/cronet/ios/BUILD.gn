@@ -1,4 +1,4 @@
-# Copyright 2015 The Chromium Authors. All rights reserved.
+# Copyright 2015 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -287,7 +287,7 @@ if (!is_fat_secondary_toolchain) {
   action("generate_license") {
     _license_path = "$_package_dir/LICENSE"
 
-    script = "//tools/licenses.py"
+    script = "//tools/licenses/licenses.py"
     inputs = [ lastchange_file ]
     outputs = [ _license_path ]
     args = [

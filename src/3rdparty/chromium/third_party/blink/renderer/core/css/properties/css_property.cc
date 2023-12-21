@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -19,12 +19,6 @@ const CSSProperty& GetCSSPropertyVariable() {
 
 bool CSSProperty::HasEqualCSSPropertyName(const CSSProperty& other) const {
   return property_id_ == other.property_id_;
-}
-
-const CSSProperty& CSSProperty::Get(CSSPropertyID id) {
-  DCHECK_NE(id, CSSPropertyID::kInvalid);
-  DCHECK_LE(id, kLastCSSProperty);  // last property id
-  return To<CSSProperty>(CSSUnresolvedProperty::GetNonAliasProperty(id));
 }
 
 // The correctness of static functions that operate on CSSPropertyName is
@@ -48,12 +42,14 @@ CSSProperty::CrossThreadStyleValueFromComputedStyle(
     bool allow_visited_style) const {
   const CSSValue* css_value = CSSValueFromComputedStyle(
       computed_style, layout_object, allow_visited_style);
-  if (!css_value)
+  if (!css_value) {
     return std::make_unique<CrossThreadUnsupportedValue>("");
+  }
   CSSStyleValue* style_value =
       StyleValueFactory::CssValueToStyleValue(GetCSSPropertyName(), *css_value);
-  if (!style_value)
+  if (!style_value) {
     return std::make_unique<CrossThreadUnsupportedValue>("");
+  }
   return ComputedStyleUtils::CrossThreadStyleValueFromCSSStyleValue(
       style_value);
 }
@@ -75,8 +71,9 @@ void CSSProperty::FilterWebExposedCSSPropertiesIntoVector(
     Vector<const CSSProperty*>& outVector) {
   for (unsigned i = 0; i < propertyCount; i++) {
     const CSSProperty& property = Get(properties[i]);
-    if (property.IsWebExposed(execution_context))
+    if (property.IsWebExposed(execution_context)) {
       outVector.push_back(&property);
+    }
   }
 }
 

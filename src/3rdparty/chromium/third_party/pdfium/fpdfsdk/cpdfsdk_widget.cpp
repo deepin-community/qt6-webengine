@@ -1,4 +1,4 @@
-// Copyright 2016 PDFium Authors. All rights reserved.
+// Copyright 2016 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -58,7 +58,7 @@ CPDFSDK_Widget::~CPDFSDK_Widget() {
 #ifdef PDF_ENABLE_XFA
 CXFA_FFWidget* CPDFSDK_Widget::GetMixXFAWidget() const {
   CPDF_Document::Extension* pContext =
-      m_pPageView->GetFormFillEnv()->GetDocExtension();
+      GetPageView()->GetFormFillEnv()->GetDocExtension();
   if (!pContext || !pContext->ContainsExtensionForegroundForm())
     return nullptr;
 
@@ -84,7 +84,7 @@ CXFA_FFWidget* CPDFSDK_Widget::GetMixXFAWidget() const {
 
 CXFA_FFWidget* CPDFSDK_Widget::GetGroupMixXFAWidget() const {
   CPDF_Document::Extension* pContext =
-      m_pPageView->GetFormFillEnv()->GetDocExtension();
+      GetPageView()->GetFormFillEnv()->GetDocExtension();
   if (!pContext || !pContext->ContainsExtensionForegroundForm())
     return nullptr;
 
@@ -99,7 +99,7 @@ CXFA_FFWidget* CPDFSDK_Widget::GetGroupMixXFAWidget() const {
 
 CXFA_FFWidgetHandler* CPDFSDK_Widget::GetXFAWidgetHandler() const {
   CPDF_Document::Extension* pContext =
-      m_pPageView->GetFormFillEnv()->GetDocExtension();
+      GetPageView()->GetFormFillEnv()->GetDocExtension();
   if (!pContext || !pContext->ContainsExtensionForegroundForm())
     return nullptr;
 
@@ -209,7 +209,7 @@ bool CPDFSDK_Widget::OnXFAAAction(PDFSDK_XFAAActionType eXFAAAT,
                                   CFFL_FieldAction* data,
                                   const CPDFSDK_PageView* pPageView) {
   auto* pContext = static_cast<CPDFXFA_Context*>(
-      m_pPageView->GetFormFillEnv()->GetDocExtension());
+      GetPageView()->GetFormFillEnv()->GetDocExtension());
   if (!pContext)
     return false;
 
@@ -295,7 +295,7 @@ void CPDFSDK_Widget::Synchronize(bool bSynchronizeElse) {
 
   if (bSynchronizeElse) {
     auto* context = static_cast<CPDFXFA_Context*>(
-        m_pPageView->GetFormFillEnv()->GetDocExtension());
+        GetPageView()->GetFormFillEnv()->GetDocExtension());
     context->GetXFADocView()->ProcessValueChanged(node);
   }
 }
@@ -341,8 +341,9 @@ bool CPDFSDK_Widget::HandleXFAAAction(
 }
 #endif  // PDF_ENABLE_XFA
 
-bool CPDFSDK_Widget::IsWidgetAppearanceValid(CPDF_Annot::AppearanceMode mode) {
-  const CPDF_Dictionary* pAP =
+bool CPDFSDK_Widget::IsWidgetAppearanceValid(
+    CPDF_Annot::AppearanceMode mode) const {
+  RetainPtr<const CPDF_Dictionary> pAP =
       GetAnnotDict()->GetDictFor(pdfium::annotation::kAP);
   if (!pAP)
     return false;
@@ -357,7 +358,7 @@ bool CPDFSDK_Widget::IsWidgetAppearanceValid(CPDF_Annot::AppearanceMode mode) {
     ap_entry = "N";
 
   // Get the AP stream or subdirectory
-  const CPDF_Object* pSub = pAP->GetDirectObjectFor(ap_entry);
+  RetainPtr<const CPDF_Object> pSub = pAP->GetDirectObjectFor(ap_entry);
   if (!pSub)
     return false;
 
@@ -380,6 +381,10 @@ bool CPDFSDK_Widget::IsWidgetAppearanceValid(CPDF_Annot::AppearanceMode mode) {
   }
 }
 
+bool CPDFSDK_Widget::IsPushHighlighted() const {
+  return GetFormControl()->GetHighlightingMode() == CPDF_FormControl::kPush;
+}
+
 FormFieldType CPDFSDK_Widget::GetFieldType() const {
   CPDF_FormField* pField = GetFormField();
   return pField ? pField->GetFieldType() : FormFieldType::kUnknown;
@@ -388,13 +393,13 @@ FormFieldType CPDFSDK_Widget::GetFieldType() const {
 void CPDFSDK_Widget::SetRect(const CFX_FloatRect& rect) {
   DCHECK(rect.right - rect.left >= 1.0f);
   DCHECK(rect.top - rect.bottom >= 1.0f);
-  GetAnnotDict()->SetRectFor(pdfium::annotation::kRect, rect);
+  GetMutableAnnotDict()->SetRectFor(pdfium::annotation::kRect, rect);
 }
 
 bool CPDFSDK_Widget::IsAppearanceValid() {
 #ifdef PDF_ENABLE_XFA
   CPDF_Document::Extension* pContext =
-      m_pPageView->GetFormFillEnv()->GetDocExtension();
+      GetPageView()->GetFormFillEnv()->GetDocExtension();
   if (pContext && pContext->ContainsExtensionFullForm())
     return true;
 #endif  // PDF_ENABLE_XFA
@@ -509,6 +514,21 @@ WideString CPDFSDK_Widget::GetExportValue() const {
 
 WideString CPDFSDK_Widget::GetOptionLabel(int nIndex) const {
   CPDF_FormField* pFormField = GetFormField();
+  return pFormField->GetOptionLabel(nIndex);
+}
+
+WideString CPDFSDK_Widget::GetSelectExportText(int nIndex) const {
+  if (nIndex < 0)
+    return WideString();
+
+  CPDF_FormField* pFormField = GetFormField();
+  if (!pFormField)
+    return WideString();
+
+  WideString swRet = pFormField->GetOptionValue(nIndex);
+  if (!swRet.IsEmpty())
+    return swRet;
+
   return pFormField->GetOptionLabel(nIndex);
 }
 
@@ -634,7 +654,7 @@ void CPDFSDK_Widget::ResetAppearance(absl::optional<WideString> sValue,
   if (bValueChanged == kValueChanged)
     m_nValueAge++;
 
-  CPDFSDK_AppStream appStream(this, GetAPDict());
+  CPDFSDK_AppStream appStream(this, GetAPDict().Get());
   switch (GetFieldType()) {
     case FormFieldType::kPushButton:
       appStream.SetAsPushButton();
@@ -857,6 +877,13 @@ WideString CPDFSDK_Widget::GetSelectedText() {
   return GetInteractiveFormFiller()->GetSelectedText(this);
 }
 
+void CPDFSDK_Widget::ReplaceAndKeepSelection(const WideString& text) {
+  if (IsSignatureWidget())
+    return;
+
+  GetInteractiveFormFiller()->ReplaceAndKeepSelection(this, text);
+}
+
 void CPDFSDK_Widget::ReplaceSelection(const WideString& text) {
   if (IsSignatureWidget())
     return;
@@ -1048,7 +1075,7 @@ void CPDFSDK_Widget::OnLoad() {
   }
 
 #ifdef PDF_ENABLE_XFA
-  auto* pContext = m_pPageView->GetFormFillEnv()->GetDocExtension();
+  auto* pContext = GetPageView()->GetFormFillEnv()->GetDocExtension();
   if (pContext && pContext->ContainsExtensionForegroundForm()) {
     if (!IsAppearanceValid() && !GetValue().IsEmpty())
       ResetXFAAppearance(CPDFSDK_Widget::kValueUnchanged);
@@ -1075,7 +1102,7 @@ CPDF_Action CPDFSDK_Widget::GetAAction(CPDF_AAction::AActionType eAAT) {
     case CPDF_AAction::kValidate:
     case CPDF_AAction::kCalculate: {
       CPDF_FormField* pField = GetFormField();
-      if (pField->GetAdditionalAction().GetDict())
+      if (pField->GetAdditionalAction().HasDict())
         return pField->GetAdditionalAction().GetAction(eAAT);
       return CPDFSDK_BAAnnot::GetAAction(eAAT);
     }
@@ -1087,5 +1114,5 @@ CPDF_Action CPDFSDK_Widget::GetAAction(CPDF_AAction::AActionType eAAT) {
 }
 
 CFFL_InteractiveFormFiller* CPDFSDK_Widget::GetInteractiveFormFiller() {
-  return m_pPageView->GetFormFillEnv()->GetInteractiveFormFiller();
+  return GetPageView()->GetFormFillEnv()->GetInteractiveFormFiller();
 }

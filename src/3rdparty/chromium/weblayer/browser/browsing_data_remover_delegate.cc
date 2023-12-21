@@ -1,10 +1,10 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "weblayer/browser/browsing_data_remover_delegate.h"
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "build/build_config.h"
 #include "components/browsing_data/content/browsing_data_helper.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
@@ -13,6 +13,7 @@
 #include "components/user_prefs/user_prefs.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browsing_data_filter_builder.h"
+#include "content/public/browser/origin_trials_controller_delegate.h"
 #include "services/network/public/mojom/cookie_manager.mojom.h"
 #include "weblayer/browser/browser_process.h"
 #include "weblayer/browser/favicon/favicon_service_impl.h"
@@ -111,6 +112,10 @@ void BrowsingDataRemoverDelegate::RemoveEmbedderData(
   if (remove_mask & DATA_TYPE_SITE_SETTINGS) {
     browsing_data::RemoveSiteSettingsData(delete_begin, delete_end,
                                           host_content_settings_map);
+    content::OriginTrialsControllerDelegate* delegate =
+        browser_context_->GetOriginTrialsControllerDelegate();
+    if (delegate)
+      delegate->ClearPersistedTokens();
   }
 
   RunCallbackIfDone();

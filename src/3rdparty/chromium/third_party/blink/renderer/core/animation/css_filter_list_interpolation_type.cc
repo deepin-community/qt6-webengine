@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -35,14 +35,14 @@ const FilterOperations& GetFilterList(const CSSProperty& property,
 }
 
 void SetFilterList(const CSSProperty& property,
-                   ComputedStyle& style,
+                   ComputedStyleBuilder& builder,
                    const FilterOperations& filter_operations) {
   switch (property.PropertyID()) {
     case CSSPropertyID::kBackdropFilter:
-      style.SetBackdropFilter(filter_operations);
+      builder.SetBackdropFilter(filter_operations);
       break;
     case CSSPropertyID::kFilter:
-      style.SetFilter(filter_operations);
+      builder.SetFilter(filter_operations);
       break;
     default:
       NOTREACHED();
@@ -157,7 +157,7 @@ InterpolationValue CSSFilterListInterpolationType::MaybeConvertInherit(
   conversion_checkers.push_back(std::make_unique<InheritedFilterListChecker>(
       CssProperty(), inherited_filter_operations));
   return ConvertFilterList(inherited_filter_operations,
-                           state.Style()->EffectiveZoom());
+                           state.StyleBuilder().EffectiveZoom());
 }
 
 InterpolationValue CSSFilterListInterpolationType::MaybeConvertValue(
@@ -258,13 +258,14 @@ void CSSFilterListInterpolationType::ApplyStandardPropertyValue(
   wtf_size_t length = interpolable_list.length();
 
   FilterOperations filter_operations;
-  filter_operations.Operations().ReserveCapacity(length);
+  filter_operations.Operations().reserve(length);
   for (wtf_size_t i = 0; i < length; i++) {
     filter_operations.Operations().push_back(
         To<InterpolableFilter>(interpolable_list.Get(i))
             ->CreateFilterOperation(state));
   }
-  SetFilterList(CssProperty(), *state.Style(), std::move(filter_operations));
+  SetFilterList(CssProperty(), state.StyleBuilder(),
+                std::move(filter_operations));
 }
 
 InterpolationValue

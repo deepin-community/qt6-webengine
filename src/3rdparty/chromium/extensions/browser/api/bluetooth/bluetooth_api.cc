@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,8 +8,8 @@
 #include <string>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/lazy_instance.h"
 #include "base/memory/ref_counted.h"
 #include "build/chromeos_buildflags.h"
@@ -146,7 +146,7 @@ void BluetoothGetDevicesFunction::DoWork(
     scoped_refptr<BluetoothAdapter> adapter) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
-  std::unique_ptr<base::ListValue> device_list(new base::ListValue);
+  base::Value::List device_list;
 
   BluetoothAdapter::DeviceList devices;
 #if BUILDFLAG(IS_CHROMEOS_ASH)
@@ -175,10 +175,10 @@ void BluetoothGetDevicesFunction::DoWork(
     bluetooth_api::Device extension_device;
     bluetooth_api::BluetoothDeviceToApiDevice(*device, &extension_device);
 
-    device_list->Append(extension_device.ToValue());
+    device_list.Append(extension_device.ToValue());
   }
 
-  Respond(OneArgument(base::Value::FromUniquePtrValue(std::move(device_list))));
+  Respond(OneArgument(base::Value(std::move(device_list))));
 }
 
 BluetoothGetDeviceFunction::BluetoothGetDeviceFunction() = default;
@@ -198,8 +198,7 @@ void BluetoothGetDeviceFunction::DoWork(
   if (device) {
     bluetooth_api::Device extension_device;
     bluetooth_api::BluetoothDeviceToApiDevice(*device, &extension_device);
-    Respond(OneArgument(
-        base::Value::FromUniquePtrValue(extension_device.ToValue())));
+    Respond(OneArgument(base::Value(extension_device.ToValue())));
   } else {
     Respond(Error(kInvalidDevice));
   }

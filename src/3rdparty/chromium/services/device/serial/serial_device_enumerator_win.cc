@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -29,6 +29,8 @@
 #include "base/strings/stringprintf.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/sequenced_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/threading/scoped_blocking_call.h"
 #include "base/win/registry.h"
 #include "base/win/scoped_devinfo.h"
@@ -148,7 +150,8 @@ absl::optional<uint32_t> GetProductID(const std::string& instance_id) {
 class SerialDeviceEnumeratorWin::UiThreadHelper
     : public DeviceMonitorWin::Observer {
  public:
-  UiThreadHelper() : task_runner_(base::SequencedTaskRunnerHandle::Get()) {
+  UiThreadHelper()
+      : task_runner_(base::SequencedTaskRunner::GetCurrentDefault()) {
     DETACH_FROM_SEQUENCE(sequence_checker_);
   }
 
@@ -277,7 +280,7 @@ void SerialDeviceEnumeratorWin::DoInitialEnumeration() {
     if (!dev_info.is_valid())
       return;
 
-    SP_DEVINFO_DATA dev_info_data = {/*.cbSize =*/ sizeof(dev_info_data)};
+    SP_DEVINFO_DATA dev_info_data = {.cbSize = sizeof(dev_info_data)};
     for (DWORD i = 0; SetupDiEnumDeviceInfo(dev_info.get(), i, &dev_info_data);
          i++) {
       EnumeratePort(dev_info.get(), &dev_info_data, /*check_port_name=*/false);
@@ -296,7 +299,7 @@ void SerialDeviceEnumeratorWin::DoInitialEnumeration() {
     if (!dev_info.is_valid())
       return;
 
-    SP_DEVINFO_DATA dev_info_data = {/*.cbSize =*/ sizeof(dev_info_data)};
+    SP_DEVINFO_DATA dev_info_data = {.cbSize = sizeof(dev_info_data)};
     for (DWORD i = 0; SetupDiEnumDeviceInfo(dev_info.get(), i, &dev_info_data);
          i++) {
       EnumeratePort(dev_info.get(), &dev_info_data, /*check_port_name=*/true);

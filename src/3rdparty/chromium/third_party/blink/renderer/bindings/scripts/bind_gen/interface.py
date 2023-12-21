@@ -1,4 +1,4 @@
-# Copyright 2019 The Chromium Authors. All rights reserved.
+# Copyright 2019 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -36,8 +36,8 @@ from .code_node_cxx import CxxUnlikelyIfNode
 from .codegen_accumulator import CodeGenAccumulator
 from .codegen_context import CodeGenContext
 from .codegen_expr import CodeGenExpr
-from .codegen_expr import expr_and
 from .codegen_expr import expr_from_exposure
+from .codegen_expr import expr_not
 from .codegen_expr import expr_or
 from .codegen_format import format_template as _format
 from .codegen_utils import component_export
@@ -172,7 +172,10 @@ def callback_function_name(cg_context,
         else:
             kind = "ExposedConstruct"
     elif cg_context.operation_group:
-        kind = "Operation"
+        if cg_context.operation_group.is_static:
+            kind = "StaticOperation"
+        else:
+            kind = "Operation"
     elif cg_context.stringifier:
         kind = "Operation"
 
@@ -610,13 +613,12 @@ def _make_reflect_process_keyword_state(cg_context):
     if not cg_context.attribute_get:
         return None
 
+    is_nullable = cg_context.return_type.unwrap(nullable=False).is_nullable
     ext_attrs = cg_context.attribute.extended_attributes
-    keywords = ext_attrs.values_of("ReflectOnly")
-    missing_default = ext_attrs.value_of("ReflectMissing")
-    empty_default = ext_attrs.value_of("ReflectEmpty")
-    invalid_default = ext_attrs.value_of("ReflectInvalid")
 
     def constant(keyword):
+        if keyword is None and is_nullable:
+            return "g_null_atom"
         if not keyword:
             return "g_empty_atom"
         return "keywords::{}".format(name_style.constant(keyword))
@@ -631,32 +633,36 @@ def _make_reflect_process_keyword_state(cg_context):
         branches,
     ]
 
-    if missing_default is not None:
+    if "ReflectMissing" in ext_attrs:
+        missing_default = ext_attrs.value_of("ReflectMissing")
         branches.append(
             cond="reflect_value.IsNull()",
             body=F("${return_value} = {};", constant(missing_default)))
-    elif cg_context.return_type.unwrap(nullable=False).is_nullable:
+    elif is_nullable:
         branches.append(
             cond="reflect_value.IsNull()",
             body=T("// Null string to IDL null."))
 
-    if empty_default is not None:
-        branches.append(
-            cond="reflect_value.IsEmpty()",
-            body=F("${return_value} = {};", constant(empty_default)))
+    if "ReflectEmpty" in ext_attrs:
+        empty_default = ext_attrs.value_of("ReflectEmpty")
+        branches.append(cond="reflect_value.empty()",
+                        body=F("${return_value} = {};",
+                               constant(empty_default)))
 
+    keywords = ext_attrs.values_of("ReflectOnly")
     expr = " || ".join(
         map(lambda keyword: "reflect_value == {}".format(constant(keyword)),
             keywords))
     branches.append(cond=expr, body=T("${return_value} = reflect_value;"))
 
-    if invalid_default is not None:
+    if "ReflectInvalid" in ext_attrs:
+        invalid_default = ext_attrs.value_of("ReflectInvalid")
         branches.append(
             cond=True,
             body=F("${return_value} = {};", constant(invalid_default)))
     else:
-        branches.append(
-            cond=True, body=F("${return_value} = {};", constant("")))
+        branches.append(cond=True,
+                        body=F("${return_value} = {};", constant(None)))
 
     return SequenceNode(nodes)
 
@@ -757,8 +763,6 @@ def _make_blink_api_call(code_node,
     if cg_context.no_alloc_direct_call_for_testing:
         expr = "\n".join([
             "[&](){",
-            "ThreadState::NoAllocationScope nadc_no_allocation_scope"
-            "(ThreadState::Current());",
             "v8::Isolate::DisallowJavascriptExecutionScope "
             "nadc_disallow_js_exec_scope"
             "(${isolate}, "
@@ -768,10 +772,6 @@ def _make_blink_api_call(code_node,
             _format("return {};", expr),
             "}()",
         ])
-        code_node.accumulate(
-            CodeGenAccumulator.require_include_headers([
-                "third_party/blink/renderer/platform/heap/thread_state_scopes.h"
-            ]))
     return expr
 
 
@@ -863,20 +863,26 @@ def bind_return_value(code_node, cg_context, overriding_args=None):
         SymbolNode("return_value", definition_constructor=create_definition))
 
 
+def _make_bindings_logging_id(cg_context):
+    assert isinstance(cg_context, CodeGenContext)
+
+    logging_id = "{}.{}".format(cg_context.class_like.identifier,
+                                cg_context.property_.identifier)
+    if cg_context.attribute_get:
+        logging_id = "{}.{}".format(logging_id, "get")
+    elif cg_context.attribute_set:
+        logging_id = "{}.{}".format(logging_id, "set")
+    elif cg_context.constructor_group and not cg_context.is_named_constructor:
+        logging_id = "{}.{}".format(cg_context.class_like.identifier,
+                                    "constructor")
+    return logging_id
+
+
 def make_bindings_trace_event(cg_context):
     assert isinstance(cg_context, CodeGenContext)
 
-    event_name = "{}.{}".format(cg_context.class_like.identifier,
-                                cg_context.property_.identifier)
-    if cg_context.attribute_get:
-        event_name = "{}.{}".format(event_name, "get")
-    elif cg_context.attribute_set:
-        event_name = "{}.{}".format(event_name, "set")
-    elif cg_context.constructor_group and not cg_context.is_named_constructor:
-        event_name = "{}.{}".format(cg_context.class_like.identifier,
-                                    "constructor")
-
-    return TextNode("BLINK_BINDINGS_TRACE_EVENT(\"{}\");".format(event_name))
+    return TextNode("BLINK_BINDINGS_TRACE_EVENT(\"{}\");".format(
+        _make_bindings_logging_id(cg_context)))
 
 
 def make_check_argument_length(cg_context):
@@ -1034,8 +1040,7 @@ def make_cooperative_scheduling_safepoint(cg_context):
 def make_log_activity(cg_context):
     assert isinstance(cg_context, CodeGenContext)
 
-    target = cg_context.member_like or cg_context.property_
-    ext_attrs = target.extended_attributes
+    ext_attrs = cg_context.logging_target.extended_attributes
     if "LogActivity" not in ext_attrs:
         return None
     target = ext_attrs.value_of("LogActivity")
@@ -1361,8 +1366,8 @@ def make_report_coop_access(cg_context):
 def make_report_deprecate_as(cg_context):
     assert isinstance(cg_context, CodeGenContext)
 
-    target = cg_context.member_like or cg_context.property_
-    name = target.extended_attributes.value_of("DeprecateAs")
+    name = cg_context.logging_target.extended_attributes.value_of(
+        "DeprecateAs")
     if not name:
         return None
 
@@ -1381,8 +1386,7 @@ def make_report_deprecate_as(cg_context):
 def _make_measure_web_feature_constant(cg_context):
     assert isinstance(cg_context, CodeGenContext)
 
-    target = cg_context.member_like or cg_context.property_
-    ext_attrs = target.extended_attributes
+    ext_attrs = cg_context.logging_target.extended_attributes
 
     suffix = ""
     if cg_context.attribute_get:
@@ -1413,29 +1417,48 @@ def _make_measure_web_feature_constant(cg_context):
 def make_report_high_entropy(cg_context):
     assert isinstance(cg_context, CodeGenContext)
 
-    target = cg_context.member_like or cg_context.property_
-    ext_attrs = target.extended_attributes
-    if cg_context.attribute_set or "HighEntropy" not in ext_attrs:
+    ext_attrs = cg_context.logging_target.extended_attributes
+    if "HighEntropy" not in ext_attrs:
         return None
+    if cg_context.attribute_set:
+        return None
+
+    node = SequenceNode([
+        TextNode("// [HighEntropy]"),
+        FormatNode(
+            "const Dactyloscoper::HighEntropyTracer"
+            "  high_entropy_tracer(\"{logging_id}\", ${info});",
+            logging_id=_make_bindings_logging_id(cg_context)),
+    ])
+    node.accumulate(
+        CodeGenAccumulator.require_include_headers([
+            "third_party/blink/renderer/core/frame/dactyloscoper.h",
+        ]))
+    return node
+
+
+def make_report_high_entropy_direct(cg_context):
+    assert isinstance(cg_context, CodeGenContext)
+
+    ext_attrs = cg_context.logging_target.extended_attributes
+    if not ext_attrs.value_of("HighEntropy") == "Direct":
+        return None
+    if cg_context.attribute_set:
+        return None
+
     assert "Measure" in ext_attrs or "MeasureAs" in ext_attrs, "{}: {}".format(
         cg_context.idl_location_and_name,
-        "[HighEntropy] must be specified with either [Measure] or "
+        "[HighEntropy=Direct] must be specified with either [Measure] or "
         "[MeasureAs].")
 
-    if ext_attrs.value_of("HighEntropy") == "Direct":
-        text = _format(
-            "// [HighEntropy=Direct]\n"
+    node = SequenceNode([
+        TextNode("// [HighEntropy=Direct]"),
+        FormatNode(
             "Dactyloscoper::RecordDirectSurface("
             "${current_execution_context}, {measure_constant}, "
             "${return_value});",
-            measure_constant=_make_measure_web_feature_constant(cg_context))
-    else:
-        text = _format(
-            "// [HighEntropy]\n"
-            "Dactyloscoper::Record("
-            "${current_execution_context}, {measure_constant});",
-            measure_constant=_make_measure_web_feature_constant(cg_context))
-    node = TextNode(text)
+            measure_constant=_make_measure_web_feature_constant(cg_context)),
+    ])
     node.accumulate(
         CodeGenAccumulator.require_include_headers(
             ["third_party/blink/renderer/core/frame/dactyloscoper.h"]))
@@ -1445,8 +1468,7 @@ def make_report_high_entropy(cg_context):
 def make_report_measure_as(cg_context):
     assert isinstance(cg_context, CodeGenContext)
 
-    target = cg_context.member_like or cg_context.property_
-    ext_attrs = target.extended_attributes
+    ext_attrs = cg_context.logging_target.extended_attributes
     if not ("Measure" in ext_attrs or "MeasureAs" in ext_attrs):
         return None
 
@@ -1523,7 +1545,7 @@ def make_runtime_call_timer_scope(cg_context, overriding_name=None):
     assert isinstance(cg_context, CodeGenContext)
     assert _is_none_or_str(overriding_name)
 
-    target = cg_context.member_like or cg_context.property_
+    target = cg_context.logging_target
 
     suffix = ""
     if cg_context.attribute_get:
@@ -1649,12 +1671,16 @@ def make_v8_set_return_value(cg_context):
         return T("bindings::V8SetReturnValue(${info}, ${return_value});")
 
     return_type = cg_context.return_type
-    if return_type.is_typedef:
-        if return_type.identifier in ("EventHandler",
-                                      "OnBeforeUnloadEventHandler",
-                                      "OnErrorEventHandler"):
-            return T("bindings::V8SetReturnValue(${info}, ${return_value}, "
-                     "${isolate}, ${blink_receiver});")
+    if return_type.is_event_handler:
+        return T("bindings::V8SetReturnValue(${info}, ${return_value}, "
+                 "${isolate}, ${blink_receiver});")
+
+    if return_type.is_typedef and return_type.identifier == "SyncIteratorType":
+        # Sync iterator objects (default iterator objects, map iterator objects,
+        # and set iterator objects) are implemented as ScriptWrappable
+        # instances.
+        return T("bindings::V8SetReturnValue(${info}, ${return_value}, "
+                 "${blink_receiver});")
 
     # [CheckSecurity=ReturnValue]
     #
@@ -1818,6 +1844,7 @@ def make_attribute_get_callback_def(cg_context, function_name):
         make_bindings_trace_event(cg_context),
         make_report_coop_access(cg_context),
         make_report_deprecate_as(cg_context),
+        make_report_high_entropy(cg_context),
         make_report_measure_as(cg_context),
         make_log_activity(cg_context),
         EmptyNode(),
@@ -1835,7 +1862,7 @@ def make_attribute_get_callback_def(cg_context, function_name):
         EmptyNode(),
         make_check_security_of_return_value(cg_context),
         make_v8_set_return_value(cg_context),
-        make_report_high_entropy(cg_context),
+        make_report_high_entropy_direct(cg_context),
         make_return_value_cache_update_value(cg_context),
     ])
 
@@ -1883,17 +1910,13 @@ def make_attribute_set_callback_def(cg_context, function_name):
     #   Web IDL.
     # 2. Leverage the nature of [LegacyTreatNonObjectAsNull] (ES to IDL
     #   conversion never fails).
-    if (cg_context.attribute.idl_type.is_typedef
-            and (cg_context.attribute.idl_type.identifier in (
-                "EventHandler", "OnBeforeUnloadEventHandler",
-                "OnErrorEventHandler"))):
-        body.extend([
+    if cg_context.attribute.idl_type.is_event_handler:
+        body.append(
             TextNode("""\
 EventListener* event_handler = JSEventHandler::CreateOrNull(
     ${v8_property_value},
     JSEventHandler::HandlerType::k${attribute.idl_type.identifier});\
-"""),
-        ])
+"""))
         code_generator_info = cg_context.attribute.code_generator_info
         func_name = name_style.api_func("set", cg_context.attribute.identifier)
         if code_generator_info.defined_in_partial:
@@ -1925,7 +1948,7 @@ EventListener* event_handler = JSEventHandler::CreateOrNull(
             elif key == "Reflect":
                 has_reflect = True
             elif key in ("Affects", "CrossOriginIsolated", "DeprecateAs",
-                         "DirectSocketEnabled", "Exposed", "LogActivity",
+                         "Exposed", "IsolatedContext", "LogActivity",
                          "LogAllWorlds", "Measure", "MeasureAs",
                          "ReflectEmpty", "ReflectInvalid", "ReflectMissing",
                          "ReflectOnly", "RuntimeCallStatsCounter",
@@ -2009,6 +2032,7 @@ def make_constant_callback_def(cg_context, function_name):
 
     logging_nodes = SequenceNode([
         make_report_deprecate_as(cg_context),
+        make_report_high_entropy(cg_context),
         make_report_measure_as(cg_context),
         make_log_activity(cg_context),
     ])
@@ -2027,7 +2051,6 @@ def make_constant_callback_def(cg_context, function_name):
         logging_nodes,
         EmptyNode(),
         TextNode(v8_set_return_value),
-        make_report_high_entropy(cg_context),
     ])
 
     return func_def
@@ -2088,6 +2111,20 @@ def make_constructor_function_def(cg_context, function_name):
     body = func_def.body
 
     if len(cg_context.constructor_group) == 1:
+        # The constructor callback is installed with
+        # v8::FunctionTemplate::SetCallHandler, where no way to control the
+        # installation context-by-context. So, we check the exposure and may
+        # throw a TypeError if not exposed. For the case of multiple overloads,
+        # the overload resolution is already exposure sensitive.
+        if cg_context.constructor.exposure.is_context_dependent():
+            body.append(
+                CxxUnlikelyIfNode(cond=expr_not(
+                    expr_from_exposure(cg_context.constructor.exposure)),
+                                  body=[
+                                      T("${exception_state}.ThrowTypeError("
+                                        "\"Illegal constructor\");"),
+                                      T("return;"),
+                                  ]))
         body.append(make_constructor_entry(cg_context))
         body.append(EmptyNode())
 
@@ -2471,16 +2508,10 @@ def make_no_alloc_direct_call_callback_def(cg_context, function_name,
     bind_callback_local_vars(body, cg_context)
 
     body.extend([
-        T("ThreadState::NoAllocationScope "
-          "thread_no_alloc_scope(ThreadState::Current());"),
         T("blink::NoAllocDirectCallScope no_alloc_direct_call_scope("
           "${blink_receiver}, &${v8_arg_callback_options});"),
         EmptyNode(),
     ])
-    body.accumulate(
-        CodeGenAccumulator.require_include_headers([
-            "third_party/blink/renderer/platform/heap/thread_state_scopes.h"
-        ]))
 
     blink_arguments = list(
         map(lambda arg: "${{{}}}".format(arg.blink_arg_name), arg_list))
@@ -2616,6 +2647,7 @@ def make_operation_function_def(cg_context, function_name):
         EmptyNode(),
         make_report_coop_access(cg_context),
         make_report_deprecate_as(cg_context),
+        make_report_high_entropy(cg_context),
         make_report_measure_as(cg_context),
         make_log_activity(cg_context),
         EmptyNode(),
@@ -2638,7 +2670,7 @@ def make_operation_function_def(cg_context, function_name):
         EmptyNode(),
         make_check_security_of_return_value(cg_context),
         make_v8_set_return_value(cg_context),
-        make_report_high_entropy(cg_context),
+        make_report_high_entropy_direct(cg_context),
     ])
 
     return func_def
@@ -2935,7 +2967,7 @@ ${class_name}::NamedPropertyDeleterCallback(property_name, ${info});
 // step 1.3. Return false.
 const bool is_supported = ${index} < ${blink_receiver}->length();
 bindings::V8SetReturnValue(${info}, !is_supported);
-if (is_supported and ${info}.ShouldThrowOnError()) {
+if (is_supported && ${info}.ShouldThrowOnError()) {
   ExceptionState exception_state(
       ${info}.GetIsolate(),
       ExceptionContext::Context::kIndexedPropertyDelete,
@@ -3143,7 +3175,7 @@ def make_named_property_getter_callback(cg_context, function_name):
     # existence by heuristics.
     type = cg_context.return_type.unwrap()
     if type.is_any or type.is_object:
-        not_found_expr = "${return_value}.IsEmpty()"
+        not_found_expr = "${return_value}.empty()"
     elif type.is_string:
         not_found_expr = "${return_value}.IsNull()"
     elif type.is_interface:
@@ -4578,7 +4610,7 @@ def make_same_origin_indexed_deleter_callback(cg_context, function_name):
 // https://html.spec.whatwg.org/C/#windowproxy-delete
 const bool is_supported = ${index} < ${blink_receiver}->length();
 bindings::V8SetReturnValue(${info}, !is_supported);
-if (is_supported and ${info}.ShouldThrowOnError()) {
+if (is_supported && ${info}.ShouldThrowOnError()) {
   ExceptionState exception_state(
       ${info}.GetIsolate(),
       ExceptionContext::Context::kIndexedPropertyDelete,
@@ -4716,9 +4748,9 @@ def bind_installer_local_vars(code_node, cg_context):
         S("is_cross_origin_isolated",
           ("const bool ${is_cross_origin_isolated} = "
            "${execution_context}->CrossOriginIsolatedCapability();")),
-        S("is_direct_socket_enabled",
-          ("const bool ${is_direct_socket_enabled} = "
-           "${execution_context}->DirectSocketCapability();")),
+        S("is_in_isolated_context",
+          ("const bool ${is_in_isolated_context} = "
+           "${execution_context}->IsIsolatedContext();")),
         S("is_in_secure_context",
           ("const bool ${is_in_secure_context} = "
            "${execution_context}->IsSecureContext();")),
@@ -4730,7 +4762,7 @@ def bind_installer_local_vars(code_node, cg_context):
            "${class_name}::GetWrapperTypeInfo();")),
     ])
 
-    if cg_context.interface:
+    if cg_context.interface or cg_context.sync_iterator:
         local_vars.extend([
             S("interface_function_template",
               ("v8::Local<v8::FunctionTemplate> "
@@ -5284,7 +5316,12 @@ def make_property_entries_and_callback_defs(cg_context, attribute_entries,
 
     class_like = cg_context.class_like
     interface = cg_context.interface
-    global_names = class_like.extended_attributes.values_of("Global")
+    # This function produces the property installation code and we'd like to
+    # expose IDL constructs with [Exposed] not only on [Global] but also on
+    # [TargetOfExposed].
+    global_names = (
+        class_like.extended_attributes.values_of("Global") +
+        class_like.extended_attributes.values_of("TargetOfExposed"))
 
     callback_def_nodes = ListNode()
 
@@ -5545,9 +5582,19 @@ def _make_install_prototype_object(cg_context):
     interface = cg_context.interface
 
     unscopables = []
-    is_unscopable = lambda member: "Unscopable" in member.extended_attributes
-    unscopables.extend(filter(is_unscopable, class_like.attributes))
-    unscopables.extend(filter(is_unscopable, class_like.operations))
+    if interface:
+        # Iff the interface has an unscopable member, then collect all
+        # unscopable members including ones in inherited interfaces.
+        # Otherwise, do not create an @@unscopables object.
+        is_unscopable = lambda member: "Unscopable" in member.extended_attributes
+        unscopables.extend(filter(is_unscopable, interface.attributes))
+        unscopables.extend(filter(is_unscopable, interface.operations))
+        if unscopables:
+            for i in interface.inclusive_inherited_interfaces:
+                if i == interface:
+                    continue
+                unscopables.extend(filter(is_unscopable, i.attributes))
+                unscopables.extend(filter(is_unscopable, i.operations))
     if unscopables:
         nodes.extend([
             TextNode("""\
@@ -5561,8 +5608,8 @@ def _make_install_prototype_object(cg_context):
                 TextNode("static constexpr const char* "
                          "kUnscopablePropertyNames[] = {"),
                 ListNode([
-                    TextNode("\"{}\", ".format(member.identifier))
-                    for member in unscopables
+                    TextNode("\"{}\", ".format(name)) for name in sorted(
+                        map(lambda member: member.identifier, unscopables))
                 ]),
                 TextNode("};"),
             ]),
@@ -5736,27 +5783,52 @@ def make_install_interface_template(cg_context, function_name, class_name, api_c
               "${interface_function_template});"),
             EmptyNode(),
         ])
+    elif cg_context.sync_iterator:
+        if cg_context.sync_iterator.interface.iterable:
+            parent_intrinsic_prototype = "v8::Intrinsic::kIteratorPrototype"
+        elif cg_context.sync_iterator.interface.maplike:
+            parent_intrinsic_prototype = "v8::Intrinsic::kMapIteratorPrototype"
+        elif cg_context.sync_iterator.interface.setlike:
+            parent_intrinsic_prototype = "v8::Intrinsic::kSetIteratorPrototype"
+        else:
+            assert False
+        body.extend([
+            FormatNode(
+                "bindings::SetupIDLSyncIteratorTemplate("
+                "${isolate}, ${wrapper_type_info}, "
+                "${instance_object_template}, "
+                "${prototype_object_template}, "
+                "${interface_function_template}, "
+                "{parent_intrinsic_prototype}, "
+                "\"{interface_identifier} Iterator\");",
+                parent_intrinsic_prototype=parent_intrinsic_prototype,
+                interface_identifier=(
+                    cg_context.sync_iterator.interface.identifier)),
+            EmptyNode(),
+        ])
     else:
         assert False
 
     for entry in constructor_entries:
-        set_callback = _format(
-            "${interface_function_template}->SetCallHandler({});",
-            api_class_name + "Callbacks::" + entry.ctor_callback_name)
-        set_length = _format("${interface_function_template}->SetLength({});",
-                             entry.ctor_func_length)
+        nodes = [
+            FormatNode("${interface_function_template}->SetCallHandler({});",
+                       api_class_name + "Callbacks::" + entry.ctor_callback_name),
+            FormatNode("${interface_function_template}->SetLength({});",
+                       entry.ctor_func_length),
+        ]
+        if not (entry.exposure_conditional.is_always_true
+                or entry.is_context_dependent):
+            nodes = [
+                CxxUnlikelyIfNode(cond=entry.exposure_conditional, body=nodes),
+            ]
         if entry.world == CodeGenContext.MAIN_WORLD:
             body.append(
-                CxxLikelyIfNode(
-                    cond="${world}.IsMainWorld()",
-                    body=[T(set_callback), T(set_length)]))
+                CxxLikelyIfNode(cond="${world}.IsMainWorld()", body=nodes))
         elif entry.world == CodeGenContext.NON_MAIN_WORLDS:
             body.append(
-                CxxLikelyIfNode(
-                    cond="!${world}.IsMainWorld()",
-                    body=[T(set_callback), T(set_length)]))
+                CxxUnlikelyIfNode(cond="!${world}.IsMainWorld()", body=nodes))
         elif entry.world == CodeGenContext.ALL_WORLDS:
-            body.extend([T(set_callback), T(set_length)])
+            body.extend(nodes)
         else:
             assert False
         body.append(EmptyNode())
@@ -6767,6 +6839,55 @@ def make_cross_component_init(
 
 
 # ----------------------------------------------------------------------------
+# IsExposed
+# ----------------------------------------------------------------------------
+
+
+def make_is_exposed(cg_context, function_name):
+    assert isinstance(cg_context, CodeGenContext)
+    assert function_name == "IsExposed"
+    class_like = cg_context.class_like
+
+    is_exposed_decl = CxxFuncDeclNode(
+        name=function_name,
+        arg_decls=["ExecutionContext* execution_context"],
+        return_type="bool",
+        static=True)
+    is_exposed_decl.accumulate(
+        CodeGenAccumulator.require_class_decls(["ExecutionContext"]))
+
+    is_exposed_def = CxxFuncDefNode(
+        name=function_name,
+        arg_decls=["ExecutionContext* execution_context"],
+        return_type="bool",
+        class_name=cg_context.class_name)
+
+    def define_execution_context(symbol_node):
+        # execution_context doesn't really need a definition because it's a
+        # function argument, but needs to require ".../execution_context.h".
+        node = SymbolDefinitionNode(symbol_node)
+        node.accumulate(
+            CodeGenAccumulator.require_include_headers([
+                "third_party/blink/renderer/core/execution_context/execution_context.h"
+            ]))
+        return node
+
+    is_exposed_def.body.register_code_symbol(
+        SymbolNode("execution_context",
+                   definition_constructor=define_execution_context))
+    bind_installer_local_vars(is_exposed_def.body, cg_context)
+    # If [Exposed] exists at all, then this exposure condition should be valid.
+    # Otherwise, it is not an exposed interface at all.
+    if class_like.exposure.global_names_and_features:
+        is_exposed_def.body.append(
+            FormatNode("return {};",
+                       expr_from_exposure(class_like.exposure).to_text()))
+    else:
+        is_exposed_def.body.append(TextNode("return false;"))
+    return (is_exposed_decl, is_exposed_def)
+
+
+# ----------------------------------------------------------------------------
 # WrapperTypeInfo
 # ----------------------------------------------------------------------------
 
@@ -6859,6 +6980,8 @@ const WrapperTypeInfo ${class_name}::wrapper_type_info_{{
         idl_definition_kind = "WrapperTypeInfo::kIdlNamespace"
     elif class_like.is_callback_interface:
         idl_definition_kind = "WrapperTypeInfo::kIdlCallbackInterface"
+    elif class_like.is_sync_iterator:
+        idl_definition_kind = "WrapperTypeInfo::kIdlSyncIterator"
     wrapper_type_info_def.append(
         F(pattern,
           install_interface_template_func=FN_INSTALL_INTERFACE_TEMPLATE,
@@ -6870,7 +6993,7 @@ const WrapperTypeInfo ${class_name}::wrapper_type_info_{{
               active_script_wrappable_inheritance),
           idl_definition_kind=idl_definition_kind))
 
-    if class_like.is_interface:
+    if class_like.is_interface or class_like.is_sync_iterator:
         blink_class = blink_class_name(class_like)
         pattern = """\
 const WrapperTypeInfo& {blink_class}::wrapper_type_info_ =
@@ -7102,9 +7225,11 @@ return ${class_name}::{func}(
 
 
 def _collect_include_headers(class_like):
-    assert isinstance(class_like, (web_idl.Interface, web_idl.Namespace))
+    assert isinstance(
+        class_like,
+        (web_idl.Interface, web_idl.Namespace, web_idl.SyncIterator))
 
-    headers = set(class_like.code_generator_info.blink_headers)
+    headers = set(class_like.code_generator_info.blink_headers or [])
 
     def collect_from_idl_type(idl_type):
         idl_type.apply_to_all_composing_elements(add_include_headers)
@@ -7168,8 +7293,11 @@ def _collect_include_headers(class_like):
     return headers
 
 
-def generate_class_like(class_like):
-    assert isinstance(class_like, (web_idl.Interface, web_idl.Namespace))
+def generate_class_like(class_like,
+                        generate_sync_iterator_blink_impl_class_callback=None):
+    assert isinstance(
+        class_like,
+        (web_idl.Interface, web_idl.Namespace, web_idl.SyncIterator))
 
     path_manager = PathManager(class_like)
     api_component = path_manager.api_component
@@ -7193,6 +7321,9 @@ def generate_class_like(class_like):
     elif class_like.is_namespace:
         namespace = class_like
         cg_context = CodeGenContext(namespace=namespace,
+                                    class_name=api_class_name)
+    elif class_like.is_sync_iterator:
+        cg_context = CodeGenContext(sync_iterator=class_like,
                                     class_name=api_class_name)
 
     # Filepaths
@@ -7495,6 +7626,10 @@ def generate_class_like(class_like):
          has_context_dependent_props=bool(
              install_context_dependent_props_decl))
 
+    # Exposure
+    (is_exposed_decl,
+     is_exposed_def) = make_is_exposed(cg_context, "IsExposed")
+
     # Cross-component trampolines
     if is_cross_components:
         (cross_component_init_decl, cross_component_init_def,
@@ -7576,14 +7711,20 @@ def generate_class_like(class_like):
             make_forward_declarations(impl_source_node.accumulator),
             EmptyNode(),
         ])
-    api_header_node.accumulator.add_class_decls([blink_class_name(class_like)])
+    if class_like.is_sync_iterator:
+        api_header_node.accumulator.add_class_decls(
+            [blink_class_name(class_like.interface)])
+    else:
+        api_header_node.accumulator.add_class_decls(
+            [blink_class_name(class_like)])
     api_header_node.accumulator.add_include_headers([
         component_export_header(api_component, for_testing),
         "third_party/blink/renderer/platform/bindings/v8_interface_bridge.h",
     ])
     api_source_node.accumulator.add_include_headers([
         # Blink implementation class' header (e.g. node.h for Node)
-        class_like.code_generator_info.blink_headers[0],
+        (class_like.code_generator_info.blink_headers
+         and class_like.code_generator_info.blink_headers[0]),
     ])
     if interface and interface.inherited:
         api_source_node.accumulator.add_include_headers(
@@ -7595,7 +7736,8 @@ def generate_class_like(class_like):
         ])
     impl_source_node.accumulator.add_include_headers([
         # Blink implementation class' header (e.g. node.h for Node)
-        class_like.code_generator_info.blink_headers[0],
+        (class_like.code_generator_info.blink_headers
+         and class_like.code_generator_info.blink_headers[0]),
         "third_party/blink/renderer/bindings/core/v8/generated_code_helper.h",
         "third_party/blink/renderer/bindings/core/v8/native_value_traits_impl.h",
         "third_party/blink/renderer/bindings/core/v8/to_v8_traits.h",
@@ -7609,6 +7751,15 @@ def generate_class_like(class_like):
         _collect_include_headers(class_like))
 
     # Assemble the parts.
+    if generate_sync_iterator_blink_impl_class_callback:
+        assert isinstance(class_like, web_idl.SyncIterator)
+        generate_sync_iterator_blink_impl_class_callback(
+            sync_iterator=class_like,
+            api_component=api_component,
+            for_testing=for_testing,
+            header_blink_ns=api_header_blink_ns,
+            source_blink_ns=api_source_blink_ns)
+
     api_header_blink_ns.body.extend([
         api_class_def,
         EmptyNode(),
@@ -7625,6 +7776,15 @@ def generate_class_like(class_like):
             constants_def,
             EmptyNode(),
         ])
+
+    api_class_def.public_section.extend([
+        is_exposed_decl,
+        EmptyNode(),
+    ])
+    api_source_blink_ns.body.extend([
+        is_exposed_def,
+        EmptyNode(),
+    ])
 
     api_class_def.public_section.append(get_wrapper_type_info_def)
     api_class_def.public_section.append(EmptyNode())
@@ -8027,7 +8187,13 @@ def generate_interfaces(task_queue):
     web_idl_database = package_initializer().web_idl_database()
 
     for interface in web_idl_database.interfaces:
-        task_queue.post_task(generate_interface, interface.identifier)
+        # Use the number of attributes + constants + operations as a very rough
+        # heuristic for workload. This is by no means close-to-accurate, but is
+        # better than nothing.
+        task_queue.post_task_with_workload(
+            len(interface.attributes) + len(interface.constants) +
+            len(interface.operations), generate_interface,
+            interface.identifier)
 
     task_queue.post_task(generate_install_properties_per_feature,
                          "InstallPropertiesPerFeature",

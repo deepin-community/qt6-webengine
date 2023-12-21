@@ -1,9 +1,10 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/viz/host/host_display_client.h"
 
+#include "base/task/single_thread_task_runner.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
 
@@ -13,6 +14,7 @@
 
 #if BUILDFLAG(IS_WIN)
 #include <windows.h>
+#include <utility>
 
 #include "components/viz/common/display/use_layered_window.h"
 #include "components/viz/host/layered_window_updater_impl.h"
@@ -56,6 +58,10 @@ void HostDisplayClient::CreateLayeredWindowUpdater(
 
   layered_window_updater_ =
       std::make_unique<LayeredWindowUpdaterImpl>(widget_, std::move(receiver));
+}
+void HostDisplayClient::AddChildWindowToBrowser(
+    gpu::SurfaceHandle child_window) {
+  NOTREACHED();
 }
 #endif
 

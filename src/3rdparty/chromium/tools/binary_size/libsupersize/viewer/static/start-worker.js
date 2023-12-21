@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -34,6 +34,12 @@ class TreeWorker {
     });
   }
 
+  /** @public **/
+  dispose() {
+    this._worker.terminate();
+    delete this._worker;
+  }
+
   /**
    * @param {string} action
    * @param {any} data
@@ -66,10 +72,11 @@ class TreeWorker {
    * @returns {Promise<BuildTreeResults, string>}
    */
   loadAndBuildTree(input=null, accessToken=null) {
+    const buildOptions = state.exportToBuildOptions();
     return this._waitForResponse('loadAndBuildTree', {
       input,
       accessToken,
-      optionsStr: location.search.slice(1),
+      buildOptions,
     });
   }
 
@@ -78,8 +85,9 @@ class TreeWorker {
    * @returns {Promise<BuildTreeResults>}
    */
   buildTree() {
+    const buildOptions = state.exportToBuildOptions();
     return this._waitForResponse('buildTree', {
-      optionsStr: location.search.slice(1),
+      buildOptions,
     });
   }
 
@@ -99,6 +107,10 @@ class TreeWorker {
  * @return {TreeWorker}
  */
 function restartWorker(onProgressHandler) {
+  if (window.supersize.worker) {
+    window.supersize.worker.dispose();
+    window.supersize.worker = null;
+  }
   const innerWorker = new Worker('tree-worker-wasm.js');
   window.supersize.worker = new TreeWorker(innerWorker, onProgressHandler);
   return window.supersize.worker;

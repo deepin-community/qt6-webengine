@@ -1,22 +1,29 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_FRAME_REMOTE_FRAME_VIEW_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_FRAME_REMOTE_FRAME_VIEW_H_
 
-#include "cc/paint/paint_canvas.h"
+#include "base/check.h"
+#include "base/time/time.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/mojom/frame/lifecycle.mojom-blink-forward.h"
 #include "third_party/blink/public/mojom/frame/viewport_intersection_state.mojom-blink.h"
-#include "third_party/blink/renderer/core/dom/document_lifecycle.h"
+#include "third_party/blink/renderer/core/frame/embedded_content_view.h"
 #include "third_party/blink/renderer/core/frame/frame_view.h"
 #include "third_party/blink/renderer/core/layout/intrinsic_sizing_info.h"
+#include "third_party/blink/renderer/core/paint/paint_flags.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/heap/member.h"
 #include "ui/gfx/geometry/rect.h"
 
 namespace cc {
 class PaintCanvas;
+}
+
+namespace gfx {
+class Vector2d;
 }
 
 namespace blink {
@@ -82,6 +89,8 @@ class RemoteFrameView final : public GarbageCollected<RemoteFrameView>,
 
   void Trace(Visitor*) const override;
 
+  void ResetFrozenSize() { frozen_size_ = absl::nullopt; }
+
  protected:
   bool NeedsViewportOffset() const override { return true; }
   // This is used to service IntersectionObservers in an OOPIF child document.
@@ -102,6 +111,9 @@ class RemoteFrameView final : public GarbageCollected<RemoteFrameView>,
   // animations.
   gfx::Rect ComputeCompositingRect() const;
 
+  // Fetch the frozen size, if any, from the associated LayoutObject.
+  void UpdateFrozenSize();
+
   // The properties and handling of the cycle between RemoteFrame
   // and its RemoteFrameView corresponds to that between LocalFrame
   // and LocalFrameView. Please see the LocalFrameView::frame_ comment for
@@ -109,6 +121,7 @@ class RemoteFrameView final : public GarbageCollected<RemoteFrameView>,
   Member<RemoteFrame> remote_frame_;
   mojom::blink::ViewportIntersectionState last_intersection_state_;
   gfx::Rect compositing_rect_;
+  absl::optional<gfx::Size> frozen_size_;
   float compositing_scale_factor_ = 1.0f;
 
   IntrinsicSizingInfo intrinsic_sizing_info_;

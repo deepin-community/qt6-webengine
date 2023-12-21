@@ -1,11 +1,11 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef COMPONENTS_WEBXR_MAILBOX_TO_SURFACE_BRIDGE_IMPL_H_
 #define COMPONENTS_WEBXR_MAILBOX_TO_SURFACE_BRIDGE_IMPL_H_
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/task/single_thread_task_runner.h"
@@ -66,7 +66,7 @@ class MailboxToSurfaceBridgeImpl : public device::MailboxToSurfaceBridge {
 
   void WaitSyncToken(const gpu::SyncToken& sync_token) override;
 
-  void WaitForClientGpuFence(gfx::GpuFence*) override;
+  void WaitForClientGpuFence(gfx::GpuFence&) override;
 
   void CreateGpuFence(const gpu::SyncToken& sync_token,
                       base::OnceCallback<void(std::unique_ptr<gfx::GpuFence>)>
@@ -88,7 +88,6 @@ class MailboxToSurfaceBridgeImpl : public device::MailboxToSurfaceBridge {
   void DrawQuad(unsigned int textureHandle, const gfx::Transform& uv_transform);
 
   scoped_refptr<viz::ContextProvider> context_provider_;
-  std::unique_ptr<gl::ScopedJavaSurface> surface_;
   raw_ptr<gpu::gles2::GLES2Interface> gl_ = nullptr;
   raw_ptr<gpu::ContextSupport> context_support_ = nullptr;
   int surface_handle_ = gpu::kNullSurfaceHandle;

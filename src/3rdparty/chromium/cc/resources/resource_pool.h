@@ -1,4 +1,4 @@
-// Copyright 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -22,7 +22,6 @@
 #include "base/time/time.h"
 #include "base/trace_event/memory_allocator_dump_guid.h"
 #include "base/trace_event/memory_dump_provider.h"
-#include "base/unguessable_token.h"
 #include "cc/cc_export.h"
 #include "components/viz/common/resources/resource_format.h"
 #include "components/viz/common/resources/resource_id.h"
@@ -202,7 +201,7 @@ class CC_EXPORT ResourcePool : public base::trace_event::MemoryDumpProvider {
 
     // `resource_` is not a raw_ptr<...> for performance reasons (based on
     // analysis of sampling profiler data and tab_search:top100:2020).
-    PoolResource* resource_ = nullptr;
+    RAW_PTR_EXCLUSION PoolResource* resource_ = nullptr;
   };
 
   // When holding gpu resources, the |context_provider| should be non-null,
@@ -264,7 +263,9 @@ class CC_EXPORT ResourcePool : public base::trace_event::MemoryDumpProvider {
   void ReduceResourceUsage();
   bool ResourceUsageTooHigh();
 
-  size_t memory_usage_bytes() const { return in_use_memory_usage_bytes_; }
+  size_t memory_usage_bytes() const {
+    return total_memory_usage_bytes_ - unused_memory_usage_bytes_;
+  }
   size_t resource_count() const { return in_use_resources_.size(); }
 
   // Overridden from base::trace_event::MemoryDumpProvider:
@@ -347,7 +348,8 @@ class CC_EXPORT ResourcePool : public base::trace_event::MemoryDumpProvider {
     void OnMemoryDump(base::trace_event::ProcessMemoryDump* pmd,
                       int tracing_id,
                       const viz::ClientResourceProvider* resource_provider,
-                      bool is_free) const;
+                      bool is_free,
+                      bool is_busy) const;
 
     void set_debug_name(const std::string& name) { debug_name_ = name; }
     const std::string& debug_name() const { return debug_name_; }
@@ -392,7 +394,7 @@ class CC_EXPORT ResourcePool : public base::trace_event::MemoryDumpProvider {
     }
 
    private:
-    ResourcePool* const resource_pool_;
+    const raw_ptr<ResourcePool> resource_pool_;
     const size_t unique_id_;
     const gfx::Size size_;
     const viz::ResourceFormat format_;
@@ -470,7 +472,7 @@ class CC_EXPORT ResourcePool : public base::trace_event::MemoryDumpProvider {
   size_t next_resource_unique_id_ = 1;
   size_t max_memory_usage_bytes_ = 0;
   size_t max_resource_count_ = 0;
-  size_t in_use_memory_usage_bytes_ = 0;
+  size_t unused_memory_usage_bytes_ = 0;
   size_t total_memory_usage_bytes_ = 0;
   size_t total_resource_count_ = 0;
   bool evict_expired_resources_pending_ = false;

@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -272,6 +272,47 @@ TEST(CookieInclusionStatusTest, ValidateExclusionAndWarningFromWire) {
   warning_reasons = (1u << (CookieInclusionStatus::NUM_WARNING_REASONS - 1));
   EXPECT_TRUE(CookieInclusionStatus::ValidateExclusionAndWarningFromWire(
       exclusion_reasons, warning_reasons));
+}
+
+TEST(CookieInclusionStatusTest, ExcludedByUserPreferences) {
+  CookieInclusionStatus status =
+      CookieInclusionStatus::MakeFromReasonsForTesting(
+          {CookieInclusionStatus::ExclusionReason::EXCLUDE_USER_PREFERENCES});
+  EXPECT_TRUE(status.ExcludedByUserPreferences());
+
+  status = CookieInclusionStatus::MakeFromReasonsForTesting({
+      CookieInclusionStatus::ExclusionReason::EXCLUDE_USER_PREFERENCES,
+      CookieInclusionStatus::ExclusionReason::EXCLUDE_FAILURE_TO_STORE,
+  });
+  EXPECT_FALSE(status.ExcludedByUserPreferences());
+
+  status = CookieInclusionStatus::MakeFromReasonsForTesting({
+      CookieInclusionStatus::ExclusionReason::EXCLUDE_USER_PREFERENCES,
+      CookieInclusionStatus::ExclusionReason::
+          EXCLUDE_THIRD_PARTY_BLOCKED_WITHIN_FIRST_PARTY_SET,
+  });
+  EXPECT_TRUE(status.ExcludedByUserPreferences());
+
+  status = CookieInclusionStatus::MakeFromReasonsForTesting({
+      CookieInclusionStatus::ExclusionReason::
+          EXCLUDE_THIRD_PARTY_BLOCKED_WITHIN_FIRST_PARTY_SET,
+  });
+  EXPECT_FALSE(status.ExcludedByUserPreferences());
+
+  status = CookieInclusionStatus::MakeFromReasonsForTesting({
+      CookieInclusionStatus::ExclusionReason::
+          EXCLUDE_THIRD_PARTY_BLOCKED_WITHIN_FIRST_PARTY_SET,
+      CookieInclusionStatus::ExclusionReason::EXCLUDE_FAILURE_TO_STORE,
+  });
+  EXPECT_FALSE(status.ExcludedByUserPreferences());
+
+  status = CookieInclusionStatus::MakeFromReasonsForTesting({
+      CookieInclusionStatus::ExclusionReason::EXCLUDE_USER_PREFERENCES,
+      CookieInclusionStatus::ExclusionReason::
+          EXCLUDE_THIRD_PARTY_BLOCKED_WITHIN_FIRST_PARTY_SET,
+      CookieInclusionStatus::ExclusionReason::EXCLUDE_FAILURE_TO_STORE,
+  });
+  EXPECT_FALSE(status.ExcludedByUserPreferences());
 }
 
 }  // namespace net

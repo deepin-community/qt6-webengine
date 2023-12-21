@@ -29,6 +29,7 @@
 #include "quiche/quic/core/quic_error_codes.h"
 #include "quiche/quic/core/quic_flow_controller.h"
 #include "quiche/quic/core/quic_packets.h"
+#include "quiche/quic/core/quic_stream_priority.h"
 #include "quiche/quic/core/quic_stream_send_buffer.h"
 #include "quiche/quic/core/quic_stream_sequencer.h"
 #include "quiche/quic/core/quic_types.h"
@@ -137,16 +138,6 @@ class QUIC_EXPORT_PRIVATE PendingStream
 class QUIC_EXPORT_PRIVATE QuicStream
     : public QuicStreamSequencer::StreamInterface {
  public:
-  // Default priority for Google QUIC.
-  // This is somewhat arbitrary.  It's possible, but unlikely, we will either
-  // fail to set a priority client-side, or cancel a stream before stripping the
-  // priority from the wire server-side.  In either case, start out with a
-  // priority in the middle in case of Google QUIC.
-  static const spdy::SpdyPriority kDefaultPriority = 3;
-  static_assert(kDefaultPriority ==
-                    (spdy::kV3LowestPriority + spdy::kV3HighestPriority) / 2,
-                "Unexpected value of kDefaultPriority");
-
   // Creates a new stream with stream_id |id| associated with |session|. If
   // |is_static| is true, then the stream will be given precedence
   // over other streams when determing what streams should write next.
@@ -160,10 +151,6 @@ class QUIC_EXPORT_PRIVATE QuicStream
   QuicStream& operator=(const QuicStream&) = delete;
 
   virtual ~QuicStream();
-
-  // Default priority for IETF QUIC, defined by the priority extension at
-  // https://httpwg.org/http-extensions/draft-ietf-httpbis-priority.html#urgency.
-  static const int kDefaultUrgency = 3;
 
   // QuicStreamSequencer::StreamInterface implementation.
   QuicStreamId id() const override { return id_; }
@@ -210,7 +197,7 @@ class QUIC_EXPORT_PRIVATE QuicStream
   virtual void OnConnectionClosed(QuicErrorCode error,
                                   ConnectionCloseSource source);
 
-  const spdy::SpdyStreamPrecedence& precedence() const;
+  const QuicStreamPriority& priority() const;
 
   // Send PRIORITY_UPDATE frame if application protocol supports it.
   virtual void MaybeSendPriorityUpdateFrame() {}
@@ -220,7 +207,7 @@ class QUIC_EXPORT_PRIVATE QuicStream
   // PRIORITY_UPDATE frame is received.  This calls
   // MaybeSendPriorityUpdateFrame(), which for a client stream might send a
   // PRIORITY_UPDATE frame.
-  void SetPriority(const spdy::SpdyStreamPrecedence& precedence);
+  void SetPriority(const QuicStreamPriority& priority);
 
   // Returns true if this stream is still waiting for acks of sent data.
   // This will return false if all data has been acked, or if the stream
@@ -392,9 +379,6 @@ class QUIC_EXPORT_PRIVATE QuicStream
 
   bool was_draining() const { return was_draining_; }
 
-  static spdy::SpdyStreamPrecedence CalculateDefaultPriority(
-      const QuicSession* session);
-
   QuicTime creation_time() const { return creation_time_; }
 
   bool fin_buffered() const { return fin_buffered_; }
@@ -405,6 +389,10 @@ class QUIC_EXPORT_PRIVATE QuicStream
   // Called immediately after the stream is created from a pending stream,
   // indicating it can start processing data.
   void OnStreamCreatedFromPendingStream();
+
+  void DisableConnectionFlowControlForThisStream() {
+    stream_contributes_to_connection_flow_control_ = false;
+  }
 
  protected:
   // Called when data of [offset, offset + data_length] is buffered in send
@@ -476,10 +464,6 @@ class QUIC_EXPORT_PRIVATE QuicStream
   const QuicStreamSequencer* sequencer() const { return &sequencer_; }
   QuicStreamSequencer* sequencer() { return &sequencer_; }
 
-  void DisableConnectionFlowControlForThisStream() {
-    stream_contributes_to_connection_flow_control_ = false;
-  }
-
   const QuicIntervalSet<QuicStreamOffset>& bytes_acked() const;
 
   const QuicStreamSendBuffer& send_buffer() const { return send_buffer_; }
@@ -529,8 +513,8 @@ class QUIC_EXPORT_PRIVATE QuicStream
   // TODO(b/136274541): Remove session pointer from streams.
   QuicSession* session_;
   StreamDelegateInterface* stream_delegate_;
-  // The precedence of the stream, once parsed.
-  spdy::SpdyStreamPrecedence precedence_;
+  // The priority of the stream, once parsed.
+  QuicStreamPriority priority_;
   // Bytes read refers to payload bytes only: they do not include framing,
   // encryption overhead etc.
   uint64_t stream_bytes_read_;

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,9 +10,9 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
+#include "base/functional/bind.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/lazy_thread_pool_task_runner.h"
 #include "base/task/sequenced_task_runner.h"
@@ -112,7 +112,6 @@ void GetPlatformPathOnFileThread(
 scoped_refptr<storage::FileSystemContext> CreateFileSystemContext(
     BrowserContext* browser_context,
     const base::FilePath& profile_path,
-    const base::FilePath& bucket_base_path,
     bool is_incognito,
     scoped_refptr<storage::QuotaManagerProxy> quota_manager_proxy) {
   // Setting up additional filesystem backends.
@@ -136,7 +135,7 @@ scoped_refptr<storage::FileSystemContext> CreateFileSystemContext(
       browser_context->GetMountPoints(),
       browser_context->GetSpecialStoragePolicy(),
       std::move(quota_manager_proxy), std::move(additional_backends),
-      url_request_auto_mount_handlers, profile_path, bucket_base_path, options);
+      url_request_auto_mount_handlers, profile_path, options);
 
   for (const storage::FileSystemType& type :
        file_system_context->GetFileSystemTypes()) {

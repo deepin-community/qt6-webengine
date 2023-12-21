@@ -1,13 +1,12 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "google_apis/gaia/gaia_auth_util.h"
 
 #include "base/base64url.h"
-#include "google_apis/gaia/oauth2_mint_token_consent_result.pb.h"
+#include "google_apis/gaia/gaia_auth_test_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/gurl.h"
 
 namespace gaia {
@@ -15,25 +14,6 @@ namespace gaia {
 namespace {
 
 const char kGaiaId[] = "fake_gaia_id";
-
-std::string GenerateOAuth2MintTokenConsentResult(
-    absl::optional<bool> approved,
-    const absl::optional<std::string>& encrypted_approval_data,
-    const absl::optional<std::string>& obfuscated_id,
-    base::Base64UrlEncodePolicy encode_policy =
-        base::Base64UrlEncodePolicy::OMIT_PADDING) {
-  OAuth2MintTokenConsentResult consent_result;
-  if (approved.has_value())
-    consent_result.set_approved(approved.value());
-  if (encrypted_approval_data.has_value())
-    consent_result.set_encrypted_approval_data(encrypted_approval_data.value());
-  if (obfuscated_id.has_value())
-    consent_result.set_obfuscated_id(obfuscated_id.value());
-  std::string serialized_consent = consent_result.SerializeAsString();
-  std::string encoded_consent;
-  base::Base64UrlEncode(serialized_consent, encode_policy, &encoded_consent);
-  return encoded_consent;
-}
 
 }  // namespace
 
@@ -135,24 +115,54 @@ TEST(GaiaAuthUtilTest, AreEmailsSame) {
   EXPECT_FALSE(AreEmailsSame("user@gmail.com", "foo@gmail.com"));
 }
 
+TEST(GaiaAuthUtilTest, IsGoogleRobotAccountEmail) {
+  EXPECT_FALSE(IsGoogleRobotAccountEmail(""));
+  EXPECT_FALSE(IsGoogleRobotAccountEmail("foo"));
+  EXPECT_FALSE(IsGoogleRobotAccountEmail("1234567890"));
+  EXPECT_FALSE(IsGoogleRobotAccountEmail("foo@gmail.com"));
+  EXPECT_FALSE(IsGoogleRobotAccountEmail("system.gserviceaccount.com"));
+  EXPECT_TRUE(IsGoogleRobotAccountEmail("foo@system.gserviceaccount.com"));
+  EXPECT_TRUE(IsGoogleRobotAccountEmail("foo@system.googleusercontent.com"));
+  EXPECT_TRUE(IsGoogleRobotAccountEmail("foo@System.Gserviceaccount.com"));
+  EXPECT_TRUE(IsGoogleRobotAccountEmail("foo@System.Googleusercontent.com"));
+}
+
 TEST(GaiaAuthUtilTest, GmailAndGooglemailAreSame) {
   EXPECT_TRUE(AreEmailsSame("foo@gmail.com", "foo@googlemail.com"));
   EXPECT_FALSE(AreEmailsSame("bar@gmail.com", "foo@googlemail.com"));
 }
 
-TEST(GaiaAuthUtilTest, IsGaiaSignonRealm) {
-  // Only https versions of Gaia URLs should be considered valid.
-  EXPECT_TRUE(IsGaiaSignonRealm(GURL("https://accounts.google.com/")));
-  EXPECT_FALSE(IsGaiaSignonRealm(GURL("http://accounts.google.com/")));
+TEST(GaiaAuthUtilTest, HasGaiaSchemeHostPort) {
+  EXPECT_TRUE(HasGaiaSchemeHostPort(GURL("https://accounts.google.com/")));
 
-  // Other Google URLs are not valid.
-  EXPECT_FALSE(IsGaiaSignonRealm(GURL("https://www.google.com/")));
-  EXPECT_FALSE(IsGaiaSignonRealm(GURL("http://www.google.com/")));
-  EXPECT_FALSE(IsGaiaSignonRealm(GURL("https://google.com/")));
-  EXPECT_FALSE(IsGaiaSignonRealm(GURL("https://mail.google.com/")));
+  // Paths and queries should be ignored.
+  EXPECT_TRUE(HasGaiaSchemeHostPort(GURL("https://accounts.google.com/foo")));
+  EXPECT_TRUE(
+      HasGaiaSchemeHostPort(GURL("https://accounts.google.com/foo?bar=1#baz")));
 
-  // Other https URLs are not valid.
-  EXPECT_FALSE(IsGaiaSignonRealm(GURL("https://www.example.com/")));
+  // Scheme mismatch should lead to false.
+  EXPECT_FALSE(HasGaiaSchemeHostPort(GURL("http://accounts.google.com/")));
+
+  // Port mismatch should lead to false.
+  EXPECT_FALSE(HasGaiaSchemeHostPort(GURL("https://accounts.google.com:123/")));
+
+  // Host mismatch should lead to false, including Google URLs.
+  EXPECT_FALSE(HasGaiaSchemeHostPort(GURL("https://example.com/")));
+  EXPECT_FALSE(HasGaiaSchemeHostPort(GURL("https://www.example.com/")));
+  EXPECT_FALSE(HasGaiaSchemeHostPort(GURL("https://www.google.com/")));
+  EXPECT_FALSE(HasGaiaSchemeHostPort(GURL("https://google.com/")));
+  EXPECT_FALSE(HasGaiaSchemeHostPort(GURL("https://mail.google.com/")));
+
+  // about: scheme.
+  EXPECT_FALSE(HasGaiaSchemeHostPort(GURL("about:blank")));
+  EXPECT_FALSE(HasGaiaSchemeHostPort(GURL("about:srcdoc")));
+
+  // blob: scheme.
+  EXPECT_FALSE(HasGaiaSchemeHostPort(
+      GURL("blob:https://accounts.google.com/mocked-blob-guid")));
+
+  // Invalid/empty URL.
+  EXPECT_FALSE(HasGaiaSchemeHostPort(GURL()));
 }
 
 TEST(GaiaAuthUtilTest, ParseListAccountsData) {

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,12 +9,12 @@
 
 #include <memory>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/containers/contains.h"
 #include "base/containers/cxx20_erase.h"
 #include "base/cpu.h"
 #include "base/files/scoped_file.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/json/json_writer.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
@@ -22,16 +22,15 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/synchronization/waitable_event.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/task/bind_post_task.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/trace_event/memory_dump_manager.h"
 #include "base/trace_event/process_memory_dump.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "gpu/ipc/service/gpu_channel.h"
-#include "media/base/bind_to_current_loop.h"
 #include "media/base/format_utils.h"
 #include "media/base/media_log.h"
-#include "media/base/unaligned_shared_memory.h"
 #include "media/base/video_util.h"
 #include "media/gpu/accelerated_video_decoder.h"
 #include "media/gpu/h264_decoder.h"
@@ -45,7 +44,6 @@
 #include "media/gpu/vp8_decoder.h"
 #include "media/gpu/vp9_decoder.h"
 #include "media/video/picture.h"
-#include "ui/gl/gl_image.h"
 
 namespace media {
 
@@ -155,7 +153,7 @@ VaapiVideoDecodeAccelerator::VaapiVideoDecodeAccelerator(
       buffer_allocation_mode_(BufferAllocationMode::kNormal),
       surfaces_available_(&lock_),
       va_surface_format_(VA_INVALID_ID),
-      task_runner_(base::ThreadTaskRunnerHandle::Get()),
+      task_runner_(base::SingleThreadTaskRunner::GetCurrentDefault()),
       decoder_thread_("VaapiDecoderThread"),
       finish_flush_pending_(false),
       awaiting_va_surfaces_recycle_(false),
@@ -167,11 +165,12 @@ VaapiVideoDecodeAccelerator::VaapiVideoDecodeAccelerator(
       bind_image_cb_(bind_image_cb),
       weak_this_factory_(this) {
   weak_this_ = weak_this_factory_.GetWeakPtr();
-  va_surface_recycle_cb_ = BindToCurrentLoop(base::BindRepeating(
-      &VaapiVideoDecodeAccelerator::RecycleVASurface, weak_this_));
+  va_surface_recycle_cb_ =
+      base::BindPostTaskToCurrentDefault(base::BindRepeating(
+          &VaapiVideoDecodeAccelerator::RecycleVASurface, weak_this_));
   base::trace_event::MemoryDumpManager::GetInstance()->RegisterDumpProvider(
       this, "media::VaapiVideoDecodeAccelerator",
-      base::ThreadTaskRunnerHandle::Get());
+      base::SingleThreadTaskRunner::GetCurrentDefault());
 }
 
 VaapiVideoDecodeAccelerator::~VaapiVideoDecodeAccelerator() {
@@ -346,7 +345,7 @@ void VaapiVideoDecodeAccelerator::QueueInputBuffer(
   } else {
     auto input_buffer = std::make_unique<InputBuffer>(
         bitstream_id, std::move(buffer),
-        BindToCurrentLoop(
+        base::BindPostTaskToCurrentDefault(
             base::BindOnce(&Client::NotifyEndOfBitstreamBuffer, client_)));
     input_buffers_.push(std::move(input_buffer));
   }
@@ -807,7 +806,7 @@ void VaapiVideoDecodeAccelerator::AssignPictureBuffers(
   }
 }
 
-#if defined(USE_OZONE)
+#if BUILDFLAG(IS_OZONE)
 void VaapiVideoDecodeAccelerator::ImportBufferForPicture(
     int32_t picture_buffer_id,
     VideoPixelFormat pixel_format,
@@ -1086,9 +1085,9 @@ void VaapiVideoDecodeAccelerator::Destroy() {
   delete this;
 }
 
-bool VaapiVideoDecodeAccelerator::TryToSetupDecodeOnSeparateThread(
+bool VaapiVideoDecodeAccelerator::TryToSetupDecodeOnSeparateSequence(
     const base::WeakPtr<Client>& decode_client,
-    const scoped_refptr<base::SingleThreadTaskRunner>& decode_task_runner) {
+    const scoped_refptr<base::SequencedTaskRunner>& decode_task_runner) {
   return false;
 }
 

@@ -1,4 +1,4 @@
-// Copyright (c) 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,13 +10,15 @@
 #include <memory>
 #include <vector>
 
-#include "base/callback.h"
 #include "base/component_export.h"
 #include "base/containers/circular_deque.h"
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ptr_exclusion.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/synchronization/condition_variable.h"
 #include "base/synchronization/lock.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/threading/thread_checker.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/gfx/geometry/rect.h"
@@ -51,7 +53,9 @@ class COMPONENT_EXPORT(VULKAN) VulkanSwapChain {
     VkSemaphore end_semaphore() const { return end_semaphore_; }
 
    private:
-    VulkanSwapChain* swap_chain_ = nullptr;
+    // This field is not a raw_ptr<> because it was filtered by the rewriter
+    // for: #union
+    RAW_PTR_EXCLUSION VulkanSwapChain* swap_chain_ = nullptr;
     bool success_ = false;
     VkImage image_ = VK_NULL_HANDLE;
     uint32_t image_index_ = 0;
@@ -76,6 +80,7 @@ class COMPONENT_EXPORT(VULKAN) VulkanSwapChain {
                   uint32_t min_image_count,
                   VkImageUsageFlags image_usage_flags,
                   VkSurfaceTransformFlagBitsKHR pre_transform,
+                  VkCompositeAlphaFlagBitsKHR composite_alpha,
                   std::unique_ptr<VulkanSwapChain> old_swap_chain);
 
   // Destroy() should be called when all related GPU tasks have been finished.
@@ -125,6 +130,7 @@ class COMPONENT_EXPORT(VULKAN) VulkanSwapChain {
                            uint32_t min_image_count,
                            VkImageUsageFlags image_usage_flags,
                            VkSurfaceTransformFlagBitsKHR pre_transform,
+                           VkCompositeAlphaFlagBitsKHR composite_alpha,
                            std::unique_ptr<VulkanSwapChain> old_swap_chain)
       EXCLUSIVE_LOCKS_REQUIRED(lock_);
   void DestroySwapChain() EXCLUSIVE_LOCKS_REQUIRED(lock_);

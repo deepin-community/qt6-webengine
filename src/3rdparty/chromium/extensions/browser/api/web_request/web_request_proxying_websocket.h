@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,9 +8,9 @@
 #include <string>
 #include <vector>
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "components/keyed_service/core/keyed_service_shutdown_notifier.h"
 #include "extensions/browser/api/web_request/web_request_api.h"
@@ -104,6 +104,8 @@ class WebRequestProxyingWebSocket
       const url::Origin& origin,
       content::BrowserContext* browser_context,
       WebRequestAPI::ProxySet* proxies);
+
+  static void EnsureAssociatedFactoryBuilt();
 
  private:
   void OnBeforeRequestComplete(int error_code);

@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,14 +6,13 @@
 
 #include <memory>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/task/sequence_manager/sequence_manager.h"
 #include "base/task/sequence_manager/task_queue.h"
-#include "base/threading/sequenced_task_runner_handle.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/trace_event/trace_event.h"
 #include "base/trace_event/traced_value.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
@@ -21,14 +20,15 @@
 #include "services/metrics/public/cpp/ukm_builders.h"
 #include "third_party/blink/public/common/thread_safe_browser_interface_broker_proxy.h"
 #include "third_party/blink/public/platform/platform.h"
+#include "third_party/blink/renderer/platform/scheduler/common/auto_advancing_virtual_time_domain.h"
 #include "third_party/blink/renderer/platform/scheduler/common/features.h"
 #include "third_party/blink/renderer/platform/scheduler/common/process_state.h"
 #include "third_party/blink/renderer/platform/scheduler/common/throttling/cpu_time_budget_pool.h"
 #include "third_party/blink/renderer/platform/scheduler/common/throttling/task_queue_throttler.h"
 #include "third_party/blink/renderer/platform/scheduler/common/throttling/wake_up_budget_pool.h"
 #include "third_party/blink/renderer/platform/scheduler/public/event_loop.h"
-#include "third_party/blink/renderer/platform/scheduler/public/worker_scheduler.h"
 #include "third_party/blink/renderer/platform/scheduler/worker/non_main_thread_scheduler_helper.h"
+#include "third_party/blink/renderer/platform/scheduler/worker/worker_scheduler_impl.h"
 #include "third_party/blink/renderer/platform/scheduler/worker/worker_scheduler_proxy.h"
 #include "third_party/blink/renderer/platform/scheduler/worker/worker_thread_scheduler.h"
 
@@ -99,17 +99,20 @@ WorkerThreadScheduler::WorkerThreadScheduler(
     ThreadType thread_type,
     base::sequence_manager::SequenceManager* sequence_manager,
     WorkerSchedulerProxy* proxy)
-    : NonMainThreadSchedulerImpl(sequence_manager,
+    : NonMainThreadSchedulerBase(sequence_manager,
                                  TaskType::kWorkerThreadTaskQueueDefault),
       thread_type_(thread_type),
-      idle_helper_(helper(),
+      idle_helper_queue_(GetHelper().NewTaskQueue(
+          TaskQueue::Spec(base::sequence_manager::QueueName::WORKER_IDLE_TQ))),
+      idle_helper_(&GetHelper(),
                    this,
                    "WorkerSchedulerIdlePeriod",
                    base::Milliseconds(300),
-                   helper()->NewTaskQueue(TaskQueue::Spec("worker_idle_tq"))),
+                   idle_helper_queue_->GetTaskQueue()),
       lifecycle_state_(proxy ? proxy->lifecycle_state()
                              : SchedulingLifecycleState::kNotThrottled),
-      worker_metrics_helper_(thread_type, helper()->HasCPUTimingForEachTask()),
+      worker_metrics_helper_(thread_type,
+                             GetHelper().HasCPUTimingForEachTask()),
       initial_frame_status_(proxy ? proxy->initial_frame_status()
                                   : FrameStatus::kNone),
       ukm_source_id_(proxy ? proxy->ukm_source_id() : ukm::kInvalidSourceId) {
@@ -121,6 +124,8 @@ WorkerThreadScheduler::WorkerThreadScheduler(
     CreateBudgetPools();
   }
 
+  GetHelper().SetObserver(this);
+
   TRACE_EVENT_OBJECT_CREATED_WITH_ID(
       TRACE_DISABLED_BY_DEFAULT("worker.scheduler"), "WorkerScheduler", this);
 }
@@ -129,7 +134,7 @@ WorkerThreadScheduler::~WorkerThreadScheduler() {
   TRACE_EVENT_OBJECT_DELETED_WITH_ID(
       TRACE_DISABLED_BY_DEFAULT("worker.scheduler"), "WorkerScheduler", this);
 
-  DCHECK(worker_schedulers_.IsEmpty());
+  DCHECK(worker_schedulers_.empty());
 }
 
 scoped_refptr<SingleThreadIdleTaskRunner>
@@ -145,20 +150,14 @@ WorkerThreadScheduler::V8TaskRunner() {
 }
 
 scoped_refptr<base::SingleThreadTaskRunner>
-WorkerThreadScheduler::CompositorTaskRunner() {
-  DCHECK(initialized_);
-  return compositor_task_runner_;
+WorkerThreadScheduler::CleanupTaskRunner() {
+  return DefaultTaskQueue()->GetTaskRunnerWithDefaultTaskType();
 }
 
 scoped_refptr<base::SingleThreadTaskRunner>
-WorkerThreadScheduler::NonWakingTaskRunner() {
-  NOTREACHED() << "Not implemented";
-  return nullptr;
-}
-
-bool WorkerThreadScheduler::CanExceedIdleDeadlineIfRequired() const {
+WorkerThreadScheduler::CompositorTaskRunner() {
   DCHECK(initialized_);
-  return idle_helper_.CanExceedIdleDeadlineIfRequired();
+  return compositor_task_runner_;
 }
 
 bool WorkerThreadScheduler::ShouldYieldForHighPriorityWork() {
@@ -168,25 +167,26 @@ bool WorkerThreadScheduler::ShouldYieldForHighPriorityWork() {
 
 void WorkerThreadScheduler::AddTaskObserver(base::TaskObserver* task_observer) {
   DCHECK(initialized_);
-  helper()->AddTaskObserver(task_observer);
+  GetHelper().AddTaskObserver(task_observer);
 }
 
 void WorkerThreadScheduler::RemoveTaskObserver(
     base::TaskObserver* task_observer) {
   DCHECK(initialized_);
-  helper()->RemoveTaskObserver(task_observer);
+  GetHelper().RemoveTaskObserver(task_observer);
 }
 
 void WorkerThreadScheduler::Shutdown() {
   DCHECK(initialized_);
+  ThreadSchedulerBase::Shutdown();
   idle_helper_.Shutdown();
-  helper()->Shutdown();
+  GetHelper().Shutdown();
 }
 
 scoped_refptr<NonMainThreadTaskQueue>
 WorkerThreadScheduler::DefaultTaskQueue() {
   DCHECK(initialized_);
-  return helper()->DefaultNonMainThreadTaskQueue();
+  return GetHelper().DefaultNonMainThreadTaskQueue();
 }
 
 void WorkerThreadScheduler::Init() {
@@ -203,7 +203,7 @@ void WorkerThreadScheduler::OnTaskCompleted(
     NonMainThreadTaskQueue* task_queue,
     const base::sequence_manager::Task& task,
     TaskQueue::TaskTiming* task_timing,
-    base::sequence_manager::LazyNow* lazy_now) {
+    base::LazyNow* lazy_now) {
   PerformMicrotaskCheckpoint();
 
   task_timing->RecordTaskEnd(lazy_now);
@@ -217,7 +217,7 @@ void WorkerThreadScheduler::OnTaskCompleted(
 }
 
 SchedulerHelper* WorkerThreadScheduler::GetSchedulerHelperForTesting() {
-  return helper();
+  return &GetHelper();
 }
 
 bool WorkerThreadScheduler::CanEnterLongIdlePeriod(base::TimeTicks,
@@ -241,20 +241,20 @@ void WorkerThreadScheduler::OnLifecycleStateChanged(
 }
 
 void WorkerThreadScheduler::RegisterWorkerScheduler(
-    WorkerScheduler* worker_scheduler) {
+    WorkerSchedulerImpl* worker_scheduler) {
   worker_schedulers_.insert(worker_scheduler);
   worker_scheduler->OnLifecycleStateChanged(lifecycle_state_);
 }
 
 void WorkerThreadScheduler::UnregisterWorkerScheduler(
-    WorkerScheduler* worker_scheduler) {
+    WorkerSchedulerImpl* worker_scheduler) {
   DCHECK(worker_schedulers_.find(worker_scheduler) != worker_schedulers_.end());
   worker_schedulers_.erase(worker_scheduler);
 }
 
 scoped_refptr<NonMainThreadTaskQueue>
 WorkerThreadScheduler::ControlTaskQueue() {
-  return helper()->ControlNonMainThreadTaskQueue();
+  return GetHelper().ControlNonMainThreadTaskQueue();
 }
 
 void WorkerThreadScheduler::CreateBudgetPools() {
@@ -276,7 +276,7 @@ void WorkerThreadScheduler::RecordTaskUkm(
     NonMainThreadTaskQueue* worker_task_queue,
     const base::sequence_manager::Task& task,
     const base::sequence_manager::TaskQueue::TaskTiming& task_timing) {
-  if (!helper()->ShouldRecordTaskUkm(task_timing.has_thread_time()))
+  if (!GetHelper().ShouldRecordTaskUkm(task_timing.has_thread_time()))
     return;
 
   if (!ukm_recorder_)
@@ -305,7 +305,7 @@ void WorkerThreadScheduler::SetUkmRecorderForTest(
 }
 
 void WorkerThreadScheduler::SetUkmTaskSamplingRateForTest(double rate) {
-  helper()->SetUkmTaskSamplingRateForTest(rate);
+  GetHelper().SetUkmTaskSamplingRateForTest(rate);
 }
 
 void WorkerThreadScheduler::SetCPUTimeBudgetPoolForTesting(
@@ -313,7 +313,7 @@ void WorkerThreadScheduler::SetCPUTimeBudgetPoolForTesting(
   cpu_time_budget_pool_ = std::move(cpu_time_budget_pool);
 }
 
-HashSet<WorkerScheduler*>&
+HashSet<WorkerSchedulerImpl*>&
 WorkerThreadScheduler::GetWorkerSchedulersForTesting() {
   return worker_schedulers_;
 }
@@ -321,6 +321,52 @@ WorkerThreadScheduler::GetWorkerSchedulersForTesting() {
 void WorkerThreadScheduler::PerformMicrotaskCheckpoint() {
   if (isolate())
     EventLoop::PerformIsolateGlobalMicrotasksCheckpoint(isolate());
+}
+
+base::SequencedTaskRunner* WorkerThreadScheduler::GetVirtualTimeTaskRunner() {
+  // Note this is not Control task runner because it has task notifications
+  // disabled.
+  return DefaultTaskQueue()->GetTaskRunnerWithDefaultTaskType().get();
+}
+
+void WorkerThreadScheduler::OnVirtualTimeDisabled() {}
+
+void WorkerThreadScheduler::OnVirtualTimePaused() {
+  for (auto* worker_scheduler : worker_schedulers_) {
+    worker_scheduler->PauseVirtualTime();
+  }
+}
+
+void WorkerThreadScheduler::OnVirtualTimeResumed() {
+  for (WorkerScheduler* worker_scheduler : worker_schedulers_) {
+    auto* scheduler = static_cast<WorkerSchedulerImpl*>(worker_scheduler);
+    scheduler->UnpauseVirtualTime();
+  }
+}
+
+void WorkerThreadScheduler::PostIdleTask(const base::Location& location,
+                                         Thread::IdleTask task) {
+  IdleTaskRunner()->PostIdleTask(location, std::move(task));
+}
+
+void WorkerThreadScheduler::PostNonNestableIdleTask(
+    const base::Location& location,
+    Thread::IdleTask task) {
+  IdleTaskRunner()->PostNonNestableIdleTask(location, std::move(task));
+}
+
+void WorkerThreadScheduler::PostDelayedIdleTask(const base::Location& location,
+                                                base::TimeDelta delay,
+                                                Thread::IdleTask task) {
+  IdleTaskRunner()->PostDelayedIdleTask(location, delay, std::move(task));
+}
+
+base::TimeTicks WorkerThreadScheduler::MonotonicallyIncreasingVirtualTime() {
+  return base::TimeTicks::Now();
+}
+
+void WorkerThreadScheduler::SetV8Isolate(v8::Isolate* isolate) {
+  NonMainThreadSchedulerBase::SetV8Isolate(isolate);
 }
 
 }  // namespace scheduler

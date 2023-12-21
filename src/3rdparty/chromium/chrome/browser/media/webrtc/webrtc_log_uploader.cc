@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,17 +8,17 @@
 #include <cstdlib>
 #include <utility>
 
-#include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
+#include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/pickle.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/task/thread_pool.h"
-#include "base/threading/sequenced_task_runner_handle.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
@@ -96,7 +96,7 @@ WebRtcLogUploader::UploadDoneData::UploadDoneData(
 WebRtcLogUploader::UploadDoneData::~UploadDoneData() = default;
 
 WebRtcLogUploader::WebRtcLogUploader()
-    : main_task_runner_(base::SequencedTaskRunnerHandle::Get()),
+    : main_task_runner_(base::SequencedTaskRunner::GetCurrentDefault()),
       background_task_runner_(base::ThreadPool::CreateSequencedTaskRunner(
           {base::MayBlock(), base::TaskPriority::BEST_EFFORT})) {}
 
@@ -286,8 +286,9 @@ void WebRtcLogUploader::LoggingStoppedDoStore(
     base::FilePath meta_path =
         log_paths.directory.AppendASCII(log_id).AddExtension(
             FILE_PATH_LITERAL(".meta"));
-    base::WriteFile(meta_path, static_cast<const char*>(pickle.data()),
-                    pickle.size());
+    base::WriteFile(meta_path,
+                    base::make_span(static_cast<const uint8_t*>(pickle.data()),
+                                    pickle.size()));
   }
 
   main_task_runner_->PostTask(
@@ -521,7 +522,7 @@ void WebRtcLogUploader::WriteCompressedLogToFile(
     const base::FilePath& log_file_path) {
   DCHECK(background_task_runner_->RunsTasksInCurrentSequence());
   DCHECK(!compressed_log.empty());
-  base::WriteFile(log_file_path, &compressed_log[0], compressed_log.size());
+  base::WriteFile(log_file_path, compressed_log);
 }
 
 void WebRtcLogUploader::AddLocallyStoredLogInfoToUploadListFile(
@@ -560,11 +561,8 @@ void WebRtcLogUploader::AddLocallyStoredLogInfoToUploadListFile(
   contents += ",," + local_log_id + "," +
               base::NumberToString(base::Time::Now().ToDoubleT()) + '\n';
 
-  int written =
-      base::WriteFile(upload_list_path, &contents[0], contents.size());
-  if (written != static_cast<int>(contents.size())) {
-    DPLOG(WARNING) << "Could not write all data to WebRTC log list file: "
-                   << written;
+  if (!base::WriteFile(upload_list_path, contents)) {
+    DPLOG(WARNING) << "Could not write data to WebRTC log list file.";
   }
 }
 
@@ -599,11 +597,8 @@ void WebRtcLogUploader::AddUploadedLogInfoToUploadListFile(
     contents += time_now_str + "," + report_id + ",," + time_now_str + "\n";
   }
 
-  int written =
-      base::WriteFile(upload_list_path, &contents[0], contents.size());
-  if (written != static_cast<int>(contents.size())) {
-    DPLOG(WARNING) << "Could not write all data to WebRTC log list file: "
-                   << written;
+  if (!base::WriteFile(upload_list_path, contents)) {
+    DPLOG(WARNING) << "Could not write data to WebRTC log list file.";
   }
 }
 

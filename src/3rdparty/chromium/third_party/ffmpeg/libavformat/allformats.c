@@ -20,6 +20,9 @@
  */
 
 #include <stdatomic.h>
+#include <stddef.h>
+#include <stdint.h>
+
 #include "libavformat/internal.h"
 #include "avformat.h"
 
@@ -52,6 +55,7 @@ extern const AVInputFormat  ff_amrnb_demuxer;
 extern const AVInputFormat  ff_amrwb_demuxer;
 extern const AVOutputFormat ff_amv_muxer;
 extern const AVInputFormat  ff_anm_demuxer;
+extern const AVInputFormat  ff_apac_demuxer;
 extern const AVInputFormat  ff_apc_demuxer;
 extern const AVInputFormat  ff_ape_demuxer;
 extern const AVInputFormat  ff_apm_demuxer;
@@ -81,6 +85,7 @@ extern const AVOutputFormat ff_au_muxer;
 extern const AVInputFormat  ff_av1_demuxer;
 extern const AVInputFormat  ff_avi_demuxer;
 extern const AVOutputFormat ff_avi_muxer;
+extern const AVOutputFormat ff_avif_muxer;
 extern const AVInputFormat  ff_avisynth_demuxer;
 extern const AVOutputFormat ff_avm2_muxer;
 extern const AVInputFormat  ff_avr_demuxer;
@@ -101,6 +106,7 @@ extern const AVInputFormat  ff_bmv_demuxer;
 extern const AVInputFormat  ff_bfstm_demuxer;
 extern const AVInputFormat  ff_brstm_demuxer;
 extern const AVInputFormat  ff_boa_demuxer;
+extern const AVInputFormat  ff_bonk_demuxer;
 extern const AVInputFormat  ff_c93_demuxer;
 extern const AVInputFormat  ff_caf_demuxer;
 extern const AVOutputFormat ff_caf_muxer;
@@ -234,6 +240,7 @@ extern const AVInputFormat  ff_jv_demuxer;
 extern const AVInputFormat  ff_kux_demuxer;
 extern const AVInputFormat  ff_kvag_demuxer;
 extern const AVOutputFormat ff_kvag_muxer;
+extern const AVInputFormat  ff_laf_demuxer;
 extern const AVOutputFormat ff_latm_muxer;
 extern const AVInputFormat  ff_lmlm4_demuxer;
 extern const AVInputFormat  ff_loas_demuxer;
@@ -472,6 +479,7 @@ extern const AVInputFormat  ff_vplayer_demuxer;
 extern const AVInputFormat  ff_vqf_demuxer;
 extern const AVInputFormat  ff_w64_demuxer;
 extern const AVOutputFormat ff_w64_muxer;
+extern const AVInputFormat  ff_wady_demuxer;
 extern const AVInputFormat  ff_wav_demuxer;
 extern const AVOutputFormat ff_wav_muxer;
 extern const AVInputFormat  ff_wc3_demuxer;
@@ -493,6 +501,7 @@ extern const AVInputFormat  ff_wv_demuxer;
 extern const AVOutputFormat ff_wv_muxer;
 extern const AVInputFormat  ff_xa_demuxer;
 extern const AVInputFormat  ff_xbin_demuxer;
+extern const AVInputFormat  ff_xmd_demuxer;
 extern const AVInputFormat  ff_xmv_demuxer;
 extern const AVInputFormat  ff_xvag_demuxer;
 extern const AVInputFormat  ff_xwma_demuxer;
@@ -507,25 +516,31 @@ extern const AVInputFormat  ff_image_dpx_pipe_demuxer;
 extern const AVInputFormat  ff_image_exr_pipe_demuxer;
 extern const AVInputFormat  ff_image_gem_pipe_demuxer;
 extern const AVInputFormat  ff_image_gif_pipe_demuxer;
+extern const AVInputFormat  ff_image_hdr_pipe_demuxer;
 extern const AVInputFormat  ff_image_j2k_pipe_demuxer;
 extern const AVInputFormat  ff_image_jpeg_pipe_demuxer;
 extern const AVInputFormat  ff_image_jpegls_pipe_demuxer;
+extern const AVInputFormat  ff_image_jpegxl_pipe_demuxer;
 extern const AVInputFormat  ff_image_pam_pipe_demuxer;
 extern const AVInputFormat  ff_image_pbm_pipe_demuxer;
 extern const AVInputFormat  ff_image_pcx_pipe_demuxer;
+extern const AVInputFormat  ff_image_pfm_pipe_demuxer;
 extern const AVInputFormat  ff_image_pgmyuv_pipe_demuxer;
 extern const AVInputFormat  ff_image_pgm_pipe_demuxer;
 extern const AVInputFormat  ff_image_pgx_pipe_demuxer;
+extern const AVInputFormat  ff_image_phm_pipe_demuxer;
 extern const AVInputFormat  ff_image_photocd_pipe_demuxer;
 extern const AVInputFormat  ff_image_pictor_pipe_demuxer;
 extern const AVInputFormat  ff_image_png_pipe_demuxer;
 extern const AVInputFormat  ff_image_ppm_pipe_demuxer;
 extern const AVInputFormat  ff_image_psd_pipe_demuxer;
 extern const AVInputFormat  ff_image_qdraw_pipe_demuxer;
+extern const AVInputFormat  ff_image_qoi_pipe_demuxer;
 extern const AVInputFormat  ff_image_sgi_pipe_demuxer;
 extern const AVInputFormat  ff_image_svg_pipe_demuxer;
 extern const AVInputFormat  ff_image_sunrast_pipe_demuxer;
 extern const AVInputFormat  ff_image_tiff_pipe_demuxer;
+extern const AVInputFormat  ff_image_vbn_pipe_demuxer;
 extern const AVInputFormat  ff_image_webp_pipe_demuxer;
 extern const AVInputFormat  ff_image_xbm_pipe_demuxer;
 extern const AVInputFormat  ff_image_xpm_pipe_demuxer;

@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -26,7 +26,6 @@ struct EncoderStatusTraits {
     kFormatConversionError = 12,
   };
   static constexpr StatusGroupType Group() { return "EncoderStatus"; }
-  static constexpr Codes DefaultEnumValue() { return Codes::kOk; }
 };
 
 using EncoderStatus = TypedStatus<EncoderStatusTraits>;

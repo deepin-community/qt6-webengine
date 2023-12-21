@@ -1,10 +1,11 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef THIRD_PARTY_BLINK_PUBLIC_COMMON_WIDGET_VISUAL_PROPERTIES_MOJOM_TRAITS_H_
 #define THIRD_PARTY_BLINK_PUBLIC_COMMON_WIDGET_VISUAL_PROPERTIES_MOJOM_TRAITS_H_
 
+#include "base/check_op.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/common/common_export.h"
 #include "third_party/blink/public/common/widget/visual_properties.h"
@@ -79,6 +80,11 @@ struct BLINK_COMMON_EXPORT StructTraits<blink::mojom::VisualPropertiesDataView,
     return r.zoom_level;
   }
 
+  static int virtual_keyboard_resize_height_physical_px(
+      const blink::VisualProperties& r) {
+    return r.virtual_keyboard_resize_height_physical_px;
+  }
+
   static double page_scale_factor(const blink::VisualProperties& r) {
     DCHECK_GT(r.page_scale_factor, 0);
     return r.page_scale_factor;
@@ -87,6 +93,12 @@ struct BLINK_COMMON_EXPORT StructTraits<blink::mojom::VisualPropertiesDataView,
   static double compositing_scale_factor(const blink::VisualProperties& r) {
     DCHECK_GT(r.compositing_scale_factor, 0);
     return r.compositing_scale_factor;
+  }
+
+  static float cursor_accessibility_scale_factor(
+      const blink::VisualProperties& r) {
+    DCHECK_GE(r.cursor_accessibility_scale_factor, 1.f);
+    return r.cursor_accessibility_scale_factor;
   }
 
   static const std::vector<gfx::Rect>& root_widget_window_segments(

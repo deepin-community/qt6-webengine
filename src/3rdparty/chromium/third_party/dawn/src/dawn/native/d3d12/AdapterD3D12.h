@@ -17,49 +17,53 @@
 
 #include "dawn/native/Adapter.h"
 
-#include "dawn/common/GPUInfo.h"
 #include "dawn/native/d3d12/D3D12Info.h"
 #include "dawn/native/d3d12/d3d12_platform.h"
 
 namespace dawn::native::d3d12 {
 
-    class Backend;
+class Backend;
 
-    class Adapter : public AdapterBase {
-      public:
-        Adapter(Backend* backend, ComPtr<IDXGIAdapter3> hardwareAdapter);
-        ~Adapter() override;
+class Adapter : public AdapterBase {
+  public:
+    Adapter(Backend* backend, ComPtr<IDXGIAdapter3> hardwareAdapter);
+    ~Adapter() override;
 
-        // AdapterBase Implementation
-        bool SupportsExternalImages() const override;
+    // AdapterBase Implementation
+    bool SupportsExternalImages() const override;
 
-        const D3D12DeviceInfo& GetDeviceInfo() const;
-        IDXGIAdapter3* GetHardwareAdapter() const;
-        Backend* GetBackend() const;
-        ComPtr<ID3D12Device> GetDevice() const;
-        const gpu_info::D3DDriverVersion& GetDriverVersion() const;
+    const D3D12DeviceInfo& GetDeviceInfo() const;
+    IDXGIAdapter3* GetHardwareAdapter() const;
+    Backend* GetBackend() const;
+    ComPtr<ID3D12Device> GetDevice() const;
 
-      private:
-        ResultOrError<Ref<DeviceBase>> CreateDeviceImpl(
-            const DeviceDescriptor* descriptor) override;
-        MaybeError ResetInternalDeviceForTestingImpl() override;
+  private:
+    void SetupBackendDeviceToggles(TogglesState* deviceToggles) const override;
 
-        bool AreTimestampQueriesSupported() const;
+    ResultOrError<Ref<DeviceBase>> CreateDeviceImpl(const DeviceDescriptor* descriptor,
+                                                    const TogglesState& deviceToggles) override;
 
-        MaybeError InitializeImpl() override;
-        MaybeError InitializeSupportedFeaturesImpl() override;
-        MaybeError InitializeSupportedLimitsImpl(CombinedLimits* limits) override;
+    MaybeError ResetInternalDeviceForTestingImpl() override;
 
-        MaybeError InitializeDebugLayerFilters();
-        void CleanUpDebugLayerFilters();
+    bool AreTimestampQueriesSupported() const;
 
-        ComPtr<IDXGIAdapter3> mHardwareAdapter;
-        ComPtr<ID3D12Device> mD3d12Device;
-        gpu_info::D3DDriverVersion mDriverVersion;
+    MaybeError InitializeImpl() override;
+    void InitializeSupportedFeaturesImpl() override;
+    MaybeError InitializeSupportedLimitsImpl(CombinedLimits* limits) override;
 
-        Backend* mBackend;
-        D3D12DeviceInfo mDeviceInfo = {};
-    };
+    MaybeError ValidateFeatureSupportedWithDeviceTogglesImpl(
+        wgpu::FeatureName feature,
+        const TogglesState& deviceTogglesState) override;
+
+    MaybeError InitializeDebugLayerFilters();
+    void CleanUpDebugLayerFilters();
+
+    ComPtr<IDXGIAdapter3> mHardwareAdapter;
+    ComPtr<ID3D12Device> mD3d12Device;
+
+    Backend* mBackend;
+    D3D12DeviceInfo mDeviceInfo = {};
+};
 
 }  // namespace dawn::native::d3d12
 

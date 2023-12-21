@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,6 +10,7 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/synchronization/lock.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
 #include "base/timer/elapsed_timer.h"
 #include "base/trace_event/trace_event.h"
@@ -25,8 +26,9 @@
 
 namespace blink {
 
-const base::Feature kDelayParkingImages{"DelayParkingImages",
-                                        base::FEATURE_DISABLED_BY_DEFAULT};
+BASE_FEATURE(kDelayParkingImages,
+             "DelayParkingImages",
+             base::FEATURE_DISABLED_BY_DEFAULT);
 
 namespace {
 
@@ -96,8 +98,9 @@ void AsanUnpoisonBuffer(RWBuffer* rw_buffer) {
 
 }  // namespace
 
-const base::Feature kUseParkableImageSegmentReader{
-    "UseParkableImageSegmentReader", base::FEATURE_DISABLED_BY_DEFAULT};
+BASE_FEATURE(kUseParkableImageSegmentReader,
+             "UseParkableImageSegmentReader",
+             base::FEATURE_DISABLED_BY_DEFAULT);
 
 constexpr base::TimeDelta ParkableImageImpl::kParkingDelay;
 
@@ -309,7 +312,8 @@ bool ParkableImageImpl::TransientlyUnableToPark() const {
   }
 }
 
-bool ParkableImageImpl::MaybePark() {
+bool ParkableImageImpl::MaybePark(
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
   DCHECK(ParkableImageManager::IsParkableImagesToDiskEnabled());
 
   base::AutoLock lock(lock_);
@@ -333,7 +337,7 @@ bool ParkableImageImpl::MaybePark() {
       FROM_HERE, {base::MayBlock()},
       CrossThreadBindOnce(&ParkableImageImpl::WriteToDiskInBackground,
                           scoped_refptr<ParkableImageImpl>(this),
-                          Thread::Current()->GetTaskRunner()));
+                          std::move(task_runner)));
   return true;
 }
 

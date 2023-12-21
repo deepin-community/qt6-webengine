@@ -1,10 +1,10 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include <cstddef>
 #include <sstream>
-#include "base/callback_helpers.h"
+#include "base/functional/callback_helpers.h"
 #include "components/feed/core/proto/v2/wire/reliability_logging_enums.pb.h"
 #include "components/feed/core/shared_prefs/pref_names.h"
 #include "components/feed/core/v2/api_test/feed_api_test.h"
@@ -14,6 +14,7 @@
 #include "components/feed/core/v2/feedstore_util.h"
 #include "components/feed/core/v2/public/feed_service.h"
 #include "components/feed/core/v2/public/stream_type.h"
+#include "components/feed/core/v2/test/callback_receiver.h"
 #include "net/http/http_status_code.h"
 
 namespace feed {
@@ -310,12 +311,13 @@ TEST_F(FeedApiReliabilityLoggingTest,
 
 TEST_F(FeedApiReliabilityLoggingTest, CacheRead_Stale) {
   store_->OverwriteStream(
-      kForYouStream,
+      StreamType(StreamKind::kForYou),
       MakeTypicalInitialModelState(
-          /*first_cluster_id=*/0,
-          kTestTimeEpoch -
-              GetFeedConfig().GetStalenessThreshold(kForYouStream) -
-              base::Minutes(1)),
+          /*first_cluster_id=*/0, kTestTimeEpoch -
+                                      GetFeedConfig().GetStalenessThreshold(
+                                          StreamType(StreamKind::kForYou),
+                                          /*is_web_feed_subscriber=*/true) -
+                                      base::Minutes(1)),
       base::DoNothing());
 
   // Store is stale, so we should fallback to a network request.
@@ -343,12 +345,13 @@ TEST_F(FeedApiReliabilityLoggingTest, CacheRead_Stale) {
 TEST_F(FeedApiReliabilityLoggingTest, CacheRead_StaleWithNetworkError) {
   network_.http_status_code = net::HttpStatusCode::HTTP_FORBIDDEN;
   store_->OverwriteStream(
-      kForYouStream,
+      StreamType(StreamKind::kForYou),
       MakeTypicalInitialModelState(
-          /*first_cluster_id=*/0,
-          kTestTimeEpoch -
-              GetFeedConfig().GetStalenessThreshold(kForYouStream) -
-              base::Minutes(1)),
+          /*first_cluster_id=*/0, kTestTimeEpoch -
+                                      GetFeedConfig().GetStalenessThreshold(
+                                          StreamType(StreamKind::kForYou),
+                                          /*is_web_feed_subscriber=*/true) -
+                                      base::Minutes(1)),
       base::DoNothing());
 
   // Store is stale, so we should fallback to a network request.
@@ -374,8 +377,8 @@ TEST_F(FeedApiReliabilityLoggingTest, CacheRead_StaleWithNetworkError) {
 }
 
 TEST_F(FeedApiReliabilityLoggingTest, CacheRead_Okay) {
-  store_->OverwriteStream(kForYouStream, MakeTypicalInitialModelState(),
-                          base::DoNothing());
+  store_->OverwriteStream(StreamType(StreamKind::kForYou),
+                          MakeTypicalInitialModelState(), base::DoNothing());
   WaitForIdleTaskQueue();
 
   TestForYouSurface surface(stream_.get());
@@ -447,6 +450,45 @@ TEST_F(FeedApiReliabilityLoggingTest, IdChangeOnMetricsIdChange) {
   profile_prefs_.ClearPref(prefs::kReliabilityLoggingIdSalt);
   EXPECT_NE(first_id, FeedService::GetReliabilityLoggingId(kSomeMetricsId,
                                                            &profile_prefs_));
+}
+
+TEST_F(FeedApiReliabilityLoggingTest, WebFeedLoad) {
+  CallbackReceiver<WebFeedSubscriptions::RefreshResult> refresh_result;
+  network_.InjectListWebFeedsResponse({MakeWireWebFeed("cats")});
+  stream_->subscriptions().RefreshSubscriptions(refresh_result.Bind());
+  refresh_result.RunUntilCalled();
+  response_translator_.InjectResponse(MakeTypicalInitialModelState());
+  TestWebFeedSurface surface(stream_.get());
+  WaitForIdleTaskQueue();
+
+  EXPECT_EQ(
+      "LogFeedLaunchOtherStart\n"
+      "LogLoadingIndicatorShown\n"
+      "LogCacheReadStart\n"
+      "LogCacheReadEnd result=EMPTY_SESSION\n"
+      "LogWebFeedRequestStart id=1\n"
+      "LogRequestSent id=1\n"
+      "LogResponseReceived id=1\n"
+      "LogRequestFinished result=200 id=1\n"
+      "LogAboveTheFoldRender result=SUCCESS\n",
+      surface.reliability_logging_bridge.GetEventsString());
+}
+
+TEST_F(FeedApiReliabilityLoggingTest, SingleWebFeedLoad) {
+  response_translator_.InjectResponse(MakeTypicalInitialModelState());
+  TestSingleWebFeedSurface surface(stream_.get());
+  WaitForIdleTaskQueue();
+  EXPECT_EQ(
+      "LogFeedLaunchOtherStart\n"
+      "LogLoadingIndicatorShown\n"
+      "LogCacheReadStart\n"
+      "LogCacheReadEnd result=EMPTY_SESSION\n"
+      "LogSingleWebFeedRequestStart id=1\n"
+      "LogRequestSent id=1\n"
+      "LogResponseReceived id=1\n"
+      "LogRequestFinished result=200 id=1\n"
+      "LogAboveTheFoldRender result=SUCCESS\n",
+      surface.reliability_logging_bridge.GetEventsString());
 }
 
 }  // namespace

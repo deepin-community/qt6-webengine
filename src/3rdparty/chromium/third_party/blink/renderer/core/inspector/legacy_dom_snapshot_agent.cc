@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -31,13 +31,13 @@
 #include "third_party/blink/renderer/core/inspector/inspector_dom_agent.h"
 #include "third_party/blink/renderer/core/inspector/inspector_dom_debugger_agent.h"
 #include "third_party/blink/renderer/core/inspector/inspector_dom_snapshot_agent.h"
-#include "third_party/blink/renderer/core/inspector/thread_debugger.h"
 #include "third_party/blink/renderer/core/layout/layout_embedded_content.h"
 #include "third_party/blink/renderer/core/layout/layout_object.h"
 #include "third_party/blink/renderer/core/layout/layout_text.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
 #include "third_party/blink/renderer/core/paint/paint_layer.h"
 #include "third_party/blink/renderer/core/paint/paint_layer_scrollable_area.h"
+#include "third_party/blink/renderer/platform/bindings/thread_debugger.h"
 #include "v8/include/v8-inspector.h"
 
 namespace blink {
@@ -61,9 +61,9 @@ std::unique_ptr<protocol::DOM::Rect> LegacyBuildRectForPhysicalRect(
 struct LegacyDOMSnapshotAgent::VectorStringHashTraits
     : public WTF::GenericHashTraits<Vector<String>> {
   static unsigned GetHash(const Vector<String>& vec) {
-    unsigned h = DefaultHash<size_t>::Hash::GetHash(vec.size());
-    for (wtf_size_t i = 0; i < vec.size(); i++) {
-      h = WTF::HashInts(h, DefaultHash<String>::Hash::GetHash(vec[i]));
+    unsigned h = WTF::GetHash(vec.size());
+    for (const String& s : vec) {
+      h = WTF::HashInts(h, WTF::GetHash(s));
     }
     return h;
   }
@@ -78,7 +78,7 @@ struct LegacyDOMSnapshotAgent::VectorStringHashTraits
     return true;
   }
 
-  static void ConstructDeletedValue(Vector<String>& vec, bool) {
+  static void ConstructDeletedValue(Vector<String>& vec) {
     new (NotNullTag::kNotNull, &vec)
         Vector<String>(WTF::kHashTableDeletedValue);
   }
@@ -87,11 +87,10 @@ struct LegacyDOMSnapshotAgent::VectorStringHashTraits
     return vec.IsHashTableDeletedValue();
   }
 
-  static bool IsEmptyValue(const Vector<String>& vec) { return vec.IsEmpty(); }
+  static bool IsEmptyValue(const Vector<String>& vec) { return vec.empty(); }
 
-  static const bool kEmptyValueIsZero = false;
-  static const bool safe_to_compare_to_empty_or_deleted = false;
-  static const bool kHasIsEmptyValueFunction = true;
+  static constexpr bool kEmptyValueIsZero = false;
+  static constexpr bool kSafeToCompareToEmptyOrDeleted = false;
 };
 
 LegacyDOMSnapshotAgent::LegacyDOMSnapshotAgent(
@@ -220,7 +219,7 @@ int LegacyDOMSnapshotAgent::VisitNode(Node* node,
       InspectorDOMDebuggerAgent::CollectEventListeners(
           script_state->GetIsolate(), node, v8::Local<v8::Value>(), node, true,
           &event_information);
-      if (!event_information.IsEmpty()) {
+      if (!event_information.empty()) {
         value->setEventListeners(
             dom_debugger_agent_->BuildObjectsForEventListeners(
                 event_information, context, v8_inspector::StringView()));
@@ -250,13 +249,13 @@ int LegacyDOMSnapshotAgent::VisitNode(Node* node,
     }
 
     if (auto* textarea_element = DynamicTo<HTMLTextAreaElement>(*element))
-      value->setTextValue(textarea_element->value());
+      value->setTextValue(textarea_element->Value());
 
     if (auto* input_element = DynamicTo<HTMLInputElement>(*element)) {
-      value->setInputValue(input_element->value());
+      value->setInputValue(input_element->Value());
       if ((input_element->type() == input_type_names::kRadio) ||
           (input_element->type() == input_type_names::kCheckbox)) {
-        value->setInputChecked(input_element->checked());
+        value->setInputChecked(input_element->Checked());
       }
     }
 
@@ -408,7 +407,7 @@ int LegacyDOMSnapshotAgent::VisitLayoutTreeNode(LayoutObject* layout_object,
     auto* layout_text = To<LayoutText>(layout_object);
     layout_tree_node->setLayoutText(layout_text->GetText());
     Vector<LayoutText::TextBoxInfo> text_boxes = layout_text->GetTextBoxInfo();
-    if (!text_boxes.IsEmpty()) {
+    if (!text_boxes.empty()) {
       auto inline_text_nodes = std::make_unique<
           protocol::Array<protocol::DOMSnapshot::InlineTextBox>>();
       for (const auto& text_box : text_boxes) {
@@ -438,7 +437,7 @@ int LegacyDOMSnapshotAgent::GetStyleIndexForNode(Node* node) {
   bool all_properties_empty = true;
   for (const auto& pair : *css_property_filter_) {
     String value = computed_style_info->GetPropertyValue(pair.second);
-    if (!value.IsEmpty())
+    if (!value.empty())
       all_properties_empty = false;
     style.push_back(value);
   }
@@ -456,7 +455,7 @@ int LegacyDOMSnapshotAgent::GetStyleIndexForNode(Node* node) {
       std::make_unique<protocol::Array<protocol::DOMSnapshot::NameValue>>();
 
   for (wtf_size_t i = 0; i < style.size(); i++) {
-    if (style[i].IsEmpty())
+    if (style[i].empty())
       continue;
     style_properties->emplace_back(
         protocol::DOMSnapshot::NameValue::create()

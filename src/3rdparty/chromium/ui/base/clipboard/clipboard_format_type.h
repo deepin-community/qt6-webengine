@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -88,19 +88,28 @@ class COMPONENT_EXPORT(UI_BASE_CLIPBOARD_TYPES) ClipboardFormatType {
   static const ClipboardFormatType& MozUrlType();
 #endif
 
-  // For custom formats we hardcode the web custom format prefix and the index.
-  // Due to Windows/Linux limitations, please place limits on the amount of
-  // `WebCustomFormatName` calls with unique `index` argument.
+  // For custom formats, individual types are added to the clipboard with a type
+  // consisting of a prefix + index, and a map type that maps the custom format
+  // type to the type used on the clipboard. On Windows/Linux, this is done
+  // because there is a limited amount of system resources available to hold
+  // format types, so they must be conserved. On the Mac, there is no limit, but
+  // types must be named using strict alphanumerics, and MIME types do not
+  // conform to that naming restriction, so types must be mapped, and therefore
+  // the same mapping scheme is reused.
+
+  // Returns the format identifier used for web custom format data on the
+  // clipboard. Derived from the provided `index` value.
   static std::string WebCustomFormatName(int index);
-  // Gets the ClipboardFormatType corresponding to a format string,
-  // registering it with the system if needed.
+
+  // Returns the ClipboardFormatType used for web custom format data,
+  // registering it with the system if needed. Pass in a value obtained from
+  // `WebCustomFormatName` above.
   static ClipboardFormatType CustomPlatformType(
       const std::string& format_string);
-  // Returns the web custom format map that has the mapping of MIME types to
-  // custom format names.
+
+  // Returns the ClipboardFormatType used for the web custom format map that has
+  // the mapping of MIME types to custom format names.
   static const ClipboardFormatType& WebCustomFormatMap();
-  // Returns the web custom format map name.
-  static std::string WebCustomFormatMapName();
 
   // ClipboardFormatType can be used in a set on some platforms.
   bool operator<(const ClipboardFormatType& other) const;
@@ -113,7 +122,7 @@ class COMPONENT_EXPORT(UI_BASE_CLIPBOARD_TYPES) ClipboardFormatType {
 #elif defined(TOOLKIT_QT)
   const std::string& ToString() const { return data_; }
 #elif BUILDFLAG(IS_APPLE)
-  NSString* ToNSString() const { return data_; }
+  NSString* ToNSString() const { return uttype_; }
   // Custom copy and assignment constructor to handle NSString.
   ClipboardFormatType(const ClipboardFormatType& other);
   ClipboardFormatType& operator=(const ClipboardFormatType& other);
@@ -152,8 +161,10 @@ class COMPONENT_EXPORT(UI_BASE_CLIPBOARD_TYPES) ClipboardFormatType {
   explicit ClipboardFormatType(const std::string& native_format);
   std::string data_;
 #elif BUILDFLAG(IS_APPLE)
-  explicit ClipboardFormatType(NSString* native_format);
-  NSString* data_;
+  explicit ClipboardFormatType(NSString* uttype);
+  // A Uniform Type identifier string. TODO(macOS 11): Change to a UTType
+  // object.
+  NSString* uttype_;
 #else
 #error No ClipboardFormatType definition.
 #endif

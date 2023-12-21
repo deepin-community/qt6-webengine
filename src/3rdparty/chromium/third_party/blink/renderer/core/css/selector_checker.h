@@ -30,19 +30,27 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_CSS_SELECTOR_CHECKER_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_CSS_SELECTOR_CHECKER_H_
 
+#include <limits>
 #include "base/dcheck_is_on.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/css/css_selector.h"
+#include "third_party/blink/renderer/core/css/resolver/match_flags.h"
 #include "third_party/blink/renderer/core/css/style_request.h"
+#include "third_party/blink/renderer/core/css/style_scope.h"
+#include "third_party/blink/renderer/core/css/style_scope_frame.h"
 #include "third_party/blink/renderer/core/dom/element.h"
 #include "third_party/blink/renderer/core/scroll/scroll_types.h"
+#include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_map.h"
+#include "third_party/blink/renderer/platform/heap/collection_support/heap_vector.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+#include "third_party/blink/renderer/platform/heap/member.h"
+#include "third_party/blink/renderer/platform/heap/visitor.h"
 
 namespace blink {
 
 class CSSSelector;
 class ContainerNode;
 class CustomScrollbar;
-class ComputedStyle;
 class Element;
 class PartNames;
 
@@ -77,20 +85,17 @@ class CORE_EXPORT SelectorChecker {
   };
 
   explicit inline SelectorChecker(const Mode& mode)
-      : element_style_(nullptr),
-        scrollbar_(nullptr),
+      : scrollbar_(nullptr),
         part_names_(nullptr),
         pseudo_argument_(g_null_atom),
         scrollbar_part_(kNoPart),
         mode_(mode),
         is_ua_rule_(false) {}
-  inline SelectorChecker(ComputedStyle* element_style,
-                         PartNames* part_names,
+  inline SelectorChecker(PartNames* part_names,
                          const StyleRequest& style_request,
                          const Mode& mode,
                          const bool& is_ua_rule)
-      : element_style_(element_style),
-        scrollbar_(style_request.scrollbar),
+      : scrollbar_(style_request.scrollbar),
         part_names_(part_names),
         pseudo_argument_(style_request.pseudo_argument),
         scrollbar_part_(style_request.scrollbar_part),
@@ -112,13 +117,21 @@ class CORE_EXPORT SelectorChecker {
     // Group fields by type to avoid perf test regression.
     // https://crrev.com/c/3362008
     const CSSSelector* selector = nullptr;
+
+    // Used to match the :scope pseudo-class.
     const ContainerNode* scope = nullptr;
+    // If `style_scope` is specified, that is used to match the :scope
+    // pseudo-class instead (and `scope` is ignored).
+    const StyleScope* style_scope = nullptr;
+    // StyleScopeFrame is required if style_scope is non-nullptr.
+    StyleScopeFrame* style_scope_frame = nullptr;
 
     Element* element = nullptr;
     Element* previous_element = nullptr;
     Element* vtt_originating_element = nullptr;
-    ContainerNode* relative_leftmost_element = nullptr;
+    ContainerNode* relative_anchor_element = nullptr;
 
+    AtomicString* pseudo_argument = nullptr;
     PseudoId pseudo_id = kPseudoIdNone;
 
     bool is_sub_selector = false;
@@ -130,19 +143,29 @@ class CORE_EXPORT SelectorChecker {
     bool is_inside_visited_link = false;
     bool pseudo_has_in_rightmost_compound = true;
     bool is_inside_has_pseudo_class = false;
+    // Set to true if :initial pseudo class should match.
+    bool is_initial = false;
   };
 
   struct MatchResult {
     STACK_ALLOCATED();
 
    public:
-    PseudoId dynamic_pseudo{kPseudoIdNone};
-    AtomicString custom_highlight_name;
+    void SetFlag(MatchFlag flag) { flags |= static_cast<MatchFlags>(flag); }
+    bool HasFlag(MatchFlag flag) const {
+      return flags & static_cast<MatchFlags>(flag);
+    }
 
-    // From the shortest argument selector match, we need to get the element
-    // that matches the leftmost compound selector to mark the correct scope
-    // elements of :has() pseudo class having the argument selectors starts
-    // with descendant combinator.
+    PseudoId dynamic_pseudo{kPseudoIdNone};
+
+    // Comes from an AtomicString, but not stored as one to avoid
+    // the cost of checking the refcount on cleaning up from every
+    // Match() call. Owned by the CSS selector it came from.
+    StringImpl* custom_highlight_name{nullptr};
+
+    // From the :has() argument selector checking, we need to get the element
+    // that matches the leftmost compound selector to mark all possible :has()
+    // anchor elements (the relative anchor element of the :has() argument).
     //
     // <main id=main>
     //   <div id=d1>
@@ -160,38 +183,48 @@ class CORE_EXPORT SelectorChecker {
     //  main.querySelectorAll('div:has(.a .b)'); // Should return #d1, #d2
     // </script>
     //
-    // In case of the above example, div#d5 element matches the argument
-    // selector '.a .b'. Among the ancestors of the div#d5, the div#d3 and
-    // div#d4 is not the correct candidate scope element of ':has(.a .b)'
-    // because those elements don't have .a element as it's descendant.
-    // So instead of marking ancestors of div#d5, we should mark ancestors
-    // of div#d3 to prevent incorrect marking.
-    // In case of the shortest match for the argument selector '.a .b' on
-    // div#d5 element, the div#d3 is the element that matches the leftmost
-    // compound selector '.a'. So the MatchResult will return the div#d3
-    // element for the matching operation.
+    // In case of the above example, the selector 'div:has(.a .b)' is checked
+    // on the descendants of '#main' element in this order:
+    // - 'div#d1', 'div#d2', 'div#d3', 'div#d4', 'div#d5'
+    // When checking the selector on 'div#d1', we can get all possible :has()
+    // anchor element while checking the :has() argument selector ('.a .b')
+    // on the descendants of 'div#d1'.
+    // Among the descendants of 'div#d1', 'div#d5' matches the argument selector
+    // '.a .b'. More precisely, the 'div#d5' matches the argument selector
+    // ':-internal-relative-anchor .a .b' only when the ':-internal-relative-
+    // anchor' matches any ancestors of the element matches the leftmost
+    // compound of the argument selector ('.a').
+    // So, in case of checking the 'div:has(.a .b)' on 'div#d1', 'div#d1' and
+    // 'div#d2' can be a :has() argument anchor element because 'div#d3' and
+    // 'div#d4' are the element that matches the leftmost compound '.a' of the
+    // :has() argument '.a .b'.
+    // To avoid repetitive argument checking, the :has() anchor elements are
+    // stored in the CheckPseudoHasResultCache. To cache the anchor elements
+    // correctly, MatchResult returns the elements that match the leftmost
+    // compound of the :has() argument selector.
     //
-    // In case of matching none desendant relative argument selectors, we
-    // can get the candidate leftmost compound matches while matching the
-    // argument selector.
-    // To process the 'main.querySelectorAll("div:has(:scope > .a .b)")'
-    // on the above DOM tree, selector checker will try to match the
-    // argument selector ':scope > .a .b' on the descendants of #d1 div
-    // element with the :scope element as #d1. When it matches the argument
-    // selector on #d5 element, the matching result is true and it can get
-    // the element that matches the leftmost(except :scope) compound '.a'
-    // as #d2 element. But while matching the argument selector on the #d5
-    // element, selector checker can also aware that the #d3 element can
-    // be a leftmost compound matching element when the scope element is
-    // #d2 element. So the selector checker will return the #d2 and #d3
-    // element so that the #d1 and #d2 can be marked as matched with the
-    // ':has(:scope > .a .b)'
-    //
-    // Instead of having vector for the :has argument matching, MatchResult
-    // has a pointer field to hold a element vector instance to minimize the
-    // MatchResult instance allocation overhead for none-has matching operations
+    // This field is only for checking :has() pseudo class. To avoid the
+    // MatchResult instance allocation overhead on checking the other selectors,
+    // MatchResult has a pointer field to hold the reference of the vector
+    // instance instead of having the vector instance field.
     HeapVector<Member<Element>>* has_argument_leftmost_compound_matches{
         nullptr};
+    unsigned proximity{std::numeric_limits<unsigned>::max()};
+    MatchFlags flags{0};
+  };
+
+  // Used for situations where we have "inner" selector matching, such as
+  // :is(...). Ensures that MatchFlags found for the inner selector are
+  //  propagated to the outer MatchResult.
+  class SubResult : public MatchResult {
+    STACK_ALLOCATED();
+
+   public:
+    explicit SubResult(MatchResult& parent) : parent_(parent) {}
+    ~SubResult() { parent_.flags |= flags; }
+
+   private:
+    MatchResult& parent_;
   };
 
   bool Match(const SelectorCheckingContext& context, MatchResult& result) const;
@@ -205,12 +238,14 @@ class CORE_EXPORT SelectorChecker {
   static bool MatchesFocusVisiblePseudoClass(const Element&);
   static bool MatchesSpatialNavigationInterestPseudoClass(const Element&);
   static bool MatchesSelectorFragmentAnchorPseudoClass(const Element&);
+  bool CheckInStyleScope(const SelectorCheckingContext&, MatchResult&) const;
 
  private:
   // Does the work of checking whether the simple selector and element pointed
   // to by the context are a match. Delegates most of the work to the Check*
   // methods below.
-  bool CheckOne(const SelectorCheckingContext&, MatchResult&) const;
+  ALWAYS_INLINE bool CheckOne(const SelectorCheckingContext&,
+                              MatchResult&) const;
 
   enum MatchStatus {
     kSelectorMatches,
@@ -252,10 +287,28 @@ class CORE_EXPORT SelectorChecker {
   bool CheckScrollbarPseudoClass(const SelectorCheckingContext&,
                                  MatchResult&) const;
   bool CheckPseudoHost(const SelectorCheckingContext&, MatchResult&) const;
+  bool CheckPseudoScope(const SelectorCheckingContext&, MatchResult&) const;
   bool CheckPseudoNot(const SelectorCheckingContext&, MatchResult&) const;
   bool CheckPseudoHas(const SelectorCheckingContext&, MatchResult&) const;
+  bool MatchesAnyInList(const SelectorCheckingContext& context,
+                        const CSSSelector* selector_list,
+                        MatchResult& result) const;
 
-  ComputedStyle* element_style_;
+  const StyleScopeActivations& EnsureActivations(const SelectorCheckingContext&,
+                                                 const StyleScope&) const;
+  const StyleScopeActivations* CalculateActivations(
+      Element&,
+      const StyleScope&,
+      const StyleScopeActivations& outer_activations,
+      StyleScopeFrame*) const;
+  bool MatchesWithScope(Element&,
+                        const CSSSelector& selector_list,
+                        const ContainerNode* scope) const;
+  // https://drafts.csswg.org/css-cascade-6/#scoping-limit
+  bool ElementIsScopingLimit(const StyleScope&,
+                             const StyleScopeActivation&,
+                             Element& element) const;
+
   CustomScrollbar* scrollbar_;
   PartNames* part_names_;
   const String pseudo_argument_;
@@ -265,6 +318,67 @@ class CORE_EXPORT SelectorChecker {
 #if DCHECK_IS_ON()
   mutable bool inside_match_ = false;
 #endif
+
+  friend class NthIndexCache;
+};
+
+// An accelerated selector checker that matches only selectors with a
+// certain set of restrictions, informally called “easy” selectors.
+// (Not to be confused with simple selectors, which is a standards-defined
+// term.) Easy selectors support only a very small subset of the full
+// CSS selector machinery, but does so much faster than SelectorChecker
+// (typically a bit over twice as fast), and that subset tends to be enough
+// for ~80% of actual selectors checks on a typical web page. (It is also
+// ree from the complexities of Shadow DOM and does not check whether
+// the query exceeds the scope, so it cannot be used for querySelector().)
+//
+// The set of supported selectors is formally given as “anything IsEasy()
+// returns true for”, but roughly encompasses the following:
+//
+//  - Tag matches (e.g. div).
+//  - ID matches (e.g. #id).
+//  - Class matches (e.g. .c).
+//  - Case-sensitive attribute is-set and exact matches ([foo] and [foo="bar"]).
+//  - Subselector and descendant combinators.
+//  - Anything that does not need further checking
+//    (CSSSelector::IsCoveredByBucketing()).
+//
+// Given this, it does not need to set up any context, do recursion,
+// backtracking, have large switch/cases for pseudos, or the similar.
+//
+// You must include selector_checker-inl.h to use this class;
+// its functions are declared ALWAYS_INLINE because the call overhead
+// is so large compared to what the functions are actually doing.
+class CORE_EXPORT EasySelectorChecker {
+ public:
+  // Returns true iff the given selector is easy and can be given to Match().
+  // Should be precomputed for the given selector.
+  //
+  // If IsEasy() is true, this selector can never return any match flags,
+  // or match (dynamic) pseudos.
+  static ALWAYS_INLINE bool IsEasy(const CSSSelector* selector);
+
+  // Returns whether the given selector matches the given element.
+  // The following preconditions apply:
+  //
+  //  - The selector must be easy (see IsEasy()).
+  //  - Tag matching must be case-sensitive in the current context,
+  //    i.e., that the element is _not_ a non-HTML element in an
+  //    HTML document.
+  //
+  // Unlike SelectorChecker, does not check style_scope; the caller
+  // will need to do that if desired.
+  static ALWAYS_INLINE bool Match(const CSSSelector* selector,
+                                  const Element* element);
+
+ private:
+  static ALWAYS_INLINE bool MatchOne(const CSSSelector* selector,
+                                     const Element* element);
+  static ALWAYS_INLINE bool AttributeIsSet(const Element& element,
+                                           const QualifiedName& attr);
+  static ALWAYS_INLINE bool AttributeMatches(const Element& element,
+                                             const QualifiedName& attr,
+                                             const AtomicString& value);
 };
 
 }  // namespace blink

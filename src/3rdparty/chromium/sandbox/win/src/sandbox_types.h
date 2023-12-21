@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -162,6 +162,10 @@ enum ResultCode : int {
   SBOX_ERROR_INVALID_READ_SENTINEL_SIZE = 67,
   // The target process sentinel value did not match the sentinel in the broker.
   SBOX_ERROR_MISMATCH_SENTINEL_VALUE = 68,
+  // The process of consolidating the ConfigBase for a policy failed.
+  SBOX_ERROR_FAILED_TO_FREEZE_CONFIG = 69,
+  // Unable to obtain the environment in the broker process.
+  SBOX_ERROR_CANNOT_OBTAIN_ENVIRONMENT = 70,
   // Placeholder for last item of the enum.
   SBOX_ERROR_LAST
 };
@@ -180,11 +184,9 @@ enum TerminationCodes {
   SBOX_FATAL_LAST
 };
 
-#if !defined(SANDBOX_FUZZ_TARGET)
 static_assert(SBOX_FATAL_MEMORY_EXCEEDED ==
                   base::win::kSandboxFatalMemoryExceeded,
               "Value for SBOX_FATAL_MEMORY_EXCEEDED must match base.");
-#endif  // !defined(SANDBOX_FUZZ_TARGET)
 
 class BrokerServices;
 class TargetServices;

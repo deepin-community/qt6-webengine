@@ -122,7 +122,7 @@ class CORE_EXPORT AnimationEffect : public ScriptWrappable {
   void SetEventDelegate(EventDelegate* delegate) { event_delegate_ = delegate; }
 
   EffectTiming* getTiming() const;
-  ComputedEffectTiming* getComputedTiming() const;
+  ComputedEffectTiming* getComputedTiming();
   void updateTiming(OptionalEffectTiming*,
                     ExceptionState& = ASSERT_NO_EXCEPTION);
   AnimationTimeDelta GetCancelTime() const { return cancel_time_; }
@@ -151,8 +151,8 @@ class CORE_EXPORT AnimationEffect : public ScriptWrappable {
   // it will (if necessary) recalculate timings and (if necessary) call
   // UpdateChildrenAndEffects.
   void UpdateInheritedTime(absl::optional<AnimationTimeDelta> inherited_time,
-                           absl::optional<TimelinePhase> inherited_phase,
                            bool at_progress_timeline_boundary,
+                           bool is_idle,
                            double inherited_playback_rate,
                            TimingUpdateReason) const;
   void Invalidate() const { needs_update_ = true; }
@@ -172,6 +172,12 @@ class CORE_EXPORT AnimationEffect : public ScriptWrappable {
     return AnimationTimeDelta();
   }
 
+  // Converts timeline offsets to start and end delays in time units based on
+  // the timeline duration. In the event that the timeline is not an instance
+  // of a view timeline, the delays are zero.
+  using TimeDelayPair = std::pair<AnimationTimeDelta, AnimationTimeDelta>;
+  TimeDelayPair ComputeEffectiveAnimationDelays() const;
+
   virtual AnimationTimeDelta CalculateTimeToEffectChange(
       bool forwards,
       absl::optional<AnimationTimeDelta> local_time,
@@ -190,7 +196,8 @@ class CORE_EXPORT AnimationEffect : public ScriptWrappable {
   mutable absl::optional<Timing::NormalizedTiming> normalized_;
   mutable bool needs_update_;
   mutable absl::optional<AnimationTimeDelta> last_update_time_;
-  mutable absl::optional<Timing::Phase> last_update_phase_;
+  mutable bool last_at_progress_timeline_boundary_ = false;
+  mutable bool last_is_idle_ = false;
   AnimationTimeDelta cancel_time_;
   const Timing::CalculatedTiming& EnsureCalculated() const;
   void EnsureNormalizedTiming() const;

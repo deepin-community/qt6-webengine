@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,7 +10,7 @@
 #include <vector>
 
 #include "base/android/jni_string.h"
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/metrics/histogram_functions.h"
 #include "components/url_formatter/elide_url.h"
 #include "content/browser/renderer_host/render_frame_host_impl.h"

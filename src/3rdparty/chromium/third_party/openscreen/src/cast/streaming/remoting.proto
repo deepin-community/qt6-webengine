@@ -62,6 +62,7 @@ message AudioDecoderConfig {
     kCodecMpegHAudio = 17;
     kCodecDTS = 18;
     kCodecDTSXP2 = 19;
+    kCodecDTSE = 20;
   }
 
   // Proto version of Chrome's media::SampleFormat.
@@ -187,6 +188,14 @@ message VideoDecoderConfig {
     AV1PROFILE_PROFILE_PRO = 26;
     DOLBYVISION_PROFILE8 = 27;
     DOLBYVISION_PROFILE9 = 28;
+    HEVCPROFILE_REXT = 29;
+    HEVCPROFILE_HIGH_THROUGHPUT = 30;
+    HEVCPROFILE_MULTIVIEW_MAIN = 31;
+    HEVCPROFILE_SCALABLE_MAIN = 32;
+    HEVCPROFILE_3D_MAIN = 33;
+    HEVCPROFILE_SCREEN_EXTENDED = 34;
+    HEVCPROFILE_SCALABLE_REXT = 35;
+    HEVCPROFILE_HIGH_THROUGHPUT_SCREEN_EXTENDED = 36;
   };
 
   // Proto version of Chrome's media::VideoPixelFormat.
@@ -308,6 +317,34 @@ message RendererClientOnVideoConfigChange {
   optional VideoDecoderConfig video_decoder_config = 1;
 }
 
+message RemotingError {
+  enum ErrorType {
+    // Proto version of Chrome's media::PipelineStatus.
+    kMediaPipelineNetwork = 1;
+    kMediaPipelineDecode = 2;
+    kMediaPipelineAbort = 3;
+    kMediaPipelineInitializationFailed = 4;
+    kMediaPipelineCouldNotRender = 5;
+    kMediaPipelineRead = 6;
+    kMediaPipelineInvalidState = 7;
+    kMediaPipelineExternalRendererFailed = 8;
+    kMediaPipelineHardwareContextReset = 9;
+    kMediaPipelineDisconnected = 10;
+    kMediaPipelineDemuxerCouldNotOpen = 11;
+    kMediaPipelineDemuxerCouldNotParse = 12;
+    kMediaPipelineDemuxerNoSupportedStreams = 13;
+    kMediaPipelineDemuxerDetectedHls = 14;
+    kMediaPipelineDecoderNotSupported = 15;
+    kMediaPipelineChunkDemuxerAppendFailed = 16;
+    kMediaPipelineChunkDemuxerEosStatusDecode = 17;
+    kMediaPipelineChunkDemuxerEosStatusNetwork = 18;
+    kMediaPipelineAudioRenderer = 19;
+  }
+
+  optional ErrorType error_type = 1;
+  optional string description = 2;
+}
+
 message DemuxerStreamReadUntil {
   optional int32 callback_handle = 1;
   optional uint32 count = 2;
@@ -344,44 +381,142 @@ message RpcMessage {
         "RPC_RC_ONWAITINGFORDECRYPTIONKEY", "RPC_RC_ONDURATIONCHANGE",
         "RPC_R_SETCDM";
 
-    // Remoting setup
+    // In the below documentation, the two endpoints for the remoting protocol
+    // are referred to as the SOURCE (the device sending frames) and the SINK
+    // (the device receiving frames).
+
     RPC_INTERNAL = 0;
+
+    // *******************
+    // Remoting setup
+    //
+    // Sent from the SOURCE to the SINK.
+    // *******************
+
+    // Value is populated in integer_value().
     RPC_ACQUIRE_RENDERER = 1;
-    RPC_ACQUIRE_RENDERER_DONE = 2;
+
+    // Value is populated in acquire_demuxer_rpc().
     RPC_ACQUIRE_DEMUXER = 5;
 
-    // Renderer message
+    // *******************
+    // Remoting Initial Setup
+    //
+    // Sent from the SINK to the SOURCE.
+    // *******************
+
+    // Value is populated in integer_value().
+    RPC_ACQUIRE_RENDERER_DONE = 2;
+
+    // *******************
+    // Remoting Error Reporting
+    //
+    // Sent from the SINK to the SOURCE.
+
+    // Value is populated in remoting_error_rpc().
+    RPC_ONREMOTINGERROR = 6;
+
+    // *******************
+    // Renderer Control
+    //
+    // Sent from the SINK to the SOURCE.
+    // *******************
+
+    // Has no value.
     RPC_R_INITIALIZE = 1000;
+
+    // Value is populated in renderer_flushuntil_rpc().
     RPC_R_FLUSHUNTIL = 1001;
+
+    // Value is populated in integer64_value().
     RPC_R_STARTPLAYINGFROM = 1002;
+
+    // Value is populated in double_value().
     RPC_R_SETPLAYBACKRATE = 1003;
+
+    // Value is populated in double_value().
     RPC_R_SETVOLUME = 1004;
 
-    // Renderer callbacks
+    // *******************
+    // Renderer Control Callbacks
+    //
+    // Sent from the SINK to the SOURCE.
+    // *******************
+
+    // Value is populated in boolean_value().
     RPC_R_INITIALIZE_CALLBACK = 1100;
+
+    // Has no value.
     RPC_R_FLUSHUNTIL_CALLBACK = 1101;
+
+    // Value is populated in boolean_value().
     RPC_R_SETCDM_CALLBACK = 1102;
 
-    // Renderer client message
+    // *******************
+    // Renderer Client Information
+    //
+    // Sent from the SINK to the SOURCE.
+    // *******************
+
+    // Value is populated in rendererclient_ontimeupdate_rpc().
     RPC_RC_ONTIMEUPDATE = 2000;
+
+    // Value is populated in rendererclient_onbufferingstatechange_rpc().
     RPC_RC_ONBUFFERINGSTATECHANGE = 2001;
+
+    // Has no value.
     RPC_RC_ONENDED = 2002;
+
+    // Has no value.
     RPC_RC_ONERROR = 2003;
+
+    // Value is populated in rendererclient_onvideonatualsizechange_rpc().
     RPC_RC_ONVIDEONATURALSIZECHANGE = 2004;
+
+    // Value is populated in boolean_value().
     RPC_RC_ONVIDEOOPACITYCHANGE = 2005;
+
+    // Value is populated in rendererclient_onstatisticsupdate_rpc().
     RPC_RC_ONSTATISTICSUPDATE = 2006;
+
+    // Value is populated in rendererclient_onaudioconfigchange_rpc().
     RPC_RC_ONAUDIOCONFIGCHANGE = 2009;
+
+    // Value is populated in rendererclient_onvideoconfigchange_rpc().
     RPC_RC_ONVIDEOCONFIGCHANGE = 2010;
 
-    // DemuxerStream message
+    // *******************
+    // Demuxer Stream Controls
+    //
+    // Sent from the SINK to the SOURCE.
+    // *******************
+
+    // Value is populated in integer_value().
     RPC_DS_INITIALIZE = 3000;
+
+    // Value is populated in demuxerstream_readuntil_rpc().
     RPC_DS_READUNTIL = 3001;
+
+    // Has no value.
     RPC_DS_ENABLEBITSTREAMCONVERTER = 3002;
+
+    // Has no value.
     RPC_DS_ONERROR = 3003;
 
-    // DemuxerStream callbacks
+    // *******************
+    // Demuxer Stream Callbacks
+    //
+    // Sent from the SOURCE to the SINK.
+    // *******************
+
+    // Value is populated in integer_value().
     RPC_DS_INITIALIZE_CALLBACK = 3100;
+
+    // Value is populated in demuxerstream_readuntilcb_rpc().
     RPC_DS_READUNTIL_CALLBACK = 3101;
+
+    // Value is populated in boolean_value().
+    RPC_DS_ENABLEBITSTREAMCONVERTER_CALLBACK = 3102;
   };
 
   // Component base of RPC message handle. This allows both sender and receiver
@@ -422,6 +557,9 @@ message RpcMessage {
     // string only:
     // RPC_CDMC_ONSESSIONCLOSED
     string string_value = 7;
+
+    // RPC_ONREMOTINGERROR
+    RemotingError remoting_error_rpc = 99;
 
     // RPC_R_INITIALIZE
     RendererInitialize renderer_initialize_rpc = 100;

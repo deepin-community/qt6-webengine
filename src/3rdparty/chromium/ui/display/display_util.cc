@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -56,6 +56,7 @@ void DisplayUtil::DisplayToScreenInfo(ScreenInfo* screen_info,
       screen && (screen->GetPrimaryDisplay().id() == display.id());
   screen_info->is_internal = display.IsInternal();
   screen_info->display_id = display.id();
+  screen_info->label = display.label();
 }
 
 // static
@@ -134,6 +135,20 @@ mojom::ScreenOrientation DisplayUtil::GetOrientationTypeForDesktop(
   return primary_landscape_angle == angle
              ? mojom::ScreenOrientation::kLandscapePrimary
              : mojom::ScreenOrientation::kLandscapeSecondary;
+}
+
+// static
+uint32_t DisplayUtil::GetAudioFormats() {
+  // Audio passthrough is only supported with a single display. If multiple
+  // displays are attached, audio passthrough will not be enabled.
+  Screen* screen = Screen::GetScreen();
+  if (screen) {
+    auto display = screen->GetAllDisplays();
+    if (display.size() == 1) {
+      return display.front().audio_formats();
+    }
+  }
+  return 0;
 }
 
 }  // namespace display

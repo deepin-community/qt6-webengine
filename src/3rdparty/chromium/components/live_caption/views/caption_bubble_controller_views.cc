@@ -1,32 +1,38 @@
-// Copyright (c) 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/live_caption/views/caption_bubble_controller_views.h"
 
 #include <memory>
+#include <set>
 #include <string>
+#include <unordered_map>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "components/live_caption/caption_bubble_context.h"
 #include "components/live_caption/live_caption_controller.h"
 #include "components/live_caption/views/caption_bubble.h"
 #include "components/live_caption/views/caption_bubble_model.h"
+#include "components/prefs/pref_service.h"
 
 namespace captions {
 
 // Static
-std::unique_ptr<CaptionBubbleController> CaptionBubbleController::Create() {
-  return std::make_unique<CaptionBubbleControllerViews>();
+std::unique_ptr<CaptionBubbleController> CaptionBubbleController::Create(
+    PrefService* profile_prefs) {
+  return std::make_unique<CaptionBubbleControllerViews>(profile_prefs);
 }
 
-CaptionBubbleControllerViews::CaptionBubbleControllerViews() {
+CaptionBubbleControllerViews::CaptionBubbleControllerViews(
+    PrefService* profile_prefs) {
   caption_bubble_ = new CaptionBubble(
+      profile_prefs,
       base::BindOnce(&CaptionBubbleControllerViews::OnCaptionBubbleDestroyed,
-                     base::Unretained(this)),
-      /* hide_on_inactivity= */ true);
+                     base::Unretained(this)));
   caption_widget_ =
       views::BubbleDialogDelegateView::CreateBubble(caption_bubble_);
+  caption_bubble_->SetCaptionBubbleStyle();
 }
 
 CaptionBubbleControllerViews::~CaptionBubbleControllerViews() {
@@ -99,9 +105,35 @@ void CaptionBubbleControllerViews::UpdateCaptionStyle(
 void CaptionBubbleControllerViews::SetActiveModel(
     CaptionBubbleContext* caption_bubble_context) {
   if (!caption_bubble_models_.count(caption_bubble_context)) {
-    caption_bubble_models_.emplace(
+    auto caption_bubble_model = std::make_unique<CaptionBubbleModel>(
         caption_bubble_context,
-        std::make_unique<CaptionBubbleModel>(caption_bubble_context));
+        base::BindRepeating(
+            &CaptionBubbleControllerViews::OnSessionEnded,
+            // Unretained is safe because |CaptionBubbleControllerViews|
+            // owns |caption_bubble_model|.
+            base::Unretained(this)));
+
+    if (base::Contains(closed_sessions_,
+                       caption_bubble_context->GetSessionId())) {
+      caption_bubble_model->Close();
+    }
+
+    caption_bubble_models_.emplace(caption_bubble_context,
+                                   std::move(caption_bubble_model));
+  }
+
+  if (!caption_bubble_session_observers_.count(
+          caption_bubble_context->GetSessionId())) {
+    std::unique_ptr<CaptionBubbleSessionObserver> observer =
+        caption_bubble_context->GetCaptionBubbleSessionObserver();
+
+    if (observer) {
+      observer->SetEndSessionCallback(
+          base::BindRepeating(&CaptionBubbleControllerViews::OnSessionReset,
+                              base::Unretained(this)));
+      caption_bubble_session_observers_.emplace(
+          caption_bubble_context->GetSessionId(), std::move(observer));
+    }
   }
 
   CaptionBubbleModel* caption_bubble_model =
@@ -112,8 +144,34 @@ void CaptionBubbleControllerViews::SetActiveModel(
   }
 }
 
+void CaptionBubbleControllerViews::OnSessionEnded(
+    const std::string& session_id) {
+  // Close all other CaptionBubbleModels that share this WebContents identifier.
+  for (const auto& caption_bubble_model : caption_bubble_models_) {
+    if (caption_bubble_model.first->GetSessionId() == session_id) {
+      caption_bubble_model.second->Close();
+    }
+  }
+
+  closed_sessions_.insert(session_id);
+}
+
+void CaptionBubbleControllerViews::OnSessionReset(
+    const std::string& session_id) {
+  if (base::Contains(closed_sessions_, session_id)) {
+    closed_sessions_.erase(session_id);
+  }
+
+  caption_bubble_session_observers_.erase(session_id);
+}
+
 bool CaptionBubbleControllerViews::IsWidgetVisibleForTesting() {
   return caption_widget_ && caption_widget_->IsVisible();
+}
+
+bool CaptionBubbleControllerViews::IsGenericErrorMessageVisibleForTesting() {
+  return caption_bubble_ &&
+         caption_bubble_->IsGenericErrorMessageVisibleForTesting();  // IN-TEST
 }
 
 std::string CaptionBubbleControllerViews::GetBubbleLabelTextForTesting() {
@@ -121,6 +179,19 @@ std::string CaptionBubbleControllerViews::GetBubbleLabelTextForTesting() {
              ? base::UTF16ToUTF8(
                    caption_bubble_->GetLabelForTesting()->GetText())  // IN-TEST
              : "";
+}
+
+void CaptionBubbleControllerViews::CloseActiveModelForTesting() {
+  if (active_model_)
+    active_model_->Close();
+}
+
+views::Widget* CaptionBubbleControllerViews::GetCaptionWidgetForTesting() {
+  return caption_widget_;
+}
+
+CaptionBubble* CaptionBubbleControllerViews::GetCaptionBubbleForTesting() {
+  return caption_bubble_;
 }
 
 }  // namespace captions

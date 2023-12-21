@@ -1,4 +1,4 @@
-// Copyright 2021 The Tint Authors.
+// Copyright 2023 The Tint Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,24 +14,12 @@
 
 #include "src/tint/sem/expression.h"
 
-#include <utility>
-
 TINT_INSTANTIATE_TYPEINFO(tint::sem::Expression);
 
 namespace tint::sem {
 
-Expression::Expression(const ast::Expression* declaration,
-                       const sem::Type* type,
-                       const Statement* statement,
-                       Constant constant,
-                       bool has_side_effects)
-    : declaration_(declaration),
-      type_(type),
-      statement_(statement),
-      constant_(std::move(constant)),
-      has_side_effects_(has_side_effects) {
-  TINT_ASSERT(Semantic, type_);
-}
+Expression::Expression(const ast::Expression* declaration, const Statement* statement)
+    : declaration_(declaration), statement_(statement) {}
 
 Expression::~Expression() = default;
 

@@ -1,4 +1,4 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -67,10 +67,11 @@ V8CSSNumberish* CSSHWB::alpha() const {
 }
 
 void CSSHWB::setH(CSSNumericValue* hue, ExceptionState& exception_state) {
-  if (CSSOMTypes::IsCSSStyleValueAngle(*hue))
+  if (CSSOMTypes::IsCSSStyleValueAngle(*hue)) {
     h_ = hue;
-  else
+  } else {
     exception_state.ThrowTypeError("Hue must be a CSS angle type.");
+  }
 }
 
 void CSSHWB::setW(const V8CSSNumberish* white,
@@ -104,9 +105,9 @@ void CSSHWB::setAlpha(const V8CSSNumberish* alpha,
 }
 
 Color CSSHWB::ToColor() const {
-  // MakeRGBAFromHSLA expects hue in the range [0, 6)
-  return MakeRGBAFromHWBA(
-      h_->to(CSSPrimitiveValue::UnitType::kDegrees)->value() / 60,
+  // FromHSLA expects hue in the range [0, 6)
+  return Color::FromHWBA(
+      h_->to(CSSPrimitiveValue::UnitType::kDegrees)->value() / 60.f,
       ComponentToColorInput(w_), ComponentToColorInput(b_),
       ComponentToColorInput(alpha_));
 }

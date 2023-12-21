@@ -37,7 +37,6 @@
 #define EIGEN_HALF_H
 
 #include "../../InternalHeaderCheck.h"
-#include <sstream>
 
 #if defined(EIGEN_HAS_GPU_FP16) || defined(EIGEN_HAS_ARM64_FP16_SCALAR_ARITHMETIC)
 // When compiling with GPU support, the "__half_raw" base class as well as
@@ -391,7 +390,7 @@ EIGEN_STRONG_INLINE __device__ bool operator >= (const half& a, const half& b) {
 }
 #endif
 
-#if defined(EIGEN_HAS_ARM64_FP16_SCALAR_ARITHMETIC)
+#if defined(EIGEN_HAS_ARM64_FP16_SCALAR_ARITHMETIC) && !defined(EIGEN_GPU_COMPILE_PHASE)
 EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC half operator + (const half& a, const half& b) {
   return half(vaddh_f16(a.x, b.x));
 }
@@ -446,7 +445,7 @@ EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bool operator >= (const half& a, const hal
 // of the functions, while the latter can only deal with one of them.
 #elif !defined(EIGEN_HAS_NATIVE_FP16) || (EIGEN_COMP_CLANG && !EIGEN_COMP_NVCC) // Emulate support for half floats
 
-#if EIGEN_COMP_CLANG && defined(EIGEN_CUDACC)
+#if EIGEN_COMP_CLANG && defined(EIGEN_GPUCC)
 // We need to provide emulated *host-side* FP16 operators for clang.
 #pragma push_macro("EIGEN_DEVICE_FUNC")
 #undef EIGEN_DEVICE_FUNC
@@ -511,7 +510,7 @@ EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC bool operator >= (const half& a, const hal
   return float(a) >= float(b);
 }
 
-#if defined(__clang__) && defined(__CUDA__)
+#if EIGEN_COMP_CLANG && defined(EIGEN_GPUCC)
 #pragma pop_macro("EIGEN_DEVICE_FUNC")
 #endif
 #endif  // Emulate support for half floats
@@ -591,7 +590,12 @@ EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC __half_raw float_to_half_rtne(float ff) {
 
 #elif defined(EIGEN_HAS_FP16_C)
   __half_raw h;
-  h.x = _cvtss_sh(ff, 0);
+  #if EIGEN_COMP_MSVC
+    // MSVC does not have scalar instructions.
+    h.x =_mm_extract_epi16(_mm_cvtps_ph(_mm_set_ss(ff), 0), 0);
+  #else
+    h.x = _cvtss_sh(ff, 0);
+  #endif
   return h;
 
 #elif defined(EIGEN_HAS_ARM64_FP16_SCALAR_ARITHMETIC)
@@ -652,7 +656,12 @@ EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC float half_to_float(__half_raw h) {
   (defined(EIGEN_HAS_HIP_FP16) && defined(EIGEN_HIP_DEVICE_COMPILE))
   return __half2float(h);
 #elif defined(EIGEN_HAS_FP16_C)
-  return _cvtsh_ss(h.x);
+  #if EIGEN_COMP_MSVC
+    // MSVC does not have scalar instructions.
+    return _mm_cvtss_f32(_mm_cvtph_ps(_mm_set1_epi16(h.x)));
+  #else
+    return _cvtsh_ss(h.x);
+  #endif
 #elif defined(EIGEN_HAS_ARM64_FP16_SCALAR_ARITHMETIC)
   return static_cast<float>(h.x);
 #else
@@ -748,6 +757,9 @@ EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC half sqrt(const half& a) {
 }
 EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC half pow(const half& a, const half& b) {
   return half(::powf(float(a), float(b)));
+}
+EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC half atan2(const half& a, const half& b) {
+  return half(::atan2f(float(a), float(b)));
 }
 EIGEN_STRONG_INLINE EIGEN_DEVICE_FUNC half sin(const half& a) {
   return half(::sinf(float(a)));

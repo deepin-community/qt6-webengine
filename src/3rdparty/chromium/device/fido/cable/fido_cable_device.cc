@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,11 +6,11 @@
 
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/numerics/safe_math.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/task/single_thread_task_runner.h"
 #include "components/device_event_log/device_event_log.h"
 #include "device/fido/cable/fido_ble_frames.h"
 #include "device/fido/cable/fido_ble_uuids.h"
@@ -121,14 +121,14 @@ std::string FidoCableDevice::GetId() const {
 }
 
 FidoTransportProtocol FidoCableDevice::DeviceTransport() const {
-  return FidoTransportProtocol::kCloudAssistedBluetoothLowEnergy;
+  return FidoTransportProtocol::kHybrid;
 }
 
 FidoDevice::CancelToken FidoCableDevice::DeviceTransact(
     std::vector<uint8_t> command,
     DeviceCallback callback) {
   if (!encryption_data_ || !EncryptOutgoingMessage(&command)) {
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(std::move(callback), absl::nullopt));
     state_ = State::kDeviceError;
     FIDO_LOG(ERROR) << "Failed to encrypt outgoing caBLE message.";

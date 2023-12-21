@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,9 +9,8 @@
 
 #include "base/gtest_prod_util.h"
 #include "base/mac/scoped_cftyperef.h"
-#include "base/memory/ref_counted.h"
 #include "net/base/net_export.h"
-#include "net/cert/internal/trust_store.h"
+#include "net/cert/pki/trust_store.h"
 
 namespace net {
 
@@ -74,11 +73,15 @@ class NET_EXPORT TrustStoreMac : public TrustStore {
     COPY_TRUST_SETTINGS_ERROR = 1 << 11,
   };
 
+  // NOTE: When updating this enum, also update ParamToTrustImplType in
+  // system_trust_store.cc
   enum class TrustImplType {
+    // Values 1 and 3 were used for implementation strategies that have since
+    // been removed.
     kUnknown = 0,
-    kDomainCache = 1,
     kSimple = 2,
-    kLruCache = 3,
+    kDomainCacheFullCerts = 4,
+    kKeychainCacheFullCerts = 5,
   };
 
   class ResultDebugData : public base::SupportsUserData::Data {
@@ -109,9 +112,8 @@ class NET_EXPORT TrustStoreMac : public TrustStore {
   // |policy_oid|. For list of possible policy values, see:
   // https://developer.apple.com/reference/security/1667150-certificate_key_and_trust_servic/1670151-standard_policies_for_specific_c?language=objc
   // |impl| selects which internal implementation is used for checking trust
-  // settings, and the interpretation of |cache_size| varies depending on
-  // |impl|.
-  TrustStoreMac(CFStringRef policy_oid, TrustImplType impl, size_t cache_size);
+  // settings.
+  TrustStoreMac(CFStringRef policy_oid, TrustImplType impl);
 
   TrustStoreMac(const TrustStoreMac&) = delete;
   TrustStoreMac& operator=(const TrustStoreMac&) = delete;
@@ -121,23 +123,17 @@ class NET_EXPORT TrustStoreMac : public TrustStore {
   // Initializes the trust cache, if it isn't already initialized.
   void InitializeTrustCache() const;
 
-  // Returns true if the given certificate is present in the system trust
-  // domain.
-  bool IsKnownRoot(const ParsedCertificate* cert) const;
-
   // TrustStore implementation:
   void SyncGetIssuersOf(const ParsedCertificate* cert,
                         ParsedCertificateList* issuers) override;
   CertificateTrust GetTrust(const ParsedCertificate* cert,
-                            base::SupportsUserData* debug_data) const override;
+                            base::SupportsUserData* debug_data) override;
 
  private:
   class TrustImpl;
-  class TrustImplDomainCache;
+  class TrustImplDomainCacheFullCerts;
+  class TrustImplKeychainCacheFullCerts;
   class TrustImplNoCache;
-  class TrustImplLRUCache;
-
-  FRIEND_TEST_ALL_PREFIXES(TrustStoreMacImplTest, MultiRootNotTrusted);
 
   // Finds certificates in the OS keychains whose Subject matches |name_data|.
   // The result is an array of CRYPTO_BUFFERs containing the DER certificate

@@ -1,4 +1,4 @@
-// Copyright 2017 PDFium Authors. All rights reserved.
+// Copyright 2017 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,6 +14,8 @@
 
 class CXFA_Rectangle : public CXFA_Box {
  public:
+  static CXFA_Rectangle* FromNode(CXFA_Node* pNode);
+
   CONSTRUCT_VIA_MAKE_GARBAGE_COLLECTED;
   ~CXFA_Rectangle() override;
 

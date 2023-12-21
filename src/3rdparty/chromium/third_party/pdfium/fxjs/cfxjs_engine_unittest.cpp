@@ -1,4 +1,4 @@
-// Copyright 2018 PDFium Authors. All rights reserved.
+// Copyright 2018 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -37,6 +37,12 @@ static bool temp_created = false;
 static bool temp_destroyed = false;
 
 TEST_F(FXJSEngineUnitTest, GC) {
+  // Reset variables since there might be multiple iterations.
+  perm_created = false;
+  perm_destroyed = false;
+  temp_created = false;
+  temp_destroyed = false;
+
   v8::Isolate::Scope isolate_scope(isolate());
   v8::HandleScope handle_scope(isolate());
 

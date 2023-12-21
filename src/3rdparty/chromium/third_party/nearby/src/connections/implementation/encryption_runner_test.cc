@@ -26,7 +26,6 @@
 #include "internal/platform/system_clock.h"
 #include "proto/connections_enums.pb.h"
 
-namespace location {
 namespace nearby {
 namespace connections {
 namespace {
@@ -42,7 +41,17 @@ class FakeEndpointChannel : public EndpointChannel {
     return in_ ? in_->Read(Pipe::kChunkSize)
                : ExceptionOr<ByteArray>{Exception::kIo};
   }
+  ExceptionOr<ByteArray> Read(PacketMetaData& packet_meta_data) override {
+    read_timestamp_ = SystemClock::ElapsedRealtime();
+    return in_ ? in_->Read(Pipe::kChunkSize)
+               : ExceptionOr<ByteArray>{Exception::kIo};
+  }
   Exception Write(const ByteArray& data) override {
+    write_timestamp_ = SystemClock::ElapsedRealtime();
+    return out_ ? out_->Write(data) : Exception{Exception::kIo};
+  }
+  Exception Write(const ByteArray& data,
+                  PacketMetaData& packet_meta_data) override {
     write_timestamp_ = SystemClock::ElapsedRealtime();
     return out_ ? out_->Write(data) : Exception{Exception::kIo};
   }
@@ -50,19 +59,24 @@ class FakeEndpointChannel : public EndpointChannel {
     if (in_) in_->Close();
     if (out_) out_->Close();
   }
-  void Close(proto::connections::DisconnectionReason reason) override {
+  void Close(location::nearby::proto::connections::DisconnectionReason reason)
+      override {
     Close();
   }
-  proto::connections::ConnectionTechnology GetTechnology() const override {
-    return proto::connections::ConnectionTechnology::
+  location::nearby::proto::connections::ConnectionTechnology GetTechnology()
+      const override {
+    return location::nearby::proto::connections::ConnectionTechnology::
         CONNECTION_TECHNOLOGY_BLE_GATT;
   }
-  proto::connections::ConnectionBand GetBand() const override {
-    return proto::connections::ConnectionBand::CONNECTION_BAND_CELLULAR_BAND_2G;
+  location::nearby::proto::connections::ConnectionBand GetBand()
+      const override {
+    return location::nearby::proto::connections::ConnectionBand::
+        CONNECTION_BAND_CELLULAR_BAND_2G;
   }
   int GetFrequency() const override { return 0; }
   int GetTryCount() const override { return 0; }
   std::string GetType() const override { return "fake-channel-type"; }
+  std::string GetServiceId() const override { return "fake-service-id"; }
   std::string GetName() const override { return "fake-channel"; }
   Medium GetMedium() const override { return Medium::BLE; }
   int GetMaxTransmitPacketSize() const override { return 512; }
@@ -157,4 +171,3 @@ TEST(EncryptionRunnerTest, ReadWrite) {
 }  // namespace
 }  // namespace connections
 }  // namespace nearby
-}  // namespace location

@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,8 +7,9 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/task/sequenced_task_runner.h"
 #include "components/safe_browsing/core/browser/db/v4_get_hash_protocol_manager.h"
 #include "components/safe_browsing/core/browser/db/v4_protocol_manager_util.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
@@ -148,6 +149,17 @@ SafeBrowsingDatabaseManager::RegisterDatabaseUpdatedCallback(
 void SafeBrowsingDatabaseManager::NotifyDatabaseUpdateFinished() {
   DCHECK(ui_task_runner()->RunsTasksInCurrentSequence());
   update_complete_callback_list_.Notify();
+}
+
+bool SafeBrowsingDatabaseManager::IsDatabaseReady() {
+  DCHECK(io_task_runner()->RunsTasksInCurrentSequence());
+  return enabled_;
+}
+
+void SafeBrowsingDatabaseManager::SetLookupMechanismExperimentIsEnabled() {
+  if (v4_get_hash_protocol_manager_) {
+    v4_get_hash_protocol_manager_->SetLookupMechanismExperimentIsEnabled();
+  }
 }
 
 SafeBrowsingDatabaseManager::SafeBrowsingApiCheck::SafeBrowsingApiCheck(

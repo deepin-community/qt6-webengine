@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,7 @@
 #include <utility>
 #include <vector>
 
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/task/single_thread_task_runner.h"
 #include "cc/trees/layer_tree_frame_sink.h"
 #include "components/exo/layer_tree_frame_sink_holder.h"
 #include "components/exo/shell_surface_base.h"
@@ -33,10 +33,12 @@
 #include "ui/aura/window_targeter.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/base/cursor/cursor.h"
+#include "ui/color/color_id.h"
 #include "ui/compositor/compositor.h"
 #include "ui/compositor/layer.h"
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
+#include "ui/display/types/display_constants.h"
 #include "ui/gfx/color_space.h"
 #include "ui/gfx/display_color_spaces.h"
 #include "ui/gfx/geometry/dip_util.h"
@@ -123,6 +125,8 @@ SurfaceTreeHost::~SurfaceTreeHost() {
   SetRootSurface(nullptr);
   LayerTreeFrameSinkHolder::DeleteWhenLastResourceHasBeenReclaimed(
       std::move(layer_tree_frame_sink_holder_));
+
+  CleanUpCallbacks();
 }
 
 void SurfaceTreeHost::SetRootSurface(Surface* root_surface) {
@@ -143,22 +147,6 @@ void SurfaceTreeHost::SetRootSurface(Surface* root_surface) {
     // Force recreating resources when the surface is added to a tree again.
     root_surface_->SurfaceHierarchyResourcesLost();
     root_surface_ = nullptr;
-
-    // Call all frame callbacks with a null frame time to indicate that they
-    // have been cancelled.
-    while (!frame_callbacks_.empty()) {
-      frame_callbacks_.front().Run(base::TimeTicks());
-      frame_callbacks_.pop_front();
-    }
-
-    DCHECK(presentation_callbacks_.empty());
-    for (auto entry : active_presentation_callbacks_) {
-      while (!entry.second.empty()) {
-        entry.second.front().Run(gfx::PresentationFeedback());
-        entry.second.pop_front();
-      }
-    }
-    active_presentation_callbacks_.clear();
   }
 
   if (root_surface) {
@@ -180,10 +168,11 @@ void SurfaceTreeHost::GetHitTestMask(SkPath* mask) const {
 }
 
 void SurfaceTreeHost::DidReceiveCompositorFrameAck() {
-  while (!frame_callbacks_.empty()) {
-    frame_callbacks_.front().Run(base::TimeTicks::Now());
-    frame_callbacks_.pop_front();
+  const base::TimeTicks now = base::TimeTicks::Now();
+  for (auto& callback : frame_callbacks_.front()) {
+    callback.Run(now);
   }
+  frame_callbacks_.pop();
 }
 
 void SurfaceTreeHost::DidPresentCompositorFrame(
@@ -197,11 +186,29 @@ void SurfaceTreeHost::DidPresentCompositorFrame(
   active_presentation_callbacks_.erase(it);
 }
 
+void SurfaceTreeHost::SetScaleFactor(float scale_factor) {
+  pending_scale_factor_ = scale_factor;
+}
+
+void SurfaceTreeHost::SetSecurityDelegate(SecurityDelegate* security_delegate) {
+  DCHECK(security_delegate_ == nullptr);
+  security_delegate_ = security_delegate;
+}
+
+void SurfaceTreeHost::SubmitCompositorFrameForTesting(
+    viz::CompositorFrame frame) {
+  // Make sure that every submission has an entry pushed into
+  // `frame_callbacks_`, which will be pop when ack is received.
+  frame_callbacks_.emplace();
+  active_presentation_callbacks_[frame.metadata.frame_token] =
+      PresentationCallbacks();
+  layer_tree_frame_sink_holder_->SubmitCompositorFrame(std::move(frame));
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // SurfaceDelegate overrides:
 
 void SurfaceTreeHost::OnSurfaceCommit() {
-  DCHECK(presentation_callbacks_.empty());
   root_surface_->CommitSurfaceHierarchy(false);
   UpdateHostWindowBounds();
 }
@@ -220,6 +227,11 @@ void SurfaceTreeHost::OnNewOutputAdded() {
   UpdateDisplayOnTree();
 }
 
+SecurityDelegate* SurfaceTreeHost::GetSecurityDelegate() {
+  DCHECK(security_delegate_);
+  return security_delegate_;
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // display::DisplayObserver:
 void SurfaceTreeHost::OnDisplayMetricsChanged(const display::Display& display,
@@ -235,7 +247,7 @@ void SurfaceTreeHost::OnDisplayMetricsChanged(const display::Display& display,
 void SurfaceTreeHost::OnContextLost() {
   // Handle context loss in a new stack frame to avoid bugs from re-entrant
   // code.
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(&SurfaceTreeHost::HandleContextLost,
                                 weak_ptr_factory_.GetWeakPtr()));
 }
@@ -248,10 +260,20 @@ void SurfaceTreeHost::UpdateDisplayOnTree() {
       display::Screen::GetScreen()->GetDisplayNearestWindow(host_window());
   if (display_id_ != display.id()) {
     if (root_surface_) {
-      if (root_surface_->UpdateDisplay(display_id_, display.id()))
+      if (root_surface_->UpdateDisplay(display_id_, display.id())) {
         display_id_ = display.id();
+      } else {
+        // The surface failed to update to the new display.
+        // Invalidate cached display id, so the surface always gets updated
+        // next time, even when it gets updated back to the previous display.
+        display_id_ = display::kInvalidDisplayId;
+      }
     }
   }
+}
+
+void SurfaceTreeHost::WillCommit() {
+  scale_factor_ = pending_scale_factor_;
 }
 
 void SurfaceTreeHost::SubmitCompositorFrame() {
@@ -272,26 +294,44 @@ void SurfaceTreeHost::SubmitCompositorFrame() {
         << ", StartupId=" << (startup_id ? *startup_id : "''");
   }
 
-  root_surface_->AppendSurfaceHierarchyCallbacks(&frame_callbacks_,
-                                                 &presentation_callbacks_);
-  if (!presentation_callbacks_.empty()) {
-    DCHECK_EQ(active_presentation_callbacks_.count(*next_token_), 0u);
-    active_presentation_callbacks_[*next_token_] =
-        std::move(presentation_callbacks_);
-  } else {
-    active_presentation_callbacks_[*next_token_] = PresentationCallbacks();
-  }
+  std::list<Surface::FrameCallback> current_frame_callbacks;
+  PresentationCallbacks presentation_callbacks;
+  root_surface_->AppendSurfaceHierarchyCallbacks(&current_frame_callbacks,
+                                                 &presentation_callbacks);
+
+  frame_callbacks_.push(std::move(current_frame_callbacks));
+
+  const uint32_t frame_token = frame.metadata.frame_token;
+
+  DCHECK_EQ(active_presentation_callbacks_.count(frame_token), 0u);
+  active_presentation_callbacks_[frame_token] =
+      std::move(presentation_callbacks);
 
   root_surface_->AppendSurfaceHierarchyContentsToFrame(
-      gfx::PointF(root_surface_origin_),
-      host_window()->layer()->device_scale_factor(),
+      gfx::PointF(root_surface_origin_), GetScaleFactor(),
+      client_submits_surfaces_in_pixel_coordinates(),
       layer_tree_frame_sink_holder_->resource_manager(), &frame);
 
   std::vector<GLbyte*> sync_tokens;
-  for (auto& resource : frame.resource_list)
+  // We track previously verified tokens and set them to be verified to avoid
+  // the considerable overhead of flush verification in
+  // 'VerifySyncTokensCHROMIUM'.
+  for (auto& resource : frame.resource_list) {
+    if (prev_frame_verified_tokens_.find(resource.mailbox_holder.sync_token) !=
+        prev_frame_verified_tokens_.end()) {
+      resource.mailbox_holder.sync_token.SetVerifyFlush();
+    }
     sync_tokens.push_back(resource.mailbox_holder.sync_token.GetData());
+  }
   gpu::gles2::GLES2Interface* gles2 = context_provider_->ContextGL();
   gles2->VerifySyncTokensCHROMIUM(sync_tokens.data(), sync_tokens.size());
+
+  prev_frame_verified_tokens_.clear();
+  for (auto& resource : frame.resource_list) {
+    if (resource.mailbox_holder.sync_token.verified_flush()) {
+      prev_frame_verified_tokens_.insert(resource.mailbox_holder.sync_token);
+    }
+  }
 
   frame.metadata.content_color_usage = gfx::ContentColorUsage::kSRGB;
   for (auto& resource : frame.resource_list) {
@@ -299,6 +339,8 @@ void SurfaceTreeHost::SubmitCompositorFrame() {
         std::max(frame.metadata.content_color_usage,
                  resource.color_space.GetContentColorUsage());
   }
+
+  frame.metadata.may_contain_video = root_surface_->ContainsVideo();
 
   layer_tree_frame_sink_holder_->SubmitCompositorFrame(std::move(frame));
 }
@@ -320,8 +362,14 @@ void SurfaceTreeHost::SubmitEmptyCompositorFrame() {
 
   viz::SolidColorDrawQuad* solid_quad =
       render_pass->CreateAndAppendDrawQuad<viz::SolidColorDrawQuad>();
-  solid_quad->SetNew(quad_state, quad_rect, quad_rect, SK_ColorBLACK,
-                     /*force_anti_aliasing_off=*/false);
+  solid_quad->SetNew(quad_state, quad_rect, quad_rect, SkColors::kBlack,
+                     /*anti_aliasing_off=*/false);
+
+  // Make sure that every submission has an entry pushed into
+  // `frame_callbacks_`, which will be pop when ack is received.
+  frame_callbacks_.emplace();
+  active_presentation_callbacks_[frame.metadata.frame_token] =
+      PresentationCallbacks();
   layer_tree_frame_sink_holder_->SubmitCompositorFrame(std::move(frame));
 }
 
@@ -340,7 +388,7 @@ void SurfaceTreeHost::UpdateHostWindowBounds() {
   // synchronization.
   if (client_submits_surfaces_in_pixel_coordinates_) {
     gfx::Transform tr;
-    float scale = host_window_->layer()->device_scale_factor();
+    float scale = GetScaleFactor();
     tr.Scale(1.0f / scale, 1.0f / scale);
     if (host_window_->transform() != tr)
       host_window_->SetTransform(tr);
@@ -369,12 +417,13 @@ viz::CompositorFrame SurfaceTreeHost::PrepareToSubmitCompositorFrame() {
     // it's resources are lost anyways.
     layer_tree_frame_sink_holder_ = std::make_unique<LayerTreeFrameSinkHolder>(
         this, host_window_->CreateLayerTreeFrameSink());
+    CleanUpCallbacks();
   }
 
   viz::CompositorFrame frame;
   frame.metadata.begin_frame_ack =
       viz::BeginFrameAck::CreateManualAckWithDamage();
-  frame.metadata.frame_token = ++next_token_;
+  frame.metadata.frame_token = GenerateNextFrameToken();
   frame.render_pass_list.push_back(viz::CompositorRenderPass::Create());
   const std::unique_ptr<viz::CompositorRenderPass>& render_pass =
       frame.render_pass_list.back();
@@ -392,8 +441,7 @@ viz::CompositorFrame SurfaceTreeHost::PrepareToSubmitCompositorFrame() {
   // compositor frame, otherwise we may set the Surface created by Viz to be the
   // wrong size. Then, trying to submit a regular compositor frame will fail
   // because  the size is different.
-  const float device_scale_factor =
-      host_window()->layer()->device_scale_factor();
+  const float device_scale_factor = GetScaleFactor();
   // TODO(crbug.com/1131628): Should this be ceil? Why do we choose floor?
   gfx::Size output_surface_size_in_pixels =
       gfx::ToFlooredSize(gfx::ConvertSizeToPixels(host_window_->bounds().size(),
@@ -426,6 +474,39 @@ void SurfaceTreeHost::HandleContextLost() {
 
   root_surface_->SurfaceHierarchyResourcesLost();
   SubmitCompositorFrame();
+}
+
+float SurfaceTreeHost::GetScaleFactor() {
+  if (scale_factor_) {
+    // TODO(crbug.com/1412420): Remove this once the scale factor precision
+    // issue is fixed.
+    if (std::abs(scale_factor_.value() -
+                 host_window_->layer()->device_scale_factor()) <
+        display::kDeviceScaleFactorErrorTolerance) {
+      return host_window_->layer()->device_scale_factor();
+    }
+    return scale_factor_.value();
+  }
+  return host_window_->layer()->device_scale_factor();
+}
+
+void SurfaceTreeHost::CleanUpCallbacks() {
+  // Call all frame callbacks with a null frame time to indicate that they
+  // have been cancelled.
+  while (!frame_callbacks_.empty()) {
+    for (auto& callback : frame_callbacks_.front()) {
+      callback.Run(base::TimeTicks());
+    }
+    frame_callbacks_.pop();
+  }
+
+  for (auto entry : active_presentation_callbacks_) {
+    while (!entry.second.empty()) {
+      entry.second.front().Run(gfx::PresentationFeedback());
+      entry.second.pop_front();
+    }
+  }
+  active_presentation_callbacks_.clear();
 }
 
 }  // namespace exo

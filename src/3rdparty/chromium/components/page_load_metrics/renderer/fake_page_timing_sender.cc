@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -25,10 +25,11 @@ void FakePageTimingSender::SendTiming(
     const mojom::FrameRenderDataUpdate& render_data,
     const mojom::CpuTimingPtr& cpu_timing,
     const mojom::InputTimingPtr new_input_timing,
-    const absl::optional<blink::MobileFriendliness>& mobile_friendliness) {
+    const mojom::SubresourceLoadMetricsPtr subresource_load_metrics,
+    uint32_t soft_navigation_count) {
   validator_->UpdateTiming(timing, metadata, new_features, resources,
                            render_data, cpu_timing, new_input_timing,
-                           mobile_friendliness);
+                           subresource_load_metrics, soft_navigation_count);
 }
 
 void FakePageTimingSender::SetUpSmoothnessReporting(
@@ -85,14 +86,15 @@ void FakePageTimingSender::PageTimingValidator::VerifyExpectedInputTiming()
 }
 
 void FakePageTimingSender::PageTimingValidator::
-    UpdateExpectedMobileFriendliness(
-        const blink::MobileFriendliness& mobile_friendliness) {
-  expected_mobile_friendliness = mobile_friendliness;
+    UpdateExpectedSubresourceLoadMetrics(
+        const mojom::SubresourceLoadMetrics& subresource_load_metrics) {
+  expected_subresource_load_metrics_ = subresource_load_metrics.Clone();
 }
 
 void FakePageTimingSender::PageTimingValidator::
-    VerifyExpectedMobileFriendliness() const {
-  ASSERT_EQ(expected_mobile_friendliness, actual_mobile_friendliness);
+    VerifyExpectedSubresourceLoadMetrics() const {
+  ASSERT_EQ(expected_subresource_load_metrics_,
+            actual_subresource_load_metrics_);
 }
 
 void FakePageTimingSender::PageTimingValidator::VerifyExpectedCpuTimings()
@@ -124,12 +126,15 @@ void FakePageTimingSender::PageTimingValidator::VerifyExpectedRenderData()
 }
 
 void FakePageTimingSender::PageTimingValidator::
-    VerifyExpectedFrameIntersectionUpdate() const {
-  if (!expected_frame_intersection_update_.is_null()) {
-    EXPECT_FALSE(actual_frame_intersection_update_.is_null());
-    EXPECT_TRUE(expected_frame_intersection_update_->Equals(
-        *actual_frame_intersection_update_));
-  }
+    VerifyExpectedMainFrameIntersectionRect() const {
+  EXPECT_EQ(expected_main_frame_intersection_rect_,
+            actual_main_frame_intersection_rect_);
+}
+
+void FakePageTimingSender::PageTimingValidator::
+    VerifyExpectedMainFrameViewportRect() const {
+  EXPECT_EQ(expected_main_frame_viewport_rect_,
+            actual_main_frame_viewport_rect_);
 }
 
 void FakePageTimingSender::PageTimingValidator::UpdateTiming(
@@ -140,7 +145,8 @@ void FakePageTimingSender::PageTimingValidator::UpdateTiming(
     const mojom::FrameRenderDataUpdate& render_data,
     const mojom::CpuTimingPtr& cpu_timing,
     const mojom::InputTimingPtr& new_input_timing,
-    const absl::optional<blink::MobileFriendliness>& mobile_friendliness) {
+    const mojom::SubresourceLoadMetricsPtr& subresource_load_metrics,
+    uint32_t soft_navigation_count) {
   actual_timings_.push_back(timing.Clone());
   if (!cpu_timing->task_time.is_zero()) {
     actual_cpu_timings_.push_back(cpu_timing.Clone());
@@ -153,21 +159,23 @@ void FakePageTimingSender::PageTimingValidator::UpdateTiming(
   }
 
   actual_render_data_.layout_shift_delta = render_data.layout_shift_delta;
-  actual_frame_intersection_update_ = metadata->intersection_update.Clone();
+  actual_main_frame_intersection_rect_ = metadata->main_frame_intersection_rect;
+  actual_main_frame_viewport_rect_ = metadata->main_frame_viewport_rect;
 
   actual_input_timing->num_input_events += new_input_timing->num_input_events;
   actual_input_timing->total_input_delay += new_input_timing->total_input_delay;
   actual_input_timing->total_adjusted_input_delay +=
       new_input_timing->total_adjusted_input_delay;
-  if (mobile_friendliness.has_value())
-    actual_mobile_friendliness = *mobile_friendliness;
+  actual_subresource_load_metrics_ = subresource_load_metrics.Clone();
 
   VerifyExpectedTimings();
   VerifyExpectedCpuTimings();
   VerifyExpectedFeatures();
   VerifyExpectedRenderData();
-  VerifyExpectedFrameIntersectionUpdate();
-  VerifyExpectedMobileFriendliness();
+  VerifyExpectedMainFrameIntersectionRect();
+  VerifyExpectedMainFrameViewportRect();
+  VerifyExpectedSubresourceLoadMetrics();
+  // TODO(yoav): Verify that soft nav count matches expectations.
 }
 
 }  // namespace page_load_metrics

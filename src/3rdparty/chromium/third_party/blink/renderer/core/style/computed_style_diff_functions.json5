@@ -74,19 +74,20 @@
         fields_to_diff: ["padding-top", "padding-left", "padding-right",
                 "padding-bottom", "appearance", "-webkit-line-clamp",
                 "text-overflow", "shape-margin", "order", "-webkit-highlight",
-                "text-indent", "text-align-last", "TextIndentLine", "EffectiveZoom",
+                "text-indent", "text-align-last", "EffectiveZoom",
                 "word-break", "overflow-wrap", "-webkit-line-break",
-                "-webkit-text-security", "hyphens", "HyphenationLimitBefore",
-                "HyphenationLimitAfter", "-webkit-hyphenate-character",
+                "-webkit-text-security",
+                "hyphens", "hyphenate-character", "hyphenate-limit-chars",
                 "image-orientation", "-webkit-ruby-position",
                 "TextEmphasisMark", "text-emphasis-position",
-                "TextEmphasisCustomMark", "text-justify", "text-orientation",
+                "TextEmphasisCustomMark", "text-orientation",
                 "text-combine-upright", "tab-size", "text-size-adjust",
-                "list-style-image", "line-height-step",
+                "list-style-image",
                 "-webkit-text-stroke-width", "line-height",
                 "-webkit-border-horizontal-spacing",
                 "-webkit-border-vertical-spacing", "TextAutosizingMultiplier",
                 "ImplicitNamedGridColumnLines","ImplicitNamedGridRowLines", "NamedGridArea",
+                "initial-letter",
                 "grid-auto-rows", "grid-template-rows", "grid-template-columns",
                 "grid-auto-columns", "row-gap", "NamedGridAreaRowCount",
                 "NamedGridAreaColumnCount", "grid-auto-flow",
@@ -96,11 +97,14 @@
                 "grid-row-start", "grid-row-end", "grid-column-start", "grid-column-end",
                 "column-gap", "column-width",
                 "column-count", "HasAutoColumnCount", "HasAutoColumnWidth", "column-fill", "column-span",
+                "MathFractionBarThickness", "MathLSpace", "MathMaxSize", "MathMinSize",
+                "MathPaddedVOffset", "MathRSpace",
                 "cx", "cy", "d", "rx", "ry", "x", "y", "r", "alignment-baseline", "vector-effect",
                 "BaselineShiftType", "baseline-shift", "dominant-baseline",
                 "CssDominantBaseline", "text-anchor",
                 "stroke-width", "stroke-miterlimit", "stroke-linecap", "stroke-linejoin",
-                "marker-end", "marker-mid", "marker-start", "scrollbar-width", "object-view-box"],
+                "marker-end", "marker-mid", "marker-start", "scrollbar-width", "object-view-box",
+                "position-fallback"],
         methods_to_diff: [
           {
             method: "BorderLeftWidth()",
@@ -228,7 +232,8 @@
                 "contain-intrinsic-height", "container-type",
                 "content-visibility", "aspect-ratio", "overflow-clip-margin",
                 "-internal-align-self-block", "orphans", "widows",
-                "scrollbar-gutter"],
+                "scrollbar-gutter", "break-after", "break-before",
+                "break-inside", "baseline-source", "text-wrap"],
         methods_to_diff: [
           {
             method: "VerticalAlign()",
@@ -242,14 +247,20 @@
             method: "SkipsContents()",
             field_dependencies: ["content-visibility"]
           },
-        ]
+        ],
+	predicates_to_test: [
+	  {
+	    predicate: "a.AnchorNameDataEquivalent(b)",
+	    field_dependencies: ["anchor-name"],
+	  },
+	]
     },
     {
         name: "DiffNeedsPaintInvalidation",
         fields_to_diff: ["-webkit-user-modify", "user-select", "image-rendering",
                 "column-rule-style", "column-rule-width", "column-rule-color",
                 "-internal-visited-column-rule-color",
-                "-webkit-user-drag", "object-fit", "object-fit", "object-position",
+                "-webkit-user-drag", "object-fit", "object-position",
                 "mix-blend-mode", "isolation", "Mask", "MaskBoxImage", "mask", "mask-type",
                 "stop-color", "stop-opacity", "flood-color", "flood-opacity",
                 "lighting-color", "shape-rendering", "clip-rule", "fill-rule",
@@ -270,10 +281,6 @@
             field_dependencies: ["InsideLink"]
           },
           {
-            method: "InternalVisitedBackgroundColor()",
-            field_dependencies: ["-internal-visited-background-color"]
-          },
-          {
             method: "Resize()",
             field_dependencies: ["resize"]
           },
@@ -284,7 +291,7 @@
           {
             method: "AccentColorResolved()",
             field_dependencies: ["accent-color", "color"]
-          }
+          },
         ],
         predicates_to_test: [
           {
@@ -294,10 +301,6 @@
           {
             predicate: "a.ShapeOutsideDataEquivalent(b)",
             field_dependencies: ["shape-outside"]
-          },
-          {
-            predicate: "a.ClipPathDataEquivalent(b)",
-            field_dependencies: ["clip-path"]
           },
           {
             predicate: "a.OutlineVisuallyEqual(b)",
@@ -327,25 +330,10 @@
             predicate: "a.StrokeDashArrayDataEquivalent(b)",
             field_dependencies: ["stroke-dasharray"]
           },
-        ]
-    },
-    {
-        name: "DiffNeedsVisualRectUpdate",
-        methods_to_diff: [
-          {
-            method: "Visibility()",
-            field_dependencies: ["visibility"]
-          },
-          {
-            method: "Resize()",
-            field_dependencies: ["resize"]
-          },
-        ],
-        predicates_to_test: [
-          {
-            predicate: "a.ClipPathDataEquivalent(b)",
-            field_dependencies: ["clip-path"]
-          }
+	  {
+	    predicate: "a.AnchorScrollDataEquivalent(b)",
+	    field_dependencies: ["anchor-scroll"],
+	  },
         ]
     },
     {
@@ -366,20 +354,30 @@
                      "transform-box"],
     },
     {
+        // Diff of the transform property only. See
+        // |UpdatePropertySpecificDifferencesOtherTransform|.
         name: "UpdatePropertySpecificDifferencesTransform",
-        fields_to_diff: ["transform", "translate", "rotate",
+        fields_to_diff: ["transform"],
+    },
+    {
+        // Diff of transform-related properties other than the transform itself.
+        // Because HasTransform() is checked below, this will also check for
+        // changes to the existence of the transform property.
+        name: "UpdatePropertySpecificDifferencesOtherTransform",
+        fields_to_diff: ["translate", "rotate",
                     "scale", "offset-path", "offset-rotate", "transform-origin",
                      "offset-position", "offset-anchor", "offset-distance",
                      "perspective", "perspective-origin", "transform-box"],
         methods_to_diff: [
           {
             // It's possible for the old and new style transform data to be equivalent
-            // while hasTransform() differs, as it checks a number of conditions aside
+            // while HasTransform() differs, as it checks a number of conditions aside
             // from just the matrix, including but not limited to animation state.
             method: "HasTransform()",
             field_dependencies: ["transform", "offset-position",
-                    "HasCurrentTransformAnimation", "translate", "rotate",
-                    "scale"]
+                    "HasCurrentTranslateAnimation", "HasCurrentRotateAnimation",
+                    "HasCurrentScaleAnimation", "HasCurrentTransformAnimation",
+                    "translate", "rotate", "scale"]
           },
         ]
     },
@@ -423,7 +421,7 @@
             predicate: "a.TextDecorationVisualOverflowEqual(b)",
             field_dependencies: ["text-decoration-thickness", "text-decoration-style",
                                  "text-decoration-line", "text-underline-offset", "text-underline-position",
-                                 "AppliedTextDecorations"]
+                                 "BaseTextDecorationData"]
           },
         ]
     },
@@ -433,12 +431,8 @@
                 "text-decoration-style", "text-decoration-color",
                 "text-decoration-thickness", "text-underline-offset",
                 "-internal-visited-text-decoration-color", "TextEmphasisFill",
-                "text-underline-position", "text-decoration-skip-ink", "AppliedTextDecorations"],
+                "text-underline-position", "text-decoration-skip-ink", "BaseTextDecorationData"],
         methods_to_diff: [
-          {
-            method: "HasSimpleUnderlineInternal()",
-            field_dependencies: ["HasSimpleUnderline"]
-          },
           {
             method: "TextFillColor()",
             field_dependencies: ["-webkit-text-fill-color"]

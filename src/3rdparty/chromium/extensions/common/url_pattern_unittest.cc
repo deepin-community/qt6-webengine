@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -155,6 +155,52 @@ TEST(ExtensionURLPatternTest, IPv6Patterns) {
     SCOPED_TRACE(test_case.pattern);
     URLPattern pattern(URLPattern::SCHEME_HTTP);
     EXPECT_EQ(test_case.expected_failure, pattern.Parse(test_case.pattern));
+  }
+}
+
+// Verify percent encoding behavior.
+TEST(ExtensionURLPatternTest, PercentEncodedAscii) {
+  {
+    URLPattern pattern(kAllSchemes);
+    ASSERT_EQ(URLPattern::ParseResult::kSuccess,
+              pattern.Parse("http://*/%40*"));
+    EXPECT_EQ("http", pattern.scheme());
+    EXPECT_EQ("", pattern.host());
+    EXPECT_TRUE(pattern.match_subdomains());
+    EXPECT_FALSE(pattern.match_all_urls());
+    EXPECT_EQ("/%40*", pattern.path());
+  }
+  {
+    URLPattern pattern(kAllSchemes);
+    ASSERT_EQ(URLPattern::ParseResult::kSuccess, pattern.Parse("http://*/@*"));
+    EXPECT_EQ("http", pattern.scheme());
+    EXPECT_EQ("", pattern.host());
+    EXPECT_TRUE(pattern.match_subdomains());
+    EXPECT_FALSE(pattern.match_all_urls());
+    EXPECT_EQ("/@*", pattern.path());
+  }
+}
+
+// Verify percent encoding behavior.
+TEST(ExtensionURLPatternTest, PercentEncodedNonAscii) {
+  {
+    URLPattern pattern(kAllSchemes);
+    ASSERT_EQ(URLPattern::ParseResult::kSuccess,
+              pattern.Parse("http://*/%F0%9F%90%B1*"));
+    EXPECT_EQ("http", pattern.scheme());
+    EXPECT_EQ("", pattern.host());
+    EXPECT_TRUE(pattern.match_subdomains());
+    EXPECT_FALSE(pattern.match_all_urls());
+    EXPECT_EQ("/%F0%9F%90%B1*", pattern.path());
+  }
+  {
+    URLPattern pattern(kAllSchemes);
+    ASSERT_EQ(URLPattern::ParseResult::kSuccess, pattern.Parse("http://*/🐱*"));
+    EXPECT_EQ("http", pattern.scheme());
+    EXPECT_EQ("", pattern.host());
+    EXPECT_TRUE(pattern.match_subdomains());
+    EXPECT_FALSE(pattern.match_all_urls());
+    EXPECT_EQ("/🐱*", pattern.path());
   }
 }
 

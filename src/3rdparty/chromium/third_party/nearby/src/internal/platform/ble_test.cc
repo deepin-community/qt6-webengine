@@ -19,11 +19,10 @@
 #include "gmock/gmock.h"
 #include "protobuf-matchers/protocol-buffer-matchers.h"
 #include "gtest/gtest.h"
-#include "internal/platform/medium_environment.h"
 #include "internal/platform/count_down_latch.h"
 #include "internal/platform/logging.h"
+#include "internal/platform/medium_environment.h"
 
-namespace location {
 namespace nearby {
 namespace {
 
@@ -47,8 +46,6 @@ class BleMediumTest : public ::testing::TestWithParam<FeatureFlags> {
  protected:
   using DiscoveredPeripheralCallback = BleMedium::DiscoveredPeripheralCallback;
   using AcceptedConnectionCallback = BleMedium::AcceptedConnectionCallback;
-
-  BleMediumTest() { env_.Stop(); }
 
   MediumEnvironment& env_{MediumEnvironment::Instance()};
 };
@@ -303,4 +300,3 @@ TEST_F(BleMediumTest, CanStopDiscovery) {
 
 }  // namespace
 }  // namespace nearby
-}  // namespace location

@@ -1,59 +1,56 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
+#include "qtwebenginecoreglobal.h"
+
+#include "content/browser/accessibility/browser_accessibility_manager.h"
+
+#include <QtGui/qtguiglobal.h>
+
+#if QT_CONFIG(accessibility)
+#include "browser_accessibility_qt.h"
 #include "browser_accessibility_manager_qt.h"
-#include "qtwebenginecoreglobal_p.h"
+#include "render_widget_host_view_qt.h" // WebContentsAccessibilityQt
 
 #include "content/browser/accessibility/browser_accessibility.h"
 #include "ui/accessibility/ax_enums.mojom.h"
 
-#if QT_CONFIG(webengine_extensions)
-#include "content/browser/renderer_host/render_frame_host_impl.h"
-#include "content/public/browser/web_contents.h"
-#endif // QT_CONFIG(webengine_extensions)
-
-#include "browser_accessibility_qt.h"
-#include "render_widget_host_view_qt.h"
-
 #include <QtGui/qaccessible.h>
-
-using namespace blink;
+#endif // QT_CONFIG(accessibility)
 
 namespace content {
 
 // static
 BrowserAccessibilityManager *BrowserAccessibilityManager::Create(
         const ui::AXTreeUpdate &initialTree,
-        BrowserAccessibilityDelegate *delegate)
+        WebAXPlatformTreeManagerDelegate *delegate)
 {
 #if QT_CONFIG(accessibility)
     Q_ASSERT(delegate);
     QtWebEngineCore::WebContentsAccessibilityQt *access = nullptr;
     access = static_cast<QtWebEngineCore::WebContentsAccessibilityQt *>(delegate->AccessibilityGetWebContentsAccessibility());
 
-#if QT_CONFIG(webengine_extensions)
-    // Accessibility is not supported for guest views.
+    // Accessibility is not supported for guest views and child frames.
     if (!access) {
-        Q_ASSERT(content::WebContents::FromRenderFrameHost(
-                         static_cast<content::RenderFrameHostImpl *>(delegate))
-                         ->GetOuterWebContents());
         return nullptr;
     }
-#endif // QT_CONFIG(webengine_extensions)
 
     return new BrowserAccessibilityManagerQt(access, initialTree, delegate);
 #else
+    Q_UNUSED(initialTree);
+    Q_UNUSED(delegate);
     return nullptr;
 #endif // QT_CONFIG(accessibility)
 }
 
 // static
 BrowserAccessibilityManager *BrowserAccessibilityManager::Create(
-        BrowserAccessibilityDelegate *delegate)
+        WebAXPlatformTreeManagerDelegate *delegate)
 {
 #if QT_CONFIG(accessibility)
     return BrowserAccessibilityManager::Create(BrowserAccessibilityManagerQt::GetEmptyDocument(), delegate);
 #else
+    Q_UNUSED(delegate);
     return nullptr;
 #endif
 }
@@ -62,7 +59,7 @@ BrowserAccessibilityManager *BrowserAccessibilityManager::Create(
 BrowserAccessibilityManagerQt::BrowserAccessibilityManagerQt(
     QtWebEngineCore::WebContentsAccessibilityQt *webContentsAccessibility,
     const ui::AXTreeUpdate &initialTree,
-    BrowserAccessibilityDelegate* delegate)
+    WebAXPlatformTreeManagerDelegate* delegate)
       : BrowserAccessibilityManager(delegate)
       , m_webContentsAccessibility(webContentsAccessibility)
 {
@@ -77,7 +74,7 @@ BrowserAccessibilityManagerQt::~BrowserAccessibilityManagerQt()
 
 QAccessibleInterface *BrowserAccessibilityManagerQt::rootParentAccessible()
 {
-    content::BrowserAccessibility *parent_node = GetParentNodeFromParentTree();
+    content::BrowserAccessibility *parent_node = GetParentNodeFromParentTreeAsBrowserAccessibility();
     if (!parent_node) {
         Q_ASSERT(m_webContentsAccessibility);
         return QAccessible::queryAccessibleInterface(m_webContentsAccessibility->accessibilityParentObject());
@@ -97,6 +94,8 @@ void BrowserAccessibilityManagerQt::FireBlinkEvent(ax::mojom::Event event_type,
     switch (event_type) {
     case ax::mojom::Event::kFocus: {
         QAccessibleEvent event(iface, QAccessible::Focus);
+        if (event.object())
+            event.setChild(-1);
         QAccessible::updateAccessibility(&event);
         break;
     }
@@ -104,6 +103,8 @@ void BrowserAccessibilityManagerQt::FireBlinkEvent(ax::mojom::Event event_type,
         QAccessible::State change;
         change.checked = true;
         QAccessibleStateChangeEvent event(iface, change);
+        if (event.object())
+            event.setChild(-1);
         QAccessible::updateAccessibility(&event);
         break;
     }
@@ -112,6 +113,8 @@ void BrowserAccessibilityManagerQt::FireBlinkEvent(ax::mojom::Event event_type,
         if (QAccessibleValueInterface *valueIface = iface->valueInterface())
             value = valueIface->currentValue();
         QAccessibleValueChangeEvent event(iface, value);
+        if (event.object())
+            event.setChild(-1);
         QAccessible::updateAccessibility(&event);
         break;
     }
@@ -123,6 +126,8 @@ void BrowserAccessibilityManagerQt::FireBlinkEvent(ax::mojom::Event event_type,
         break;
     case ax::mojom::Event::kTextChanged: {
         QAccessibleTextUpdateEvent event(iface, -1, QString(), QString());
+        if (event.object())
+            event.setChild(-1);
         QAccessible::updateAccessibility(&event);
         break;
     }
@@ -134,9 +139,13 @@ void BrowserAccessibilityManagerQt::FireBlinkEvent(ax::mojom::Event event_type,
             textIface->selection(0, &start, &end);
             if (start == end) {
                 QAccessibleTextCursorEvent event(iface, start);
+                if (event.object())
+                    event.setChild(-1);
                 QAccessible::updateAccessibility(&event);
             } else {
                 QAccessibleTextSelectionEvent event(iface, start, end);
+                if (event.object())
+                    event.setChild(-1);
                 QAccessible::updateAccessibility(&event);
             }
         }
@@ -148,14 +157,20 @@ void BrowserAccessibilityManagerQt::FireBlinkEvent(ax::mojom::Event event_type,
 }
 
 void BrowserAccessibilityManagerQt::FireGeneratedEvent(ui::AXEventGenerator::Event event_type,
-                                                       BrowserAccessibility* node)
+                                                       const ui::AXNode *node)
 {
-    auto *iface = toQAccessibleInterface(node);
+    BrowserAccessibilityManager::FireGeneratedEvent(event_type, node);
+
+    BrowserAccessibility *wrapper = GetFromAXNode(node);
+    DCHECK(wrapper);
+    auto *iface = toQAccessibleInterface(wrapper);
 
     switch (event_type) {
     case ui::AXEventGenerator::Event::VALUE_IN_TEXT_FIELD_CHANGED:
         if (iface->role() == QAccessible::EditableText) {
             QAccessibleTextUpdateEvent event(iface, -1, QString(), QString());
+            if (event.object())
+                event.setChild(-1);
             QAccessible::updateAccessibility(&event);
         }
         break;

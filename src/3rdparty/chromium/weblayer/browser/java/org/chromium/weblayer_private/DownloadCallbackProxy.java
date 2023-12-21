@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -58,7 +58,7 @@ public final class DownloadCallbackProxy {
     @CalledByNative
     private void allowDownload(TabImpl tab, String url, String requestMethod,
             String requestInitiator, long callbackId) throws RemoteException {
-        WindowAndroid window = tab.getBrowser().getWindowAndroid();
+        WindowAndroid window = tab.getBrowser().getBrowserFragment().getWindowAndroid();
         if (window.hasPermission(permission.WRITE_EXTERNAL_STORAGE)) {
             continueAllowDownload(url, requestMethod, requestInitiator, callbackId);
             return;

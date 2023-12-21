@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,8 +14,10 @@
 #include "content/public/common/content_switches.h"
 #include "content/public/common/url_constants.h"
 #include "content/public/renderer/render_frame.h"
+#include "content/public/renderer/v8_value_converter.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/content_script_injection_url_getter.h"
+#include "extensions/common/context_data.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_api.h"
 #include "extensions/common/extension_urls.h"
@@ -40,19 +42,18 @@ namespace extensions {
 
 namespace {
 
-class WebLocalFrameAdapter
-    : public ContentScriptInjectionUrlGetter::FrameAdapter {
+class RendererContextData : public ContextData {
  public:
-  explicit WebLocalFrameAdapter(const blink::WebLocalFrame* frame)
+  explicit RendererContextData(const blink::WebLocalFrame* frame)
       : frame_(frame) {}
 
-  ~WebLocalFrameAdapter() override = default;
+  ~RendererContextData() override = default;
 
-  std::unique_ptr<FrameAdapter> Clone() const override {
-    return std::make_unique<WebLocalFrameAdapter>(frame_);
+  std::unique_ptr<ContextData> Clone() const override {
+    return std::make_unique<RendererContextData>(frame_);
   }
 
-  std::unique_ptr<FrameAdapter> GetLocalParentOrOpener() const override {
+  std::unique_ptr<ContextData> GetLocalParentOrOpener() const override {
     blink::WebFrame* parent_or_opener = nullptr;
     if (frame_->Parent())
       parent_or_opener = frame_->Parent();
@@ -66,7 +67,7 @@ class WebLocalFrameAdapter
     if (local_parent_or_opener->GetDocument().IsNull())
       return nullptr;
 
-    return std::make_unique<WebLocalFrameAdapter>(local_parent_or_opener);
+    return std::make_unique<RendererContextData>(local_parent_or_opener);
   }
 
   GURL GetUrl() const override {
@@ -85,14 +86,14 @@ class WebLocalFrameAdapter
     return frame_->GetSecurityOrigin().CanAccess(target);
   }
 
-  bool CanAccess(const FrameAdapter& target) const override {
+  bool CanAccess(const ContextData& target) const override {
     // It is important that below `web_security_origin` wraps the security
     // origin of the `target_frame` (rather than a new origin created via
     // url::Origin round-trip - such an origin wouldn't be 100% equivalent -
     // e.g. `disallowdocumentaccess` information might be lost).  FWIW, this
     // scenario is execised by ScriptContextTest.GetEffectiveDocumentURL.
     const blink::WebLocalFrame* target_frame =
-        static_cast<const WebLocalFrameAdapter&>(target).frame_;
+        static_cast<const RendererContextData&>(target).frame_;
     blink::WebSecurityOrigin web_security_origin =
         target_frame->GetDocument().GetSecurityOrigin();
 
@@ -113,7 +114,7 @@ GURL GetEffectiveDocumentURL(
     MatchOriginAsFallbackBehavior match_origin_as_fallback,
     bool allow_inaccessible_parents) {
   return ContentScriptInjectionUrlGetter::Get(
-      WebLocalFrameAdapter(frame), document_url, match_origin_as_fallback,
+      RendererContextData(frame), document_url, match_origin_as_fallback,
       allow_inaccessible_parents);
 }
 
@@ -137,6 +138,8 @@ std::string GetContextTypeDescriptionString(Feature::Context context_type) {
       return "WEBUI_UNTRUSTED";
     case Feature::LOCK_SCREEN_EXTENSION_CONTEXT:
       return "LOCK_SCREEN_EXTENSION";
+    case Feature::OFFSCREEN_EXTENSION_CONTEXT:
+      return "OFFSCREEN_EXTENSION_CONTEXT";
   }
   NOTREACHED();
   return std::string();
@@ -271,42 +274,43 @@ content::RenderFrame* ScriptContext::GetRenderFrame() const {
   DCHECK(thread_checker_.CalledOnValidThread());
   if (web_frame_)
     return content::RenderFrame::FromWebFrame(web_frame_);
-  return NULL;
+  return nullptr;
 }
 
 void ScriptContext::SafeCallFunction(const v8::Local<v8::Function>& function,
                                      int argc,
                                      v8::Local<v8::Value> argv[]) {
-  SafeCallFunction(function, argc, argv,
-                   ScriptInjectionCallback::CompleteCallback());
+  SafeCallFunction(function, argc, argv, blink::WebScriptExecutionCallback());
 }
 
 void ScriptContext::SafeCallFunction(
     const v8::Local<v8::Function>& function,
     int argc,
     v8::Local<v8::Value> argv[],
-    ScriptInjectionCallback::CompleteCallback callback) {
+    blink::WebScriptExecutionCallback callback) {
   DCHECK(thread_checker_.CalledOnValidThread());
   v8::HandleScope handle_scope(isolate());
   v8::Context::Scope scope(v8_context());
-  v8::MicrotasksScope microtasks(isolate(),
+  v8::MicrotasksScope microtasks(isolate(), v8_context()->GetMicrotaskQueue(),
                                  v8::MicrotasksScope::kDoNotRunMicrotasks);
   v8::Local<v8::Object> global = v8_context()->Global();
   if (web_frame_) {
-    ScriptInjectionCallback* wrapper_callback = nullptr;
-    if (!callback.is_null()) {
-      // ScriptInjectionCallback manages its own lifetime.
-      wrapper_callback = new ScriptInjectionCallback(std::move(callback));
-    }
     web_frame_->RequestExecuteV8Function(v8_context(), function, global, argc,
-                                         argv, wrapper_callback);
+                                         argv, std::move(callback));
   } else {
+    auto start_time = base::TimeTicks::Now();
     v8::MaybeLocal<v8::Value> maybe_result =
         function->Call(v8_context(), global, argc, argv);
     v8::Local<v8::Value> result;
     if (!callback.is_null() && maybe_result.ToLocal(&result)) {
-      std::vector<v8::Local<v8::Value>> results(1, result);
-      std::move(callback).Run(results);
+      std::unique_ptr<base::Value> value =
+          content::V8ValueConverter::Create()->FromV8Value(result,
+                                                           v8_context());
+      std::move(callback).Run(
+          value ? absl::make_optional(
+                      base::Value::FromUniquePtrValue(std::move(value)))
+                : absl::nullopt,
+          start_time);
     }
   }
 }
@@ -335,7 +339,7 @@ Feature::Availability ScriptContext::GetAvailability(
   const Extension* extension = extension_.get();
   if (extension && extension->is_hosted_app() &&
       (api_name == "runtime.connect" || api_name == "runtime.sendMessage")) {
-    extension = NULL;
+    extension = nullptr;
   }
   return ExtensionAPI::GetSharedInstance()->IsAvailable(
       api_name, extension, context_type_, url(), check_alias,
@@ -546,8 +550,8 @@ v8::Local<v8::Value> ScriptContext::RunScript(
     return v8::Undefined(isolate());
   }
 
-  v8::MicrotasksScope microtasks(
-      isolate(), v8::MicrotasksScope::kDoNotRunMicrotasks);
+  v8::MicrotasksScope microtasks(isolate(), v8_context()->GetMicrotaskQueue(),
+                                 v8::MicrotasksScope::kDoNotRunMicrotasks);
   v8::TryCatch try_catch(isolate());
   try_catch.SetCaptureMessage(true);
   v8::ScriptOrigin origin(isolate(), v8_helpers::ToV8StringUnsafe(

@@ -1,10 +1,11 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef COMPONENTS_FEED_CORE_V2_WEB_FEED_SUBSCRIPTIONS_UNSUBSCRIBE_FROM_WEB_FEED_TASK_H_
 #define COMPONENTS_FEED_CORE_V2_WEB_FEED_SUBSCRIPTIONS_UNSUBSCRIBE_FROM_WEB_FEED_TASK_H_
 
+#include "base/memory/raw_ref.h"
 #include "components/feed/core/proto/v2/wire/web_feeds.pb.h"
 #include "components/feed/core/v2/enums.h"
 #include "components/feed/core/v2/feed_network.h"
@@ -28,6 +29,7 @@ class UnsubscribeFromWebFeedTask : public offline_pages::Task {
       FeedStream* stream,
       const OperationToken& operation_token,
       const std::string& web_feed_id,
+      feedwire::webfeed::WebFeedChangeReason change_reason,
       base::OnceCallback<void(Result)> callback);
   ~UnsubscribeFromWebFeedTask() override;
   UnsubscribeFromWebFeedTask(const UnsubscribeFromWebFeedTask&) = delete;
@@ -41,10 +43,11 @@ class UnsubscribeFromWebFeedTask : public offline_pages::Task {
           result);
   void Done(WebFeedSubscriptionRequestStatus status);
 
-  FeedStream& stream_;
+  const raw_ref<FeedStream> stream_;
   OperationToken operation_token_;
   Result result_;
   std::string web_feed_name_;
+  feedwire::webfeed::WebFeedChangeReason change_reason_;
   base::OnceCallback<void(Result)> callback_;
 };
 }  // namespace feed

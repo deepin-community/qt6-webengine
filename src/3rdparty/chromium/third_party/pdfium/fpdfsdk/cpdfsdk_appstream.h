@@ -1,4 +1,4 @@
-// Copyright 2017 PDFium Authors. All rights reserved.
+// Copyright 2017 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -33,7 +33,7 @@ class CPDFSDK_AppStream {
   void Write(const ByteString& sAPType,
              const ByteString& sContents,
              const ByteString& sAPState);
-  void Remove(const ByteString& sAPType);
+  void Remove(ByteStringView sAPType);
 
   ByteString GetBackgroundAppStream() const;
   ByteString GetBorderAppStream() const;

@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,7 +9,7 @@
 
 #include <vector>
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/mac/scoped_nsobject.h"
 #include "base/memory/weak_ptr.h"
 #include "components/remote_cocoa/app_shim/remote_cocoa_app_shim_export.h"

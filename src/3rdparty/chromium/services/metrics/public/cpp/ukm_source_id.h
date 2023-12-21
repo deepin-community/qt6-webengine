@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,6 +6,7 @@
 #define SERVICES_METRICS_PUBLIC_CPP_UKM_SOURCE_ID_H_
 
 #include <stdint.h>
+#include <string>
 
 #include "services/metrics/public/cpp/metrics_export.h"
 
@@ -71,8 +72,29 @@ class METRICS_EXPORT SourceIdObj {
     // specific URL. Metrics with this type will be whitelisted and always
     // recorded. A source ID of this type can be obtained with NoURLSourceId().
     NO_URL_ID = 8,
+    // Source ID for server (HTTP) redirects. A new source of this type and
+    // associated events are expected to be recorded within the same report
+    // interval; it will not be kept in memory between different reports.
+    REDIRECT_ID = 9,
+    // Source ID type for Identity Providers used by the FedCM API. A new source
+    // of this type and associated events are expected to be recorded within the
+    // same report interval; it will not be kept in memory between different
+    // reports. The URLs are provided by the developer when they call the FedCM
+    // API, and hence do not follow a specific pattern. See
+    // https://fedidcg.github.io/FedCM/#examples for examples.
+    WEB_IDENTITY_ID = 10,
+    // Source ID for ChromeOS website stats. A new source of this type and
+    // associated events are expected to be recorded within the same report
+    // interval; it will not be kept in memory between different reports.
+    CHROMEOS_WEBSITE_ID = 11,
+    // Source ID type for extensions. A new source of this
+    // type and associated events are expected to be recorded within the same
+    // report interval; it will not be kept in memory between different reports.
+    // Some criteria (e.g. checking if it's a synced extension) will be applied
+    // when recording metrics with this type.
+    EXTENSION_ID = 12,
 
-    kMaxValue = NO_URL_ID,
+    kMaxValue = EXTENSION_ID,
   };
 
   // Default constructor has the invalid value.
@@ -129,6 +151,8 @@ METRICS_EXPORT SourceId NoURLSourceId();
 // Get the SourceIdType of the SourceId object.
 METRICS_EXPORT SourceIdType GetSourceIdType(SourceId source_id);
 
+// Get a string representation of the SourceIdType of the SourceId object.
+METRICS_EXPORT std::string GetSourceIdTypeDebugString(SourceId source_id);
 }  // namespace ukm
 
 #endif  // SERVICES_METRICS_PUBLIC_CPP_UKM_SOURCE_ID_H_

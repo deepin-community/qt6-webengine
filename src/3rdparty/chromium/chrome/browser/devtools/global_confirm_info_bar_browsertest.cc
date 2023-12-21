@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -117,10 +117,86 @@ IN_PROC_BROWSER_TEST_F(GlobalConfirmInfoBarTest, CreateAndCloseInfobar) {
 
   // Verify that the info bar is shown.
   ASSERT_EQ(1u, infobar_manager->infobar_count());
-  EXPECT_TRUE(
-      infobar_manager->infobar_at(0)->delegate()->EqualsDelegate(delegate_ptr));
+
+  auto* test_infobar = infobar_manager->infobar_at(0)->delegate();
+  EXPECT_TRUE(test_infobar->EqualsDelegate(delegate_ptr));
+  EXPECT_TRUE(test_infobar->IsCloseable());
 
   // Close the infobar and make sure that the tab has no info bar.
   infobar->Close();
   EXPECT_EQ(0u, infobar_manager->infobar_count());
+}
+
+class NonDefaultTestConfirmInfoBarDelegate : public TestConfirmInfoBarDelegate {
+ public:
+  NonDefaultTestConfirmInfoBarDelegate() = default;
+
+  NonDefaultTestConfirmInfoBarDelegate(
+      const NonDefaultTestConfirmInfoBarDelegate&) = delete;
+  NonDefaultTestConfirmInfoBarDelegate& operator=(
+      const NonDefaultTestConfirmInfoBarDelegate&) = delete;
+
+  ~NonDefaultTestConfirmInfoBarDelegate() override = default;
+
+  bool IsCloseable() const override { return false; }
+  bool ShouldAnimate() const override { return false; }
+};
+
+IN_PROC_BROWSER_TEST_F(GlobalConfirmInfoBarTest,
+                       VerifyInfobarNonDefaultProperties) {
+  TabStripModel* tab_strip_model = browser()->tab_strip_model();
+  ASSERT_EQ(1, tab_strip_model->count());
+  infobars::ContentInfoBarManager* infobar_manager =
+      GetInfoBarManagerFromTabIndex(0);
+
+  // Make sure the tab has no info bar.
+  EXPECT_EQ(0u, infobar_manager->infobar_count());
+
+  auto delegate = std::make_unique<NonDefaultTestConfirmInfoBarDelegate>();
+  NonDefaultTestConfirmInfoBarDelegate* delegate_ptr = delegate.get();
+
+  GlobalConfirmInfoBar::Show(std::move(delegate));
+
+  // Verify that the info bar is shown.
+  ASSERT_EQ(1u, infobar_manager->infobar_count());
+
+  auto* test_infobar = infobar_manager->infobar_at(0)->delegate();
+  EXPECT_TRUE(test_infobar->EqualsDelegate(delegate_ptr));
+
+  EXPECT_FALSE(test_infobar->IsCloseable());
+  EXPECT_FALSE(test_infobar->ShouldAnimate());
+}
+
+class TestConfirmInfoBarDelegateWithLink : public TestConfirmInfoBarDelegate {
+ public:
+  TestConfirmInfoBarDelegateWithLink() = default;
+
+  TestConfirmInfoBarDelegateWithLink(
+      const TestConfirmInfoBarDelegateWithLink&) = delete;
+  TestConfirmInfoBarDelegateWithLink& operator=(
+      const TestConfirmInfoBarDelegateWithLink&) = delete;
+
+  ~TestConfirmInfoBarDelegateWithLink() override = default;
+
+  std::u16string GetLinkText() const override { return u"Test"; }
+  GURL GetLinkURL() const override { return GURL("about:blank"); }
+};
+
+// Verifies that clicking a link in a global infobar does not crash. Regression
+// test for http://crbug.com/1393765.
+IN_PROC_BROWSER_TEST_F(GlobalConfirmInfoBarTest, ClickLink) {
+  // Show an infobar with a link.
+  TabStripModel* tab_strip_model = browser()->tab_strip_model();
+  ASSERT_EQ(1, tab_strip_model->count());
+  GlobalConfirmInfoBar::Show(
+      std::make_unique<TestConfirmInfoBarDelegateWithLink>());
+
+  // Simulate clicking the link on the infobar.
+  infobars::InfoBar* first_tab_infobar =
+      GetInfoBarManagerFromTabIndex(0)->infobar_at(0);
+  EXPECT_FALSE(first_tab_infobar->delegate()->LinkClicked(
+      WindowOpenDisposition::NEW_BACKGROUND_TAB));
+
+  // This should have opened a new tab.
+  ASSERT_EQ(2, tab_strip_model->count());
 }

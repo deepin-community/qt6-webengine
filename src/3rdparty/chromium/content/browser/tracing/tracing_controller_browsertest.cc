@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,8 +7,8 @@
 #include <stdint.h>
 #include <utility>
 
-#include "base/bind.h"
 #include "base/files/file_util.h"
+#include "base/functional/bind.h"
 #include "base/json/json_reader.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/run_loop.h"
@@ -29,13 +29,15 @@
 #include "content/shell/browser/shell.h"
 #include "content/test/test_content_browser_client.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
+#include "services/tracing/public/cpp/perfetto/trace_event_data_source.h"
 #include "services/tracing/public/cpp/trace_event_agent.h"
 #include "services/tracing/public/cpp/tracing_features.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "chromeos/system/fake_statistics_provider.h"
-#include "chromeos/system/statistics_provider.h"
+#include "chromeos/ash/components/dbus/debug_daemon/debug_daemon_client.h"
+#include "chromeos/ash/components/system/fake_statistics_provider.h"
+#include "chromeos/ash/components/system/statistics_provider.h"
 #endif
 
 using base::trace_event::RECORD_CONTINUOUSLY;
@@ -96,7 +98,7 @@ class TracingControllerTestEndpoint
 
 class TracingControllerTest : public ContentBrowserTest {
  public:
-  TracingControllerTest() {}
+  TracingControllerTest() = default;
 
   void SetUp() override {
     get_categories_done_callback_count_ = 0;
@@ -104,20 +106,28 @@ class TracingControllerTest : public ContentBrowserTest {
     disable_recording_done_callback_count_ = 0;
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
+    ash::DebugDaemonClient::InitializeFake();
     // Set statistic provider for hardware class tests.
-    chromeos::system::StatisticsProvider::SetTestProvider(
+    ash::system::StatisticsProvider::SetTestProvider(
         &fake_statistics_provider_);
     fake_statistics_provider_.SetMachineStatistic(
-        chromeos::system::kHardwareClassKey, "test-hardware-class");
+        ash::system::kHardwareClassKey, "test-hardware-class");
 #endif
     ContentBrowserTest::SetUp();
+  }
+
+  void TearDown() override {
+    ContentBrowserTest::TearDown();
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+    ash::DebugDaemonClient::Shutdown();
+#endif
   }
 
   void Navigate(Shell* shell) {
     EXPECT_TRUE(NavigateToURL(shell, GetTestUrl("", "title1.html")));
   }
 
-  absl::optional<base::Value> GenerateMetadataDict() {
+  absl::optional<base::Value::Dict> GenerateMetadataDict() {
     return std::move(metadata_);
   }
 
@@ -235,9 +245,10 @@ class TracingControllerTest : public ContentBrowserTest {
       scoped_refptr<TracingController::TraceDataEndpoint> trace_data_endpoint =
           TracingController::CreateStringEndpoint(std::move(callback));
 
-      metadata_ = base::Value(base::Value::Type::DICTIONARY);
-      metadata_->SetStringKey("not-whitelisted", "this_not_found");
-      tracing::TraceEventAgent::GetInstance()->AddMetadataGeneratorFunction(
+      base::Value::Dict metadata;
+      metadata.Set("not-whitelisted", "this_not_found");
+      metadata_ = std::move(metadata);
+      tracing::TraceEventMetadataSource::GetInstance()->AddGeneratorFunction(
           base::BindRepeating(&TracingControllerTest::GenerateMetadataDict,
                               base::Unretained(this)));
 
@@ -319,7 +330,7 @@ class TracingControllerTest : public ContentBrowserTest {
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
  protected:
-  chromeos::system::ScopedFakeStatisticsProvider fake_statistics_provider_;
+  ash::system::ScopedFakeStatisticsProvider fake_statistics_provider_;
 #endif
 
  private:
@@ -327,7 +338,7 @@ class TracingControllerTest : public ContentBrowserTest {
   int enable_recording_done_callback_count_;
   int disable_recording_done_callback_count_;
   base::FilePath last_actual_recording_file_path_;
-  absl::optional<base::Value> metadata_;
+  absl::optional<base::Value::Dict> metadata_;
   std::unique_ptr<std::string> last_data_;
 };
 
@@ -421,7 +432,7 @@ IN_PROC_BROWSER_TEST_F(TracingControllerTest,
   absl::optional<base::Value> trace_json = base::JSONReader::Read(last_data());
   ASSERT_TRUE(trace_json);
   const base::Value* metadata_json =
-      trace_json->FindKeyOfType("metadata", base::Value::Type::DICTIONARY);
+      trace_json->FindKeyOfType("metadata", base::Value::Type::DICT);
   ASSERT_TRUE(metadata_json);
 
   EXPECT_TRUE(KeyNotEquals(metadata_json, "cpu-brand", "__stripped__"));
@@ -490,11 +501,7 @@ IN_PROC_BROWSER_TEST_F(TracingControllerTest, MAYBE_DoubleStopTracing) {
 }
 
 // Only CrOS and Cast support system tracing.
-// TODO(crbug.com/1052397): Revisit once build flag switch of lacros-chrome is
-// complete.
-#if BUILDFLAG(IS_CHROMEOS_ASH) || \
-    (BUILDFLAG(IS_CHROMECAST) &&  \
-     (BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS)))
+#if BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CASTOS)
 #define MAYBE_SystemTraceEvents SystemTraceEvents
 #else
 #define MAYBE_SystemTraceEvents DISABLED_SystemTraceEvents

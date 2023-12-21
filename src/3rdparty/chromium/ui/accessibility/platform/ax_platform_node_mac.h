@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,8 +7,8 @@
 
 #import <Cocoa/Cocoa.h>
 
+#include "base/component_export.h"
 #include "base/mac/scoped_nsobject.h"
-#include "ui/accessibility/ax_export.h"
 #include "ui/accessibility/platform/ax_platform_node_base.h"
 
 @class AXPlatformNodeCocoa;
@@ -56,7 +56,8 @@ class AXPlatformNodeMac : public AXPlatformNodeBase {
 
 // Convenience function to determine whether an internal object role should
 // expose its accessible name in AXValue (as opposed to AXTitle/AXDescription).
-AX_EXPORT bool IsNameExposedInAXValueForRole(ax::mojom::Role role);
+COMPONENT_EXPORT(AX_PLATFORM)
+bool IsNameExposedInAXValueForRole(ax::mojom::Role role);
 
 }  // namespace ui
 

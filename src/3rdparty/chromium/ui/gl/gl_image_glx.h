@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -25,19 +25,11 @@ class GL_EXPORT GLImageGLX : public GLImage {
 
   // Overridden from GLImage:
   gfx::Size GetSize() override;
-  unsigned GetInternalFormat() override;
-  unsigned GetDataType() override;
-  BindOrCopy ShouldBindOrCopy() override;
-  bool BindTexImage(unsigned target) override;
-  void ReleaseTexImage(unsigned target) override;
-  bool CopyTexImage(unsigned target) override;
-  bool CopyTexSubImage(unsigned target,
-                       const gfx::Point& offset,
-                       const gfx::Rect& rect) override;
-  void Flush() override {}
-  void OnMemoryDump(base::trace_event::ProcessMemoryDump* pmd,
-                    uint64_t process_tracing_id,
-                    const std::string& dump_name) override;
+  unsigned GetInternalFormat();
+  unsigned GetDataType();
+  bool BindTexImage(unsigned target);
+  void ReleaseTexImage(unsigned target);
+  bool CopyTexImage(unsigned target);
 
  protected:
   ~GLImageGLX() override;

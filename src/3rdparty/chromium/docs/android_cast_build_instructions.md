@@ -91,7 +91,7 @@ $ gclient sync
 Once you have checked out the code, run
 
 ```shell
-$ build/install-build-deps-android.sh
+$ build/install-build-deps.sh --android
 ```
 
 to get all of the dependencies you need to build on Linux, *plus* all of the
@@ -122,7 +122,7 @@ with different configurations. To create a build directory which builds Chrome
 for Android, run:
 
 ```shell
-$ gn gen --args='target_os="android" is_chromecast=true' out/Default
+$ gn gen --args='target_os="android" is_cast_android=true' out/Default
 ```
 
 * You only have to run this once for each new build directory, Ninja will

@@ -7,12 +7,14 @@
 
 #include "src/gpu/ganesh/dawn/GrDawnProgramBuilder.h"
 
+#include "include/private/SkSLProgramKind.h"
 #include "src/gpu/ganesh/GrAutoLocaleSetter.h"
 #include "src/gpu/ganesh/GrRenderTarget.h"
 #include "src/gpu/ganesh/GrStencilSettings.h"
 #include "src/gpu/ganesh/dawn/GrDawnGpu.h"
 #include "src/gpu/ganesh/dawn/GrDawnTexture.h"
 #include "src/gpu/ganesh/effects/GrTextureEffect.h"
+#include "src/sksl/SkSLCompiler.h"
 #include "src/utils/SkShaderUtils.h"
 
 static wgpu::BlendFactor to_dawn_blend_factor(skgpu::BlendCoeff coeff) {
@@ -141,11 +143,8 @@ static wgpu::PrimitiveTopology to_dawn_primitive_topology(GrPrimitiveType primit
             return wgpu::PrimitiveTopology::LineList;
         case GrPrimitiveType::kLineStrip:
             return wgpu::PrimitiveTopology::LineStrip;
-        case GrPrimitiveType::kPath:
-        default:
-            SkASSERT(!"unsupported primitive topology");
-            return wgpu::PrimitiveTopology::TriangleList;
     }
+    SkUNREACHABLE;
 }
 
 static wgpu::VertexFormat to_dawn_vertex_format(GrVertexAttribType type) {
@@ -174,7 +173,7 @@ static wgpu::VertexFormat to_dawn_vertex_format(GrVertexAttribType type) {
 }
 
 static wgpu::BlendState create_blend_state(const GrDawnGpu* gpu, const GrPipeline& pipeline) {
-    GrXferProcessor::BlendInfo blendInfo = pipeline.getXferProcessor().getBlendInfo();
+    skgpu::BlendInfo blendInfo = pipeline.getXferProcessor().getBlendInfo();
     skgpu::BlendEquation equation = blendInfo.fEquation;
     skgpu::BlendCoeff srcCoeff = blendInfo.fSrcBlend;
     skgpu::BlendCoeff dstCoeff = blendInfo.fDstBlend;
@@ -382,9 +381,9 @@ sk_sp<GrDawnProgram> GrDawnProgramBuilder::Build(GrDawnGpu* gpu,
     colorTargetState.format = colorFormat;
     colorTargetState.blend = &blendState;
 
-    bool writeColor = pipeline.getXferProcessor().getBlendInfo().fWriteColor;
-    colorTargetState.writeMask = writeColor ? wgpu::ColorWriteMask::All
-                                            : wgpu::ColorWriteMask::None;
+    bool writesColor = pipeline.getXferProcessor().getBlendInfo().fWritesColor;
+    colorTargetState.writeMask = writesColor ? wgpu::ColorWriteMask::All
+                                             : wgpu::ColorWriteMask::None;
 
     wgpu::FragmentState fragmentState;
     fragmentState.module = fsModule;
@@ -439,7 +438,7 @@ wgpu::ShaderModule GrDawnProgramBuilder::createShaderModule(const GrGLSLShaderBu
     }
 
     return fGpu->createShaderModule(spirvSource);
-};
+}
 
 const GrCaps* GrDawnProgramBuilder::caps() const {
     return fGpu->caps();

@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -47,7 +47,9 @@ FilteredGestureProvider::OnTouchEvent(const MotionEvent& event) {
   TouchDispositionGestureFilter::PacketResult filter_result =
       gesture_filter_.OnGesturePacket(pending_gesture_packet_);
   if (filter_result != TouchDispositionGestureFilter::SUCCESS) {
-    NOTREACHED() << "Invalid touch gesture sequence detected.";
+    DCHECK_EQ(filter_result,
+              TouchDispositionGestureFilter::EMPTY_GESTURE_SEQUENCE)
+        << "Invalid touch gesture sequence detected.";
     return TouchHandlingResult();
   }
 

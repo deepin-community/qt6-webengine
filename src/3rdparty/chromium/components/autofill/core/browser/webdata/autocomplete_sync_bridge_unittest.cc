@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,15 +10,14 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/bind.h"
 #include "base/test/task_environment.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "components/autofill/core/browser/webdata/autofill_entry.h"
 #include "components/autofill/core/browser/webdata/autofill_table.h"
@@ -33,8 +32,8 @@
 #include "components/sync/protocol/autofill_specifics.pb.h"
 #include "components/sync/protocol/entity_metadata.pb.h"
 #include "components/sync/protocol/model_type_state.pb.h"
-#include "components/sync/test/model/mock_model_type_change_processor.h"
-#include "components/sync/test/model/test_matchers.h"
+#include "components/sync/test/mock_model_type_change_processor.h"
+#include "components/sync/test/test_matchers.h"
 #include "components/webdata/common/web_database.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -189,7 +188,8 @@ class AutocompleteSyncBridgeTest : public testing::Test {
     for (const AutofillSpecifics& specifics : remote_data) {
       initial_updates.push_back(SpecificsToUpdateResponse(specifics));
     }
-    real_processor_->OnUpdateReceived(state, std::move(initial_updates));
+    real_processor_->OnUpdateReceived(state, std::move(initial_updates),
+                                      /*gc_directive=*/absl::nullopt);
   }
 
   void SaveSpecificsToTable(
@@ -641,8 +641,8 @@ TEST_F(AutocompleteSyncBridgeTest, LocalEntryExpired) {
   const std::string storage_key = GetStorageKey(expired_specifics);
 
   // Let's add the sync metadata
-  ASSERT_TRUE(table()->UpdateSyncMetadata(syncer::AUTOFILL, storage_key,
-                                          EntityMetadata()));
+  ASSERT_TRUE(table()->UpdateEntityMetadata(syncer::AUTOFILL, storage_key,
+                                            EntityMetadata()));
 
   // Validate that it was added.
   syncer::MetadataBatch batch;
@@ -669,7 +669,7 @@ TEST_F(AutocompleteSyncBridgeTest, LoadMetadataCalled) {
   EXPECT_TRUE(
       table()->UpdateModelTypeState(syncer::AUTOFILL, model_type_state));
   EXPECT_TRUE(
-      table()->UpdateSyncMetadata(syncer::AUTOFILL, "key", EntityMetadata()));
+      table()->UpdateEntityMetadata(syncer::AUTOFILL, "key", EntityMetadata()));
 
   ResetProcessor();
   EXPECT_CALL(mock_processor(), ModelReadyToSync(MetadataBatchContains(

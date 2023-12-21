@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,6 +9,7 @@
 #include <cmath>
 #include <memory>
 
+#include "base/memory/raw_ptr_exclusion.h"
 #include "media/base/limits.h"
 #include "media/base/video_frame.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -44,16 +45,16 @@ scoped_refptr<media::VideoFrame> CreateFrameWithPatternFilled(
   scoped_refptr<media::VideoFrame> frame(media::VideoFrame::CreateFrame(
       format, coded_size, visible_rect, natural_size, timestamp));
 
-  FillPlaneWithPattern(frame->data(media::VideoFrame::kYPlane),
+  FillPlaneWithPattern(frame->writable_data(media::VideoFrame::kYPlane),
                        frame->stride(media::VideoFrame::kYPlane),
                        frame->visible_rect().size());
   FillPlaneWithPattern(
-      frame->data(media::VideoFrame::kUPlane),
+      frame->writable_data(media::VideoFrame::kUPlane),
       frame->stride(media::VideoFrame::kUPlane),
       media::VideoFrame::PlaneSize(format, media::VideoFrame::kUPlane,
                                    frame->visible_rect().size()));
   FillPlaneWithPattern(
-      frame->data(media::VideoFrame::kVPlane),
+      frame->writable_data(media::VideoFrame::kVPlane),
       frame->stride(media::VideoFrame::kVPlane),
       media::VideoFrame::PlaneSize(format, media::VideoFrame::kVPlane,
                                    frame->visible_rect().size()));
@@ -167,9 +168,9 @@ class VideoUtilTest : public testing::Test {
     u_stride_ = u_stride;
     v_stride_ = v_stride;
 
-    y_plane_.reset(new uint8_t[y_stride * height]);
-    u_plane_.reset(new uint8_t[u_stride * height / 2]);
-    v_plane_.reset(new uint8_t[v_stride * height / 2]);
+    y_plane_ = std::make_unique<uint8_t[]>(y_stride * height);
+    u_plane_ = std::make_unique<uint8_t[]>(u_stride * height / 2);
+    v_plane_ = std::make_unique<uint8_t[]>(v_stride * height / 2);
   }
 
   void CreateDestinationFrame(int width, int height) {
@@ -271,8 +272,12 @@ uint8_t* target4x6_270_y_n = target4x6_90_n_y;
 uint8_t* target4x6_270_y_y = target4x6_90_n_n;
 
 struct VideoRotationTestData {
-  uint8_t* src;
-  uint8_t* target;
+  // This field is not a raw_ptr<> because it was filtered by the rewriter for:
+  // #global-scope
+  RAW_PTR_EXCLUSION uint8_t* src;
+  // This field is not a raw_ptr<> because it was filtered by the rewriter for:
+  // #global-scope
+  RAW_PTR_EXCLUSION uint8_t* target;
   int width;
   int height;
   int rotation;
@@ -328,7 +333,7 @@ class VideoUtilRotationTest
     : public testing::TestWithParam<VideoRotationTestData> {
  public:
   VideoUtilRotationTest() {
-    dest_.reset(new uint8_t[GetParam().width * GetParam().height]);
+    dest_ = std::make_unique<uint8_t[]>(GetParam().width * GetParam().height);
   }
   VideoUtilRotationTest(const VideoUtilRotationTest&) = delete;
   VideoUtilRotationTest& operator=(const VideoUtilRotationTest&) = delete;
@@ -637,7 +642,7 @@ TEST_F(VideoUtilTest, WrapAsI420VideoFrame) {
   // ASAN.
   src_frame.reset();
   for (auto plane : planes)
-    memset(dst_frame->data(plane), 1, dst_frame->stride(plane));
+    memset(dst_frame->writable_data(plane), 1, dst_frame->stride(plane));
 }
 
 }  // namespace media

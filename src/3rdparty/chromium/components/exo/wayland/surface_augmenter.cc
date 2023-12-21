@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -39,6 +39,7 @@ class AugmentedSurface : public SurfaceObserver {
   explicit AugmentedSurface(Surface* surface) : surface_(surface) {
     surface_->AddSurfaceObserver(this);
     surface_->SetProperty(kSurfaceHasAugmentedSurfaceKey, true);
+    surface_->set_legacy_buffer_release_skippable(true);
   }
   AugmentedSurface(const AugmentedSurface&) = delete;
   AugmentedSurface& operator=(const AugmentedSurface&) = delete;
@@ -64,6 +65,10 @@ class AugmentedSurface : public SurfaceObserver {
 
   void SetDestination(float width, float height) {
     surface_->SetViewport(gfx::SizeF(width, height));
+  }
+
+  void SetBackgroundColor(absl::optional<SkColor4f> background_color) {
+    surface_->SetBackgroundColor(background_color);
   }
 
   // SurfaceObserver:
@@ -130,10 +135,24 @@ void augmented_surface_set_rounded_corners_bounds(wl_client* client,
       wl_fixed_to_double(bottom_left));
 }
 
+void augmented_surface_set_background_color(wl_client* client,
+                                            wl_resource* resource,
+                                            wl_array* color_data) {
+  absl::optional<SkColor4f> sk_color;
+  // Empty data means no color.
+  if (color_data->size) {
+    float* data = reinterpret_cast<float*>(color_data->data);
+    sk_color = {data[0], data[1], data[2], data[3]};
+  }
+
+  GetUserDataAs<AugmentedSurface>(resource)->SetBackgroundColor(sk_color);
+}
+
 const struct augmented_surface_interface augmented_implementation = {
     augmented_surface_destroy, augmented_surface_set_corners_DEPRECATED,
     augmented_surface_set_destination_size,
-    augmented_surface_set_rounded_corners_bounds};
+    augmented_surface_set_rounded_corners_bounds,
+    augmented_surface_set_background_color};
 
 ////////////////////////////////////////////////////////////////////////////////
 // augmented_sub_surface_interface:
@@ -162,6 +181,19 @@ class AugmentedSubSurface : public SubSurfaceObserver {
     sub_surface_->SetPosition(gfx::PointF(x, y));
   }
 
+  void SetClipRect(float x, float y, float width, float height) {
+    absl::optional<gfx::RectF> clip_rect;
+    if (x >= 0 && y >= 0 && width >= 0 && height >= 0) {
+      clip_rect = gfx::RectF(x, y, width, height);
+    }
+    // TODO(rivr): Should we send a protocol error if there are invalid values?
+    sub_surface_->SetClipRect(clip_rect);
+  }
+
+  void SetTransform(const gfx::Transform& transform) {
+    sub_surface_->SetTransform(transform);
+  }
+
   // SurfaceObserver:
   void OnSubSurfaceDestroying(SubSurface* sub_surface) override {
     sub_surface->RemoveSubSurfaceObserver(this);
@@ -184,9 +216,50 @@ void augmented_sub_surface_set_position(wl_client* client,
       wl_fixed_to_double(x), wl_fixed_to_double(y));
 }
 
+void augmented_sub_surface_set_clip_rect(wl_client* client,
+                                         wl_resource* resource,
+                                         wl_fixed_t x,
+                                         wl_fixed_t y,
+                                         wl_fixed_t width,
+                                         wl_fixed_t height) {
+  GetUserDataAs<AugmentedSubSurface>(resource)->SetClipRect(
+      wl_fixed_to_double(x), wl_fixed_to_double(y), wl_fixed_to_double(width),
+      wl_fixed_to_double(height));
+}
+
+void augmented_sub_surface_set_transform(wl_client* client,
+                                         wl_resource* resource,
+                                         wl_array* matrix_data) {
+  gfx::Transform transform;
+  // Empty data represents the identity matrix.
+  if (matrix_data->size == 6 * sizeof(float)) {
+    // | a c x |
+    // | b d y | -> float[6] { a b c d x y }
+    float* data = reinterpret_cast<float*>(matrix_data->data);
+    // If b and c are 0, make a simplified transform using AxisTransform2d.
+    if (data[1] == 0 && data[2] == 0) {
+      transform = gfx::Transform(gfx::AxisTransform2d::FromScaleAndTranslation(
+          gfx::Vector2dF(data[0], data[3]), gfx::Vector2dF(data[4], data[5])));
+    } else {
+      transform = gfx::Transform::Affine(data[0], data[1], data[2], data[3],
+                                         data[4], data[5]);
+    }
+  } else if (matrix_data->size != 0) {
+    wl_resource_post_error(resource, AUGMENTED_SUB_SURFACE_ERROR_INVALID_SIZE,
+                           "The matrix must contain 0 or 6 %zu-byte floats "
+                           "(%zu bytes given)",
+                           sizeof(float), matrix_data->size);
+    return;
+  }
+
+  GetUserDataAs<AugmentedSubSurface>(resource)->SetTransform(transform);
+}
+
 const struct augmented_sub_surface_interface
-    augmented_sub_surface_implementation = {augmented_sub_surface_destroy,
-                                            augmented_sub_surface_set_position};
+    augmented_sub_surface_implementation = {
+        augmented_sub_surface_destroy, augmented_sub_surface_set_position,
+        augmented_sub_surface_set_clip_rect,
+        augmented_sub_surface_set_transform};
 
 ////////////////////////////////////////////////////////////////////////////////
 // wl_buffer_interface:

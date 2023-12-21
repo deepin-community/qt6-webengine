@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -50,11 +50,16 @@ class V4L2VideoDecoderBackend {
     virtual void InitiateFlush() = 0;
     // Inform the flushing is complete.
     virtual void CompleteFlush() = 0;
+    // Perform streamoff - streamon sequence to start capture queue when
+    // it is stopped after LAST buffer dequeue.
+    virtual void RestartStream() = 0;
     // Stop the stream to reallocate the CAPTURE buffers. Can only be done
     // between calls to |InitiateFlush| and |CompleteFlush|.
+    // |bit_depth| is the
     virtual void ChangeResolution(gfx::Size pic_size,
                                   gfx::Rect visible_rect,
-                                  size_t num_output_frames) = 0;
+                                  size_t num_codec_reference_frames,
+                                  uint8_t bit_depth) = 0;
     // Convert the frame and call the output callback.
     virtual void OutputFrame(scoped_refptr<VideoFrame> frame,
                              const gfx::Rect& visible_rect,
@@ -89,20 +94,21 @@ class V4L2VideoDecoderBackend {
   // to do something specific beyond applying these parameters to the CAPTURE
   // queue.
   virtual bool ApplyResolution(const gfx::Size& pic_size,
-                               const gfx::Rect& visible_rect,
-                               const size_t num_output_frames) = 0;
+                               const gfx::Rect& visible_rect) = 0;
   // Called when ChangeResolution is done. |status| indicates whether there is
   // any error occurs during the resolution change.
   virtual void OnChangeResolutionDone(CroStatus status) = 0;
   // Clear all pending decoding tasks and call all pending decode callbacks
   // with |status| as argument.
   virtual void ClearPendingRequests(DecoderStatus status) = 0;
-
   // Whether we should stop the input queue when changing resolution. Stateless
   // decoders require this, but stateful ones need the input queue to keep
   // running. Although not super elegant, this is required to express that
   // difference.
   virtual bool StopInputQueueOnResChange() const = 0;
+  // Returns the amount of OUTPUT queue buffers needed or estimated to be
+  // needed by the specific backend.
+  virtual size_t GetNumOUTPUTQueueBuffers() const = 0;
 
  protected:
   V4L2VideoDecoderBackend(Client* const client,

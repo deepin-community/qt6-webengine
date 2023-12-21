@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,6 +7,8 @@ module ash.personalization_app.mojom;
 import "mojo/public/mojom/base/big_buffer.mojom";
 import "mojo/public/mojom/base/file_path.mojom";
 import "mojo/public/mojom/base/string16.mojom";
+import "mojo/public/mojom/base/time.mojom";
+import "skia/public/mojom/skcolor.mojom";
 import "url/mojom/url.mojom";
 
 // This should be kept in sync with |ash::WallpaperLayout|
@@ -41,7 +43,11 @@ enum WallpaperType {
                       // goes away when another wallpaper is shown or the
                       // browser process exits. Note: the image will never be
                       // blurred or dimmed.
-  kGooglePhotos = 9,  // WallpaperInfo.location contains the Google Photos id.
+  // kGooglePhotos = 9,    // Deprecated: b/229788402
+  kDailyGooglePhotos = 10, // WallpaperInfo.location contains the Google Photos
+                           // album id.
+  kOnceGooglePhotos = 11,  // WallpaperInfo.location contains the Google Photos
+                           // photo id.
 };
 
 // The image type specific to online wallpapers. This should be kept in sync
@@ -73,6 +79,9 @@ struct WallpaperCollection {
     // Name of this collection to be displayed to the user.
     string name;
 
+    // Extra description text about the wallpaper collection.
+    string description;
+
     // The preview image URLs of this collection.
     array<url.mojom.Url> previews;
 };
@@ -91,6 +100,12 @@ struct GooglePhotosAlbum {
 
     // URL to the bytes of the album's displayed cover photo.
     url.mojom.Url preview;
+
+    // Latest modification timestamp used to sort albums.
+    mojo_base.mojom.Time timestamp;
+
+    // Whether the album is a shared album.
+    bool is_shared;
 };
 
 // Represents the server-provided response to a Google Photos albums request.
@@ -128,6 +143,12 @@ struct GooglePhotosPhoto {
     // Unique identifier for this photo.
     string id;
 
+    // A string which uniquely identifies a Google Photos photo across albums.
+    // Note that the same photo appearing in multiple albums will have a unique
+    // |id| for each album in which it appears, but the |dedup_key| is shared
+    // across albums.
+    string? dedup_key;
+
     // Display name of the photo, derived from the photo's server-side filename.
     string name;
 
@@ -154,11 +175,23 @@ struct FetchGooglePhotosPhotosResponse {
     string? resume_token;
 };
 
+// Represents the response to a daily refresh request.
+struct SetDailyRefreshResponse {
+  // Indicates whether the request is successful.
+  bool success;
+
+  // Indicates whether the request forces the current wallpaper image to
+  // refresh.
+  bool force_refresh;
+};
+
+struct CurrentWallpaperDescription {
+  string title;
+  string content;
+};
+
 // Represents the currently selected wallpaper image.
 struct CurrentWallpaper {
-  // URL of the currently selected wallpaper image in data scheme.
-  url.mojom.Url url;
-
   // Attribution text such as "Photo by John Doe" or the file name of the local
   // image.
   array<string> attribution;
@@ -172,10 +205,18 @@ struct CurrentWallpaper {
   // A unique identifier for the image. This is used to identify which
   // |WallpaperImage| or local image the user has selected.
   string key;
+
+  // Extra description content about the image. Currently only supplied for
+  // images supplied by backdrop server with type
+  // `WallpaperType::{kDaily, kOnline}`.
+  CurrentWallpaperDescription? description;
 };
 
 // Receives updated wallpaper information whenever it is changed.
 interface WallpaperObserver {
+  // Triggered by |WallpaperControllerObserver::OnWallpaperPreviewEnded|.
+  OnWallpaperPreviewEnded();
+
   // Triggered by |WallpaperControllerObserver::OnWallpaperChanged|. Retrieves
   // updated wallpaper information and calls the observer. |image| will be null
   // if there is an error retrieving wallpaper information.
@@ -215,9 +256,14 @@ interface WallpaperProvider {
     FetchGooglePhotosAlbums(string? resume_token) =>
         (FetchGooglePhotosAlbumsResponse response);
 
-    // Fetch the number of photos the user has stored in Google Photos. |count|
-    // will be -1 on failure.
-    FetchGooglePhotosCount() => (int32 count);
+    // Fetch the list of albums shared with the user or shared by the user in
+    // Google Photos. Albums with no photo assets will not be returned. On
+    // error, |response.albums| will be absent. |response.resume_token| will
+    // be present when there are more results to fetch; |resume_token| will
+    // be present when this is a follow-up query to one that indicated there
+    // were more results to fetch.
+    FetchGooglePhotosSharedAlbums(string? resume_token) =>
+        (FetchGooglePhotosAlbumsResponse response);
 
     // Fetch whether the user is allowed to access Google Photos data.
     FetchGooglePhotosEnabled() => (GooglePhotosEnablementState state);
@@ -238,10 +284,17 @@ interface WallpaperProvider {
     // will be null on failure.
     GetLocalImages() => (array<mojo_base.mojom.FilePath>? images);
 
+    // Device default image is a special case of an image stored on disk. It is
+    // stored in a special directory and the file is not accessible to the user.
+    // If this device has a default image, return a thumbnail representation of
+    // it. |data| will be empty url on failure or if the device has no
+    // default image.
+    GetDefaultImageThumbnail() => (url.mojom.Url data);
+
     // Fetch a thumbnail data url for the given local image path. |data| will be
-    // empty string on failure.
+    // empty on failure.
     GetLocalImageThumbnail(mojo_base.mojom.FilePath file_path) =>
-        (string data);
+        (url.mojom.Url data);
 
     // Binds a listener to start receiving updates on wallpaper changes.
     SetWallpaperObserver(pending_remote<WallpaperObserver> observer);
@@ -249,6 +302,10 @@ interface WallpaperProvider {
     // Sets the given backdrop wallpaper as the user's background.
     SelectWallpaper(uint64 image_asset_id, bool preview_mode) =>
         (bool success);
+
+    // Select the device default image as the user's background. Not all devices
+    // have a default image.
+    SelectDefaultImage() => (bool success);
 
     // Sets the given local wallpaper as the user's background. Validated
     // against list of file paths returned by |GetLocalImages|.
@@ -259,11 +316,23 @@ interface WallpaperProvider {
     SelectGooglePhotosPhoto(string id, WallpaperLayout layout,
         bool preview_mode) => (bool success);
 
+    // Sets the Google Photos album with the given id as the daily refresh
+    // album. May refresh the current wallpaper image if it is not part of the
+    // album.
+    SelectGooglePhotosAlbum(string id)
+        => (SetDailyRefreshResponse response);
+
+    // Gets the id of the current Google Photos album on daily refresh, or an
+    // empty string if Google Photos daily refresh is not active.
+    GetGooglePhotosDailyRefreshAlbumId() => (string album_id);
+
     // Sets the layout for current wallpaper.
     SetCurrentWallpaperLayout(WallpaperLayout layout);
 
-    // Set and enable daily refresh for the given |collection_id|.
-    SetDailyRefreshCollectionId(string collection_id);
+    // Sets and enables daily refresh for the given |collection_id|. May refresh
+    // the current wallpaper image if it is not part of the collection.
+    SetDailyRefreshCollectionId(string collection_id)
+        => (SetDailyRefreshResponse response);
 
     // Get the daily refresh collection id. It can be empty if daily refresh is
     // not enabled.
@@ -284,6 +353,23 @@ interface WallpaperProvider {
     CancelPreviewWallpaper();
 };
 
+// Color scheme options used to generate the system UI's color palette.
+enum ColorScheme {
+  kStatic = 0,
+  kTonalSpot = 1,
+  kNeutral = 2,
+  kExpressive = 3,
+  kVibrant = 4,
+};
+
+// Samples of a color scheme for the tri-color scheme preview.
+struct SampleColorScheme {
+  ColorScheme scheme;
+  skia.mojom.SkColor primary;
+  skia.mojom.SkColor secondary;
+  skia.mojom.SkColor tertiary;
+};
+
 // Receives information whenever there are theme related changes such as color
 // mode.
 interface ThemeObserver {
@@ -293,6 +379,15 @@ interface ThemeObserver {
 
   // Notifies the JS side the current state of color mode auto scheduler.
   OnColorModeAutoScheduleChanged(bool enabled);
+
+  //Notifies the JS side about the current state of the color scheme.
+  OnColorSchemeChanged(ColorScheme color_scheme);
+
+  // Notifies the JS side that the sample color schemes have changed.
+  OnSampleColorSchemesChanged(array<SampleColorScheme> sample_color_schemes);
+
+  // Notifies the JS side about the current state of the static color.
+  OnStaticColorChanged(skia.mojom.SkColor? color);
 };
 
 // Provides APIs to expose theme settings such dark/light color mode.
@@ -306,6 +401,23 @@ interface ThemeProvider {
   // Disables or enables dark color mode auto scheduler.
   SetColorModeAutoScheduleEnabled(bool enabled);
 
+  // Sets the color scheme for dynamic color.
+  // @see //ash/style/color_palette_controller.h
+  SetColorScheme(ColorScheme colorScheme);
+
+  // Sets the seed color for dynamic color.
+  // @see //ash/style/color_palette_controller.h
+  SetStaticColor(skia.mojom.SkColor static_color);
+
+  // Retrieves the color scheme for dynamic color.
+  GetColorScheme() => (ColorScheme color_scheme);
+
+  // Retrieves the static seed color for dynamic color.
+  GetStaticColor() => (skia.mojom.SkColor? static_color);
+
+  // Generate samples of all the color schemes.
+  GenerateSampleColorSchemes() => (array<SampleColorScheme> sample_color_schemes);
+
   // Returns whether color mode auto scheduler is enabled.
   IsColorModeAutoScheduleEnabled() => (bool enabled);
 
@@ -315,11 +427,22 @@ interface ThemeProvider {
 
 // Contains information about the current user.
 struct UserInfo {
-  // The display email of the user.
+  // The display email of the user. It can be empty for guest users.
   string email;
 
   // The display name of the user.
   string name;
+};
+
+// Additional attribution information for several deprecated user image choices.
+// These avatars are no longer able to be selected by users, but some users may
+// still have one set as their chosen avatar image.
+struct DeprecatedSourceInfo {
+  // The name of the author that created the avatar image.
+  mojo_base.mojom.String16 author;
+
+  // The website of the author.
+  url.mojom.Url website;
 };
 
 // A default user image stored on the device that can be set as the user's
@@ -333,6 +456,9 @@ struct DefaultUserImage {
 
   // A url to display the image. Typically |chrome://theme/IDR_LOGIN_DEFAULT_X|.
   url.mojom.Url url;
+
+  // Additional information about the source of the avatar.
+  DeprecatedSourceInfo? source_info;
 };
 
 // An empty struct that is just used to indicate the presence of a profile
@@ -370,6 +496,10 @@ interface UserImageObserver {
   // Triggered by
   // |ash::CameraPresenceNotifier::Observer::OnCameraPresenceCheckDone|.
   OnCameraPresenceCheckDone(bool is_camera_present);
+
+  // Triggered by
+  // |UserManager::Observer::OnUserImageIsEnterpriseManagedChanged|.
+  OnIsEnterpriseManagedChanged(bool is_enterprise_managed);
 };
 
 // Provides APIs to view information about the current user. This API is exposed
@@ -406,11 +536,13 @@ interface UserProvider {
 };
 
 // The animation theme for screen saver. Should be kept in sync with
-// |ash::AmbientAnimationTheme|.
+// |ash::AmbientTheme|.
 enum AnimationTheme {
   kSlideshow = 0,
   kFeelTheBreeze = 1,
   kFloatOnBy = 2,
+  kVideoNewMexico = 3,
+  kVideoClouds = 4,
 };
 
 // The source of the screensaver images come from.
@@ -426,6 +558,15 @@ enum TopicSource {
 enum TemperatureUnit {
   kFahrenheit = 0,
   kCelsius = 1,
+};
+
+// Enumeration of UI visibility states.
+// This should be kept in sync with |ash:AmbientUiVisibility|.
+enum AmbientUiVisibility {
+  kShown = 0,
+  kPreview = 1,
+  kHidden = 2,
+  kClosed = 3,
 };
 
 // Album metadaba to display. Contains necessary data for both topic sources.
@@ -467,10 +608,17 @@ interface AmbientObserver {
 
   // Notifies the JS side about the current albums.
   OnAlbumsChanged(array<AmbientModeAlbum> albums);
+
+  // Notifies the JS side about the previews of the selected Google Photos
+  // albums.
+  OnGooglePhotosAlbumsPreviewsFetched(array<url.mojom.Url> previews);
+
+  // Notifies the JS side when ambient visibility is changed.
+  OnAmbientUiVisibilityChanged(AmbientUiVisibility visibility);
 };
 
 // Provides APIs to expose Ambient mode settings.
-// Used by the Personalization Hub.
+// Used by the personalization hub WebUI to call into the browser process.
 interface AmbientProvider {
   // Boolean pref for whether ambient mode is enabled.
   IsAmbientModeEnabled() => (bool enabled);
@@ -495,4 +643,64 @@ interface AmbientProvider {
 
   // Record that the user viewed the Ambient mode page.
   SetPageViewed();
+
+  // Request updated Ambient mode settings and albums.
+  FetchSettingsAndAlbums();
+
+  // Starts the screen saver preview.
+  StartScreenSaverPreview();
+};
+
+// The supported preset colors for keyboard backlight.
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
+enum BacklightColor {
+  kWallpaper = 0,
+  kWhite = 1,
+  kRed = 2,
+  kYellow = 3,
+  kGreen = 4,
+  kBlue = 5,
+  kIndigo = 6,
+  kPurple = 7,
+
+  kRainbow = 100,
+  // Indicates multi-zone customization is selected. The actual zone colors are
+  // saved in |ash::prefs::kPersonalizationKeyboardBacklightZoneColors|.
+  kMultiZone = 101,
+};
+
+// Hex values of the colors displayed in the rgb keyboard section.
+const uint32 kWhiteColor = 0xFFFFFF;
+const uint32 kRedColor = 0xEE675C;
+const uint32 kYellowColor = 0xFBBC04;
+const uint32 kGreenColor = 0x34A853;
+const uint32 kBlueColor = 0x00A3C2;
+const uint32 kIndigoColor = 0x4285F4;
+const uint32 kPurpleColor = 0xB76DF8;
+
+// Receives information whenever there are keyboard backlight related changes
+// such as backlight colors.
+interface KeyboardBacklightObserver {
+  // Notifies the JS side about the current state of the backlight color.
+  OnBacklightColorChanged(BacklightColor color);
+
+  // Notifies the JS side the current wallpaper-extracted color.
+  OnWallpaperColorChanged(skia.mojom.SkColor wallpaper_color);
+};
+
+// Provides APIs to expose keyboard backlight settings.
+interface KeyboardBacklightProvider {
+  // Binds a listener to start receiving updates on backlight color changes.
+  SetKeyboardBacklightObserver(pending_remote<KeyboardBacklightObserver>
+      observer);
+
+  // Sets the backlight color.
+  SetBacklightColor(BacklightColor backlight_color);
+
+  // Determines whether to show the education nudge.
+  ShouldShowNudge() => (bool should_show_nudge);
+
+  // Called when the nudge is shown.
+  HandleNudgeShown();
 };

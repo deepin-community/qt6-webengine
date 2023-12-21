@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Copyright 2021 The Chromium Authors. All rights reserved.
+# Copyright 2021 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 """Utilities for parsing structured.xml.
@@ -18,9 +18,9 @@ import re
 
 def error(elem, msg):
   """Raise a nicely formatted error with some context."""
-  name = elem.attrib.get('name', None)
-  name = name + ' ' if name else ''
-  msg = 'Structured metrics error, {} node {}: {}.'.format(elem.tag, name, msg)
+  name = elem.attrib.get("name", None)
+  name = name + " " if name else ""
+  msg = "Structured metrics error, {} node {}: {}.".format(elem.tag, name, msg)
   raise ValueError(msg)
 
 
@@ -39,13 +39,27 @@ def get_attr(elem, tag, regex=None):
   return attr
 
 
-def get_compound_children(elem, tag):
+def get_optional_attr(elem, tag, regex=None):
+  """Get an attribute.
+
+  Returns None if it doesn't exist.
+  """
+  attr = elem.attrib.get(tag)
+  if not attr:
+    return None
+  if regex and not re.match(regex, attr):
+    error(elem, ("has '{}' attribute '{}' which does "
+                 "not match regex '{}'").format(tag, attr, regex))
+  return attr
+
+
+def get_compound_children(elem, tag, allow_missing_children=False):
   """Get all child nodes of `elem` with tag `tag`.
 
   Error if none exist, or a child is not a compound node.
   """
   children = elem.findall(tag)
-  if not children:
+  if not children and not allow_missing_children:
     error(elem, "missing node '{}'".format(tag))
   for child in children:
     if child.text and child.text.strip():
@@ -100,28 +114,30 @@ def get_text_child(elem, tag, regex=None):
   return result[0]
 
 
-def check_attributes(elem, expected_attrs):
+def check_attributes(elem, expected_attrs, optional_attrs=None):
   """Ensure `elem` has no attributes except those in `expected_attrs`."""
   actual_attrs = set(elem.attrib.keys())
   unexpected_attrs = actual_attrs - set(expected_attrs)
+  if optional_attrs:
+    unexpected_attrs = unexpected_attrs - set(optional_attrs)
   if unexpected_attrs:
-    attrs = ' '.join(unexpected_attrs)
-    error(elem, 'has unexpected attributes: ' + attrs)
+    attrs = " ".join(unexpected_attrs)
+    error(elem, "has unexpected attributes: " + attrs)
 
 
 def check_children(elem, expected_children):
-  """Ensure `elem` has no children without tags in `expected_children`."""
+  """Ensure all children in `expected_children` are in `elem`."""
   actual_children = {child.tag for child in elem}
-  unexpected_children = actual_children - set(expected_children)
+  unexpected_children = set(expected_children) - actual_children
   if unexpected_children:
-    children = ' '.join(unexpected_children)
-    error(elem, 'has unexpected nodes: ' + children)
+    children = " ".join(unexpected_children)
+    error(elem, "is missing nodes: " + children)
 
 
 def check_child_names_unique(elem, tag):
   """Ensure uniqueness of the 'name' of all children of `elem` with `tag`."""
-  names = [child.attrib.get('name', None) for child in elem if child.tag == tag]
+  names = [child.attrib.get("name", None) for child in elem if child.tag == tag]
   name_counts = collections.Counter(names)
   has_duplicates = any(c > 1 for c in name_counts.values())
   if has_duplicates:
-    error(elem, 'has {} nodes with duplicate names'.format(tag))
+    error(elem, "has {} nodes with duplicate names".format(tag))

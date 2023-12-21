@@ -1,4 +1,4 @@
-// Copyright 2014 PDFium Authors. All rights reserved.
+// Copyright 2014 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -74,7 +74,6 @@ class CFWL_ListBox : public CFWL_Widget {
   Item* GetSelItem(int32_t nIndexSel);
   int32_t GetSelIndex(int32_t nIndex);
   void SetSelItem(Item* hItem, bool bSelect);
-  float GetItemHeight() const { return m_fItemHeight; }
   float CalcItemHeight();
 
  protected:

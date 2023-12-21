@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -15,7 +15,7 @@
 #include "ui/accessibility/ax_node.h"
 #include "ui/accessibility/ax_tree.h"
 #include "ui/accessibility/platform/ax_platform_node.h"
-#include "ui/accessibility/platform/ax_platform_node_delegate_base.h"
+#include "ui/accessibility/platform/ax_platform_node_delegate.h"
 
 #if BUILDFLAG(IS_WIN)
 namespace gfx {
@@ -27,7 +27,7 @@ namespace ui {
 
 // For testing, a TestAXNodeWrapper wraps an AXNode, implements
 // AXPlatformNodeDelegate, and owns an AXPlatformNode.
-class TestAXNodeWrapper : public AXPlatformNodeDelegateBase {
+class TestAXNodeWrapper : public AXPlatformNodeDelegate {
  public:
   // Create TestAXNodeWrapper instances on-demand from an AXTree and AXNode.
   static TestAXNodeWrapper* GetOrCreate(AXTree* tree, AXNode* node);
@@ -71,7 +71,7 @@ class TestAXNodeWrapper : public AXPlatformNodeDelegateBase {
   // AXPlatformNodeDelegate.
   const AXNodeData& GetData() const override;
   const AXTreeData& GetTreeData() const override;
-  const AXTree::Selection GetUnignoredSelection() const override;
+  const AXSelection GetUnignoredSelection() const override;
   AXNodePosition::AXPositionInstance CreatePositionAt(
       int offset,
       ax::mojom::TextAffinity affinity =
@@ -82,8 +82,8 @@ class TestAXNodeWrapper : public AXPlatformNodeDelegateBase {
           ax::mojom::TextAffinity::kDownstream) const override;
   gfx::NativeViewAccessible GetNativeViewAccessible() override;
   gfx::NativeViewAccessible GetParent() const override;
-  int GetChildCount() const override;
-  gfx::NativeViewAccessible ChildAtIndex(int index) override;
+  size_t GetChildCount() const override;
+  gfx::NativeViewAccessible ChildAtIndex(size_t index) override;
   gfx::Rect GetBoundsRect(const AXCoordinateSystem coordinate_system,
                           const AXClippingBehavior clipping_behavior,
                           AXOffscreenResult* offscreen_result) const override;
@@ -105,17 +105,17 @@ class TestAXNodeWrapper : public AXPlatformNodeDelegateBase {
   gfx::NativeViewAccessible GetFocus() const override;
   bool IsMinimized() const override;
   bool IsWebContent() const override;
+  bool IsReadOnlySupported() const override;
+  bool IsReadOnlyOrDisabled() const override;
   AXPlatformNode* GetFromNodeID(int32_t id) override;
   AXPlatformNode* GetFromTreeIDAndNodeID(const ui::AXTreeID& ax_tree_id,
                                          int32_t id) override;
-  int GetIndexInParent() override;
-  bool IsTable() const override;
+  absl::optional<size_t> GetIndexInParent() override;
   absl::optional<int> GetTableRowCount() const override;
   absl::optional<int> GetTableColCount() const override;
   absl::optional<int> GetTableAriaColCount() const override;
   absl::optional<int> GetTableAriaRowCount() const override;
   absl::optional<int> GetTableCellCount() const override;
-  absl::optional<bool> GetTableHasColumnOrRowHeaderNode() const override;
   std::vector<int32_t> GetColHeaderNodeIds() const override;
   std::vector<int32_t> GetColHeaderNodeIds(int col_index) const override;
   std::vector<int32_t> GetRowHeaderNodeIds() const override;
@@ -145,9 +145,9 @@ class TestAXNodeWrapper : public AXPlatformNodeDelegateBase {
   bool ShouldIgnoreHoveredStateForTesting() override;
   const ui::AXUniqueId& GetUniqueId() const override;
   bool HasVisibleCaretOrSelection() const override;
-  std::set<AXPlatformNode*> GetReverseRelations(
+  std::set<AXPlatformNode*> GetSourceNodesForReverseRelations(
       ax::mojom::IntAttribute attr) override;
-  std::set<AXPlatformNode*> GetReverseRelations(
+  std::set<AXPlatformNode*> GetSourceNodesForReverseRelations(
       ax::mojom::IntListAttribute attr) override;
   bool IsOrderedSetItem() const override;
   bool IsOrderedSet() const override;
@@ -160,8 +160,8 @@ class TestAXNodeWrapper : public AXPlatformNodeDelegateBase {
       ui::AXPlatformNodeDelegate* start,
       ui::AXPlatformNodeDelegate* end) override;
   gfx::RectF GetLocation() const;
-  int InternalChildCount() const;
-  TestAXNodeWrapper* InternalGetChild(int index) const;
+  size_t InternalChildCount() const;
+  TestAXNodeWrapper* InternalGetChild(size_t index) const;
 
  private:
   TestAXNodeWrapper(AXTree* tree, AXNode* node);

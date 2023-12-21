@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,9 +10,10 @@
 #include <tuple>
 
 #include "base/allocator/buildflags.h"
-#include "base/callback_helpers.h"
+#include "base/allocator/partition_allocator/partition_alloc_buildflags.h"
 #include "base/debug/crash_logging.h"
 #include "base/feature_list.h"
+#include "base/functional/callback_helpers.h"
 #include "base/logging.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/numerics/safe_math.h"
@@ -63,9 +64,8 @@ constexpr base::FeatureState kDefaultEnabled =
     base::FEATURE_DISABLED_BY_DEFAULT;
 #endif
 
-const base::Feature kGwpAsanMalloc{"GwpAsanMalloc", kDefaultEnabled};
-const base::Feature kGwpAsanPartitionAlloc{"GwpAsanPartitionAlloc",
-                                           kDefaultEnabled};
+BASE_FEATURE(kGwpAsanMalloc, "GwpAsanMalloc", kDefaultEnabled);
+BASE_FEATURE(kGwpAsanPartitionAlloc, "GwpAsanPartitionAlloc", kDefaultEnabled);
 
 // Returns whether this process should be sampled to enable GWP-ASan.
 bool SampleProcess(const base::Feature& feature, bool boost_sampling) {
@@ -139,9 +139,11 @@ GWP_ASAN_EXPORT absl::optional<AllocatorSettings> GetAllocatorSettings(
   if (!base::FeatureList::IsEnabled(feature))
     return absl::nullopt;
 
-  static_assert(AllocatorState::kMaxSlots <= std::numeric_limits<int>::max(),
-                "kMaxSlots out of range");
-  constexpr int kMaxSlots = static_cast<int>(AllocatorState::kMaxSlots);
+  static_assert(
+      AllocatorState::kMaxRequestedSlots <= std::numeric_limits<int>::max(),
+      "kMaxRequestedSlots out of range");
+  constexpr int kMaxRequestedSlots =
+      static_cast<int>(AllocatorState::kMaxRequestedSlots);
 
   static_assert(AllocatorState::kMaxMetadata <= std::numeric_limits<int>::max(),
                 "kMaxMetadata out of range");
@@ -149,7 +151,7 @@ GWP_ASAN_EXPORT absl::optional<AllocatorSettings> GetAllocatorSettings(
 
   int total_pages = GetFieldTrialParamByFeatureAsInt(feature, "TotalPages",
                                                      kDefaultTotalPages);
-  if (total_pages < 1 || total_pages > kMaxSlots) {
+  if (total_pages < 1 || total_pages > kMaxRequestedSlots) {
     DLOG(ERROR) << "GWP-ASan TotalPages is out-of-range: " << total_pages;
     return absl::nullopt;
   }

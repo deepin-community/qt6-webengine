@@ -94,7 +94,7 @@ bool AXMenuListPopup::OnNativeClickAction() {
 }
 
 void AXMenuListPopup::AddChildren() {
-#if DCHECK_IS_ON()
+#if defined(AX_FAIL_FAST_BUILD)
   DCHECK(!IsDetached());
   DCHECK(!is_adding_children_) << " Reentering method on " << GetNode();
   base::AutoReset<bool> reentrancy_protector(&is_adding_children_, true);
@@ -111,7 +111,7 @@ void AXMenuListPopup::AddChildren() {
   if (!html_select_element)
     return;
 
-  DCHECK(children_.IsEmpty());
+  DCHECK(children_.empty());
   DCHECK(children_dirty_);
   children_dirty_ = false;
 
@@ -158,9 +158,9 @@ void AXMenuListPopup::DidUpdateActiveOption(int option_index,
 
   if (option_index >= 0 && option_index < static_cast<int>(children_.size())) {
     AXObject* child = children_[option_index].Get();
-    cache.PostNotification(this, ax::mojom::Event::kChildrenChanged);
-    cache.PostNotification(this, ax::mojom::Event::kActiveDescendantChanged);
     cache.MarkAXObjectDirtyWithCleanLayout(child);
+    cache.PostNotification(this,
+                           ax::mojom::blink::Event::kActiveDescendantChanged);
   }
 }
 
@@ -168,10 +168,9 @@ void AXMenuListPopup::DidHide() {
   AXObjectCacheImpl& cache = AXObjectCache();
   AXObject* descendant = ActiveDescendant();
   cache.PostNotification(this, ax::mojom::Event::kHide);
-  if (descendant) {
-    cache.PostNotification(this, ax::mojom::Event::kChildrenChanged);
-    cache.MarkAXObjectDirtyWithCleanLayout(descendant);
-  }
+  if (descendant)  // TODO(accessibility) Try removing. Line below is enough.
+    cache.MarkAXObjectDirtyWithCleanLayout(this);
+  cache.MarkAXSubtreeDirtyWithCleanLayout(ParentObject());
 }
 
 void AXMenuListPopup::DidShow() {
@@ -186,6 +185,7 @@ void AXMenuListPopup::DidShow() {
   } else {
     cache.PostNotification(parent_, ax::mojom::Event::kFocus);
   }
+  cache.MarkAXSubtreeDirtyWithCleanLayout(ParentObject());
 }
 
 AXObject* AXMenuListPopup::ActiveDescendant() {

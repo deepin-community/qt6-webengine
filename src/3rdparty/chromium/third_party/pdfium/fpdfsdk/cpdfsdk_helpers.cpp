@@ -1,10 +1,12 @@
-// Copyright 2018 PDFium Authors. All rights reserved.
+// Copyright 2018 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 // Original code copyright 2014 Foxit Software Inc. http://www.foxitsoftware.com
 
 #include "fpdfsdk/cpdfsdk_helpers.h"
+
+#include <utility>
 
 #include "build/build_config.h"
 #include "constants/form_fields.h"
@@ -18,6 +20,7 @@
 #include "core/fpdfdoc/cpdf_annot.h"
 #include "core/fpdfdoc/cpdf_interactiveform.h"
 #include "core/fpdfdoc/cpdf_metadata.h"
+#include "core/fxcrt/span_util.h"
 #include "core/fxcrt/unowned_ptr.h"
 #include "fpdfsdk/cpdfsdk_formfillenvironment.h"
 #include "third_party/base/check.h"
@@ -47,28 +50,26 @@ bool DocHasXFA(const CPDF_Document* doc) {
   if (!root)
     return false;
 
-  const CPDF_Dictionary* form = root->GetDictFor("AcroForm");
+  RetainPtr<const CPDF_Dictionary> form = root->GetDictFor("AcroForm");
   return form && form->GetArrayFor("XFA");
 }
 
-unsigned long GetStreamMaybeCopyAndReturnLengthImpl(const CPDF_Stream* stream,
-                                                    void* buffer,
-                                                    unsigned long buflen,
-                                                    bool decode) {
+unsigned long GetStreamMaybeCopyAndReturnLengthImpl(
+    RetainPtr<const CPDF_Stream> stream,
+    pdfium::span<uint8_t> buffer,
+    bool decode) {
   DCHECK(stream);
-  auto stream_acc = pdfium::MakeRetain<CPDF_StreamAcc>(stream);
-
+  auto stream_acc = pdfium::MakeRetain<CPDF_StreamAcc>(std::move(stream));
   if (decode)
     stream_acc->LoadAllDataFiltered();
   else
     stream_acc->LoadAllDataRaw();
 
-  const auto stream_data_size = stream_acc->GetSize();
-  if (!buffer || buflen < stream_data_size)
-    return stream_data_size;
+  pdfium::span<const uint8_t> stream_data_span = stream_acc->GetSpan();
+  if (!buffer.empty() && buffer.size() <= stream_data_span.size())
+    fxcrt::spancpy(buffer, stream_data_span);
 
-  memcpy(buffer, stream_acc->GetData(), stream_data_size);
-  return stream_data_size;
+  return pdfium::base::checked_cast<unsigned long>(stream_data_span.size());
 }
 
 #ifdef PDF_ENABLE_XFA
@@ -78,15 +79,13 @@ class FPDF_FileHandlerContext final : public IFX_SeekableStream {
 
   // IFX_SeekableStream:
   FX_FILESIZE GetSize() override;
-  bool IsEOF() override;
   FX_FILESIZE GetPosition() override;
-  bool ReadBlockAtOffset(void* buffer,
-                         FX_FILESIZE offset,
-                         size_t size) override;
-  size_t ReadBlock(void* buffer, size_t size) override;
-  bool WriteBlockAtOffset(const void* buffer,
-                          FX_FILESIZE offset,
-                          size_t size) override;
+  bool IsEOF() override;
+  size_t ReadBlock(pdfium::span<uint8_t> buffer) override;
+  bool ReadBlockAtOffset(pdfium::span<uint8_t> buffer,
+                         FX_FILESIZE offset) override;
+  bool WriteBlockAtOffset(pdfium::span<const uint8_t> buffer,
+                          FX_FILESIZE offset) override;
   bool Flush() override;
 
   void SetPosition(FX_FILESIZE pos) { m_nCurPos = pos; }
@@ -121,48 +120,50 @@ FX_FILESIZE FPDF_FileHandlerContext::GetPosition() {
   return m_nCurPos;
 }
 
-bool FPDF_FileHandlerContext::ReadBlockAtOffset(void* buffer,
-                                                FX_FILESIZE offset,
-                                                size_t size) {
-  if (!buffer || !size || !m_pFS->ReadBlock)
+bool FPDF_FileHandlerContext::ReadBlockAtOffset(pdfium::span<uint8_t> buffer,
+                                                FX_FILESIZE offset) {
+  if (buffer.empty() || !m_pFS->ReadBlock)
     return false;
 
-  if (m_pFS->ReadBlock(m_pFS->clientData, (FPDF_DWORD)offset, buffer,
-                       (FPDF_DWORD)size) == 0) {
-    m_nCurPos = offset + size;
+  if (m_pFS->ReadBlock(m_pFS->clientData, static_cast<FPDF_DWORD>(offset),
+                       buffer.data(),
+                       static_cast<FPDF_DWORD>(buffer.size())) == 0) {
+    m_nCurPos = offset + buffer.size();
     return true;
   }
   return false;
 }
 
-size_t FPDF_FileHandlerContext::ReadBlock(void* buffer, size_t size) {
-  if (!buffer || !size || !m_pFS->ReadBlock)
+size_t FPDF_FileHandlerContext::ReadBlock(pdfium::span<uint8_t> buffer) {
+  if (buffer.empty() || !m_pFS->ReadBlock)
     return 0;
 
   FX_FILESIZE nSize = GetSize();
   if (m_nCurPos >= nSize)
     return 0;
   FX_FILESIZE dwAvail = nSize - m_nCurPos;
-  if (dwAvail < (FX_FILESIZE)size)
-    size = static_cast<size_t>(dwAvail);
-  if (m_pFS->ReadBlock(m_pFS->clientData, (FPDF_DWORD)m_nCurPos, buffer,
-                       (FPDF_DWORD)size) == 0) {
-    m_nCurPos += size;
-    return size;
+  if (dwAvail < (FX_FILESIZE)buffer.size())
+    buffer = buffer.first(static_cast<size_t>(dwAvail));
+  if (m_pFS->ReadBlock(m_pFS->clientData, static_cast<FPDF_DWORD>(m_nCurPos),
+                       buffer.data(),
+                       static_cast<FPDF_DWORD>(buffer.size())) == 0) {
+    m_nCurPos += buffer.size();
+    return buffer.size();
   }
 
   return 0;
 }
 
-bool FPDF_FileHandlerContext::WriteBlockAtOffset(const void* buffer,
-                                                 FX_FILESIZE offset,
-                                                 size_t size) {
+bool FPDF_FileHandlerContext::WriteBlockAtOffset(
+    pdfium::span<const uint8_t> buffer,
+    FX_FILESIZE offset) {
   if (!m_pFS || !m_pFS->WriteBlock)
     return false;
 
-  if (m_pFS->WriteBlock(m_pFS->clientData, (FPDF_DWORD)offset, buffer,
-                        (FPDF_DWORD)size) == 0) {
-    m_nCurPos = offset + size;
+  if (m_pFS->WriteBlock(m_pFS->clientData, static_cast<FPDF_DWORD>(offset),
+                        buffer.data(),
+                        static_cast<FPDF_DWORD>(buffer.size())) == 0) {
+    m_nCurPos = offset + buffer.size();
     return true;
   }
   return false;
@@ -220,16 +221,18 @@ RetainPtr<IFX_SeekableStream> MakeSeekableStream(
 }
 #endif  // PDF_ENABLE_XFA
 
-const CPDF_Array* GetQuadPointsArrayFromDictionary(
+RetainPtr<const CPDF_Array> GetQuadPointsArrayFromDictionary(
     const CPDF_Dictionary* dict) {
   return dict->GetArrayFor("QuadPoints");
 }
 
-CPDF_Array* GetQuadPointsArrayFromDictionary(CPDF_Dictionary* dict) {
-  return dict->GetArrayFor("QuadPoints");
+RetainPtr<CPDF_Array> GetMutableQuadPointsArrayFromDictionary(
+    CPDF_Dictionary* dict) {
+  return pdfium::WrapRetain(
+      const_cast<CPDF_Array*>(GetQuadPointsArrayFromDictionary(dict).Get()));
 }
 
-CPDF_Array* AddQuadPointsArrayToDictionary(CPDF_Dictionary* dict) {
+RetainPtr<CPDF_Array> AddQuadPointsArrayToDictionary(CPDF_Dictionary* dict) {
   return dict->SetNewFor<CPDF_Array>(kQuadPoints);
 }
 
@@ -237,7 +240,7 @@ bool IsValidQuadPointsIndex(const CPDF_Array* array, size_t index) {
   return array && index < array->size() / 8;
 }
 
-bool GetQuadPointsAtIndex(const CPDF_Array* array,
+bool GetQuadPointsAtIndex(RetainPtr<const CPDF_Array> array,
                           size_t quad_index,
                           FS_QUADPOINTSF* quad_points) {
   DCHECK(quad_points);
@@ -247,14 +250,14 @@ bool GetQuadPointsAtIndex(const CPDF_Array* array,
     return false;
 
   quad_index *= 8;
-  quad_points->x1 = array->GetNumberAt(quad_index);
-  quad_points->y1 = array->GetNumberAt(quad_index + 1);
-  quad_points->x2 = array->GetNumberAt(quad_index + 2);
-  quad_points->y2 = array->GetNumberAt(quad_index + 3);
-  quad_points->x3 = array->GetNumberAt(quad_index + 4);
-  quad_points->y3 = array->GetNumberAt(quad_index + 5);
-  quad_points->x4 = array->GetNumberAt(quad_index + 6);
-  quad_points->y4 = array->GetNumberAt(quad_index + 7);
+  quad_points->x1 = array->GetFloatAt(quad_index);
+  quad_points->y1 = array->GetFloatAt(quad_index + 1);
+  quad_points->x2 = array->GetFloatAt(quad_index + 2);
+  quad_points->y2 = array->GetFloatAt(quad_index + 3);
+  quad_points->x3 = array->GetFloatAt(quad_index + 4);
+  quad_points->y3 = array->GetFloatAt(quad_index + 5);
+  quad_points->x4 = array->GetFloatAt(quad_index + 6);
+  quad_points->y4 = array->GetFloatAt(quad_index + 7);
   return true;
 }
 
@@ -299,17 +302,17 @@ unsigned long Utf16EncodeMaybeCopyAndReturnLength(const WideString& text,
   return len;
 }
 
-unsigned long GetRawStreamMaybeCopyAndReturnLength(const CPDF_Stream* stream,
-                                                   void* buffer,
-                                                   unsigned long buflen) {
-  return GetStreamMaybeCopyAndReturnLengthImpl(stream, buffer, buflen,
+unsigned long GetRawStreamMaybeCopyAndReturnLength(
+    RetainPtr<const CPDF_Stream> stream,
+    pdfium::span<uint8_t> buffer) {
+  return GetStreamMaybeCopyAndReturnLengthImpl(std::move(stream), buffer,
                                                /*decode=*/false);
 }
 
-unsigned long DecodeStreamMaybeCopyAndReturnLength(const CPDF_Stream* stream,
-                                                   void* buffer,
-                                                   unsigned long buflen) {
-  return GetStreamMaybeCopyAndReturnLengthImpl(stream, buffer, buflen,
+unsigned long DecodeStreamMaybeCopyAndReturnLength(
+    RetainPtr<const CPDF_Stream> stream,
+    pdfium::span<uint8_t> buffer) {
+  return GetStreamMaybeCopyAndReturnLengthImpl(std::move(stream), buffer,
                                                /*decode=*/true);
 }
 
@@ -351,17 +354,18 @@ void ReportUnsupportedFeatures(const CPDF_Document* pDoc) {
   if (pRootDict->KeyExist("Collection"))
     RaiseUnsupportedError(FPDF_UNSP_DOC_PORTABLECOLLECTION);
 
-  const CPDF_Dictionary* pNameDict = pRootDict->GetDictFor("Names");
+  RetainPtr<const CPDF_Dictionary> pNameDict = pRootDict->GetDictFor("Names");
   if (pNameDict) {
     if (pNameDict->KeyExist("EmbeddedFiles"))
       RaiseUnsupportedError(FPDF_UNSP_DOC_ATTACHMENT);
 
-    const CPDF_Dictionary* pJSDict = pNameDict->GetDictFor("JavaScript");
+    RetainPtr<const CPDF_Dictionary> pJSDict =
+        pNameDict->GetDictFor("JavaScript");
     if (pJSDict) {
-      const CPDF_Array* pArray = pJSDict->GetArrayFor("Names");
+      RetainPtr<const CPDF_Array> pArray = pJSDict->GetArrayFor("Names");
       if (pArray) {
         for (size_t i = 0; i < pArray->size(); i++) {
-          ByteString cbStr = pArray->GetStringAt(i);
+          ByteString cbStr = pArray->GetByteStringAt(i);
           if (cbStr == "com.adobe.acrobat.SharedReview.Register") {
             RaiseUnsupportedError(FPDF_UNSP_DOC_SHAREDREVIEW);
             break;
@@ -372,9 +376,9 @@ void ReportUnsupportedFeatures(const CPDF_Document* pDoc) {
   }
 
   // SharedForm
-  const CPDF_Stream* pStream = pRootDict->GetStreamFor("Metadata");
+  RetainPtr<const CPDF_Stream> pStream = pRootDict->GetStreamFor("Metadata");
   if (pStream) {
-    CPDF_Metadata metadata(pStream);
+    CPDF_Metadata metadata(std::move(pStream));
     for (const UnsupportedFeature& feature : metadata.CheckForSharedForm())
       RaiseUnsupportedError(static_cast<int>(feature));
   }
@@ -398,7 +402,7 @@ void CheckForUnsupportedAnnot(const CPDF_Annot* pAnnot) {
       break;
     case CPDF_Annot::Subtype::SCREEN: {
       const CPDF_Dictionary* pAnnotDict = pAnnot->GetAnnotDict();
-      ByteString cbString = pAnnotDict->GetStringFor("IT");
+      ByteString cbString = pAnnotDict->GetByteStringFor("IT");
       if (cbString != "Img")
         RaiseUnsupportedError(FPDF_UNSP_ANNOT_SCREEN_MEDIA);
       break;
@@ -411,7 +415,8 @@ void CheckForUnsupportedAnnot(const CPDF_Annot* pAnnot) {
       break;
     case CPDF_Annot::Subtype::WIDGET: {
       const CPDF_Dictionary* pAnnotDict = pAnnot->GetAnnotDict();
-      ByteString cbString = pAnnotDict->GetStringFor(pdfium::form_fields::kFT);
+      ByteString cbString =
+          pAnnotDict->GetByteStringFor(pdfium::form_fields::kFT);
       if (cbString == pdfium::form_fields::kSig)
         RaiseUnsupportedError(FPDF_UNSP_ANNOT_SIG);
       break;

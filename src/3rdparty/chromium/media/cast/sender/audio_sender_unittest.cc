@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,8 +9,8 @@
 #include <memory>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
@@ -26,8 +26,7 @@
 #include "media/cast/test/utility/audio_utility.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-namespace media {
-namespace cast {
+namespace media::cast {
 
 namespace {
 
@@ -102,7 +101,7 @@ class AudioSenderTest : public ::testing::Test {
     cast_environment_ = new CastEnvironment(&testing_clock_, task_runner_,
                                             task_runner_, task_runner_);
     audio_config_.codec = CODEC_AUDIO_OPUS;
-    audio_config_.use_external_encoder = false;
+    audio_config_.use_hardware_encoder = false;
     audio_config_.rtp_timebase = kDefaultAudioSamplingRate;
     audio_config_.channels = 2;
     audio_config_.max_bitrate = kDefaultAudioEncoderBitrate;
@@ -164,5 +163,4 @@ TEST_F(AudioSenderTest, RtcpTimer) {
   EXPECT_LE(1, transport_->number_of_rtcp_packets());
 }
 
-}  // namespace cast
-}  // namespace media
+}  // namespace media::cast

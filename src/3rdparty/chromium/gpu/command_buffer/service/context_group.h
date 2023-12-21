@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -30,7 +30,6 @@ class ProgressReporter;
 
 namespace gpu {
 
-class ImageFactory;
 struct GpuPreferences;
 class MailboxManager;
 class SharedImageManager;
@@ -44,7 +43,6 @@ namespace gles2 {
 
 class ProgramCache;
 class BufferManager;
-class ImageManager;
 class RenderbufferManager;
 class ProgramManager;
 class SamplerManager;
@@ -69,8 +67,6 @@ class GPU_GLES2_EXPORT ContextGroup : public base::RefCounted<ContextGroup> {
                FramebufferCompletenessCache* framebuffer_completeness_cache,
                const scoped_refptr<FeatureInfo>& feature_info,
                bool bind_generates_resource,
-               ImageManager* image_manager,
-               gpu::ImageFactory* image_factory,
                gl::ProgressReporter* progress_reporter,
                const GpuFeatureInfo& gpu_feature_info,
                ServiceDiscardableManager* discardable_manager,
@@ -165,10 +161,6 @@ class GPU_GLES2_EXPORT ContextGroup : public base::RefCounted<ContextGroup> {
   FeatureInfo* feature_info() {
     return feature_info_.get();
   }
-
-  ImageManager* image_manager() const { return image_manager_; }
-
-  gpu::ImageFactory* image_factory() const { return image_factory_; }
 
   const GpuPreferences& gpu_preferences() const {
     return gpu_preferences_;
@@ -312,10 +304,6 @@ class GPU_GLES2_EXPORT ContextGroup : public base::RefCounted<ContextGroup> {
   std::unique_ptr<SamplerManager> sampler_manager_;
 
   scoped_refptr<FeatureInfo> feature_info_;
-
-  raw_ptr<ImageManager> image_manager_;
-
-  raw_ptr<gpu::ImageFactory> image_factory_;
 
   std::vector<base::WeakPtr<DecoderContext>> decoders_;
 

@@ -1,22 +1,28 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "ui/aura/screen_ozone.h"
 
+#include <memory>
+
 #include "ui/aura/client/screen_position_client.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/display/display.h"
+#include "ui/display/tablet_state.h"
 #include "ui/ozone/public/ozone_platform.h"
 #include "ui/ozone/public/platform_screen.h"
 
 namespace aura {
 
-ScreenOzone::ScreenOzone() = default;
+ScreenOzone::ScreenOzone() {
+  DCHECK(!display::Screen::HasScreen());
+  display::Screen::SetScreenInstance(this);
+}
 
 ScreenOzone::~ScreenOzone() {
-  display::Screen::SetScreenInstance(old_screen_);
+  display::Screen::SetScreenInstance(nullptr);
 }
 
 void ScreenOzone::Initialize() {
@@ -32,6 +38,11 @@ void ScreenOzone::Initialize() {
     NOTREACHED()
         << "PlatformScreen is not implemented for this ozone platform.";
   }
+}
+
+// static
+bool ScreenOzone::IsOzoneInitialized() {
+  return ui::OzonePlatform::IsInitialized();
 }
 
 gfx::Point ScreenOzone::GetCursorScreenPoint() {
@@ -100,8 +111,16 @@ display::Display ScreenOzone::GetPrimaryDisplay() const {
 }
 
 #if BUILDFLAG(IS_CHROMEOS_LACROS) || BUILDFLAG(IS_LINUX)
-bool ScreenOzone::SetScreenSaverSuspended(bool suspend) {
-  return platform_screen_->SetScreenSaverSuspended(suspend);
+ScreenOzone::ScreenSaverSuspenderOzone::ScreenSaverSuspenderOzone(
+    std::unique_ptr<ui::PlatformScreen::PlatformScreenSaverSuspender> suspender)
+    : suspender_(std::move(suspender)) {}
+
+ScreenOzone::ScreenSaverSuspenderOzone::~ScreenSaverSuspenderOzone() = default;
+
+std::unique_ptr<display::Screen::ScreenSaverSuspender>
+ScreenOzone::SuspendScreenSaver() {
+  return std::make_unique<ScreenSaverSuspenderOzone>(
+      platform_screen_->SuspendScreenSaver());
 }
 #endif  // BUILDFLAG(IS_CHROMEOS_LACROS) || BUILDFLAG(IS_LINUX)
 
@@ -125,10 +144,21 @@ std::string ScreenOzone::GetCurrentWorkspace() {
   return platform_screen_->GetCurrentWorkspace();
 }
 
-std::vector<base::Value> ScreenOzone::GetGpuExtraInfo(
+base::Value::List ScreenOzone::GetGpuExtraInfo(
     const gfx::GpuExtraInfo& gpu_extra_info) {
   return platform_screen_->GetGpuExtraInfo(gpu_extra_info);
 }
+
+#if BUILDFLAG(IS_CHROMEOS_LACROS)
+display::TabletState ScreenOzone::GetTabletState() const {
+  return platform_screen_->GetTabletState();
+}
+
+void ScreenOzone::OverrideTabletStateForTesting(
+    display::TabletState tablet_state) {
+  platform_screen_->OnTabletStateChanged(tablet_state);
+}
+#endif
 
 gfx::NativeWindow ScreenOzone::GetNativeWindowFromAcceleratedWidget(
     gfx::AcceleratedWidget widget) const {
@@ -148,5 +178,18 @@ gfx::AcceleratedWidget ScreenOzone::GetAcceleratedWidgetForWindow(
 }
 
 void ScreenOzone::OnBeforePlatformScreenInit() {}
+
+ScopedScreenOzone::ScopedScreenOzone(const base::Location& location)
+    : ScopedNativeScreen(/*call_maybe_init=*/false, location) {
+  MaybeInit();
+}
+
+ScopedScreenOzone::~ScopedScreenOzone() = default;
+
+display::Screen* ScopedScreenOzone::CreateScreen() {
+  auto* screen = new ScreenOzone();
+  screen->Initialize();
+  return screen;
+}
 
 }  // namespace aura

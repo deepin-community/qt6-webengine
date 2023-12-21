@@ -11,6 +11,7 @@
 #include "cast/streaming/constants.h"
 #include "cast/streaming/receiver_packet_router.h"
 #include "cast/streaming/session_config.h"
+#include "platform/base/trivial_clock_traits.h"
 #include "util/chrono_helpers.h"
 #include "util/osp_logging.h"
 #include "util/std_util.h"
@@ -18,6 +19,8 @@
 
 namespace openscreen {
 namespace cast {
+
+using clock_operators::operator<<;
 
 // Conveniences for ensuring logging output includes the SSRC of the Receiver,
 // to help distinguish one out of multiple instances in a Cast Streaming
@@ -108,7 +111,7 @@ int Receiver::AdvanceToNextFrame() {
       if (f == immediate_next_frame) {  // Typical case.
         return FrameCrypto::GetPlaintextSize(encrypted_frame);
       }
-      if (encrypted_frame.dependency != EncodedFrame::DEPENDS_ON_ANOTHER) {
+      if (encrypted_frame.dependency != EncodedFrame::Dependency::kDependent) {
         // Found a frame after skipping past some frames. Drop the ones being
         // skipped, advancing |last_frame_consumed_| before returning.
         DropAllFramesBefore(f);
@@ -141,7 +144,7 @@ int Receiver::AdvanceToNextFrame() {
   return kNoFramesReady;
 }
 
-EncodedFrame Receiver::ConsumeNextFrame(absl::Span<uint8_t> buffer) {
+EncodedFrame Receiver::ConsumeNextFrame(ByteBuffer buffer) {
   TRACE_DEFAULT_SCOPED(TraceCategory::kReceiver);
   // Assumption: The required call to AdvanceToNextFrame() ensures that
   // |last_frame_consumed_| is set to one before the frame to be consumed here.
@@ -151,21 +154,25 @@ EncodedFrame Receiver::ConsumeNextFrame(absl::Span<uint8_t> buffer) {
   // Decrypt the frame, populating the given output |frame|.
   PendingFrame& entry = GetQueueEntry(frame_id);
   OSP_DCHECK(entry.collector.is_complete());
-  EncodedFrame frame;
-  frame.data = buffer;
-  crypto_.Decrypt(entry.collector.PeekAtAssembledFrame(), &frame);
   OSP_DCHECK(entry.estimated_capture_time);
+
+  const EncryptedFrame& encrypted_frame =
+      entry.collector.PeekAtAssembledFrame();
+
+  // `buffer` will contain the decrypted frame contents.
+  crypto_.Decrypt(encrypted_frame, buffer);
+  EncodedFrame frame;
+  encrypted_frame.CopyMetadataTo(&frame);
+  frame.data = buffer;
   frame.reference_time =
       *entry.estimated_capture_time + ResolveTargetPlayoutDelay(frame_id);
 
   RECEIVER_VLOG << "ConsumeNextFrame → " << frame.frame_id << ": "
                 << frame.data.size() << " payload bytes, RTP Timestamp "
-                << frame.rtp_timestamp
-                       .ToTimeSinceOrigin<microseconds>(rtp_timebase_)
-                       .count()
-                << " µs, to play-out "
-                << to_microseconds(frame.reference_time - now_()).count()
-                << " µs from now.";
+                << frame.rtp_timestamp.ToTimeSinceOrigin<microseconds>(
+                       rtp_timebase_)
+                << ", to play-out " << (frame.reference_time - now_())
+                << " from now.";
 
   entry.Reset();
   last_frame_consumed_ = frame_id;
@@ -271,7 +278,7 @@ void Receiver::OnReceivedRtpPacket(Clock::time_point arrival_time,
 
   // Whenever a key frame has been received, the decoder has what it needs to
   // recover. In this case, clear the PLI condition.
-  if (encrypted_frame.dependency == EncryptedFrame::KEY_FRAME) {
+  if (encrypted_frame.dependency == EncryptedFrame::Dependency::kKeyFrame) {
     rtcp_builder_.SetPictureLossIndicator(false);
     last_key_frame_received_ = part->frame_id;
   }

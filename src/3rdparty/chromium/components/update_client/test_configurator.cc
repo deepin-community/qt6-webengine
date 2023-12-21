@@ -1,20 +1,25 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/update_client/test_configurator.h"
 
 #include <string>
+#include <tuple>
 #include <utility>
 
-#include "base/bind.h"
 #include "base/containers/flat_map.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/files/file_util.h"
+#include "base/files/scoped_temp_dir.h"
+#include "base/functional/bind.h"
+#include "base/path_service.h"
+#include "base/time/time.h"
 #include "base/version.h"
 #include "components/prefs/pref_service.h"
 #include "components/services/patch/in_process_file_patcher.h"
 #include "components/services/unzip/in_process_unzipper.h"
 #include "components/update_client/activity_data_service.h"
+#include "components/update_client/buildflags.h"
 #include "components/update_client/crx_downloader_factory.h"
 #include "components/update_client/net/network_chromium.h"
 #include "components/update_client/patch/patch_impl.h"
@@ -54,29 +59,31 @@ TestConfigurator::TestConfigurator(PrefService* pref_service)
               test_shared_loader_factory_,
               base::BindRepeating([](const GURL& url) { return false; }))),
       updater_state_provider_(base::BindRepeating(
-          [](bool /*is_machine*/) { return UpdaterStateAttributes(); })) {}
+          [](bool /*is_machine*/) { return UpdaterStateAttributes(); })) {
+  std::ignore = crx_cache_root_temp_dir_.CreateUniqueTempDir();
+}
 
 TestConfigurator::~TestConfigurator() = default;
 
-double TestConfigurator::InitialDelay() const {
+base::TimeDelta TestConfigurator::InitialDelay() const {
   return initial_time_;
 }
 
-int TestConfigurator::NextCheckDelay() const {
-  return 1;
+base::TimeDelta TestConfigurator::NextCheckDelay() const {
+  return base::Seconds(1);
 }
 
-int TestConfigurator::OnDemandDelay() const {
+base::TimeDelta TestConfigurator::OnDemandDelay() const {
   return ondemand_time_;
 }
 
-int TestConfigurator::UpdateDelay() const {
-  return 1;
+base::TimeDelta TestConfigurator::UpdateDelay() const {
+  return base::Seconds(1);
 }
 
 std::vector<GURL> TestConfigurator::UpdateUrl() const {
-  if (!update_check_url_.is_empty())
-    return std::vector<GURL>(1, update_check_url_);
+  if (!update_check_urls_.empty())
+    return update_check_urls_;
 
   return MakeDefaultUrls();
 }
@@ -173,12 +180,22 @@ UpdaterStateProvider TestConfigurator::GetUpdaterStateProvider() const {
   return updater_state_provider_;
 }
 
-void TestConfigurator::SetOnDemandTime(int seconds) {
-  ondemand_time_ = seconds;
+#if BUILDFLAG(ENABLE_PUFFIN_PATCHES)
+absl::optional<base::FilePath> TestConfigurator::GetCrxCachePath() const {
+  if (!crx_cache_root_temp_dir_.IsValid()) {
+    return absl::nullopt;
+  }
+  return absl::optional<base::FilePath>(
+      crx_cache_root_temp_dir_.GetPath().AppendASCII("crx_cache"));
+}
+#endif
+
+void TestConfigurator::SetOnDemandTime(base::TimeDelta time) {
+  ondemand_time_ = time;
 }
 
-void TestConfigurator::SetInitialDelay(double seconds) {
-  initial_time_ = seconds;
+void TestConfigurator::SetInitialDelay(base::TimeDelta delay) {
+  initial_time_ = delay;
 }
 
 void TestConfigurator::SetEnabledCupSigning(bool enabled_cup_signing) {
@@ -191,7 +208,11 @@ void TestConfigurator::SetDownloadPreference(
 }
 
 void TestConfigurator::SetUpdateCheckUrl(const GURL& url) {
-  update_check_url_ = url;
+  update_check_urls_ = {url};
+}
+
+void TestConfigurator::SetUpdateCheckUrls(const std::vector<GURL>& urls) {
+  update_check_urls_ = urls;
 }
 
 void TestConfigurator::SetPingUrl(const GURL& url) {

@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Copyright 2020 The Chromium Authors. All rights reserved.
-     Use of this source code is governed by a BSD-style license that can be
-     found in the LICENSE file. -->
+<!--
+Copyright 2020 The Chromium Authors
+Use of this source code is governed by a BSD-style license that can be
+found in the LICENSE file.
+-->
 
 <org.chromium.components.messages.MessageBannerView
     xmlns:android="http://schemas.android.com/apk/res/android"
@@ -31,6 +33,8 @@
         android:importantForAccessibility="no" />
 
     <LinearLayout
+        android:id="@+id/message_main_content"
+        android:animateLayoutChanges="true"
         android:layout_width="0dp"
         android:layout_weight="1"
         android:gravity="center_vertical"
@@ -66,8 +70,9 @@
         app:menuVerticalOverlapAnchor="false"
         android:visibility="gone"
         android:contentDescription="@null"
+        android:accessibilityTraversalAfter="@id/message_primary_button"
         android:background="?actionBarItemBackground"
-        android:layout_width="@dimen/message_banner_button_width"
+        android:layout_width="@dimen/min_touch_target_size"
         android:layout_height="@dimen/min_touch_target_size" />
 
     <ImageView
@@ -91,7 +96,18 @@
         android:maxWidth="@dimen/message_primary_button_max_width"
         android:minWidth="@dimen/button_min_width"
         android:layout_width="wrap_content"
-        android:layout_height="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_vertical"
+        android:visibility="gone" />
+
+    <ProgressBar
+        style="@style/ProgressBarStyle"
+        android:id="@+id/message_primary_progress_spinner"
+        android:indeterminate="true"
+        android:maxWidth="@dimen/message_primary_button_max_width"
+        android:minWidth="@dimen/button_min_width"
+        android:layout_width="wrap_content"
+        android:layout_height="@dimen/message_progress_spinner_height"
         android:layout_gravity="center_vertical"
         android:visibility="gone" />
 </org.chromium.components.messages.MessageBannerView>

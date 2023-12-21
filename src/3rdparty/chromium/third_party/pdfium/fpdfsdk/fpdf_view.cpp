@@ -1,4 +1,4 @@
-// Copyright 2014 PDFium Authors. All rights reserved.
+// Copyright 2014 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,6 +14,7 @@
 #include "core/fpdfapi/page/cpdf_docpagedata.h"
 #include "core/fpdfapi/page/cpdf_occontext.h"
 #include "core/fpdfapi/page/cpdf_page.h"
+#include "core/fpdfapi/page/cpdf_pageimagecache.h"
 #include "core/fpdfapi/page/cpdf_pagemodule.h"
 #include "core/fpdfapi/parser/cpdf_array.h"
 #include "core/fpdfapi/parser/cpdf_dictionary.h"
@@ -22,19 +23,18 @@
 #include "core/fpdfapi/parser/cpdf_parser.h"
 #include "core/fpdfapi/parser/cpdf_stream.h"
 #include "core/fpdfapi/parser/cpdf_string.h"
-#include "core/fpdfapi/parser/cpdf_syntax_parser.h"
 #include "core/fpdfapi/parser/fpdf_parser_decode.h"
 #include "core/fpdfapi/render/cpdf_docrenderdata.h"
-#include "core/fpdfapi/render/cpdf_pagerendercache.h"
 #include "core/fpdfapi/render/cpdf_pagerendercontext.h"
 #include "core/fpdfapi/render/cpdf_rendercontext.h"
 #include "core/fpdfapi/render/cpdf_renderoptions.h"
 #include "core/fpdfdoc/cpdf_nametree.h"
 #include "core/fpdfdoc/cpdf_viewerpreferences.h"
-#include "core/fxcrt/cfx_readonlymemorystream.h"
+#include "core/fxcrt/cfx_read_only_span_stream.h"
 #include "core/fxcrt/fx_safe_types.h"
 #include "core/fxcrt/fx_stream.h"
 #include "core/fxcrt/fx_system.h"
+#include "core/fxcrt/span_util.h"
 #include "core/fxcrt/stl_util.h"
 #include "core/fxcrt/unowned_ptr.h"
 #include "core/fxge/cfx_defaultrenderdevice.h"
@@ -47,9 +47,15 @@
 #include "fpdfsdk/cpdfsdk_renderpage.h"
 #include "fxjs/ijs_runtime.h"
 #include "public/fpdf_formfill.h"
+#include "third_party/base/check_op.h"
 #include "third_party/base/numerics/safe_conversions.h"
 #include "third_party/base/ptr_util.h"
 #include "third_party/base/span.h"
+
+#ifdef _SKIA_SUPPORT_
+#include "third_party/skia/include/core/SkPictureRecorder.h"  // nogncheck
+#include "third_party/skia/include/core/SkRect.h"             // nogncheck
+#endif  // _SKIA_SUPPORT_
 
 #ifdef PDF_ENABLE_V8
 #include "fxjs/cfx_v8_array_buffer_allocator.h"
@@ -96,37 +102,71 @@ static_assert(
     "WindowsPrintMode::kPostScript3Type42PassThrough value mismatch");
 #endif  // BUILDFLAG(IS_WIN)
 
+#if defined(_SKIA_SUPPORT_)
+// These checks are here because core/ and public/ cannot depend on each other.
+static_assert(static_cast<int>(CFX_DefaultRenderDevice::RendererType::kAgg) ==
+                  FPDF_RENDERERTYPE_AGG,
+              "CFX_DefaultRenderDevice::RendererType::kAGG value mismatch");
+static_assert(static_cast<int>(CFX_DefaultRenderDevice::RendererType::kSkia) ==
+                  FPDF_RENDERERTYPE_SKIA,
+              "CFX_DefaultRenderDevice::RendererType::kSkia value mismatch");
+#endif  // defined(_SKIA_SUPPORT_)
+
 namespace {
 
 bool g_bLibraryInitialized = false;
 
-const CPDF_Object* GetXFAEntryFromDocument(const CPDF_Document* doc) {
+void UseRendererType(FPDF_RENDERER_TYPE public_type) {
+  // Internal definition of renderer types must stay updated with respect to
+  // the public definition, such that all public definitions can be mapped to
+  // an internal definition in `CFX_DefaultRenderDevice`. A public definition
+  // value might not be meaningful for a particular build configuration, which
+  // would mean use of that value is an error for that build.
+
+  // AGG is always present in a build. |FPDF_RENDERERTYPE_SKIA| is valid to use
+  // only if it is included in the build.
+#if defined(_SKIA_SUPPORT_)
+  // This build configuration has the option for runtime renderer selection.
+  if (public_type == FPDF_RENDERERTYPE_AGG ||
+      public_type == FPDF_RENDERERTYPE_SKIA) {
+    CFX_DefaultRenderDevice::SetDefaultRenderer(
+        static_cast<CFX_DefaultRenderDevice::RendererType>(public_type));
+    return;
+  }
+  CHECK(false);
+#else
+  // `FPDF_RENDERERTYPE_AGG` is used for fully AGG builds.
+  CHECK_EQ(public_type, FPDF_RENDERERTYPE_AGG);
+#endif
+}
+
+RetainPtr<const CPDF_Object> GetXFAEntryFromDocument(const CPDF_Document* doc) {
   const CPDF_Dictionary* root = doc->GetRoot();
   if (!root)
     return nullptr;
 
-  const CPDF_Dictionary* acro_form = root->GetDictFor("AcroForm");
+  RetainPtr<const CPDF_Dictionary> acro_form = root->GetDictFor("AcroForm");
   return acro_form ? acro_form->GetObjectFor("XFA") : nullptr;
 }
 
 struct XFAPacket {
   ByteString name;
-  const CPDF_Stream* data;
+  RetainPtr<const CPDF_Stream> data;
 };
 
-std::vector<XFAPacket> GetXFAPackets(const CPDF_Object* xfa_object) {
+std::vector<XFAPacket> GetXFAPackets(RetainPtr<const CPDF_Object> xfa_object) {
   std::vector<XFAPacket> packets;
 
   if (!xfa_object)
     return packets;
 
-  const CPDF_Stream* xfa_stream = ToStream(xfa_object->GetDirect());
+  RetainPtr<const CPDF_Stream> xfa_stream = ToStream(xfa_object->GetDirect());
   if (xfa_stream) {
-    packets.push_back({"", xfa_stream});
+    packets.push_back({"", std::move(xfa_stream)});
     return packets;
   }
 
-  const CPDF_Array* xfa_array = ToArray(xfa_object->GetDirect());
+  RetainPtr<const CPDF_Array> xfa_array = ToArray(xfa_object->GetDirect());
   if (!xfa_array)
     return packets;
 
@@ -135,22 +175,21 @@ std::vector<XFAPacket> GetXFAPackets(const CPDF_Object* xfa_object) {
     if (i + 1 == xfa_array->size())
       break;
 
-    const CPDF_String* name = ToString(xfa_array->GetObjectAt(i));
+    RetainPtr<const CPDF_String> name = xfa_array->GetStringAt(i);
     if (!name)
       continue;
 
-    const CPDF_Stream* data = xfa_array->GetStreamAt(i + 1);
+    RetainPtr<const CPDF_Stream> data = xfa_array->GetStreamAt(i + 1);
     if (!data)
       continue;
 
-    packets.push_back({name->GetString(), data});
+    packets.push_back({name->GetString(), std::move(data)});
   }
   return packets;
 }
 
-FPDF_DOCUMENT LoadDocumentImpl(
-    const RetainPtr<IFX_SeekableReadStream>& pFileAccess,
-    FPDF_BYTESTRING password) {
+FPDF_DOCUMENT LoadDocumentImpl(RetainPtr<IFX_SeekableReadStream> pFileAccess,
+                               FPDF_BYTESTRING password) {
   if (!pFileAccess) {
     ProcessParseError(CPDF_Parser::FILE_ERROR);
     return nullptr;
@@ -160,7 +199,8 @@ FPDF_DOCUMENT LoadDocumentImpl(
       std::make_unique<CPDF_Document>(std::make_unique<CPDF_DocRenderData>(),
                                       std::make_unique<CPDF_DocPageData>());
 
-  CPDF_Parser::Error error = pDocument->LoadDoc(pFileAccess, password);
+  CPDF_Parser::Error error =
+      pDocument->LoadDoc(std::move(pFileAccess), password);
   if (error != CPDF_Parser::SUCCESS) {
     ProcessParseError(error);
     return nullptr;
@@ -181,7 +221,7 @@ FPDF_InitLibraryWithConfig(const FPDF_LIBRARY_CONFIG* config) {
   if (g_bLibraryInitialized)
     return;
 
-  FXMEM_InitializePartitionAlloc();
+  FX_InitializeMemoryAllocators();
   CFX_GEModule::Create(config ? config->m_pUserFontPaths : nullptr);
   CPDF_PageModule::Create();
 
@@ -193,6 +233,9 @@ FPDF_InitLibraryWithConfig(const FPDF_LIBRARY_CONFIG* config) {
     void* platform = config->version >= 3 ? config->m_pPlatform : nullptr;
     IJS_Runtime::Initialize(config->m_v8EmbedderSlot, config->m_pIsolate,
                             platform);
+
+    if (config->version >= 4)
+      UseRendererType(config->m_RendererType);
   }
   g_bLibraryInitialized = true;
 }
@@ -246,11 +289,11 @@ FPDF_EXPORT int FPDF_CALLCONV FPDF_GetFormType(FPDF_DOCUMENT document) {
   if (!pRoot)
     return FORMTYPE_NONE;
 
-  const CPDF_Dictionary* pAcroForm = pRoot->GetDictFor("AcroForm");
+  RetainPtr<const CPDF_Dictionary> pAcroForm = pRoot->GetDictFor("AcroForm");
   if (!pAcroForm)
     return FORMTYPE_NONE;
 
-  const CPDF_Object* pXFA = pAcroForm->GetObjectFor("XFA");
+  RetainPtr<const CPDF_Object> pXFA = pAcroForm->GetObjectFor("XFA");
   if (!pXFA)
     return FORMTYPE_ACRO_FORM;
 
@@ -274,7 +317,7 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV FPDF_LoadXFA(FPDF_DOCUMENT document) {
 FPDF_EXPORT FPDF_DOCUMENT FPDF_CALLCONV
 FPDF_LoadMemDocument(const void* data_buf, int size, FPDF_BYTESTRING password) {
   return LoadDocumentImpl(
-      pdfium::MakeRetain<CFX_ReadOnlyMemoryStream>(
+      pdfium::MakeRetain<CFX_ReadOnlySpanStream>(
           pdfium::make_span(static_cast<const uint8_t*>(data_buf), size)),
       password);
 }
@@ -284,7 +327,7 @@ FPDF_LoadMemDocument64(const void* data_buf,
                        size_t size,
                        FPDF_BYTESTRING password) {
   return LoadDocumentImpl(
-      pdfium::MakeRetain<CFX_ReadOnlyMemoryStream>(
+      pdfium::MakeRetain<CFX_ReadOnlySpanStream>(
           pdfium::make_span(static_cast<const uint8_t*>(data_buf), size)),
       password);
 }
@@ -334,7 +377,7 @@ FPDF_GetSecurityHandlerRevision(FPDF_DOCUMENT document) {
   if (!pDoc || !pDoc->GetParser())
     return -1;
 
-  const CPDF_Dictionary* pDict = pDoc->GetParser()->GetEncryptDict();
+  RetainPtr<const CPDF_Dictionary> pDict = pDoc->GetParser()->GetEncryptDict();
   return pDict ? pDict->GetIntegerFor("R") : -1;
 }
 
@@ -364,13 +407,14 @@ FPDF_EXPORT FPDF_PAGE FPDF_CALLCONV FPDF_LoadPage(FPDF_DOCUMENT document,
   }
 #endif  // PDF_ENABLE_XFA
 
-  CPDF_Dictionary* pDict = pDoc->GetPageDictionary(page_index);
+  RetainPtr<CPDF_Dictionary> pDict = pDoc->GetMutablePageDictionary(page_index);
   if (!pDict)
     return nullptr;
 
-  auto pPage = pdfium::MakeRetain<CPDF_Page>(pDoc, pDict);
-  pPage->SetRenderCache(std::make_unique<CPDF_PageRenderCache>(pPage.Get()));
+  auto pPage = pdfium::MakeRetain<CPDF_Page>(pDoc, std::move(pDict));
+  pPage->AddPageImageCache();
   pPage->ParseContent();
+
   return FPDFPageFromIPDFPage(pPage.Leak());
 }
 
@@ -536,7 +580,7 @@ FPDF_EXPORT void FPDF_CALLCONV FPDF_RenderPage(HDC dc,
   pBitmap->Clear(0x00ffffff);
   CFX_DefaultRenderDevice* pDevice = new CFX_DefaultRenderDevice;
   pContext->m_pDevice = pdfium::WrapUnique(pDevice);
-  pDevice->Attach(pBitmap, false, nullptr, false);
+  pDevice->Attach(pBitmap);
   if (bHasMask) {
     pContext->m_pOptions = std::make_unique<CPDF_RenderOptions>();
     pContext->m_pOptions->GetOptions().bBreakForMasks = true;
@@ -553,7 +597,8 @@ FPDF_EXPORT void FPDF_CALLCONV FPDF_RenderPage(HDC dc,
     if (win_dc.GetDeviceType() == DeviceType::kPrinter) {
       auto pDst = pdfium::MakeRetain<CFX_DIBitmap>();
       if (pDst->Create(size_x, size_y, FXDIB_Format::kRgb32)) {
-        memset(pDst->GetBuffer(), -1, pBitmap->GetPitch() * size_y);
+        fxcrt::spanset(pDst->GetBuffer().first(pBitmap->GetPitch() * size_y),
+                       -1);
         pDst->CompositeBitmap(0, 0, size_x, size_y, pBitmap, 0, 0,
                               BlendMode::kNormal, nullptr, false);
         win_dc.StretchDIBits(pDst, 0, 0, size_x, size_y);
@@ -629,15 +674,17 @@ FPDF_EXPORT void FPDF_CALLCONV FPDF_RenderPageBitmap(FPDF_BITMAP bitmap,
   pContext->m_pDevice = std::move(pOwnedDevice);
 
   RetainPtr<CFX_DIBitmap> pBitmap(CFXDIBitmapFromFPDFBitmap(bitmap));
-  pDevice->Attach(pBitmap, !!(flags & FPDF_REVERSE_BYTE_ORDER), nullptr, false);
+  pDevice->AttachWithRgbByteOrder(pBitmap, !!(flags & FPDF_REVERSE_BYTE_ORDER));
   CPDFSDK_RenderPageWithContext(pContext, pPage, start_x, start_y, size_x,
                                 size_y, rotate, flags, /*color_scheme=*/nullptr,
                                 /*need_to_restore=*/true,
                                 /*pause=*/nullptr);
 
-#if defined(_SKIA_SUPPORT_PATHS_)
-  pDevice->Flush(true);
-  pBitmap->UnPreMultiply();
+#ifdef _SKIA_SUPPORT_
+  if (CFX_DefaultRenderDevice::SkiaIsDefaultRenderer()) {
+    pDevice->Flush(true);
+    pBitmap->UnPreMultiply();
+  }
 #endif
 }
 
@@ -664,7 +711,8 @@ FPDF_RenderPageBitmapWithMatrix(FPDF_BITMAP bitmap,
   pContext->m_pDevice = std::move(pOwnedDevice);
 
   RetainPtr<CFX_DIBitmap> pBitmap(CFXDIBitmapFromFPDFBitmap(bitmap));
-  pDevice->Attach(pBitmap, !!(flags & FPDF_REVERSE_BYTE_ORDER), nullptr, false);
+  pDevice->AttachWithRgbByteOrder(std::move(pBitmap),
+                                  !!(flags & FPDF_REVERSE_BYTE_ORDER));
 
   CFX_FloatRect clipping_rect;
   if (clipping)
@@ -683,24 +731,33 @@ FPDF_RenderPageBitmapWithMatrix(FPDF_BITMAP bitmap,
 FPDF_EXPORT FPDF_RECORDER FPDF_CALLCONV FPDF_RenderPageSkp(FPDF_PAGE page,
                                                            int size_x,
                                                            int size_y) {
+  auto skDevice = std::make_unique<CFX_DefaultRenderDevice>();
+  std::unique_ptr<SkPictureRecorder> recorder =
+      skDevice->CreateRecorder(SkRect::MakeWH(size_x, size_y));
+
   CPDF_Page* pPage = CPDFPageFromFPDFPage(page);
-  if (!pPage)
-    return nullptr;
+  if (!pPage) {
+    // The equivalent bitmap APIs don't signal failure in this case, but defer
+    // the real work to a later call to `FPDF_FFLDraw()`. This is the case for
+    // XFA pages, for example.
+    //
+    // The caller still needs the `SkPictureRecorder` in order to call
+    // `FPDF_FFLRecord()` later.
+    return recorder.release();
+  }
 
   auto pOwnedContext = std::make_unique<CPDF_PageRenderContext>();
-  CPDF_PageRenderContext* pContext = pOwnedContext.get();
-  CPDF_Page::RenderContextClearer clearer(pPage);
-  pPage->SetRenderContext(std::move(pOwnedContext));
+  pOwnedContext->m_pDevice = std::move(skDevice);
 
-  auto skDevice = std::make_unique<CFX_DefaultRenderDevice>();
-  FPDF_RECORDER recorder = skDevice->CreateRecorder(size_x, size_y);
-  pContext->m_pDevice = std::move(skDevice);
+  CPDF_Page::RenderContextClearer clearer(pPage);
+  CPDF_PageRenderContext* pContext = pOwnedContext.get();
+  pPage->SetRenderContext(std::move(pOwnedContext));
 
   CPDFSDK_RenderPageWithContext(pContext, pPage, 0, 0, size_x, size_y, 0, 0,
                                 /*color_scheme=*/nullptr,
                                 /*need_to_restore=*/true, /*pause=*/nullptr);
 
-  return recorder;
+  return recorder.release();
 }
 #endif  // defined(_SKIA_SUPPORT_)
 
@@ -715,20 +772,10 @@ FPDF_EXPORT void FPDF_CALLCONV FPDF_ClosePage(FPDF_PAGE page) {
   if (pPage->AsXFAPage())
     return;
 
-  CPDFSDK_PageView* pPageView =
-      static_cast<CPDFSDK_PageView*>(pPage->AsPDFPage()->GetView());
-  if (!pPageView || pPageView->IsBeingDestroyed())
-    return;
-
-  if (pPageView->IsLocked()) {
-    pPageView->TakePageOwnership();
-    return;
-  }
-
-  // This will delete the |pPageView| object. We must cleanup the PageView
-  // first because it will attempt to reset the View on the |pPage| during
-  // destruction.
-  pPageView->GetFormFillEnv()->RemovePageView(pPage.Get());
+  // This will delete the PageView object corresponding to |pPage|. We must
+  // cleanup the PageView before releasing the reference on |pPage| as it will
+  // attempt to reset the PageView during destruction.
+  pPage->AsPDFPage()->ClearView();
 }
 
 FPDF_EXPORT void FPDF_CALLCONV FPDF_CloseDocument(FPDF_DOCUMENT document) {
@@ -828,7 +875,7 @@ FPDF_EXPORT FPDF_BITMAP FPDF_CALLCONV FPDFBitmap_CreateEx(int width,
   // Ensure external memory is good at least for the duration of this call.
   UnownedPtr<uint8_t> pChecker(static_cast<uint8_t*>(first_scan));
   auto pBitmap = pdfium::MakeRetain<CFX_DIBitmap>();
-  if (!pBitmap->Create(width, height, fx_format, pChecker.Get(), stride))
+  if (!pBitmap->Create(width, height, fx_format, pChecker, stride))
     return nullptr;
 
   return FPDFBitmapFromCFXDIBitmap(pBitmap.Leak());
@@ -865,7 +912,7 @@ FPDF_EXPORT void FPDF_CALLCONV FPDFBitmap_FillRect(FPDF_BITMAP bitmap,
 
   CFX_DefaultRenderDevice device;
   RetainPtr<CFX_DIBitmap> pBitmap(CFXDIBitmapFromFPDFBitmap(bitmap));
-  device.Attach(pBitmap, false, nullptr, false);
+  device.Attach(pBitmap);
   if (!pBitmap->IsAlphaFormat())
     color |= 0xFF000000;
   device.FillRect(FX_RECT(left, top, left + width, top + height),
@@ -873,7 +920,8 @@ FPDF_EXPORT void FPDF_CALLCONV FPDFBitmap_FillRect(FPDF_BITMAP bitmap,
 }
 
 FPDF_EXPORT void* FPDF_CALLCONV FPDFBitmap_GetBuffer(FPDF_BITMAP bitmap) {
-  return bitmap ? CFXDIBitmapFromFPDFBitmap(bitmap)->GetBuffer() : nullptr;
+  return bitmap ? CFXDIBitmapFromFPDFBitmap(bitmap)->GetBuffer().data()
+                : nullptr;
 }
 
 FPDF_EXPORT int FPDF_CALLCONV FPDFBitmap_GetWidth(FPDF_BITMAP bitmap) {
@@ -920,12 +968,12 @@ FPDF_GetPageSizeByIndexF(FPDF_DOCUMENT document,
   }
 #endif  // PDF_ENABLE_XFA
 
-  CPDF_Dictionary* pDict = pDoc->GetPageDictionary(page_index);
+  RetainPtr<CPDF_Dictionary> pDict = pDoc->GetMutablePageDictionary(page_index);
   if (!pDict)
     return false;
 
-  auto page = pdfium::MakeRetain<CPDF_Page>(pDoc, pDict);
-  page->SetRenderCache(std::make_unique<CPDF_PageRenderCache>(page.Get()));
+  auto page = pdfium::MakeRetain<CPDF_Page>(pDoc, std::move(pDict));
+  page->AddPageImageCache();
   size->width = page->GetPageWidth();
   size->height = page->GetPageHeight();
   return true;
@@ -971,6 +1019,8 @@ FPDF_VIEWERREF_GetPrintPageRange(FPDF_DOCUMENT document) {
   if (!pDoc)
     return nullptr;
   CPDF_ViewerPreferences viewRef(pDoc);
+
+  // Unretained reference in public API. NOLINTNEXTLINE
   return FPDFPageRangeFromCPDFArray(viewRef.PrintPageRange());
 }
 
@@ -1034,7 +1084,7 @@ FPDF_CountNamedDests(FPDF_DOCUMENT document) {
 
   auto name_tree = CPDF_NameTree::Create(pDoc, "Dests");
   FX_SAFE_UINT32 count = name_tree ? name_tree->GetCount() : 0;
-  const CPDF_Dictionary* pOldStyleDests = pRoot->GetDictFor("Dests");
+  RetainPtr<const CPDF_Dictionary> pOldStyleDests = pRoot->GetDictFor("Dests");
   if (pOldStyleDests)
     count += pOldStyleDests->size();
   return count.ValueOrDefault(0);
@@ -1050,9 +1100,10 @@ FPDF_GetNamedDestByName(FPDF_DOCUMENT document, FPDF_BYTESTRING name) {
     return nullptr;
 
   ByteString dest_name(name);
+
   // TODO(tsepez): murky ownership, should caller get a reference?
-  return FPDFDestFromCPDFArray(
-      CPDF_NameTree::LookupNamedDest(pDoc, dest_name).Get());
+  // Unretained reference in public API. NOLINTNEXTLINE
+  return FPDFDestFromCPDFArray(CPDF_NameTree::LookupNamedDest(pDoc, dest_name));
 }
 
 #ifdef PDF_ENABLE_V8
@@ -1137,12 +1188,12 @@ FPDF_EXPORT FPDF_DEST FPDF_CALLCONV FPDF_GetNamedDest(FPDF_DOCUMENT document,
 
   auto name_tree = CPDF_NameTree::Create(pDoc, "Dests");
   size_t name_tree_count = name_tree ? name_tree->GetCount() : 0;
-  CPDF_Object* pDestObj = nullptr;
+  RetainPtr<const CPDF_Object> pDestObj;
   WideString wsName;
   if (static_cast<size_t>(index) >= name_tree_count) {
     // If |index| is out of bounds, then try to retrieve the Nth old style named
     // destination. Where N is 0-indexed, with N = index - name_tree_count.
-    const CPDF_Dictionary* pDest = pRoot->GetDictFor("Dests");
+    RetainPtr<const CPDF_Dictionary> pDest = pRoot->GetDictFor("Dests");
     if (!pDest)
       return nullptr;
 
@@ -1157,7 +1208,7 @@ FPDF_EXPORT FPDF_DEST FPDF_CALLCONV FPDF_GetNamedDest(FPDF_DOCUMENT document,
     CPDF_DictionaryLocker locker(pDest);
     for (const auto& it : locker) {
       bsName = it.first.AsStringView();
-      pDestObj = it.second.Get();
+      pDestObj = it.second;
       if (i == index)
         break;
       i++;
@@ -1168,7 +1219,7 @@ FPDF_EXPORT FPDF_DEST FPDF_CALLCONV FPDF_GetNamedDest(FPDF_DOCUMENT document,
   }
   if (!pDestObj)
     return nullptr;
-  if (CPDF_Dictionary* pDict = pDestObj->AsDictionary()) {
+  if (const CPDF_Dictionary* pDict = pDestObj->AsDictionary()) {
     pDestObj = pDict->GetArrayFor("D");
     if (!pDestObj)
       return nullptr;
@@ -1231,8 +1282,9 @@ FPDF_GetXFAPacketContent(FPDF_DOCUMENT document,
   if (static_cast<size_t>(index) >= xfa_packets.size())
     return false;
 
-  *out_buflen = DecodeStreamMaybeCopyAndReturnLength(xfa_packets[index].data,
-                                                     buffer, buflen);
+  *out_buflen = DecodeStreamMaybeCopyAndReturnLength(
+      xfa_packets[index].data,
+      {static_cast<uint8_t*>(buffer), static_cast<size_t>(buflen)});
   return true;
 }
 
@@ -1246,48 +1298,7 @@ FPDF_GetTrailerEnds(FPDF_DOCUMENT document,
 
   // Start recording trailer ends.
   auto* parser = doc->GetParser();
-  CPDF_SyntaxParser* syntax = parser->GetSyntax();
-  std::vector<unsigned int> trailer_ends;
-  syntax->SetTrailerEnds(&trailer_ends);
-
-  // Traverse the document.
-  syntax->SetPos(0);
-  while (true) {
-    CPDF_SyntaxParser::WordResult word_result = syntax->GetNextWord();
-    if (word_result.is_number) {
-      // The object number was read. Read the generation number.
-      word_result = syntax->GetNextWord();
-      if (!word_result.is_number)
-        break;
-
-      word_result = syntax->GetNextWord();
-      if (word_result.word != "obj")
-        break;
-
-      syntax->GetObjectBody(nullptr);
-
-      word_result = syntax->GetNextWord();
-      if (word_result.word != "endobj")
-        break;
-    } else if (word_result.word == "trailer") {
-      syntax->GetObjectBody(nullptr);
-    } else if (word_result.word == "startxref") {
-      syntax->GetNextWord();
-    } else if (word_result.word == "xref") {
-      while (true) {
-        word_result = syntax->GetNextWord();
-        if (word_result.word.IsEmpty() || word_result.word == "startxref")
-          break;
-      }
-      syntax->GetNextWord();
-    } else {
-      break;
-    }
-  }
-
-  // Stop recording trailer ends.
-  syntax->SetTrailerEnds(nullptr);
-
+  std::vector<unsigned int> trailer_ends = parser->GetTrailerEnds();
   const unsigned long trailer_ends_len =
       fxcrt::CollectionSize<unsigned long>(trailer_ends);
   if (buffer && length >= trailer_ends_len) {

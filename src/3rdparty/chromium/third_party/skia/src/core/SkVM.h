@@ -12,9 +12,9 @@
 #include "include/core/SkColor.h"
 #include "include/core/SkColorType.h"
 #include "include/core/SkSpan.h"
-#include "include/private/SkMacros.h"
-#include "include/private/SkTArray.h"
-#include "include/private/SkTHash.h"
+#include "include/private/base/SkMacros.h"
+#include "include/private/base/SkTArray.h"
+#include "src/core/SkTHash.h"
 #include "src/core/SkVM_fwd.h"
 #include <vector>      // std::vector
 
@@ -31,10 +31,6 @@ class SkWStream;
             #define SKVM_JIT
         #endif
     #endif
-#endif
-
-#if 0
-    #define SKVM_LLVM
 #endif
 
 #if 0
@@ -558,7 +554,7 @@ namespace skvm {
             for (int bits : ints) {
                 buf.push_back(bits);
             }
-            return {base, (int)( sizeof(int)*(buf.size() - SK_ARRAY_COUNT(ints)) )};
+            return {base, (int)( sizeof(int)*(buf.size() - std::size(ints)) )};
         }
 
         Uniform pushArray(int32_t a[]) {
@@ -571,7 +567,7 @@ namespace skvm {
     };
 
     struct PixelFormat {
-        enum { UNORM, SRGB, FLOAT} encoding;
+        enum { UNORM, SRGB, FLOAT, XRNG } encoding;
         int r_bits,  g_bits,  b_bits,  a_bits,
             r_shift, g_shift, b_shift, a_shift;
     };
@@ -1079,7 +1075,7 @@ namespace skvm {
         bool hasJIT() const;         // Has this Program been JITted?
         bool hasTraceHooks() const;  // Is this program instrumented for debugging?
 
-        void visualize(SkWStream* output, const char* code) const;
+        void visualize(SkWStream* output) const;
         void dump(SkWStream* = nullptr) const;
         void disassemble(SkWStream* = nullptr) const;
         viz::Visualizer* visualizer();
@@ -1087,13 +1083,11 @@ namespace skvm {
     private:
         void setupInterpreter(const std::vector<OptimizedInstruction>&);
         void setupJIT        (const std::vector<OptimizedInstruction>&, const char* debug_name);
-        void setupLLVM       (const std::vector<OptimizedInstruction>&, const char* debug_name);
 
         bool jit(const std::vector<OptimizedInstruction>&,
                  int* stack_hint, uint32_t* registers_used,
                  Assembler*) const;
 
-        void waitForLLVM() const;
         void dropJIT();
 
         struct Impl;

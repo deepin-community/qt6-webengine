@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -35,7 +35,7 @@ enum DisallowActivationReasonId : uint64_t {
   kAXSetFocus = 11,
   kAXGetNativeView = 12,
   kAXGetNativeViewForWindow = 13,
-  kAXWebContents = 14,
+  // kAXWebContents = 14 is no longer blocking.
   kCertificateErrors = 15,
   kCreateChildFrame = 16,
   kCommitSameDocumentNavigation = 17,
@@ -55,6 +55,10 @@ enum DisallowActivationReasonId : uint64_t {
   kBeginDownload = 31,
   kBug1234857 = 32,
   kFileSystemAccessPermissionRequest = 33,
+  kCreateFencedFrame = 34,
+  kIndexedDBEvent = 35,
+  kIndexedDBTransactionIsAcquiringLocks = 36,
+  kIndexedDBTransactionIsBlockingOthers = 37,
   // New entries go above here. New entries should be added to
   // tools/metrics/histograms/enums.xml .
   kMinEmbedderDisallowActivationReason = 2 << 16,

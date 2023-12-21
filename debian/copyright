@@ -3,9 +3,10 @@ Upstream-Name: qtwebengine-everywhere-src
 Source: https://download.qt.io/archive/qt/*/submodules/
 Files-Excluded: examples/webenginewidgets/contentmanipulation/jquery.min.js
                 src/3rdparty/chromium/build/android/CheckInstallApk-debug.apk
-                src/3rdparty/chromium/build/android/stacktrace/java_deobfuscate.jar
+                src/3rdparty/chromium/build/android/stacktrace/java_deobfuscate_java.jar
                 src/3rdparty/chromium/buildtools/third_party/eu-strip/bin/eu-strip
                 src/3rdparty/chromium/net/tools/testserver/dist/*.pyd
+                src/3rdparty/chromium/third_party/android_ndk/prebuilt/linux-x86_64/share/info/make.info
                 src/3rdparty/chromium/third_party/angle/third_party/rapidjson/src/bin/jsonchecker
                 src/3rdparty/chromium/third_party/apple_apsl/*
                 src/3rdparty/chromium/third_party/blanketjs/src/blanket.js
@@ -35,9 +36,6 @@ Files-Excluded: examples/webenginewidgets/contentmanipulation/jquery.min.js
                 src/3rdparty/chromium/third_party/google-closure-library/scripts/ci/CloseAdobeDialog.exe
                 src/3rdparty/chromium/third_party/gradle_wrapper/gradle/wrapper/gradle-wrapper.jar
                 src/3rdparty/chromium/third_party/jstemplate/jstemplate_compiled.js
-                src/3rdparty/chromium/third_party/lzma_sdk/7zr.exe
-                src/3rdparty/chromium/third_party/lzma_sdk/Executable/7za.exe
-                src/3rdparty/chromium/third_party/mako/doc
                 src/3rdparty/chromium/third_party/openh264/src/autotest/performanceTest/ios/fruitstrap
                 src/3rdparty/chromium/third_party/openh264/src/autotest/performanceTest/ios/iFileTransfer
                 src/3rdparty/chromium/third_party/pycoverage/coverage/htmlfiles/*.min.js
@@ -48,8 +46,6 @@ Files-Excluded: examples/webenginewidgets/contentmanipulation/jquery.min.js
                 src/3rdparty/chromium/third_party/skia/resources/icc_profiles/AdobeRGB1998.icc
                 src/3rdparty/chromium/third_party/skia/resources/icc_profiles/srgb_lab_pcs.icc
                 src/3rdparty/chromium/third_party/skia/tools/perf-canvaskit-puppeteer/path_translate_assets/car.svg
-                src/3rdparty/chromium/third_party/tflite/src/tensorflow/lite/java/demo/gradle/wrapper/gradle-wrapper.jar
-                src/3rdparty/chromium/third_party/tflite/src/tensorflow/lite/java/ovic/demo/gradle/wrapper/gradle-wrapper.jar
                 src/3rdparty/chromium/third_party/vulkan_memory_allocator/build
                 src/3rdparty/chromium/third_party/vulkan_memory_allocator/docs
                 src/3rdparty/chromium/third_party/vulkan-deps/spirv-cross/src/tests-other/*.spv

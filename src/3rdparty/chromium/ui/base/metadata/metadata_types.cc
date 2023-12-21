@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -36,6 +36,10 @@ bool operator!(PropertyFlags op) {
 MetaDataProvider::MetaDataProvider() = default;
 
 MetaDataProvider::~MetaDataProvider() = default;
+
+class ClassMetaData* MetaDataProvider::GetClassMetaData() {
+  return const_cast<ClassMetaData*>(std::as_const(*this).GetClassMetaData());
+}
 
 base::CallbackListSubscription MetaDataProvider::AddPropertyChangedCallback(
     PropertyKey property,

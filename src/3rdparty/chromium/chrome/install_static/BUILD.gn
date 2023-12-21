@@ -1,4 +1,4 @@
-# Copyright 2016 The Chromium Authors. All rights reserved.
+# Copyright 2016 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -28,6 +28,7 @@ if (is_win) {
     public_deps = [
       ":buildflags",
       "//build:branding_buildflags",
+      "//chrome/browser/chrome_for_testing:buildflags",
       "//chrome/chrome_elf:nt_registry",
     ]
 
@@ -35,6 +36,8 @@ if (is_win) {
       "../app/chrome_dll_resource.h",
       "../common/chrome_icon_resources_win.h",
       "//base/compiler_specific.h",
+      "//base/win/win_handle_types.h",
+      "//base/win/win_handle_types_list.inc",
       "//base/win/windows_types.h",
       "install_constants.h",
       "install_details.cc",
@@ -55,6 +58,11 @@ if (is_win) {
       sources += [
         "google_chrome_install_modes.cc",
         "google_chrome_install_modes.h",
+      ]
+    } else if (is_chrome_for_testing_branded) {
+      sources += [
+        "google_chrome_for_testing_install_modes.cc",
+        "google_chrome_for_testing_install_modes.h",
       ]
     } else {
       sources += [

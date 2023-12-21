@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,8 +10,6 @@
 #include <map>
 #include <memory>
 
-#include "base/memory/ref_counted.h"
-#include "base/memory/weak_ptr.h"
 #include "components/domain_reliability/beacon.h"
 #include "components/domain_reliability/clear_mode.h"
 #include "components/domain_reliability/config.h"
@@ -25,14 +23,10 @@
 #include "net/base/ip_endpoint.h"
 #include "net/base/load_timing_info.h"
 #include "net/base/net_error_details.h"
+#include "net/base/network_anonymization_key.h"
 #include "net/base/network_change_notifier.h"
-#include "net/base/network_isolation_key.h"
 #include "net/http/http_response_info.h"
 #include "net/socket/connection_attempts.h"
-
-namespace base {
-class Value;
-}  // namespace base
 
 namespace net {
 class URLRequest;
@@ -57,7 +51,7 @@ class DOMAIN_RELIABILITY_EXPORT DomainReliabilityMonitor
     static bool ShouldReportRequest(const RequestInfo& request);
 
     GURL url;
-    net::NetworkIsolationKey network_isolation_key;
+    net::NetworkAnonymizationKey network_anonymization_key;
     int net_error;
     net::HttpResponseInfo response_info;
     bool allow_credentials;
@@ -124,10 +118,6 @@ class DOMAIN_RELIABILITY_EXPORT DomainReliabilityMonitor
   void ClearBrowsingData(
       DomainReliabilityClearMode mode,
       const base::RepeatingCallback<bool(const url::Origin&)>& origin_filter);
-
-  // Gets a Value containing data that can be formatted into a web page for
-  // debugging purposes.
-  base::Value GetWebUIData() const;
 
   // Returns pointer to the added context.
   const DomainReliabilityContext* AddContextForTesting(

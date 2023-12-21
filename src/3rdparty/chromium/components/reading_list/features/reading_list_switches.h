@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,14 +11,6 @@
 namespace reading_list {
 namespace switches {
 
-// Feature flag used for enabling Read later on desktop and Android.
-extern const base::Feature kReadLater;
-
-// Whether Reading List is enabled on this device. On iOS this is true if the
-// buildflag for Reading List is enabled (no experiment). On Desktop it is also
-// true if `kSidePanel` is enabled as it assumes a reading list.
-bool IsReadingListEnabled();
-
 // Feature flag used for enabling the reading list backend migration.
 // When enabled, reading list data will also be stored in the Bookmarks backend.
 // This allows each platform to migrate their reading list front end to point at
@@ -26,12 +18,21 @@ bool IsReadingListEnabled();
 // interruption to cross device sync if some syncing devices are on versions
 // with the migration behavior while others aren't. See crbug/1234426 for more
 // details.
-extern const base::Feature kReadLaterBackendMigration;
+BASE_DECLARE_FEATURE(kReadLaterBackendMigration);
 
 #if BUILDFLAG(IS_ANDROID)
 // Feature flag used for enabling read later reminder notification.
-extern const base::Feature kReadLaterReminderNotification;
+BASE_DECLARE_FEATURE(kReadLaterReminderNotification);
 #endif
+
+// Feature flag that controls a technical rollout of a new codepath that doesn't
+// itself cause user-facing changes but sets the foundation for later rollouts
+// namely, `kReadingListEnableSyncTransportModeUponSignIn` below).
+BASE_DECLARE_FEATURE(kReadingListEnableDualReadingListModel);
+
+// Feature flag used for enabling sync (transport mode) for signed-in users that
+// haven't turned on full sync.
+BASE_DECLARE_FEATURE(kReadingListEnableSyncTransportModeUponSignIn);
 
 }  // namespace switches
 }  // namespace reading_list

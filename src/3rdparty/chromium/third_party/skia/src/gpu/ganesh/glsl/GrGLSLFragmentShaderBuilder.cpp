@@ -19,15 +19,14 @@ const char* GrGLSLFragmentShaderBuilder::dstColor() {
     SkDEBUGCODE(fHasReadDstColorThisStage_DebugOnly = true;)
 
     const GrShaderCaps* shaderCaps = fProgramBuilder->shaderCaps();
-    if (shaderCaps->fbFetchSupport()) {
+    if (shaderCaps->fFBFetchSupport) {
         this->addFeature(1 << kFramebufferFetch_GLSLPrivateFeature,
-                         shaderCaps->fbFetchExtensionString());
+                         shaderCaps->fFBFetchExtensionString);
 
         // Some versions of this extension string require declaring custom color output on ES 3.0+
         const char* fbFetchColorName = "sk_LastFragColor";
-        if (shaderCaps->fbFetchNeedsCustomOutput()) {
-            this->enableCustomOutput();
-            fCustomColorOutput->setTypeModifier(GrShaderVar::TypeModifier::InOut);
+        if (shaderCaps->fFBFetchNeedsCustomOutput) {
+            fPrimaryColorIsInOut = true;
             fbFetchColorName = DeclaredColorOutputName();
             // Set the dstColor to an intermediate variable so we don't override it with the output
             this->codeAppendf("half4 %s = %s;", kDstColorName, fbFetchColorName);
@@ -49,19 +48,11 @@ void GrGLSLFragmentShaderBuilder::enableAdvancedBlendEquationIfNeeded(
     }
 }
 
-void GrGLSLFragmentShaderBuilder::enableCustomOutput() {
-    if (!fCustomColorOutput) {
-        fCustomColorOutput = &fOutputs.emplace_back(DeclaredColorOutputName(), SkSLType::kHalf4,
-                                                    GrShaderVar::TypeModifier::Out);
-        fProgramBuilder->finalizeFragmentOutputColor(fOutputs.back());
-    }
-}
-
 void GrGLSLFragmentShaderBuilder::enableSecondaryOutput() {
     SkASSERT(!fHasSecondaryOutput);
     fHasSecondaryOutput = true;
     const GrShaderCaps& caps = *fProgramBuilder->shaderCaps();
-    if (const char* extension = caps.secondaryOutputExtensionString()) {
+    if (const char* extension = caps.fSecondaryOutputExtensionString) {
         this->addFeature(1 << kBlendFuncExtended_GLSLPrivateFeature, extension);
     }
 
@@ -81,8 +72,7 @@ const char* GrGLSLFragmentShaderBuilder::getPrimaryColorOutputName() const {
 }
 
 bool GrGLSLFragmentShaderBuilder::primaryColorOutputIsInOut() const {
-    return fCustomColorOutput &&
-           fCustomColorOutput->getTypeModifier() == GrShaderVar::TypeModifier::InOut;
+    return fPrimaryColorIsInOut;
 }
 
 const char* GrGLSLFragmentShaderBuilder::getSecondaryColorOutputName() const {

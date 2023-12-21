@@ -1,22 +1,22 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "device/fido/cable/fido_cable_discovery.h"
 
-#include <algorithm>
 #include <memory>
 #include <utility>
 
 #include "base/barrier_closure.h"
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/containers/contains.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/no_destructor.h"
+#include "base/ranges/algorithm.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/threading/sequenced_task_runner_handle.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "components/device_event_log/device_event_log.h"
@@ -52,9 +52,9 @@ std::unique_ptr<BluetoothAdvertisement::Data> ConstructAdvertisementData(
       BluetoothAdvertisement::AdvertisementType::ADVERTISEMENT_TYPE_BROADCAST);
 
 #if BUILDFLAG(IS_MAC)
-  auto list = std::make_unique<BluetoothAdvertisement::UUIDList>();
-  list->emplace_back(kGoogleCableUUID16);
-  list->emplace_back(fido_parsing_utils::ConvertBytesToUuid(client_eid));
+  BluetoothAdvertisement::UUIDList list;
+  list.emplace_back(kGoogleCableUUID16);
+  list.emplace_back(fido_parsing_utils::ConvertBytesToUuid(client_eid));
   advertisement_data->set_service_uuids(std::move(list));
 
 #elif BUILDFLAG(IS_WIN)
@@ -74,14 +74,13 @@ std::unique_ptr<BluetoothAdvertisement::Data> ConstructAdvertisementData(
       kCableGoogleManufacturerDataLength, kCableGoogleManufacturerDataType,
       kCableFlags, /*version=*/1};
 
-  auto manufacturer_data =
-      std::make_unique<BluetoothAdvertisement::ManufacturerData>();
+  BluetoothAdvertisement::ManufacturerData manufacturer_data;
   std::vector<uint8_t> manufacturer_data_value;
   fido_parsing_utils::Append(&manufacturer_data_value,
                              kCableGoogleManufacturerDataHeader);
   fido_parsing_utils::Append(&manufacturer_data_value, client_eid);
-  manufacturer_data->emplace(kGoogleManufacturerId,
-                             std::move(manufacturer_data_value));
+  manufacturer_data.emplace(kGoogleManufacturerId,
+                            std::move(manufacturer_data_value));
   advertisement_data->set_manufacturer_data(std::move(manufacturer_data));
 
 #elif BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
@@ -92,36 +91,18 @@ std::unique_ptr<BluetoothAdvertisement::Data> ConstructAdvertisementData(
   // Service data for ChromeOS and Linux is 1 byte corresponding to Cable flags,
   // followed by 1 byte corresponding to Cable version number, followed by 16
   // bytes corresponding to client EID.
-  auto service_data = std::make_unique<BluetoothAdvertisement::ServiceData>();
+  BluetoothAdvertisement::ServiceData service_data;
   std::vector<uint8_t> service_data_value(18, 0);
   // Since the remainder of this service data field is a Cable EID, set the 5th
   // bit of the flag byte.
   service_data_value[0] = kCableFlags;
   service_data_value[1] = 1 /* version */;
-  std::copy(client_eid.begin(), client_eid.end(),
-            service_data_value.begin() + 2);
-  service_data->emplace(kGoogleCableUUID128, std::move(service_data_value));
+  base::ranges::copy(client_eid, service_data_value.begin() + 2);
+  service_data.emplace(kGoogleCableUUID128, std::move(service_data_value));
   advertisement_data->set_service_data(std::move(service_data));
 #endif
 
   return advertisement_data;
-}
-
-static bool Is128BitUUID(const CableEidArray& eid) {
-  // Abbreviated UUIDs have a fixed, 12-byte suffix. kGoogleCableUUID
-  // is one such abbeviated UUID.
-  static_assert(sizeof(kGoogleCableUUID) == EXTENT(eid), "");
-  return memcmp(eid.data() + 4, kGoogleCableUUID + 4,
-                sizeof(kGoogleCableUUID) - 4) != 0;
-}
-
-static bool IsCableUUID(const CableEidArray& eid) {
-  static_assert(sizeof(kGoogleCableUUID) == EXTENT(eid), "");
-  static_assert(sizeof(kFIDOCableUUID) == EXTENT(eid), "");
-
-  return (memcmp(eid.data(), kGoogleCableUUID, sizeof(kGoogleCableUUID)) ==
-          0) ||
-         (memcmp(eid.data(), kFIDOCableUUID, sizeof(kFIDOCableUUID)) == 0);
 }
 
 }  // namespace
@@ -158,8 +139,7 @@ FidoCableDiscovery::ObservedDeviceData::~ObservedDeviceData() = default;
 
 FidoCableDiscovery::FidoCableDiscovery(
     std::vector<CableDiscoveryData> discovery_data)
-    : FidoDeviceDiscovery(
-          FidoTransportProtocol::kCloudAssistedBluetoothLowEnergy),
+    : FidoDeviceDiscovery(FidoTransportProtocol::kHybrid),
       discovery_data_(std::move(discovery_data)) {
 // Windows currently does not support multiple EIDs, thus we ignore any extra
 // discovery data.
@@ -275,19 +255,15 @@ void FidoCableDiscovery::OnGetAdapter(scoped_refptr<BluetoothAdapter> adapter) {
 #if BUILDFLAG(IS_MAC)
   // TODO(crbug.com/1314404): turn this into a user-visible UI if we believe
   // that it's a good signal.
-
   switch (fido::mac::ProcessIsSigned()) {
-    case fido::mac::CodeSigningState::kUnknown:
-      FIDO_LOG(DEBUG) << "Cannot determine whether build is signed. Assuming "
-                         "Bluetooth permission is granted.";
-      break;
-
     case fido::mac::CodeSigningState::kSigned:
       FIDO_LOG(DEBUG) << "Bluetooth authorized: "
-                      << (adapter_->GetOsPermissionStatus() !=
-                          BluetoothAdapter::PermissionStatus::kDenied);
+                      << static_cast<int>(adapter_->GetOsPermissionStatus());
+      if (adapter_->GetOsPermissionStatus() ==
+          BluetoothAdapter::PermissionStatus::kDenied) {
+        observer()->BleDenied();
+      }
       break;
-
     case fido::mac::CodeSigningState::kNotSigned:
       FIDO_LOG(DEBUG)
           << "Build not signed. Assuming Bluetooth permission is granted.";
@@ -305,7 +281,7 @@ void FidoCableDiscovery::OnGetAdapter(scoped_refptr<BluetoothAdapter> adapter) {
 
 void FidoCableDiscovery::OnSetPowered() {
   DCHECK(adapter());
-  base::SequencedTaskRunnerHandle::Get()->PostTask(
+  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(&FidoCableDiscovery::StartCableDiscovery,
                                 weak_factory_.GetWeakPtr()));
 }
@@ -368,7 +344,7 @@ void FidoCableDiscovery::AdapterPoweredChanged(BluetoothAdapter* adapter,
   // not ready for use". So wait for things to actually be ready.
   // TODO(crbug/1046140): Remove this delay once the Bluetooth layer handles
   // the spurious failure.
-  base::SequencedTaskRunnerHandle::Get()->PostDelayedTask(
+  base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
       FROM_HERE,
       base::BindOnce(&FidoCableDiscovery::StartCableDiscovery,
                      weak_factory_.GetWeakPtr()),
@@ -428,7 +404,7 @@ void FidoCableDiscovery::OnStartDiscoverySession(
   // Advertising is delayed by 500ms to ensure that any UI has a chance to
   // appear as we don't want to start broadcasting without the user being
   // aware.
-  base::SequencedTaskRunnerHandle::Get()->PostDelayedTask(
+  base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
       FROM_HERE,
       base::BindOnce(&FidoCableDiscovery::StartAdvertisement,
                      weak_factory_.GetWeakPtr()),
@@ -643,13 +619,6 @@ FidoCableDiscovery::GetCableDiscoveryData(const BluetoothDevice* device) {
     FIDO_LOG(DEBUG) << "  Service data: <none>";
   }
 
-  // uuid128s is the subset of |uuids| that are 128-bit values. Likewise
-  // |uuid32s| is the (disjoint) subset that are 32- or 16-bit UUIDs.
-  // TODO: handle the case where the 32-bit UUID collides with the caBLE
-  // indicator.
-  std::vector<CableEidArray> uuid128s;
-  std::vector<CableEidArray> uuid32s;
-
   if (!uuids.empty()) {
     FIDO_LOG(DEBUG) << "  UUIDs:";
     for (const auto& uuid : uuids) {
@@ -658,38 +627,14 @@ FidoCableDiscovery::GetCableDiscoveryData(const BluetoothDevice* device) {
       if (!result && eid_result) {
         result = std::move(eid_result);
       }
-
-      if (Is128BitUUID(uuid)) {
-        uuid128s.push_back(uuid);
-      } else if (!IsCableUUID(uuid)) {
-        // 16-bit UUIDs are also considered to be 32-bit UUID because one in
-        // 2**16 32-bit UUIDs will randomly turn into 16-bit ones.
-        uuid32s.push_back(uuid);
-      }
     }
   }
 
-  if (advert_callback_) {
-    std::array<uint8_t, 16 + 4> v2_advert;
-
-    // Try all combinations of 16- and 4-byte UUIDs to form 20-byte advert
-    // payloads. (We don't know if something in the BLE stack might add other
-    // short UUIDs to a BLE advert message).
-    for (const auto& uuid128 : uuid128s) {
-      static_assert(EXTENT(uuid128) == 16, "");
-      memcpy(v2_advert.data(), uuid128.data(), 16);
-
-      for (const auto& uuid32 : uuid32s) {
-        static_assert(EXTENT(uuid32) >= 4, "");
-        memcpy(v2_advert.data() + 16, uuid32.data(), 4);
-        advert_callback_.Run(v2_advert);
-      }
-    }
-
-    if (service_data && service_data->size() == v2_advert.size()) {
-      memcpy(v2_advert.data(), service_data->data(), v2_advert.size());
-      advert_callback_.Run(v2_advert);
-    }
+  std::array<uint8_t, 16 + 4> v2_advert;
+  if (advert_callback_ && service_data &&
+      service_data->size() == v2_advert.size()) {
+    memcpy(v2_advert.data(), service_data->data(), v2_advert.size());
+    advert_callback_.Run(v2_advert);
   }
 
   auto observed_data = std::make_unique<ObservedDeviceData>();
@@ -821,12 +766,9 @@ std::string FidoCableDiscovery::ResultDebugString(
   return ret;
 }
 
-bool FidoCableDiscovery::MaybeStop() {
-  if (!FidoDeviceDiscovery::MaybeStop()) {
-    NOTREACHED();
-  }
+void FidoCableDiscovery::Stop() {
+  FidoDeviceDiscovery::Stop();
   StopAdvertisements(base::DoNothing());
-  return true;
 }
 
 }  // namespace device

@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,8 +14,8 @@
 
 #include "base/containers/span.h"
 #include "base/memory/raw_ptr.h"
-#include "base/memory/ref_counted.h"
-#include "extensions/browser/api/api_resource_manager.h"
+#include "base/memory/scoped_refptr.h"
+#include "base/values.h"
 #include "extensions/browser/api/usb/usb_device_manager.h"
 #include "extensions/browser/extension_function.h"
 #include "extensions/common/api/usb.h"
@@ -75,7 +75,7 @@ class UsbTransferFunction : public UsbConnectionFunction {
   ~UsbTransferFunction() override;
 
   void OnCompleted(device::mojom::UsbTransferStatus status,
-                   std::unique_ptr<base::DictionaryValue> transfer_info);
+                   base::Value::Dict transfer_info);
   void OnTransferInCompleted(device::mojom::UsbTransferStatus status,
                              base::span<const uint8_t> data);
   void OnTransferOutCompleted(device::mojom::UsbTransferStatus status);
@@ -111,13 +111,13 @@ class UsbFindDevicesFunction : public UsbExtensionFunction {
       std::vector<device::mojom::UsbDeviceInfoPtr> devices);
   void OnDeviceOpened(const std::string& guid,
                       mojo::Remote<device::mojom::UsbDevice> device_ptr,
-                      device::mojom::UsbOpenDeviceError error);
+                      device::mojom::UsbOpenDeviceResultPtr result);
   void OpenComplete();
   void OnDisconnect();
 
   uint16_t vendor_id_;
   uint16_t product_id_;
-  std::unique_ptr<base::ListValue> result_;
+  base::Value::List result_;
   base::RepeatingClosure barrier_;
 };
 
@@ -215,7 +215,7 @@ class UsbOpenDeviceFunction : public UsbPermissionCheckingFunction {
 
   void OnDeviceOpened(std::string guid,
                       mojo::Remote<device::mojom::UsbDevice> device,
-                      device::mojom::UsbOpenDeviceError error);
+                      device::mojom::UsbOpenDeviceResultPtr result);
   void OnDisconnect();
 };
 

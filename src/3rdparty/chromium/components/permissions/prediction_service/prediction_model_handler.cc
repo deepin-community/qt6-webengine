@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,30 +6,23 @@
 
 #include <memory>
 
-#include "base/task/sequenced_task_runner.h"
-#include "base/task/task_traits.h"
-#include "base/task/thread_pool.h"
-#include "components/keyed_service/content/browser_context_dependency_manager.h"
-#include "components/keyed_service/content/browser_context_keyed_service_factory.h"
-#include "components/keyed_service/core/keyed_service.h"
 #include "components/optimization_guide/core/optimization_guide_model_provider.h"
-#include "components/optimization_guide/proto/models.pb.h"
-#include "components/permissions/prediction_service/prediction_model_executor.h"
-#include "components/permissions/prediction_service/prediction_request_features.h"
-#include "content/public/browser/browser_context.h"
 
 namespace permissions {
 
 PredictionModelHandler::PredictionModelHandler(
     optimization_guide::OptimizationGuideModelProvider* model_provider,
-    scoped_refptr<base::SequencedTaskRunner> background_task_runner)
-    : ModelHandler<GeneratePredictionsResponse,
-                   const GeneratePredictionsRequest&>(
+    optimization_guide::proto::OptimizationTarget optimization_target)
+    : ModelHandler<
+          GeneratePredictionsResponse,
+          const GeneratePredictionsRequest&,
+          const absl::optional<WebPermissionPredictionsModelMetadata>&>(
           model_provider,
-          background_task_runner,
+          base::ThreadPool::CreateSequencedTaskRunner(
+              {base::MayBlock(), base::TaskPriority::USER_VISIBLE}),
           std::make_unique<PredictionModelExecutor>(),
-          optimization_guide::proto::OptimizationTarget::
-              OPTIMIZATION_TARGET_NOTIFICATION_PERMISSION_PREDICTIONS,
+          /*model_inference_timeout=*/absl::nullopt,
+          optimization_target,
           absl::nullopt) {}
 
 void PredictionModelHandler::OnModelUpdated(
@@ -37,10 +30,25 @@ void PredictionModelHandler::OnModelUpdated(
     const optimization_guide::ModelInfo& model_info) {
   // First invoke parent to update internal status.
   optimization_guide::ModelHandler<
-      GeneratePredictionsResponse,
-      const GeneratePredictionsRequest&>::OnModelUpdated(optimization_target,
-                                                         model_info);
+      GeneratePredictionsResponse, const GeneratePredictionsRequest&,
+      const absl::optional<WebPermissionPredictionsModelMetadata>&>::
+      OnModelUpdated(optimization_target, model_info);
   model_load_run_loop_.Quit();
+}
+
+absl::optional<WebPermissionPredictionsModelMetadata>
+PredictionModelHandler::GetModelMetaData() {
+  absl::optional<WebPermissionPredictionsModelMetadata> metadata =
+      ParsedSupportedFeaturesForLoadedModel<
+          WebPermissionPredictionsModelMetadata>();
+  return metadata;
+}
+
+void PredictionModelHandler::ExecuteModelWithMetadata(
+    ExecutionCallback callback,
+    std::unique_ptr<GeneratePredictionsRequest> proto_request) {
+  ExecuteModelWithInput(std::move(callback), *proto_request,
+                        GetModelMetaData());
 }
 
 void PredictionModelHandler::WaitForModelLoadForTesting() {

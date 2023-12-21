@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,7 +6,7 @@
 
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/json/json_writer.h"
 #include "base/time/time.h"
 #include "base/values.h"
@@ -34,7 +34,7 @@ enum class Rpc {
 // chrome/browser/resources/nearby_internals/types.js.
 enum class Direction { kRequest = 0, kResponse = 1 };
 
-std::string FormatAsJSON(const base::Value& value) {
+std::string FormatAsJSON(const base::Value::Dict& value) {
   std::string json;
   base::JSONWriter::WriteWithOptions(
       value, base::JSONWriter::OPTIONS_PRETTY_PRINT, &json);
@@ -56,15 +56,15 @@ const char kHttpMessageDirectionKey[] = "direction";
 
 // Converts a RPC request/response to a raw dictionary value used as a
 // JSON argument to JavaScript functions.
-base::Value HttpMessageToDictionary(const base::Value& message,
-                                    Direction dir,
-                                    Rpc rpc) {
+base::Value::Dict HttpMessageToDictionary(const base::Value::Dict& message,
+                                          Direction dir,
+                                          Rpc rpc) {
   base::Value::Dict dictionary;
   dictionary.Set(kHttpMessageBodyKey, FormatAsJSON(message));
   dictionary.Set(kHttpMessageTimeKey, GetJavascriptTimestamp());
   dictionary.Set(kHttpMessageRpcKey, static_cast<int>(rpc));
   dictionary.Set(kHttpMessageDirectionKey, static_cast<int>(dir));
-  return base::Value(std::move(dictionary));
+  return dictionary;
 }
 
 }  // namespace

@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,8 +13,6 @@
 #include "components/autofill/core/common/autofill_l10n_util.h"
 
 namespace autofill {
-
-using structured_address::VerificationStatus;
 
 void FormGroup::GetMatchingTypes(const std::u16string& text,
                                  const std::string& app_locale,
@@ -46,6 +44,15 @@ void FormGroup::GetNonEmptyTypes(const std::string& app_locale,
   GetSupportedTypes(&types);
   for (auto type : types) {
     if (!GetInfo(AutofillType(type), app_locale).empty())
+      non_empty_types->insert(type);
+  }
+}
+
+void FormGroup::GetNonEmptyRawTypes(ServerFieldTypeSet* non_empty_types) const {
+  ServerFieldTypeSet types;
+  GetSupportedTypes(&types);
+  for (auto type : types) {
+    if (!GetRawInfo(type).empty())
       non_empty_types->insert(type);
   }
 }

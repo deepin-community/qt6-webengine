@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -87,8 +87,9 @@ mojom::blink::FederatedAuthRequest*
 CredentialManagerProxy::FederatedAuthRequest() {
   BindRemoteForFedCm(
       federated_auth_request_,
-      WTF::Bind(&CredentialManagerProxy::OnFederatedAuthRequestConnectionError,
-                WrapWeakPersistent(this)));
+      WTF::BindOnce(
+          &CredentialManagerProxy::OnFederatedAuthRequestConnectionError,
+          WrapWeakPersistent(this)));
   return federated_auth_request_.get();
 }
 
@@ -96,8 +97,8 @@ mojom::blink::FederatedAuthRequest*
 CredentialManagerProxy::FedCmLogoutRpsRequest() {
   BindRemoteForFedCm(
       fedcm_logout_request_,
-      WTF::Bind(&CredentialManagerProxy::OnFedCmLogoutConnectionError,
-                WrapWeakPersistent(this)));
+      WTF::BindOnce(&CredentialManagerProxy::OnFedCmLogoutConnectionError,
+                    WrapWeakPersistent(this)));
   return fedcm_logout_request_.get();
 }
 
@@ -113,11 +114,32 @@ void CredentialManagerProxy::OnFedCmLogoutConnectionError() {
   // appropriate error message.
 }
 
+// TODO(crbug.com/1372275): Replace From(ScriptState*) with
+// From(ExecutionContext*)
 // static
 CredentialManagerProxy* CredentialManagerProxy::From(
     ScriptState* script_state) {
   DCHECK(script_state->ContextIsValid());
   LocalDOMWindow& window = *LocalDOMWindow::From(script_state);
+  return From(&window);
+}
+
+CredentialManagerProxy* CredentialManagerProxy::From(LocalDOMWindow* window) {
+  auto* supplement =
+      Supplement<LocalDOMWindow>::From<CredentialManagerProxy>(*window);
+  if (!supplement) {
+    supplement = MakeGarbageCollected<CredentialManagerProxy>(*window);
+    ProvideTo(*window, supplement);
+  }
+  return supplement;
+}
+
+// static
+CredentialManagerProxy* CredentialManagerProxy::From(
+    ExecutionContext* execution_context) {
+  // Since the FedCM API cannot be used by workers, the execution context is
+  // always a window.
+  LocalDOMWindow& window = *To<LocalDOMWindow>(execution_context);
   auto* supplement =
       Supplement<LocalDOMWindow>::From<CredentialManagerProxy>(window);
   if (!supplement) {

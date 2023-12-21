@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,15 +11,14 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/memory/ptr_util.h"
 #include "base/task/current_thread.h"
-#include "components/exo/capabilities.h"
 #include "components/exo/data_exchange_delegate.h"
 #include "components/exo/display.h"
 #include "components/exo/input_method_surface_manager.h"
 #include "components/exo/notification_surface_manager.h"
+#include "components/exo/security_delegate.h"
 #include "components/exo/toast_surface_manager.h"
 #include "components/exo/wayland/server.h"
 #include "components/exo/wm_helper.h"
-#include "components/exo/wm_helper_chromeos.h"
 
 namespace exo {
 
@@ -60,7 +59,7 @@ WaylandServerController::WaylandServerController(
     std::unique_ptr<NotificationSurfaceManager> notification_surface_manager,
     std::unique_ptr<InputMethodSurfaceManager> input_method_surface_manager,
     std::unique_ptr<ToastSurfaceManager> toast_surface_manager)
-    : wm_helper_(std::make_unique<WMHelperChromeOS>()),
+    : wm_helper_(std::make_unique<WMHelper>()),
       display_(
           std::make_unique<Display>(std::move(notification_surface_manager),
                                     std::move(input_method_surface_manager),
@@ -69,23 +68,23 @@ WaylandServerController::WaylandServerController(
   DCHECK(!g_instance);
   g_instance = this;
   CreateServer(
-      /*capabilities=*/nullptr,
+      /*security_delegate=*/nullptr,
       base::BindOnce([](bool success, const base::FilePath& path) {
         DCHECK(success) << "Failed to start the default wayland server.";
       }));
 }
 
 void WaylandServerController::CreateServer(
-    std::unique_ptr<Capabilities> capabilities,
+    std::unique_ptr<SecurityDelegate> security_delegate,
     wayland::Server::StartCallback callback) {
   bool async = true;
-  if (!capabilities) {
-    capabilities = Capabilities::GetDefaultCapabilities();
+  if (!security_delegate) {
+    security_delegate = SecurityDelegate::GetDefaultSecurityDelegate();
     async = false;
   }
 
   std::unique_ptr<wayland::Server> server =
-      wayland::Server::Create(display_.get(), std::move(capabilities));
+      wayland::Server::Create(display_.get(), std::move(security_delegate));
   auto* server_ptr = server.get();
   auto start_callback = base::BindOnce(&WaylandServerController::OnStarted,
                                        weak_factory_.GetWeakPtr(),

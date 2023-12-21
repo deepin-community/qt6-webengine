@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -201,7 +201,8 @@ namespace declarativeNetRequest {
     // characters. This is matched against a url where the host is encoded in
     // the punycode format (in case of internationalized domains) and any other
     // non-ascii characters are url encoded in utf-8.
-    // For example, when the request url is http://abc.рф?q=ф, the
+    // For example, when the request url is
+    // http://abc.&#x0440;&#x0444;?q=&#x0444;, the
     // <code>urlFilter</code> will be matched against the url
     // http://abc.xn--p1ai/?q=%D1%84.
     DOMString? urlFilter;
@@ -390,6 +391,12 @@ namespace declarativeNetRequest {
   };
 
   [noinline_doc]
+  dictionary GetRulesFilter {
+    // If specified, only rules with matching IDs are included.
+    long[]? ruleIds;
+  };
+
+  [noinline_doc]
   dictionary MatchedRuleInfo {
     MatchedRule rule;
 
@@ -442,14 +449,14 @@ namespace declarativeNetRequest {
 
     // The unique identifier for the frame's document, if this request is for a
     // frame.
-    [nodoc] DOMString? documentId;
+    DOMString? documentId;
 
     // The type of the frame, if this request is for a frame.
-    [nodoc] extensionTypes.FrameType? frameType;
+    extensionTypes.FrameType? frameType;
 
     // The lifecycle of the frame's document, if this request is for a
     // frame.
-    [nodoc] extensionTypes.DocumentLifecycle? documentLifecycle;
+    extensionTypes.DocumentLifecycle? documentLifecycle;
 
     // ID of frame that wraps the frame which sent the request. Set to -1 if no
     // parent frame exists.
@@ -457,7 +464,7 @@ namespace declarativeNetRequest {
 
     // The unique identifier for the frame's parent document, if this request
     // is for a frame and has a parent.
-    [nodoc] DOMString? parentDocumentId;
+    DOMString? parentDocumentId;
 
     // The ID of the tab in which the request takes place. Set to -1 if the
     // request isn't related to a tab.
@@ -465,6 +472,26 @@ namespace declarativeNetRequest {
 
     // The resource type of the request.
     ResourceType type;
+  };
+
+  dictionary TestMatchRequestDetails {
+    // The URL of the hypothetical request.
+    DOMString url;
+
+    // The initiator URL (if any) for the hypothetical request.
+    DOMString? initiator;
+
+    // Standard HTTP method of the hypothetical request. Defaults to "get" for
+    // HTTP requests and is ignored for non-HTTP requests.
+    RequestMethod? method;
+
+    // The resource type of the hypothetical request.
+    ResourceType type;
+
+    // The ID of the tab in which the hypothetical request takes place. Does
+    // not need to correspond to a real tab ID. Default is -1, meaning that
+    // the request isn't related to a tab.
+    long? tabId;
   };
 
   dictionary MatchedRuleInfoDebug {
@@ -504,6 +531,11 @@ namespace declarativeNetRequest {
     UnsupportedRegexReason? reason;
   };
 
+  dictionary TestMatchOutcomeResult {
+    // The rules (if any) that match the hypothetical request.
+    MatchedRule[] matchedRules;
+  };
+
   dictionary UpdateRuleOptions {
     // IDs of the rules to remove. Any invalid IDs will be ignored.
     long[]? removeRuleIds;
@@ -518,6 +550,20 @@ namespace declarativeNetRequest {
     // The set of ids corresponding to a static $(ref:Ruleset) that should be
     // enabled.
     DOMString[]? enableRulesetIds;
+  };
+
+  dictionary UpdateStaticRulesOptions {
+    // The id corresponding to a static $(ref:Ruleset).
+    DOMString rulesetId;
+    // Set of ids corresponding to rules in the $(ref:Ruleset) to disable.
+    long[]? disableRuleIds;
+    // Set of ids corresponding to rules in the $(ref:Ruleset) to enable.
+    long[]? enableRuleIds;
+  };
+
+  dictionary GetDisabledRuleIdsOptions {
+    // The id corresponding to a static $(ref:Ruleset).
+    DOMString rulesetId;
   };
 
   dictionary TabActionCountUpdate {
@@ -541,8 +587,10 @@ namespace declarativeNetRequest {
   callback GetRulesCallback = void(Rule[] rules);
   callback GetMatchedRulesCallback = void(RulesMatchedDetails details);
   callback GetEnabledRulesetsCallback = void(DOMString[] rulesetIds);
+  callback GetDisabledRuleIdsCallback = void(long[] disabledRuleIds);
   callback IsRegexSupportedCallback = void(IsRegexSupportedResult result);
   callback GetAvailableStaticRuleCountCallback = void(long count);
+  callback TestMatchOutcomeCallback = void(TestMatchOutcomeResult result);
 
   interface Functions {
 
@@ -569,10 +617,15 @@ namespace declarativeNetRequest {
         UpdateRuleOptions options,
         optional EmptyCallback callback);
 
-    // Returns the current set of dynamic rules for the extension.
+    // Returns the current set of dynamic rules for the extension. Callers can
+    // optionally filter the list of fetched rules by specifying a
+    // <code>filter</code>.
+    // |filter|: An object to filter the list of fetched rules.
     // |callback|: Called with the set of dynamic rules. An error might be
     // raised in case of transient internal errors.
-    [supportsPromises] static void getDynamicRules(GetRulesCallback callback);
+    [supportsPromises] static void getDynamicRules(
+        optional GetRulesFilter filter,
+        GetRulesCallback callback);
 
     // Modifies the current set of session scoped rules for the extension.
     // The rules with IDs listed in <code>options.removeRuleIds</code> are first
@@ -595,8 +648,13 @@ namespace declarativeNetRequest {
         optional EmptyCallback callback);
 
     // Returns the current set of session scoped rules for the extension.
+    // Callers can optionally filter the list of fetched rules by specifying a
+    // <code>filter</code>.
+    // |filter|: An object to filter the list of fetched rules.
     // |callback|: Called with the set of session scoped rules.
-    [supportsPromises] static void getSessionRules(GetRulesCallback callback);
+    [supportsPromises] static void getSessionRules(
+        optional GetRulesFilter filter,
+        GetRulesCallback callback);
 
     // Updates the set of enabled static rulesets for the extension. The
     // rulesets with IDs listed in <code>options.disableRulesetIds</code> are
@@ -620,9 +678,28 @@ namespace declarativeNetRequest {
     [supportsPromises] static void getEnabledRulesets(
         GetEnabledRulesetsCallback callback);
 
+    // Disables and enables individual static rules in a $(ref:Ruleset).
+    // Changes to rules belonging to a disabled $(ref:Ruleset) will take
+    // effect the next time that it becomes enabled.
+    // |callback|: Called once the update is complete. In case of an error,
+    // $(ref:runtime.lastError) will be set and no change will be made to the
+    // enabled static rules.
+    [nodoc, supportsPromises] static void updateStaticRules(
+        UpdateStaticRulesOptions options,
+        optional EmptyCallback callback);
+
+    // Returns the list of static rules in the given $(ref:Ruleset) that are
+    // currently disabled.
+    // |options|: Specifies the ruleset to query.
+    // |callback|: Called with a list of ids that correspond to the disabled
+    // rules in that ruleset.
+    [nodoc, supportsPromises] static void getDisabledRuleIds(
+        GetDisabledRuleIdsOptions options,
+        GetDisabledRuleIdsCallback callback);
+
     // Returns all rules matched for the extension. Callers can optionally
-    // filter the list of matched rules by specifying a |filter|. This method is
-    // only available to extensions with the
+    // filter the list of matched rules by specifying a <code>filter</code>.
+    // This method is only available to extensions with the
     // <code>declarativeNetRequestFeedback</code> permission or having the
     // <code>activeTab</code> permission granted for the <code>tabId</code>
     // specified in <code>filter</code>.
@@ -654,15 +731,26 @@ namespace declarativeNetRequest {
         IsRegexSupportedCallback callback);
 
     // Returns the number of static rules an extension can enable before the
-    // <a href="#global-rule-limit">global static rule limit</a> is reached.
+    // <a href="#global-static-rule-limit">global static rule limit</a> is
+    // reached.
     [supportsPromises] static void getAvailableStaticRuleCount(
         GetAvailableStaticRuleCountCallback callback);
+
+    // Checks if any of the extension's declarativeNetRequest rules would match
+    // a hypothetical request.
+    // Note: Only available for unpacked extensions as this is only intended to
+    // be used during extension development.
+    // |requestDetails|: The request details to test.
+    // |callback|: Called with the details of matched rules.
+    [supportsPromises] static void testMatchOutcome(
+        TestMatchRequestDetails request,
+        TestMatchOutcomeCallback callback);
   };
 
   interface Properties {
     // The minimum number of static rules guaranteed to an extension across its
     // enabled static rulesets. Any rules above this limit will count towards
-    // the <a href="#global-rule-limit">global rule limit</a>.
+    // the <a href="#global-static-rule-limit">global static rule limit</a>.
     [value=30000] static long GUARANTEED_MINIMUM_STATIC_RULES();
 
     // The maximum number of dynamic rules that an extension can add.

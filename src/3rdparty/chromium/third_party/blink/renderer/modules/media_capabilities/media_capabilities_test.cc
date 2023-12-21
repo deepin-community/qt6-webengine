@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -39,6 +39,7 @@
 #include "third_party/blink/renderer/core/frame/navigator.h"
 #include "third_party/blink/renderer/core/testing/page_test_base.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
+#include "third_party/blink/renderer/platform/peerconnection/rtc_video_encoder_factory.h"
 #include "third_party/blink/renderer/platform/testing/testing_platform_support.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_view.h"
@@ -202,6 +203,7 @@ class FakeMediaMetricsProvider
                   media::mojom::MediaURLScheme url_scheme,
                   media::mojom::MediaStreamType media_stream_type) override {}
   void OnError(media::mojom::blink::PipelineStatusPtr status) override {}
+  void OnFallback(::media::mojom::blink::PipelineStatusPtr status) override {}
   void SetIsEME() override {}
   void SetTimeToMetadata(base::TimeDelta elapsed) override {}
   void SetTimeToFirstFrame(base::TimeDelta elapsed) override {}
@@ -1463,9 +1465,14 @@ TEST(MediaCapabilitiesTests, WebrtcEncodePowerEfficientIsSmooth) {
   // supported and powerEfficient.
   MediaCapabilitiesTestContext context;
   media::MockGpuVideoAcceleratorFactories mock_gpu_factories(nullptr);
+
+  auto video_encoder_factory =
+      std::make_unique<RTCVideoEncoderFactory>(&mock_gpu_factories);
+  // Ensure all the profiles in our mock GPU factory are allowed.
+  video_encoder_factory->clear_disabled_profiles_for_testing();
+
   WebrtcEncodingInfoHandler encoding_info_handler(
-      blink::CreateWebrtcVideoEncoderFactory(&mock_gpu_factories,
-                                             base::DoNothing()),
+      std::move(video_encoder_factory),
       blink::CreateWebrtcAudioEncoderFactory());
   context.GetMediaCapabilities()->set_webrtc_encoding_info_handler_for_test(
       &encoding_info_handler);
@@ -1501,9 +1508,14 @@ TEST(MediaCapabilitiesTests, WebrtcEncodeOverridePowerEfficientIsSmooth) {
   // supported and powerEfficient.
   MediaCapabilitiesTestContext context;
   media::MockGpuVideoAcceleratorFactories mock_gpu_factories(nullptr);
+
+  auto video_encoder_factory =
+      std::make_unique<RTCVideoEncoderFactory>(&mock_gpu_factories);
+  // Ensure all the profiles in our mock GPU factory are allowed.
+  video_encoder_factory->clear_disabled_profiles_for_testing();
+
   WebrtcEncodingInfoHandler encoding_info_handler(
-      blink::CreateWebrtcVideoEncoderFactory(&mock_gpu_factories,
-                                             base::DoNothing()),
+      std::move(video_encoder_factory),
       blink::CreateWebrtcAudioEncoderFactory());
   context.GetMediaCapabilities()->set_webrtc_encoding_info_handler_for_test(
       &encoding_info_handler);

@@ -1,4 +1,4 @@
-# Copyright 2020 The Chromium Authors. All rights reserved.
+# Copyright 2020 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -18,6 +18,7 @@ source_set("libavif") {
     "src/src/rawdata.c",
     "src/src/read.c",
     "src/src/reformat.c",
+    "src/src/reformat_libsharpyuv.c",
     "src/src/reformat_libyuv.c",
     "src/src/scale.c",
     "src/src/stream.c",
@@ -36,11 +37,5 @@ source_set("libavif") {
     include_dirs += [ "../dav1d/libdav1d/include/" ]
     defines += [ "AVIF_CODEC_DAV1D" ]
     deps += [ "//third_party/dav1d" ]
-  }
-
-  if (enable_libgav1_decoder) {
-    sources += [ "src/src/codec_libgav1.c" ]
-    defines += [ "AVIF_CODEC_LIBGAV1" ]
-    deps += [ "//third_party/libgav1" ]
   }
 }

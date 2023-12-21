@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,9 +7,9 @@
 #include <string>
 #include <utility>
 
-#include "base/bind.h"
-#include "base/callback.h"
 #include "base/check.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/ash/printing/cups_print_job.h"
@@ -26,6 +26,16 @@
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace extensions {
+
+// Subclass PrintJob to allow construction without supplying a PrintJobManager
+// instance.
+class PrintJobForTesting : public printing::PrintJob {
+ public:
+  PrintJobForTesting() = default;
+
+ private:
+  ~PrintJobForTesting() override = default;
+};
 
 FakePrintJobControllerAsh::FakePrintJobControllerAsh(
     ash::TestCupsPrintJobManager* print_job_manager,
@@ -60,7 +70,7 @@ scoped_refptr<printing::PrintJob> FakePrintJobControllerAsh::StartPrintJob(
     const std::string& extension_id,
     std::unique_ptr<printing::MetafileSkia> metafile,
     std::unique_ptr<printing::PrintSettings> settings) {
-  auto job = base::MakeRefCounted<printing::PrintJob>();
+  auto job = base::MakeRefCounted<PrintJobForTesting>();
   content::GetUIThreadTaskRunner({})->PostTask(
       FROM_HERE, base::BindOnce(&FakePrintJobControllerAsh::StartPrinting,
                                 weak_ptr_factory_.GetWeakPtr(), job,
@@ -73,7 +83,7 @@ void FakePrintJobControllerAsh::StartPrinting(
     const std::string& extension_id,
     std::unique_ptr<printing::PrintSettings> settings) {
   job_id_++;
-  job->SetSource(printing::PrintJob::Source::EXTENSION, extension_id);
+  job->SetSource(printing::PrintJob::Source::kExtension, extension_id);
 
   absl::optional<chromeos::Printer> printer =
       printers_manager_->GetPrinter(base::UTF16ToUTF8(settings->device_name()));
@@ -99,8 +109,8 @@ void FakePrintJobControllerAsh::StartPrinting(
   // Create a new CupsPrintJob.
   auto print_job = std::make_unique<ash::CupsPrintJob>(
       *printer, job_id_, base::UTF16ToUTF8(document->settings().title()),
-      /*total_page_number=*/1, printing::PrintJob::Source::EXTENSION,
-      extension_id, chromeos::PrintSettingsToProto(document->settings()));
+      /*total_page_number=*/1, printing::PrintJob::Source::kExtension,
+      extension_id, ash::PrintSettingsToProto(document->settings()));
   print_job_manager_->CreatePrintJob(print_job.get());
   print_job_manager_->StartPrintJob(print_job.get());
   std::string id = print_job->GetUniqueId();

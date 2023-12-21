@@ -1,4 +1,4 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,9 +7,8 @@
 
 #include <cstddef>
 
-#include "base/allocator/buildflags.h"
-#include "base/allocator/partition_allocator/partition_alloc_config.h"
-#include "base/base_export.h"
+#include "base/allocator/partition_allocator/partition_alloc_base/component_export.h"
+#include "base/allocator/partition_allocator/partition_alloc_buildflags.h"
 
 namespace partition_alloc {
 
@@ -17,32 +16,35 @@ namespace partition_alloc {
 struct PoolStats {
   size_t usage = 0;
 
-  // On 32-bit, GigaCage is mainly a logical entity, intermingled with
+  // On 32-bit, pools are mainly logical entities, intermingled with
   // allocations not managed by PartitionAlloc. The "largest available
   // reservation" is not possible to measure in that case.
-#if defined(PA_HAS_64_BITS_POINTERS)
+#if BUILDFLAG(HAS_64_BIT_POINTERS)
   size_t largest_available_reservation = 0;
-#endif  // defined(PA_HAS_64_BITS_POINTERS)
+#endif
 };
 
 struct AddressSpaceStats {
   PoolStats regular_pool_stats;
-#if BUILDFLAG(USE_BACKUP_REF_PTR)
+#if BUILDFLAG(ENABLE_BACKUP_REF_PTR_SUPPORT)
   PoolStats brp_pool_stats;
-#endif  // BUILDFLAG(USE_BACKUP_REF_PTR)
-#if defined(PA_HAS_64_BITS_POINTERS)
+#endif  // BUILDFLAG(ENABLE_BACKUP_REF_PTR_SUPPORT)
+#if BUILDFLAG(HAS_64_BIT_POINTERS)
   PoolStats configurable_pool_stats;
 #else
-#if BUILDFLAG(USE_BACKUP_REF_PTR)
+#if BUILDFLAG(ENABLE_BACKUP_REF_PTR_SUPPORT)
   size_t blocklist_size;  // measured in super pages
   size_t blocklist_hit_count;
-#endif  // BUILDFLAG(USE_BACKUP_REF_PTR)
-#endif  // defined(PA_HAS_64_BITS_POINTERS)
+#endif  // BUILDFLAG(ENABLE_BACKUP_REF_PTR_SUPPORT)
+#endif  // BUILDFLAG(HAS_64_BIT_POINTERS)
+#if BUILDFLAG(ENABLE_PKEYS)
+  PoolStats pkey_pool_stats;
+#endif
 };
 
 // Interface passed to `AddressPoolManager::DumpStats()` to mediate
 // for `AddressSpaceDumpProvider`.
-class BASE_EXPORT AddressSpaceStatsDumper {
+class PA_COMPONENT_EXPORT(PARTITION_ALLOC) AddressSpaceStatsDumper {
  public:
   virtual void DumpStats(const AddressSpaceStats* address_space_stats) = 0;
 };

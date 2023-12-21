@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,7 +6,7 @@
 
 #include <tuple>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/no_destructor.h"
 #include "components/remote_cocoa/app_shim/alert.h"
 #include "components/remote_cocoa/app_shim/color_panel_bridge.h"
@@ -150,11 +150,12 @@ void ApplicationBridge::CreateNativeWidgetNSWindow(
 }
 
 void ApplicationBridge::CreateRenderWidgetHostNSView(
+    uint64_t view_id,
     mojo::PendingAssociatedRemote<mojom::StubInterface> host,
     mojo::PendingAssociatedReceiver<mojom::StubInterface> view_receiver) {
   if (!render_widget_host_create_callback_)
     return;
-  render_widget_host_create_callback_.Run(host.PassHandle(),
+  render_widget_host_create_callback_.Run(view_id, host.PassHandle(),
                                           view_receiver.PassHandle());
 }
 

@@ -82,6 +82,7 @@
 .styles-section .styles-section-subtitle .devtools-link {
   color: var(--color-text-primary);
   text-decoration-color: hsl(0deg 0% 60%);
+  outline-offset: 0;
 }
 
 .styles-section .selector {
@@ -226,12 +227,15 @@
 .sidebar-pane-section-toolbar {
   position: absolute;
   right: 0;
-  bottom: 0;
+  bottom: -5px;
   z-index: 0;
 }
 
 .sidebar-pane-section-toolbar.new-rule-toolbar {
   visibility: hidden;
+  margin-bottom: 5px;
+
+  --toolbar-height: 16px;
 }
 
 .styles-pane:not(.is-editing-style) .styles-section.matched-styles:not(.read-only):hover .sidebar-pane-section-toolbar.new-rule-toolbar {

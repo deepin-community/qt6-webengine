@@ -7,14 +7,12 @@
 <translation id="1178581264944972037">Szünet</translation>
 <translation id="1306460908038601864">Ki</translation>
 <translation id="1311894908970423688">Ilyen érték szükséges: <ph name="VALUE_DATE_OR_TIME" />.</translation>
-<translation id="145015347812617860"><ph name="COUNT" /> elem</translation>
 <translation id="1480676835519562650">több is választható, <ph name="COUNT" />/<ph name="SELECTED" /> van kiválasztva.</translation>
 <translation id="1588438908519853928">Normál</translation>
 <translation id="1591562245178063882">Ebben a hónapban</translation>
 <translation id="1637811476055996098">Fájlok kiválasztása</translation>
 <translation id="1681022320378710418">aktuális idő</translation>
 <translation id="1727839386348365796">Pipetta</translation>
-<translation id="1727886345390570319">a feliratok menü elrejtése</translation>
 <translation id="1729654308190250600">Kérjük, ne hagyja üresen az e-mail-cím mezőjét.</translation>
 <translation id="1758486001363313524">Más...</translation>
 <translation id="1787192514241997742">összes idő: <ph name="REMAINING_TIME" /></translation>
@@ -31,7 +29,6 @@
 <translation id="2246498165605549352">Helyi fájl</translation>
 <translation id="2247351761944213033"><ph name="WEEKNUMBER" />. hét, <ph name="YEAR" /></translation>
 <translation id="2277199496770840904"><ph name="NUMBER" />. szám</translation>
-<translation id="2307576640803031502">a lista <ph name="INDEX" />/<ph name="COUNT" />. eleme</translation>
 <translation id="2393030564806080191">Szín hexadecimális értéke</translation>
 <translation id="2398813069815436052">párbeszédpanel megnyitva.</translation>
 <translation id="245932805758469625">a videóból hátralévő másodpercek száma</translation>
@@ -63,7 +60,6 @@
 <translation id="4103419683916926126">Ezredmásodperc</translation>
 <translation id="4201051445878709314">Az előző hónap megjelenítése</translation>
 <translation id="4360991593054037559">Kérjük, érvényes értéket adjon meg. A két legközelebbi érvényes érték <ph name="VALID_VALUE_LOW" /> és <ph name="VALID_VALUE_HIGHER" />.</translation>
-<translation id="4371899966896349864">lejátszási sebesség menüjének elrejtése</translation>
 <translation id="4522570452068850558">Részletek</translation>
 <translation id="4664250907885839816">A „<ph name="ATSIGN" />” utáni rész nem tartalmazhat „<ph name="INVALIDCHARACTER" />” karaktert.</translation>
 <translation id="4718048029184481307">Lejátszás kép a képben módban</translation>
@@ -83,6 +79,7 @@
 <translation id="5117590920725113268">A következő hónap megjelenítése</translation>
 <translation id="5164977714490026579">Az érték legyen nagyobb vagy egyenlő, mint <ph name="MINIMUM" />.</translation>
 <translation id="5196716972587102051">2</translation>
+<translation id="5199514351668672591">vissza a beállításokhoz</translation>
 <translation id="520299402983819650"><ph name="QUANTITY" /> PB</translation>
 <translation id="5272594226096532950">Nincs bejelölve. A csoportban, a(z) <ph name="COUNT" />., összesen: <ph name="INDEX" />.</translation>
 <translation id="5307600278924710095">Kérjük, adja meg a „<ph name="ATSIGN" />” előtti részt is. A „<ph name="INVALIDADDRESS" />” cím nem teljes.</translation>

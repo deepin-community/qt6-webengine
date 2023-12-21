@@ -7,10 +7,11 @@
 
 #include "src/gpu/ganesh/effects/GrRRectEffect.h"
 
+#include "src/base/SkTLazy.h"
 #include "src/core/SkRRectPriv.h"
-#include "src/core/SkTLazy.h"
 #include "src/gpu/KeyBuilder.h"
 #include "src/gpu/ganesh/GrFragmentProcessor.h"
+#include "src/gpu/ganesh/GrProcessorUnitTest.h"
 #include "src/gpu/ganesh/GrShaderCaps.h"
 #include "src/gpu/ganesh/effects/GrConvexPolyEffect.h"
 #include "src/gpu/ganesh/effects/GrOvalEffect.h"
@@ -118,7 +119,7 @@ bool CircularRRectEffect::onIsEqual(const GrFragmentProcessor& other) const {
 
 //////////////////////////////////////////////////////////////////////////////
 
-GR_DEFINE_FRAGMENT_PROCESSOR_TEST(CircularRRectEffect);
+GR_DEFINE_FRAGMENT_PROCESSOR_TEST(CircularRRectEffect)
 
 #if GR_TEST_UTILS
 std::unique_ptr<GrFragmentProcessor> CircularRRectEffect::TestCreate(GrProcessorTestData* d) {
@@ -171,7 +172,7 @@ void CircularRRectEffect::Impl::emitCode(EmitArgs& args) {
 
     // If we're on a device where float != fp32 then the length calculation could overflow.
     SkString clampedCircleDistance;
-    if (!args.fShaderCaps->floatIs32Bits()) {
+    if (!args.fShaderCaps->fFloatIs32Bits) {
         clampedCircleDistance.printf("saturate(%s.x * (1.0 - length(dxy * %s.y)))",
                                      radiusPlusHalfName, radiusPlusHalfName);
     } else {
@@ -452,7 +453,7 @@ bool EllipticalRRectEffect::onIsEqual(const GrFragmentProcessor& other) const {
 
 //////////////////////////////////////////////////////////////////////////////
 
-GR_DEFINE_FRAGMENT_PROCESSOR_TEST(EllipticalRRectEffect);
+GR_DEFINE_FRAGMENT_PROCESSOR_TEST(EllipticalRRectEffect)
 
 #if GR_TEST_UTILS
 std::unique_ptr<GrFragmentProcessor> EllipticalRRectEffect::TestCreate(GrProcessorTestData* d) {
@@ -499,7 +500,7 @@ static bool elliptical_effect_uses_scale(const GrShaderCaps& caps, const SkRRect
     // If we're on a device where float != fp32 then we'll do the distance computation in a space
     // that is normalized by the largest radius. The scale uniform will be scale, 1/scale. The
     // radii uniform values are already in this normalized space.
-    if (!caps.floatIs32Bits()) {
+    if (!caps.fFloatIs32Bits) {
         return true;
     }
     // Additionally, even if we have fp32, large radii can underflow 1/radii^2 terms leading to

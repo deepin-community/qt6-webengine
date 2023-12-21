@@ -1,4 +1,4 @@
-// Copyright 2017 PDFium Authors. All rights reserved.
+// Copyright 2017 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -32,8 +32,7 @@ class CPDF_SampledFunc final : public CPDF_Function {
   ~CPDF_SampledFunc() override;
 
   // CPDF_Function:
-  bool v_Init(const CPDF_Object* pObj,
-              std::set<const CPDF_Object*>* pVisited) override;
+  bool v_Init(const CPDF_Object* pObj, VisitedSet* pVisited) override;
   bool v_Call(pdfium::span<const float> inputs,
               pdfium::span<float> results) const override;
 
@@ -42,15 +41,15 @@ class CPDF_SampledFunc final : public CPDF_Function {
   }
   uint32_t GetBitsPerSample() const { return m_nBitsPerSample; }
 
-#if defined(_SKIA_SUPPORT_) || defined(_SKIA_SUPPORT_PATHS_)
+#ifdef _SKIA_SUPPORT_
   RetainPtr<CPDF_StreamAcc> GetSampleStream() const;
 #endif
 
  private:
   std::vector<SampleEncodeInfo> m_EncodeInfo;
   std::vector<SampleDecodeInfo> m_DecodeInfo;
-  uint32_t m_nBitsPerSample;
-  uint32_t m_SampleMax;
+  uint32_t m_nBitsPerSample = 0;
+  uint32_t m_SampleMax = 0;
   RetainPtr<CPDF_StreamAcc> m_pSampleStream;
 };
 

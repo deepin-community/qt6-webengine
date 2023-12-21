@@ -9,6 +9,7 @@
 
 #include "extensions/pdf_iframe_navigation_throttle_qt.h"
 
+#include "base/task/sequenced_task_runner.h"
 #include "chrome/grit/renderer_resources.h"
 #include "components/strings/grit/components_strings.h"
 #include "content/public/browser/download_utils.h"
@@ -18,7 +19,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_user_data.h"
 #include "content/public/common/webplugininfo.h"
-#include "net/base/escape.h"
+#include "base/strings/escape.h"
 #include "net/http/http_response_headers.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -37,7 +38,6 @@ class PdfWebContentsLifetimeHelper : public content::WebContentsUserData<PdfWebC
 public:
     explicit PdfWebContentsLifetimeHelper(content::WebContents *web_contents)
         : content::WebContentsUserData<PdfWebContentsLifetimeHelper>(*web_contents)
-        , web_contents_(web_contents)
     {}
 
     base::WeakPtr<PdfWebContentsLifetimeHelper> GetWeakPtr()
@@ -47,13 +47,12 @@ public:
 
     void NavigateIFrameToPlaceholder(const content::OpenURLParams &url_params)
     {
-        web_contents_->OpenURL(url_params);
+        GetWebContents().OpenURL(url_params);
     }
 
 private:
     friend class content::WebContentsUserData<PdfWebContentsLifetimeHelper>;
 
-    content::WebContents *const web_contents_;
     base::WeakPtrFactory<PdfWebContentsLifetimeHelper> weak_factory_{this};
 
     WEB_CONTENTS_USER_DATA_KEY_DECL();
@@ -69,15 +68,16 @@ bool IsPDFPluginEnabled(content::NavigationHandle *navigation_handle, bool *is_s
     if (web_contents->IsInnerWebContentsForGuest())
         web_contents = web_contents->GetOuterWebContents();
 
-    int process_id = web_contents->GetMainFrame()->GetProcess()->GetID();
-    int routing_id = web_contents->GetMainFrame()->GetRoutingID();
+    int process_id = web_contents->GetPrimaryMainFrame()->GetProcess()->GetID();
+    int routing_id = web_contents->GetPrimaryMainFrame()->GetRoutingID();
     content::WebPluginInfo plugin_info;
     // Will check WebEngineSettings by PluginServiceFilterQt
     return content::PluginService::GetInstance()->GetPluginInfo(
-                process_id, routing_id, navigation_handle->GetURL(),
-                kPDFMimeType,
-                false /* allow_wildcard */, is_stale, &plugin_info,
-                nullptr /* actual_mime_type */);
+                process_id, routing_id,
+                navigation_handle->GetWebContents()->GetBrowserContext(),
+                navigation_handle->GetURL(),
+                kPDFMimeType, false /* allow_wildcard */,
+                is_stale, &plugin_info, nullptr /* actual_mime_type */);
 }
 
 std::string GetPDFPlaceholderHTML(const GURL &pdf_url)
@@ -85,12 +85,12 @@ std::string GetPDFPlaceholderHTML(const GURL &pdf_url)
     std::string template_html = ui::ResourceBundle::GetSharedInstance().LoadDataResourceString(IDR_PDF_PLUGIN_HTML);
     webui::AppendWebUiCssTextDefaults(&template_html);
 
-    base::DictionaryValue values;
-    values.SetString("fileName", pdf_url.ExtractFileName());
-    values.SetString("open", l10n_util::GetStringUTF8(IDS_ACCNAME_OPEN));
-    values.SetString("pdfUrl", pdf_url.spec());
+    base::Value::Dict values;
+    values.Set("fileName", pdf_url.ExtractFileName());
+    values.Set("open", l10n_util::GetStringUTF8(IDS_ACCNAME_OPEN));
+    values.Set("pdfUrl", pdf_url.spec());
 
-    return webui::GetI18nTemplateHtml(template_html, &values);
+    return webui::GetI18nTemplateHtml(template_html, std::move(values));
 }
 
 // static
@@ -167,7 +167,7 @@ void PDFIFrameNavigationThrottleQt::LoadPlaceholderHTML()
 {
     // Prepare the params to navigate to the placeholder.
     std::string html = GetPDFPlaceholderHTML(navigation_handle()->GetURL());
-    GURL data_url("data:text/html," + net::EscapePath(html));
+    GURL data_url("data:text/html," + base::EscapePath(html));
     content::OpenURLParams params = content::OpenURLParams::FromNavigationHandle(navigation_handle());
     params.url = data_url;
     params.transition = ui::PAGE_TRANSITION_AUTO_SUBFRAME;
@@ -182,7 +182,7 @@ void PDFIFrameNavigationThrottleQt::LoadPlaceholderHTML()
 
     PdfWebContentsLifetimeHelper::CreateForWebContents(web_contents);
     PdfWebContentsLifetimeHelper *helper = PdfWebContentsLifetimeHelper::FromWebContents(web_contents);
-    base::SequencedTaskRunnerHandle::Get()->PostTask(
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE,
         base::BindOnce(&PdfWebContentsLifetimeHelper::NavigateIFrameToPlaceholder,
                        helper->GetWeakPtr(), std::move(params)));

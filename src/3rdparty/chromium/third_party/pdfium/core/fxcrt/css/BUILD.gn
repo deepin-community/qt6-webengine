@@ -1,4 +1,4 @@
-# Copyright 2018 The PDFium Authors. All rights reserved.
+# Copyright 2018 The PDFium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -64,6 +64,7 @@ source_set("css") {
 
 pdfium_unittest_source_set("unittests") {
   sources = [
+    "cfx_cssdata_unittest.cpp",
     "cfx_cssdeclaration_unittest.cpp",
     "cfx_cssstylesheet_unittest.cpp",
     "cfx_csssyntaxparser_unittest.cpp",

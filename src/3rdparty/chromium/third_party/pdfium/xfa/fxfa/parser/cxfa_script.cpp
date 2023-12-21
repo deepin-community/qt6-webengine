@@ -1,4 +1,4 @@
-// Copyright 2017 PDFium Authors. All rights reserved.
+// Copyright 2017 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -31,6 +31,13 @@ const CXFA_Node::AttributeData kScriptAttributeData[] = {
 };
 
 }  // namespace
+
+// static
+CXFA_Script* CXFA_Script::FromNode(CXFA_Node* pNode) {
+  return pNode && pNode->GetElementType() == XFA_Element::Script
+             ? static_cast<CXFA_Script*>(pNode)
+             : nullptr;
+}
 
 CXFA_Script::CXFA_Script(CXFA_Document* doc, XFA_PacketType packet)
     : CXFA_Node(doc,

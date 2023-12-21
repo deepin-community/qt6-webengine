@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,7 +13,7 @@
 #include "services/data_decoder/public/mojom/gzipper.mojom.h"
 #include "services/data_decoder/public/mojom/image_decoder.mojom.h"
 #include "services/data_decoder/public/mojom/json_parser.mojom.h"
-#include "services/data_decoder/public/mojom/web_bundler.mojom.h"
+#include "services/data_decoder/public/mojom/structured_headers_parser.mojom.h"
 #include "services/data_decoder/public/mojom/xml_parser.mojom.h"
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
@@ -59,26 +59,18 @@ class DataDecoderService : public mojom::DataDecoderService {
     web_bundle_parser_factory_binder_ = binder;
   }
 
-  // Configures the service to use |binder| to bind WebBundler in subsequent
-  // BindWebBundler() calls.
-  void SetWebBundlerBinderForTesting(
-      base::RepeatingCallback<void(mojo::PendingReceiver<mojom::WebBundler>)>
-          binder) {
-    web_bundler_binder_ = binder;
-  }
-
  private:
   // mojom::DataDecoderService implementation:
   void BindImageDecoder(
       mojo::PendingReceiver<mojom::ImageDecoder> receiver) override;
   void BindJsonParser(
       mojo::PendingReceiver<mojom::JsonParser> receiver) override;
+  void BindStructuredHeadersParser(
+      mojo::PendingReceiver<mojom::StructuredHeadersParser> receiver) override;
   void BindXmlParser(mojo::PendingReceiver<mojom::XmlParser> receiver) override;
   void BindWebBundleParserFactory(
       mojo::PendingReceiver<web_package::mojom::WebBundleParserFactory>
           receiver) override;
-  void BindWebBundler(
-      mojo::PendingReceiver<mojom::WebBundler> receiver) override;
   void BindGzipper(mojo::PendingReceiver<mojom::Gzipper> receiver) override;
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
@@ -95,8 +87,6 @@ class DataDecoderService : public mojom::DataDecoderService {
   base::RepeatingCallback<void(
       mojo::PendingReceiver<web_package::mojom::WebBundleParserFactory>)>
       web_bundle_parser_factory_binder_;
-  base::RepeatingCallback<void(mojo::PendingReceiver<mojom::WebBundler>)>
-      web_bundler_binder_;
 };
 
 }  // namespace data_decoder

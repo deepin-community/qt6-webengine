@@ -57,12 +57,17 @@ struct allocate_small_svd {
   }
 };
 
+EIGEN_DIAGNOSTICS(push)
+EIGEN_DISABLE_DEPRECATED_WARNING
+
 template <typename MatrixType>
 struct allocate_small_svd<MatrixType, 0> {
   static void run(JacobiSVD<MatrixType>& smallSvd, Index rows, Index cols, unsigned int computationOptions) {
     smallSvd = JacobiSVD<MatrixType>(rows, cols, computationOptions);
   }
 };
+
+EIGEN_DIAGNOSTICS(pop)
 
 } // end namespace internal
 
@@ -76,9 +81,11 @@ struct allocate_small_svd<MatrixType, 0> {
  * \tparam MatrixType_ the type of the matrix of which we are computing the SVD decomposition
  *
  * \tparam Options_ this optional parameter allows one to specify options for computing unitaries \a U and \a V.
- *                  Possible values are #ComputeThinU, #ComputeThinV, #ComputeFullU, #ComputeFullV.
- *                  It is not possible to request both the thin and full version of \a U or \a V.
- *                  By default, unitaries are not computed.
+ *                  Possible values are #ComputeThinU, #ComputeThinV, #ComputeFullU, #ComputeFullV, and
+ *                  #DisableQRDecomposition. It is not possible to request both the thin and full version of \a U or
+ *                  \a V. By default, unitaries are not computed. BDCSVD uses R-Bidiagonalization to improve
+ *                  performance on tall and wide matrices. For backwards compatility, the option
+ *                  #DisableQRDecomposition can be used to disable this optimization.
  *
  * This class first reduces the input matrix to bi-diagonal form using class UpperBidiagonalization,
  * and then performs a divide-and-conquer diagonalization. Small blocks are diagonalized using class JacobiSVD.
@@ -110,6 +117,8 @@ public:
   typedef typename Base::Index Index;
   enum {
     Options = Options_,
+    QRDecomposition = Options & internal::QRPreconditionerBits,
+    ComputationOptions = Options & internal::ComputationOptionsBits,
     RowsAtCompileTime = Base::RowsAtCompileTime,
     ColsAtCompileTime = Base::ColsAtCompileTime,
     DiagSizeAtCompileTime = Base::DiagSizeAtCompileTime,
@@ -227,7 +236,6 @@ public:
   }
 
 private:
-  void allocate(Index rows, Index cols, unsigned int computationOptions);
   BDCSVD& compute_impl(const MatrixType& matrix, unsigned int computationOptions);
   void divide(Index firstCol, Index lastCol, Index firstRowW, Index firstColW, Index shift);
   void computeSVDofM(Index firstCol, Index n, MatrixXr& U, VectorType& singVals, MatrixXr& V);
@@ -245,14 +253,19 @@ private:
   void computeBaseCase(SVDType& svd, Index n, Index firstCol, Index firstRowW, Index firstColW, Index shift);
 
  protected:
+  void allocate(Index rows, Index cols, unsigned int computationOptions);
   MatrixXr m_naiveU, m_naiveV;
   MatrixXr m_computed;
   Index m_nRec;
   ArrayXr m_workspace;
   ArrayXi m_workspaceI;
   int m_algoswap;
-  bool m_isTranspose, m_compU, m_compV;
-  JacobiSVD<MatrixType, Options> smallSvd;
+  bool m_isTranspose, m_compU, m_compV, m_useQrDecomp;
+  JacobiSVD<MatrixType, ComputationOptions> smallSvd;
+  HouseholderQR<MatrixX> qrDecomp;
+  internal::UpperBidiagonalization<MatrixX> bid;
+  MatrixX copyWorkspace;
+  MatrixX reducedTriangle;
 
   using Base::m_computationOptions;
   using Base::m_computeThinU;
@@ -276,7 +289,7 @@ void BDCSVD<MatrixType, Options>::allocate(Index rows, Index cols, unsigned int 
     return;
 
   if (cols < m_algoswap)
-    internal::allocate_small_svd<MatrixType, Options>::run(smallSvd, rows, cols, computationOptions);
+    internal::allocate_small_svd<MatrixType, ComputationOptions>::run(smallSvd, rows, cols, computationOptions);
 
   m_computed = MatrixXr::Zero(m_diagSize + 1, m_diagSize );
   m_compU = computeV();
@@ -284,6 +297,22 @@ void BDCSVD<MatrixType, Options>::allocate(Index rows, Index cols, unsigned int 
   m_isTranspose = (cols > rows);
   if (m_isTranspose)
     std::swap(m_compU, m_compV);
+
+  // kMinAspectRatio is the crossover point that determines if we perform R-Bidiagonalization
+  // or bidiagonalize the input matrix directly.
+  // It is based off of LAPACK's dgesdd routine, which uses 11.0/6.0
+  // we use a larger scalar to prevent a regression for relatively square matrices.
+  constexpr Index kMinAspectRatio = 4;
+  constexpr bool disableQrDecomp = static_cast<int>(QRDecomposition) == static_cast<int>(DisableQRDecomposition);
+  m_useQrDecomp = !disableQrDecomp && ((rows / kMinAspectRatio > cols) || (cols / kMinAspectRatio > rows));
+  if (m_useQrDecomp) {
+    qrDecomp = HouseholderQR<MatrixX>((std::max)(rows, cols), (std::min)(rows, cols));
+    reducedTriangle = MatrixX(m_diagSize, m_diagSize);
+  }
+
+  copyWorkspace = MatrixX(m_isTranspose ? cols : rows, m_isTranspose ? rows : cols);
+  bid = internal::UpperBidiagonalization<MatrixX>(m_useQrDecomp ? m_diagSize : copyWorkspace.rows(),
+                                                  m_useQrDecomp ? m_diagSize : copyWorkspace.cols());
 
   if (m_compU) m_naiveU = MatrixXr::Zero(m_diagSize + 1, m_diagSize + 1 );
   else         m_naiveU = MatrixXr::Zero(2, m_diagSize + 1 );
@@ -330,13 +359,22 @@ BDCSVD<MatrixType, Options>& BDCSVD<MatrixType, Options>::compute_impl(const Mat
   }
 
   if(numext::is_exactly_zero(scale)) scale = Literal(1);
-  MatrixX copy;
-  if (m_isTranspose) copy = matrix.adjoint()/scale;
-  else               copy = matrix/scale;
 
-  //**** step 1 - Bidiagonalization
-  // FIXME this line involves temporaries
-  internal::UpperBidiagonalization<MatrixX> bid(copy);
+  if (m_isTranspose) copyWorkspace = matrix.adjoint() / scale;
+  else copyWorkspace = matrix / scale;
+
+  //**** step 1 - Bidiagonalization.
+  // If the problem is sufficiently rectangular, we perform R-Bidiagonalization: compute A = Q(R/0)
+  // and then bidiagonalize R. Otherwise, if the problem is relatively square, we
+  // bidiagonalize the input matrix directly.
+  if (m_useQrDecomp) {
+    qrDecomp.compute(copyWorkspace);
+    reducedTriangle = qrDecomp.matrixQR().topRows(m_diagSize);
+    reducedTriangle.template triangularView<StrictlyLower>().setZero();
+    bid.compute(reducedTriangle);
+  } else {
+    bid.compute(copyWorkspace);
+  }
 
   //**** step 2 - Divide & Conquer
   m_naiveU.setZero();
@@ -368,12 +406,14 @@ BDCSVD<MatrixType, Options>& BDCSVD<MatrixType, Options>::compute_impl(const Mat
     }
   }
 
-#ifdef EIGEN_BDCSVD_DEBUG_VERBOSE
-//   std::cout << "m_naiveU\n" << m_naiveU << "\n\n";
-//   std::cout << "m_naiveV\n" << m_naiveV << "\n\n";
-#endif
+  //**** step 4 - Finalize unitaries U and V
   if(m_isTranspose) copyUV(bid.householderV(), bid.householderU(), m_naiveV, m_naiveU);
   else              copyUV(bid.householderU(), bid.householderV(), m_naiveU, m_naiveV);
+
+  if (m_useQrDecomp) {
+    if (m_isTranspose && computeV()) m_matrixV.applyOnTheLeft(qrDecomp.householderQ());
+    else if (!m_isTranspose && computeU()) m_matrixU.applyOnTheLeft(qrDecomp.householderQ());
+  }
 
   m_isInitialized = true;
   return *this;
@@ -386,17 +426,21 @@ void BDCSVD<MatrixType, Options>::copyUV(const HouseholderU& householderU, const
   // Note exchange of U and V: m_matrixU is set from m_naiveV and vice versa
   if (computeU())
   {
-    Index Ucols = m_computeThinU ? m_diagSize : householderU.cols();
-    m_matrixU = MatrixX::Identity(householderU.cols(), Ucols);
+    Index Ucols = m_computeThinU ? m_diagSize : rows();
+    m_matrixU = MatrixX::Identity(rows(), Ucols);
     m_matrixU.topLeftCorner(m_diagSize, m_diagSize) = naiveV.template cast<Scalar>().topLeftCorner(m_diagSize, m_diagSize);
-    householderU.applyThisOnTheLeft(m_matrixU); // FIXME this line involves a temporary buffer
+    // FIXME the following conditionals involve temporary buffers
+    if (m_useQrDecomp) m_matrixU.topLeftCorner(householderU.cols(), m_diagSize).applyOnTheLeft(householderU);
+    else m_matrixU.applyOnTheLeft(householderU);
   }
   if (computeV())
   {
-    Index Vcols = m_computeThinV ? m_diagSize : householderV.cols();
-    m_matrixV = MatrixX::Identity(householderV.cols(), Vcols);
+    Index Vcols = m_computeThinV ? m_diagSize : cols();
+    m_matrixV = MatrixX::Identity(cols(), Vcols);
     m_matrixV.topLeftCorner(m_diagSize, m_diagSize) = naiveU.template cast<Scalar>().topLeftCorner(m_diagSize, m_diagSize);
-    householderV.applyThisOnTheLeft(m_matrixV); // FIXME this line involves a temporary buffer
+    // FIXME the following conditionals involve temporary buffers
+    if (m_useQrDecomp) m_matrixV.topLeftCorner(householderV.cols(), m_diagSize).applyOnTheLeft(householderV);
+    else m_matrixV.applyOnTheLeft(householderV);
   }
 }
 
@@ -550,9 +594,9 @@ void BDCSVD<MatrixType, Options>::divide(Index firstCol, Index lastCol, Index fi
   }
 
 #ifdef EIGEN_BDCSVD_SANITY_CHECKS
-  assert(m_naiveU.allFinite());
-  assert(m_naiveV.allFinite());
-  assert(m_computed.allFinite());
+  eigen_internal_assert(m_naiveU.allFinite());
+  eigen_internal_assert(m_naiveV.allFinite());
+  eigen_internal_assert(m_computed.allFinite());
 #endif
 
   if (m_compU)
@@ -589,9 +633,9 @@ void BDCSVD<MatrixType, Options>::divide(Index firstCol, Index lastCol, Index fi
   }
 
 #ifdef EIGEN_BDCSVD_SANITY_CHECKS
-  assert(m_naiveU.allFinite());
-  assert(m_naiveV.allFinite());
-  assert(m_computed.allFinite());
+  eigen_internal_assert(m_naiveU.allFinite());
+  eigen_internal_assert(m_naiveV.allFinite());
+  eigen_internal_assert(m_computed.allFinite());
 #endif
 
   m_computed(firstCol + shift, firstCol + shift) = r0;
@@ -610,9 +654,9 @@ void BDCSVD<MatrixType, Options>::divide(Index firstCol, Index lastCol, Index fi
   std::cout << "err:      " << ((tmp1-tmp2).abs()>1e-12*tmp2.abs()).transpose() << "\n";
   static int count = 0;
   std::cout << "# " << ++count << "\n\n";
-  assert((tmp1-tmp2).matrix().norm() < 1e-14*tmp2.matrix().norm());
-//   assert(count<681);
-//   assert(((tmp1-tmp2).abs()<1e-13*tmp2.abs()).all());
+  eigen_internal_assert((tmp1-tmp2).matrix().norm() < 1e-14*tmp2.matrix().norm());
+//   eigen_internal_assert(count<681);
+//   eigen_internal_assert(((tmp1-tmp2).abs()<1e-13*tmp2.abs()).all());
 #endif
 
   // Third part: compute SVD of combined matrix
@@ -621,8 +665,8 @@ void BDCSVD<MatrixType, Options>::divide(Index firstCol, Index lastCol, Index fi
   computeSVDofM(firstCol + shift, n, UofSVD, singVals, VofSVD);
 
 #ifdef EIGEN_BDCSVD_SANITY_CHECKS
-  assert(UofSVD.allFinite());
-  assert(VofSVD.allFinite());
+  eigen_internal_assert(UofSVD.allFinite());
+  eigen_internal_assert(VofSVD.allFinite());
 #endif
 
   if (m_compU)
@@ -637,9 +681,9 @@ void BDCSVD<MatrixType, Options>::divide(Index firstCol, Index lastCol, Index fi
   if (m_compV)  structured_update(m_naiveV.block(firstRowW, firstColW, n, n), VofSVD, (n+1)/2);
 
 #ifdef EIGEN_BDCSVD_SANITY_CHECKS
-  assert(m_naiveU.allFinite());
-  assert(m_naiveV.allFinite());
-  assert(m_computed.allFinite());
+  eigen_internal_assert(m_naiveU.allFinite());
+  eigen_internal_assert(m_naiveV.allFinite());
+  eigen_internal_assert(m_computed.allFinite());
 #endif
 
   m_computed.block(firstCol + shift, firstCol + shift, n, n).setZero();
@@ -710,16 +754,16 @@ void BDCSVD<MatrixType, Options>::computeSVDofM(Index firstCol, Index n, MatrixX
   {
     std::cout << "\n\n    mus:    " << mus.head(actual_n).transpose() << "\n\n";
     std::cout << "    check1 (expect0) : " << ((singVals.array()-(shifts+mus)) / singVals.array()).head(actual_n).transpose() << "\n\n";
-    assert((((singVals.array()-(shifts+mus)) / singVals.array()).head(actual_n) >= 0).all());
+    eigen_internal_assert((((singVals.array()-(shifts+mus)) / singVals.array()).head(actual_n) >= 0).all());
     std::cout << "    check2 (>0)      : " << ((singVals.array()-diag) / singVals.array()).head(actual_n).transpose() << "\n\n";
-    assert((((singVals.array()-diag) / singVals.array()).head(actual_n) >= 0).all());
+    eigen_internal_assert((((singVals.array()-diag) / singVals.array()).head(actual_n) >= 0).all());
   }
 #endif
 
 #ifdef EIGEN_BDCSVD_SANITY_CHECKS
-  assert(singVals.allFinite());
-  assert(mus.allFinite());
-  assert(shifts.allFinite());
+  eigen_internal_assert(singVals.allFinite());
+  eigen_internal_assert(mus.allFinite());
+  eigen_internal_assert(shifts.allFinite());
 #endif
 
   // Compute zhat
@@ -729,7 +773,7 @@ void BDCSVD<MatrixType, Options>::computeSVDofM(Index firstCol, Index n, MatrixX
 #endif
 
 #ifdef EIGEN_BDCSVD_SANITY_CHECKS
-  assert(zhat.allFinite());
+  eigen_internal_assert(zhat.allFinite());
 #endif
 
   computeSingVecs(zhat, diag, perm, singVals, shifts, mus, U, V);
@@ -740,13 +784,13 @@ void BDCSVD<MatrixType, Options>::computeSVDofM(Index firstCol, Index n, MatrixX
 #endif
 
 #ifdef EIGEN_BDCSVD_SANITY_CHECKS
-  assert(m_naiveU.allFinite());
-  assert(m_naiveV.allFinite());
-  assert(m_computed.allFinite());
-  assert(U.allFinite());
-  assert(V.allFinite());
-//   assert((U.transpose() * U - MatrixXr(MatrixXr::Identity(U.cols(),U.cols()))).norm() < 100*NumTraits<RealScalar>::epsilon() * n);
-//   assert((V.transpose() * V - MatrixXr(MatrixXr::Identity(V.cols(),V.cols()))).norm() < 100*NumTraits<RealScalar>::epsilon() * n);
+  eigen_internal_assert(m_naiveU.allFinite());
+  eigen_internal_assert(m_naiveV.allFinite());
+  eigen_internal_assert(m_computed.allFinite());
+  eigen_internal_assert(U.allFinite());
+  eigen_internal_assert(V.allFinite());
+//   eigen_internal_assert((U.transpose() * U - MatrixXr(MatrixXr::Identity(U.cols(),U.cols()))).norm() < 100*NumTraits<RealScalar>::epsilon() * n);
+//   eigen_internal_assert((V.transpose() * V - MatrixXr(MatrixXr::Identity(V.cols(),V.cols()))).norm() < 100*NumTraits<RealScalar>::epsilon() * n);
 #endif
 
   // Because of deflation, the singular values might not be completely sorted.
@@ -767,7 +811,7 @@ void BDCSVD<MatrixType, Options>::computeSVDofM(Index firstCol, Index n, MatrixX
     bool singular_values_sorted = (((singVals.segment(1,actual_n-1)-singVals.head(actual_n-1))).array() >= 0).all();
     if(!singular_values_sorted)
       std::cout << "Singular values are not sorted: " << singVals.segment(1,actual_n).transpose() << "\n";
-    assert(singular_values_sorted);
+    eigen_internal_assert(singular_values_sorted);
   }
 #endif
 
@@ -922,7 +966,7 @@ void BDCSVD<MatrixType, Options>::computeSingVals(const ArrayRef& col0, const Ar
       RealScalar fZero = secularEq(muZero, col0, diag, perm, diagShifted, shift);
 
 #ifdef EIGEN_BDCSVD_SANITY_CHECKS
-      assert((numext::isfinite)(fZero));
+      eigen_internal_assert((numext::isfinite)(fZero));
 #endif
 
       muPrev = muCur;
@@ -975,11 +1019,11 @@ void BDCSVD<MatrixType, Options>::computeSingVals(const ArrayRef& col0, const Ar
 #ifdef EIGEN_BDCSVD_SANITY_CHECKS
       if(!(numext::isfinite)(fLeft))
         std::cout << "f(" << leftShifted << ") =" << fLeft << " ; " << left << " " << shift << " " << right << "\n";
-      assert((numext::isfinite)(fLeft));
+      eigen_internal_assert((numext::isfinite)(fLeft));
 
       if(!(numext::isfinite)(fRight))
         std::cout << "f(" << rightShifted << ") =" << fRight << " ; " << left << " " << shift << " " << right << "\n";
-      // assert((numext::isfinite)(fRight));
+      // eigen_internal_assert((numext::isfinite)(fRight));
 #endif
 
 #ifdef  EIGEN_BDCSVD_DEBUG_VERBOSE
@@ -1037,15 +1081,15 @@ void BDCSVD<MatrixType, Options>::computeSingVals(const ArrayRef& col0, const Ar
       std::cout << "found " << singVals[k] << " == " << shift << " + " << muCur << " from " << diag(k) << " .. "  << diag(k+1) << "\n";
 #endif
 #ifdef EIGEN_BDCSVD_SANITY_CHECKS
-    assert(k==0 || singVals[k]>=singVals[k-1]);
-    assert(singVals[k]>=diag(k));
+    eigen_internal_assert(k==0 || singVals[k]>=singVals[k-1]);
+    eigen_internal_assert(singVals[k]>=diag(k));
 #endif
 
     // perturb singular value slightly if it equals diagonal entry to avoid division by zero later
     // (deflation is supposed to avoid this from happening)
     // - this does no seem to be necessary anymore -
-//     if (singVals[k] == left) singVals[k] *= 1 + NumTraits<RealScalar>::epsilon();
-//     if (singVals[k] == right) singVals[k] *= 1 - NumTraits<RealScalar>::epsilon();
+    // if (singVals[k] == left) singVals[k] *= 1 + NumTraits<RealScalar>::epsilon();
+    // if (singVals[k] == right) singVals[k] *= 1 - NumTraits<RealScalar>::epsilon();
   }
 }
 
@@ -1079,7 +1123,7 @@ void BDCSVD<MatrixType, Options>::perturbCol0(const ArrayRef& col0, const ArrayR
         std::cout << "prod = " << "(" << singVals(lastIdx) << " + " << dk << ") * (" << mus(lastIdx) << " + (" << shifts(lastIdx) << " - " << dk << "))" << "\n";
         std::cout << "     = " << singVals(lastIdx) + dk << " * " << mus(lastIdx) + (shifts(lastIdx) - dk) <<  "\n";
       }
-      assert(prod>=0);
+      eigen_internal_assert(prod>=0);
 #endif
 
       for(Index l = 0; l<m; ++l)
@@ -1097,17 +1141,24 @@ void BDCSVD<MatrixType, Options>::perturbCol0(const ArrayRef& col0, const ArrayR
             std::cout << "  " << "j=" << j << "\n";
           }
 #endif
-          Index j = i<k ? i : perm(l-1);
+          // Avoid index out of bounds.
+          // Will end up setting zhat(k) = 0.
+          if (i >= k && l == 0) {
+            m_info = NumericalIssue;
+            prod = 0;
+            break;
+          }
+          Index j = i<k ? i : l > 0 ? perm(l-1) : i;
 #ifdef EIGEN_BDCSVD_SANITY_CHECKS
           if(!(dk!=Literal(0) || diag(i)!=Literal(0)))
           {
             std::cout << "k=" << k << ", i=" << i << ", l=" << l << ", perm.size()=" << perm.size() << "\n";
           }
-          assert(dk!=Literal(0) || diag(i)!=Literal(0));
+          eigen_internal_assert(dk!=Literal(0) || diag(i)!=Literal(0));
 #endif
           prod *= ((singVals(j)+dk) / ((diag(i)+dk))) * ((mus(j)+(shifts(j)-dk)) / ((diag(i)-dk)));
 #ifdef EIGEN_BDCSVD_SANITY_CHECKS
-          assert(prod>=0);
+          eigen_internal_assert(prod>=0);
 #endif
 #ifdef EIGEN_BDCSVD_DEBUG_VERBOSE
           if(i!=k && numext::abs(((singVals(j)+dk)*(mus(j)+(shifts(j)-dk)))/((diag(i)+dk)*(diag(i)-dk)) - 1) > 0.9 )
@@ -1121,7 +1172,7 @@ void BDCSVD<MatrixType, Options>::perturbCol0(const ArrayRef& col0, const ArrayR
 #endif
       RealScalar tmp = sqrt(prod);
 #ifdef EIGEN_BDCSVD_SANITY_CHECKS
-      assert((numext::isfinite)(tmp));
+      eigen_internal_assert((numext::isfinite)(tmp));
 #endif
       zhat(k) = col0(k) > Literal(0) ? RealScalar(tmp) : RealScalar(-tmp);
     }
@@ -1258,9 +1309,9 @@ void BDCSVD<MatrixType, Options>::deflation(Index firstCol, Index lastCol, Index
   RealScalar epsilon_coarse = Literal(8) * NumTraits<RealScalar>::epsilon() * numext::maxi<RealScalar>(col0.cwiseAbs().maxCoeff(), maxDiag);
 
 #ifdef EIGEN_BDCSVD_SANITY_CHECKS
-  assert(m_naiveU.allFinite());
-  assert(m_naiveV.allFinite());
-  assert(m_computed.allFinite());
+  eigen_internal_assert(m_naiveU.allFinite());
+  eigen_internal_assert(m_naiveV.allFinite());
+  eigen_internal_assert(m_computed.allFinite());
 #endif
 
 #ifdef  EIGEN_BDCSVD_DEBUG_VERBOSE
@@ -1297,9 +1348,9 @@ void BDCSVD<MatrixType, Options>::deflation(Index firstCol, Index lastCol, Index
     }
 
 #ifdef EIGEN_BDCSVD_SANITY_CHECKS
-  assert(m_naiveU.allFinite());
-  assert(m_naiveV.allFinite());
-  assert(m_computed.allFinite());
+  eigen_internal_assert(m_naiveU.allFinite());
+  eigen_internal_assert(m_naiveV.allFinite());
+  eigen_internal_assert(m_computed.allFinite());
 #endif
 #ifdef EIGEN_BDCSVD_DEBUG_VERBOSE
   std::cout << "to be sorted: " << diag.transpose() << "\n\n";
@@ -1403,13 +1454,13 @@ void BDCSVD<MatrixType, Options>::deflation(Index firstCol, Index lastCol, Index
 
 #ifdef EIGEN_BDCSVD_SANITY_CHECKS
   for(Index j=2;j<length;++j)
-    assert(diag(j-1)<=diag(j) || abs(diag(j))<considerZero);
+    eigen_internal_assert(diag(j-1)<=diag(j) || abs(diag(j))<considerZero);
 #endif
 
 #ifdef EIGEN_BDCSVD_SANITY_CHECKS
-  assert(m_naiveU.allFinite());
-  assert(m_naiveV.allFinite());
-  assert(m_computed.allFinite());
+  eigen_internal_assert(m_naiveU.allFinite());
+  eigen_internal_assert(m_naiveV.allFinite());
+  eigen_internal_assert(m_computed.allFinite());
 #endif
 }  // end deflation
 

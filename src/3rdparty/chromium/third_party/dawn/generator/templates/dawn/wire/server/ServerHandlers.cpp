@@ -47,29 +47,11 @@ namespace dawn::wire::server {
                 {% set Type = member.handle_type.name.CamelCase() %}
                 {% set name = as_varName(member.name) %}
 
-                auto* {{name}}Data = {{Type}}Objects().Allocate(cmd.{{name}}.id);
+                auto* {{name}}Data = {{Type}}Objects().Allocate(cmd.{{name}});
                 if ({{name}}Data == nullptr) {
                     return false;
                 }
                 {{name}}Data->generation = cmd.{{name}}.generation;
-
-                //* TODO(crbug.com/dawn/384): This is a hack to make sure that all child objects
-                //* are destroyed before their device. The dawn_native device needs to track all child objects so
-                //* it can destroy them if the device is destroyed first.
-                {% if command.derived_object %}
-                    {% set type = command.derived_object %}
-                    {% if type.name.get() == "device" %}
-                        {{name}}Data->deviceInfo = DeviceObjects().Get(cmd.selfId)->info.get();
-                    {% else %}
-                        auto* selfData = {{type.name.CamelCase()}}Objects().Get(cmd.selfId);
-                        {{name}}Data->deviceInfo = selfData->deviceInfo;
-                    {% endif %}
-                    if ({{name}}Data->deviceInfo != nullptr) {
-                        if (!TrackDeviceChild({{name}}Data->deviceInfo, ObjectType::{{Type}}, cmd.{{name}}.id)) {
-                            return false;
-                        }
-                    }
-                {% endif %}
             {% endfor %}
 
             //* Do command

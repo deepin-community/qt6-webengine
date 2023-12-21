@@ -1,11 +1,11 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include <memory>
 
-#include "base/bind.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/test/bind.h"
@@ -205,7 +205,8 @@ class CookieStoreManagerTest
     int64_t registration_id;
     blink::mojom::ServiceWorkerRegistrationOptions options;
     options.scope = GURL(scope);
-    blink::StorageKey key(url::Origin::Create(GURL(scope)));
+    const blink::StorageKey key =
+        blink::StorageKey::CreateFirstParty(url::Origin::Create(GURL(scope)));
     base::RunLoop run_loop;
     worker_test_helper_->context()->RegisterServiceWorker(
         GURL(script_url), key, options,
@@ -219,7 +220,8 @@ class CookieStoreManagerTest
               << blink::ServiceWorkerStatusToString(status);
           run_loop.Quit();
         }),
-        /*requesting_frame_id=*/GlobalRenderFrameHostId());
+        /*requesting_frame_id=*/GlobalRenderFrameHostId(),
+        PolicyContainerPolicies());
     run_loop.Run();
     if (!success)
       return kInvalidRegistrationId;
@@ -307,20 +309,22 @@ class CookieStoreManagerTest
     return SetCanonicalCookie(
         *net::CanonicalCookie::CreateUnsafeCookieForTesting(
             name, value, domain, path, base::Time(), base::Time(), base::Time(),
-            /* secure = */ true,
-            /* httponly = */ false, net::CookieSameSite::NO_RESTRICTION,
-            net::COOKIE_PRIORITY_DEFAULT, /* same_party = */ false));
+            base::Time(),
+            /*secure=*/true,
+            /*httponly=*/false, net::CookieSameSite::NO_RESTRICTION,
+            net::COOKIE_PRIORITY_DEFAULT, /*same_party=*/false));
   }
 
   bool DeleteCookie(const char* name, const char* domain, const char* path) {
     return SetCanonicalCookie(
         *net::CanonicalCookie::CreateUnsafeCookieForTesting(
-            name, /* value = */ "", domain, path, /* creation = */ base::Time(),
-            /* expiration = */ base::Time::Min(),
-            /* last_access = */ base::Time(),
-            /* secure = */ true, /* httponly = */ false,
+            name, /*value=*/"", domain, path, /*creation=*/base::Time(),
+            /*expiration=*/base::Time::Min(),
+            /*last_access=*/base::Time(),
+            /*last_update=*/base::Time(),
+            /*secure=*/true, /*httponly=*/false,
             net::CookieSameSite::NO_RESTRICTION, net::COOKIE_PRIORITY_DEFAULT,
-            /* same_party = */ false));
+            /*same_party=*/false));
   }
 
   // Designates a closure for preparing the cookie store for the current test.
@@ -365,19 +369,19 @@ class CookieStoreManagerTest
 
     cookie_store_manager_->BindReceiver(
         example_service_remote_.BindNewPipeAndPassReceiver(),
-        url::Origin::Create(GURL(kExampleScope)));
+        blink::StorageKey::CreateFromStringForTesting(kExampleScope));
     example_service_ =
         std::make_unique<CookieStoreSync>(example_service_remote_.get());
 
     cookie_store_manager_->BindReceiver(
         google_service_remote_.BindNewPipeAndPassReceiver(),
-        url::Origin::Create(GURL(kGoogleScope)));
+        blink::StorageKey::CreateFromStringForTesting(kGoogleScope));
     google_service_ =
         std::make_unique<CookieStoreSync>(google_service_remote_.get());
 
     cookie_store_manager_->BindReceiver(
         legacy_service_remote_.BindNewPipeAndPassReceiver(),
-        url::Origin::Create(GURL(kLegacyScope)));
+        blink::StorageKey::CreateFromStringForTesting(kLegacyScope));
     legacy_service_ =
         std::make_unique<CookieStoreSync>(legacy_service_remote_.get());
 
@@ -1562,10 +1566,10 @@ TEST_P(CookieStoreManagerTest, HttpOnlyCookieChange) {
   ASSERT_TRUE(
       SetCanonicalCookie(*net::CanonicalCookie::CreateUnsafeCookieForTesting(
           "cookie-name-1", "cookie-value-1", "example.com", "/", base::Time(),
-          base::Time(), base::Time(),
-          /* secure = */ true,
-          /* httponly = */ true, net::CookieSameSite::NO_RESTRICTION,
-          net::COOKIE_PRIORITY_DEFAULT, /* same_party = */ false)));
+          base::Time(), base::Time(), base::Time(),
+          /*secure=*/true,
+          /*httponly=*/true, net::CookieSameSite::NO_RESTRICTION,
+          net::COOKIE_PRIORITY_DEFAULT, /*same_party=*/false)));
   task_environment_.RunUntilIdle();
   EXPECT_EQ(0u, worker_test_helper_->changes().size());
 
@@ -1573,10 +1577,10 @@ TEST_P(CookieStoreManagerTest, HttpOnlyCookieChange) {
   ASSERT_TRUE(
       SetCanonicalCookie(*net::CanonicalCookie::CreateUnsafeCookieForTesting(
           "cookie-name-2", "cookie-value-2", "example.com", "/", base::Time(),
-          base::Time(), base::Time(),
-          /* secure = */ true,
-          /* httponly = */ false, net::CookieSameSite::NO_RESTRICTION,
-          net::COOKIE_PRIORITY_DEFAULT, /* same_party = */ false)));
+          base::Time(), base::Time(), base::Time(),
+          /*secure=*/true,
+          /*httponly=*/false, net::CookieSameSite::NO_RESTRICTION,
+          net::COOKIE_PRIORITY_DEFAULT, /*same_party=*/false)));
   task_environment_.RunUntilIdle();
 
   ASSERT_EQ(1u, worker_test_helper_->changes().size());
@@ -1619,10 +1623,10 @@ TEST_P(CookieStoreManagerTest, HttpOnlyCookieChangeLegacy) {
   ASSERT_TRUE(
       SetCanonicalCookie(*net::CanonicalCookie::CreateUnsafeCookieForTesting(
           "cookie-name-1", "cookie-value-1", "legacy.com", "/", base::Time(),
-          base::Time(), base::Time(),
-          /* secure = */ false,
-          /* httponly = */ true, net::CookieSameSite::NO_RESTRICTION,
-          net::COOKIE_PRIORITY_DEFAULT, /* same_party = */ false)));
+          base::Time(), base::Time(), base::Time(),
+          /*secure=*/false,
+          /*httponly=*/true, net::CookieSameSite::NO_RESTRICTION,
+          net::COOKIE_PRIORITY_DEFAULT, /*same_party=*/false)));
   task_environment_.RunUntilIdle();
   EXPECT_EQ(0u, worker_test_helper_->changes().size());
 
@@ -1630,10 +1634,10 @@ TEST_P(CookieStoreManagerTest, HttpOnlyCookieChangeLegacy) {
   ASSERT_TRUE(
       SetCanonicalCookie(*net::CanonicalCookie::CreateUnsafeCookieForTesting(
           "cookie-name-2", "cookie-value-2", "legacy.com", "/", base::Time(),
-          base::Time(), base::Time(),
-          /* secure = */ false,
-          /* httponly = */ false, net::CookieSameSite::NO_RESTRICTION,
-          net::COOKIE_PRIORITY_DEFAULT, /* same_party = */ false)));
+          base::Time(), base::Time(), base::Time(),
+          /*secure=*/false,
+          /*httponly=*/false, net::CookieSameSite::NO_RESTRICTION,
+          net::COOKIE_PRIORITY_DEFAULT, /*same_party=*/false)));
   task_environment_.RunUntilIdle();
 
   ASSERT_EQ(1u, worker_test_helper_->changes().size());
@@ -1765,7 +1769,7 @@ TEST_F(CookieStoreManagerTest, UnTrustworthyOrigin) {
 
   cookie_store_manager_->BindReceiver(
       untrustworthy_service_remote.BindNewPipeAndPassReceiver(),
-      url::Origin::Create(GURL("http://insecure.com")));
+      blink::StorageKey::CreateFromStringForTesting("http://insecure.com"));
 
   untrustworthy_service_remote.FlushForTesting();
   EXPECT_FALSE(untrustworthy_service_remote.is_connected());

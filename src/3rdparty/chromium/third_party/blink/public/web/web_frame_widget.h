@@ -33,7 +33,7 @@
 
 #include <stdint.h>
 
-#include "base/callback_forward.h"
+#include "base/functional/callback_forward.h"
 #include "base/types/pass_key.h"
 #include "components/viz/common/surfaces/frame_sink_id.h"
 #include "third_party/blink/public/common/page/drag_operation.h"
@@ -47,6 +47,10 @@
 #include "ui/base/dragdrop/mojom/drag_drop_types.mojom-shared.h"
 #include "ui/gfx/ca_layer_result.h"
 #include "ui/gfx/geometry/rect.h"
+
+namespace base {
+class SingleThreadTaskRunner;
+}
 
 namespace cc {
 struct ApplyViewportChangesArgs;
@@ -151,7 +155,7 @@ class WebFrameWidget : public WebWidget {
   virtual void NotifyPresentationTime(
       base::OnceCallback<void(base::TimeTicks)> callback) = 0;
 
-#if BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_APPLE)
   virtual void NotifyCoreAnimationErrorCode(
       base::OnceCallback<void(gfx::CALayerResult)> callback) = 0;
 #endif
@@ -215,6 +219,10 @@ class WebFrameWidget : public WebWidget {
   // `FrameWidgetTestHelper::CreateTestWebFrameWidget()`.
   virtual FrameWidgetTestHelper* GetFrameWidgetTestHelperForTesting() = 0;
 
+  // This should be called for the local root frame before calling the final
+  // UpdateAllLifecyclePhases() just before dumping pixels.
+  virtual void PrepareForFinalLifecyclUpdateForTesting() = 0;
+
  private:
   // This is a private virtual method so we don't expose cc::LayerTreeHost
   // outside of this class. Friend classes may be added in order to access it.
@@ -248,7 +256,8 @@ using CreateWebFrameWidgetCallback = base::RepeatingCallback<WebFrameWidget*(
     bool hidden,
     bool never_composited,
     bool is_for_child_local_root,
-    bool is_for_nested_main_frame)>;
+    bool is_for_nested_main_frame,
+    bool is_for_scalable_page)>;
 // Allows tests to inject their own type of WebFrameWidget in order to
 // override methods of the WebFrameWidgetImpl.
 void BLINK_EXPORT

@@ -1,10 +1,11 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef COMPONENTS_OPTIMIZATION_GUIDE_CORE_TEST_MODEL_HANDLER_H_
 #define COMPONENTS_OPTIMIZATION_GUIDE_CORE_TEST_MODEL_HANDLER_H_
 
+#include "base/task/sequenced_task_runner.h"
 #include "components/optimization_guide/core/model_handler.h"
 #include "components/optimization_guide/core/test_model_executor.h"
 
@@ -22,6 +23,7 @@ class TestModelHandler
             model_provider,
             background_task_runner,
             std::move(executor),
+            /*model_inference_timeout=*/absl::nullopt,
             proto::OptimizationTarget::OPTIMIZATION_TARGET_PAINFUL_PAGE_LOAD,
             /*model_metadata=*/absl::nullopt) {}
   ~TestModelHandler() override = default;

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,12 +10,11 @@
 #include <algorithm>
 #include <memory>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/location.h"
+#include "base/task/bind_post_task.h"
 #include "base/task/sequenced_task_runner.h"
-#include "base/threading/sequenced_task_runner_handle.h"
-#include "media/base/bind_to_current_loop.h"
 #include "media/base/decoder_buffer.h"
 #include "media/base/limits.h"
 #include "media/base/media_log.h"
@@ -208,7 +207,7 @@ int FFmpegVideoDecoder::GetVideoBuffer(struct AVCodecContext* codec_context,
   }
 
   for (size_t i = 0; i < VideoFrame::NumPlanes(video_frame->format()); i++) {
-    frame->data[i] = video_frame->data(i);
+    frame->data[i] = video_frame->writable_data(i);
     frame->linesize[i] = video_frame->stride(i);
   }
 
@@ -245,7 +244,7 @@ void FFmpegVideoDecoder::Initialize(const VideoDecoderConfig& config,
   DCHECK(config.IsValidConfig());
   DCHECK(output_cb);
 
-  InitCB bound_init_cb = BindToCurrentLoop(std::move(init_cb));
+  InitCB bound_init_cb = base::BindPostTaskToCurrentDefault(std::move(init_cb));
 
   if (config.is_encrypted()) {
     std::move(bound_init_cb)
@@ -273,7 +272,8 @@ void FFmpegVideoDecoder::Decode(scoped_refptr<DecoderBuffer> buffer,
   DCHECK(decode_cb);
   CHECK_NE(state_, DecoderState::kUninitialized);
 
-  DecodeCB decode_cb_bound = BindToCurrentLoop(std::move(decode_cb));
+  DecodeCB decode_cb_bound =
+      base::BindPostTaskToCurrentDefault(std::move(decode_cb));
 
   if (state_ == DecoderState::kError) {
     std::move(decode_cb_bound).Run(DecoderStatus::Codes::kFailed);
@@ -326,8 +326,8 @@ void FFmpegVideoDecoder::Reset(base::OnceClosure closure) {
   avcodec_flush_buffers(codec_context_.get());
   state_ = DecoderState::kNormal;
   // PostTask() to avoid calling |closure| immediately.
-  base::SequencedTaskRunnerHandle::Get()->PostTask(FROM_HERE,
-                                                   std::move(closure));
+  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,
+                                                           std::move(closure));
 }
 
 FFmpegVideoDecoder::~FFmpegVideoDecoder() {

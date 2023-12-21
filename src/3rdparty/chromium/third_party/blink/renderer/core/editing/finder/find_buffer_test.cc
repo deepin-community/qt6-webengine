@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -668,20 +668,20 @@ TEST_F(FindBufferTest, SelectMultipleTest) {
   SetBodyContent("<select multiple><option>find me</option></select>");
   {
     FindBuffer buffer(WholeDocumentRange());
-#if BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
     EXPECT_EQ(0u, buffer.FindMatches("find", 0).CountForTesting());
 #else
     EXPECT_EQ(1u, buffer.FindMatches("find", 0).CountForTesting());
-#endif  // BUILDFLAG(IS_ANDROID)
+#endif  // BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
   }
   SetBodyContent("<select size=2><option>find me</option></select>");
   {
     FindBuffer buffer(WholeDocumentRange());
-#if BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
     EXPECT_EQ(0u, buffer.FindMatches("find", 0).CountForTesting());
 #else
     EXPECT_EQ(1u, buffer.FindMatches("find", 0).CountForTesting());
-#endif  // BUILDFLAG(IS_ANDROID)
+#endif  // BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
   }
   SetBodyContent("<select size=1><option>find me</option></select>");
   {

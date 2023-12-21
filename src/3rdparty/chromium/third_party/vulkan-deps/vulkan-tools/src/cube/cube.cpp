@@ -41,7 +41,6 @@
 #define VULKAN_HPP_NO_EXCEPTIONS
 #define VULKAN_HPP_TYPESAFE_CONVERSION
 #include <vulkan/vulkan.hpp>
-#include <vulkan/vk_sdk_platform.h>
 
 #include "linmath.h"
 
@@ -330,6 +329,7 @@ struct Demo {
     bool use_staging_buffer = false;
     bool use_xlib = false;
     bool separate_present_queue = false;
+    bool invalid_gpu_selection = false;
     int32_t gpu_number = 0;
 
     vk::Instance inst;
@@ -495,7 +495,7 @@ static void seat_handle_capabilities(void *data, wl_seat *seat, uint32_t caps) {
     if (caps & WL_SEAT_CAPABILITY_KEYBOARD) {
         demo.keyboard = wl_seat_get_keyboard(seat);
         wl_keyboard_add_listener(demo.keyboard, &keyboard_listener, &demo);
-    } else if (!(caps & WL_SEAT_CAPABILITY_KEYBOARD)) {
+    } else if (!(caps & WL_SEAT_CAPABILITY_KEYBOARD) && demo.keyboard) {
         wl_keyboard_destroy(demo.keyboard);
         demo.keyboard = nullptr;
     }
@@ -601,9 +601,9 @@ void Demo::cleanup() {
     xcb_disconnect(connection);
     free(atom_wm_delete_window);
 #elif defined(VK_USE_PLATFORM_WAYLAND_KHR)
-    wl_keyboard_destroy(keyboard);
-    wl_pointer_destroy(pointer);
-    wl_seat_destroy(seat);
+    if (keyboard) wl_keyboard_destroy(keyboard);
+    if (pointer) wl_pointer_destroy(pointer);
+    if (seat) wl_seat_destroy(seat);
     xdg_toplevel_destroy(window_toplevel);
     xdg_surface_destroy(window_surface);
     wl_surface_destroy(window);
@@ -706,14 +706,15 @@ void Demo::draw() {
         VERIFY(change_owner_result == vk::Result::eSuccess);
     }
 
+    const auto presentInfo = vk::PresentInfoKHR()
+                                 .setWaitSemaphores(separate_present_queue ? image_ownership_semaphores[frame_index]
+                                                                           : draw_complete_semaphores[frame_index])
+                                 .setSwapchains(swapchain)
+                                 .setImageIndices(current_buffer);
+
     // If we are using separate queues we have to wait for image ownership,
     // otherwise wait for draw complete
-    auto present_result =
-        present_queue.presentKHR(vk::PresentInfoKHR()
-                                     .setWaitSemaphores(separate_present_queue ? image_ownership_semaphores[frame_index]
-                                                                               : draw_complete_semaphores[frame_index])
-                                     .setSwapchains(swapchain)
-                                     .setImageIndices(current_buffer));
+    auto present_result = present_queue.presentKHR(&presentInfo);
     frame_index += 1;
     frame_index %= FRAME_LAG;
     if (present_result == vk::Result::eErrorOutOfDateKHR) {
@@ -887,13 +888,31 @@ void Demo::init(int argc, char **argv) {
             i++;
             continue;
         }
-        if (strcmp(argv[i], "--width") == 0 && i < argc - 1 && sscanf(argv[i + 1], "%" SCNu32, &width) == 1) {
-            i++;
-            continue;
+        if (strcmp(argv[i], "--width") == 0) {
+            int32_t in_width = 0;
+            if (i < argc - 1 && sscanf(argv[i + 1], "%d", &in_width) == 1) {
+                if (in_width > 0) {
+                    width = static_cast<uint32_t>(in_width);
+                    i++;
+                    continue;
+                } else {
+                    ERR_EXIT("The --width parameter must be greater than 0", "User Error");
+                }
+            }
+            ERR_EXIT("The --width parameter must be followed by a number", "User Error");
         }
-        if (strcmp(argv[i], "--height") == 0 && i < argc - 1 && sscanf(argv[i + 1], "%" SCNu32, &height) == 1) {
-            i++;
-            continue;
+        if (strcmp(argv[i], "--height") == 0) {
+            int32_t in_height = 0;
+            if (i < argc - 1 && sscanf(argv[i + 1], "%d", &height) == 1) {
+                if (height > 0) {
+                    height = static_cast<uint32_t>(in_height);
+                    i++;
+                    continue;
+                } else {
+                    ERR_EXIT("The --height parameter must be greater than 0", "User Error");
+                }
+            }
+            ERR_EXIT("The --height parameter must be followed by a number", "User Error");
         }
         if (strcmp(argv[i], "--suppress_popups") == 0) {
             suppress_popups = true;
@@ -901,7 +920,7 @@ void Demo::init(int argc, char **argv) {
         }
         if ((strcmp(argv[i], "--gpu_number") == 0) && (i < argc - 1)) {
             gpu_number = atoi(argv[i + 1]);
-            assert(gpu_number >= 0);
+            if (gpu_number < 0) invalid_gpu_selection = true;
             i++;
             continue;
         }
@@ -1039,15 +1058,21 @@ VKAPI_ATTR VkBool32 VKAPI_CALL Demo::debug_messenger_callback(VkDebugUtilsMessag
     if (pCallbackData->objectCount > 0) {
         message << "\n\tObjects - " << pCallbackData->objectCount << "\n";
         for (uint32_t object = 0; object < pCallbackData->objectCount; ++object) {
-            if (NULL != pCallbackData->pObjects[object].pObjectName && strlen(pCallbackData->pObjects[object].pObjectName) > 0) {
-                message << "\t\tObject[" << object << "] - "
-                        << vk::to_string(vk::ObjectType(pCallbackData->pObjects[object].objectType)) << ", Handle "
-                        << pCallbackData->pObjects[object].objectHandle << ", Name \""
-                        << pCallbackData->pObjects[object].pObjectName << "\"\n";
+            message << "\t\tObject[" << object << "] - "
+                    << vk::to_string(vk::ObjectType(pCallbackData->pObjects[object].objectType)) << ", Handle ";
+
+            // Print handle correctly if it is a dispatchable handle - aka a pointer
+            VkObjectType t = pCallbackData->pObjects[object].objectType;
+            if (t == VK_OBJECT_TYPE_INSTANCE || t == VK_OBJECT_TYPE_PHYSICAL_DEVICE || t == VK_OBJECT_TYPE_DEVICE ||
+                t == VK_OBJECT_TYPE_COMMAND_BUFFER || t == VK_OBJECT_TYPE_QUEUE) {
+                message << reinterpret_cast<void*>(static_cast<uintptr_t>(pCallbackData->pObjects[object].objectHandle));
             } else {
-                message << "\t\tObject[" << object << "] - "
-                        << vk::to_string(vk::ObjectType(pCallbackData->pObjects[object].objectType)) << ", Handle "
-                        << pCallbackData->pObjects[object].objectHandle << "\n";
+                message << pCallbackData->pObjects[object].objectHandle;
+            }
+            if (NULL != pCallbackData->pObjects[object].pObjectName && strlen(pCallbackData->pObjects[object].pObjectName) > 0) {
+                message << ", Name \"" << pCallbackData->pObjects[object].pObjectName << "\"\n";
+            } else {
+                message << "\n";
             }
         }
     }
@@ -1131,7 +1156,7 @@ void Demo::init_vk() {
             // We want cube to be able to enumerate drivers that support the portability_subset extension, so we have to enable the
             // portability enumeration extension.
             portabilityEnumerationActive = true;
-            enabled_instance_extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+            enabled_instance_extensions.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
         } else if (!strcmp(VK_KHR_SURFACE_EXTENSION_NAME, extension.extensionName)) {
             surfaceExtFound = 1;
             enabled_instance_extensions.push_back(VK_KHR_SURFACE_EXTENSION_NAME);
@@ -1241,7 +1266,8 @@ void Demo::init_vk() {
                          .setPApplicationName(APP_SHORT_NAME)
                          .setApplicationVersion(0)
                          .setPEngineName(APP_SHORT_NAME)
-                         .setEngineVersion(0);
+                         .setEngineVersion(0)
+                         .setApiVersion(VK_API_VERSION_1_0);
     auto const inst_info = vk::InstanceCreateInfo()
                                .setFlags(portabilityEnumerationActive ? vk::InstanceCreateFlagBits::eEnumeratePortabilityKHR
                                                                       : static_cast<vk::InstanceCreateFlagBits>(0))
@@ -1293,7 +1319,7 @@ void Demo::init_vk() {
             "vkEnumeratePhysicalDevices Failure");
     }
 
-    if (gpu_number >= 0 && !(static_cast<uint32_t>(gpu_number) < physical_devices.size())) {
+    if (invalid_gpu_selection || (gpu_number >= 0 && !(static_cast<uint32_t>(gpu_number) < physical_devices.size()))) {
         fprintf(stderr, "GPU %d specified is not present, GPU count = %zu\n", gpu_number, physical_devices.size());
         ERR_EXIT("Specified GPU number is not present", "User Error");
     }
@@ -2962,7 +2988,8 @@ vk::Result Demo::create_display_surface() {
         exit(1);
     }
 
-    vk::DisplayPlaneCapabilitiesKHR planeCaps = gpu.getDisplayPlaneCapabilitiesKHR(display_mode_prop.displayMode, plane_found);
+    vk::DisplayPlaneCapabilitiesKHR planeCaps =
+        gpu.getDisplayPlaneCapabilitiesKHR(display_mode_prop.displayMode, plane_found).value;
     // Find a supported alpha mode
     vk::DisplayPlaneAlphaFlagBitsKHR alphaMode = vk::DisplayPlaneAlphaFlagBitsKHR::eOpaque;
     std::array<vk::DisplayPlaneAlphaFlagBitsKHR, 4> alphaModes = {
@@ -3149,7 +3176,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
     return static_cast<int>(msg.wParam);
 }
 
-#elif defined(__linux__) || defined(__FreeBSD__)
+#elif defined(__linux__) || defined(__FreeBSD__) || defined(__OpenBSD__)
 
 int main(int argc, char **argv) {
     Demo demo;

@@ -1,6 +1,7 @@
 load("//tensorflow_lite_support/cc/port:build_defs.bzl", "support_py_proto_library")
 
 package(
+    default_applicable_licenses = ["//tensorflow_lite_support:license"],
     default_visibility = [
         "//visibility:public",
     ],
@@ -121,6 +122,10 @@ support_py_proto_library(
     srcs = ["detections.proto"],
     api_version = 2,
     proto_deps = [":detections_proto"],
+    py_proto_deps = [
+        ":class_py_pb2",
+        ":bounding_box_py_pb2",
+    ],
 )
 
 cc_library(
@@ -194,6 +199,7 @@ support_py_proto_library(
     srcs = ["classifications.proto"],
     api_version = 2,
     proto_deps = [":classifications_proto"],
+    py_proto_deps = [":class_py_pb2"],
 )
 
 cc_library(
@@ -244,6 +250,13 @@ cc_proto_library(
     deps = [
         ":segmentations_proto",
     ],
+)
+
+support_py_proto_library(
+    name = "segmentations_py_pb2",
+    srcs = ["segmentations.proto"],
+    api_version = 2,
+    proto_deps = [":segmentations_proto"],
 )
 
 cc_library(
@@ -313,4 +326,21 @@ cc_library(
     name = "embeddings_proto_inc",
     hdrs = ["embeddings_proto_inc.h"],
     deps = [":embeddings_cc_proto"],
+)
+
+proto_library(
+    name = "image_searcher_options_proto",
+    srcs = ["image_searcher_options.proto"],
+    deps = [
+        "//tensorflow_lite_support/cc/task/core/proto:base_options_proto",
+        "//tensorflow_lite_support/cc/task/processor/proto:embedding_options_proto",
+        "//tensorflow_lite_support/cc/task/processor/proto:search_options_proto",
+    ],
+)
+
+cc_proto_library(
+    name = "image_searcher_options_cc_proto",
+    deps = [
+        ":image_searcher_options_proto",
+    ],
 )

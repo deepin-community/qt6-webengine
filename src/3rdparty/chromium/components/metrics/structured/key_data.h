@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -16,8 +16,7 @@
 #include "components/metrics/structured/storage.pb.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 
-namespace metrics {
-namespace structured {
+namespace metrics::structured {
 
 class KeyDataTest;
 
@@ -26,7 +25,7 @@ class KeyDataTest;
 //
 // The class maintains one key and its rotation data for every project defined
 // in /tools/metrics/structured.xml. This can be used to generate:
-//  - a user ID for the project with KeyData::Id.
+//  - an ID for the project with KeyData::Id.
 //  - a hash of a given value for an event with KeyData::HmacMetric.
 //
 // KeyData performs key rotation. Every project is associated with a rotation
@@ -69,7 +68,8 @@ class KeyData {
   // Returns 0u in case of an error.
   uint64_t HmacMetric(uint64_t project_name_hash,
                       uint64_t metric_name_hash,
-                      const std::string& value);
+                      const std::string& value,
+                      int key_rotation_period);
 
   // Returns an ID for this (user, |project_name_hash|) pair.
   // |project_name_hash| is the name of a project, represented by the first 8
@@ -84,7 +84,9 @@ class KeyData {
   // the server. This means events are associated with the client ID when
   // uploaded from the device. See the class comment of
   // StructuredMetricsProvider for more details.
-  uint64_t Id(uint64_t project_name_hash);
+  //
+  // Default |key_rotation_period| is 90 days.
+  uint64_t Id(uint64_t project_name_hash, int key_rotation_period);
 
   // Returns when the key for |project_name_hash| was last rotated, in days
   // since epoch. Returns nullopt if the key doesn't exist.
@@ -109,12 +111,15 @@ class KeyData {
   void OnWrite(WriteStatus status);
 
   // Ensure that a valid key exists for |project|, and return it. Either returns
-  // a string of size |kKeySize| or absl::nullopt, which indicates an error.
-  absl::optional<std::string> ValidateAndGetKey(uint64_t project_name_hash);
+  // a string of size |kKeySize| or absl::nullopt, which indicates an error. If
+  // a key doesn't exist OR if the key needs to be rotated, then a new key with
+  // |key_rotation_period| will be created.
+  absl::optional<std::string> ValidateAndGetKey(uint64_t project_name_hash,
+                                                int key_rotation_period);
 
-  // Regenerate |key|, also updating the |last_rotation| and |rotation_period|.
-  // This triggers a save.
-  void UpdateKey(KeyProto* key, int last_rotation, int rotation_period);
+  // Regenerate |key|, also updating the |last_key_rotation| and
+  // |key_rotation_period|. This triggers a save.
+  void UpdateKey(KeyProto* key, int last_key_rotation, int key_rotation_period);
 
   // Storage for keys.
   std::unique_ptr<PersistentProto<KeyDataProto>> proto_;
@@ -130,7 +135,6 @@ class KeyData {
   base::WeakPtrFactory<KeyData> weak_factory_{this};
 };
 
-}  // namespace structured
-}  // namespace metrics
+}  // namespace metrics::structured
 
 #endif  // COMPONENTS_METRICS_STRUCTURED_KEY_DATA_H_

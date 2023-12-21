@@ -1,10 +1,10 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/safe_browsing/content/browser/safe_browsing_tab_observer.h"
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "components/prefs/pref_service.h"
 #include "components/safe_browsing/buildflags.h"
 #include "content/public/browser/web_contents.h"
@@ -47,8 +47,6 @@ SafeBrowsingTabObserver::SafeBrowsingTabObserver(
         delegate_->DoesSafeBrowsingServiceExist() && csd_service) {
       safebrowsing_detection_host_ =
           delegate_->CreateClientSideDetectionHost(web_contents);
-      csd_service->AddClientSideDetectionHost(
-          safebrowsing_detection_host_.get());
     }
   }
 #endif
@@ -70,8 +68,6 @@ void SafeBrowsingTabObserver::UpdateSafebrowsingDetectionHost() {
     if (!safebrowsing_detection_host_.get()) {
       safebrowsing_detection_host_ =
           delegate_->CreateClientSideDetectionHost(&GetWebContents());
-      csd_service->AddClientSideDetectionHost(
-          safebrowsing_detection_host_.get());
     }
   } else {
     safebrowsing_detection_host_.reset();

@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,7 +10,7 @@
 #include <string>
 #include <utility>
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/memory/ref_counted.h"
 #include "base/run_loop.h"
 #include "base/test/task_environment.h"
@@ -297,7 +297,7 @@ TEST(ThrottlingControllerTest, DownloadOnly) {
   ThrottlingControllerTestHelper helper;
   TestCallback* callback = helper.callback();
 
-  helper.SetNetworkState(false, 10000000, 0);
+  helper.SetNetworkState(false, 10000000, -1);
   int rv = helper.Start(false);
   EXPECT_EQ(rv, net::ERR_IO_PENDING);
   helper.FastForwardUntilNoTasksRemain();
@@ -316,7 +316,7 @@ TEST(ThrottlingControllerTest, UploadOnly) {
   ThrottlingControllerTestHelper helper;
   TestCallback* callback = helper.callback();
 
-  helper.SetNetworkState(false, 0, 1000000);
+  helper.SetNetworkState(false, -2, 1000000);
   int rv = helper.Start(true);
   EXPECT_EQ(rv, net::OK);
   helper.FastForwardUntilNoTasksRemain();

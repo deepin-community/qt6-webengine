@@ -1,4 +1,4 @@
-// Copyright 2016 PDFium Authors. All rights reserved.
+// Copyright 2016 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -34,7 +34,8 @@ class CPDF_SimpleFont : public CPDF_Font {
  protected:
   static constexpr size_t kInternalTableSize = 256;
 
-  CPDF_SimpleFont(CPDF_Document* pDocument, CPDF_Dictionary* pFontDict);
+  CPDF_SimpleFont(CPDF_Document* pDocument,
+                  RetainPtr<CPDF_Dictionary> pFontDict);
 
   virtual void LoadGlyphMap() = 0;
 

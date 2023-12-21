@@ -1,4 +1,4 @@
-// Copyright (c) 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -71,18 +71,6 @@ gfx::Size GLImageEGLPixmap::GetSize() {
   return size_;
 }
 
-unsigned GLImageEGLPixmap::GetInternalFormat() {
-  return gl::BufferFormatToGLInternalFormat(format_);
-}
-
-unsigned GLImageEGLPixmap::GetDataType() {
-  return GL_UNSIGNED_BYTE;
-}
-
-GLImageEGLPixmap::BindOrCopy GLImageEGLPixmap::ShouldBindOrCopy() {
-  return BIND;
-}
-
 bool GLImageEGLPixmap::BindTexImage(unsigned target) {
   if (!surface_)
     return false;
@@ -97,17 +85,10 @@ bool GLImageEGLPixmap::BindTexImage(unsigned target) {
   return true;
 }
 
-void GLImageEGLPixmap::ReleaseTexImage(unsigned target) {
+void GLImageEGLPixmap::ReleaseEGLImage() {
   DCHECK_NE(nullptr, surface_);
-  DCHECK_EQ(static_cast<GLenum>(GL_TEXTURE_2D), target);
 
   eglReleaseTexImage(display_, surface_, EGL_BACK_BUFFER);
-}
-
-void GLImageEGLPixmap::OnMemoryDump(base::trace_event::ProcessMemoryDump* pmd,
-                                    uint64_t process_tracing_id,
-                                    const std::string& dump_name) {
-  // TODO(crbug.com/514914): Implement GLImage OnMemoryDump.
 }
 
 }  // namespace gl

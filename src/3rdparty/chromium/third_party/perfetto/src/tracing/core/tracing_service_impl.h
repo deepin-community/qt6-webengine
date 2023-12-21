@@ -33,6 +33,7 @@
 #include "perfetto/ext/base/circular_queue.h"
 #include "perfetto/ext/base/optional.h"
 #include "perfetto/ext/base/periodic_task.h"
+#include "perfetto/ext/base/uuid.h"
 #include "perfetto/ext/base/weak_ptr.h"
 #include "perfetto/ext/tracing/core/basic_types.h"
 #include "perfetto/ext/tracing/core/commit_data_request.h"
@@ -76,8 +77,6 @@ class TracingServiceImpl : public TracingService {
   struct DataSourceInstance;
 
  public:
-  static constexpr size_t kDefaultShmPageSize = 4096ul;
-  static constexpr size_t kDefaultShmSize = 256 * 1024ul;
   static constexpr size_t kMaxShmSize = 32 * 1024 * 1024ul;
   static constexpr uint32_t kDataSourceStopTimeoutMs = 5000;
   static constexpr uint8_t kSyncMarker[] = {0x82, 0x47, 0x7a, 0x76, 0xb2, 0x8d,
@@ -108,6 +107,7 @@ class TracingServiceImpl : public TracingService {
     ~ProducerEndpointImpl() override;
 
     // TracingService::ProducerEndpoint implementation.
+    void Disconnect() override;
     void RegisterDataSource(const DataSourceDescriptor&) override;
     void UpdateDataSource(const DataSourceDescriptor&) override;
     void UnregisterDataSource(const std::string& name) override;
@@ -225,11 +225,16 @@ class TracingServiceImpl : public TracingService {
     void QueryServiceState(QueryServiceStateCallback) override;
     void QueryCapabilities(QueryCapabilitiesCallback) override;
     void SaveTraceForBugreport(SaveTraceForBugreportCallback) override;
+    void CloneSession(TracingSessionID) override;
 
     // Will queue a task to notify the consumer about the state change.
     void OnDataSourceInstanceStateChange(const ProducerEndpointImpl&,
                                          const DataSourceInstance&);
     void OnAllDataSourcesStarted();
+
+    base::WeakPtr<ConsumerEndpointImpl> GetWeakPtr() {
+      return weak_ptr_factory_.GetWeakPtr();
+    }
 
    private:
     friend class TracingServiceImpl;
@@ -300,6 +305,7 @@ class TracingServiceImpl : public TracingService {
              uint32_t timeout_ms,
              ConsumerEndpoint::FlushCallback);
   void FlushAndDisableTracing(TracingSessionID);
+  void FlushAndCloneSession(ConsumerEndpointImpl*, TracingSessionID);
 
   // Starts reading the internal tracing buffers from the tracing session `tsid`
   // and sends them to `*consumer` (which must be != nullptr).
@@ -422,7 +428,8 @@ class TracingServiceImpl : public TracingService {
       DISABLED = 0,
       CONFIGURED,
       STARTED,
-      DISABLING_WAITING_STOP_ACKS
+      DISABLING_WAITING_STOP_ACKS,
+      CLONED_READ_ONLY,
     };
 
     TracingSession(TracingSessionID,
@@ -634,12 +641,28 @@ class TracingServiceImpl : public TracingService {
     // etc)
     base::PeriodicTask snapshot_periodic_task;
 
+    // Deferred task that stops the trace when |duration_ms| expires. This is
+    // to handle the case of |prefer_suspend_clock_for_duration| which cannot
+    // use PostDelayedTask.
+    base::PeriodicTask timed_stop_task;
+
     // When non-NULL the packets should be post-processed using the filter.
     std::unique_ptr<protozero::MessageFilter> trace_filter;
     uint64_t filter_input_packets = 0;
     uint64_t filter_input_bytes = 0;
     uint64_t filter_output_bytes = 0;
     uint64_t filter_errors = 0;
+
+    // A randomly generated trace identifier. Note that this does NOT always
+    // match the requested TraceConfig.trace_uuid_msb/lsb. Spcifically, it does
+    // until a gap-less snapshot is requested. Each snapshot re-generates the
+    // uuid to avoid emitting two different traces with the same uuid.
+    base::Uuid trace_uuid;
+
+    // NOTE: when adding new fields here consider whether that state should be
+    // copied over in DoCloneSession() or not. Ask yourself: is this a
+    // "runtime state" (e.g. active data sources) or a "trace (meta)data state"?
+    // If the latter, it should be handled by DoCloneSession()).
   };
 
   TracingServiceImpl(const TracingServiceImpl&) = delete;
@@ -686,7 +709,7 @@ class TracingServiceImpl : public TracingService {
   TraceStats GetTraceStats(TracingSession*);
   void EmitLifecycleEvents(TracingSession*, std::vector<TracePacket>*);
   void EmitSeizedForBugreportLifecycleEvent(std::vector<TracePacket>*);
-  void MaybeEmitTraceConfig(TracingSession*, std::vector<TracePacket>*);
+  void MaybeEmitUuidAndTraceConfig(TracingSession*, std::vector<TracePacket>*);
   void MaybeEmitSystemInfo(TracingSession*, std::vector<TracePacket>*);
   void MaybeEmitReceivedTriggers(TracingSession*, std::vector<TracePacket>*);
   void MaybeNotifyAllDataSourcesStarted(TracingSession*);
@@ -701,6 +724,9 @@ class TracingServiceImpl : public TracingService {
   void ScrapeSharedMemoryBuffers(TracingSession*, ProducerEndpointImpl*);
   void PeriodicClearIncrementalStateTask(TracingSessionID, bool post_next_only);
   TraceBuffer* GetBufferByID(BufferID);
+  base::Status DoCloneSession(ConsumerEndpointImpl*,
+                              TracingSessionID,
+                              bool final_flush_outcome);
 
   // Returns true if `*tracing_session` is waiting for a trigger that hasn't
   // happened.
@@ -730,6 +756,7 @@ class TracingServiceImpl : public TracingService {
                      std::vector<TracePacket> packets);
   void OnStartTriggersTimeout(TracingSessionID tsid);
   void MaybeLogUploadEvent(const TraceConfig&,
+                           const base::Uuid&,
                            PerfettoStatsdAtom atom,
                            const std::string& trigger_name = "");
   void MaybeLogTriggerEvent(const TraceConfig&,
@@ -737,6 +764,8 @@ class TracingServiceImpl : public TracingService {
                             const std::string& trigger_name);
   size_t PurgeExpiredAndCountTriggerInWindow(int64_t now_ns,
                                              uint64_t trigger_name_hash);
+  static void StopOnDurationMsExpiry(base::WeakPtr<TracingServiceImpl>,
+                                     TracingSessionID);
 
   base::TaskRunner* const task_runner_;
   std::unique_ptr<SharedMemory::Factory> shm_factory_;

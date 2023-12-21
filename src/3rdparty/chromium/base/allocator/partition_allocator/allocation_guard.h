@@ -1,27 +1,27 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef BASE_ALLOCATOR_PARTITION_ALLOCATOR_ALLOCATION_GUARD_H_
 #define BASE_ALLOCATOR_PARTITION_ALLOCATOR_ALLOCATION_GUARD_H_
 
+#include "base/allocator/partition_allocator/partition_alloc_base/component_export.h"
 #include "base/allocator/partition_allocator/partition_alloc_config.h"
-#include "base/base_export.h"
 #include "build/build_config.h"
 
 namespace partition_alloc {
 
-#if defined(PA_HAS_ALLOCATION_GUARD)
+#if PA_CONFIG(HAS_ALLOCATION_GUARD)
 
 // Disallow allocations in the scope. Does not nest.
-class BASE_EXPORT ScopedDisallowAllocations {
+class PA_COMPONENT_EXPORT(PARTITION_ALLOC) ScopedDisallowAllocations {
  public:
   ScopedDisallowAllocations();
   ~ScopedDisallowAllocations();
 };
 
 // Disallow allocations in the scope. Does not nest.
-class BASE_EXPORT ScopedAllowAllocations {
+class PA_COMPONENT_EXPORT(PARTITION_ALLOC) ScopedAllowAllocations {
  public:
   ScopedAllowAllocations();
   ~ScopedAllowAllocations();
@@ -35,7 +35,7 @@ class BASE_EXPORT ScopedAllowAllocations {
 struct [[maybe_unused]] ScopedDisallowAllocations{};
 struct [[maybe_unused]] ScopedAllowAllocations{};
 
-#endif  // defined(PA_HAS_ALLOCATION_GUARD)
+#endif  // PA_CONFIG(HAS_ALLOCATION_GUARD)
 
 }  // namespace partition_alloc
 

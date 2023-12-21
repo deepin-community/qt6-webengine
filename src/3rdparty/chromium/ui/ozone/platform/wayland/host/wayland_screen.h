@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,8 +8,11 @@
 #include <set>
 #include <vector>
 
+#include "base/containers/flat_map.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
+#include "base/values.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/display/display_list.h"
 #include "ui/display/display_observer.h"
@@ -17,6 +20,7 @@
 #include "ui/gfx/buffer_types.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/ozone/platform/wayland/common/wayland_object.h"
+#include "ui/ozone/platform/wayland/host/wayland_output.h"
 #include "ui/ozone/public/platform_screen.h"
 
 namespace gfx {
@@ -39,13 +43,13 @@ class WaylandScreen : public PlatformScreen {
   WaylandScreen& operator=(const WaylandScreen&) = delete;
   ~WaylandScreen() override;
 
-  void OnOutputAddedOrUpdated(uint32_t output_id,
-                              const gfx::Rect& bounds,
-                              float output_scale,
-                              int32_t output_transform);
+  void OnOutputAddedOrUpdated(const WaylandOutput::Metrics& metrics);
   void OnOutputRemoved(uint32_t output_id);
 
-  void OnTabletStateChanged(display::TabletState tablet_state);
+  WaylandOutput::Id GetOutputIdForDisplayId(int64_t display_id);
+
+  // Returns id of the output that matches the bounds in screen coordinates.
+  WaylandOutput::Id GetOutputIdMatching(const gfx::Rect& match_rect);
 
   base::WeakPtr<WaylandScreen> GetWeakPtr();
 
@@ -64,28 +68,57 @@ class WaylandScreen : public PlatformScreen {
       const gfx::Point& point) const override;
   display::Display GetDisplayMatching(
       const gfx::Rect& match_rect) const override;
-  bool SetScreenSaverSuspended(bool suspend) override;
+  std::unique_ptr<PlatformScreen::PlatformScreenSaverSuspender>
+  SuspendScreenSaver() override;
   bool IsScreenSaverActive() const override;
   base::TimeDelta CalculateIdleTime() const override;
   void AddObserver(display::DisplayObserver* observer) override;
   void RemoveObserver(display::DisplayObserver* observer) override;
-  std::vector<base::Value> GetGpuExtraInfo(
+  base::Value::List GetGpuExtraInfo(
       const gfx::GpuExtraInfo& gpu_extra_info) override;
+#if BUILDFLAG(IS_CHROMEOS_LACROS)
+  void OnTabletStateChanged(display::TabletState tablet_state) override;
+  display::TabletState GetTabletState() const override;
+#endif
+
+ protected:
+  // Suspends or un-suspends the platform-specific screensaver, and returns
+  // whether the operation was successful. Can be called more than once with the
+  // same value for |suspend|, but those states should not stack: the first
+  // alternating value should toggle the state of the suspend.
+  bool SetScreenSaverSuspended(bool suspend);
 
  private:
-  void AddOrUpdateDisplay(uint32_t output_id,
-                          const gfx::Rect& bounds,
-                          float scale,
-                          int32_t transform);
+  class WaylandScreenSaverSuspender
+      : public PlatformScreen::PlatformScreenSaverSuspender {
+   public:
+    WaylandScreenSaverSuspender(const WaylandScreenSaverSuspender&) = delete;
+    WaylandScreenSaverSuspender& operator=(const WaylandScreenSaverSuspender&) =
+        delete;
 
-  WaylandConnection* connection_ = nullptr;
+    ~WaylandScreenSaverSuspender() override;
 
+    static std::unique_ptr<WaylandScreenSaverSuspender> Create(
+        WaylandScreen& screen);
+
+   private:
+    explicit WaylandScreenSaverSuspender(WaylandScreen& screen);
+
+    base::WeakPtr<WaylandScreen> screen_;
+    bool is_suspending_ = false;
+  };
+
+  void AddOrUpdateDisplay(const WaylandOutput::Metrics& metrics);
+  raw_ptr<WaylandConnection> connection_ = nullptr;
+
+  base::flat_map<WaylandOutput::Id, int64_t> display_id_map_;
   display::DisplayList display_list_;
 
   base::ObserverList<display::DisplayObserver> observers_;
 
   absl::optional<gfx::BufferFormat> image_format_alpha_;
   absl::optional<gfx::BufferFormat> image_format_no_alpha_;
+  absl::optional<gfx::BufferFormat> image_format_hdr_;
 
 #if defined(USE_DBUS)
   mutable std::unique_ptr<OrgGnomeMutterIdleMonitor>
@@ -93,6 +126,10 @@ class WaylandScreen : public PlatformScreen {
 #endif
 
   wl::Object<zwp_idle_inhibitor_v1> idle_inhibitor_;
+  uint32_t screen_saver_suspension_count_ = 0;
+#if BUILDFLAG(IS_CHROMEOS_LACROS)
+  display::TabletState tablet_state_;
+#endif
 
   base::WeakPtrFactory<WaylandScreen> weak_factory_;
 };

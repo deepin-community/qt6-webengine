@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -33,7 +33,7 @@ class MockMediaNotificationView : public MediaNotificationView {
                void(const media_session::MediaPosition&));
   MOCK_METHOD1(UpdateWithMediaArtwork, void(const gfx::ImageSkia&));
   MOCK_METHOD1(UpdateWithFavicon, void(const gfx::ImageSkia&));
-  MOCK_METHOD1(UpdateWithVectorIcon, void(const gfx::VectorIcon& vector_icon));
+  MOCK_METHOD1(UpdateWithVectorIcon, void(const gfx::VectorIcon* vector_icon));
   MOCK_METHOD1(UpdateDeviceSelectorAvailability, void(bool availability));
   MOCK_METHOD1(UpdateWithMuteStatus, void(bool));
   MOCK_METHOD1(UpdateWithVolume, void(float));

@@ -70,8 +70,23 @@ $ tools/run-swarmed.py $outdir $target [-- --gtest_filter=...]
 ```
 
 See the `--help` option of `run-swarmed.py` for more details about that script.
+Many flags are converted into dimensions to pass to `mb.py`; see
+[Bot selection criteria](#bot-selection-criteria) for possible values. (Most
+dimensions have the same name as the flag, but `--swarming-os` is just the `os`
+dimension.)
+
 Note you might need `--swarming-os Ubuntu-14.04` if you get an error like,
 `UnboundLocalError: local variable 'dbus_pid' referenced before assignment`.
+
+Web tests can be also run on swarmed. However:
+- the only supported output folders are `Debug` and `Release`
+- `--no-test-flags` must be specified.
+
+For example, you can run all Web Platform Tests inside `<some-wpt-folder>` like this:
+```
+$ autoninja -C out/Release blink_tests
+$ tools/run-swarmed.py --no-test-flags out/Release blink_wpt_tests <some-wpt-folder>
+```
 
 ### mb.py run
 
@@ -158,7 +173,11 @@ You may need to log in to `https://chromium-swarm.appspot.com` to do this
 $ tools/luci-go/isolate login
 ```
 
-Use your google.com account for this.
+Use your google.com account for this. On Windows the command would be:
+
+```
+$ tools\luci-go\isolate.exe login
+```
 
 ## Uploading an isolate
 

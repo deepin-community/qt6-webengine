@@ -15,15 +15,8 @@ Bundles provide three main advantages over monolithic `.apk` files:
    * Resource splits can also be made on a per-screen-density basis (for drawables),
      but Chrome has not taken advantage of this (yet).
 2. Features can be packaged into lazily loaded `.apk` files, known as
-   "feature splits". Feature splits have no performance overhead until used.
-   * Except on versions prior to Android O, where support for
-     [android:isolatedSplits] was added. On prior versions, all installed splits
-     are loaded on application launch.
-   * E.g.: The `chrome` feature split makes renderers more efficient by having
-     them not load Java code that they don't need.
-   * E.g.: The `image_editor` feature split defers loading of Share-related code
-     until a Share action is performed.
-   * See also: [go/isolated-splits-dev-guide] (Googlers only).
+   "feature splits". Chrome enables [isolated splits], which means feature
+   splits have no performance overhead until used (on Android O+ at least).
 3. Feature splits can be downloaded on-demand, saving disk space for users that
    do not need the functionality they provide. These are known as
    "Dynamic feature modules", or "DFMs".
@@ -46,8 +39,7 @@ to do so:
 
 [android_build_instructions.md#multiple-chrome-targets]: android_build_instructions.md#multiple-chrome-targets
 [Android App Bundles]: https://developer.android.com/guide/app-bundle
-[android:isolatedSplits]: https://developer.android.com/reference/android/R.attr#isolatedSplits
-[go/isolated-splits-dev-guide]: http://go/isolated-splits-dev-guide
+[isolated splits]: android_isolated_splits.md
 
 ### Declaring App Bundles with GN Templates
 
@@ -152,13 +144,12 @@ foo_module_desc = {
 ```
 
 Then, add the module descriptor to the appropriate descriptor list in
-//chrome/android/modules/chrome_feature_modules.gni, e.g. the Chrome Modern
-list:
+//chrome/android/modules/chrome_feature_modules.gni, e.g. the Monochrome list:
 
 ```gn
 import("//chrome/android/modules/foo/foo_module.gni")
 ...
-chrome_modern_module_descs += [ foo_module_desc ]
+monochrome_module_descs += [ foo_module_desc ]
 ```
 
 The next step is to add Foo to the list of feature modules for UMA recording.
@@ -285,9 +276,7 @@ Next, define an implementation that goes into the module in the new file
 package org.chromium.chrome.browser.foo;
 
 import org.chromium.base.Log;
-import org.chromium.base.annotations.UsedByReflection;
 
-@UsedByReflection("FooModule")
 public class FooImpl implements Foo {
     @Override
     public void bar() {
@@ -437,12 +426,13 @@ reading this section.
 There are some subtleties to how JNI registration works with DFMs:
 
 * Generated wrapper `ClassNameJni` classes are packaged into the DFM's dex file
-* The class containing the actual native definitions, `GEN_JNI.java`, is always
-  stored in the base module
-* If the DFM is only included in bundles that use [implicit JNI
-  registration](android_native_libraries.md#JNI-Native-Methods-Resolution) (i.e.
-  Monochrome and newer), then no extra consideration is necessary
-* Otherwise, the DFM will need to provide a `generate_jni_registration` target
+* The class containing the actual native definitions,
+  `<module_name>_GEN_JNI.java`, is currently stored in the base module, but
+  could be moved out
+* The `Natives` interface you provide will need to be annotated with your module
+  name as an argument to `NativeMethods`, eg. `@NativeMethods("foo")`, resulting
+  in a uniquely named `foo_GEN_JNI.java`
+* The DFM will need to provide a `generate_jni_registration` target
   that will generate all of the native registration functions
 
 #### Calling DFM native code via JNI
@@ -517,9 +507,9 @@ component("foo") {
 # the base module).
 generate_jni_registration("jni_registration") {
   targets = [ "//chrome/browser/foo/internal:java" ]
-  header_output = "$target_gen_dir/jni_registration.h"
   namespace = "foo"
   no_transitive_deps = true
+  manual_jni_registration = true
 }
 
 # This group is a convenience alias representing the module's native code,
@@ -579,7 +569,7 @@ With a declaration of the native method on the Java side:
 public class FooImpl implements Foo {
     ...
 
-    @NativeMethods
+    @NativeMethods("foo")
     interface Natives {
         int execute();
     }
@@ -721,10 +711,8 @@ package org.chromium.chrome.browser.foo;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
-import org.chromium.base.annotations.UsedByReflection;
 import org.chromium.chrome.browser.foo.R;
 
-@UsedByReflection("FooModule")
 public class FooImpl implements Foo {
     @Override
     public void bar() {

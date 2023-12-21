@@ -11,54 +11,79 @@ import * as UI from '../../ui/legacy/legacy.js';
 import {MobileThrottlingSelector} from './MobileThrottlingSelector.js';
 import {NetworkThrottlingSelector} from './NetworkThrottlingSelector.js';
 
-import type {Conditions, ConditionsList, MobileThrottlingConditionsGroup, NetworkThrottlingConditionsGroup} from './ThrottlingPresets.js';
-import {ThrottlingPresets} from './ThrottlingPresets.js';
+import {
+  ThrottlingPresets,
+  type Conditions,
+  type ConditionsList,
+  type MobileThrottlingConditionsGroup,
+  type NetworkThrottlingConditionsGroup,
+} from './ThrottlingPresets.js';
 
 const UIStrings = {
   /**
-  *@description Text with two placeholders separated by a colon
-  *@example {Node removed} PH1
-  *@example {div#id1} PH2
-  */
+   *@description Text with two placeholders separated by a colon
+   *@example {Node removed} PH1
+   *@example {div#id1} PH2
+   */
   sS: '{PH1}: {PH2}',
   /**
-  *@description Text in Throttling Manager of the Network panel
-  */
+   *@description Text in Throttling Manager of the Network panel
+   */
   add: 'Add…',
   /**
-  *@description Accessibility label for custom add network throttling option
-  *@example {Custom} PH1
-  */
+   *@description Accessibility label for custom add network throttling option
+   *@example {Custom} PH1
+   */
   addS: 'Add {PH1}',
   /**
-  *@description Text to indicate the network connectivity is offline
-  */
+   *@description Text to indicate the network connectivity is offline
+   */
   offline: 'Offline',
   /**
-  *@description Text in Throttling Manager of the Network panel
-  */
+   *@description Text in Throttling Manager of the Network panel
+   */
   forceDisconnectedFromNetwork: 'Force disconnected from network',
   /**
-  *@description Text for throttling the network
-  */
+   *@description Text for throttling the network
+   */
   throttling: 'Throttling',
   /**
-  *@description Icon title in Throttling Manager of the Network panel
-  */
+   *@description Icon title in Throttling Manager of the Network panel
+   */
   cpuThrottlingIsEnabled: 'CPU throttling is enabled',
   /**
-  *@description Screen reader label for a select box that chooses the CPU throttling speed in the Performance panel
-  */
+   *@description Screen reader label for a select box that chooses the CPU throttling speed in the Performance panel
+   */
   cpuThrottling: 'CPU throttling',
   /**
-  *@description Text for no network throttling
-  */
+   *@description Text for no network throttling
+   */
   noThrottling: 'No throttling',
   /**
-  *@description Text in Throttling Manager of the Network panel
-  *@example {2} PH1
-  */
+   *@description Text in Throttling Manager of the Network panel
+   *@example {2} PH1
+   */
   dSlowdown: '{PH1}× slowdown',
+  /**
+   *@description Tooltip text in Throttling Manager of the Performance panel
+   */
+  excessConcurrency: 'Exceeding the default value may degrade system performance.',
+  /**
+   *@description Tooltip text in Throttling Manager of the Performance panel
+   */
+  resetConcurrency: 'Reset to the default value',
+  /**
+   *@description Screen reader label for an check box that neables overriding navigator.hardwareConcurrency
+   */
+  hardwareConcurrency: 'Hardware concurrency',
+  /**
+   *@description Screen reader label for an input box that overrides navigator.hardwareConcurrency
+   */
+  hardwareConcurrencyValue: 'Value of navigator.hardwareConcurrency',
+  /**
+   *@description Icon title in Throttling Manager of the Performance panel
+   */
+  hardwareConcurrencyIsEnabled: 'Hardware concurrency override is enabled',
 };
 const str_ = i18n.i18n.registerUIStrings('panels/mobile_throttling/ThrottlingManager.ts', UIStrings);
 const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
@@ -71,6 +96,11 @@ export class ThrottlingManager {
   private readonly currentNetworkThrottlingConditionsSetting: Common.Settings.Setting<SDK.NetworkManager.Conditions>;
   private lastNetworkThrottlingConditions!: SDK.NetworkManager.Conditions;
   private readonly cpuThrottlingManager: SDK.CPUThrottlingManager.CPUThrottlingManager;
+  #hardwareConcurrencyOverrideEnabled = false;
+
+  get hardwareConcurrencyOverrideEnabled(): boolean {
+    return this.#hardwareConcurrencyOverrideEnabled;
+  }
 
   private constructor() {
     this.cpuThrottlingManager = SDK.CPUThrottlingManager.CPUThrottlingManager.instance();
@@ -230,19 +260,36 @@ export class ThrottlingManager {
     }
   }
 
+  private updatePanelIcon(): void {
+    const cpuRate = this.cpuThrottlingManager.cpuThrottlingRate();
+
+    if (cpuRate === SDK.CPUThrottlingManager.CPUThrottlingRates.NoThrottling &&
+        !this.hardwareConcurrencyOverrideEnabled) {
+      UI.InspectorView.InspectorView.instance().setPanelIcon('timeline', null);
+      return;
+    }
+    const icon = UI.Icon.Icon.create('smallicon-warning');
+    const tooltips: string[] = [];
+    if (cpuRate !== SDK.CPUThrottlingManager.CPUThrottlingRates.NoThrottling) {
+      tooltips.push(i18nString(UIStrings.cpuThrottlingIsEnabled));
+    }
+    if (this.hardwareConcurrencyOverrideEnabled) {
+      tooltips.push(i18nString(UIStrings.hardwareConcurrencyIsEnabled));
+    }
+    icon.title = tooltips.join('\n');
+    UI.InspectorView.InspectorView.instance().setPanelIcon('timeline', icon);
+  }
+
   setCPUThrottlingRate(rate: number): void {
     this.cpuThrottlingManager.setCPUThrottlingRate(rate);
-    let icon: UI.Icon.Icon|null = null;
     if (rate !== SDK.CPUThrottlingManager.CPUThrottlingRates.NoThrottling) {
       Host.userMetrics.actionTaken(Host.UserMetrics.Action.CpuThrottlingEnabled);
-      icon = UI.Icon.Icon.create('smallicon-warning');
-      UI.Tooltip.Tooltip.install(icon, i18nString(UIStrings.cpuThrottlingIsEnabled));
     }
     const index = this.cpuThrottlingRates.indexOf(rate);
     for (const control of this.cpuThrottlingControls) {
       control.setSelectedIndex(index);
     }
-    UI.InspectorView.InspectorView.instance().setPanelIcon('timeline', icon);
+    this.updatePanelIcon();
   }
 
   createCPUThrottlingSelector(): UI.Toolbar.ToolbarComboBox {
@@ -262,6 +309,73 @@ export class ThrottlingManager {
       }
     }
     return control;
+  }
+
+  createHardwareConcurrencySelector(): {
+    input: UI.Toolbar.ToolbarItem,
+    reset: UI.Toolbar.ToolbarButton,
+    warning: UI.Toolbar.ToolbarItem,
+    toggle: UI.Toolbar.ToolbarItem,
+  } {
+    const input = new UI.Toolbar.ToolbarItem(UI.UIUtils.createInput('devtools-text-input', 'number'));
+    input.setTitle(i18nString(UIStrings.hardwareConcurrencyValue));
+    const inputElement = input.element as HTMLInputElement;
+    inputElement.min = '1';
+    input.setEnabled(false);
+
+    const toggle = new UI.Toolbar.ToolbarCheckbox(i18nString(UIStrings.hardwareConcurrency));
+    const reset = new UI.Toolbar.ToolbarButton('Reset concurrency', 'largeicon-undo');
+    reset.setTitle(i18nString(UIStrings.resetConcurrency));
+    const warning = new UI.Toolbar.ToolbarItem(UI.Icon.Icon.create('smallicon-warning'));
+    warning.setTitle(i18nString(UIStrings.excessConcurrency));
+
+    toggle.inputElement.disabled = true;  // Prevent modification while still wiring things up asynchronously below
+    reset.element.classList.add('timeline-concurrency-hidden');
+    warning.element.classList.add('timeline-concurrency-hidden');
+
+    void this.cpuThrottlingManager.getHardwareConcurrency().then(defaultValue => {
+      if (defaultValue === undefined) {
+        return;
+      }
+
+      const setHardwareConcurrency = (value: number): void => {
+        if (value >= 1) {
+          this.cpuThrottlingManager.setHardwareConcurrency(value);
+        }
+        if (value > defaultValue) {
+          warning.element.classList.remove('timeline-concurrency-hidden');
+        } else {
+          warning.element.classList.add('timeline-concurrency-hidden');
+        }
+        if (value === defaultValue) {
+          reset.element.classList.add('timeline-concurrency-hidden');
+        } else {
+          reset.element.classList.remove('timeline-concurrency-hidden');
+        }
+      };
+
+      inputElement.value = `${defaultValue}`;
+      inputElement.oninput = (): void => setHardwareConcurrency(Number(inputElement.value));
+      toggle.inputElement.disabled = false;
+      toggle.inputElement.addEventListener('change', () => {
+        this.#hardwareConcurrencyOverrideEnabled = toggle.checked();
+        this.updatePanelIcon();
+
+        input.setEnabled(this.hardwareConcurrencyOverrideEnabled);
+        setHardwareConcurrency(this.hardwareConcurrencyOverrideEnabled ? Number(inputElement.value) : defaultValue);
+      });
+
+      reset.addEventListener(UI.Toolbar.ToolbarButton.Events.Click, () => {
+        inputElement.value = `${defaultValue}`;
+        setHardwareConcurrency(defaultValue);
+      });
+    });
+
+    return {input, reset, warning, toggle};
+  }
+
+  setHardwareConcurrency(concurrency: number): void {
+    this.cpuThrottlingManager.setHardwareConcurrency(concurrency);
   }
 
   private isDirty(): boolean {

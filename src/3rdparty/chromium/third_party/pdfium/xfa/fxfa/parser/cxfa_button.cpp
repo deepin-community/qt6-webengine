@@ -1,4 +1,4 @@
-// Copyright 2017 PDFium Authors. All rights reserved.
+// Copyright 2017 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -24,6 +24,13 @@ const CXFA_Node::AttributeData kButtonAttributeData[] = {
 };
 
 }  // namespace
+
+// static
+CXFA_Button* CXFA_Button::FromNode(CXFA_Node* pNode) {
+  return pNode && pNode->GetElementType() == XFA_Element::Button
+             ? static_cast<CXFA_Button*>(pNode)
+             : nullptr;
+}
 
 CXFA_Button::CXFA_Button(CXFA_Document* doc, XFA_PacketType packet)
     : CXFA_Node(doc,

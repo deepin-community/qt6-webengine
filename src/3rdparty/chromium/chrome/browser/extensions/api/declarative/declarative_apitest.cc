@@ -1,13 +1,13 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include <stddef.h>
 
 #include <memory>
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/command_line.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
@@ -121,55 +121,6 @@ class DeclarativeApiTest : public ExtensionApiTest {
   }
 };
 
-// Copied from origin_policy_browsertest.cc.
-const base::FilePath::CharType kDataRoot[] =
-    FILE_PATH_LITERAL("chrome/test/data/origin_policy_browsertest");
-
-class DeclarativeApiTestWithOriginPolicy : public DeclarativeApiTest {
- protected:
-  std::u16string NavigateToAndReturnTitle(const char* url) {
-    EXPECT_TRUE(server());
-    EXPECT_TRUE(
-        ui_test_utils::NavigateToURL(browser(), GURL(server()->GetURL(url))));
-    std::u16string title;
-    ui_test_utils::GetCurrentTabTitle(browser(), &title);
-    return title;
-  }
-
- private:
-  void SetUpInProcessBrowserTestFixture() override {
-    server_ = std::make_unique<net::test_server::EmbeddedTestServer>(
-        net::test_server::EmbeddedTestServer::TYPE_HTTPS);
-    server_->AddDefaultHandlers(base::FilePath(kDataRoot));
-    feature_list_.InitAndEnableFeature(features::kOriginPolicy);
-    EXPECT_TRUE(server()->Start());
-    DeclarativeApiTest::SetUpInProcessBrowserTestFixture();
-  }
-
-  void TearDownInProcessBrowserTestFixture() override { server_.reset(); }
-
-  net::test_server::EmbeddedTestServer* server() { return server_.get(); }
-
-  std::unique_ptr<net::test_server::EmbeddedTestServer> server_;
-  base::test::ScopedFeatureList feature_list_;
-};
-
-// Regression test for crbug.com/1047275.
-IN_PROC_BROWSER_TEST_F(DeclarativeApiTestWithOriginPolicy,
-                       OriginPolicyEnabled) {
-  // Navigate to a page with an origin policy. It should load correctly.
-  EXPECT_EQ(u"Page With Policy",
-            NavigateToAndReturnTitle("/page-with-policy.html"));
-
-  // Load an extension that has the |declarativeWebRequest| permission.
-  ASSERT_TRUE(RunExtensionTest("declarative/api")) << message_;
-
-  // Future navigations to the page with the origin policy should still work,
-  // and not throw an interstitial.
-  EXPECT_EQ(u"Page With Policy",
-            NavigateToAndReturnTitle("/page-with-policy.html"));
-}
-
 IN_PROC_BROWSER_TEST_F(DeclarativeApiTest, DeclarativeApi) {
   ASSERT_TRUE(RunExtensionTest("declarative/api")) << message_;
 
@@ -211,7 +162,7 @@ IN_PROC_BROWSER_TEST_F(DeclarativeApiTest, ExtensionLifetimeRulesHandling) {
                                        kRedirectToDataConstants,
                                        kRedirectToDataRules,
                                        kRedirectToDataInstallRules));
-  ExtensionTestMessageListener ready("ready", /*will_reply=*/false);
+  ExtensionTestMessageListener ready("ready");
   const Extension* extension = InstallExtensionWithUIAutoConfirm(
       ext_dir.Pack(), 1 /*+1 installed extension*/, browser());
   ASSERT_TRUE(extension);
@@ -244,8 +195,7 @@ IN_PROC_BROWSER_TEST_F(DeclarativeApiTest, ExtensionLifetimeRulesHandling) {
       FILE_PATH_LITERAL("background.js"),
       base::StringPrintf(
           "%s%s", kRedirectToDataConstants, kRedirectToDataNoRules));
-  ExtensionTestMessageListener ready_after_update("ready",
-                                                  /*will_reply=*/false);
+  ExtensionTestMessageListener ready_after_update("ready");
   EXPECT_TRUE(UpdateExtension(
       extension_id, ext_dir.Pack(), 0 /*no new installed extension*/));
   ASSERT_TRUE(ready_after_update.WaitUntilSatisfied());
@@ -280,7 +230,7 @@ IN_PROC_BROWSER_TEST_F(DeclarativeApiTest, NoTracesAfterUninstalling) {
                                        kRedirectToDataConstants,
                                        kRedirectToDataRules,
                                        kRedirectToDataInstallRules));
-  ExtensionTestMessageListener ready("ready", /*will_reply=*/false);
+  ExtensionTestMessageListener ready("ready");
   const Extension* extension = InstallExtensionWithUIAutoConfirm(
       ext_dir.Pack(), 1 /*+1 installed extension*/, browser());
   ASSERT_TRUE(extension);

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -29,11 +29,9 @@ const std::string& OmniboxInfo::GetKeyword(const Extension* extension) {
   return info ? info->keyword : base::EmptyString();
 }
 
-OmniboxHandler::OmniboxHandler() {
-}
+OmniboxHandler::OmniboxHandler() = default;
 
-OmniboxHandler::~OmniboxHandler() {
-}
+OmniboxHandler::~OmniboxHandler() = default;
 
 bool OmniboxHandler::Parse(Extension* extension, std::u16string* error) {
   ManifestKeys manifest_keys;

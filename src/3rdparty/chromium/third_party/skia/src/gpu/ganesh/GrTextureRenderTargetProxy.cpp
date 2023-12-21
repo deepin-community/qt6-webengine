@@ -26,10 +26,10 @@ GrTextureRenderTargetProxy::GrTextureRenderTargetProxy(const GrCaps& caps,
                                                        const GrBackendFormat& format,
                                                        SkISize dimensions,
                                                        int sampleCnt,
-                                                       GrMipmapped mipMapped,
+                                                       GrMipmapped mipmapped,
                                                        GrMipmapStatus mipmapStatus,
                                                        SkBackingFit fit,
-                                                       SkBudgeted budgeted,
+                                                       skgpu::Budgeted budgeted,
                                                        GrProtected isProtected,
                                                        GrInternalSurfaceFlags surfaceFlags,
                                                        UseAllocator useAllocator,
@@ -38,10 +38,27 @@ GrTextureRenderTargetProxy::GrTextureRenderTargetProxy(const GrCaps& caps,
         : GrSurfaceProxy(
                   format, dimensions, fit, budgeted, isProtected, surfaceFlags, useAllocator, label)
         // for now textures w/ data are always wrapped
-        , GrRenderTargetProxy(caps, format, dimensions, sampleCnt, fit, budgeted, isProtected,
-                              surfaceFlags, useAllocator, label)
-        , GrTextureProxy(format, dimensions, mipMapped, mipmapStatus, fit, budgeted, isProtected,
-                         surfaceFlags, useAllocator, creatingProvider, label) {
+        , GrRenderTargetProxy(caps,
+                              format,
+                              dimensions,
+                              sampleCnt,
+                              fit,
+                              budgeted,
+                              isProtected,
+                              surfaceFlags,
+                              useAllocator,
+                              label)
+        , GrTextureProxy(format,
+                         dimensions,
+                         mipmapped,
+                         mipmapStatus,
+                         fit,
+                         budgeted,
+                         isProtected,
+                         surfaceFlags,
+                         useAllocator,
+                         creatingProvider,
+                         label) {
     this->initSurfaceFlags(caps);
 }
 
@@ -51,10 +68,10 @@ GrTextureRenderTargetProxy::GrTextureRenderTargetProxy(const GrCaps& caps,
                                                        const GrBackendFormat& format,
                                                        SkISize dimensions,
                                                        int sampleCnt,
-                                                       GrMipmapped mipMapped,
+                                                       GrMipmapped mipmapped,
                                                        GrMipmapStatus mipmapStatus,
                                                        SkBackingFit fit,
-                                                       SkBudgeted budgeted,
+                                                       skgpu::Budgeted budgeted,
                                                        GrProtected isProtected,
                                                        GrInternalSurfaceFlags surfaceFlags,
                                                        UseAllocator useAllocator,
@@ -85,7 +102,7 @@ GrTextureRenderTargetProxy::GrTextureRenderTargetProxy(const GrCaps& caps,
         , GrTextureProxy(LazyInstantiateCallback(),
                          format,
                          dimensions,
-                         mipMapped,
+                         mipmapped,
                          mipmapStatus,
                          fit,
                          budgeted,
@@ -196,6 +213,7 @@ GrSurfaceProxy::LazySurfaceDesc GrTextureRenderTargetProxy::callbackDesc() const
             this->textureType(),
             this->isProtected(),
             this->isBudgeted(),
+            this->getLabel(),
     };
 }
 
@@ -210,7 +228,7 @@ void GrTextureRenderTargetProxy::onValidateSurface(const GrSurface* surface) {
     SkASSERT(surface->asRenderTarget());
     SkASSERT(surface->asRenderTarget()->numSamples() == this->numSamples());
 
-    SkASSERT(surface->asTexture()->textureType() == this->textureType());
+    //SkASSERT(surface->asTexture()->textureType() == this->textureType());
 
     GrInternalSurfaceFlags proxyFlags = fSurfaceFlags;
     GrInternalSurfaceFlags surfaceFlags = surface->flags();

@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,7 +7,7 @@
 
 #include <memory>
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
 #include "base/time/time.h"
 #include "cc/trees/layer_tree_host_client.h"
 #include "cc/trees/paint_holding_reason.h"
@@ -41,8 +41,12 @@ class LayerTreeViewDelegate {
   virtual void BeginMainFrame(base::TimeTicks frame_time) = 0;
 
   virtual void OnDeferMainFrameUpdatesChanged(bool) = 0;
-  virtual void OnDeferCommitsChanged(bool defer_status,
-                                     cc::PaintHoldingReason reason) = 0;
+  virtual void OnDeferCommitsChanged(
+      bool defer_status,
+      cc::PaintHoldingReason reason,
+      absl::optional<cc::PaintHoldingCommitTrigger> trigger) = 0;
+  virtual void OnPauseRenderingChanged(bool) = 0;
+  virtual void OnCommitRequested() = 0;
 
   // Notifies that the layer tree host has completed a call to
   // RequestMainFrameUpdate in response to a BeginMainFrame.

@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -35,6 +35,18 @@ class FakeUrlCheckerDelegate : public UrlCheckerDelegate {
       const net::HttpRequestHeaders& headers,
       bool is_main_frame,
       bool has_user_gesture) override {
+    resource.callback.Run(/*proceed=*/false, /*showed_intersitial=*/false);
+  }
+
+  void CheckLookupMechanismExperimentEligibility(
+      const security_interstitials::UnsafeResource& resource,
+      base::OnceCallback<void(bool)> callback,
+      scoped_refptr<base::SequencedTaskRunner> callback_task_runner) override {}
+
+  void CheckExperimentEligibilityAndStartBlockingPage(
+      const security_interstitials::UnsafeResource& resource,
+      base::OnceCallback<void(bool)> callback,
+      scoped_refptr<base::SequencedTaskRunner> callback_task_runner) override {
     resource.callback.Run(/*proceed=*/false, /*showed_intersitial=*/false);
   }
 

@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,6 +13,9 @@ namespace update_client {
 const char* kJSONValid = R"()]}'
   {"response":{
    "protocol":"3.1",
+   "systemrequirements":{"platform":"win",
+                         "arch":"x64",
+                         "min_os_version":"6.1"},
    "app":[
     {"appid":"12345",
      "status":"ok",
@@ -107,6 +110,23 @@ const char* kJSONInvalidMissingManifest = R"()]}'
      "status":"ok",
      "urls":{"url":[{"codebase":"http://localhost/download/"}]}
      }
+    }
+   ]
+  }})";
+
+// `manifest` is supposed to be a dictionary. It is a list here.
+const char* kJSONInvalidManifest = R"()]}'
+  {"response":{
+   "protocol":"3.1",
+   "app":[
+    {
+      "appid":"12345",
+      "status":"ok",
+      "updatecheck":{
+        "status":"ok",
+        "urls":{"url":[{"codebase":"http://localhost/download/"}]},
+        "manifest": []
+      }
     }
    ]
   }})";
@@ -404,10 +424,17 @@ TEST(UpdateClientProtocolParserJSONTest, Parse) {
   EXPECT_TRUE(parser->results().list.empty());
   EXPECT_FALSE(parser->errors().empty());
 
+  EXPECT_TRUE(parser->Parse(kJSONInvalidManifest));
+  EXPECT_TRUE(parser->results().list.empty());
+  EXPECT_FALSE(parser->errors().empty());
+
   {
     // Parse some valid XML, and check that all params came out as expected.
     EXPECT_TRUE(parser->Parse(kJSONValid));
     EXPECT_TRUE(parser->errors().empty());
+    EXPECT_EQ(parser->results().system_requirements.platform, "win");
+    EXPECT_EQ(parser->results().system_requirements.arch, "x64");
+    EXPECT_EQ(parser->results().system_requirements.min_os_version, "6.1");
     EXPECT_EQ(1u, parser->results().list.size());
     const auto* first_result = &parser->results().list[0];
     EXPECT_STREQ("ok", first_result->status.c_str());

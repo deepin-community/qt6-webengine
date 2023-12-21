@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,10 +10,10 @@
 #include <utility>
 #include <vector>
 
-#include "base/callback.h"
 #include "base/compiler_specific.h"
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
 #include "components/update_client/update_client.h"
@@ -80,9 +80,26 @@ class TestExtensionsBrowserClient : public ExtensionsBrowserClient {
       content::BrowserContext* context) override;
   content::BrowserContext* GetOriginalContext(
       content::BrowserContext* context) override;
+
+  content::BrowserContext* GetRedirectedContextInIncognito(
+      content::BrowserContext* context,
+      bool force_guest_profile,
+      bool force_system_profile) override;
+  content::BrowserContext* GetContextForRegularAndIncognito(
+      content::BrowserContext* context,
+      bool force_guest_profile,
+      bool force_system_profile) override;
+  content::BrowserContext* GetRegularProfile(
+      content::BrowserContext* context,
+      bool force_guest_profile,
+      bool force_system_profile) override;
+
 #if BUILDFLAG(IS_CHROMEOS_ASH)
   std::string GetUserIdHashFromContext(
       content::BrowserContext* context) override;
+#endif
+#if BUILDFLAG(IS_CHROMEOS_LACROS)
+  bool IsFromMainProfile(content::BrowserContext* context) override;
 #endif
   bool IsGuestSession(content::BrowserContext* context) const override;
   bool IsExtensionIncognitoEnabled(
@@ -138,7 +155,7 @@ class TestExtensionsBrowserClient : public ExtensionsBrowserClient {
   void BroadcastEventToRenderers(
       events::HistogramValue histogram_value,
       const std::string& event_name,
-      std::unique_ptr<base::ListValue> args,
+      base::Value::List args,
       bool dispatch_to_off_the_record_profiles) override;
   ExtensionCache* GetExtensionCache() override;
   bool IsBackgroundUpdateAllowed() override;

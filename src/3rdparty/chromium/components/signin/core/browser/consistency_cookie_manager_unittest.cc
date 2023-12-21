@@ -1,4 +1,4 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,11 +6,10 @@
 
 #include <memory>
 
-#include "base/test/scoped_feature_list.h"
+#include "base/memory/raw_ptr.h"
 #include "components/signin/core/browser/account_reconcilor.h"
 #include "components/signin/core/browser/account_reconcilor_delegate.h"
 #include "components/signin/public/base/signin_metrics.h"
-#include "components/signin/public/base/signin_switches.h"
 #include "components/signin/public/base/test_signin_client.h"
 #include "google_apis/gaia/gaia_urls.h"
 #include "net/cookies/canonical_cookie.h"
@@ -18,6 +17,10 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
+
+#if BUILDFLAG(IS_CHROMEOS)
+#include "components/account_manager_core/mock_account_manager_facade.h"
+#endif
 
 namespace signin {
 
@@ -51,6 +54,9 @@ class ConsistencyCookieManagerTest : public testing::Test {
     signin_client_.set_cookie_manager(std::move(mock_cookie_manager));
     reconcilor_ = std::make_unique<AccountReconcilor>(
         /*identity_manager=*/nullptr, &signin_client_,
+#if BUILDFLAG(IS_CHROMEOS)
+        &account_manager_facade_,
+#endif
         std::make_unique<AccountReconcilorDelegate>());
   }
 
@@ -127,14 +133,12 @@ class ConsistencyCookieManagerTest : public testing::Test {
   MockCookieManager* cookie_manager() { return cookie_manager_; }
 
  private:
-  // The kLacrosNonSyncingProfiles flags bundles several features: non-syncing
-  // profiles, signed out profiles, and Mirror Landing. The
-  // `ConsistencyCookieManager` is related to MirrorLanding.
-  base::test::ScopedFeatureList feature_list_{
-      switches::kLacrosNonSyncingProfiles};
-
   TestSigninClient signin_client_{/*prefs=*/nullptr};
-  MockCookieManager* cookie_manager_ = nullptr;  // Owned by `signin_client_`.
+  raw_ptr<MockCookieManager> cookie_manager_ =
+      nullptr;  // Owned by `signin_client_`.
+#if BUILDFLAG(IS_CHROMEOS)
+  account_manager::MockAccountManagerFacade account_manager_facade_;
+#endif
   std::unique_ptr<AccountReconcilor> reconcilor_;
 };
 
@@ -146,7 +150,7 @@ TEST_F(ConsistencyCookieManagerTest, ReconcilorState) {
       GetConsistencyCookieManager();
   ASSERT_TRUE(consistency_cookie_manager);
   EXPECT_EQ(account_reconcilor()->GetState(),
-            signin_metrics::ACCOUNT_RECONCILOR_INACTIVE);
+            signin_metrics::AccountReconcilorState::kInactive);
   // Cookie has not been set.
   testing::Mock::VerifyAndClearExpectations(cookie_manager());
   // Set some initial value for the cookie.
@@ -164,15 +168,15 @@ TEST_F(ConsistencyCookieManagerTest, ReconcilorState) {
   // - Always change the reconcilor state to something that results in a
   //   different cookie value (otherwise the cookie is not updated).
   AccountReconcilorStateTestCase cases[] = {
-      {signin_metrics::ACCOUNT_RECONCILOR_RUNNING,
+      {signin_metrics::AccountReconcilorState::kRunning,
        ConsistencyCookieManager::kCookieValueStringUpdating},
-      {signin_metrics::ACCOUNT_RECONCILOR_OK,
+      {signin_metrics::AccountReconcilorState::kOk,
        ConsistencyCookieManager::kCookieValueStringConsistent},
-      {signin_metrics::ACCOUNT_RECONCILOR_ERROR,
+      {signin_metrics::AccountReconcilorState::kError,
        ConsistencyCookieManager::kCookieValueStringInconsistent},
-      {signin_metrics::ACCOUNT_RECONCILOR_SCHEDULED,
+      {signin_metrics::AccountReconcilorState::kScheduled,
        ConsistencyCookieManager::kCookieValueStringUpdating},
-      {signin_metrics::ACCOUNT_RECONCILOR_INACTIVE, absl::nullopt},
+      {signin_metrics::AccountReconcilorState::kInactive, absl::nullopt},
   };
 
   for (const AccountReconcilorStateTestCase& test_case : cases) {
@@ -189,17 +193,17 @@ TEST_F(ConsistencyCookieManagerTest, ReconcilorState) {
 
   // Check that the cookie is not updated needlessly.
   EXPECT_EQ(account_reconcilor()->GetState(),
-            signin_metrics::ACCOUNT_RECONCILOR_INACTIVE);
+            signin_metrics::AccountReconcilorState::kInactive);
   // Set again the state that was used before INACTIVE.
-  SetReconcilorState(signin_metrics::ACCOUNT_RECONCILOR_SCHEDULED);
+  SetReconcilorState(signin_metrics::AccountReconcilorState::kScheduled);
   testing::Mock::VerifyAndClearExpectations(cookie_manager());
   // Setting the same state again does not update the cookie.
-  SetReconcilorState(signin_metrics::ACCOUNT_RECONCILOR_SCHEDULED);
+  SetReconcilorState(signin_metrics::AccountReconcilorState::kScheduled);
   testing::Mock::VerifyAndClearExpectations(cookie_manager());
   // Setting a state that maps to the same value does not update the cookie.
   EXPECT_EQ(account_reconcilor()->GetState(),
-            signin_metrics::ACCOUNT_RECONCILOR_SCHEDULED);
-  SetReconcilorState(signin_metrics::ACCOUNT_RECONCILOR_RUNNING);
+            signin_metrics::AccountReconcilorState::kScheduled);
+  SetReconcilorState(signin_metrics::AccountReconcilorState::kRunning);
   testing::Mock::VerifyAndClearExpectations(cookie_manager());
 }
 
@@ -211,7 +215,7 @@ TEST_F(ConsistencyCookieManagerTest, ScopedAccountUpdate) {
   // Start the reconcilor, with no cookie.
   SetCookieInManager(std::string());
   ExpectGetCookie();
-  SetReconcilorState(signin_metrics::ACCOUNT_RECONCILOR_OK);
+  SetReconcilorState(signin_metrics::AccountReconcilorState::kOk);
   testing::Mock::VerifyAndClearExpectations(cookie_manager());
 
   EXPECT_EQ(consistency_cookie_manager->scoped_update_count_, 0);
@@ -254,7 +258,7 @@ TEST_F(ConsistencyCookieManagerTest, ScopedAccountUpdate_Inactive) {
   ConsistencyCookieManager* consistency_cookie_manager =
       GetConsistencyCookieManager();
   EXPECT_EQ(account_reconcilor()->GetState(),
-            signin_metrics::ACCOUNT_RECONCILOR_INACTIVE);
+            signin_metrics::AccountReconcilorState::kInactive);
   EXPECT_EQ(consistency_cookie_manager->scoped_update_count_, 0);
 
   {
@@ -284,7 +288,7 @@ TEST_F(ConsistencyCookieManagerTest, ScopedAccountUpdate_Inactive) {
     SetCookieInManager(
         ConsistencyCookieManager::kCookieValueStringInconsistent);
     ExpectCookieSet(ConsistencyCookieManager::kCookieValueStringUpdating);
-    SetReconcilorState(signin_metrics::ACCOUNT_RECONCILOR_OK);
+    SetReconcilorState(signin_metrics::AccountReconcilorState::kOk);
     testing::Mock::VerifyAndClearExpectations(cookie_manager());
 
     // Destroy `update`. This resets the state to "Consistent".
@@ -303,7 +307,7 @@ TEST_F(ConsistencyCookieManagerTest, MoveOperations) {
   // Start the reconcilor, with no cookie.
   SetCookieInManager(std::string());
   ExpectGetCookie();
-  SetReconcilorState(signin_metrics::ACCOUNT_RECONCILOR_OK);
+  SetReconcilorState(signin_metrics::AccountReconcilorState::kOk);
   testing::Mock::VerifyAndClearExpectations(cookie_manager());
 
   EXPECT_EQ(consistency_cookie_manager->scoped_update_count_, 0);
@@ -361,7 +365,7 @@ TEST_F(ConsistencyCookieManagerTest, UpdateAfterDestruction) {
   // Start the reconcilor, with no cookie.
   SetCookieInManager(std::string());
   ExpectGetCookie();
-  SetReconcilorState(signin_metrics::ACCOUNT_RECONCILOR_OK);
+  SetReconcilorState(signin_metrics::AccountReconcilorState::kOk);
   testing::Mock::VerifyAndClearExpectations(cookie_manager());
 
   EXPECT_EQ(consistency_cookie_manager->scoped_update_count_, 0);
@@ -396,7 +400,7 @@ TEST_F(ConsistencyCookieManagerTest, CookieDeleted) {
   SetCookieInManager(std::string());
   // Start the reconcilor, the cookie is not created.
   ExpectGetCookie();
-  SetReconcilorState(signin_metrics::ACCOUNT_RECONCILOR_OK);
+  SetReconcilorState(signin_metrics::AccountReconcilorState::kOk);
   testing::Mock::VerifyAndClearExpectations(cookie_manager());
 
   // Create a cookie with "Updating" value, cookie creation is forced.
@@ -430,7 +434,7 @@ TEST_F(ConsistencyCookieManagerTest, CookieInvalid) {
   SetCookieInManager("invalid_value");
   ExpectGetCookie();
   ExpectCookieSet(ConsistencyCookieManager::kCookieValueStringConsistent);
-  SetReconcilorState(signin_metrics::ACCOUNT_RECONCILOR_OK);
+  SetReconcilorState(signin_metrics::AccountReconcilorState::kOk);
 }
 
 // Tests that the cookie is not set if it already has the desired value.
@@ -439,7 +443,7 @@ TEST_F(ConsistencyCookieManagerTest, CookieAlreadySet) {
   SetCookieInManager(ConsistencyCookieManager::kCookieValueStringConsistent);
   // Start the reconcilor. This queries the cookie, but does not set it again.
   ExpectGetCookie();
-  SetReconcilorState(signin_metrics::ACCOUNT_RECONCILOR_OK);
+  SetReconcilorState(signin_metrics::AccountReconcilorState::kOk);
 }
 
 // Check that concurrent cookie queries are coalesced and result in only one
@@ -458,9 +462,9 @@ TEST_F(ConsistencyCookieManagerTest, CoalesceCookieQueries) {
 
   // Perform multiple account reconcilor changes, while the cookie query is in
   // progress. `GetCookieList()` is called only once.
-  SetReconcilorState(signin_metrics::ACCOUNT_RECONCILOR_OK);
-  SetReconcilorState(signin_metrics::ACCOUNT_RECONCILOR_RUNNING);
-  SetReconcilorState(signin_metrics::ACCOUNT_RECONCILOR_ERROR);
+  SetReconcilorState(signin_metrics::AccountReconcilorState::kOk);
+  SetReconcilorState(signin_metrics::AccountReconcilorState::kRunning);
+  SetReconcilorState(signin_metrics::AccountReconcilorState::kError);
   // Unblock `GetCookieList()`. `SetCanonicalCookie()` is called only once, with
   // the most recent value.
   ExpectCookieSet(ConsistencyCookieManager::kCookieValueStringInconsistent);
@@ -484,7 +488,7 @@ TEST_F(ConsistencyCookieManagerTest, CancelPendingQuery) {
             get_cookie_callback = std::move(callback);
           })));
   // Start a cookie query.
-  SetReconcilorState(signin_metrics::ACCOUNT_RECONCILOR_OK);
+  SetReconcilorState(signin_metrics::AccountReconcilorState::kOk);
   // While the query is in progress, trigger a forced update, the cookie is set
   // immediately, and the query is canceled.
   {
@@ -519,7 +523,7 @@ TEST_F(ConsistencyCookieManagerTest, ExtraCookieManager) {
   // Start with "Consistent" in the main cookie manager.
   SetCookieInManager(ConsistencyCookieManager::kCookieValueStringConsistent);
   ExpectGetCookie();
-  SetReconcilorState(signin_metrics::ACCOUNT_RECONCILOR_OK);
+  SetReconcilorState(signin_metrics::AccountReconcilorState::kOk);
 
   // Add an extra cookie manager, the cookie is set immediately.
   MockCookieManager extra_cookie_manager;
@@ -535,7 +539,7 @@ TEST_F(ConsistencyCookieManagerTest, ExtraCookieManager) {
   ExpectCookieSetInManager(
       &extra_cookie_manager,
       ConsistencyCookieManager::kCookieValueStringInconsistent);
-  SetReconcilorState(signin_metrics::ACCOUNT_RECONCILOR_ERROR);
+  SetReconcilorState(signin_metrics::AccountReconcilorState::kError);
   testing::Mock::VerifyAndClearExpectations(&extra_cookie_manager);
 
   // Changes from the `ScopedAccountUpdate` are applied too.

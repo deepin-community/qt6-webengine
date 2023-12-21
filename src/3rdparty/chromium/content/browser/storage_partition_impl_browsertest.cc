@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,6 +6,7 @@
 
 #include <string>
 
+#include "base/task/sequenced_task_runner.h"
 #include "base/test/bind.h"
 #include "build/build_config.h"
 #include "content/public/browser/browser_context.h"
@@ -15,6 +16,7 @@
 #include "content/public/common/content_client.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/content_browser_test.h"
+#include "content/public/test/content_browser_test_content_browser_client.h"
 #include "content/public/test/simple_url_loader_test_helper.h"
 #include "content/public/test/url_loader_interceptor.h"
 #include "content/shell/browser/shell.h"
@@ -52,7 +54,7 @@ class StoragePartitionImplBrowsertest : public ContentBrowserTest {
  private:
 };
 
-class ClientCertBrowserClient : public ContentBrowserClient {
+class ClientCertBrowserClient : public ContentBrowserTestContentBrowserClient {
  public:
   explicit ClientCertBrowserClient(
       base::OnceClosure select_certificate_callback,
@@ -102,8 +104,6 @@ class ClientCertBrowserTest : public ContentBrowserTest {
     https_test_server_.ServeFilesFromSourceDirectory(GetTestDataFilePath());
   }
 
-  ~ClientCertBrowserTest() override = default;
-
  protected:
   void SetUpOnMainThread() override {
     ContentBrowserTest::SetUpOnMainThread();
@@ -114,8 +114,6 @@ class ClientCertBrowserTest : public ContentBrowserTest {
     client_ = std::make_unique<ClientCertBrowserClient>(
         select_certificate_run_loop_->QuitClosure(),
         delete_delegate_run_loop_->QuitClosure());
-
-    content::SetBrowserClientForTesting(client_.get());
   }
 
   net::EmbeddedTestServer https_test_server_;

@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -43,6 +43,16 @@ extern const char kAppFullscreenAllowed[];
 // A boolean indicating if external extensions are blocked from installing.
 extern const char kBlockExternalExtensions[];
 
+// A preference for a list of Component extensions that have been
+// uninstalled/removed and should not be reloaded.
+extern const char kDeletedComponentExtensions[];
+
+// A list of app origins that will grant a long-lived background lifetime to
+// the connecting extension, if connected to them via persistent messaging
+// ports. The value is controlled by the
+// `ExtensionExtendedBackgroundLifetimeForPortConnectionsToUrls` policy.
+extern const char kExtendedBackgroundLifetimeForPortConnectionsToUrls[];
+
 // Dictionary pref that keeps track of per-extension settings. The keys are
 // extension ids.
 extern const char kExtensions[];
@@ -51,6 +61,11 @@ extern const char kExtensions[];
 // Values are expected to conform to the schema of the ExtensionManagement
 // policy.
 extern const char kExtensionManagement[];
+
+// An integer that indicates the availability of extensions that are unpublished
+// on the Chrome Web Store. More details can be found at
+// ExtensionUnpublishedAvailability.yaml
+extern const char kExtensionUnpublishedAvailability[];
 
 // Policy that indicates whether CRX2 extension updates are allowed.
 extern const char kInsecureExtensionUpdatesEnabled[];
@@ -85,6 +100,11 @@ extern const char kNativeMessagingUserLevelHosts[];
 // Time of the next scheduled extensions auto-update checks.
 extern const char kNextUpdateCheck[];
 
+// An integer indicates the availability of manifest v2 extensions. The value is
+// controlled by the ExtensionManifestV2Availability policy. More details can
+// be found at ExtensionManifestV2Availability.yaml.
+extern const char kManifestV2Availability[];
+
 // A preference that tracks extensions pinned to the toolbar. This is a list
 // object stored in the Preferences file. The extensions are stored by ID.
 extern const char kPinnedExtensions[];
@@ -92,14 +112,6 @@ extern const char kPinnedExtensions[];
 // Indicates on-disk data might have skeletal data that needs to be cleaned
 // on the next start of the browser.
 extern const char kStorageGarbageCollect[];
-
-// A preference that tracks browser action toolbar configuration. This is a list
-// object stored in the Preferences file. The extensions are stored by ID.
-extern const char kToolbar[];
-
-// A preference for a list of Component extensions that have been
-// uninstalled/removed and should not be reloaded.
-extern const char kDeletedComponentExtensions[];
 
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || \
     BUILDFLAG(IS_FUCHSIA)
@@ -109,13 +121,9 @@ extern const char kDeletedComponentExtensions[];
 extern const char kChromeAppsEnabled[];
 #endif
 
-// A boolean indicating whether the deprecated U2F Security Key API, implemented
-// in the CryptoToken component extension, should be forcibly enabled, even if
-// it has been disabled via the `extensions_features::U2FSecurityKeyAPI` feature
-// flag.
-//
-// TODO(1224886): Delete together with CryptoToken code.
-extern const char kU2fSecurityKeyApiEnabled[];
+// A preference for an enterprise policy which is a temporary workaround for
+// behaviour changes to <webview>.
+extern const char kChromeAppsWebViewPermissiveBehaviorAllowed[];
 
 // Properties in kExtensions dictionaries --------------------------------------
 

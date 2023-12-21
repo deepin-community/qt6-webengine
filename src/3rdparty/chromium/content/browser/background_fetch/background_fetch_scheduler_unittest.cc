@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,9 +6,9 @@
 
 #include <vector>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/containers/cxx20_erase.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/guid.h"
 #include "base/memory/raw_ptr.h"
 #include "base/strings/string_number_conversions.h"
@@ -202,12 +202,12 @@ TEST_F(BackgroundFetchSchedulerTest, TwoControllersSynchronous) {
 
   // Create a controller with A1 -> A4.
   InitializeControllerWithRequests(
-      blink::StorageKey(url::Origin::Create(GURL("https://A.com"))),
+      blink::StorageKey::CreateFromStringForTesting("https://A.com"),
       std::vector<std::string>(all_requests.begin(), all_requests.begin() + 4));
 
   // Create a controller with B1 -> B4.
   InitializeControllerWithRequests(
-      blink::StorageKey(url::Origin::Create(GURL("https://B.com"))),
+      blink::StorageKey::CreateFromStringForTesting("https://B.com"),
       std::vector<std::string>(all_requests.begin() + 4, all_requests.end()));
 
   RunSchedulerToCompletion();
@@ -222,12 +222,12 @@ TEST_F(BackgroundFetchSchedulerTest, TwoControllersConcurrent) {
 
   // Create a controller with A1 -> A4.
   InitializeControllerWithRequests(
-      blink::StorageKey(url::Origin::Create(GURL("https://A.com"))),
+      blink::StorageKey::CreateFromStringForTesting("https://A.com"),
       std::vector<std::string>(all_requests.begin(), all_requests.begin() + 4));
 
   // Create a controller with B1 -> B4.
   InitializeControllerWithRequests(
-      blink::StorageKey(url::Origin::Create(GURL("https://B.com"))),
+      blink::StorageKey::CreateFromStringForTesting("https://B.com"),
       std::vector<std::string>(all_requests.begin() + 4, all_requests.end()));
 
   RunSchedulerToCompletion();

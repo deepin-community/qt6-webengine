@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -12,15 +12,16 @@
 #include <vector>
 
 #include "ash/constants/ash_features.h"
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/containers/contains.h"
 #include "base/cxx17_backports.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/no_destructor.h"
 #include "base/posix/safe_strerror.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/task/bind_post_task.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/trace_event/typed_macros.h"
-#include "media/base/bind_to_current_loop.h"
 #include "media/capture/mojom/image_capture_types.h"
 #include "media/capture/video/blob_utils.h"
 #include "media/capture/video/chromeos/camera_3a_controller.h"
@@ -281,10 +282,10 @@ ResultMetadata::~ResultMetadata() = default;
 
 CameraDeviceDelegate::CameraDeviceDelegate(
     VideoCaptureDeviceDescriptor device_descriptor,
-    scoped_refptr<CameraHalDelegate> camera_hal_delegate,
+    CameraHalDelegate* camera_hal_delegate,
     scoped_refptr<base::SingleThreadTaskRunner> ipc_task_runner)
     : device_descriptor_(device_descriptor),
-      camera_hal_delegate_(std::move(camera_hal_delegate)),
+      camera_hal_delegate_(camera_hal_delegate),
       ipc_task_runner_(std::move(ipc_task_runner)) {}
 
 CameraDeviceDelegate::~CameraDeviceDelegate() = default;
@@ -354,7 +355,7 @@ void CameraDeviceDelegate::AllocateAndStart(
       camera_hal_delegate_->GetCameraIdFromDeviceId(
           device_descriptor_.device_id),
       device_ops_.BindNewPipeAndPassReceiver(),
-      BindToCurrentLoop(
+      base::BindPostTaskToCurrentDefault(
           base::BindOnce(&CameraDeviceDelegate::OnOpenedDevice, GetWeakPtr())));
   device_ops_.set_disconnect_handler(base::BindOnce(
       &CameraDeviceDelegate::OnMojoConnectionError, GetWeakPtr()));
@@ -450,6 +451,16 @@ void CameraDeviceDelegate::SetPhotoOptions(
     return;
   }
 
+  // Abort if background blur does not have already the desired value.
+  if (settings->has_background_blur_mode &&
+      (!ash::features::IsVideoConferenceEnabled() ||
+       current_effects_.is_null() ||
+       settings->background_blur_mode !=
+           (current_effects_->blur_enabled ? mojom::BackgroundBlurMode::BLUR
+                                           : mojom::BackgroundBlurMode::OFF))) {
+    return;
+  }
+
   // Set the vendor tag into with given |name| and |value|. Returns true if
   // the vendor tag is set and false otherwise.
   auto to_uint8_vector = [](int32_t value) {
@@ -498,8 +509,8 @@ void CameraDeviceDelegate::SetPhotoOptions(
 
       request_manager_->SetRepeatingCaptureMetadata(
           cros::mojom::CameraMetadataTag::ANDROID_SCALER_CROP_REGION,
-          cros::mojom::EntryType::TYPE_INT32, 4,
-          SerializeMetadataValueFromSpan(base::make_span(region, 4)));
+          cros::mojom::EntryType::TYPE_INT32, std::size(region),
+          SerializeMetadataValueFromSpan<int32_t>(region));
 
       VLOG(1) << "zoom ratio:" << settings->zoom << " scaler.crop.region("
               << region[0] << "," << region[1] << "," << region[2] << ","
@@ -755,6 +766,7 @@ void CameraDeviceDelegate::OnClosed(int32_t result) {
   if (request_manager_) {
     request_manager_->RemoveResultMetadataObserver(this);
   }
+  CameraHalDispatcherImpl::GetInstance()->RemoveCameraEffectObserver(this);
   ResetMojoInterface();
   device_context_ = nullptr;
   current_blob_resolution_.SetSize(0, 0);
@@ -824,6 +836,13 @@ void CameraDeviceDelegate::Initialize() {
       std::move(callback_ops),
       base::BindOnce(&CameraDeviceDelegate::OnInitialized, GetWeakPtr()));
   request_manager_->AddResultMetadataObserver(this);
+  // The callback passed to CameraHalDispatcherImpl will be called on a
+  // different thread inside CameraHalDispatcherImpl, so we need always
+  // post the callback onto current task runner.
+  CameraHalDispatcherImpl::GetInstance()->AddCameraEffectObserver(
+      this, base::BindPostTaskToCurrentDefault(base::BindOnce(
+                &CameraDeviceDelegate::OnCameraEffectObserverAdded,
+                weak_ptr_factory_.GetWeakPtr())));
 
   // For Intel IPU6 platform, set power mode to high quality for CCA and low
   // power mode for others.
@@ -906,10 +925,10 @@ void CameraDeviceDelegate::ConfigureStreams(
     switch (param.first) {
       case ClientType::kPreviewClient:
         usage = cros::mojom::GRALLOC_USAGE_HW_COMPOSER;
-        // TODO(henryhsu): PreviewClient should remove HW_VIDEO_ENCODER usage
-        // when multiple streams enabled.
-        if (camera_app_device && camera_app_device->GetCaptureIntent() ==
-                                     cros::mojom::CaptureIntent::VIDEO_RECORD) {
+        if (camera_app_device &&
+            camera_app_device->GetCaptureIntent() ==
+                cros::mojom::CaptureIntent::VIDEO_RECORD &&
+            !camera_app_device->IsMultipleStreamsEnabled()) {
           usage |= cros::mojom::GRALLOC_USAGE_HW_VIDEO_ENCODER;
         }
         break;
@@ -971,7 +990,13 @@ void CameraDeviceDelegate::ConfigureStreams(
     stream_config->streams.push_back(std::move(still_capture_stream));
 
     int32_t max_yuv_width = 0, max_yuv_height = 0;
-    if (IsYUVReprocessingSupported(&max_yuv_width, &max_yuv_height)) {
+    bool is_recording_multi_stream =
+        camera_app_device &&
+        camera_app_device->GetCaptureIntent() ==
+            cros::mojom::CaptureIntent::VIDEO_RECORD &&
+        camera_app_device->IsMultipleStreamsEnabled();
+    if (IsYUVReprocessingSupported(&max_yuv_width, &max_yuv_height) &&
+        !is_recording_multi_stream) {
       auto reprocessing_stream_input = cros::mojom::Camera3Stream::New();
       reprocessing_stream_input->id =
           static_cast<uint64_t>(StreamType::kYUVInput);
@@ -1016,6 +1041,7 @@ void CameraDeviceDelegate::ConfigureStreams(
       CAMERA3_STREAM_CONFIGURATION_NORMAL_MODE;
   if (device_api_version_ >= cros::mojom::CAMERA_DEVICE_API_VERSION_3_5) {
     stream_config->session_parameters = cros::mojom::CameraMetadata::New();
+    ConfigureSessionParameters(&stream_config->session_parameters);
   }
   device_ops_->ConfigureStreams(
       std::move(stream_config),
@@ -1203,36 +1229,16 @@ void CameraDeviceDelegate::OnConstructedDefaultPreviewRequestSettings(
   device_context_->SetState(CameraDeviceContext::State::kCapturing);
   camera_3a_controller_->SetAutoFocusModeForStillCapture();
 
-  auto camera_app_device =
-      CameraAppDeviceBridgeImpl::GetInstance()->GetWeakCameraAppDevice(
-          device_descriptor_.device_id);
-  auto specified_fps_range =
-      camera_app_device ? camera_app_device->GetFpsRange() : absl::nullopt;
-  if (specified_fps_range) {
-    SetFpsRangeInMetadata(&settings, specified_fps_range->GetMin(),
-                          specified_fps_range->GetMax());
-  } else {
-    // Assumes the frame_rate will be the same for all |chrome_capture_params|.
-    int32_t requested_frame_rate =
-        std::round(chrome_capture_params_[ClientType::kPreviewClient]
-                       .requested_format.frame_rate);
-    bool prefer_constant_frame_rate =
-        base::FeatureList::IsEnabled(
-            chromeos::features::kPreferConstantFrameRate) ||
-        (camera_app_device && camera_app_device->GetCaptureIntent() ==
-                                  cros::mojom::CaptureIntent::VIDEO_RECORD);
-    auto [target_min, target_max] = GetTargetFrameRateRange(
-        static_metadata_, requested_frame_rate, prefer_constant_frame_rate);
-    if (target_min == 0 || target_max == 0) {
-      device_context_->SetErrorState(
-          media::VideoCaptureError::
-              kCrosHalV3DeviceDelegateFailedToGetDefaultRequestSettings,
-          FROM_HERE, "Failed to get valid frame rate range");
-      return;
-    }
-
-    SetFpsRangeInMetadata(&settings, target_min, target_max);
+  auto [target_min, target_max] = GetFrameRateRange();
+  if (target_min == 0 || target_max == 0) {
+    device_context_->SetErrorState(
+        media::VideoCaptureError::
+            kCrosHalV3DeviceDelegateFailedToGetDefaultRequestSettings,
+        FROM_HERE, "Failed to get valid frame rate range");
+    return;
   }
+  SetFpsRangeInMetadata(&settings, target_min, target_max);
+
   while (!on_reconfigured_callbacks_.empty()) {
     std::move(on_reconfigured_callbacks_.front()).Run();
     on_reconfigured_callbacks_.pop();
@@ -1260,7 +1266,7 @@ void CameraDeviceDelegate::OnConstructedDefaultStillCaptureRequestSettings(
     if (camera_app_device) {
       camera_app_device->ConsumeReprocessOptions(
           std::move(take_photo_callback),
-          media::BindToCurrentLoop(base::BindOnce(
+          base::BindPostTaskToCurrentDefault(base::BindOnce(
               &RequestManager::TakePhoto, request_manager_->GetWeakPtr(),
               settings.Clone())));
     } else {
@@ -1526,6 +1532,29 @@ void CameraDeviceDelegate::OnResultMetadataAvailable(
   }
 }
 
+void CameraDeviceDelegate::OnCameraEffectObserverAdded(
+    cros::mojom::EffectsConfigPtr current_effects) {
+  DCHECK(ipc_task_runner_->BelongsToCurrentThread());
+  current_effects_ = std::move(current_effects);
+}
+
+void CameraDeviceDelegate::OnCameraEffectChanged(
+    const cros::mojom::EffectsConfigPtr& new_effects) {
+  if (!ipc_task_runner_->BelongsToCurrentThread()) {
+    ipc_task_runner_->PostTask(
+        FROM_HERE, base::BindOnce(&CameraDeviceDelegate::OnCameraEffectChanged,
+                                  GetWeakPtr(), new_effects.Clone()));
+    return;
+  }
+
+  DCHECK(ipc_task_runner_->BelongsToCurrentThread());
+  if (!current_effects_.is_null() &&
+      current_effects_->blur_enabled != new_effects->blur_enabled) {
+    device_context_->OnCaptureConfigurationChanged();
+  }
+  current_effects_ = new_effects.Clone();
+}
+
 void CameraDeviceDelegate::DoGetPhotoState(
     VideoCaptureDevice::GetPhotoStateCallback callback) {
   DCHECK(ipc_task_runner_->BelongsToCurrentThread());
@@ -1777,7 +1806,72 @@ void CameraDeviceDelegate::DoGetPhotoState(
     }
   }
 
+  // For background blur part, we only set capabilities and current
+  // configuration setting if the feature flag is enabled.
+  //
+  // https://w3c.github.io/mediacapture-extensions/#exposing-mediastreamtrack-source-background-blur-support
+  if (ash::features::IsVideoConferenceEnabled() &&
+      !current_effects_.is_null()) {
+    photo_state->supported_background_blur_modes = {
+        current_effects_->blur_enabled ? mojom::BackgroundBlurMode::BLUR
+                                       : mojom::BackgroundBlurMode::OFF};
+
+    photo_state->background_blur_mode = current_effects_->blur_enabled
+                                            ? mojom::BackgroundBlurMode::BLUR
+                                            : mojom::BackgroundBlurMode::OFF;
+  }
+
   std::move(callback).Run(std::move(photo_state));
+}
+
+std::pair<int32_t, int32_t> CameraDeviceDelegate::GetFrameRateRange() {
+  auto camera_app_device =
+      CameraAppDeviceBridgeImpl::GetInstance()->GetWeakCameraAppDevice(
+          device_descriptor_.device_id);
+  auto specified_fps_range =
+      camera_app_device ? camera_app_device->GetFpsRange() : absl::nullopt;
+  if (specified_fps_range) {
+    return std::make_pair(specified_fps_range->GetMin(),
+                          specified_fps_range->GetMax());
+  }
+  // Assumes the frame_rate will be the same for all |chrome_capture_params|.
+  int32_t requested_frame_rate =
+      std::round(chrome_capture_params_[ClientType::kPreviewClient]
+                     .requested_format.frame_rate);
+  bool prefer_constant_frame_rate =
+      base::FeatureList::IsEnabled(ash::features::kPreferConstantFrameRate) ||
+      (camera_app_device && camera_app_device->GetCaptureIntent() ==
+                                cros::mojom::CaptureIntent::VIDEO_RECORD);
+  return GetTargetFrameRateRange(static_metadata_, requested_frame_rate,
+                                 prefer_constant_frame_rate);
+}
+
+void CameraDeviceDelegate::ConfigureSessionParameters(
+    cros::mojom::CameraMetadataPtr* session_parameters) {
+  auto session_keys = GetMetadataEntryAsSpan<int32_t>(
+      static_metadata_,
+      cros::mojom::CameraMetadataTag::ANDROID_REQUEST_AVAILABLE_SESSION_KEYS);
+  for (auto tag_value : session_keys) {
+    auto metadata_tag = static_cast<cros::mojom::CameraMetadataTag>(tag_value);
+    switch (metadata_tag) {
+      case cros::mojom::CameraMetadataTag::
+          ANDROID_CONTROL_AE_TARGET_FPS_RANGE: {
+        VLOG(1) << "Setting " << metadata_tag << " in session_parameters.";
+        auto [fps_min, fps_max] = GetFrameRateRange();
+        if (fps_min == 0 || fps_max == 0) {
+          LOG(WARNING) << "Failed to get valid fps range, did not set "
+                       << metadata_tag << " in session_parameters.";
+          break;
+        }
+        SetFpsRangeInMetadata(session_parameters, fps_min, fps_max);
+        break;
+      }
+      default: {
+        VLOG(1) << "Did not set " << metadata_tag << " in session_parameters.";
+        break;
+      }
+    }
+  }
 }
 
 }  // namespace media

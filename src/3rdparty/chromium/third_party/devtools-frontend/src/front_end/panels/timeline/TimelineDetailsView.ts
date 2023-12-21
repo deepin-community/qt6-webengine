@@ -10,60 +10,60 @@ import * as Components from '../../ui/legacy/components/utils/utils.js';
 import * as UI from '../../ui/legacy/legacy.js';
 
 import {EventsTimelineTreeView} from './EventsTimelineTreeView.js';
-import type {PerformanceModel} from './PerformanceModel.js';
-import {Events} from './PerformanceModel.js';
+
+import {Events, type PerformanceModel} from './PerformanceModel.js';
 import {TimelineLayersView} from './TimelineLayersView.js';
 import {TimelinePaintProfilerView} from './TimelinePaintProfilerView.js';
-import type {TimelineModeViewDelegate} from './TimelinePanel.js';
-import {TimelineSelection} from './TimelinePanel.js';
-import type {TimelineTreeView} from './TimelineTreeView.js';
-import {BottomUpTimelineTreeView, CallTreeTimelineTreeView} from './TimelineTreeView.js';
+
+import {TimelineSelection, type TimelineModeViewDelegate} from './TimelinePanel.js';
+
+import {BottomUpTimelineTreeView, CallTreeTimelineTreeView, type TimelineTreeView} from './TimelineTreeView.js';
 import {TimelineDetailsContentHelper, TimelineUIUtils} from './TimelineUIUtils.js';
 
 const UIStrings = {
   /**
-  *@description Text for the summary view
-  */
+   *@description Text for the summary view
+   */
   summary: 'Summary',
   /**
-  *@description Text in Timeline Details View of the Performance panel
-  */
+   *@description Text in Timeline Details View of the Performance panel
+   */
   bottomup: 'Bottom-Up',
   /**
-  *@description Text in Timeline Details View of the Performance panel
-  */
+   *@description Text in Timeline Details View of the Performance panel
+   */
   callTree: 'Call Tree',
   /**
-  *@description Text in Timeline Details View of the Performance panel
-  */
+   *@description Text in Timeline Details View of the Performance panel
+   */
   eventLog: 'Event Log',
   /**
-  *@description The label for estimated total blocking time in the performance panel
-  */
+   *@description The label for estimated total blocking time in the performance panel
+   */
   estimated: 'estimated',
   /**
-  *@description Label for the total blocking time in the Performance Panel
-  *@example {320.23} PH1
-  *@example {(estimated)} PH2
-  */
+   *@description Label for the total blocking time in the Performance Panel
+   *@example {320.23} PH1
+   *@example {(estimated)} PH2
+   */
   totalBlockingTimeSmss: 'Total blocking time: {PH1}ms{PH2}',
   /**
-  *@description Text that is usually a hyperlink to more documentation
-  */
+   *@description Text that is usually a hyperlink to more documentation
+   */
   learnMore: 'Learn more',
   /**
-  *@description Title of the Layers tool
-  */
+   *@description Title of the Layers tool
+   */
   layers: 'Layers',
   /**
-  *@description Title of the paint profiler, old name of the performance pane
-  */
+   *@description Title of the paint profiler, old name of the performance pane
+   */
   paintProfiler: 'Paint Profiler',
   /**
-  *@description Text in Timeline Details View of the Performance panel
-  *@example {1ms} PH1
-  *@example {10ms} PH2
-  */
+   *@description Text in Timeline Details View of the Performance panel
+   *@example {1ms} PH1
+   *@example {10ms} PH2
+   */
   rangeSS: 'Range:  {PH1} – {PH2}',
 };
 const str_ = i18n.i18n.registerUIStrings('panels/timeline/TimelineDetailsView.ts', UIStrings);
@@ -146,10 +146,8 @@ export class TimelineDetailsView extends UI.Widget.VBox {
 
       const warning = document.createElement('span');
       const clsLink = UI.XLink.XLink.create('https://web.dev/tbt/', i18nString(UIStrings.learnMore));
-      // crbug.com/1103188: In dark mode the focus ring is hidden by the surrounding
-      // container of this link. For some additional spacing on the right to make
-      // sure the ring is fully visible.
-      clsLink.style.marginRight = '2px';
+      // Prevent focus ring from being cut off.
+      clsLink.style.margin = '3px';
       warning.appendChild(clsLink);
 
       this.additionalMetricsToolbar.appendText(message);

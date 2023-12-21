@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -59,14 +59,20 @@ struct HttpRequest {
   // Returns a GURL as a convenience to extract the path and query strings.
   GURL GetURL() const;
 
-  std::string relative_url;  // Starts with '/'. Example: "/test?query=foo"
+  // The request target. For most methods, this will start with '/', e.g.,
+  // "/test?query=foo". If `method` is `METHOD_OPTIONS`, it may also be "*". If
+  // `method` is `METHOD_CONNECT`, it will instead be a string like
+  // "example.com:443".
+  std::string relative_url;
   GURL base_url;
-  HttpMethod method;
+  // The HTTP method. If unknown, this will be `METHOD_UNKNOWN` and the actual
+  // method will be in `method_string`.
+  HttpMethod method = METHOD_UNKNOWN;
   std::string method_string;
   std::string all_headers;
   HeaderMap headers;
   std::string content;
-  bool has_content;
+  bool has_content = false;
   absl::optional<SSLInfo> ssl_info;
 };
 
@@ -104,7 +110,7 @@ class HttpRequestParser {
   ~HttpRequestParser();
 
   // Adds chunk of data into the internal buffer.
-  void ProcessChunk(const base::StringPiece& data);
+  void ProcessChunk(base::StringPiece data);
 
   // Parses the http request (including data - if provided).
   // If returns ACCEPTED, then it means that the whole request has been found
@@ -117,7 +123,9 @@ class HttpRequestParser {
   // another request.
   std::unique_ptr<HttpRequest> GetRequest();
 
-  static HttpMethod GetMethodType(const std::string& token);
+  // Returns `METHOD_UNKNOWN` if `token` is not a recognized method. Methods are
+  // case-sensitive.
+  static HttpMethod GetMethodType(base::StringPiece token);
 
  private:
   // Parses headers and returns ACCEPTED if whole request was parsed. Otherwise
@@ -135,10 +143,10 @@ class HttpRequestParser {
 
   std::unique_ptr<HttpRequest> http_request_;
   std::string buffer_;
-  size_t buffer_position_;  // Current position in the internal buffer.
-  State state_;
+  size_t buffer_position_ = 0;  // Current position in the internal buffer.
+  State state_ = STATE_HEADERS;
   // Content length of the request currently being parsed.
-  size_t declared_content_length_;
+  size_t declared_content_length_ = 0;
 
   std::unique_ptr<HttpChunkedDecoder> chunked_decoder_;
 };

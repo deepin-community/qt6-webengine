@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,8 +6,8 @@
 
 #include <string>
 
-#include "base/bind.h"
 #include "base/feature_list.h"
+#include "base/functional/bind.h"
 #include "base/metrics/histogram_macros.h"
 #include "content/browser/devtools/devtools_background_services_context_impl.h"
 #include "content/browser/service_worker/service_worker_context_wrapper.h"
@@ -82,7 +82,8 @@ void FindServiceWorkerRegistration(
   // Try to acquire the registration from storage. If it's already live we'll
   // receive it right away. If not, it will be revived from storage.
   service_worker_context->FindReadyRegistrationForId(
-      service_worker_registration_id, blink::StorageKey(origin),
+      service_worker_registration_id,
+      blink::StorageKey::CreateFirstParty(origin),
       base::BindOnce(&DidFindServiceWorkerRegistration, event_type,
                      std::move(devtools_context), std::move(callback)));
 }
@@ -176,7 +177,7 @@ void PushMessagingRouter::DeliverMessageToWorker(
     if (payload)
       event_metadata["Payload"] = *payload;
     devtools_context->LogBackgroundServiceEvent(
-        service_worker->registration_id(), service_worker->key().origin(),
+        service_worker->registration_id(), service_worker->key(),
         DevToolsBackgroundService::kPushMessaging, "Push event dispatched",
         message_id, event_metadata);
   }
@@ -242,7 +243,7 @@ void PushMessagingRouter::DeliverMessageEnd(
       push_event_status !=
           blink::mojom::PushEventStatus::SERVICE_WORKER_ERROR) {
     devtools_context->LogBackgroundServiceEvent(
-        service_worker->registration_id(), service_worker->key().origin(),
+        service_worker->registration_id(), service_worker->key(),
         DevToolsBackgroundService::kPushMessaging, "Push event completed",
         message_id, {{"Status", status_description}});
   }
@@ -257,7 +258,7 @@ void PushMessagingRouter::FireSubscriptionChangeEvent(
     blink::mojom::PushSubscriptionPtr old_subscription,
     PushEventCallback subscription_change_callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  DCHECK(base::FeatureList::IsEnabled(features::kPushSubscriptionChangeEvent));
+  DCHECK(base::FeatureList::IsEnabled(::features::kPushSubscriptionChangeEvent));
 
   StartServiceWorkerForDispatch(
       ServiceWorkerMetrics::EventType::PUSH_SUBSCRIPTION_CHANGE,
@@ -276,7 +277,7 @@ void PushMessagingRouter::FireSubscriptionChangeEventToWorker(
     scoped_refptr<DevToolsBackgroundServicesContextImpl> devtools_context,
     blink::ServiceWorkerStatusCode status) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  DCHECK(base::FeatureList::IsEnabled(features::kPushSubscriptionChangeEvent));
+  DCHECK(base::FeatureList::IsEnabled(::features::kPushSubscriptionChangeEvent));
 
   if (!service_worker) {
     DCHECK_NE(blink::ServiceWorkerStatusCode::kOk, status);

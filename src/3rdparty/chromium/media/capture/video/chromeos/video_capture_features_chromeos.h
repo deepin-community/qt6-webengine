@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -26,9 +26,11 @@ constexpr char kAutoFramingForceDisabled[] = "force-disabled";
 
 namespace features {
 
-CAPTURE_EXPORT extern const base::Feature kDisableCameraFrameRotationAtSource;
+CAPTURE_EXPORT BASE_DECLARE_FEATURE(kDisableCameraFrameRotationAtSource);
 
 }  // namespace features
+
+CAPTURE_EXPORT bool ShouldEnableAutoFraming();
 
 }  // namespace media
 

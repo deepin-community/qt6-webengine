@@ -1,13 +1,17 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef COMPONENTS_PASSWORD_MANAGER_CORE_BROWSER_MOCK_WEBAUTHN_CREDENTIALS_DELEGATE_H_
 #define COMPONENTS_PASSWORD_MANAGER_CORE_BROWSER_MOCK_WEBAUTHN_CREDENTIALS_DELEGATE_H_
 
-#include "components/password_manager/core/browser/webauthn_credentials_delegate.h"
+#include <string>
+#include <vector>
 
+#include "components/password_manager/core/browser/passkey_credential.h"
+#include "components/password_manager/core/browser/webauthn_credentials_delegate.h"
 #include "testing/gmock/include/gmock/gmock.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace password_manager {
 
@@ -21,19 +25,13 @@ class MockWebAuthnCredentialsDelegate : public WebAuthnCredentialsDelegate {
   MockWebAuthnCredentialsDelegate& operator=(
       const MockWebAuthnCredentialsDelegate&) = delete;
 
-  MOCK_METHOD(bool, IsWebAuthnAutofillEnabled, (), (const, override));
-  MOCK_METHOD(void,
-              SelectWebAuthnCredential,
-              (std::string backend_id),
-              (override));
-  MOCK_METHOD(const std::vector<autofill::Suggestion>&,
-              GetWebAuthnSuggestions,
+  MOCK_METHOD(void, LaunchWebAuthnFlow, (), (override));
+  MOCK_METHOD(void, SelectPasskey, (const std::string& backend_id), (override));
+  MOCK_METHOD(const absl::optional<std::vector<PasskeyCredential>>&,
+              GetPasskeys,
               (),
               (const override));
-  MOCK_METHOD(void,
-              RetrieveWebAuthnSuggestions,
-              (base::OnceClosure),
-              (override));
+  MOCK_METHOD(void, RetrievePasskeys, (base::OnceClosure), (override));
 };
 
 }  // namespace password_manager

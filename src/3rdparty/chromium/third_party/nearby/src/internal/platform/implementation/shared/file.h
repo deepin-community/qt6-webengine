@@ -17,13 +17,13 @@
 
 #include <cstdint>
 #include <fstream>
+#include <string>
 
 #include "absl/strings/string_view.h"
 #include "internal/platform/exception.h"
 #include "internal/platform/implementation/input_file.h"
 #include "internal/platform/implementation/output_file.h"
 
-namespace location {
 namespace nearby {
 namespace shared {
 
@@ -35,9 +35,9 @@ class IOFile final : public api::InputFile, public api::OutputFile {
   static std::unique_ptr<IOFile> CreateOutputFile(const absl::string_view path);
 
   ExceptionOr<ByteArray> Read(std::int64_t size) override;
-  std::string GetFilePath() const override {
-    return std::string(path_.data(), path_.size());
-  }
+
+  std::string GetFilePath() const override { return path_; }
+
   std::int64_t GetTotalSize() const override { return total_size_; }
   Exception Close() override;
 
@@ -55,6 +55,5 @@ class IOFile final : public api::InputFile, public api::OutputFile {
 
 }  // namespace shared
 }  // namespace nearby
-}  // namespace location
 
 #endif  // PLATFORM_IMPL_SHARED_FILE_H_

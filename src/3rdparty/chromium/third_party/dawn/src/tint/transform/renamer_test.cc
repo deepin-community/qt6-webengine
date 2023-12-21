@@ -15,8 +15,12 @@
 #include "src/tint/transform/renamer.h"
 
 #include <memory>
+#include <unordered_set>
+#include <vector>
 
 #include "gmock/gmock.h"
+#include "src/tint/builtin/builtin.h"
+#include "src/tint/builtin/texel_format.h"
 #include "src/tint/transform/test_helper.h"
 
 namespace tint::transform {
@@ -32,25 +36,25 @@ using ::testing::ContainerEq;
 using RenamerTest = TransformTest;
 
 TEST_F(RenamerTest, EmptyModule) {
-  auto* src = "";
-  auto* expect = "";
+    auto* src = "";
+    auto* expect = "";
 
-  auto got = Run<Renamer>(src);
+    auto got = Run<Renamer>(src);
 
-  EXPECT_EQ(expect, str(got));
+    EXPECT_EQ(expect, str(got));
 
-  auto* data = got.data.Get<Renamer::Data>();
+    auto* data = got.data.Get<Renamer::Data>();
 
-  ASSERT_EQ(data->remappings.size(), 0u);
+    ASSERT_EQ(data->remappings.size(), 0u);
 }
 
 TEST_F(RenamerTest, BasicModuleVertexIndex) {
-  auto* src = R"(
+    auto* src = R"(
 fn test(vert_idx : u32) -> u32 {
   return vert_idx;
 }
 
-@stage(vertex)
+@vertex
 fn entry(@builtin(vertex_index) vert_idx : u32
         ) -> @builtin(position) vec4<f32>  {
   _ = test(vert_idx);
@@ -58,158 +62,224 @@ fn entry(@builtin(vertex_index) vert_idx : u32
 }
 )";
 
-  auto* expect = R"(
+    auto* expect = R"(
 fn tint_symbol(tint_symbol_1 : u32) -> u32 {
   return tint_symbol_1;
 }
 
-@stage(vertex)
+@vertex
 fn tint_symbol_2(@builtin(vertex_index) tint_symbol_1 : u32) -> @builtin(position) vec4<f32> {
   _ = tint_symbol(tint_symbol_1);
   return vec4<f32>();
 }
 )";
 
-  auto got = Run<Renamer>(src);
+    auto got = Run<Renamer>(src);
 
-  EXPECT_EQ(expect, str(got));
+    EXPECT_EQ(expect, str(got));
 
-  auto* data = got.data.Get<Renamer::Data>();
+    auto* data = got.data.Get<Renamer::Data>();
 
-  ASSERT_NE(data, nullptr);
-  Renamer::Data::Remappings expected_remappings = {
-      {"vert_idx", "tint_symbol_1"},
-      {"test", "tint_symbol"},
-      {"entry", "tint_symbol_2"},
-  };
-  EXPECT_THAT(data->remappings, ContainerEq(expected_remappings));
+    ASSERT_NE(data, nullptr);
+    Renamer::Data::Remappings expected_remappings = {
+        {"vert_idx", "tint_symbol_1"},
+        {"test", "tint_symbol"},
+        {"entry", "tint_symbol_2"},
+    };
+    EXPECT_THAT(data->remappings, ContainerEq(expected_remappings));
 }
 
 TEST_F(RenamerTest, PreserveSwizzles) {
-  auto* src = R"(
-@stage(vertex)
+    auto* src = R"(
+@vertex
 fn entry() -> @builtin(position) vec4<f32> {
   var v : vec4<f32>;
   var rgba : f32;
   var xyzw : f32;
-  return v.zyxw + v.rgab;
+  var z : f32;
+  return v.zyxw + v.rgab * v.z;
 }
 )";
 
-  auto* expect = R"(
-@stage(vertex)
+    auto* expect = R"(
+@vertex
 fn tint_symbol() -> @builtin(position) vec4<f32> {
   var tint_symbol_1 : vec4<f32>;
   var tint_symbol_2 : f32;
   var tint_symbol_3 : f32;
-  return (tint_symbol_1.zyxw + tint_symbol_1.rgab);
+  var tint_symbol_4 : f32;
+  return (tint_symbol_1.zyxw + (tint_symbol_1.rgab * tint_symbol_1.z));
 }
 )";
 
-  auto got = Run<Renamer>(src);
+    auto got = Run<Renamer>(src);
 
-  EXPECT_EQ(expect, str(got));
+    EXPECT_EQ(expect, str(got));
 
-  auto* data = got.data.Get<Renamer::Data>();
+    auto* data = got.data.Get<Renamer::Data>();
 
-  ASSERT_NE(data, nullptr);
-  Renamer::Data::Remappings expected_remappings = {
-      {"entry", "tint_symbol"},
-      {"v", "tint_symbol_1"},
-      {"rgba", "tint_symbol_2"},
-      {"xyzw", "tint_symbol_3"},
-  };
-  EXPECT_THAT(data->remappings, ContainerEq(expected_remappings));
+    ASSERT_NE(data, nullptr);
+    Renamer::Data::Remappings expected_remappings = {
+        {"entry", "tint_symbol"},  {"v", "tint_symbol_1"}, {"rgba", "tint_symbol_2"},
+        {"xyzw", "tint_symbol_3"}, {"z", "tint_symbol_4"},
+    };
+    EXPECT_THAT(data->remappings, ContainerEq(expected_remappings));
 }
 
 TEST_F(RenamerTest, PreserveBuiltins) {
-  auto* src = R"(
-@stage(vertex)
+    auto* src = R"(
+@vertex
 fn entry() -> @builtin(position) vec4<f32> {
   var blah : vec4<f32>;
   return abs(blah);
 }
 )";
 
-  auto* expect = R"(
-@stage(vertex)
+    auto* expect = R"(
+@vertex
 fn tint_symbol() -> @builtin(position) vec4<f32> {
   var tint_symbol_1 : vec4<f32>;
   return abs(tint_symbol_1);
 }
 )";
 
-  auto got = Run<Renamer>(src);
+    auto got = Run<Renamer>(src);
 
-  EXPECT_EQ(expect, str(got));
+    EXPECT_EQ(expect, str(got));
 
-  auto* data = got.data.Get<Renamer::Data>();
+    auto* data = got.data.Get<Renamer::Data>();
 
-  ASSERT_NE(data, nullptr);
-  Renamer::Data::Remappings expected_remappings = {
-      {"entry", "tint_symbol"},
-      {"blah", "tint_symbol_1"},
-  };
-  EXPECT_THAT(data->remappings, ContainerEq(expected_remappings));
+    ASSERT_NE(data, nullptr);
+    Renamer::Data::Remappings expected_remappings = {
+        {"entry", "tint_symbol"},
+        {"blah", "tint_symbol_1"},
+    };
+    EXPECT_THAT(data->remappings, ContainerEq(expected_remappings));
 }
 
 TEST_F(RenamerTest, PreserveBuiltinTypes) {
-  auto* src = R"(
-@stage(compute) @workgroup_size(1)
+    auto* src = R"(
+@compute @workgroup_size(1)
 fn entry() {
   var a = modf(1.0).whole;
   var b = modf(1.0).fract;
-  var c = frexp(1.0).sig;
+  var c = frexp(1.0).fract;
   var d = frexp(1.0).exp;
 }
 )";
 
-  auto* expect = R"(
-@stage(compute) @workgroup_size(1)
+    auto* expect = R"(
+@compute @workgroup_size(1)
 fn tint_symbol() {
   var tint_symbol_1 = modf(1.0).whole;
   var tint_symbol_2 = modf(1.0).fract;
-  var tint_symbol_3 = frexp(1.0).sig;
+  var tint_symbol_3 = frexp(1.0).fract;
   var tint_symbol_4 = frexp(1.0).exp;
 }
 )";
 
-  auto got = Run<Renamer>(src);
+    auto got = Run<Renamer>(src);
 
-  EXPECT_EQ(expect, str(got));
+    EXPECT_EQ(expect, str(got));
 
-  auto* data = got.data.Get<Renamer::Data>();
+    auto* data = got.data.Get<Renamer::Data>();
 
-  ASSERT_NE(data, nullptr);
-  Renamer::Data::Remappings expected_remappings = {
-      {"entry", "tint_symbol"}, {"a", "tint_symbol_1"}, {"b", "tint_symbol_2"},
-      {"c", "tint_symbol_3"},   {"d", "tint_symbol_4"},
-  };
-  EXPECT_THAT(data->remappings, ContainerEq(expected_remappings));
+    ASSERT_NE(data, nullptr);
+    Renamer::Data::Remappings expected_remappings = {
+        {"entry", "tint_symbol"}, {"a", "tint_symbol_1"}, {"b", "tint_symbol_2"},
+        {"c", "tint_symbol_3"},   {"d", "tint_symbol_4"},
+    };
+    EXPECT_THAT(data->remappings, ContainerEq(expected_remappings));
 }
 
-TEST_F(RenamerTest, PreserveUnicode) {
-  auto src = R"(
-@stage(fragment)
-fn frag_main() {
-  var )" + std::string(kUnicodeIdentifier) +
-             R"( : i32;
+TEST_F(RenamerTest, PreserveDiagnosticControls) {
+    auto* src = R"(
+diagnostic(off, unreachable_code);
+
+@diagnostic(off, derivative_uniformity)
+@fragment
+fn entry(@location(0) value : f32) -> @location(0) f32 {
+  if (value > 0) {
+    return dpdx(value);
+    return 0.0;
+  }
+  return 1.0;
 }
 )";
 
-  auto expect = src;
+    auto* expect = R"(
+diagnostic(off, unreachable_code);
 
-  DataMap inputs;
-  inputs.Add<Renamer::Config>(Renamer::Target::kMslKeywords,
-                              /* preserve_unicode */ true);
-  auto got = Run<Renamer>(src, inputs);
+@diagnostic(off, derivative_uniformity) @fragment
+fn tint_symbol(@location(0) tint_symbol_1 : f32) -> @location(0) f32 {
+  if ((tint_symbol_1 > 0)) {
+    return dpdx(tint_symbol_1);
+    return 0.0;
+  }
+  return 1.0;
+}
+)";
 
-  EXPECT_EQ(expect, str(got));
+    auto got = Run<Renamer>(src);
+
+    EXPECT_EQ(expect, str(got));
+
+    auto* data = got.data.Get<Renamer::Data>();
+
+    ASSERT_NE(data, nullptr);
+    Renamer::Data::Remappings expected_remappings = {
+        {"entry", "tint_symbol"},
+        {"value", "tint_symbol_1"},
+    };
+    EXPECT_THAT(data->remappings, ContainerEq(expected_remappings));
+}
+
+TEST_F(RenamerTest, PreserveUnicode) {
+    auto src = R"(
+@fragment
+fn frag_main() {
+  var )" + std::string(kUnicodeIdentifier) +
+               R"( : i32;
+}
+)";
+
+    auto expect = src;
+
+    DataMap inputs;
+    inputs.Add<Renamer::Config>(Renamer::Target::kMslKeywords,
+                                /* preserve_unicode */ true);
+    auto got = Run<Renamer>(src, inputs);
+
+    EXPECT_EQ(expect, str(got));
+}
+
+TEST_F(RenamerTest, PreserveUnicodeRenameAll) {
+    auto src = R"(
+@fragment
+fn frag_main() {
+  var )" + std::string(kUnicodeIdentifier) +
+               R"( : i32;
+}
+)";
+
+    auto expect = R"(
+@fragment
+fn tint_symbol() {
+  var tint_symbol_1 : i32;
+}
+)";
+
+    DataMap inputs;
+    inputs.Add<Renamer::Config>(Renamer::Target::kAll,
+                                /* preserve_unicode */ true);
+    auto got = Run<Renamer>(src, inputs);
+
+    EXPECT_EQ(expect, str(got));
 }
 
 TEST_F(RenamerTest, AttemptSymbolCollision) {
-  auto* src = R"(
-@stage(vertex)
+    auto* src = R"(
+@vertex
 fn entry() -> @builtin(position) vec4<f32> {
   var tint_symbol : vec4<f32>;
   var tint_symbol_2 : vec4<f32>;
@@ -218,8 +288,8 @@ fn entry() -> @builtin(position) vec4<f32> {
 }
 )";
 
-  auto* expect = R"(
-@stage(vertex)
+    auto* expect = R"(
+@vertex
 fn tint_symbol() -> @builtin(position) vec4<f32> {
   var tint_symbol_1 : vec4<f32>;
   var tint_symbol_2 : vec4<f32>;
@@ -228,334 +298,377 @@ fn tint_symbol() -> @builtin(position) vec4<f32> {
 }
 )";
 
-  auto got = Run<Renamer>(src);
+    auto got = Run<Renamer>(src);
 
-  EXPECT_EQ(expect, str(got));
+    EXPECT_EQ(expect, str(got));
 
-  auto* data = got.data.Get<Renamer::Data>();
+    auto* data = got.data.Get<Renamer::Data>();
 
-  ASSERT_NE(data, nullptr);
-  Renamer::Data::Remappings expected_remappings = {
-      {"entry", "tint_symbol"},
-      {"tint_symbol", "tint_symbol_1"},
-      {"tint_symbol_2", "tint_symbol_2"},
-      {"tint_symbol_4", "tint_symbol_3"},
-  };
-  EXPECT_THAT(data->remappings, ContainerEq(expected_remappings));
+    ASSERT_NE(data, nullptr);
+    Renamer::Data::Remappings expected_remappings = {
+        {"entry", "tint_symbol"},
+        {"tint_symbol", "tint_symbol_1"},
+        {"tint_symbol_2", "tint_symbol_2"},
+        {"tint_symbol_4", "tint_symbol_3"},
+    };
+    EXPECT_THAT(data->remappings, ContainerEq(expected_remappings));
 }
 
+TEST_F(RenamerTest, PreserveTexelFormatAndAccess) {
+    auto src = R"(
+@group(0) @binding(0) var texture : texture_storage_2d<rgba8unorm, write>;
+
+fn f() {
+  var dims = textureDimensions(texture);
+}
+)";
+
+    auto expect = R"(
+@group(0) @binding(0) var tint_symbol : texture_storage_2d<rgba8unorm, write>;
+
+fn tint_symbol_1() {
+  var tint_symbol_2 = textureDimensions(tint_symbol);
+}
+)";
+
+    auto got = Run<Renamer>(src);
+
+    EXPECT_EQ(expect, str(got));
+}
+
+TEST_F(RenamerTest, PreserveAddressSpace) {
+    auto src = R"(
+var<private> p : i32;
+
+fn f() {
+  var v = p;
+}
+)";
+
+    auto expect = R"(
+var<private> tint_symbol : i32;
+
+fn tint_symbol_1() {
+  var tint_symbol_2 = tint_symbol;
+}
+)";
+
+    auto got = Run<Renamer>(src);
+
+    EXPECT_EQ(expect, str(got));
+}
 using RenamerTestGlsl = TransformTestWithParam<std::string>;
 using RenamerTestHlsl = TransformTestWithParam<std::string>;
 using RenamerTestMsl = TransformTestWithParam<std::string>;
 
 TEST_P(RenamerTestGlsl, Keywords) {
-  auto keyword = GetParam();
+    auto keyword = GetParam();
 
-  auto src = R"(
-@stage(fragment)
+    auto src = R"(
+@fragment
 fn frag_main() {
   var )" + keyword +
-             R"( : i32;
+               R"( : i32;
 }
 )";
 
-  auto* expect = R"(
-@stage(fragment)
+    auto* expect = R"(
+@fragment
 fn frag_main() {
   var tint_symbol : i32;
 }
 )";
 
-  DataMap inputs;
-  inputs.Add<Renamer::Config>(Renamer::Target::kGlslKeywords,
-                              /* preserve_unicode */ false);
-  auto got = Run<Renamer>(src, inputs);
+    DataMap inputs;
+    inputs.Add<Renamer::Config>(Renamer::Target::kGlslKeywords,
+                                /* preserve_unicode */ false);
+    auto got = Run<Renamer>(src, inputs);
 
-  EXPECT_EQ(expect, str(got));
+    EXPECT_EQ(expect, str(got));
 }
 
 TEST_P(RenamerTestHlsl, Keywords) {
-  auto keyword = GetParam();
+    auto keyword = GetParam();
 
-  auto src = R"(
-@stage(fragment)
+    auto src = R"(
+@fragment
 fn frag_main() {
   var )" + keyword +
-             R"( : i32;
+               R"( : i32;
 }
 )";
 
-  auto* expect = R"(
-@stage(fragment)
+    auto* expect = R"(
+@fragment
 fn frag_main() {
   var tint_symbol : i32;
 }
 )";
 
-  DataMap inputs;
-  inputs.Add<Renamer::Config>(Renamer::Target::kHlslKeywords,
-                              /* preserve_unicode */ false);
-  auto got = Run<Renamer>(src, inputs);
+    DataMap inputs;
+    inputs.Add<Renamer::Config>(Renamer::Target::kHlslKeywords,
+                                /* preserve_unicode */ false);
+    auto got = Run<Renamer>(src, inputs);
 
-  EXPECT_EQ(expect, str(got));
+    EXPECT_EQ(expect, str(got));
 }
 
 TEST_P(RenamerTestMsl, Keywords) {
-  auto keyword = GetParam();
+    auto keyword = GetParam();
 
-  auto src = R"(
-@stage(fragment)
+    auto src = R"(
+@fragment
 fn frag_main() {
   var )" + keyword +
-             R"( : i32;
+               R"( : i32;
 }
 )";
 
-  auto* expect = R"(
-@stage(fragment)
+    auto* expect = R"(
+@fragment
 fn frag_main() {
   var tint_symbol : i32;
 }
 )";
 
-  DataMap inputs;
-  inputs.Add<Renamer::Config>(Renamer::Target::kMslKeywords,
-                              /* preserve_unicode */ false);
-  auto got = Run<Renamer>(src, inputs);
+    DataMap inputs;
+    inputs.Add<Renamer::Config>(Renamer::Target::kMslKeywords,
+                                /* preserve_unicode */ false);
+    auto got = Run<Renamer>(src, inputs);
 
-  EXPECT_EQ(expect, str(got));
+    EXPECT_EQ(expect, str(got));
 }
 
 INSTANTIATE_TEST_SUITE_P(RenamerTestGlsl,
                          RenamerTestGlsl,
-                         testing::Values("active",
-                                         //    "asm",       // WGSL keyword
-                                         "atomic_uint",
-                                         "attribute",
-                                         //    "bool",      // WGSL keyword
-                                         //    "break",     // WGSL keyword
-                                         "buffer",
-                                         "bvec2",
-                                         "bvec3",
-                                         "bvec4",
-                                         //    "case",      // WGSL keyword
-                                         "cast",
-                                         "centroid",
-                                         "class",
-                                         "coherent",
-                                         "common",
-                                         //    "const",     // WGSL keyword
-                                         //    "continue",  // WGSL keyword
-                                         //    "default",   // WGSL keyword
-                                         //    "discard",   // WGSL keyword
-                                         "dmat2",
-                                         "dmat2x2",
-                                         "dmat2x3",
-                                         "dmat2x4",
-                                         "dmat3",
-                                         "dmat3x2",
-                                         "dmat3x3",
-                                         "dmat3x4",
-                                         "dmat4",
-                                         "dmat4x2",
-                                         "dmat4x3",
-                                         "dmat4x4",
-                                         //    "do",         // WGSL keyword
-                                         "double",
-                                         "dvec2",
-                                         "dvec3",
-                                         "dvec4",
-                                         //    "else"        // WGSL keyword
-                                         //    "enum",       // WGSL keyword
-                                         "extern",
-                                         "external",
-                                         //    "false",      // WGSL keyword
-                                         "filter",
-                                         "fixed",
-                                         "flat",
-                                         "float",
-                                         //    "for",        // WGSL keyword
-                                         "fvec2",
-                                         "fvec3",
-                                         "fvec4",
-                                         "gl_BaseInstance",
-                                         "gl_BaseVertex",
-                                         "gl_ClipDistance",
-                                         "gl_DepthRangeParameters",
-                                         "gl_DrawID",
-                                         "gl_FragCoord",
-                                         "gl_FragDepth",
-                                         "gl_FrontFacing",
-                                         "gl_GlobalInvocationID",
-                                         "gl_InstanceID",
-                                         "gl_LocalInvocationID",
-                                         "gl_LocalInvocationIndex",
-                                         "gl_NumSamples",
-                                         "gl_NumWorkGroups",
-                                         "gl_PerVertex",
-                                         "gl_PointCoord",
-                                         "gl_PointSize",
-                                         "gl_Position",
-                                         "gl_PrimitiveID",
-                                         "gl_SampleID",
-                                         "gl_SampleMask",
-                                         "gl_SampleMaskIn",
-                                         "gl_SamplePosition",
-                                         "gl_VertexID",
-                                         "gl_WorkGroupID",
-                                         "gl_WorkGroupSize",
-                                         "goto",
-                                         "half",
-                                         "highp",
-                                         "hvec2",
-                                         "hvec3",
-                                         "hvec4",
-                                         //    "if",         // WGSL keyword
-                                         "iimage1D",
-                                         "iimage1DArray",
-                                         "iimage2D",
-                                         "iimage2DArray",
-                                         "iimage2DMS",
-                                         "iimage2DMSArray",
-                                         "iimage2DRect",
-                                         "iimage3D",
-                                         "iimageBuffer",
-                                         "iimageCube",
-                                         "iimageCubeArray",
-                                         "image1D",
-                                         "image1DArray",
-                                         "image2D",
-                                         "image2DArray",
-                                         "image2DMS",
-                                         "image2DMSArray",
-                                         "image2DRect",
-                                         "image3D",
-                                         "imageBuffer",
-                                         "imageCube",
-                                         "imageCubeArray",
-                                         "in",
-                                         "inline",
-                                         "inout",
-                                         "input",
-                                         "int",
-                                         "interface",
-                                         "invariant",
-                                         "isampler1D",
-                                         "isampler1DArray",
-                                         "isampler2D",
-                                         "isampler2DArray",
-                                         "isampler2DMS",
-                                         "isampler2DMSArray",
-                                         "isampler2DRect",
-                                         "isampler3D",
-                                         "isamplerBuffer",
-                                         "isamplerCube",
-                                         "isamplerCubeArray",
-                                         "ivec2",
-                                         "ivec3",
-                                         "ivec4",
-                                         "layout",
-                                         "long",
-                                         "lowp",
-                                         //    "mat2x2",      // WGSL keyword
-                                         //    "mat2x3",      // WGSL keyword
-                                         //    "mat2x4",      // WGSL keyword
-                                         //    "mat2",
-                                         "mat3",
-                                         //    "mat3x2",      // WGSL keyword
-                                         //    "mat3x3",      // WGSL keyword
-                                         //    "mat3x4",      // WGSL keyword
-                                         "mat4",
-                                         //    "mat4x2",      // WGSL keyword
-                                         //    "mat4x3",      // WGSL keyword
-                                         //    "mat4x4",      // WGSL keyword
-                                         "mediump",
-                                         "namespace",
-                                         "noinline",
-                                         "noperspective",
-                                         "out",
-                                         "output",
-                                         "partition",
-                                         "patch",
-                                         "precise",
-                                         "precision",
-                                         "public",
-                                         "readonly",
-                                         "resource",
-                                         "restrict",
-                                         //    "return",     // WGSL keyword
-                                         "sample",
-                                         "sampler1D",
-                                         "sampler1DArray",
-                                         "sampler1DArrayShadow",
-                                         "sampler1DShadow",
-                                         "sampler2D",
-                                         "sampler2DArray",
-                                         "sampler2DArrayShadow",
-                                         "sampler2DMS",
-                                         "sampler2DMSArray",
-                                         "sampler2DRect",
-                                         "sampler2DRectShadow",
-                                         "sampler2DShadow",
-                                         "sampler3D",
-                                         "sampler3DRect",
-                                         "samplerBuffer",
-                                         "samplerCube",
-                                         "samplerCubeArray",
-                                         "samplerCubeArrayShadow",
-                                         "samplerCubeShadow",
-                                         "shared",
-                                         "short",
-                                         "sizeof",
-                                         "smooth",
-                                         "static",
-                                         //    "struct",     // WGSL keyword
-                                         "subroutine",
-                                         "superp",
-                                         //    "switch",     // WGSL keyword
-                                         "template",
-                                         "this",
-                                         //    "true",       // WGSL keyword
-                                         //    "typedef",    // WGSL keyword
-                                         "uimage1D",
-                                         "uimage1DArray",
-                                         "uimage2D",
-                                         "uimage2DArray",
-                                         "uimage2DMS",
-                                         "uimage2DMSArray",
-                                         "uimage2DRect",
-                                         "uimage3D",
-                                         "uimageBuffer",
-                                         "uimageCube",
-                                         "uimageCubeArray",
-                                         "uint",
-                                         //    "uniform",    // WGSL keyword
-                                         "union",
-                                         "unsigned",
-                                         "usampler1D",
-                                         "usampler1DArray",
-                                         "usampler2D",
-                                         "usampler2DArray",
-                                         "usampler2DMS",
-                                         "usampler2DMSArray",
-                                         "usampler2DRect",
-                                         "usampler3D",
-                                         "usamplerBuffer",
-                                         "usamplerCube",
-                                         "usamplerCubeArray",
-                                         //    "using",      // WGSL keyword
-                                         "uvec2",
-                                         "uvec3",
-                                         "uvec4",
-                                         "varying",
-                                         //    "vec2",       // WGSL keyword
-                                         //    "vec3",       // WGSL keyword
-                                         //    "vec4",       // WGSL keyword
-                                         //    "void",       // WGSL keyword
-                                         "volatile",
-                                         //    "while",      // WGSL keyword
-                                         "writeonly",
-                                         kUnicodeIdentifier));
+                         testing::Values(  // "active",   // Also reserved in WGSL
+                                           // "asm",       // WGSL keyword
+                             "atomic_uint",
+                             // "attribute",  // Also reserved in WGSL
+                             // "bool",      // WGSL keyword
+                             // "break",     // WGSL keyword
+                             "buffer",
+                             "bvec2",
+                             "bvec3",
+                             "bvec4",
+                             //    "case",      // WGSL keyword
+                             // "cast",  // Also reserved in WGSL
+                             "centroid",
+                             // "class",  // Also reserved in WGSL
+                             // "coherent",  // Also reserved in WGSL
+                             // "common",  // Also reserved in WGSL
+                             // "const",     // WGSL keyword
+                             // "continue",  // WGSL keyword
+                             // "default",   // WGSL keyword
+                             // "discard",   // WGSL keyword
+                             "dmat2",
+                             "dmat2x2",
+                             "dmat2x3",
+                             "dmat2x4",
+                             "dmat3",
+                             "dmat3x2",
+                             "dmat3x3",
+                             "dmat3x4",
+                             "dmat4",
+                             "dmat4x2",
+                             "dmat4x3",
+                             "dmat4x4",
+                             // "do",         // WGSL keyword
+                             "double",
+                             "dvec2",
+                             "dvec3",
+                             "dvec4",
+                             // "else"        // WGSL keyword
+                             // "enum",       // WGSL keyword
+                             // "extern",  // Also reserved in WGSL
+                             // "external",  // Also reserved in WGSL
+                             // "false",      // WGSL keyword
+                             // "filter",  // Also reserved in WGSL
+                             "fixed",
+                             "flat",
+                             "float",
+                             // "for",        // WGSL keyword
+                             "fvec2",
+                             "fvec3",
+                             "fvec4",
+                             "gl_BaseInstance",
+                             "gl_BaseVertex",
+                             "gl_ClipDistance",
+                             "gl_DepthRangeParameters",
+                             "gl_DrawID",
+                             "gl_FragCoord",
+                             "gl_FragDepth",
+                             "gl_FrontFacing",
+                             "gl_GlobalInvocationID",
+                             "gl_InstanceID",
+                             "gl_LocalInvocationID",
+                             "gl_LocalInvocationIndex",
+                             "gl_NumSamples",
+                             "gl_NumWorkGroups",
+                             "gl_PerVertex",
+                             "gl_PointCoord",
+                             "gl_PointSize",
+                             "gl_Position",
+                             "gl_PrimitiveID",
+                             "gl_SampleID",
+                             "gl_SampleMask",
+                             "gl_SampleMaskIn",
+                             "gl_SamplePosition",
+                             "gl_VertexID",
+                             "gl_WorkGroupID",
+                             "gl_WorkGroupSize",
+                             // "goto",  // Also reserved in WGSL
+                             "half",
+                             // "highp",  // Also reserved in WGSL
+                             "hvec2",
+                             "hvec3",
+                             "hvec4",
+                             // "if",         // WGSL keyword
+                             "iimage1D",
+                             "iimage1DArray",
+                             "iimage2D",
+                             "iimage2DArray",
+                             "iimage2DMS",
+                             "iimage2DMSArray",
+                             "iimage2DRect",
+                             "iimage3D",
+                             "iimageBuffer",
+                             "iimageCube",
+                             "iimageCubeArray",
+                             "image1D",
+                             "image1DArray",
+                             "image2D",
+                             "image2DArray",
+                             "image2DMS",
+                             "image2DMSArray",
+                             "image2DRect",
+                             "image3D",
+                             "imageBuffer",
+                             "imageCube",
+                             "imageCubeArray",
+                             "in",
+                             // "inline",  // Also reserved in WGSL
+                             // "inout",  // Also reserved in WGSL
+                             "input",
+                             "int",
+                             // "interface",  // Also reserved in WGSL
+                             // "invariant",  // Also reserved in WGSL
+                             "isampler1D",
+                             "isampler1DArray",
+                             "isampler2D",
+                             "isampler2DArray",
+                             "isampler2DMS",
+                             "isampler2DMSArray",
+                             "isampler2DRect",
+                             "isampler3D",
+                             "isamplerBuffer",
+                             "isamplerCube",
+                             "isamplerCubeArray",
+                             "ivec2",
+                             "ivec3",
+                             "ivec4",
+                             // "layout",  // Also reserved in WGSL
+                             "long",
+                             // "lowp",  // Also reserved in WGSL
+                             // "mat2x2",      // WGSL keyword
+                             // "mat2x3",      // WGSL keyword
+                             // "mat2x4",      // WGSL keyword
+                             // "mat2",
+                             "mat3",
+                             // "mat3x2",      // WGSL keyword
+                             // "mat3x3",      // WGSL keyword
+                             // "mat3x4",      // WGSL keyword
+                             "mat4",
+                             // "mat4x2",      // WGSL keyword
+                             // "mat4x3",      // WGSL keyword
+                             // "mat4x4",      // WGSL keyword
+                             // "mediump",  // Also reserved in WGSL
+                             // "namespace",  // Also reserved in WGSL
+                             // "noinline",  // Also reserved in WGSL
+                             // "noperspective",  // Also reserved in WGSL
+                             "out",
+                             "output",
+                             // "partition",  // Also reserved in WGSL
+                             // "patch",  // Also reserved in WGSL
+                             // "precise",  // Also reserved in WGSL
+                             // "precision",  // Also reserved in WGSL
+                             // "public",  // Also reserved in WGSL
+                             // "readonly",  // Also reserved in WGSL
+                             // "resource",  // Also reserved in WGSL
+                             // "restrict",  // Also reserved in WGSL
+                             // "return",     // WGSL keyword
+                             "sample",
+                             "sampler1D",
+                             "sampler1DArray",
+                             "sampler1DArrayShadow",
+                             "sampler1DShadow",
+                             "sampler2D",
+                             "sampler2DArray",
+                             "sampler2DArrayShadow",
+                             "sampler2DMS",
+                             "sampler2DMSArray",
+                             "sampler2DRect",
+                             "sampler2DRectShadow",
+                             "sampler2DShadow",
+                             "sampler3D",
+                             "sampler3DRect",
+                             "samplerBuffer",
+                             "samplerCube",
+                             "samplerCubeArray",
+                             "samplerCubeArrayShadow",
+                             "samplerCubeShadow",
+                             // "shared"  // Also reserved in WGSL,
+                             "short",
+                             // "sizeof",  // Also reserved in WGSL
+                             // "smooth",  // Also reserved in WGSL
+                             // "static",  // Also reserved in WGSL
+                             // "struct",     // WGSL keyword
+                             // "subroutine",  // Also reserved in WGSL
+                             "superp",
+                             // "switch",     // WGSL keyword
+                             // "template",  // Also reserved in WGSL
+                             // "this",  // Also reserved in WGSL
+                             // "true",       // WGSL keyword
+                             // "typedef",    // WGSL keyword
+                             "uimage1D",
+                             "uimage1DArray",
+                             "uimage2D",
+                             "uimage2DArray",
+                             "uimage2DMS",
+                             "uimage2DMSArray",
+                             "uimage2DRect",
+                             "uimage3D",
+                             "uimageBuffer",
+                             "uimageCube",
+                             "uimageCubeArray",
+                             "uint",
+                             // "uniform",    // WGSL keyword
+                             // "union",  // Also reserved in WGSL
+                             "unsigned",
+                             "usampler1D",
+                             "usampler1DArray",
+                             "usampler2D",
+                             "usampler2DArray",
+                             "usampler2DMS",
+                             "usampler2DMSArray",
+                             "usampler2DRect",
+                             "usampler3D",
+                             "usamplerBuffer",
+                             "usamplerCube",
+                             "usamplerCubeArray",
+                             // "using",      // WGSL keyword
+                             "uvec2",
+                             "uvec3",
+                             "uvec4",
+                             // "varying",  // Also reserved in WGSL
+                             // "vec2",       // WGSL keyword
+                             // "vec3",       // WGSL keyword
+                             // "vec4",       // WGSL keyword
+                             // "void",       // WGSL keyword
+                             // "volatile",  // Also reserved in WGSL
+                             // "while",      // WGSL keyword
+                             // "writeonly",  // Also reserved in WGSL
+                             kUnicodeIdentifier));
 
 INSTANTIATE_TEST_SUITE_P(RenamerTestHlsl,
                          RenamerTestHlsl,
@@ -575,8 +688,8 @@ INSTANTIATE_TEST_SUITE_P(RenamerTestHlsl,
                                          "COLOR",
                                          "CheckAccessFullyMapped",
                                          "ComparisonFunc",
-                                         "CompileShader",
-                                         "ComputeShader",
+                                         // "CompileShader",  // Also reserved in WGSL
+                                         // "ComputeShader",  // Also reserved in WGSL
                                          "ConsumeStructuredBuffer",
                                          "D3DCOLORtoUBYTE4",
                                          "DEPTH",
@@ -584,18 +697,18 @@ INSTANTIATE_TEST_SUITE_P(RenamerTestHlsl,
                                          "DepthStencilView",
                                          "DeviceMemoryBarrier",
                                          "DeviceMemroyBarrierWithGroupSync",
-                                         "DomainShader",
+                                         // "DomainShader",  // Also reserved in WGSL
                                          "EvaluateAttributeAtCentroid",
                                          "EvaluateAttributeAtSample",
                                          "EvaluateAttributeSnapped",
                                          "FOG",
                                          "Filter",
-                                         "GeometryShader",
+                                         // "GeometryShader",  // Also reserved in WGSL
                                          "GetRenderTargetSampleCount",
                                          "GetRenderTargetSamplePosition",
                                          "GroupMemoryBarrier",
                                          "GroupMemroyBarrierWithGroupSync",
-                                         "Hullshader",
+                                         // "Hullshader",  // Also reserved in WGSL
                                          "InputPatch",
                                          "InterlockedAdd",
                                          "InterlockedAnd",
@@ -612,7 +725,7 @@ INSTANTIATE_TEST_SUITE_P(RenamerTestHlsl,
                                          "MinLOD",
                                          "MipLODBias",
                                          "NORMAL",
-                                         "NULL",
+                                         // "NULL",  // Also reserved in WGSL
                                          "Normal",
                                          "OutputPatch",
                                          "POSITION",
@@ -703,11 +816,11 @@ INSTANTIATE_TEST_SUITE_P(RenamerTestHlsl,
                                          // "asin",  // WGSL builtin
                                          "asint",
                                          // "asm",  // WGSL keyword
-                                         "asm_fragment",
+                                         // "asm_fragment",  // Also reserved in WGSL
                                          "asuint",
                                          // "atan",  // WGSL builtin
                                          // "atan2",  // WGSL builtin
-                                         "auto",
+                                         // "auto",  // Also reserved in WGSL
                                          // "bool",  // WGSL keyword
                                          "bool1",
                                          "bool1x1",
@@ -733,19 +846,19 @@ INSTANTIATE_TEST_SUITE_P(RenamerTestHlsl,
                                          // "break",  // WGSL keyword
                                          // "call",  // WGSL builtin
                                          // "case",  // WGSL keyword
-                                         "catch",
+                                         // "catch",  // Also reserved in WGSL
                                          "cbuffer",
                                          // "ceil",  // WGSL builtin
                                          "centroid",
                                          "char",
                                          // "clamp",  // WGSL builtin
-                                         "class",
+                                         // "class",  // Also reserved in WGSL
                                          "clip",
-                                         "column_major",
-                                         "compile",
-                                         "compile_fragment",
+                                         // "column_major",  // Also reserved in WGSL
+                                         // "compile",  // Also reserved in WGSL
+                                         // "compile_fragment",  // Also reserved in WGSL
                                          // "const",  // WGSL keyword
-                                         "const_cast",
+                                         // "const_cast",  // Also reserved in WGSL
                                          // "continue",  // WGSL keyword
                                          // "cos",  // WGSL builtin
                                          // "cosh",  // WGSL builtin
@@ -759,7 +872,7 @@ INSTANTIATE_TEST_SUITE_P(RenamerTestHlsl,
                                          "ddy_fine",
                                          // "default",  // WGSL keyword
                                          "degrees",
-                                         "delete",
+                                         // "delete",  // Also reserved in WGSL
                                          // "determinant",  // WGSL builtin
                                          // "discard",  // WGSL keyword
                                          // "distance",  // WGSL builtin
@@ -808,15 +921,15 @@ INSTANTIATE_TEST_SUITE_P(RenamerTestHlsl,
                                          "dword4x2",
                                          "dword4x3",
                                          "dword4x4",
-                                         "dynamic_cast",
+                                         // "dynamic_cast",  // Also reserved in WGSL
                                          // "else",  // WGSL keyword
                                          // "enum",  // WGSL keyword
                                          "errorf",
                                          // "exp",  // WGSL builtin
                                          // "exp2",  // WGSL builtin
-                                         "explicit",
-                                         "export",
-                                         "extern",
+                                         // "explicit",  // Also reserved in WGSL
+                                         // "export",  // Also reserved in WGSL
+                                         // "extern",  // Also reserved in WGSL
                                          "f16to32",
                                          "f32tof16",
                                          // "faceforward",  // WGSL builtin
@@ -853,11 +966,11 @@ INSTANTIATE_TEST_SUITE_P(RenamerTestHlsl,
                                          "forcecase",
                                          "frac",
                                          // "frexp",  // WGSL builtin
-                                         "friend",
+                                         // "friend",  // Also reserved in WGSL
                                          // "fwidth",  // WGSL builtin
-                                         "fxgroup",
-                                         "goto",
-                                         "groupshared",
+                                         // "fxgroup",  // Also reserved in WGSL
+                                         // "goto",  // Also reserved in WGSL
+                                         // "groupshared",  // Also reserved in WGSL
                                          "half",
                                          "half1",
                                          "half1x1",
@@ -881,8 +994,8 @@ INSTANTIATE_TEST_SUITE_P(RenamerTestHlsl,
                                          "half4x4",
                                          // "if",  // WGSL keyword
                                          // "in",  // WGSL keyword
-                                         "inline",
-                                         "inout",
+                                         // "inline",  // Also reserved in WGSL
+                                         // "inout",  // Also reserved in WGSL
                                          "int",
                                          "int1",
                                          "int1x1",
@@ -904,15 +1017,15 @@ INSTANTIATE_TEST_SUITE_P(RenamerTestHlsl,
                                          "int4x2",
                                          "int4x3",
                                          "int4x4",
-                                         "interface",
+                                         // "interface",  // Also reserved in WGSL
                                          "isfinite",
                                          "isinf",
                                          "isnan",
                                          // "ldexp",  // WGSL builtin
                                          // "length",  // WGSL builtin
                                          "lerp",
-                                         "line",
-                                         "lineadj",
+                                         // "line",  // Also reserved in WGSL
+                                         // "lineadj",  // Also reserved in WGSL
                                          "linear",
                                          "lit",
                                          // "log",  // WGSL builtin
@@ -1032,33 +1145,33 @@ INSTANTIATE_TEST_SUITE_P(RenamerTestHlsl,
                                          // "modf",  // WGSL builtin
                                          "msad4",
                                          "mul",
-                                         "mutable",
-                                         "namespace",
-                                         "new",
-                                         "nointerpolation",
+                                         // "mutable",  // Also reserved in WGSL
+                                         // "namespace",  // Also reserved in WGSL
+                                         // "new",  // Also reserved in WGSL
+                                         // "nointerpolation",  // Also reserved in WGSL
                                          "noise",
-                                         "noperspective",
+                                         // "noperspective",  // Also reserved in WGSL
                                          // "normalize",  // WGSL builtin
                                          "numthreads",
-                                         "operator",
+                                         // "operator",  // Also reserved in WGSL
                                          // "out",  // WGSL keyword
-                                         "packoffset",
-                                         "pass",
-                                         "pixelfragment",
+                                         // "packoffset",  // Also reserved in WGSL
+                                         // "pass",  // Also reserved in WGSL
+                                         // "pixelfragment",  // Also reserved in WGSL
                                          "pixelshader",
-                                         "point",
+                                         // "point",  // Also reserved in WGSL
                                          // "pow",  // WGSL builtin
-                                         "precise",
+                                         // "precise",  // Also reserved in WGSL
                                          "printf",
                                          // "private",  // WGSL keyword
-                                         "protected",
-                                         "public",
+                                         // "protected",  // Also reserved in WGSL
+                                         // "public",  // Also reserved in WGSL
                                          "radians",
                                          "rcp",
                                          // "reflect",  // WGSL builtin
                                          "refract",
-                                         "register",
-                                         "reinterpret_cast",
+                                         // "register",  // Also reserved in WGSL
+                                         // "reinterpret_cast",  // Also reserved in WGSL
                                          // "return",  // WGSL keyword
                                          // "reversebits",  // WGSL builtin
                                          // "round",  // WGSL builtin
@@ -1071,21 +1184,21 @@ INSTANTIATE_TEST_SUITE_P(RenamerTestHlsl,
                                          "samplerCUBE",
                                          "sampler_state",
                                          "saturate",
-                                         "shared",
+                                         // "shared",  // Also reserved in WGSL
                                          "short",
                                          // "sign",  // WGSL builtin
-                                         "signed",
+                                         // "signed",  // Also reserved in WGSL
                                          // "sin",  // WGSL builtin
                                          "sincos",
                                          // "sinh",  // WGSL builtin
-                                         "sizeof",
+                                         // "sizeof",  // Also reserved in WGSL
                                          // "smoothstep",  // WGSL builtin
-                                         "snorm",
+                                         // "snorm",  // Also reserved in WGSL
                                          // "sqrt",  // WGSL builtin
                                          "stateblock",
                                          "stateblock_state",
-                                         "static",
-                                         "static_cast",
+                                         // "static",  // Also reserved in WGSL
+                                         // "static_cast",  // Also reserved in WGSL
                                          // "step",  // WGSL builtin
                                          "string",
                                          // "struct",  // WGSL keyword
@@ -1096,7 +1209,7 @@ INSTANTIATE_TEST_SUITE_P(RenamerTestHlsl,
                                          "technique",
                                          "technique10",
                                          "technique11",
-                                         "template",
+                                         // "template",  // Also reserved in WGSL
                                          "tex1D",
                                          "tex1Dbias",
                                          "tex1Dgrad",
@@ -1127,16 +1240,16 @@ INSTANTIATE_TEST_SUITE_P(RenamerTestHlsl,
                                          "texture3D",
                                          "textureCube",
                                          "textureCubeArray",
-                                         "this",
-                                         "throw",
+                                         // "this",  // Also reserved in WGSL
+                                         // "throw",  // Also reserved in WGSL
                                          "transpose",
                                          "triangle",
                                          "triangleadj",
                                          // "true",  // WGSL keyword
                                          // "trunc",  // WGSL builtin
-                                         "try",
+                                         // "try",  // Also reserved in WGSL
                                          // "typedef",  // WGSL keyword
-                                         "typename",
+                                         // "typename",  // Also reserved in WGSL
                                          "uint",
                                          "uint1",
                                          "uint1x1",
@@ -1159,17 +1272,17 @@ INSTANTIATE_TEST_SUITE_P(RenamerTestHlsl,
                                          "uint4x3",
                                          "uint4x4",
                                          // "uniform",  // WGSL keyword
-                                         "union",
-                                         "unorm",
+                                         // "union",  // Also reserved in WGSL
+                                         // "unorm",  // Also reserved in WGSL
                                          "unroll",
                                          "unsigned",
                                          // "using",  // WGSL reserved keyword
                                          "vector",
                                          "vertexfragment",
                                          "vertexshader",
-                                         "virtual",
+                                         // "virtual",  // Also reserved in WGSL
                                          // "void",  // WGSL keyword
-                                         "volatile",
+                                         // "volatile",  // Also reserved in WGSL
                                          // "while"  // WGSL reserved keyword
                                          kUnicodeIdentifier));
 
@@ -1178,87 +1291,87 @@ INSTANTIATE_TEST_SUITE_P(
     RenamerTestMsl,
     testing::Values(
         // c++14 spec
-        "alignas",
-        "alignof",
+        // "alignas",  // Also reserved in WGSL
+        // "alignof",  // Also reserved in WGSL
         "and",
         "and_eq",
         // "asm",  // Also reserved in WGSL
-        "auto",
+        // "auto",  // Also reserved in WGSL
         "bitand",
         "bitor",
         // "bool",   // Also used in WGSL
         // "break",  // Also used in WGSL
         // "case",   // Also used in WGSL
-        "catch",
+        // "catch",  // Also reserved in WGSL
         "char",
         "char16_t",
         "char32_t",
-        "class",
+        // "class",  // Also reserved in WGSL
         "compl",
         // "const",     // Also used in WGSL
-        "const_cast",
-        "constexpr",
+        // "const_cast",  // Also reserved in WGSL
+        // "constexpr",  // Also reserved in WGSL
         // "continue",  // Also used in WGSL
-        "decltype",
+        // "decltype",  // Also reserved in WGSL
         // "default",   // Also used in WGSL
-        "delete",
+        // "delete",  // Also reserved in WGSL
         // "do",  // Also used in WGSL
         "double",
-        "dynamic_cast",
+        // "dynamic_cast",  // Also reserved in WGSL
         // "else",  // Also used in WGSL
         // "enum",  // Also used in WGSL
-        "explicit",
-        "extern",
+        // "explicit",  // Also reserved in WGSL
+        // "extern",  // Also reserved in WGSL
         // "false",  // Also used in WGSL
-        "final",
+        // "final",  // Also reserved in WGSL
         "float",
         // "for",  // Also used in WGSL
-        "friend",
-        "goto",
+        // "friend",  // Also reserved in WGSL
+        // "goto",  // Also reserved in WGSL
         // "if",  // Also used in WGSL
-        "inline",
+        // "inline",  // Also reserved in WGSL
         "int",
         "long",
-        "mutable",
-        "namespace",
-        "new",
-        "noexcept",
+        // "mutable",  // Also reserved in WGSL
+        // "namespace",  // Also reserved in WGSL
+        // "new",  // Also reserved in WGSL
+        // "noexcept",  // Also reserved in WGSL
         "not",
         "not_eq",
-        "nullptr",
-        "operator",
+        // "nullptr",  // Also reserved in WGSL
+        // "operator",  // Also reserved in WGSL
         "or",
         "or_eq",
         // "override", // Also used in WGSL
         // "private",  // Also used in WGSL
-        "protected",
-        "public",
-        "register",
-        "reinterpret_cast",
+        // "protected",  // Also reserved in WGSL
+        // "public",  // Also reserved in WGSL
+        // "register",  // Also reserved in WGSL
+        // "reinterpret_cast",  // Also reserved in WGSL
         // "return",  // Also used in WGSL
         "short",
-        "signed",
-        "sizeof",
-        "static",
-        "static_assert",
-        "static_cast",
+        // "signed",  // Also reserved in WGSL
+        // "sizeof",  // Also reserved in WGSL
+        // "static",  // Also reserved in WGSL
+        // "static_assert",  // Also reserved in WGSL
+        // "static_cast",  // Also reserved in WGSL
         // "struct",  // Also used in WGSL
         // "switch",  // Also used in WGSL
-        "template",
-        "this",
-        "thread_local",
-        "throw",
+        // "template",  // Also reserved in WGSL
+        // "this",  // Also reserved in WGSL
+        // "thread_local",  // Also reserved in WGSL
+        // "throw",  // Also reserved in WGSL
         // "true",  // Also used in WGSL
-        "try",
+        // "try",  // Also reserved in WGSL
         // "typedef",  // Also used in WGSL
-        "typeid",
-        "typename",
-        "union",
+        // "typeid",  // Also reserved in WGSL
+        // "typename",  // Also reserved in WGSL
+        // "union",  // Also reserved in WGSL
         "unsigned",
         // "using",  // WGSL reserved keyword
-        "virtual",
+        // "virtual",  // Also reserved in WGSL
         // "void",  // Also used in WGSL
-        "volatile",
+        // "volatile",  // Also reserved in WGSL
         "wchar_t",
         // "while",  // WGSL reserved keyword
         "xor",
@@ -1456,6 +1569,490 @@ INSTANTIATE_TEST_SUITE_P(
         "M_SQRT1_2_H",
         // "while"  // WGSL reserved keyword
         kUnicodeIdentifier));
+
+std::string ExpandBuiltinType(std::string_view name) {
+    if (name == "array") {
+        return "array<i32, 4>";
+    }
+    if (name == "atomic") {
+        return "atomic<i32>";
+    }
+    if (name == "mat2x2") {
+        return "mat2x2<f32>";
+    }
+    if (name == "mat2x2f") {
+        return "mat2x2<f32>";
+    }
+    if (name == "mat2x2h") {
+        return "mat2x2<f16>";
+    }
+    if (name == "mat2x3") {
+        return "mat2x3<f32>";
+    }
+    if (name == "mat2x3f") {
+        return "mat2x3<f32>";
+    }
+    if (name == "mat2x3h") {
+        return "mat2x3<f16>";
+    }
+    if (name == "mat2x4") {
+        return "mat2x4<f32>";
+    }
+    if (name == "mat2x4f") {
+        return "mat2x4<f32>";
+    }
+    if (name == "mat2x4h") {
+        return "mat2x4<f16>";
+    }
+    if (name == "mat3x2") {
+        return "mat3x2<f32>";
+    }
+    if (name == "mat3x2f") {
+        return "mat3x2<f32>";
+    }
+    if (name == "mat3x2h") {
+        return "mat3x2<f16>";
+    }
+    if (name == "mat3x3") {
+        return "mat3x3<f32>";
+    }
+    if (name == "mat3x3f") {
+        return "mat3x3<f32>";
+    }
+    if (name == "mat3x3h") {
+        return "mat3x3<f16>";
+    }
+    if (name == "mat3x4") {
+        return "mat3x4<f32>";
+    }
+    if (name == "mat3x4f") {
+        return "mat3x4<f32>";
+    }
+    if (name == "mat3x4h") {
+        return "mat3x4<f16>";
+    }
+    if (name == "mat4x2") {
+        return "mat4x2<f32>";
+    }
+    if (name == "mat4x2f") {
+        return "mat4x2<f32>";
+    }
+    if (name == "mat4x2h") {
+        return "mat4x2<f16>";
+    }
+    if (name == "mat4x3") {
+        return "mat4x3<f32>";
+    }
+    if (name == "mat4x3f") {
+        return "mat4x3<f32>";
+    }
+    if (name == "mat4x3h") {
+        return "mat4x3<f16>";
+    }
+    if (name == "mat4x4") {
+        return "mat4x4<f32>";
+    }
+    if (name == "mat4x4f") {
+        return "mat4x4<f32>";
+    }
+    if (name == "mat4x4h") {
+        return "mat4x4<f16>";
+    }
+    if (name == "ptr") {
+        return "ptr<function, i32>";
+    }
+    if (name == "vec2") {
+        return "vec2<f32>";
+    }
+    if (name == "vec2f") {
+        return "vec2<f32>";
+    }
+    if (name == "vec2h") {
+        return "vec2<f16>";
+    }
+    if (name == "vec2i") {
+        return "vec2<i32>";
+    }
+    if (name == "vec2u") {
+        return "vec2<u32>";
+    }
+    if (name == "vec3") {
+        return "vec3<f32>";
+    }
+    if (name == "vec3f") {
+        return "vec3<f32>";
+    }
+    if (name == "vec3h") {
+        return "vec3<f16>";
+    }
+    if (name == "vec3i") {
+        return "vec3<i32>";
+    }
+    if (name == "vec3u") {
+        return "vec3<u32>";
+    }
+    if (name == "vec4") {
+        return "vec4<f32>";
+    }
+    if (name == "vec4f") {
+        return "vec4<f32>";
+    }
+    if (name == "vec4h") {
+        return "vec4<f16>";
+    }
+    if (name == "vec4i") {
+        return "vec4<i32>";
+    }
+    if (name == "vec4u") {
+        return "vec4<u32>";
+    }
+    return std::string(name);
+}
+
+std::vector<const char*> ConstructableTypes() {
+    std::vector<const char*> out;
+    for (auto* ty : builtin::kBuiltinStrings) {
+        std::string_view type(ty);
+        if (type != "ptr" && type != "atomic" && !utils::HasPrefix(type, "sampler") &&
+            !utils::HasPrefix(type, "texture")) {
+            out.push_back(ty);
+        }
+    }
+    return out;
+}
+
+using RenamerBuiltinTypeTest = TransformTestWithParam<const char*>;
+
+TEST_P(RenamerBuiltinTypeTest, PreserveTypeUsage) {
+    auto expand = [&](const char* source) {
+        return utils::ReplaceAll(source, "$type", ExpandBuiltinType(GetParam()));
+    };
+
+    auto src = expand(R"(
+enable f16;
+
+fn x(v : $type) -> $type {
+  const a : $type = $type();
+  let b : $type = a;
+  var c : $type = b;
+  return c;
+}
+
+struct y {
+  a : $type,
+}
+)");
+
+    auto expect = expand(R"(
+enable f16;
+
+fn tint_symbol(tint_symbol_1 : $type) -> $type {
+  const tint_symbol_2 : $type = $type();
+  let tint_symbol_3 : $type = tint_symbol_2;
+  var tint_symbol_4 : $type = tint_symbol_3;
+  return tint_symbol_4;
+}
+
+struct tint_symbol_5 {
+  tint_symbol_2 : $type,
+}
+)");
+
+    auto got = Run<Renamer>(src);
+
+    EXPECT_EQ(expect, str(got));
+}
+TEST_P(RenamerBuiltinTypeTest, PreserveTypeInitializer) {
+    auto expand = [&](const char* source) {
+        return utils::ReplaceAll(source, "$type", ExpandBuiltinType(GetParam()));
+    };
+
+    auto src = expand(R"(
+enable f16;
+
+@fragment
+fn f() {
+  var v : $type = $type();
+}
+)");
+
+    auto expect = expand(R"(
+enable f16;
+
+@fragment
+fn tint_symbol() {
+  var tint_symbol_1 : $type = $type();
+}
+)");
+
+    auto got = Run<Renamer>(src);
+
+    EXPECT_EQ(expect, str(got));
+}
+
+TEST_P(RenamerBuiltinTypeTest, PreserveTypeConversion) {
+    if (std::string_view(GetParam()) == "array") {
+        return;  // Cannot value convert arrays.
+    }
+
+    auto expand = [&](const char* source) {
+        return utils::ReplaceAll(source, "$type", ExpandBuiltinType(GetParam()));
+    };
+
+    auto src = expand(R"(
+enable f16;
+
+@fragment
+fn f() {
+  var v : $type = $type($type());
+}
+)");
+
+    auto expect = expand(R"(
+enable f16;
+
+@fragment
+fn tint_symbol() {
+  var tint_symbol_1 : $type = $type($type());
+}
+)");
+
+    auto got = Run<Renamer>(src);
+
+    EXPECT_EQ(expect, str(got));
+}
+
+TEST_F(RenamerBuiltinTypeTest, PreserveTypeExpression) {
+    auto src = R"(
+enable f16;
+
+@fragment
+fn f() {
+  var v : array<f32, 2> = array<f32, 2>();
+}
+)";
+
+    auto expect = R"(
+enable f16;
+
+@fragment
+fn tint_symbol() {
+  var tint_symbol_1 : array<f32, 2> = array<f32, 2>();
+}
+)";
+
+    auto got = Run<Renamer>(src);
+
+    EXPECT_EQ(expect, str(got));
+}
+
+TEST_P(RenamerBuiltinTypeTest, RenameShadowedByAlias) {
+    auto expand = [&](const char* source) {
+        std::string_view ty = GetParam();
+        auto out = utils::ReplaceAll(source, "$name", ty);
+        out = utils::ReplaceAll(out, "$type", ExpandBuiltinType(ty));
+        out = utils::ReplaceAll(out, "$other_type", ty == "i32" ? "u32" : "i32");
+        return out;
+    };
+
+    auto src = expand(R"(
+alias $name = $other_type;
+
+@fragment
+fn f() {
+  var v : $other_type = $name();
+}
+)");
+
+    auto expect = expand(R"(
+alias tint_symbol = $other_type;
+
+@fragment
+fn tint_symbol_1() {
+  var tint_symbol_2 : $other_type = tint_symbol();
+}
+)");
+
+    auto got = Run<Renamer>(src);
+
+    EXPECT_EQ(expect, str(got));
+}
+
+TEST_P(RenamerBuiltinTypeTest, RenameShadowedByStruct) {
+    auto expand = [&](const char* source) {
+        std::string_view ty = GetParam();
+        auto out = utils::ReplaceAll(source, "$name", ty);
+        out = utils::ReplaceAll(out, "$type", ExpandBuiltinType(ty));
+        out = utils::ReplaceAll(out, "$other_type", ty == "i32" ? "u32" : "i32");
+        return out;
+    };
+
+    auto src = expand(R"(
+struct $name {
+  i : $other_type,
+}
+
+@fragment
+fn f() {
+  var a = $name();
+  var b = a.i;
+}
+)");
+
+    auto expect = expand(R"(
+struct tint_symbol {
+  tint_symbol_1 : $other_type,
+}
+
+@fragment
+fn tint_symbol_2() {
+  var tint_symbol_3 = tint_symbol();
+  var tint_symbol_4 = tint_symbol_3.tint_symbol_1;
+}
+)");
+
+    auto got = Run<Renamer>(src);
+
+    EXPECT_EQ(expect, str(got));
+}
+
+INSTANTIATE_TEST_SUITE_P(RenamerBuiltinTypeTest,
+                         RenamerBuiltinTypeTest,
+                         testing::ValuesIn(ConstructableTypes()));
+
+/// @return WGSL builtin identifier keywords
+std::vector<const char*> Identifiers() {
+    std::vector<const char*> out;
+    for (auto* ident : builtin::kBuiltinStrings) {
+        out.push_back(ident);
+    }
+    for (auto* ident : builtin::kAddressSpaceStrings) {
+        if (!utils::HasPrefix(ident, "_")) {
+            out.push_back(ident);
+        }
+    }
+    for (auto* ident : builtin::kTexelFormatStrings) {
+        out.push_back(ident);
+    }
+    for (auto* ident : builtin::kAccessStrings) {
+        out.push_back(ident);
+    }
+    return out;
+}
+
+using RenamerBuiltinIdentifierTest = TransformTestWithParam<const char*>;
+
+TEST_P(RenamerBuiltinIdentifierTest, GlobalConstName) {
+    auto expand = [&](const char* source) {
+        return utils::ReplaceAll(source, "$name", GetParam());
+    };
+
+    auto src = expand(R"(
+const $name = 42;
+
+fn f() {
+  const v = $name;
+}
+)");
+
+    auto expect = expand(R"(
+const tint_symbol = 42;
+
+fn tint_symbol_1() {
+  const tint_symbol_2 = tint_symbol;
+}
+)");
+
+    auto got = Run<Renamer>(src);
+
+    EXPECT_EQ(expect, str(got));
+}
+
+TEST_P(RenamerBuiltinIdentifierTest, LocalVarName) {
+    auto expand = [&](const char* source) {
+        return utils::ReplaceAll(source, "$name", GetParam());
+    };
+
+    auto src = expand(R"(
+fn f() {
+  var $name = 42;
+}
+)");
+
+    auto expect = expand(R"(
+fn tint_symbol() {
+  var tint_symbol_1 = 42;
+}
+)");
+
+    auto got = Run<Renamer>(src);
+
+    EXPECT_EQ(expect, str(got));
+}
+
+TEST_P(RenamerBuiltinIdentifierTest, FunctionName) {
+    auto expand = [&](const char* source) {
+        return utils::ReplaceAll(source, "$name", GetParam());
+    };
+
+    auto src = expand(R"(
+fn $name() {
+}
+
+fn f() {
+  $name();
+}
+)");
+
+    auto expect = expand(R"(
+fn tint_symbol() {
+}
+
+fn tint_symbol_1() {
+  tint_symbol();
+}
+)");
+
+    auto got = Run<Renamer>(src);
+
+    EXPECT_EQ(expect, str(got));
+}
+
+TEST_P(RenamerBuiltinIdentifierTest, StructName) {
+    auto expand = [&](const char* source) {
+        std::string_view name = GetParam();
+        auto out = utils::ReplaceAll(source, "$name", name);
+        return utils::ReplaceAll(out, "$other_type", name == "i32" ? "u32" : "i32");
+    };
+
+    auto src = expand(R"(
+struct $name {
+  i : $other_type,
+}
+
+fn f() {
+  var x = $name();
+}
+)");
+
+    auto expect = expand(R"(
+struct tint_symbol {
+  tint_symbol_1 : $other_type,
+}
+
+fn tint_symbol_2() {
+  var tint_symbol_3 = tint_symbol();
+}
+)");
+
+    auto got = Run<Renamer>(src);
+
+    EXPECT_EQ(expect, str(got));
+}
+
+INSTANTIATE_TEST_SUITE_P(RenamerBuiltinIdentifierTest,
+                         RenamerBuiltinIdentifierTest,
+                         testing::ValuesIn(Identifiers()));
 
 }  // namespace
 }  // namespace tint::transform

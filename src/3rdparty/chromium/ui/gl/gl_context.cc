@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,9 +6,9 @@
 
 #include <string>
 
-#include "base/bind.h"
 #include "base/cancelable_callback.h"
 #include "base/command_line.h"
+#include "base/functional/bind.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
@@ -25,7 +25,7 @@
 #include "ui/gl/gl_version_info.h"
 #include "ui/gl/gpu_timing.h"
 
-#if BUILDFLAG(IS_APPLE)
+#if BUILDFLAG(IS_MAC)
 #include "base/mac/mac_util.h"
 #endif
 
@@ -147,11 +147,6 @@ std::string GLContext::GetGLRenderer() {
   return std::string(renderer ? renderer : "");
 }
 
-YUVToRGBConverter* GLContext::GetYUVToRGBConverter(
-    const gfx::ColorSpace& color_space) {
-  return nullptr;
-}
-
 CurrentGL* GLContext::GetCurrentGL() {
   if (!static_bindings_initialized_) {
     driver_gl_ = std::make_unique<DriverGL>();
@@ -186,6 +181,12 @@ void GLContext::ForceReleaseVirtuallyCurrent() {
 void GLContext::DirtyVirtualContextState() {
   current_virtual_context_ = nullptr;
 }
+
+#if defined(USE_EGL)
+GLDisplayEGL* GLContext::GetGLDisplayEGL() {
+  return nullptr;
+}
+#endif  // USE_EGL
 
 #if BUILDFLAG(IS_APPLE)
 constexpr uint64_t kInvalidFenceId = 0;
@@ -258,7 +259,9 @@ bool GLContext::HasBackpressureFences() const {
 void GLContext::DestroyBackpressureFences() {
   backpressure_fences_.clear();
 }
+#endif
 
+#if BUILDFLAG(IS_MAC)
 void GLContext::FlushForDriverCrashWorkaround() {
   // If running on Apple silicon, regardless of the architecture, disable this
   // workaround.  See https://crbug.com/1131312.
@@ -298,8 +301,6 @@ bool GLContext::LosesAllContextsOnContextLost() {
     case kGLImplementationEGLGLES2:
     case kGLImplementationEGLANGLE:
       return true;
-    case kGLImplementationAppleGL:
-      return false;
     case kGLImplementationMockGL:
     case kGLImplementationStubGL:
       return false;

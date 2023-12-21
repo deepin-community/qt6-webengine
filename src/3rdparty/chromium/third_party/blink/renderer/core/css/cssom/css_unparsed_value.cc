@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -22,15 +22,15 @@ StringView FindVariableName(CSSParserTokenRange& range) {
   return range.Consume().Value();
 }
 
-V8CSSUnparsedSegment*
-VariableReferenceValue(const StringView& variable_name,
-                       const HeapVector<Member<V8CSSUnparsedSegment>>& tokens
-) {
+V8CSSUnparsedSegment* VariableReferenceValue(
+    const StringView& variable_name,
+    const HeapVector<Member<V8CSSUnparsedSegment>>& tokens) {
   CSSUnparsedValue* unparsed_value;
-  if (tokens.size() == 0)
+  if (tokens.size() == 0) {
     unparsed_value = nullptr;
-  else
+  } else {
     unparsed_value = CSSUnparsedValue::Create(tokens);
+  }
 
   CSSStyleVariableReferenceValue* variable_reference =
       CSSStyleVariableReferenceValue::Create(variable_name.ToString(),
@@ -38,29 +38,30 @@ VariableReferenceValue(const StringView& variable_name,
   return MakeGarbageCollected<V8CSSUnparsedSegment>(variable_reference);
 }
 
-HeapVector<Member<V8CSSUnparsedSegment>>
-ParserTokenRangeToTokens(CSSParserTokenRange range) {
+HeapVector<Member<V8CSSUnparsedSegment>> ParserTokenRangeToTokens(
+    CSSParserTokenRange range) {
   HeapVector<Member<V8CSSUnparsedSegment>> tokens;
   StringBuilder builder;
   while (!range.AtEnd()) {
     if (range.Peek().FunctionId() == CSSValueID::kVar ||
         range.Peek().FunctionId() == CSSValueID::kEnv) {
-      if (!builder.IsEmpty()) {
+      if (!builder.empty()) {
         tokens.push_back(MakeGarbageCollected<V8CSSUnparsedSegment>(
             builder.ReleaseString()));
       }
       CSSParserTokenRange block = range.ConsumeBlock();
       StringView variable_name = FindVariableName(block);
       block.ConsumeWhitespace();
-      if (block.Peek().GetType() == CSSParserTokenType::kCommaToken)
+      if (block.Peek().GetType() == CSSParserTokenType::kCommaToken) {
         block.Consume();
+      }
       tokens.push_back(VariableReferenceValue(variable_name,
                                               ParserTokenRangeToTokens(block)));
     } else {
       range.Consume().Serialize(builder);
     }
   }
-  if (!builder.IsEmpty()) {
+  if (!builder.empty()) {
     tokens.push_back(
         MakeGarbageCollected<V8CSSUnparsedSegment>(builder.ReleaseString()));
   }
@@ -77,11 +78,7 @@ CSSUnparsedValue* CSSUnparsedValue::FromCSSValue(
 
 CSSUnparsedValue* CSSUnparsedValue::FromCSSValue(
     const CSSCustomPropertyDeclaration& value) {
-  if (const CSSVariableData* data = value.Value())
-    return FromCSSVariableData(*data);
-
-  // Otherwise, it's a CSS-wide keyword
-  return FromString(value.CustomCSSText());
+  return FromCSSVariableData(value.Value());
 }
 
 CSSUnparsedValue* CSSUnparsedValue::FromCSSVariableData(
@@ -129,10 +126,12 @@ const CSSValue* CSSUnparsedValue::ToCSSValue() const {
         CSSVariableData::Create());
   }
 
+  // TODO(crbug.com/985028): We should probably propagate the CSSParserContext
+  // to here.
   return MakeGarbageCollected<CSSVariableReferenceValue>(
-      CSSVariableData::Create(
-          {range, StringView()}, false /* is_animation_tainted */,
-          false /* needs_variable_resolution */, KURL(), WTF::TextEncoding()));
+      CSSVariableData::Create({range, StringView()},
+                              false /* is_animation_tainted */,
+                              false /* needs_variable_resolution */));
 }
 
 String CSSUnparsedValue::ToString() const {

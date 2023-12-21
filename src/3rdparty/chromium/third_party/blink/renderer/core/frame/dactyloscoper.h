@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -25,13 +25,19 @@ class CORE_EXPORT Dactyloscoper {
   DISALLOW_NEW();
 
  public:
+  // HighEntropyTracer traces calls of HighEntropy APIs to perfetto.
+  //
+  // NOTE: This class must always be instantiated on the stack.
+  class CORE_EXPORT HighEntropyTracer {
+   public:
+    HighEntropyTracer(const char* called_api,
+                      const v8::FunctionCallbackInfo<v8::Value>& info);
+    ~HighEntropyTracer();
+  };
+
   Dactyloscoper();
   Dactyloscoper(const Dactyloscoper&) = delete;
   Dactyloscoper& operator=(const Dactyloscoper&) = delete;
-
-  void Record(WebFeature);
-
-  static void Record(ExecutionContext*, WebFeature);
 
   // These are helpers used by the generated bindings code when invoking IDL
   // methods with HighEntropy=Direct.

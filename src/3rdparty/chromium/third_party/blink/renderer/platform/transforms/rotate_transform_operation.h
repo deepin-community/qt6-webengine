@@ -54,10 +54,6 @@ class PLATFORM_EXPORT RotateTransformOperation : public TransformOperation {
     return base::AdoptRef(new RotateTransformOperation(rotation, type));
   }
 
-  bool operator==(const RotateTransformOperation& other) const {
-    return *this == static_cast<const TransformOperation&>(other);
-  }
-
   double X() const { return rotation_.axis.x(); }
   double Y() const { return rotation_.axis.y(); }
   double Z() const { return rotation_.axis.z(); }
@@ -73,9 +69,12 @@ class PLATFORM_EXPORT RotateTransformOperation : public TransformOperation {
   OperationType GetType() const override { return type_; }
   OperationType PrimitiveType() const override { return kRotate3D; }
 
-  void Apply(TransformationMatrix& transform,
+  void Apply(gfx::Transform& transform,
              const gfx::SizeF& /*borderBoxSize*/) const override {
-    transform.Rotate3d(rotation_);
+    if (type_ == kRotate)
+      transform.Rotate(Angle());
+    else
+      transform.RotateAbout(rotation_.axis, rotation_.angle);
   }
 
   static bool IsMatchingOperationType(OperationType type) {
@@ -84,7 +83,7 @@ class PLATFORM_EXPORT RotateTransformOperation : public TransformOperation {
   }
 
  protected:
-  bool operator==(const TransformOperation&) const override;
+  bool IsEqualAssumingSameType(const TransformOperation&) const override;
 
   bool HasNonTrivial3DComponent() const override {
     return Angle() && (X() || Y());
@@ -124,19 +123,20 @@ class PLATFORM_EXPORT RotateAroundOriginTransformOperation final
         new RotateAroundOriginTransformOperation(angle, origin_x, origin_y));
   }
 
-  void Apply(TransformationMatrix&, const gfx::SizeF&) const override;
+  void Apply(gfx::Transform&, const gfx::SizeF&) const override;
 
   static bool IsMatchingOperationType(OperationType type) {
     return type == kRotateAroundOrigin;
   }
   OperationType PrimitiveType() const override { return kRotateAroundOrigin; }
 
+ protected:
+  bool IsEqualAssumingSameType(const TransformOperation&) const override;
+
  private:
   RotateAroundOriginTransformOperation(double angle,
                                        double origin_x,
                                        double origin_y);
-
-  bool operator==(const TransformOperation&) const override;
 
   scoped_refptr<TransformOperation> Blend(
       const TransformOperation* from,

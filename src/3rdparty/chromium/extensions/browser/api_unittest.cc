@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -57,50 +57,21 @@ void ApiUnitTest::CreateBackgroundPage() {
   }
 }
 
-std::unique_ptr<base::Value> ApiUnitTest::RunFunctionAndReturnValue(
+absl::optional<base::Value> ApiUnitTest::RunFunctionAndReturnValue(
     ExtensionFunction* function,
     const std::string& args) {
   function->set_extension(extension());
   if (contents_)
-    function->SetRenderFrameHost(contents_->GetMainFrame());
-  return std::unique_ptr<base::Value>(utils::RunFunctionAndReturnSingleResult(
-      function, args, browser_context()));
-}
-
-std::unique_ptr<base::DictionaryValue>
-ApiUnitTest::RunFunctionAndReturnDictionary(ExtensionFunction* function,
-                                            const std::string& args) {
-  base::Value* value = RunFunctionAndReturnValue(function, args).release();
-  base::DictionaryValue* dict = NULL;
-
-  if (value && !value->GetAsDictionary(&dict))
-    delete value;
-
-  // We expect to either have successfully retrieved a dictionary from the
-  // value, or the value to have been NULL.
-  EXPECT_TRUE(dict || !value);
-  return std::unique_ptr<base::DictionaryValue>(dict);
-}
-
-std::unique_ptr<base::Value> ApiUnitTest::RunFunctionAndReturnList(
-    ExtensionFunction* function,
-    const std::string& args) {
-  base::Value* value = RunFunctionAndReturnValue(function, args).release();
-
-  // We expect to either have successfully gotten a list value, or the value to
-  // have been NULL.
-  EXPECT_TRUE(!value || value->is_list());
-  if (value && !value->is_list())
-    delete value;
-
-  return std::unique_ptr<base::Value>(value);
+    function->SetRenderFrameHost(contents_->GetPrimaryMainFrame());
+  return utils::RunFunctionAndReturnSingleResult(function, args,
+                                                 browser_context());
 }
 
 std::string ApiUnitTest::RunFunctionAndReturnError(ExtensionFunction* function,
                                                    const std::string& args) {
   function->set_extension(extension());
   if (contents_)
-    function->SetRenderFrameHost(contents_->GetMainFrame());
+    function->SetRenderFrameHost(contents_->GetPrimaryMainFrame());
   return utils::RunFunctionAndReturnError(function, args, browser_context());
 }
 

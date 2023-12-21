@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -113,9 +113,7 @@ class TestRTTAndThroughputEstimatesObserver
  public:
   TestRTTAndThroughputEstimatesObserver()
       : http_rtt_(nqe::internal::InvalidRTT()),
-        transport_rtt_(nqe::internal::InvalidRTT()),
-        downstream_throughput_kbps_(nqe::internal::INVALID_RTT_THROUGHPUT),
-        notifications_received_(0) {}
+        transport_rtt_(nqe::internal::InvalidRTT()) {}
 
   // RTTAndThroughputEstimatesObserver implementation:
   void OnRTTOrThroughputEstimatesComputed(
@@ -139,8 +137,8 @@ class TestRTTAndThroughputEstimatesObserver
  private:
   base::TimeDelta http_rtt_;
   base::TimeDelta transport_rtt_;
-  int32_t downstream_throughput_kbps_;
-  int notifications_received_;
+  int32_t downstream_throughput_kbps_ = nqe::internal::INVALID_RTT_THROUGHPUT;
+  int notifications_received_ = 0;
 };
 
 class TestRTTObserver : public NetworkQualityEstimator::RTTObserver {
@@ -161,7 +159,7 @@ class TestRTTObserver : public NetworkQualityEstimator::RTTObserver {
   void OnRTTObservation(int32_t rtt_ms,
                         const base::TimeTicks& timestamp,
                         NetworkQualityObservationSource source) override {
-    observations_.push_back(Observation(rtt_ms, timestamp, source));
+    observations_.emplace_back(rtt_ms, timestamp, source);
   }
 
   // Returns the last received RTT observation that has source set to |source|.
@@ -197,7 +195,7 @@ class TestThroughputObserver
       int32_t throughput_kbps,
       const base::TimeTicks& timestamp,
       NetworkQualityObservationSource source) override {
-    observations_.push_back(Observation(throughput_kbps, timestamp, source));
+    observations_.emplace_back(throughput_kbps, timestamp, source);
   }
 
  private:
@@ -1899,23 +1897,18 @@ TEST_F(NetworkQualityEstimatorTest, TestRttThroughputObservers) {
   base::TimeDelta quic_rtt(base::Milliseconds(2));
 
   // Use a public IP address so that the socket watcher runs the RTT callback.
-  IPAddressList ip_list;
   IPAddress ip_address;
   ASSERT_TRUE(ip_address.AssignFromIPLiteral("157.0.0.1"));
-  ip_list.push_back(ip_address);
-  std::vector<std::string> aliases({"canonical.example.com"});
-  AddressList address_list =
-      AddressList::CreateFromIPAddressList(ip_list, std::move(aliases));
 
   std::unique_ptr<SocketPerformanceWatcher> tcp_watcher =
       estimator.GetSocketPerformanceWatcherFactory()
           ->CreateSocketPerformanceWatcher(
-              SocketPerformanceWatcherFactory::PROTOCOL_TCP, address_list);
+              SocketPerformanceWatcherFactory::PROTOCOL_TCP, ip_address);
 
   std::unique_ptr<SocketPerformanceWatcher> quic_watcher =
       estimator.GetSocketPerformanceWatcherFactory()
           ->CreateSocketPerformanceWatcher(
-              SocketPerformanceWatcherFactory::PROTOCOL_QUIC, address_list);
+              SocketPerformanceWatcherFactory::PROTOCOL_QUIC, ip_address);
 
   tcp_watcher->OnUpdatedRTTAvailable(tcp_rtt);
   // First RTT sample from QUIC connections is dropped, but the second RTT
@@ -1967,17 +1960,12 @@ TEST_F(NetworkQualityEstimatorTest, TestGlobalSocketWatcherThrottle) {
   auto context = context_builder->Build();
 
   // Use a public IP address so that the socket watcher runs the RTT callback.
-  IPAddressList ip_list;
   IPAddress ip_address;
   ASSERT_TRUE(ip_address.AssignFromIPLiteral("157.0.0.1"));
-  ip_list.push_back(ip_address);
-  std::vector<std::string> aliases({"canonical.example.com"});
-  AddressList address_list =
-      AddressList::CreateFromIPAddressList(ip_list, std::move(aliases));
   std::unique_ptr<SocketPerformanceWatcher> tcp_watcher =
       estimator.GetSocketPerformanceWatcherFactory()
           ->CreateSocketPerformanceWatcher(
-              SocketPerformanceWatcherFactory::PROTOCOL_TCP, address_list);
+              SocketPerformanceWatcherFactory::PROTOCOL_TCP, ip_address);
 
   EXPECT_EQ(0U, rtt_observer.observations().size());
   EXPECT_TRUE(tcp_watcher->ShouldNotifyUpdatedRTT());
@@ -2182,8 +2170,7 @@ class TestNetworkQualitiesCacheObserver
   TestNetworkQualitiesCacheObserver()
       : network_id_(net::NetworkChangeNotifier::CONNECTION_UNKNOWN,
                     std::string(),
-                    INT32_MIN),
-        notification_received_(0) {}
+                    INT32_MIN) {}
 
   TestNetworkQualitiesCacheObserver(const TestNetworkQualitiesCacheObserver&) =
       delete;
@@ -2210,7 +2197,7 @@ class TestNetworkQualitiesCacheObserver
 
  private:
   nqe::internal::NetworkID network_id_;
-  size_t notification_received_;
+  size_t notification_received_ = 0;
 };
 
 TEST_F(NetworkQualityEstimatorTest, CacheObserver) {

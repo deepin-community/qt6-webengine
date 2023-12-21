@@ -30,13 +30,15 @@
 
 import * as Common from '../../core/common/common.js';
 import * as i18n from '../../core/i18n/i18n.js';
+import * as Root from '../../core/root/root.js';
 import * as SDK from '../../core/sdk/sdk.js';
 import * as NetworkForward from '../../panels/network/forward/forward.js';
 import * as UI from '../../ui/legacy/legacy.js';
-import * as NetworkComponents from './components/components.js';
 
+import * as NetworkComponents from './components/components.js';
 import {EventSourceMessagesView} from './EventSourceMessagesView.js';
-import type {NetworkTimeCalculator} from './NetworkTimeCalculator.js';
+
+import {type NetworkTimeCalculator} from './NetworkTimeCalculator.js';
 import {RequestCookiesView} from './RequestCookiesView.js';
 import {RequestHeadersView} from './RequestHeadersView.js';
 import {RequestPayloadView} from './RequestPayloadView.js';
@@ -48,80 +50,80 @@ import {ResourceWebSocketFrameView} from './ResourceWebSocketFrameView.js';
 
 const UIStrings = {
   /**
-  *@description Text for network request headers
-  */
+   *@description Text for network request headers
+   */
   headers: 'Headers',
   /**
-  *@description Text in Network Item View of the Network panel
-  */
+   *@description Text in Network Item View of the Network panel
+   */
   payload: 'Payload',
   /**
-  *@description Text in Network Item View of the Network panel
-  */
+   *@description Text in Network Item View of the Network panel
+   */
   messages: 'Messages',
   /**
-  *@description Text in Network Item View of the Network panel
-  */
+   *@description Text in Network Item View of the Network panel
+   */
   websocketMessages: 'WebSocket messages',
   /**
-  *@description Text in Network Item View of the Network panel
-  */
+   *@description Text in Network Item View of the Network panel
+   */
   eventstream: 'EventStream',
   /**
-  *@description Text for previewing items
-  */
+   *@description Text for previewing items
+   */
   preview: 'Preview',
   /**
-  *@description Text in Network Item View of the Network panel
-  */
+   *@description Text in Network Item View of the Network panel
+   */
   responsePreview: 'Response preview',
   /**
-  *@description Icon title in Network Item View of the Network panel
-  */
+   *@description Icon title in Network Item View of the Network panel
+   */
   signedexchangeError: 'SignedExchange error',
   /**
-  *@description Title of a tab in the Network panel. A Network response refers to the act of acknowledging a
+   *@description Title of a tab in the Network panel. A Network response refers to the act of acknowledging a
   network request. Should not be confused with answer.
-  */
+   */
   response: 'Response',
   /**
-  *@description Text in Network Item View of the Network panel
-  */
+   *@description Text in Network Item View of the Network panel
+   */
   rawResponseData: 'Raw response data',
   /**
-  *@description Text for the initiator of something
-  */
+   *@description Text for the initiator of something
+   */
   initiator: 'Initiator',
   /**
-  * @description Tooltip for initiator view in Network panel. An initiator is a piece of code/entity
-  * in the code that initiated/started the network request, i.e. caused the network request. The 'call
-  * stack' is the location in the code where the initiation happened.
-  */
+   * @description Tooltip for initiator view in Network panel. An initiator is a piece of code/entity
+   * in the code that initiated/started the network request, i.e. caused the network request. The 'call
+   * stack' is the location in the code where the initiation happened.
+   */
   requestInitiatorCallStack: 'Request initiator call stack',
   /**
-  *@description Title of a tab in Network Item View of the Network panel.
-  *The tab displays the duration breakdown of a network request.
-  */
+   *@description Title of a tab in Network Item View of the Network panel.
+   *The tab displays the duration breakdown of a network request.
+   */
   timing: 'Timing',
   /**
-  *@description Text in Network Item View of the Network panel
-  */
+   *@description Text in Network Item View of the Network panel
+   */
   requestAndResponseTimeline: 'Request and response timeline',
   /**
-  *@description Label of a tab in the network panel
-  */
+   *@description Label of a tab in the network panel
+   */
   trustTokens: 'Trust Tokens',
   /**
-  *@description Title of the Trust token tab in the Network panel
-  */
+   *@description Title of the Trust token tab in the Network panel
+   */
   trustTokenOperationDetails: 'Trust Token operation details',
   /**
-  *@description Text for web cookies
-  */
+   *@description Text for web cookies
+   */
   cookies: 'Cookies',
   /**
-  *@description Text in Network Item View of the Network panel
-  */
+   *@description Text in Network Item View of the Network panel
+   */
   requestAndResponseCookies: 'Request and response cookies',
 };
 const str_ = i18n.i18n.registerUIStrings('panels/network/NetworkItemView.ts', UIStrings);
@@ -130,6 +132,7 @@ export class NetworkItemView extends UI.TabbedPane.TabbedPane {
   private requestInternal: SDK.NetworkRequest.NetworkRequest;
   private readonly resourceViewTabSetting: Common.Settings.Setting<NetworkForward.UIRequestLocation.UIRequestTabs>;
   private readonly headersView: RequestHeadersView;
+  private readonly headersViewComponent: NetworkComponents.RequestHeadersView.RequestHeadersView;
   private payloadView: RequestPayloadView|null;
   private readonly responseView: RequestResponseView|undefined;
   private cookiesView: RequestCookiesView|null;
@@ -143,12 +146,19 @@ export class NetworkItemView extends UI.TabbedPane.TabbedPane {
     this.element.classList.add('network-item-view');
 
     this.resourceViewTabSetting = Common.Settings.Settings.instance().createSetting(
-        'resourceViewTab', NetworkForward.UIRequestLocation.UIRequestTabs.Preview);
+        'resourceViewTab', NetworkForward.UIRequestLocation.UIRequestTabs.Headers);
 
     this.headersView = new RequestHeadersView(request);
-    this.appendTab(
-        NetworkForward.UIRequestLocation.UIRequestTabs.Headers, i18nString(UIStrings.headers), this.headersView,
-        i18nString(UIStrings.headers));
+    this.headersViewComponent = new NetworkComponents.RequestHeadersView.RequestHeadersView(request);
+    if (Root.Runtime.experiments.isEnabled(Root.Runtime.ExperimentName.HEADER_OVERRIDES)) {
+      this.appendTab(
+          NetworkForward.UIRequestLocation.UIRequestTabs.HeadersComponent, i18nString(UIStrings.headers),
+          this.headersViewComponent, i18nString(UIStrings.headers));
+    } else {
+      this.appendTab(
+          NetworkForward.UIRequestLocation.UIRequestTabs.Headers, i18nString(UIStrings.headers), this.headersView,
+          i18nString(UIStrings.headers));
+    }
 
     this.payloadView = null;
     void this.maybeAppendPayloadPanel();
@@ -302,7 +312,20 @@ export class NetworkItemView extends UI.TabbedPane.TabbedPane {
   }
 
   revealHeader(section: NetworkForward.UIRequestLocation.UIHeaderSection, header: string|undefined): void {
-    this.selectTabInternal(NetworkForward.UIRequestLocation.UIRequestTabs.Headers);
-    this.headersView.revealHeader(section, header);
+    if (Root.Runtime.experiments.isEnabled(Root.Runtime.ExperimentName.HEADER_OVERRIDES)) {
+      this.selectTabInternal(NetworkForward.UIRequestLocation.UIRequestTabs.HeadersComponent);
+      this.headersViewComponent.revealHeader(section, header);
+    } else {
+      this.selectTabInternal(NetworkForward.UIRequestLocation.UIRequestTabs.Headers);
+      this.headersView.revealHeader(section, header);
+    }
+  }
+
+  getHeadersView(): RequestHeadersView {
+    return this.headersView;
+  }
+
+  getHeadersViewComponent(): NetworkComponents.RequestHeadersView.RequestHeadersView {
+    return this.headersViewComponent;
   }
 }

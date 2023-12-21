@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -156,7 +156,7 @@ UserAgentOverride UserAgentOverride::UserAgentOnly(const std::string& ua) {
   UserAgentOverride result;
   result.ua_string_override = ua;
 
-  // If ua is empty, it's assumed the system default should be used
+  // If ua is not empty, it's assumed the system default should be used
   if (!ua.empty() &&
       base::FeatureList::IsEnabled(features::kUACHOverrideBlank)) {
     result.ua_metadata_override = UserAgentMetadata();

@@ -1,4 +1,4 @@
-// Copyright (c) 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,6 +13,7 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
 #include "build/build_config.h"
@@ -94,7 +95,7 @@ FlatBufferModelScorer::FlatBufferModelScorer() = default;
 FlatBufferModelScorer::~FlatBufferModelScorer() = default;
 
 /* static */
-FlatBufferModelScorer* FlatBufferModelScorer::Create(
+std::unique_ptr<FlatBufferModelScorer> FlatBufferModelScorer::Create(
     base::ReadOnlySharedMemoryRegion region,
     base::File visual_tflite_model) {
   std::unique_ptr<FlatBufferModelScorer> scorer(new FlatBufferModelScorer());
@@ -142,7 +143,7 @@ FlatBufferModelScorer* FlatBufferModelScorer::Create(
   RecordScorerCreationStatus(SCORER_SUCCESS);
   scorer->flatbuffer_mapping_ = std::move(mapping);
 
-  return scorer.release();
+  return scorer;
 }
 
 double FlatBufferModelScorer::ComputeRuleScore(
@@ -184,14 +185,14 @@ void FlatBufferModelScorer::ApplyVisualTfLiteModel(
     base::Time start_post_task_time = base::Time::Now();
     base::ThreadPool::PostTask(
         FROM_HERE, {base::TaskPriority::BEST_EFFORT},
-        base::BindOnce(
-            &ApplyVisualTfLiteModelHelper, bitmap,
-            flatbuffer_model_->tflite_metadata()->input_width(),
-            flatbuffer_model_->tflite_metadata()->input_height(),
-            std::string(
-                reinterpret_cast<const char*>(visual_tflite_model_.data()),
-                visual_tflite_model_.length()),
-            base::SequencedTaskRunnerHandle::Get(), std::move(callback)));
+        base::BindOnce(&ApplyVisualTfLiteModelHelper, bitmap,
+                       flatbuffer_model_->tflite_metadata()->input_width(),
+                       flatbuffer_model_->tflite_metadata()->input_height(),
+                       std::string(reinterpret_cast<const char*>(
+                                       visual_tflite_model_.data()),
+                                   visual_tflite_model_.length()),
+                       base::SequencedTaskRunner::GetCurrentDefault(),
+                       std::move(callback)));
     base::UmaHistogramTimes(
         "SBClientPhishing.TfLiteModelLoadTime.FlatbufferScorer",
         base::Time::Now() - start_post_task_time);
@@ -203,6 +204,10 @@ void FlatBufferModelScorer::ApplyVisualTfLiteModel(
 
 int FlatBufferModelScorer::model_version() const {
   return flatbuffer_model_->version();
+}
+
+int FlatBufferModelScorer::dom_model_version() const {
+  return flatbuffer_model_->dom_model_version();
 }
 
 bool FlatBufferModelScorer::has_page_term(const std::string& str) const {

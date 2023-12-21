@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,11 +7,12 @@
 
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
+#include "components/services/screen_ai/buildflags/buildflags.h"
 #include "printing/buildflags/buildflags.h"
 #include "sandbox/policy/export.h"
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "chromeos/assistant/buildflags.h"
+#include "chromeos/ash/components/assistant/buildflags.h"
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
 namespace sandbox {
@@ -37,7 +38,9 @@ SANDBOX_POLICY_EXPORT extern const char kPrintCompositorSandbox[];
 SANDBOX_POLICY_EXPORT extern const char kAudioSandbox[];
 SANDBOX_POLICY_EXPORT extern const char kServiceSandbox[];
 SANDBOX_POLICY_EXPORT extern const char kServiceSandboxWithJit[];
+#if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
 SANDBOX_POLICY_EXPORT extern const char kScreenAISandbox[];
+#endif
 SANDBOX_POLICY_EXPORT extern const char kSpeechRecognitionSandbox[];
 SANDBOX_POLICY_EXPORT extern const char kVideoCaptureSandbox[];
 
@@ -47,6 +50,7 @@ SANDBOX_POLICY_EXPORT extern const char kXrCompositingSandbox[];
 SANDBOX_POLICY_EXPORT extern const char kIconReaderSandbox[];
 SANDBOX_POLICY_EXPORT extern const char kMediaFoundationCdmSandbox[];
 SANDBOX_POLICY_EXPORT extern const char kWindowsSystemProxyResolverSandbox[];
+SANDBOX_POLICY_EXPORT extern const char kFileUtilSandbox[];
 #endif  // BUILDFLAG(IS_WIN)
 
 #if BUILDFLAG(IS_MAC)
@@ -56,6 +60,9 @@ SANDBOX_POLICY_EXPORT extern const char kMirroringSandbox[];
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_ASH)
 SANDBOX_POLICY_EXPORT extern const char kHardwareVideoDecodingSandbox[];
 #endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+SANDBOX_POLICY_EXPORT extern const char kHardwareVideoEncodingSandbox[];
+#endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
 SANDBOX_POLICY_EXPORT extern const char kImeSandbox[];

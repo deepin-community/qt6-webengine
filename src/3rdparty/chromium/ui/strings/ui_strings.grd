@@ -397,6 +397,9 @@ need to be translated for each locale.-->
       <message name="IDS_NEW_BADGE" desc="Appears as a badge on UI elements like menus, denoting new features">
         New
       </message>
+      <message name="IDS_NEW_BADGE_UPPERCASE" desc="Appears as a badge on UI elements like menus, denoting new features, in uppercase">
+        NEW
+      </message>
       <message name="IDS_NEW_BADGE_SCREEN_READER_MESSAGE"
                desc="Message appended to screen reader description of UI elements which have the 'New' badge">
         This is a new feature
@@ -519,9 +522,6 @@ need to be translated for each locale.-->
       <message name="IDS_APP_ACCNAME_MENU" desc="The accessible name for the Menu button.">
         Menu
       </message>
-      <message name="IDS_APP_ACCNAME_FLOAT" desc="The accessible name for the Floating button.">
-        Float
-      </message>
       <message name="IDS_APP_ACCNAME_COLOR_CHOOSER_HEX_INPUT" desc="The accessible name for the color chooser hexadecimal input field">
         Hex color value
       </message>
@@ -598,6 +598,9 @@ need to be translated for each locale.-->
           Select &amp;All
         </message>
       </if>
+      <message name="IDS_APP_SELECT" desc="The text label of the Select menu item">
+        &amp;Select
+      </message>
       <if expr="not is_macosx">
         <message name="IDS_CONTENT_CONTEXT_EMOJI" desc="The context menu item to display the OS-provided emoji picker.">
           Emoji
@@ -608,7 +611,7 @@ need to be translated for each locale.-->
           Emoji &amp;&amp; Symbols
         </message>
       </if>
-      <if expr="chromeos_ash">
+      <if expr="is_chromeos">
         <message name="IDS_APP_SHOW_CLIPBOARD_HISTORY" desc="The context menu item to show the clipboard history menu.">
           Clipboard
         </message>
@@ -729,7 +732,7 @@ need to be translated for each locale.-->
         <message name="IDS_APP_FULLSCREEN_KEY" desc="This refers to the 'Fullscreen' media key on certain keyboards.">
           Fullscreen
         </message>
-        <message name="IDS_APP_OVERVIEW_KEY" desc="This refers to the 'Overview' or 'Show All Windows' media key on Chrome OS keyboards.">
+        <message name="IDS_APP_OVERVIEW_KEY" desc="This refers to the 'Overview' or 'Show All Windows' media key on ChromeOS keyboards.">
           Overview
         </message>
       </if>
@@ -803,7 +806,7 @@ need to be translated for each locale.-->
         <ph name="NUMBER">$1<ex>75</ex></ph> %
       </message>
       <message name="IDS_MESSAGE_CENTER_NOTIFICATION_CHROMEOS_SYSTEM" desc="The label to describe the notification comes from ChromeOS system.">
-        <ph name="IDS_SHORT_PRODUCT_OS_NAME">$1<ex>Chrome OS</ex></ph> system
+        <ph name="IDS_SHORT_PRODUCT_OS_NAME">$1<ex>ChromeOS</ex></ph> system
       </message>
       <message name="IDS_MESSAGE_CENTER_NOTIFICATION_INLINE_REPLY_PLACEHOLDER" desc="The default placeholder text for notification inline reply.">
         Send message
@@ -895,6 +898,9 @@ need to be translated for each locale.-->
       </message>
       <message name="IDS_CLIPBOARD_HISTORY_DELETE_BUTTON" desc="Accessibility name of the button which functions to delete a clipboard history menu entry">
         Remove from clipboard.
+      </message>
+      <message name="IDS_CLIPBOARD_HISTORY_DELETE_BUTTON_HOVER_TEXT" desc="Message displayed when hovering over the button to delete a clipboard history menu entry">
+        Remove
       </message>
       <message name="IDS_CLIPBOARD_HISTORY_ITEM_DELETION" desc="Accessibility text when a clipboard history menu entry is deleted">
         Removed.

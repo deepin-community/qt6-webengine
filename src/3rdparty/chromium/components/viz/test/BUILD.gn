@@ -1,4 +1,4 @@
-# Copyright 2017 The Chromium Authors. All rights reserved.
+# Copyright 2017 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -6,15 +6,19 @@ import("//build/buildflag_header.gni")
 import("//build/config/ui.gni")
 import("//components/viz/viz.gni")
 
+# Android on x86 architecture is likely an emulator. Some multiplanar texture
+# types don't work on Android emulator.
+is_android_emulator = is_android && (target_cpu == "x64" || target_cpu == "x86")
+
 # Generate a buildflag header to determine which tests should be enabled.
 buildflag_header("buildflags") {
   header = "buildflags.h"
 
   flags = [
-    "ENABLE_GL_RENDERER_TESTS=$enable_gl_renderer_tests",
     "ENABLE_GL_BACKEND_TESTS=$enable_gl_backend_tests",
     "ENABLE_VULKAN_BACKEND_TESTS=$enable_vulkan_backend_tests",
     "ENABLE_DAWN_BACKEND_TESTS=$enable_dawn_backend_tests",
+    "IS_ANDROID_EMULATOR=$is_android_emulator",
   ]
 }
 
@@ -76,8 +80,6 @@ viz_static_library("test_support") {
     "test_gpu_memory_buffer_manager.h",
     "test_gpu_service_holder.cc",
     "test_gpu_service_holder.h",
-    "test_image_factory.cc",
-    "test_image_factory.h",
     "test_in_process_context_provider.cc",
     "test_in_process_context_provider.h",
     "test_latest_local_surface_id_lookup_delegate.cc",
@@ -93,6 +95,7 @@ viz_static_library("test_support") {
     "test_types.cc",
     "test_types.h",
   ]
+
   deps = [
     "//base",
     "//base/test:test_support",
@@ -112,7 +115,10 @@ viz_static_library("test_support") {
     "//ui/latency:test_support",
   ]
 
-  public_deps = [ ":buildflags" ]
+  public_deps = [
+    ":buildflags",
+    "//gpu/ipc:gl_in_process_context",
+  ]
 
   if (enable_vulkan) {
     deps += [ "//gpu/vulkan/init" ]

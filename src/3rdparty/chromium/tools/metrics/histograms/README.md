@@ -84,12 +84,12 @@ callsite. At a given callsite (preferably you have only one), the string
 should be the same every time the macro is called. If you need to use dynamic
 names, use the functions in histogram_functions.h instead of the macros.
 
-### Don't Use Same String in Multiple Places
+### Don't Use Same Inline String in Multiple Places
 
 If you must use the histogram name in multiple places, use a compile-time
 constant of appropriate scope that can be referenced everywhere. Using inline
 strings in multiple places can lead to errors if you ever need to revise the
-name and you update one one location and forget another.
+name and you update one location and forget another.
 
 ### Efficiency
 
@@ -210,6 +210,9 @@ private static void logNewTabPageAction(@NewTabPageAction int action) {
 }
 ```
 
+Finally, regardless of the programming language you are using, add the
+definition of the enumerator to [enums.xml](./enums.xml).
+
 #### Legacy Enums
 
 **Note: this method of defining histogram enums is deprecated. Do not use this
@@ -248,6 +251,13 @@ corresponding entry to [enums.xml](./enums.xml). This is automatically verified
 by the `AboutFlagsHistogramTest` unit test.
 
 To add a new entry:
+
+1. After adding flags
+   to [about_flags.cc](../../../chrome/browser/about_flags.cc),
+   run `generate_flag_enums.py --feature <your awesome feature>` or
+   simply `generate_flag_enums.py` (slower).
+
+You can alternatively follow these steps:
 
 1. Edit [enums.xml](./enums.xml), adding the feature to the `LoginCustomFlags`
    enum section, with any unique value (just make one up, although whatever it
@@ -294,14 +304,15 @@ situation.
 #### Count Histograms: Choosing Number of Buckets
 
 Choose the smallest number of buckets that give you the granularity you need. By
-default, count histogram bucket sizes scale exponentially, so you can get fine
-granularity when the numbers are small yet still reasonable resolution for
-larger numbers. The macros default to 50 buckets (or 100 buckets for histograms
-with wide ranges), which is appropriate for most purposes. Because histograms
-pre-allocate all the buckets, the number of buckets selected directly dictates
-how much memory is used. Do not exceed 100 buckets without good reason (and
-consider whether [sparse histograms](#When-To-Use-Sparse-Histograms) might work
-better for you in that case—they do not pre-allocate their buckets).
+default, count histogram bucket sizes increase exponentially with respect to the
+value (i.e., exponential binning), so you can get fine granularity when the
+values are small yet still reasonable resolution when the values are larger. The
+macros default to 50 buckets (or 100 buckets for histograms with wide ranges),
+which is appropriate for most purposes. Because histograms pre-allocate all the
+buckets, the number of buckets selected directly dictates how much memory is
+used. Do not exceed 100 buckets without good reason (and consider whether
+[sparse histograms](#When-To-Use-Sparse-Histograms) might work better for you in
+that case—they do not pre-allocate their buckets).
 
 ### Timing Histograms
 
@@ -375,9 +386,9 @@ someone from the OWNERS file.
 
 Histogram expiry is specified by the `expires_after` attribute in histogram
 descriptions in histograms.xml. The attribute can be specified as date in
-**YYYY-MM-DD** format or as Chrome milestone in **M**\*(e.g. M68) format. In the
-latter case, the actual expiry date is about 12 weeks after that branch is cut,
-or basically when it is replaced on the "stable" channel by the following
+**YYYY-MM-DD** format or as Chrome milestone in **M**\*(e.g. M105) format. In
+the latter case, the actual expiry date is about 12 weeks after that branch is
+cut, or basically when it is replaced on the "stable" channel by the following
 release.
 
 After a histogram expires, it ceases to be displayed on the dashboard.
@@ -385,7 +396,9 @@ Follow [these directions](#extending) to extend it.
 
 Once a histogram has expired, the code that records it becomes dead code and
 should be removed from the codebase. You should also [clean up](#obsolete) the
-corresponding entry in histograms.xml.
+corresponding entry in histograms.xml. In _rare_ cases, a histogram may be
+expired intentionally while keeping the code around; such cases must be
+[annotated appropriately](#Intentionally-expired-histograms) in histograms.xml.
 
 In **rare** cases, the expiry can be set to "never". This is used to denote
 metrics of critical importance that are, typically, used for other reports. For
@@ -466,11 +479,29 @@ crbugs accordingly.
 ### Expired histogram allowlist
 
 If a histogram expires but turns out to be useful, you can add the histogram's
-name to the allowlist until the updated expiration date reaches the stable
-channel. When doing so, update the histogram's summary to document the period
-during which the histogram's data is incomplete. To add a histogram to the
-allowlist, see the internal documentation:
+name to the allowlist to re-enable logging for it, until the updated expiration
+date reaches the Stable channel. When doing so, update the histogram's summary
+to document the period during which the histogram's data is incomplete. To add a
+histogram to the allowlist, see the internal documentation:
 [Histogram Expiry](https://goto.google.com/histogram-expiry-gdoc).
+
+### Intentionally expired histograms
+
+In **rare** cases, a histogram may be expired intentionally while keeping the
+code around. For example, this can be useful for diagnostic metrics that are
+occasionally needed to investigate specific bugs, but do not need to be reported
+otherwise.
+
+To avoid such histograms to be flagged for code clean up, they must be annotated
+in the histograms.xml with the `expired_intentionally` tag as follows:
+
+```xml
+<histogram name="Tab.Open" enum="TabType" expires_after="M100">
+ <expired_intentionally>Kept as a diagnostic metric.</expired_intentionally>
+ <owner>histogramowner@chromium.org</owner>
+ <summary>Histogram summary.</summary>
+</histogram>
+```
 
 ## Testing
 
@@ -480,12 +511,19 @@ the values emitted to are correct. Finally, for count histograms, make sure
 that buckets capture enough precision for your needs over the range.
 
 Pro tip: You can filter the set of histograms shown on `chrome://histograms` by
-specifying a prefix. For example, `chrome://histograms/Extensions.Load` shows
-only histograms whose names match the pattern "Extensions.Load*".
+appending to the URL. For example, `chrome://histograms/UserActions` shows
+only histograms whose names contain "UserActions", such as
+"UMA.UserActionsCount".
 
 In addition to testing interactively, you can have unit tests examine the
 values emitted to histograms. See [histogram_tester.h](https://cs.chromium.org/chromium/src/base/test/metrics/histogram_tester.h)
 for details.
+
+See also `chrome://metrics-internals` ([docs](https://chromium.googlesource.com/chromium/src/+/master/components/metrics/debug/README.md))
+for more thorough manual testing if needed.
+
+By default, histograms in unit or browser tests will not be actually uploaded.
+In general, you can rely on the UMA infrastructure to upload the metrics correctly.
 
 ## Interpreting the Resulting Data
 
@@ -610,6 +648,23 @@ with the histogram. If there isn't a parallel DIR_METADATA file with such a
 component, but a parent directory has one, then the parent directory's component
 is used.
 
+### Improvement Direction
+For some histograms, an increase or a decrease in the reported values can be
+associated with either an improvement or a deterioration. For example, if you
+are tracking page load speed, then seeing your metrics tracking page load time
+in milliseconds getting gradually larger values, perhaps as the result of a
+Finch study, may signify worse performance; on the contrary, seeing a reduction
+in the page load speed may indicate an improvement. You can provide this
+information on the movement direction by adding a tag
+ `<improvement direction="LOWER_IS_BETTER"/>` within your `<histogram>`. The
+opposite is `<improvement direction="HIGHER_IS_BETTER"/>`.
+
+For other histograms where there may not be a movement direction that's clearly
+better, you can set `<improvement direction="NEITHER_IS_BETTER"/>`.
+
+This `<improvement>` tag is optional. You can also add/delete this tag or make a
+correction to its `direction` attribute any time.
+
 ### Cleaning Up Histogram Entries {#obsolete}
 
 If a histogram is no longer being emitted to, there are two options to clean up
@@ -651,8 +706,11 @@ entry in the histograms.xml file.
   * `<enum>` blocks from enums.xml that are no longer used.
   * Suffix entries in histogram_suffixes_list.xml.
 * Please remove these artifacts if you find them.
-  * **Exception**: please mark `<int value=...>` blocks as obsolete rather than
-    deleting them.
+  * **Exception**: please update the label of `<int value=... label=... />` with
+    the `(Obsolete) ` prefix, e.g.
+    `<int value="1" label="(Obsolete) Navigation failed. Removed in 2023/01."/>`
+    rather than deleting them, if the surrounding `<enum>` block is not being
+    deleted.
 * A histogram entry can be removed after an obsoletion message was added, but
   please check that at least a day has passed since the change landed. This
   ensures that the message will be recorded by internal tools.
@@ -717,6 +775,11 @@ This is useful for token substitutions that are shared among multiple families
 of histograms. See
 [histograms.xml](https://source.chromium.org/search?q=file:histograms.xml%20%3Cvariants)
 for examples.
+
+*** promo
+Warning: The `name` attribute of the `<variants>` tag is globally scoped, so
+use detailed names to avoid collisions.
+***
 
 By default, a `<variant>` inherits the owners declared for the patterned
 histogram. Each variant can optionally override the inherited list with custom

@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -18,6 +18,7 @@
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/extensions/extension_action_test_helper.h"
+#include "chrome/browser/ui/tabs/tab_enums.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/toolbar/toolbar_actions_model.h"
 #include "chrome/test/base/ui_test_utils.h"
@@ -27,17 +28,22 @@
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_utils.h"
+#include "extensions/browser/background_script_executor.h"
 #include "extensions/browser/browsertest_util.h"
 #include "extensions/browser/extension_action.h"
 #include "extensions/browser/extension_action_manager.h"
 #include "extensions/browser/extension_icon_image.h"
 #include "extensions/browser/process_manager.h"
 #include "extensions/browser/state_store.h"
+#include "extensions/common/api/extension_action/action_info.h"
 #include "extensions/common/api/extension_action/action_info_test_util.h"
 #include "extensions/common/extension.h"
+#include "extensions/common/manifest_constants.h"
 #include "extensions/test/extension_test_message_listener.h"
 #include "extensions/test/result_catcher.h"
 #include "extensions/test/test_extension_dir.h"
+#include "net/dns/mock_host_resolver.h"
+#include "net/test/embedded_test_server/embedded_test_server.h"
 #include "ui/base/window_open_disposition.h"
 #include "ui/gfx/color_utils.h"
 
@@ -200,7 +206,15 @@ void FlushStateStore(Profile* profile) {
 
 }  // namespace
 
-using ExtensionActionAPITest = ExtensionApiTest;
+// A class that allows for cross-origin navigations with embedded test server.
+class ExtensionActionAPITest : public ExtensionApiTest {
+ protected:
+  void SetUpOnMainThread() override {
+    ExtensionApiTest::SetUpOnMainThread();
+    host_resolver()->AddRule("*", "127.0.0.1");
+    ASSERT_TRUE(StartEmbeddedTestServer());
+  }
+};
 
 // Alias these for readability, when a test only exercises one type of action.
 using BrowserActionAPITest = ExtensionActionAPITest;
@@ -270,7 +284,7 @@ class MultiActionAPICanvasTest : public MultiActionAPITest {
 // cause a disk write (since we only persist the defaults).
 // Only browser actions persist settings.
 IN_PROC_BROWSER_TEST_F(BrowserActionAPITest, TestNoUnnecessaryIO) {
-  ExtensionTestMessageListener ready_listener("ready", false);
+  ExtensionTestMessageListener ready_listener("ready");
 
   TestExtensionDir test_dir;
   test_dir.WriteManifest(
@@ -340,8 +354,6 @@ IN_PROC_BROWSER_TEST_F(BrowserActionAPITest, TestNoUnnecessaryIO) {
 // removal. Regression test for https://crbug.com/834033.
 IN_PROC_BROWSER_TEST_P(MultiActionAPITest,
                        ValuesAreClearedOnNavigationAndTabRemoval) {
-  ASSERT_TRUE(StartEmbeddedTestServer());
-
   TestExtensionDir test_dir;
   constexpr char kManifestTemplate[] =
       R"({
@@ -354,7 +366,7 @@ IN_PROC_BROWSER_TEST_P(MultiActionAPITest,
 
   test_dir.WriteManifest(base::StringPrintf(
       kManifestTemplate, GetManifestVersionForActionType(GetParam()),
-      GetManifestKeyForActionType(GetParam())));
+      ActionInfo::GetManifestKeyForActionType(GetParam())));
   const Extension* extension = LoadExtension(test_dir.UnpackedPath());
   ASSERT_TRUE(extension);
 
@@ -388,7 +400,7 @@ IN_PROC_BROWSER_TEST_P(MultiActionAPITest,
   {
     content::WebContentsDestroyedWatcher destroyed_watcher(web_contents);
     tab_strip_model->CloseWebContentsAt(tab_strip_model->active_index(),
-                                        TabStripModel::CLOSE_NONE);
+                                        TabCloseTypes::CLOSE_NONE);
     destroyed_watcher.Wait();
   }
   // The title should have been cleared on tab removal as well.
@@ -412,7 +424,7 @@ IN_PROC_BROWSER_TEST_P(MultiActionAPITest, TitleLocalization) {
 
   test_dir.WriteManifest(base::StringPrintf(
       kManifestTemplate, GetManifestVersionForActionType(GetParam()),
-      GetManifestKeyForActionType(GetParam())));
+      ActionInfo::GetManifestKeyForActionType(GetParam())));
   const Extension* extension = LoadExtension(test_dir.UnpackedPath());
   ASSERT_TRUE(extension);
 
@@ -459,7 +471,8 @@ IN_PROC_BROWSER_TEST_P(MultiActionAPITest, OnClickedDispatching) {
   TestExtensionDir test_dir;
   test_dir.WriteManifest(base::StringPrintf(
       kManifestTemplate, GetManifestVersionForActionType(GetParam()),
-      GetManifestKeyForActionType(GetParam()), background_specification));
+      ActionInfo::GetManifestKeyForActionType(GetParam()),
+      background_specification));
   test_dir.WriteFile(FILE_PATH_LITERAL("background.js"),
                      base::StringPrintf(kBackgroundJsTemplate,
                                         GetAPINameForActionType(GetParam())));
@@ -512,7 +525,7 @@ IN_PROC_BROWSER_TEST_P(MultiActionAPITest, PopupCreation) {
   TestExtensionDir test_dir;
   test_dir.WriteManifest(base::StringPrintf(
       kManifestTemplate, GetManifestVersionForActionType(GetParam()),
-      GetManifestKeyForActionType(GetParam())));
+      ActionInfo::GetManifestKeyForActionType(GetParam())));
   test_dir.WriteFile(FILE_PATH_LITERAL("popup.html"), kPopupHtml);
   test_dir.WriteFile(FILE_PATH_LITERAL("popup.js"), kPopupJs);
 
@@ -595,7 +608,7 @@ IN_PROC_BROWSER_TEST_P(MultiActionAPITest,
   TestExtensionDir test_dir;
   test_dir.WriteManifest(base::StringPrintf(
       kManifestTemplate, GetManifestVersionForActionType(GetParam()),
-      GetManifestKeyForActionType(GetParam())));
+      ActionInfo::GetManifestKeyForActionType(GetParam())));
   test_dir.WriteFile(FILE_PATH_LITERAL("popup.html"), kPopupHtml);
   test_dir.WriteFile(FILE_PATH_LITERAL("popup.js"), kPopupJs);
 
@@ -738,7 +751,8 @@ IN_PROC_BROWSER_TEST_P(ActionAndBrowserActionAPITest, ValuesArePersisted) {
 }
 
 // Tests setting the icon dynamically from the background page.
-IN_PROC_BROWSER_TEST_P(MultiActionAPICanvasTest, DynamicSetIcon) {
+// TODO(crbug.com/1340330): flaky.
+IN_PROC_BROWSER_TEST_P(MultiActionAPICanvasTest, DISABLED_DynamicSetIcon) {
   constexpr char kManifestTemplate[] =
       R"({
            "name": "Test Clicking",
@@ -752,7 +766,7 @@ IN_PROC_BROWSER_TEST_P(MultiActionAPICanvasTest, DynamicSetIcon) {
   TestExtensionDir test_dir;
   test_dir.WriteManifest(base::StringPrintf(
       kManifestTemplate, GetManifestVersionForActionType(GetParam()),
-      GetManifestKeyForActionType(GetParam())));
+      ActionInfo::GetManifestKeyForActionType(GetParam())));
   test_dir.WriteFile(FILE_PATH_LITERAL("page.html"), kPageHtmlTemplate);
   test_dir.WriteFile(FILE_PATH_LITERAL("page.js"),
                      base::StringPrintf(kSetIconBackgroundJsTemplate,
@@ -889,7 +903,7 @@ IN_PROC_BROWSER_TEST_P(MultiActionAPITest, SetIconWithJavascriptHooks) {
   TestExtensionDir test_dir;
   test_dir.WriteManifest(base::StringPrintf(
       kManifestTemplate, GetManifestVersionForActionType(GetParam()),
-      GetManifestKeyForActionType(GetParam())));
+      ActionInfo::GetManifestKeyForActionType(GetParam())));
   test_dir.WriteFile(FILE_PATH_LITERAL("page.html"), kPageHtmlTemplate);
   test_dir.WriteFile(FILE_PATH_LITERAL("page.js"),
                      base::StringPrintf(kSetIconBackgroundJsTemplate,
@@ -959,7 +973,7 @@ IN_PROC_BROWSER_TEST_P(MultiActionAPITest, SetIconWithSelfDefined) {
   TestExtensionDir test_dir;
   test_dir.WriteManifest(base::StringPrintf(
       kManifestTemplate, GetManifestVersionForActionType(GetParam()),
-      GetManifestKeyForActionType(GetParam())));
+      ActionInfo::GetManifestKeyForActionType(GetParam())));
 
   test_dir.WriteFile(FILE_PATH_LITERAL("page.html"), kPageHtmlTemplate);
   test_dir.WriteFile(FILE_PATH_LITERAL("page.js"),
@@ -1028,7 +1042,7 @@ IN_PROC_BROWSER_TEST_P(MultiActionAPITest, SetIconInTabWithInvalidPath) {
   TestExtensionDir test_dir;
   test_dir.WriteManifest(base::StringPrintf(
       kManifestTemplate, GetManifestVersionForActionType(GetParam()),
-      GetManifestKeyForActionType(GetParam())));
+      ActionInfo::GetManifestKeyForActionType(GetParam())));
 
   test_dir.WriteFile(FILE_PATH_LITERAL("page.html"), kPageHtmlTemplate);
   test_dir.WriteFile(
@@ -1061,12 +1075,21 @@ IN_PROC_BROWSER_TEST_P(MultiActionAPITest, SetIconInTabWithInvalidPath) {
       "setIcon({tabId: %d, path: 'does_not_exist.png'});";
   RunTestAndWaitForSuccess(web_contents,
                            base::StringPrintf(kSetIconScript, tab_id));
-  console_observer.Wait();
+  ASSERT_TRUE(console_observer.Wait());
 }
 
-// Tests calling setIcon() in the service worker with an invalid icon path
-// specified. Regression test for https://crbug.com/1262029.
-IN_PROC_BROWSER_TEST_F(ExtensionActionAPITest, SetIconInWorkerWithInvalidPath) {
+// Tests calling setIcon() in the service worker with an invalid icon paths
+// specified. Regression test for https://crbug.com/1262029. Regression test for
+// https://crbug.com/1372518.
+// Flaky (https://crbug.com/1383903)
+#if BUILDFLAG(IS_MAC)
+#define MAYBE_SetIconInWorkerWithInvalidPath \
+  DISABLED_SetIconInWorkerWithInvalidPath
+#else
+#define MAYBE_SetIconInWorkerWithInvalidPath SetIconInWorkerWithInvalidPath
+#endif
+IN_PROC_BROWSER_TEST_F(ExtensionActionAPITest,
+                       MAYBE_SetIconInWorkerWithInvalidPath) {
   constexpr char kManifestTemplate[] =
       R"({
            "name": "Bad Icon Path In Worker",
@@ -1078,16 +1101,34 @@ IN_PROC_BROWSER_TEST_F(ExtensionActionAPITest, SetIconInWorkerWithInvalidPath) {
 
   constexpr char kBackgroundJs[] =
       R"(let expectedError = "%s";
+         const singlePath = 'does_not_exist.png';
+         const multiplePaths = {
+           16: 'does_not_exist.png',
+           32: 'also_does_not_exist.png'
+         };
+
          chrome.test.runTests([
-           function withCallback() {
-             chrome.action.setIcon({path: 'does_not_exist.png'}, () => {
+           function singleWithCallback() {
+             chrome.action.setIcon({path: singlePath}, () => {
                chrome.test.assertLastError(expectedError);
                chrome.test.succeed();
              });
            },
-           async function withPromise() {
+           async function singleWithPromise() {
              await chrome.test.assertPromiseRejects(
-                 chrome.action.setIcon({path: 'does_not_exist.png'}),
+                 chrome.action.setIcon({path: singlePath}),
+                 'Error: ' + expectedError);
+             chrome.test.succeed();
+           },
+           function multipleWithCallback() {
+             chrome.action.setIcon({path: multiplePaths}, () => {
+               chrome.test.assertLastError(expectedError);
+               chrome.test.succeed();
+             });
+           },
+           async function multipleWithPromise() {
+             await chrome.test.assertPromiseRejects(
+                 chrome.action.setIcon({path: multiplePaths}),
                  'Error: ' + expectedError);
              chrome.test.succeed();
            }
@@ -1110,6 +1151,86 @@ IN_PROC_BROWSER_TEST_F(ExtensionActionAPITest, SetIconInWorkerWithInvalidPath) {
   EXPECT_TRUE(result_catcher.GetNextResult()) << result_catcher.message();
 }
 
+// Tests multiple cases of setting an invalid popup that violate same-origin
+// checks.
+IN_PROC_BROWSER_TEST_P(MultiActionAPITest, SetPopupWithInvalidPath) {
+  constexpr char kManifestTemplate[] =
+      R"({
+           "name": "Invalid Popup Path",
+           "manifest_version": %d,
+           "version": "0.1",
+           "%s": {}
+         })";
+  constexpr char kSetPopupJsTemplate[] =
+      R"(
+        function setPopup(details, expectedError) {
+          chrome.%s.setPopup(details, () => {
+            chrome.test.assertLastError(expectedError);
+            chrome.test.succeed();
+          });
+        };
+      )";
+
+  TestExtensionDir test_dir;
+  test_dir.WriteManifest(base::StringPrintf(
+      kManifestTemplate, GetManifestVersionForActionType(GetParam()),
+      ActionInfo::GetManifestKeyForActionType(GetParam())));
+  test_dir.WriteFile(FILE_PATH_LITERAL("popup.html"),
+                     "// This space left blank.");
+  test_dir.WriteFile(FILE_PATH_LITERAL("page.html"), kPageHtmlTemplate);
+  test_dir.WriteFile(FILE_PATH_LITERAL("page.js"),
+                     base::StringPrintf(kSetPopupJsTemplate,
+                                        GetAPINameForActionType(GetParam())));
+  const Extension* extension = LoadExtension(test_dir.UnpackedPath());
+  ASSERT_TRUE(extension);
+  ExtensionAction* action = GetExtensionAction(*extension);
+  ASSERT_TRUE(action);
+
+  auto get_script = [](int tab_id, const char* popup_input) {
+    constexpr char kSetPopup[] = R"(setPopup({tabId: %d, popup: '%s'}, "%s");)";
+    return base::StringPrintf(kSetPopup, tab_id, popup_input,
+                              manifest_errors::kInvalidExtensionOriginPopup);
+  };
+
+  content::RenderFrameHost* navigated_host = ui_test_utils::NavigateToURL(
+      browser(), extension->GetResourceURL("page.html"));
+  ASSERT_TRUE(navigated_host);
+  content::WebContents* web_contents = GetActiveTab();
+  int tab_id = GetActiveTabId();
+
+  // Set the popup to an invalid nonexistent extension URL and expect an error.
+  {
+    static constexpr char kInvalidPopupUrl[] =
+        "chrome-extension://notavalidextensionid/popup.html";
+    RunTestAndWaitForSuccess(web_contents,
+                             get_script(tab_id, kInvalidPopupUrl));
+  }
+
+  // Set the popup to a web URL and expect an error.
+  {
+    static constexpr char kWebUrl[] = "http://test.com";
+    RunTestAndWaitForSuccess(web_contents, get_script(tab_id, kWebUrl));
+  }
+
+  // Set the popup to another existing extension and expect an error.
+  {
+    TestExtensionDir different_extension_dir;
+    different_extension_dir.WriteManifest(base::StringPrintf(
+        kManifestTemplate, GetManifestVersionForActionType(GetParam()),
+        ActionInfo::GetManifestKeyForActionType(GetParam())));
+    different_extension_dir.WriteFile(FILE_PATH_LITERAL("popup.html"),
+                                      "// This space left blank.");
+    const Extension* different_extension =
+        LoadExtension(different_extension_dir.UnpackedPath());
+    ASSERT_TRUE(different_extension);
+    const std::string different_extension_popup_url =
+        different_extension->GetResourceURL("popup.html").spec();
+    RunTestAndWaitForSuccess(
+        web_contents,
+        get_script(tab_id, different_extension_popup_url.c_str()));
+  }
+}
+
 // Tests various getter and setter methods.
 IN_PROC_BROWSER_TEST_P(MultiActionAPITest, GettersAndSetters) {
   // Load up an extension with default values.
@@ -1130,7 +1251,7 @@ IN_PROC_BROWSER_TEST_P(MultiActionAPITest, GettersAndSetters) {
   TestExtensionDir test_dir;
   test_dir.WriteManifest(base::StringPrintf(
       kManifestTemplate, GetManifestVersionForActionType(GetParam()),
-      GetManifestKeyForActionType(GetParam())));
+      ActionInfo::GetManifestKeyForActionType(GetParam())));
   test_dir.WriteFile(FILE_PATH_LITERAL("page.html"), kPageHtmlTemplate);
   test_dir.WriteFile(FILE_PATH_LITERAL("page.js"), kPageJs);
   test_dir.WriteFile(FILE_PATH_LITERAL("default_popup.html"), kPopupHtml);
@@ -1296,7 +1417,7 @@ IN_PROC_BROWSER_TEST_P(MultiActionAPITest, GettersAndSetters) {
              custom_badge_text2, base::BindRepeating(get_badge_text));
   }
   {
-    // setBadgeColor/getBadgeColor.
+    // setBadgeBackgroundColor/getBadgeBackgroundColor.
     ValuePair default_badge_color{"0,0,0", "[0, 0, 0, 0]"};
     ValuePair custom_badge_color1{"255,0,0", "[255, 0, 0, 255]"};
     ValuePair custom_badge_color2{"0,255,0", "[0, 255, 0, 255]"};
@@ -1311,6 +1432,30 @@ IN_PROC_BROWSER_TEST_P(MultiActionAPITest, GettersAndSetters) {
                                         web_contents);
     run_test(badge_color_helper, default_badge_color, custom_badge_color1,
              custom_badge_color2, base::BindRepeating(get_badge_color));
+  }
+
+  // TODO(crbug.com/1372176): Test using HTML colors instead of just color
+  // arrays, including set/getBadgeBackgroundColor.
+  // setBadgeTextColor/getBadgeTextColor.
+  // This API is only supported on MV3.
+  if (GetParam() != ActionInfo::TYPE_BROWSER) {
+    {
+      ValuePair default_badge_text_color{"0,0,0", "[0, 0, 0, 0]"};
+      ValuePair custom_badge_text_color1{"255,0,0", "[255, 0, 0, 255]"};
+      ValuePair custom_badge_text_color2{"0,255,0", "[0, 255, 0, 255]"};
+
+      auto get_badge_text_color = [](ExtensionAction* action, int tab_id) {
+        return color_utils::SkColorToRgbString(
+            action->GetBadgeTextColor(tab_id));
+      };
+
+      ActionTestHelper badge_text_color_helper(kApiName, "setBadgeTextColor",
+                                               "getBadgeTextColor", "color",
+                                               web_contents);
+      run_test(badge_text_color_helper, default_badge_text_color,
+               custom_badge_text_color1, custom_badge_text_color2,
+               base::BindRepeating(get_badge_text_color));
+    }
   }
 }
 
@@ -1327,7 +1472,7 @@ IN_PROC_BROWSER_TEST_P(MultiActionAPITest, EnableAndDisable) {
   TestExtensionDir test_dir;
   test_dir.WriteManifest(base::StringPrintf(
       kManifestTemplate, GetManifestVersionForActionType(GetParam()),
-      GetManifestKeyForActionType(GetParam())));
+      ActionInfo::GetManifestKeyForActionType(GetParam())));
   test_dir.WriteFile(FILE_PATH_LITERAL("page.html"), kPageHtmlTemplate);
   test_dir.WriteFile(FILE_PATH_LITERAL("page.js"), "// This space left blank.");
   const Extension* extension = LoadExtension(test_dir.UnpackedPath());
@@ -1437,6 +1582,87 @@ IN_PROC_BROWSER_TEST_P(MultiActionAPITest, EnableAndDisable) {
   }
 }
 
+// Tests that the check for enabled and disabled status are correctly reported.
+IN_PROC_BROWSER_TEST_F(ExtensionActionAPITest, IsEnabled) {
+  ASSERT_TRUE(RunExtensionTest("extension_action/is_enabled")) << message_;
+}
+
+// Tests that isEnabled correctly ignores declarativeContent rules for enable.
+IN_PROC_BROWSER_TEST_F(ExtensionActionAPITest, IsEnabledIgnoreDeclarative) {
+  constexpr char kManifestTemplate[] =
+      R"({
+           "name": "Declarative content ignored test",
+           "version": "0.1",
+           "manifest_version": 3,
+           "permissions": ["activeTab", "declarativeContent"],
+           "background": {
+             "service_worker" : "background.js"
+           },
+           "action": {}
+         })";
+  constexpr char kSetupDeclarativeContent[] =
+      R"(
+          let rule1 = {
+            conditions: [
+              new chrome.declarativeContent.PageStateMatcher({
+                pageUrl: { hostContains: 'google'},
+              })
+            ],
+            actions: [ new chrome.declarativeContent.ShowAction() ]
+          };
+          chrome.runtime.onInstalled.addListener(function(details) {
+            chrome.declarativeContent.onPageChanged.removeRules(
+              undefined, function() {
+                chrome.declarativeContent.onPageChanged.addRules(
+                  [rule1], () => {
+                    chrome.test.sendMessage('ready');
+                });
+            });
+          });
+          // Set tab disabled globally so that we can assert that the extension
+          // cannot know the enable status for declarativeContent tabs it is
+          // registered for.
+          chrome.action.disable();
+        )";
+
+  TestExtensionDir test_dir;
+  test_dir.WriteManifest(kManifestTemplate);
+  test_dir.WriteFile(FILE_PATH_LITERAL("background.js"),
+                     kSetupDeclarativeContent);
+
+  ExtensionTestMessageListener listener("ready");
+  const Extension* extension = LoadExtension(test_dir.UnpackedPath());
+  ASSERT_TRUE(extension);
+  ASSERT_TRUE(listener.WaitUntilSatisfied());
+  auto* action_manager = ExtensionActionManager::Get(profile());
+  ExtensionAction* action = action_manager->GetExtensionAction(*extension);
+  ASSERT_TRUE(action);
+
+  content::WebContents* web_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  GURL url(embedded_test_server()->GetURL("google.com", "/title1.html"));
+
+  EXPECT_TRUE(NavigateToURL(web_contents, url));
+  EXPECT_TRUE(WaitForLoadStop(web_contents));
+  const int tab_id = sessions::SessionTabHelper::IdForTab(web_contents).id();
+
+  // Confirm that the tab is only visible for declarativeContent.
+  ASSERT_TRUE(action->GetIsVisible(tab_id));
+  ASSERT_FALSE(action->GetIsVisibleIgnoringDeclarative(tab_id));
+
+  constexpr char kCheckIsEnabledStatusForTabId[] =
+      R"(
+        chrome.action.isEnabled(%d, (enabled) => {
+          chrome.test.sendScriptResult(enabled);
+        });
+      )";
+  base::Value script_result = BackgroundScriptExecutor::ExecuteScript(
+      profile(), extension->id(),
+      base::StringPrintf(kCheckIsEnabledStatusForTabId, tab_id),
+      BackgroundScriptExecutor::ResultCapture::kSendScriptResult);
+  EXPECT_FALSE(script_result.GetBool());
+}
+
 using ActionAPITest = ExtensionApiTest;
 
 IN_PROC_BROWSER_TEST_F(ActionAPITest, TestGetUserSettings) {
@@ -1461,7 +1687,7 @@ IN_PROC_BROWSER_TEST_F(ActionAPITest, TestGetUserSettings) {
 
   const Extension* extension = nullptr;
   {
-    ExtensionTestMessageListener listener("ready", /*will_reply=*/false);
+    ExtensionTestMessageListener listener("ready");
     extension = LoadExtension(test_dir.UnpackedPath());
     ASSERT_TRUE(extension);
     ASSERT_TRUE(listener.WaitUntilSatisfied());
@@ -1475,7 +1701,7 @@ IN_PROC_BROWSER_TEST_F(ActionAPITest, TestGetUserSettings) {
       ExtensionActionTestHelper::Create(browser());
 
   auto get_response = [extension, toolbar_helper = toolbar_helper.get()]() {
-    ExtensionTestMessageListener listener(/*will_reply=*/false);
+    ExtensionTestMessageListener listener;
     listener.set_extension_id(extension->id());
     toolbar_helper->Press(extension->id());
     EXPECT_TRUE(listener.WaitUntilSatisfied());
@@ -1488,6 +1714,54 @@ IN_PROC_BROWSER_TEST_F(ActionAPITest, TestGetUserSettings) {
   EXPECT_TRUE(toolbar_model->IsActionPinned(extension->id()));
 
   EXPECT_EQ(R"({"isOnToolbar":true})", get_response());
+}
+
+// Tests that invalid badge text colors return an API error to the caller.
+IN_PROC_BROWSER_TEST_F(ActionAPITest, TestBadgeTextColorErrors) {
+  content::WebContents* web_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  const int tab_id = sessions::SessionTabHelper::IdForTab(web_contents).id();
+  constexpr char kManifestTemplate[] =
+      R"({
+           "name": "alpha transparent error test",
+           "version": "0.1",
+           "manifest_version": 3,
+           "action": {},
+           "background": {"service_worker": "background.js" }
+         })";
+  static constexpr char kBackgroundJs[] =
+      R"(
+        const tabId = %d;
+        const expectedError = '%s';
+        chrome.test.runTests([
+          async function badgeColorEmptyValueInvalid() {
+            await chrome.test.assertPromiseRejects(
+              chrome.action.setBadgeTextColor(
+                {color: '', tabId}),
+              'Error: ' + expectedError);
+            chrome.test.succeed();
+          },
+          async function badgeColorAlphaTransparentInvalid() {
+            await chrome.test.assertPromiseRejects(
+              chrome.action.setBadgeTextColor(
+                {color: [255, 255, 255, 0], tabId}),
+              'Error: ' + expectedError);
+            chrome.test.succeed();
+          }
+        ]);
+      )";
+
+  TestExtensionDir test_dir;
+  test_dir.WriteManifest(kManifestTemplate);
+  test_dir.WriteFile(FILE_PATH_LITERAL("page.html"), kPageHtmlTemplate);
+  test_dir.WriteFile(FILE_PATH_LITERAL("background.js"),
+                     base::StringPrintf(kBackgroundJs, tab_id,
+                                        extension_misc::kInvalidColorError));
+
+  ResultCatcher result_catcher;
+  const Extension* extension = LoadExtension(test_dir.UnpackedPath());
+  ASSERT_TRUE(extension);
+  EXPECT_TRUE(result_catcher.GetNextResult()) << result_catcher.message();
 }
 
 INSTANTIATE_TEST_SUITE_P(All,

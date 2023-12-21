@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,6 +6,7 @@
 
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
+#include "ui/gfx/geometry/rect_conversions.h"
 
 namespace blink {
 
@@ -236,6 +237,24 @@ TEST(LayoutRectTest, ExpandEdgesToPixelBoundaries) {
   fractional_negpos_rect3.ExpandEdgesToPixelBoundaries();
   EXPECT_EQ(LayoutRect(gfx::Rect(-101, -151, 201, 352)),
             fractional_negpos_rect3);
+}
+
+TEST(LayoutRectTest, InfiniteIntRect) {
+  gfx::Rect r = LayoutRect::InfiniteIntRect();
+  EXPECT_TRUE(r.Contains(gfx::Rect(-8000000, -8000000, 16000000, 16000000)));
+  // The rect can be converted to LayoutRect and back without loss of accuracy.
+  EXPECT_EQ(ToEnclosingRect(LayoutRect(r)), r);
+  EXPECT_EQ(ToPixelSnappedRect(LayoutRect(r)), r);
+  for (int i = 0; i < 50; i++) {
+    // Modified rect with visible right/bottom can be converted to gfx::RectF
+    // or LayoutRect and back without loss of accuracy.
+    r.set_width(r.x() + i);
+    r.set_height(r.y() + i + 2000);
+    EXPECT_EQ(gfx::ToEnclosingRect(gfx::RectF(r)), r);
+    EXPECT_EQ(gfx::ToEnclosedRect(gfx::RectF(r)), r);
+    EXPECT_EQ(ToEnclosingRect(LayoutRect(r)), r);
+    EXPECT_EQ(ToPixelSnappedRect(LayoutRect(r)), r);
+  }
 }
 
 struct LayoutRectUniteTestData {

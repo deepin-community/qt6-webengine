@@ -1,4 +1,4 @@
-# Copyright 2014 The Chromium Authors. All rights reserved.
+# Copyright 2014 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 #
@@ -324,62 +324,32 @@ StripChecksumsFromPackageList() {
 HacksAndPatchesCommon() {
   local arch=$1
   local os=$2
-  local strip=$3
   Banner "Misc Hacks & Patches"
-  # these are linker scripts with absolute pathnames in them
-  # which we rewrite here
-  lscripts="${INSTALL_ROOT}/usr/lib/${arch}-${os}/libpthread.so \
-            ${INSTALL_ROOT}/usr/lib/${arch}-${os}/libc.so"
 
-  # Rewrite linker scripts
-  sed -i -e 's|/usr/lib/${arch}-${os}/||g'  ${lscripts}
-  sed -i -e 's|/lib/${arch}-${os}/||g' ${lscripts}
-
-  # Unversion libdbus and libxkbcommon symbols.  This is required because
-  # libdbus-1-3 and libxkbcommon0 switched from unversioned symbols to versioned
-  # ones, and we must still support distros using the unversioned library.  This
-  # hack can be removed once support for Ubuntu Trusty and Debian Jessie are
-  # dropped.
-  ${strip} -R .gnu.version_d -R .gnu.version \
-    "${INSTALL_ROOT}/lib/${arch}-${os}/libdbus-1.so.3"
-  cp "${SCRIPT_DIR}/libdbus-1-3-symbols" \
-    "${INSTALL_ROOT}/debian/libdbus-1-3/DEBIAN/symbols"
-
-  ${strip} -R .gnu.version_d -R .gnu.version \
-    "${INSTALL_ROOT}/usr/lib/${arch}-${os}/libxkbcommon.so.0.0.0"
-  cp "${SCRIPT_DIR}/libxkbcommon0-symbols" \
-    "${INSTALL_ROOT}/debian/libxkbcommon0/DEBIAN/symbols"
+  # Remove an unnecessary dependency on qtchooser.
+  rm "${INSTALL_ROOT}/usr/lib/${arch}-${os}/qt-default/qtchooser/default.conf"
 
   # libxcomposite1 is missing a symbols file.
   cp "${SCRIPT_DIR}/libxcomposite1-symbols" \
     "${INSTALL_ROOT}/debian/libxcomposite1/DEBIAN/symbols"
 
-  # Shared objects depending on libdbus-1.so.3 have unsatisfied undefined
-  # versioned symbols. To avoid LLD --no-allow-shlib-undefined errors, rewrite
-  # DT_NEEDED entries from libdbus-1.so.3 to a different string. LLD will
-  # suppress --no-allow-shlib-undefined diagnostics for such shared objects.
-  set +e
-  for f in "${INSTALL_ROOT}/lib/${arch}-${os}"/*.so \
-           "${INSTALL_ROOT}/usr/lib/${arch}-${os}"/*.so; do
-    echo "$f" | grep -q 'libdbus-1.so$' && continue
-    # In a dependent shared object, the only occurrence of "libdbus-1.so.3" is
-    # the string referenced by the DT_NEEDED entry.
-    offset=$(LANG=C grep -abo libdbus-1.so.3 "$f")
-    [ -n "$offset" ] || continue
-    echo -n 'libdbus-1.so.0' | dd of="$f" conv=notrunc bs=1 \
-      seek="$(echo -n "$offset" | cut -d : -f 1)" status=none
-  done
-  set -e
+  # __GLIBC_MINOR__ is used as a feature test macro.  Replace it with the
+  # earliest supported version of glibc (2.26, obtained from the oldest glibc
+  # version in //chrome/installer/linux/debian/dist_packag_versions.json and
+  # //chrome/installer/linux/rpm/dist_package_provides.json).
+  local usr_include="${INSTALL_ROOT}/usr/include"
+  local features_h="${usr_include}/features.h"
+  sed -i 's|\(#define\s\+__GLIBC_MINOR__\)|\1 26 //|' "${features_h}"
 
   # fcntl64() was introduced in glibc 2.28.  Make sure to use fcntl() instead.
   local fcntl_h="${INSTALL_ROOT}/usr/include/fcntl.h"
   sed -i '{N; s/#ifndef __USE_FILE_OFFSET64\(\nextern int fcntl\)/#if 1\1/}' \
       "${fcntl_h}"
 
-  # __GLIBC_MINOR__ is used as a feature test macro.  Replace it with the
-  # earliest supported version of glibc (2.17, https://crbug.com/376567).
-  local features_h="${INSTALL_ROOT}/usr/include/features.h"
-  sed -i 's|\(#define\s\+__GLIBC_MINOR__\)|\1 17 //|' "${features_h}"
+  # Do not use pthread_cond_clockwait as it was introduced in glibc 2.30.
+  local cppconfig_h="${usr_include}/${arch}-${os}/c++/10/bits/c++config.h"
+  sed -i 's|\(#define\s\+_GLIBCXX_USE_PTHREAD_COND_CLOCKWAIT\)|// \1|' \
+    "${cppconfig_h}"
 
   # This is for chrome's ./build/linux/pkg-config-wrapper
   # which overwrites PKG_CONFIG_LIBDIR internally
@@ -399,48 +369,46 @@ ReversionGlibc() {
     "${INSTALL_ROOT}/lib/${arch}-${os}/libc.so.6"
   "${SCRIPT_DIR}/reversion_glibc.py" \
     "${INSTALL_ROOT}/lib/${arch}-${os}/libm.so.6"
+  "${SCRIPT_DIR}/reversion_glibc.py" \
+    "${INSTALL_ROOT}/lib/${arch}-${os}/libcrypt.so.1"
 }
 
 
 HacksAndPatchesAmd64() {
-  HacksAndPatchesCommon x86_64 linux-gnu strip
+  HacksAndPatchesCommon x86_64 linux-gnu
   ReversionGlibc x86_64 linux-gnu
 }
 
 
 HacksAndPatchesI386() {
-  HacksAndPatchesCommon i386 linux-gnu strip
+  HacksAndPatchesCommon i386 linux-gnu
   ReversionGlibc i386 linux-gnu
 }
 
 
 HacksAndPatchesARM() {
-  HacksAndPatchesCommon arm linux-gnueabihf arm-linux-gnueabihf-strip
+  HacksAndPatchesCommon arm linux-gnueabihf
   ReversionGlibc arm linux-gnueabihf
 }
 
 HacksAndPatchesARM64() {
-  # Use the unstripped libdbus for arm64 to prevent linker errors.
-  # https://bugs.chromium.org/p/webrtc/issues/detail?id=8535
-  HacksAndPatchesCommon aarch64 linux-gnu true
-  # Skip reversion_glibc.py. Glibc is compiled in a way where many libm math
-  # functions do not have compatibility symbols for versions <= 2.17.
-  # ReversionGlibc aarch64 linux-gnu
+  HacksAndPatchesCommon aarch64 linux-gnu
+  ReversionGlibc aarch64 linux-gnu
 }
 
 HacksAndPatchesARMEL() {
-  HacksAndPatchesCommon arm linux-gnueabi arm-linux-gnueabi-strip
+  HacksAndPatchesCommon arm linux-gnueabi
   ReversionGlibc arm linux-gnueabi
 }
 
 HacksAndPatchesMips() {
-  HacksAndPatchesCommon mipsel linux-gnu mipsel-linux-gnu-strip
+  HacksAndPatchesCommon mipsel linux-gnu
   ReversionGlibc mipsel linux-gnu
 }
 
 
 HacksAndPatchesMips64el() {
-  HacksAndPatchesCommon mips64el linux-gnuabi64 mips64el-linux-gnuabi64-strip
+  HacksAndPatchesCommon mips64el linux-gnuabi64
   ReversionGlibc mips64el linux-gnuabi64
 }
 
@@ -482,8 +450,9 @@ InstallIntoSysroot() {
     dpkg-deb -e ${package} ${INSTALL_ROOT}/debian/${base_package}/DEBIAN
   done
 
-  # Prune /usr/share, leaving only pkgconfig.
-  ls -d ${INSTALL_ROOT}/usr/share/* | grep -v "/pkgconfig$" | xargs rm -r
+  # Prune /usr/share, leaving only pkgconfig, wayland, and wayland-protocols.
+  ls -d ${INSTALL_ROOT}/usr/share/* | \
+    grep -v "/\(pkgconfig\|wayland\|wayland-protocols\)$" | xargs rm -r
 }
 
 
@@ -594,8 +563,8 @@ BuildSysrootAmd64() {
   local files_and_sha256sums="$(cat ${package_file})"
   StripChecksumsFromPackageList "$package_file"
   InstallIntoSysroot ${files_and_sha256sums}
-  CleanupJailSymlinks
   HacksAndPatchesAmd64
+  CleanupJailSymlinks
   VerifyLibraryDepsAmd64
   CreateTarBall
 }
@@ -614,8 +583,8 @@ BuildSysrootI386() {
   local files_and_sha256sums="$(cat ${package_file})"
   StripChecksumsFromPackageList "$package_file"
   InstallIntoSysroot ${files_and_sha256sums}
-  CleanupJailSymlinks
   HacksAndPatchesI386
+  CleanupJailSymlinks
   VerifyLibraryDepsI386
   CreateTarBall
 }
@@ -634,8 +603,8 @@ BuildSysrootARM() {
   local files_and_sha256sums="$(cat ${package_file})"
   StripChecksumsFromPackageList "$package_file"
   InstallIntoSysroot ${files_and_sha256sums}
-  CleanupJailSymlinks
   HacksAndPatchesARM
+  CleanupJailSymlinks
   VerifyLibraryDepsARM
   CreateTarBall
 }
@@ -654,8 +623,8 @@ BuildSysrootARM64() {
   local files_and_sha256sums="$(cat ${package_file})"
   StripChecksumsFromPackageList "$package_file"
   InstallIntoSysroot ${files_and_sha256sums}
-  CleanupJailSymlinks
   HacksAndPatchesARM64
+  CleanupJailSymlinks
   VerifyLibraryDepsARM64
   CreateTarBall
 }
@@ -674,8 +643,8 @@ BuildSysrootARMEL() {
   local files_and_sha256sums="$(cat ${package_file})"
   StripChecksumsFromPackageList "$package_file"
   InstallIntoSysroot ${files_and_sha256sums}
-  CleanupJailSymlinks
   HacksAndPatchesARMEL
+  CleanupJailSymlinks
   VerifyLibraryDepsARMEL
   CreateTarBall
 }
@@ -694,8 +663,8 @@ BuildSysrootMips() {
   local files_and_sha256sums="$(cat ${package_file})"
   StripChecksumsFromPackageList "$package_file"
   InstallIntoSysroot ${files_and_sha256sums}
-  CleanupJailSymlinks
   HacksAndPatchesMips
+  CleanupJailSymlinks
   VerifyLibraryDepsMips
   CreateTarBall
 }
@@ -714,8 +683,8 @@ BuildSysrootMips64el() {
   local files_and_sha256sums="$(cat ${package_file})"
   StripChecksumsFromPackageList "$package_file"
   InstallIntoSysroot ${files_and_sha256sums}
-  CleanupJailSymlinks
   HacksAndPatchesMips64el
+  CleanupJailSymlinks
   VerifyLibraryDepsMips64el
   CreateTarBall
 }
@@ -953,11 +922,19 @@ PrintDistro() {
 }
 
 #@
-#@ DumpRelease
+#@ PrintRelease
 #@
-#@    Prints disto release.  eg: jessie
+#@    Prints disto release.  eg: bullseye
 PrintRelease() {
   echo ${DIST}
+}
+
+#@
+#@ PrintKey
+#@
+#@    Prints sysroot key identifier.
+PrintKey() {
+  echo "${ARCHIVE_TIMESTAMP}-${SYSROOT_RELEASE}"
 }
 
 RunCommand() {

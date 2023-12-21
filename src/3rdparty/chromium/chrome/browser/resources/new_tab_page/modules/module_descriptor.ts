@@ -1,4 +1,4 @@
-// Copyright 2020 The Chromium Authors. All rights reserved.
+// Copyright 2020 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,10 +14,10 @@ export type InitializeModuleCallback = () => Promise<HTMLElement|null>;
 
 export type InitializeModuleCallbackV2 = () => Promise<HTMLElement>;
 
-export type Module = {
-  element: HTMLElement,
-  descriptor: ModuleDescriptor,
-};
+export interface Module {
+  element: HTMLElement;
+  descriptor: ModuleDescriptor;
+}
 
 export enum ModuleHeight {
   DYNAMIC = -1,
@@ -27,22 +27,15 @@ export enum ModuleHeight {
 
 export class ModuleDescriptor {
   private id_: string;
-  private name_: string;
   private initializeCallback_: InitializeModuleCallback;
 
-  constructor(
-      id: string, name: string, initializeCallback: InitializeModuleCallback) {
+  constructor(id: string, initializeCallback: InitializeModuleCallback) {
     this.id_ = id;
-    this.name_ = name;
     this.initializeCallback_ = initializeCallback;
   }
 
   get id(): string {
     return this.id_;
-  }
-
-  get name(): string {
-    return this.name_;
   }
 
   get height(): ModuleHeight {
@@ -56,11 +49,12 @@ export class ModuleDescriptor {
   async initialize(timeout: number): Promise<HTMLElement|null> {
     const loadStartTime = WindowProxy.getInstance().now();
     const element = await Promise.race([
-      this.initializeCallback_(), new Promise<null>(resolve => {
+      this.initializeCallback_(),
+      new Promise<null>(resolve => {
         WindowProxy.getInstance().setTimeout(() => {
           resolve(null);
         }, timeout);
-      })
+      }),
     ]);
     if (!element) {
       return null;
@@ -79,9 +73,9 @@ export class ModuleDescriptorV2 extends ModuleDescriptor {
   private height_: ModuleHeight;
 
   constructor(
-      id: string, name: string, height: ModuleHeight,
+      id: string, height: ModuleHeight,
       initializeCallback: InitializeModuleCallbackV2) {
-    super(id, name, initializeCallback);
+    super(id, initializeCallback);
     this.height_ = height;
   }
 

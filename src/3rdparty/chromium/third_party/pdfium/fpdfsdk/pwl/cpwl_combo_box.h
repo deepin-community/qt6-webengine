@@ -1,4 +1,4 @@
-// Copyright 2014 PDFium Authors. All rights reserved.
+// Copyright 2014 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,7 +11,7 @@
 
 #include "core/fxcrt/unowned_ptr.h"
 #include "fpdfsdk/pwl/cpwl_wnd.h"
-#include "fpdfsdk/pwl/ipwl_systemhandler.h"
+#include "fpdfsdk/pwl/ipwl_fillernotify.h"
 
 class CPWL_Edit;
 class CPWL_CBButton;
@@ -22,14 +22,14 @@ class CPWL_ComboBox final : public CPWL_Wnd {
  public:
   CPWL_ComboBox(
       const CreateParams& cp,
-      std::unique_ptr<IPWL_SystemHandler::PerWindowData> pAttachedData);
+      std::unique_ptr<IPWL_FillerNotify::PerWindowData> pAttachedData);
   ~CPWL_ComboBox() override;
 
-  CPWL_Edit* GetEdit() const { return m_pEdit.Get(); }
+  CPWL_Edit* GetEdit() const { return m_pEdit; }
 
   // CPWL_Wnd:
   void OnDestroy() override;
-  bool OnKeyDown(FWL_VKEYCODE nChar, Mask<FWL_EVENTFLAG> nFlag) override;
+  bool OnKeyDown(FWL_VKEYCODE nKeyCode, Mask<FWL_EVENTFLAG> nFlag) override;
   bool OnChar(uint16_t nChar, Mask<FWL_EVENTFLAG> nFlag) override;
   void NotifyLButtonDown(CPWL_Wnd* child, const CFX_PointF& pos) override;
   void NotifyLButtonUp(CPWL_Wnd* child, const CFX_PointF& pos) override;
@@ -40,14 +40,13 @@ class CPWL_ComboBox final : public CPWL_Wnd {
   void KillFocus() override;
   WideString GetText() override;
   WideString GetSelectedText() override;
+  void ReplaceAndKeepSelection(const WideString& text) override;
   void ReplaceSelection(const WideString& text) override;
   bool SelectAllText() override;
   bool CanUndo() override;
   bool CanRedo() override;
   bool Undo() override;
   bool Redo() override;
-
-  void SetFillerNotify(IPWL_FillerNotify* pNotify);
 
   void SetText(const WideString& text);
   void AddString(const WideString& str);
@@ -66,7 +65,7 @@ class CPWL_ComboBox final : public CPWL_Wnd {
   void CreateListBox(const CreateParams& cp);
 
   // Returns |true| iff this instance is still allocated.
-  bool SetPopup(bool bPopup);
+  [[nodiscard]] bool SetPopup(bool bPopup);
 
   UnownedPtr<CPWL_Edit> m_pEdit;
   UnownedPtr<CPWL_CBButton> m_pButton;
@@ -75,7 +74,6 @@ class CPWL_ComboBox final : public CPWL_Wnd {
   bool m_bPopup = false;
   bool m_bBottom = true;
   int32_t m_nSelectItem = -1;
-  UnownedPtr<IPWL_FillerNotify> m_pFillerNotify;
 };
 
 #endif  // FPDFSDK_PWL_CPWL_COMBO_BOX_H_

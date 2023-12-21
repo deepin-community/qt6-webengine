@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,8 +14,8 @@
 
 #include "base/atomicops.h"
 #include "base/base_export.h"
-#include "base/callback_forward.h"
 #include "base/containers/circular_deque.h"
+#include "base/functional/callback_forward.h"
 #include "base/sequence_checker.h"
 #include "base/strings/string_piece.h"
 #include "base/synchronization/waitable_event.h"
@@ -26,6 +26,7 @@
 #include "base/task/thread_pool/task_source.h"
 #include "base/task/thread_pool/tracked_ref.h"
 #include "base/thread_annotations.h"
+#include "base/threading/thread_local.h"
 
 namespace base {
 
@@ -95,12 +96,16 @@ class BASE_EXPORT TaskTracker {
   // DelayedTaskManager (if delayed). Returns true if this operation is allowed
   // (the operation should be performed if-and-only-if it is). This method may
   // also modify metadata on |task| if desired.
+  // If this returns false, `task` must be leaked by the caller if deleting it
+  // on the current sequence may invoke sequence-affine code that belongs to
+  // another sequence.
   bool WillPostTask(Task* task, TaskShutdownBehavior shutdown_behavior);
 
   // Informs this TaskTracker that |task| that is about to be pushed to a task
   // source with |priority|. Returns true if this operation is allowed (the
   // operation should be performed if-and-only-if it is).
-  [[nodiscard]] bool WillPostTaskNow(const Task& task, TaskPriority priority);
+  [[nodiscard]] bool WillPostTaskNow(const Task& task,
+                                     TaskPriority priority) const;
 
   // Informs this TaskTracker that |task_source| is about to be queued. Returns
   // a RegisteredTaskSource that should be queued if-and-only-if it evaluates to
@@ -131,6 +136,9 @@ class BASE_EXPORT TaskTracker {
   TrackedRef<TaskTracker> GetTrackedRef() {
     return tracked_ref_factory_.GetTrackedRef();
   }
+
+  void BeginFizzlingBlockShutdownTasks();
+  void EndFizzlingBlockShutdownTasks();
 
   // Returns true if there are task sources that haven't completed their
   // execution (still queued or in progress). If it returns false: the side-
@@ -215,9 +223,6 @@ class BASE_EXPORT TaskTracker {
                                    const SequenceToken& token);
 
   TaskAnnotator task_annotator_;
-
-  // Suffix for histograms recorded by this TaskTracker.
-  const std::string histogram_label_;
 
   // Indicates whether logging information about TaskPriority::BEST_EFFORT tasks
   // was enabled with a command line switch.

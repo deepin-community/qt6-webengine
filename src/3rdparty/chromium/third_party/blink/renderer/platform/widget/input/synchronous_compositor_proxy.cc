@@ -1,10 +1,10 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/platform/widget/input/synchronous_compositor_proxy.h"
 
-#include "base/bind.h"
+#include "base/functional/bind.h"
 #include "base/memory/shared_memory_mapping.h"
 #include "components/power_scheduler/power_mode_arbiter.h"
 #include "components/power_scheduler/power_mode_voter.h"
@@ -215,7 +215,7 @@ void SynchronousCompositorProxy::DoDemandDrawSw(
   }
   SkCanvas canvas(bitmap);
   canvas.clipRect(gfx::RectToSkRect(params->clip));
-  canvas.concat(params->transform.matrix().asM33());
+  canvas.concat(gfx::TransformToFlattenedSkMatrix(params->transform));
 
   layer_tree_frame_sink_->DemandDrawSw(&canvas);
 }
@@ -313,6 +313,15 @@ void SynchronousCompositorProxy::ReclaimResources(
     return;
   layer_tree_frame_sink_->ReclaimResources(layer_tree_frame_sink_id,
                                            std::move(resources));
+}
+
+void SynchronousCompositorProxy::OnCompositorFrameTransitionDirectiveProcessed(
+    uint32_t layer_tree_frame_sink_id,
+    uint32_t sequence_id) {
+  if (!layer_tree_frame_sink_)
+    return;
+  layer_tree_frame_sink_->OnCompositorFrameTransitionDirectiveProcessed(
+      layer_tree_frame_sink_id, sequence_id);
 }
 
 void SynchronousCompositorProxy::SetSharedMemory(

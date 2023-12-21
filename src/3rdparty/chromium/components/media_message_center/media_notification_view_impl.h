@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -87,7 +87,7 @@ class COMPONENT_EXPORT(MEDIA_MESSAGE_CENTER) MediaNotificationViewImpl
       const media_session::MediaPosition& position) override {}
   void UpdateWithMediaArtwork(const gfx::ImageSkia& image) override;
   void UpdateWithFavicon(const gfx::ImageSkia& icon) override;
-  void UpdateWithVectorIcon(const gfx::VectorIcon& vector_icon) override;
+  void UpdateWithVectorIcon(const gfx::VectorIcon* vector_icon) override;
   void UpdateDeviceSelectorAvailability(bool availability) override;
   void UpdateWithMuteStatus(bool mute) override {}
   void UpdateWithVolume(float volume) override {}
@@ -171,10 +171,6 @@ class COMPONENT_EXPORT(MEDIA_MESSAGE_CENTER) MediaNotificationViewImpl
 
   // Set of enabled actions.
   base::flat_set<media_session::mojom::MediaSessionAction> enabled_actions_;
-
-  // Stores the text to be read by screen readers describing the notification.
-  // Contains the title, artist and album separated by hyphens.
-  std::u16string accessible_name_;
 
   // Container views directly attached to this view.
   raw_ptr<message_center::NotificationHeaderView> header_row_ = nullptr;

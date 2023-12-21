@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -20,10 +20,19 @@
 #include "base/time/time.h"
 #include "base/values.h"
 #include "build/build_config.h"
+#include "printing/buildflags/buildflags.h"
 #include "printing/mojom/print.mojom.h"
 #include "printing/print_job_constants.h"
 #include "printing/print_settings.h"
 #include "printing/units.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "ui/gfx/geometry/rect.h"
+#include "ui/gfx/geometry/size.h"
+
+#if BUILDFLAG(IS_CHROMEOS)
+#include "chromeos/crosapi/mojom/local_printer.mojom.h"
+#include "print_settings_conversion_chromeos.h"
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 namespace printing {
 
@@ -75,24 +84,67 @@ void SetRectToJobSettings(const std::string& json_path,
   job_settings.Set(json_path, std::move(dict));
 }
 
+void SetPrintableAreaIfValid(PrintSettings& settings,
+                             const gfx::Size& size_microns,
+                             const base::Value::Dict& media_size) {
+  absl::optional<int> left_microns =
+      media_size.FindInt(kSettingsImageableAreaLeftMicrons);
+  absl::optional<int> bottom_microns =
+      media_size.FindInt(kSettingsImageableAreaBottomMicrons);
+  absl::optional<int> right_microns =
+      media_size.FindInt(kSettingsImageableAreaRightMicrons);
+  absl::optional<int> top_microns =
+      media_size.FindInt(kSettingsImageableAreaTopMicrons);
+  if (!bottom_microns.has_value() || !left_microns.has_value() ||
+      !right_microns.has_value() || !top_microns.has_value()) {
+    return;
+  }
+
+  // Scale the page size and printable area to device units.
+  float x_scale =
+      static_cast<float>(settings.device_units_per_inch_size().width()) /
+      kMicronsPerInch;
+  float y_scale =
+      static_cast<float>(settings.device_units_per_inch_size().height()) /
+      kMicronsPerInch;
+  gfx::Size page_size = gfx::ScaleToRoundedSize(size_microns, x_scale, y_scale);
+  // Flip the y-axis since the imageable area origin is at the bottom-left,
+  // while the gfx::Rect origin is at the top-left.
+  gfx::Rect printable_area = gfx::ScaleToRoundedRect(
+      {left_microns.value(), size_microns.height() - top_microns.value(),
+       right_microns.value() - left_microns.value(),
+       top_microns.value() - bottom_microns.value()},
+      x_scale, y_scale);
+  // Sanity check that the printable area makes sense.
+  if (printable_area.IsEmpty() ||
+      !gfx::Rect(page_size).Contains(printable_area)) {
+    return;
+  }
+  settings.SetPrinterPrintableArea(page_size, printable_area,
+                                   /*landscape_needs_flip=*/true);
+}
+
 }  // namespace
 
 PageRanges GetPageRangesFromJobSettings(const base::Value::Dict& job_settings) {
   PageRanges page_ranges;
   const base::Value::List* page_range_array =
       job_settings.FindList(kSettingPageRange);
-  if (!page_range_array)
+  if (!page_range_array) {
     return page_ranges;
+  }
 
   for (const base::Value& page_range : *page_range_array) {
-    if (!page_range.is_dict())
+    if (!page_range.is_dict()) {
       continue;
+    }
 
     const auto& dict = page_range.GetDict();
     absl::optional<int> from = dict.FindInt(kSettingPageRangeFrom);
     absl::optional<int> to = dict.FindInt(kSettingPageRangeTo);
-    if (!from.has_value() || !to.has_value())
+    if (!from.has_value() || !to.has_value()) {
       continue;
+    }
 
     // Page numbers are 1-based in the dictionary.
     // Page numbers are 0-based for the printing context.
@@ -107,16 +159,18 @@ std::unique_ptr<PrintSettings> PrintSettingsFromJobSettings(
   auto settings = std::make_unique<PrintSettings>();
   absl::optional<bool> display_header_footer =
       job_settings.FindBool(kSettingHeaderFooterEnabled);
-  if (!display_header_footer.has_value())
+  if (!display_header_footer.has_value()) {
     return nullptr;
+  }
 
   settings->set_display_header_footer(display_header_footer.value());
   if (settings->display_header_footer()) {
     const std::string* title =
         job_settings.FindString(kSettingHeaderFooterTitle);
     const std::string* url = job_settings.FindString(kSettingHeaderFooterURL);
-    if (!title || !url)
+    if (!title || !url) {
       return nullptr;
+    }
 
     settings->set_title(base::UTF8ToUTF16(*title));
     settings->set_url(base::UTF8ToUTF16(*url));
@@ -126,11 +180,71 @@ std::unique_ptr<PrintSettings> PrintSettingsFromJobSettings(
       job_settings.FindBool(kSettingShouldPrintBackgrounds);
   absl::optional<bool> selection_only =
       job_settings.FindBool(kSettingShouldPrintSelectionOnly);
-  if (!backgrounds.has_value() || !selection_only.has_value())
+  if (!backgrounds.has_value() || !selection_only.has_value()) {
     return nullptr;
+  }
 
   settings->set_should_print_backgrounds(backgrounds.value());
   settings->set_selection_only(selection_only.value());
+
+  absl::optional<bool> collate = job_settings.FindBool(kSettingCollate);
+  absl::optional<int> copies = job_settings.FindInt(kSettingCopies);
+  absl::optional<int> color = job_settings.FindInt(kSettingColor);
+  absl::optional<int> duplex_mode = job_settings.FindInt(kSettingDuplexMode);
+  absl::optional<bool> landscape = job_settings.FindBool(kSettingLandscape);
+  const std::string* device_name = job_settings.FindString(kSettingDeviceName);
+  absl::optional<int> scale_factor = job_settings.FindInt(kSettingScaleFactor);
+  absl::optional<bool> rasterize_pdf =
+      job_settings.FindBool(kSettingRasterizePdf);
+  absl::optional<int> pages_per_sheet =
+      job_settings.FindInt(kSettingPagesPerSheet);
+  if (!collate.has_value() || !copies.has_value() || !color.has_value() ||
+      !duplex_mode.has_value() || !landscape.has_value() || !device_name ||
+      !scale_factor.has_value() || !rasterize_pdf.has_value() ||
+      !pages_per_sheet.has_value()) {
+    return nullptr;
+  }
+  settings->set_collate(collate.value());
+  settings->set_copies(copies.value());
+  settings->SetOrientation(landscape.value());
+  settings->set_device_name(base::UTF8ToUTF16(*device_name));
+  settings->set_duplex_mode(
+      static_cast<mojom::DuplexMode>(duplex_mode.value()));
+  settings->set_color(static_cast<mojom::ColorModel>(color.value()));
+  settings->set_scale_factor(static_cast<double>(scale_factor.value()) / 100.0);
+  settings->set_rasterize_pdf(rasterize_pdf.value());
+  settings->set_pages_per_sheet(pages_per_sheet.value());
+
+  absl::optional<int> dpi_horizontal =
+      job_settings.FindInt(kSettingDpiHorizontal);
+  absl::optional<int> dpi_vertical = job_settings.FindInt(kSettingDpiVertical);
+  if (!dpi_horizontal.has_value() || !dpi_vertical.has_value()) {
+    return nullptr;
+  }
+
+  settings->set_dpi_xy(dpi_horizontal.value(), dpi_vertical.value());
+
+  absl::optional<int> rasterize_pdf_dpi =
+      job_settings.FindInt(kSettingRasterizePdfDpi);
+  if (rasterize_pdf_dpi.has_value()) {
+    settings->set_rasterize_pdf_dpi(rasterize_pdf_dpi.value());
+  }
+
+  // Set margin type before setting printable area. `SetPrintableAreaIfValid()`
+  // calls `PrintSettings::SetPrinterPrintableArea()`, which requires the margin
+  // type to be set first.
+  mojom::MarginType margin_type = static_cast<mojom::MarginType>(
+      job_settings.FindInt(kSettingMarginsType)
+          .value_or(static_cast<int>(mojom::MarginType::kDefaultMargins)));
+  if (margin_type < mojom::MarginType::kMinValue ||
+      margin_type > mojom::MarginType::kMaxValue) {
+    margin_type = mojom::MarginType::kDefaultMargins;
+  }
+  settings->set_margin_type(margin_type);
+
+  if (margin_type == mojom::MarginType::kCustomMargins) {
+    settings->SetCustomMargins(GetCustomMarginsFromJobSettings(job_settings));
+  }
 
   PrintSettings::RequestedMedia requested_media;
   const base::Value::Dict* media_size_value =
@@ -143,79 +257,27 @@ std::unique_ptr<PrintSettings> PrintSettingsFromJobSettings(
     if (width_microns.has_value() && height_microns.has_value()) {
       requested_media.size_microns =
           gfx::Size(width_microns.value(), height_microns.value());
+      SetPrintableAreaIfValid(*settings, requested_media.size_microns,
+                              *media_size_value);
     }
 
     const std::string* vendor_id =
         media_size_value->FindString(kSettingMediaSizeVendorId);
-    if (vendor_id && !vendor_id->empty())
+    if (vendor_id && !vendor_id->empty()) {
       requested_media.vendor_id = *vendor_id;
+    }
   }
   settings->set_requested_media(requested_media);
 
-  mojom::MarginType margin_type = static_cast<mojom::MarginType>(
-      job_settings.FindInt(kSettingMarginsType)
-          .value_or(static_cast<int>(mojom::MarginType::kDefaultMargins)));
-  if (margin_type != mojom::MarginType::kDefaultMargins &&
-      margin_type != mojom::MarginType::kNoMargins &&
-      margin_type != mojom::MarginType::kCustomMargins &&
-      margin_type != mojom::MarginType::kPrintableAreaMargins) {
-    margin_type = mojom::MarginType::kDefaultMargins;
-  }
-  settings->set_margin_type(margin_type);
-
-  if (margin_type == mojom::MarginType::kCustomMargins)
-    settings->SetCustomMargins(GetCustomMarginsFromJobSettings(job_settings));
-
   settings->set_ranges(GetPageRangesFromJobSettings(job_settings));
 
-  absl::optional<bool> collate = job_settings.FindBool(kSettingCollate);
-  absl::optional<int> copies = job_settings.FindInt(kSettingCopies);
-  absl::optional<int> color = job_settings.FindInt(kSettingColor);
-  absl::optional<int> duplex_mode = job_settings.FindInt(kSettingDuplexMode);
-  absl::optional<bool> landscape = job_settings.FindBool(kSettingLandscape);
-  absl::optional<int> scale_factor = job_settings.FindInt(kSettingScaleFactor);
-  absl::optional<bool> rasterize_pdf =
-      job_settings.FindBool(kSettingRasterizePdf);
-  absl::optional<int> pages_per_sheet =
-      job_settings.FindInt(kSettingPagesPerSheet);
-
-  if (!collate.has_value() || !copies.has_value() || !color.has_value() ||
-      !duplex_mode.has_value() || !landscape.has_value() ||
-      !scale_factor.has_value() || !rasterize_pdf.has_value() ||
-      !pages_per_sheet.has_value()) {
-    return nullptr;
-  }
-
-  absl::optional<int> dpi_horizontal =
-      job_settings.FindInt(kSettingDpiHorizontal);
-  absl::optional<int> dpi_vertical = job_settings.FindInt(kSettingDpiVertical);
-  if (!dpi_horizontal.has_value() || !dpi_vertical.has_value())
-    return nullptr;
-  settings->set_dpi_xy(dpi_horizontal.value(), dpi_vertical.value());
-
-  absl::optional<int> rasterize_pdf_dpi =
-      job_settings.FindInt(kSettingRasterizePdfDpi);
-  if (rasterize_pdf_dpi.has_value())
-    settings->set_rasterize_pdf_dpi(rasterize_pdf_dpi.value());
-
-  settings->set_collate(collate.value());
-  settings->set_copies(copies.value());
-  settings->SetOrientation(landscape.value());
-  settings->set_device_name(
-      base::UTF8ToUTF16(*job_settings.FindString(kSettingDeviceName)));
-  settings->set_duplex_mode(
-      static_cast<mojom::DuplexMode>(duplex_mode.value()));
-  settings->set_color(static_cast<mojom::ColorModel>(color.value()));
-  settings->set_scale_factor(static_cast<double>(scale_factor.value()) / 100.0);
-  settings->set_rasterize_pdf(rasterize_pdf.value());
-  settings->set_pages_per_sheet(pages_per_sheet.value());
   absl::optional<bool> is_modifiable =
       job_settings.FindBool(kSettingPreviewModifiable);
   if (is_modifiable.has_value()) {
     settings->set_is_modifiable(is_modifiable.value());
   }
 
-#if BUILDFLAG(IS_CHROMEOS) || (BUILDFLAG(IS_LINUX) && defined(USE_CUPS))
+#if BUILDFLAG(IS_CHROMEOS) || (BUILDFLAG(IS_LINUX) && BUILDFLAG(USE_CUPS))
   const base::Value::Dict* advanced_settings =
       job_settings.FindDict(kSettingAdvancedSettings);
   if (advanced_settings) {
@@ -223,11 +285,13 @@ std::unique_ptr<PrintSettings> PrintSettingsFromJobSettings(
       static constexpr auto kNonJobAttributes =
           base::MakeFixedFlatSet<base::StringPiece>(
               {"printer-info", "printer-make-and-model", "system_driverinfo"});
-      if (!base::Contains(kNonJobAttributes, item.first))
+      if (!base::Contains(kNonJobAttributes, item.first)) {
         settings->advanced_settings().emplace(item.first, item.second.Clone());
+      }
     }
   }
-#endif  // BUILDFLAG(IS_CHROMEOS) || (BUILDFLAG(IS_LINUX) && defined(USE_CUPS))
+#endif  // BUILDFLAG(IS_CHROMEOS) || (BUILDFLAG(IS_LINUX) &&
+        // BUILDFLAG(USE_CUPS))
 
 #if BUILDFLAG(IS_CHROMEOS)
   bool send_user_info =
@@ -235,13 +299,38 @@ std::unique_ptr<PrintSettings> PrintSettingsFromJobSettings(
   settings->set_send_user_info(send_user_info);
   if (send_user_info) {
     const std::string* username = job_settings.FindString(kSettingUsername);
-    if (username)
+    if (username) {
       settings->set_username(*username);
+    }
+  }
+
+  const std::string* oauth_token =
+      job_settings.FindString(kSettingChromeOSAccessOAuthToken);
+  if (oauth_token) {
+    settings->set_oauth_token(*oauth_token);
   }
 
   const std::string* pin_value = job_settings.FindString(kSettingPinValue);
-  if (pin_value)
+  if (pin_value) {
     settings->set_pin_value(*pin_value);
+  }
+
+  const base::Value::List* client_info_list =
+      job_settings.FindList(kSettingIppClientInfo);
+  if (client_info_list) {
+    settings->set_client_infos(
+        ConvertJobSettingToClientInfo(*client_info_list));
+  }
+
+  settings->set_printer_manually_selected(
+      job_settings.FindBool(kSettingPrinterManuallySelected).value_or(false));
+
+  absl::optional<int> reason =
+      job_settings.FindInt(kSettingPrinterStatusReason);
+  if (reason.has_value()) {
+    settings->set_printer_status_reason(
+        static_cast<crosapi::mojom::StatusReason::Reason>(reason.value()));
+  }
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
   return settings;
@@ -304,6 +393,11 @@ base::Value::Dict PrintSettingsToJobSettingsDebug(
   SetRectToJobSettings("content_area", page_setup.content_area(), debug);
   SetRectToJobSettings("printable_area", page_setup.printable_area(), debug);
   job_settings.Set("debug", std::move(debug));
+
+#if BUILDFLAG(IS_CHROMEOS)
+  job_settings.Set(kSettingIppClientInfo,
+                   ConvertClientInfoToJobSetting(settings.client_infos()));
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
   return job_settings;
 }

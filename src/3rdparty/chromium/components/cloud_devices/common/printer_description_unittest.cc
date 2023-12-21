@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,6 +14,7 @@
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/gfx/geometry/rect.h"
 
 namespace cloud_devices {
 
@@ -125,15 +126,27 @@ const char kCdd[] = R"(
         },
         "media_size": {
           "option": [ {
+            "imageable_area_left_microns": 0,
+            "imageable_area_right_microns": 2222,
+            "imageable_area_bottom_microns": 0,
+            "imageable_area_top_microns": 3333,
             "is_default": true,
             "name": "NA_LETTER",
             "width_microns": 2222,
             "height_microns": 3333
           }, {
+            "imageable_area_bottom_microns": 0,
+            "imageable_area_left_microns": 0,
+            "imageable_area_right_microns": 4444,
+            "imageable_area_top_microns": 5555,
             "name": "ISO_A6",
             "width_microns": 4444,
             "height_microns": 5555
           }, {
+            "imageable_area_bottom_microns": 0,
+            "imageable_area_left_microns": 0,
+            "imageable_area_right_microns": 6666,
+            "imageable_area_top_microns": 7777,
             "name": "JPN_YOU4",
             "width_microns": 6666,
             "height_microns": 7777
@@ -563,6 +576,10 @@ const char kCjt[] = R"(
            } ]
         },
         "media_size": {
+          "imageable_area_bottom_microns": 100,
+          "imageable_area_left_microns": 300,
+          "imageable_area_right_microns": 3961,
+          "imageable_area_top_microns": 234,
           "name": "ISO_C7C6",
           "width_microns": 4261,
           "height_microns": 334
@@ -622,7 +639,8 @@ const struct TestTypedValueCapabilities {
 
 TEST(PrinterDescriptionTest, CddInit) {
   CloudDeviceDescription description;
-  EXPECT_EQ(NormalizeJson(kDefaultCdd), NormalizeJson(description.ToString()));
+  EXPECT_EQ(NormalizeJson(kDefaultCdd),
+            NormalizeJson(description.ToStringForTesting()));
 
   ContentTypesCapability content_types;
   PwgRasterConfigCapability pwg_raster;
@@ -741,7 +759,8 @@ TEST(PrinterDescriptionTest, CddSetAll) {
   reverse.SaveTo(&description);
   pwg_raster_config.SaveTo(&description);
 
-  EXPECT_EQ(NormalizeJson(kCdd), NormalizeJson(description.ToString()));
+  EXPECT_EQ(NormalizeJson(kCdd),
+            NormalizeJson(description.ToStringForTesting()));
 }
 
 TEST(PrinterDescriptionTest, CddGetDocumentTypeSupported) {
@@ -841,7 +860,7 @@ TEST(PrinterDescriptionTest, CddSetDocumentTypeSupported) {
     pwg_raster.SaveTo(&description);
 
     EXPECT_EQ(NormalizeJson(kDocumentTypeColorOnlyCdd),
-              NormalizeJson(description.ToString()));
+              NormalizeJson(description.ToStringForTesting()));
   }
   {
     CloudDeviceDescription description;
@@ -856,7 +875,7 @@ TEST(PrinterDescriptionTest, CddSetDocumentTypeSupported) {
     pwg_raster.SaveTo(&description);
 
     EXPECT_EQ(NormalizeJson(kDocumentTypeGrayOnlyCdd),
-              NormalizeJson(description.ToString()));
+              NormalizeJson(description.ToStringForTesting()));
   }
   {
     CloudDeviceDescription description;
@@ -873,7 +892,7 @@ TEST(PrinterDescriptionTest, CddSetDocumentTypeSupported) {
     pwg_raster.SaveTo(&description);
 
     EXPECT_EQ(NormalizeJson(kDocumentTypeColorAndGrayCdd),
-              NormalizeJson(description.ToString()));
+              NormalizeJson(description.ToStringForTesting()));
   }
   {
     CloudDeviceDescription description;
@@ -886,7 +905,7 @@ TEST(PrinterDescriptionTest, CddSetDocumentTypeSupported) {
     pwg_raster.SaveTo(&description);
 
     EXPECT_EQ(NormalizeJson(kDocumentTypeNoneCdd),
-              NormalizeJson(description.ToString()));
+              NormalizeJson(description.ToStringForTesting()));
   }
 }
 
@@ -1090,7 +1109,7 @@ TEST(PrinterDescriptionTest, CddSetVendorCapability) {
 
   vendor_capabilities.SaveTo(&description);
   EXPECT_EQ(NormalizeJson(kVendorCapabilityOnlyCdd),
-            NormalizeJson(description.ToString()));
+            NormalizeJson(description.ToStringForTesting()));
 }
 
 #if BUILDFLAG(IS_CHROMEOS)
@@ -1117,7 +1136,8 @@ TEST(PrinterDescriptionTest, CddSetPin) {
   PinCapability pin_capability;
   pin_capability.set_value(true);
   pin_capability.SaveTo(&description);
-  EXPECT_EQ(NormalizeJson(kPinOnlyCdd), NormalizeJson(description.ToString()));
+  EXPECT_EQ(NormalizeJson(kPinOnlyCdd),
+            NormalizeJson(description.ToStringForTesting()));
 }
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
@@ -1211,12 +1231,14 @@ TEST(PrinterDescriptionTest, CddGetAll) {
   EXPECT_FALSE(collate.default_value());
   EXPECT_TRUE(reverse.default_value());
 
-  EXPECT_EQ(NormalizeJson(kCdd), NormalizeJson(description.ToString()));
+  EXPECT_EQ(NormalizeJson(kCdd),
+            NormalizeJson(description.ToStringForTesting()));
 }
 
 TEST(PrinterDescriptionTest, CjtInit) {
   CloudDeviceDescription description;
-  EXPECT_EQ(NormalizeJson(kDefaultCjt), NormalizeJson(description.ToString()));
+  EXPECT_EQ(NormalizeJson(kDefaultCjt),
+            NormalizeJson(description.ToStringForTesting()));
 
   PwgRasterConfigTicketItem pwg_raster_config;
   ColorTicketItem color;
@@ -1283,7 +1305,8 @@ TEST(PrinterDescriptionTest, CjtSetAll) {
   page_ranges.push_back(Interval(1, 99));
   page_ranges.push_back(Interval(150));
   page_range.set_value(page_ranges);
-  media.set_value(Media(MediaType::ISO_C7C6, gfx::Size(4261, 334)));
+  media.set_value(Media(MediaType::ISO_C7C6, gfx::Size(4261, 334),
+                        gfx::Rect(300, 100, 3661, 134)));
   collate.set_value(false);
   reverse.set_value(true);
 
@@ -1300,7 +1323,8 @@ TEST(PrinterDescriptionTest, CjtSetAll) {
   collate.SaveTo(&description);
   reverse.SaveTo(&description);
 
-  EXPECT_EQ(NormalizeJson(kCjt), NormalizeJson(description.ToString()));
+  EXPECT_EQ(NormalizeJson(kCjt),
+            NormalizeJson(description.ToStringForTesting()));
 }
 
 TEST(PrinterDescriptionTest, CjtGetAll) {
@@ -1349,11 +1373,13 @@ TEST(PrinterDescriptionTest, CjtGetAll) {
   page_ranges.push_back(Interval(1, 99));
   page_ranges.push_back(Interval(150));
   EXPECT_EQ(page_range.value(), page_ranges);
-  EXPECT_EQ(media.value(), Media(MediaType::ISO_C7C6, gfx::Size(4261, 334)));
+  EXPECT_EQ(media.value(), Media(MediaType::ISO_C7C6, gfx::Size(4261, 334),
+                                 gfx::Rect(300, 100, 3661, 134)));
   EXPECT_FALSE(collate.value());
   EXPECT_TRUE(reverse.value());
 
-  EXPECT_EQ(NormalizeJson(kCjt), NormalizeJson(description.ToString()));
+  EXPECT_EQ(NormalizeJson(kCjt),
+            NormalizeJson(description.ToStringForTesting()));
 }
 
 }  // namespace printer

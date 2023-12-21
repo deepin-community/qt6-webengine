@@ -24,16 +24,16 @@ class InputFileTests : public testing::Test {
  protected:
   // You can define per-test set-up logic as usual.
   void SetUp() override {
-    location::nearby::PayloadId payloadId(TEST_PAYLOAD_ID);
+    nearby::PayloadId payloadId(TEST_PAYLOAD_ID);
+    auto path = test_utils::GetPayloadPath(payloadId);
 
-    hFile_ = CreateFileA(
-        test_utils::GetPayloadPath(payloadId).c_str(),  // name of the write
-        GENERIC_WRITE,                                  // open for writing
-        0,                                              // do not share
-        NULL,                                           // default security
-        CREATE_ALWAYS,                                  // create new file only
-        FILE_ATTRIBUTE_NORMAL,                          // normal file
-        NULL);                                          // no attr. template
+    hFile_ = CreateFileA(path.c_str(),           // name of the write
+                         GENERIC_WRITE,          // open for writing
+                         0,                      // do not share
+                         NULL,                   // default security
+                         CREATE_ALWAYS,          // create new file only
+                         FILE_ATTRIBUTE_NORMAL,  // normal file
+                         NULL);                  // no attr. template
 
     if (hFile_ == INVALID_HANDLE_VALUE) {
       NEARBY_LOG(ERROR,
@@ -52,7 +52,7 @@ class InputFileTests : public testing::Test {
 
   // You can define per-test tear-down logic as usual.
   void TearDown() override {
-    location::nearby::PayloadId payloadId(TEST_PAYLOAD_ID);
+    nearby::PayloadId payloadId(TEST_PAYLOAD_ID);
     if (FileExists(test_utils::GetPayloadPath(payloadId).c_str())) {
       DeleteFileA(test_utils::GetPayloadPath(payloadId).c_str());
     }
@@ -70,71 +70,67 @@ class InputFileTests : public testing::Test {
 };
 
 TEST_F(InputFileTests, SuccessfulCreation) {
-  location::nearby::PayloadId payloadId(TEST_PAYLOAD_ID);
-  std::unique_ptr<location::nearby::api::InputFile> inputFile = nullptr;
+  nearby::PayloadId payloadId(TEST_PAYLOAD_ID);
+  std::unique_ptr<nearby::api::InputFile> inputFile = nullptr;
 
-  inputFile = location::nearby::api::ImplementationPlatform::CreateInputFile(
+  inputFile = nearby::api::ImplementationPlatform::CreateInputFile(
       payloadId, strlen(TEST_STRING));
 
   EXPECT_NE(inputFile, nullptr);
-  EXPECT_EQ(inputFile->Close(),
-            location::nearby::Exception{location::nearby::Exception::kSuccess});
+  EXPECT_EQ(inputFile->Close(), nearby::Exception{nearby::Exception::kSuccess});
 }
 
 TEST_F(InputFileTests, SuccessfulGetFilePath) {
-  location::nearby::PayloadId payloadId(TEST_PAYLOAD_ID);
-  std::unique_ptr<location::nearby::api::InputFile> inputFile = nullptr;
+  nearby::PayloadId payloadId(TEST_PAYLOAD_ID);
+  std::unique_ptr<nearby::api::InputFile> inputFile = nullptr;
   std::string fileName;
 
-  inputFile = location::nearby::api::ImplementationPlatform::CreateInputFile(
+  inputFile = nearby::api::ImplementationPlatform::CreateInputFile(
       payloadId, strlen(TEST_STRING));
 
   fileName = inputFile->GetFilePath();
 
-  EXPECT_EQ(inputFile->Close(),
-            location::nearby::Exception{location::nearby::Exception::kSuccess});
+  EXPECT_EQ(inputFile->Close(), nearby::Exception{nearby::Exception::kSuccess});
 
   EXPECT_EQ(fileName, test_utils::GetPayloadPath(payloadId).c_str());
 }
 
 TEST_F(InputFileTests, SuccessfulGetTotalSize) {
-  location::nearby::PayloadId payloadId(TEST_PAYLOAD_ID);
-  std::unique_ptr<location::nearby::api::InputFile> inputFile = nullptr;
+  nearby::PayloadId payloadId(TEST_PAYLOAD_ID);
+  std::unique_ptr<nearby::api::InputFile> inputFile = nullptr;
   int64_t size = -1;
 
-  inputFile = location::nearby::api::ImplementationPlatform::CreateInputFile(
+  inputFile = nearby::api::ImplementationPlatform::CreateInputFile(
       payloadId, strlen(TEST_STRING));
 
   size = inputFile->GetTotalSize();
 
-  EXPECT_EQ(inputFile->Close(),
-            location::nearby::Exception{location::nearby::Exception::kSuccess});
+  EXPECT_EQ(inputFile->Close(), nearby::Exception{nearby::Exception::kSuccess});
 
   EXPECT_EQ(size, strlen(TEST_STRING));
 }
 
 TEST_F(InputFileTests, SuccessfulRead) {
-  location::nearby::PayloadId payloadId(TEST_PAYLOAD_ID);
-  std::unique_ptr<location::nearby::api::InputFile> inputFile = nullptr;
+  nearby::PayloadId payloadId(TEST_PAYLOAD_ID);
+  std::unique_ptr<nearby::api::InputFile> inputFile = nullptr;
 
-  inputFile = location::nearby::api::ImplementationPlatform::CreateInputFile(
+  inputFile = nearby::api::ImplementationPlatform::CreateInputFile(
       payloadId, strlen(TEST_STRING));
 
   auto fileSize = inputFile->GetTotalSize();
   auto dataRead = inputFile->Read(fileSize);
 
   EXPECT_TRUE(dataRead.ok());
-  EXPECT_EQ(inputFile->Close(),
-            location::nearby::Exception{location::nearby::Exception::kSuccess});
+  EXPECT_EQ(inputFile->Close(), nearby::Exception{nearby::Exception::kSuccess});
 
   EXPECT_STREQ(std::string(dataRead.result()).c_str(), TEST_STRING);
 }
 
 TEST_F(InputFileTests, FailedRead) {
-  location::nearby::PayloadId payloadId(TEST_PAYLOAD_ID);
-  std::unique_ptr<location::nearby::api::InputFile> inputFile = nullptr;
+  nearby::PayloadId payloadId(TEST_PAYLOAD_ID);
+  std::unique_ptr<nearby::api::InputFile> inputFile = nullptr;
 
-  inputFile = location::nearby::api::ImplementationPlatform::CreateInputFile(
+  inputFile = nearby::api::ImplementationPlatform::CreateInputFile(
       payloadId, strlen(TEST_STRING));
 
   auto fileSize = inputFile->GetTotalSize();

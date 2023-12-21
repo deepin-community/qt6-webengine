@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,7 +14,6 @@
 #if BUILDFLAG(IS_WIN)
 #include "base/win/windows_version.h"
 #include "sandbox/policy/win/sandbox_policy_feature_test.h"
-#include "sandbox/policy/win/sandbox_test_utils.h"
 #include "sandbox/policy/win/sandbox_win.h"
 #include "sandbox/win/src/app_container_base.h"
 #include "sandbox/win/src/sandbox_factory.h"
@@ -64,9 +63,9 @@ TEST_P(PpapiPluginFeatureSandboxWinTest, PpapiGeneratedPolicyTest) {
           handles_to_inherit, &test_ppapi_delegate, policy.get());
   ASSERT_EQ(::sandbox::ResultCode::SBOX_ALL_OK, result);
 
-  ValidateSecurityLevels(policy.get());
-  ValidatePolicyFlagSettings(policy.get());
-  ValidateAppContainerSettings(policy.get());
+  ValidateSecurityLevels(policy->GetConfig());
+  ValidatePolicyFlagSettings(policy->GetConfig());
+  ValidateAppContainerSettings(policy->GetConfig());
 }
 
 INSTANTIATE_TEST_SUITE_P(

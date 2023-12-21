@@ -31,15 +31,17 @@
 import * as Common from '../../core/common/common.js';
 import * as Host from '../../core/host/host.js';
 import * as i18n from '../../core/i18n/i18n.js';
+import * as Platform from '../../core/platform/platform.js';
 
 import * as ARIAUtils from './ARIAUtils.js';
 import {Icon} from './Icon.js';
 import {KeyboardShortcut, Modifiers} from './KeyboardShortcut.js';
 import {bindCheckbox} from './SettingsUI.js';
-import type {Suggestions} from './SuggestBox.js';
+
+import {type Suggestions} from './SuggestBox.js';
 import {Events, TextPrompt} from './TextPrompt.js';
-import type {ToolbarButton} from './Toolbar.js';
-import {ToolbarSettingToggle} from './Toolbar.js';
+
+import {ToolbarSettingToggle, type ToolbarButton} from './Toolbar.js';
 import {Tooltip} from './Tooltip.js';
 import {CheckboxLabel, createTextChild} from './UIUtils.js';
 import {HBox} from './Widget.js';
@@ -47,21 +49,21 @@ import filterStyles from './filter.css.legacy.js';
 
 const UIStrings = {
   /**
-  *@description Text to filter result items
-  */
+   *@description Text to filter result items
+   */
   filter: 'Filter',
   /**
-  *@description Text that appears when hover over the filter bar in the Network tool
-  */
+   *@description Text that appears when hover over the filter bar in the Network tool
+   */
   egSmalldUrlacomb: 'e.g. `/small[\d]+/ url:a.com/b`',
   /**
-  *@description Text that appears when hover over the All button in the Network tool
-  *@example {Ctrl + } PH1
-  */
+   *@description Text that appears when hover over the All button in the Network tool
+   *@example {Ctrl + } PH1
+   */
   sclickToSelectMultipleTypes: '{PH1}Click to select multiple types',
   /**
-  *@description Text for everything
-  */
+   *@description Text for everything
+   */
   allStrings: 'All',
   /**
    * @description Hover text for button to clear the filter that is applied
@@ -402,7 +404,7 @@ export class NamedBitSetFilterUI extends Common.ObjectWrapper.ObjectWrapper<Filt
       if (this.keyFocusNextBit(element, false /* selectPrevious */)) {
         event.consume(true);
       }
-    } else if (isEnterOrSpaceKey(event)) {
+    } else if (Platform.KeyboardUtilities.isEnterOrSpaceKey(event)) {
       this.onTypeFilterClicked(event);
     }
   }

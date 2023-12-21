@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,6 +9,9 @@
 
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ptr_exclusion.h"
+#include "base/memory/raw_ref.h"
+#include "base/scoped_observation.h"
 #include "base/strings/string_piece.h"
 #include "build/build_config.h"
 #include "ui/accessibility/ax_enums.mojom.h"
@@ -35,8 +38,7 @@
 
 using DispatchDetails = ui::EventDispatchDetails;
 
-namespace views {
-namespace internal {
+namespace views::internal {
 
 namespace {
 
@@ -51,6 +53,41 @@ class MouseEnterExitEvent : public ui::MouseEvent {
   }
 
   ~MouseEnterExitEvent() override = default;
+
+  // Event:
+  std::unique_ptr<ui::Event> Clone() const override {
+    return std::make_unique<MouseEnterExitEvent>(*this);
+  }
+};
+
+// TODO(crbug.com/1295290): This class is for debug purpose only.
+// Remove it after resolving the issue.
+class DanglingMouseMoveHandlerOnViewDestroyingChecker
+    : public views::ViewObserver {
+ public:
+  explicit DanglingMouseMoveHandlerOnViewDestroyingChecker(
+      const raw_ptr<views::View, DanglingUntriaged>& mouse_move_handler)
+      : mouse_move_handler_(mouse_move_handler) {
+    scoped_observation.Observe(mouse_move_handler_);
+  }
+
+  // views::ViewObserver:
+  void OnViewIsDeleting(views::View* view) override {
+    // `mouse_move_handler_` should be nulled before `view` dies. Otherwise
+    // `mouse_move_handler_` will become a dangling pointer.
+    CHECK(!mouse_move_handler_);
+    scoped_observation.Reset();
+  }
+
+ private:
+  base::ScopedObservation<views::View, views::ViewObserver> scoped_observation{
+      this};
+  // Excluded from `raw_ref` rewriter which would otherwise turn this
+  // into a `raw_ref<raw_ptr<>>`. The current `raw_ptr&` setup is
+  // intentional and used to observe the pointer without counting as a
+  // live reference to the underlying memory.
+  RAW_PTR_EXCLUSION const raw_ptr<views::View, DanglingUntriaged>&
+      mouse_move_handler_;
 };
 
 }  // namespace
@@ -85,7 +122,7 @@ class AnnounceTextView : public View {
     // May require setting kLiveStatus, kContainerLiveStatus to "polite".
     node_data->role = ax::mojom::Role::kAlert;
 #endif
-    node_data->SetName(announce_text_);
+    node_data->SetNameChecked(announce_text_);
     node_data->AddState(ax::mojom::State::kInvisible);
   }
 
@@ -221,7 +258,8 @@ RootView::~RootView() {
 
 void RootView::SetContentsView(View* contents_view) {
   DCHECK(contents_view && GetWidget()->native_widget())
-      << "Can't be called until after the native widget is created!";
+      << "Can't be called because the widget is not initialized or is "
+         "destroyed";
   // The ContentsView must be set up _after_ the window is created so that its
   // Widget pointer is valid.
   SetUseDefaultFillLayout(true);
@@ -272,6 +310,14 @@ void RootView::DeviceScaleFactorChanged(float old_device_scale_factor,
 
 // Accessibility ---------------------------------------------------------------
 
+raw_ptr<AnnounceTextView> RootView::GetOrCreateAnnounceView() {
+  if (!announce_view_) {
+    announce_view_ = AddChildView(std::make_unique<AnnounceTextView>());
+    announce_view_->SetProperty(kViewIgnoredByLayoutKey, true);
+  }
+  return announce_view_.get();
+}
+
 void RootView::AnnounceText(const std::u16string& text) {
 #if BUILDFLAG(IS_MAC)
   gfx::NativeViewAccessible native = GetViewAccessibility().GetNativeObject();
@@ -281,12 +327,12 @@ void RootView::AnnounceText(const std::u16string& text) {
 #else
   DCHECK(GetWidget());
   DCHECK(GetContentsView());
-  if (!announce_view_) {
-    announce_view_ = AddChildView(std::make_unique<AnnounceTextView>());
-    announce_view_->SetProperty(kViewIgnoredByLayoutKey, true);
-  }
-  announce_view_->Announce(text);
+  GetOrCreateAnnounceView()->Announce(text);
 #endif
+}
+
+View* RootView::GetAnnounceViewForTesting() {
+  return GetOrCreateAnnounceView();
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -350,7 +396,10 @@ void RootView::OnEventProcessingStarted(ui::Event* event) {
   gesture_handler_set_before_processing_ = !!gesture_handler_;
 }
 
-void RootView::OnEventProcessingFinished(ui::Event* event) {
+void RootView::OnEventProcessingFinished(
+    ui::Event* event,
+    ui::EventTarget* target,
+    const ui::EventDispatchDetails& details) {
   VLOG(5) << "RootView::OnEventProcessingFinished(" << event->ToString() << ")";
   // If |event| was not handled and |gesture_handler_| was not set by the
   // dispatch of a previous gesture event, then no default gesture handler
@@ -463,6 +512,7 @@ bool RootView::OnMouseDragged(const ui::MouseEvent& event) {
         DispatchEvent(mouse_pressed_handler_, &mouse_event);
     if (dispatch_details.dispatcher_destroyed)
       return false;
+    return true;
   }
   return false;
 }
@@ -549,6 +599,10 @@ void RootView::OnMouseMoved(const ui::MouseEvent& event) {
       }
       View* old_handler = mouse_move_handler_;
       mouse_move_handler_ = v;
+      // TODO(crbug.com/1295290): This is for debug purpose only.
+      // Remove it after resolving the issue.
+      DanglingMouseMoveHandlerOnViewDestroyingChecker
+          mouse_move_handler_dangling_checker(mouse_move_handler_);
       if (!mouse_move_handler_->GetNotifyEnterExitOnChild() ||
           !mouse_move_handler_->Contains(old_handler)) {
         MouseEnterExitEvent entered(event, ui::ET_MOUSE_ENTERED);
@@ -604,7 +658,7 @@ void RootView::OnMouseMoved(const ui::MouseEvent& event) {
     // some windows.  Let the non-client cursor handling code set the cursor
     // as we do above.
     if (!(event.flags() & ui::EF_IS_NON_CLIENT))
-      widget_->SetCursor(gfx::kNullCursor);
+      widget_->SetCursor(ui::Cursor());
     mouse_move_handler_ = nullptr;
   }
 }
@@ -677,8 +731,8 @@ void RootView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
   auto* widget_delegate = GetWidget()->widget_delegate();
   if (!widget_delegate)
     return;
-  node_data->SetName(widget_delegate->GetAccessibleWindowTitle());
   node_data->role = widget_delegate->GetAccessibleWindowRole();
+  node_data->SetName(widget_delegate->GetAccessibleWindowTitle());
 }
 
 void RootView::UpdateParentLayer() {
@@ -693,7 +747,7 @@ void RootView::ViewHierarchyChanged(
     const ViewHierarchyChangedDetails& details) {
   widget_->ViewHierarchyChanged(details);
 
-  if (!details.is_add) {
+  if (!details.is_add && !details.move_view) {
     if (!explicit_mouse_handler_ && mouse_pressed_handler_ == details.child)
       mouse_pressed_handler_ = nullptr;
     if (mouse_move_handler_ == details.child)
@@ -837,5 +891,4 @@ ui::EventDispatchDetails RootView::PostDispatchEvent(ui::EventTarget* target,
 
 BEGIN_METADATA(RootView, View)
 END_METADATA
-}  // namespace internal
-}  // namespace views
+}  // namespace views::internal

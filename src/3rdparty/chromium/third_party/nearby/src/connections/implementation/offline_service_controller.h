@@ -32,7 +32,6 @@
 #include "connections/payload.h"
 #include "connections/status.h"
 
-namespace location {
 namespace nearby {
 namespace connections {
 
@@ -77,6 +76,10 @@ class OfflineServiceController : public ServiceController {
 
   void Stop() override;
 
+  void SetCustomSavePath(ClientProxy* client, const std::string& path) override;
+
+  void ShutdownBwuManagerExecutors() override;
+
  private:
   // Note that the order of declaration of these is crucial, because we depend
   // on the destructors running (strictly) in the reverse order; a deviation
@@ -95,6 +98,5 @@ class OfflineServiceController : public ServiceController {
 
 }  // namespace connections
 }  // namespace nearby
-}  // namespace location
 
 #endif  // CORE_INTERNAL_OFFLINE_SERVICE_CONTROLLER_H_

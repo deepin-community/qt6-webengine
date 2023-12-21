@@ -1,4 +1,4 @@
-// Copyright (c) 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,19 +9,20 @@
 #include <algorithm>
 #include <memory>
 
-#include "base/bind.h"
 #include "base/cxx17_backports.h"
+#include "base/functional/bind.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
+#include "components/speech/audio_buffer.h"
 #include "content/browser/browser_main_loop.h"
 #include "content/browser/media/media_internals.h"
-#include "content/browser/speech/audio_buffer.h"
 #include "content/public/browser/audio_service.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/speech_recognition_event_listener.h"
 #include "media/audio/audio_system.h"
 #include "media/base/audio_converter.h"
+#include "media/base/audio_parameters.h"
 #include "media/mojo/mojom/audio_logging.mojom.h"
 #include "services/audio/public/cpp/device_factory.h"
 
@@ -31,6 +32,7 @@
 
 using media::AudioBus;
 using media::AudioConverter;
+using media::AudioGlitchInfo;
 using media::AudioParameters;
 using media::ChannelLayout;
 
@@ -59,7 +61,9 @@ class SpeechRecognizerImpl::OnDataConverter
 
  private:
   // media::AudioConverter::InputCallback implementation.
-  double ProvideInput(AudioBus* dest, uint32_t frames_delayed) override;
+  double ProvideInput(AudioBus* dest,
+                      uint32_t frames_delayed,
+                      const AudioGlitchInfo& glitch_info) override;
 
   // Handles resampling, buffering, and channel mixing between input and output
   // parameters.
@@ -163,7 +167,8 @@ scoped_refptr<AudioChunk> SpeechRecognizerImpl::OnDataConverter::Convert(
 
 double SpeechRecognizerImpl::OnDataConverter::ProvideInput(
     AudioBus* dest,
-    uint32_t frames_delayed) {
+    uint32_t frames_delayed,
+    const AudioGlitchInfo& glitch_info) {
   // Read from the input bus to feed the converter.
   input_bus_->CopyTo(dest);
   // Indicate that the recorded audio has in fact been used by the converter.
@@ -584,7 +589,8 @@ SpeechRecognizerImpl::StartRecording(const FSMEventArgs&) {
   // Hard coded, WebSpeech specific parameters are utilized here.
   int frames_per_buffer = (kAudioSampleRate * chunk_duration_ms) / 1000;
   AudioParameters output_parameters =
-      AudioParameters(AudioParameters::AUDIO_PCM_LOW_LATENCY, kChannelLayout,
+      AudioParameters(AudioParameters::AUDIO_PCM_LOW_LATENCY,
+                      media::ChannelLayoutConfig::FromLayout<kChannelLayout>(),
                       kAudioSampleRate, frames_per_buffer);
   DVLOG(1) << "SRI::output_parameters: "
            << output_parameters.AsHumanReadableString();

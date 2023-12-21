@@ -1,4 +1,4 @@
-// Copyright 2014 PDFium Authors. All rights reserved.
+// Copyright 2014 The PDFium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -23,6 +23,7 @@ class CXFA_BindItems;
 class CXFA_FFDoc;
 class CXFA_FFWidgetHandler;
 class CXFA_Node;
+class CXFA_Subform;
 class CXFA_ViewLayoutItem;
 
 extern const XFA_AttributeValue kXFAEventActivity[];
@@ -47,7 +48,7 @@ class CXFA_FFDocView : public cppgc::GarbageCollected<CXFA_FFDocView> {
 
   void Trace(cppgc::Visitor* visitor) const;
 
-  CXFA_FFDoc* GetDoc() const { return m_pDoc.Get(); }
+  CXFA_FFDoc* GetDoc() const { return m_pDoc; }
   int32_t StartLayout();
   int32_t DoLayout();
   void StopLayout();
@@ -88,7 +89,7 @@ class CXFA_FFDocView : public cppgc::GarbageCollected<CXFA_FFDocView> {
 
   bool RunLayout();
   void AddNewFormNode(CXFA_Node* pNode);
-  void AddIndexChangedSubform(CXFA_Node* pNode);
+  void AddIndexChangedSubform(CXFA_Subform* pNode);
   CXFA_Node* GetFocusNode() const { return m_pFocusNode; }
   void SetFocusNode(CXFA_Node* pNode);
   void DeleteLayoutItem(CXFA_FFWidget* pWidget);
@@ -125,7 +126,7 @@ class CXFA_FFDocView : public cppgc::GarbageCollected<CXFA_FFDocView> {
   std::vector<cppgc::Member<CXFA_Node>> m_CalculateNodes;
   std::list<cppgc::Member<CXFA_BindItems>> m_BindItems;
   std::list<cppgc::Member<CXFA_Node>> m_NewAddedNodes;
-  std::list<cppgc::Member<CXFA_Node>> m_IndexChangedSubforms;
+  std::list<cppgc::Member<CXFA_Subform>> m_IndexChangedSubforms;
   std::vector<WideString> m_NullTestMsgArray;
   bool m_bLayoutEvent = false;
   bool m_bInLayoutStatus = false;

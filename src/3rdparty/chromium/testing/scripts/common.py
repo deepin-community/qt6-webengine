@@ -1,11 +1,11 @@
-# Copyright 2014 The Chromium Authors. All rights reserved.
+# Copyright 2014 The Chromium Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+from __future__ import print_function
 import argparse
 import codecs
 import contextlib
-import io
 import json
 import os
 import logging
@@ -19,16 +19,11 @@ import traceback
 logging.basicConfig(level=logging.INFO)
 
 # Add src/testing/ into sys.path for importing xvfb and test_env.
-sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+sys.path.append(
+    os.path.abspath(os.path.join(os.path.dirname(__file__), os.path.pardir)))
 import test_env
 if sys.platform.startswith('linux'):
   import xvfb
-
-# Unfortunately we need to copy these variables from ../test_env.py.
-# Importing it and using its get_sandbox_env breaks test runs on Linux
-# (it seems to unset DISPLAY).
-CHROME_SANDBOX_ENV = 'CHROME_DEVEL_SANDBOX'
-CHROME_SANDBOX_PATH = '/opt/chromium/chrome_sandbox'
 
 
 SCRIPT_DIR = os.path.abspath(os.path.dirname(__file__))
@@ -65,6 +60,8 @@ CORRECT_ACL_VARIANTS = [
     'APPLICATION PACKAGE AUTHORITY' \
     '\\ALL RESTRICTED APPLICATION PACKAGES:(I)(OI)(CI)(RX)'
 ]
+
+# pylint: disable=useless-object-inheritance
 
 
 def set_lpac_acls(acl_dir, is_test_script=False):
@@ -154,9 +151,9 @@ def run_script(argv, funcs):
 
 
 def run_command(argv, env=None, cwd=None):
-  print('Running %r in %r (env: %r)' % (argv, cwd, env))
+  print('Running %r in %r (env: %r)' % (argv, cwd, env), file=sys.stderr)
   rc = test_env.run_command(argv, env=env, cwd=cwd)
-  print('Command %r returned exit code %d' % (argv, rc))
+  print('Command %r returned exit code %d' % (argv, rc), file=sys.stderr)
   return rc
 
 
@@ -313,7 +310,21 @@ def extract_filter_list(filter_list):
   return filter_list.split('::')
 
 
-class BaseIsolatedScriptArgsAdapter(object):
+def add_emulator_args(parser):
+    parser.add_argument(
+        '--avd-config',
+        type=os.path.realpath,
+        help=('Path to the avd config. Required for Android products. '
+              '(See //tools/android/avd/proto for message definition '
+              'and existing *.textpb files.)'))
+    parser.add_argument(
+        '--emulator-window',
+        action='store_true',
+        default=False,
+        help='Enable graphical window display on the emulator.')
+
+
+class BaseIsolatedScriptArgsAdapter:
   """The base class for all script adapters that need to translate flags
   set by isolated script test contract into the specific test script's flags.
   """
@@ -322,12 +333,13 @@ class BaseIsolatedScriptArgsAdapter(object):
     self._parser = argparse.ArgumentParser()
     self._options = None
     self._rest_args = None
+    self._script_writes_output_json = None
     self._parser.add_argument(
         '--isolated-outdir', type=str,
         required=False,
         help='value of $ISOLATED_OUTDIR from swarming task')
     self._parser.add_argument(
-        '--isolated-script-test-output', type=str,
+        '--isolated-script-test-output', type=os.path.abspath,
         required=False,
         help='path to write test results JSON object to')
     self._parser.add_argument(
@@ -347,12 +359,16 @@ class BaseIsolatedScriptArgsAdapter(object):
         '--xvfb',
         help='start xvfb. Ignored on unsupported platforms',
         action='store_true')
-
-    # This argument is ignored for now.
+    # Used to create the correct subclass.
     self._parser.add_argument(
-        '--isolated-script-test-chartjson-output', type=str)
-    # This argument is ignored for now.
-    self._parser.add_argument('--isolated-script-test-perf-output', type=str)
+        '--script-type', choices=['isolated', 'typ', 'bare'],
+        help='Which script adapter to use')
+
+    # Arguments that are ignored, but added here because it's easier to ignore
+    # them to to update bot configs to not pass them.
+    add_emulator_args(self._parser)
+    self._parser.add_argument('--isolated-script-test-chartjson-output')
+    self._parser.add_argument('--isolated-script-test-perf-output')
 
     self.add_extra_arguments(self._parser)
 
@@ -376,26 +392,26 @@ class BaseIsolatedScriptArgsAdapter(object):
 
   def generate_test_output_args(self, output):
     del output  # unused
-    raise RuntimeError('this method is not yet implemented')
+    return []
 
   def generate_test_filter_args(self, test_filter_str):
     del test_filter_str  # unused
-    raise RuntimeError('this method is not yet implemented')
+    raise RuntimeError('Flag not supported.')
 
   def generate_test_repeat_args(self, repeat_count):
     del repeat_count  # unused
-    raise RuntimeError('this method is not yet implemented')
+    raise RuntimeError('Flag not supported.')
 
   def generate_test_launcher_retry_limit_args(self, retry_limit):
     del retry_limit  # unused
-    raise RuntimeError('this method is not yet implemented')
+    raise RuntimeError('Flag not supported.')
+
+  def generate_sharding_args(self, total_shards, shard_index):
+    del total_shards, shard_index  # unused
+    raise RuntimeError('Flag not supported.')
 
   def generate_test_also_run_disabled_tests_args(self):
-    raise RuntimeError('this method is not yet implemented')
-
-  def generate_sharding_args(self, total_shard, shard_index):
-    del total_shard, shard_index  # unused
-    raise RuntimeError('this method is not yet implemented')
+    raise RuntimeError('Flag not supported.')
 
   def select_python_executable(self):
     return sys.executable
@@ -404,8 +420,10 @@ class BaseIsolatedScriptArgsAdapter(object):
     isolated_script_cmd = [ self.select_python_executable() ] + self.rest_args
 
     if self.options.isolated_script_test_output:
-      isolated_script_cmd += self.generate_test_output_args(
+      output_args = self.generate_test_output_args(
           self.options.isolated_script_test_output)
+      self._script_writes_output_json = bool(output_args)
+      isolated_script_cmd += output_args
 
     # Augment test filter args if needed
     if self.options.isolated_script_test_filter:
@@ -451,7 +469,35 @@ class BaseIsolatedScriptArgsAdapter(object):
   def do_post_test_run_tasks(self):
     pass
 
-  def run_test(self):
+  def _write_simple_test_results(self, start_time, exit_code):
+    if exit_code is None:
+      failure_type = 'CRASH'
+    elif exit_code == 0:
+      failure_type = 'PASS'
+    else:
+      failure_type = 'FAIL'
+
+    test_name = os.path.basename(self._rest_args[0])
+    # See //docs/testing/json_test_results_format.md
+    results_json = {
+        'version': 3,
+        'interrupted': False,
+        'num_failures_by_type': { failure_type: 1 },
+        'path_delimiter': '/',
+        'seconds_since_epoch': start_time,
+        'tests': {
+            test_name: {
+              'expected': 'PASS',
+              'actual': failure_type,
+              'time': time.time() - start_time,
+            },
+        },
+    }
+    with open(self.options.isolated_script_test_output, 'w') as fp:
+      json.dump(results_json, fp)
+
+
+  def run_test(self, cwd=None):
     self.parse_args()
     cmd = self.generate_isolated_script_cmd()
 
@@ -459,36 +505,27 @@ class BaseIsolatedScriptArgsAdapter(object):
 
     env = os.environ.copy()
 
-    # Assume we want to set up the sandbox environment variables all the
-    # time; doing so is harmless on non-Linux platforms and is needed
-    # all the time on Linux.
-    env[CHROME_SANDBOX_ENV] = CHROME_SANDBOX_PATH
-    valid = True
+    env['CHROME_HEADLESS'] = '1'
+    print('Running command: %s\nwith env: %r' % (
+        ' '.join(cmd), env))
+    sys.stdout.flush()
+    start_time = time.time()
     try:
-      env['CHROME_HEADLESS'] = '1'
-      print('Running command: %s\nwith env: %r' % (
-          ' '.join(cmd), env))
-      sys.stdout.flush()
       if self.options.xvfb and sys.platform.startswith('linux'):
-        exit_code = xvfb.run_executable(cmd, env)
+        exit_code = xvfb.run_executable(cmd, env, cwd=cwd)
       else:
-        exit_code = test_env.run_command(cmd, env=env, log=False)
+        exit_code = test_env.run_command(cmd, env=env, cwd=cwd, log=False)
       print('Command returned exit code %d' % exit_code)
       sys.stdout.flush()
       self.do_post_test_run_tasks()
-      return exit_code
     except Exception:
       traceback.print_exc()
-      valid = False
+      exit_code = None
     finally:
       self.clean_up_after_test_run()
 
-    if not valid:
-      failures = ['(entire test suite)']
-      with open(self.options.isolated_script_test_output, 'w') as fp:
-        json.dump({
-            'valid': valid,
-            'failures': failures,
-        }, fp)
+    if (self.options.isolated_script_test_output
+        and not self._script_writes_output_json):
+      self._write_simple_test_results(start_time, exit_code)
 
-    return 1
+    return exit_code if exit_code is not None else 2

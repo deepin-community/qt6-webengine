@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2021 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -31,6 +31,7 @@ class LaunchReliabilityLogger {
   NetworkRequestId LogFeedRequestStart();
   NetworkRequestId LogActionsUploadRequestStart();
   NetworkRequestId LogWebFeedRequestStart();
+  NetworkRequestId LogSingleWebFeedRequestStart();
   void LogRequestSent(NetworkRequestId id, base::TimeTicks timestamp);
   void LogResponseReceived(NetworkRequestId id,
                            int64_t server_receive_timestamp_ns,
@@ -57,7 +58,7 @@ class LaunchReliabilityLogger {
       feedwire::DiscoverLaunchResult result);
 
  private:
-  raw_ptr<StreamSurfaceSet> surfaces_;
+  raw_ptr<StreamSurfaceSet, DanglingUntriaged> surfaces_;
   NetworkRequestId::Generator request_id_gen_;
 };
 

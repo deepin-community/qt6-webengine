@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2015 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -178,7 +178,7 @@ class CONTENT_EXPORT RenderWidgetHostInputEventRouter final
       const blink::WebGestureEvent& event) override;
   void ForwardEmulatedTouchEvent(const blink::WebTouchEvent& event,
                                  RenderWidgetHostViewBase* target) override;
-  void SetCursor(const WebCursor& cursor) override;
+  void SetCursor(const ui::Cursor& cursor) override;
   void ShowContextMenuAtPoint(const gfx::Point& point,
                               const ui::MenuSourceType source_type,
                               RenderWidgetHostViewBase* target) override;
@@ -200,8 +200,9 @@ class CONTENT_EXPORT RenderWidgetHostInputEventRouter final
   void SetAutoScrollInProgress(bool is_autoscroll_in_progress);
 
  private:
-  FRIEND_TEST_ALL_PREFIXES(BrowserSideFlingBrowserTest,
-                           InertialGSUBubblingStopsWhenParentCannotScroll);
+  FRIEND_TEST_ALL_PREFIXES(
+      BrowserSideFlingBrowserTest,
+      DISABLE_InertialGSUBubblingStopsWhenParentCannotScroll);
 
   using FrameSinkIdOwnerMap =
       std::unordered_map<viz::FrameSinkId,

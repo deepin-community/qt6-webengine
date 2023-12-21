@@ -11,6 +11,7 @@
 #define COMPILER_TRANSLATOR_TREEOPS_APPLE_REWRITEDOWHILE_H_
 
 #include "common/angleutils.h"
+#include "common/debug.h"
 
 namespace sh
 {
@@ -20,13 +21,13 @@ class TIntermNode;
 class TSymbolTable;
 
 #if defined(ANGLE_ENABLE_GLSL) && defined(ANGLE_ENABLE_APPLE_WORKAROUNDS)
-ANGLE_NO_DISCARD bool RewriteDoWhile(TCompiler *compiler,
-                                     TIntermNode *root,
-                                     TSymbolTable *symbolTable);
+[[nodiscard]] bool RewriteDoWhile(TCompiler *compiler,
+                                  TIntermNode *root,
+                                  TSymbolTable *symbolTable);
 #else
-ANGLE_NO_DISCARD ANGLE_INLINE bool RewriteDoWhile(TCompiler *compiler,
-                                                  TIntermNode *root,
-                                                  TSymbolTable *symbolTable)
+[[nodiscard]] ANGLE_INLINE bool RewriteDoWhile(TCompiler *compiler,
+                                               TIntermNode *root,
+                                               TSymbolTable *symbolTable)
 {
     UNREACHABLE();
     return false;

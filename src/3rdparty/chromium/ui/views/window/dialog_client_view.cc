@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "base/memory/raw_ptr.h"
+#include "base/ranges/algorithm.h"
 #include "build/build_config.h"
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
@@ -83,7 +84,9 @@ END_METADATA
 DialogClientView::DialogClientView(Widget* owner, View* contents_view)
     : ClientView(owner, contents_view),
       button_row_insets_(
-          LayoutProvider::Get()->GetInsetsMetric(INSETS_DIALOG_BUTTON_ROW)) {
+          LayoutProvider::Get()->GetInsetsMetric(INSETS_DIALOG_BUTTON_ROW)),
+      input_protector_(
+          std::make_unique<views::InputEventActivationProtector>()) {
   // Doing this now ensures this accelerator will have lower priority than
   // one set by the contents view.
   AddAccelerator(ui::Accelerator(ui::VKEY_ESCAPE, ui::EF_NONE));
@@ -153,7 +156,7 @@ gfx::Size DialogClientView::GetMaximumSize() const {
 
 void DialogClientView::VisibilityChanged(View* starting_from, bool is_visible) {
   ClientView::VisibilityChanged(starting_from, is_visible);
-  input_protector_.VisibilityChanged(is_visible);
+  input_protector_->VisibilityChanged(is_visible);
 }
 
 void DialogClientView::Layout() {
@@ -225,8 +228,12 @@ void DialogClientView::OnThemeChanged() {
   }
 }
 
+void DialogClientView::UpdateInputProtectorTimeStamp() {
+  input_protector_->UpdateViewShownTimeStamp();
+}
+
 void DialogClientView::ResetViewShownTimeStampForTesting() {
-  input_protector_.ResetForTesting();
+  input_protector_->ResetForTesting();  // IN-TEST
 }
 
 DialogDelegate* DialogClientView::GetDialogDelegate() const {
@@ -238,6 +245,10 @@ void DialogClientView::ChildVisibilityChanged(View* child) {
   if (child == extra_view_)
     UpdateDialogButtons();
   InvalidateLayout();
+}
+
+void DialogClientView::TriggerInputProtection() {
+  input_protector_->UpdateViewShownTimeStamp();
 }
 
 void DialogClientView::OnDialogChanged() {
@@ -293,7 +304,7 @@ void DialogClientView::UpdateDialogButton(LabelButton** member,
 void DialogClientView::ButtonPressed(ui::DialogButton type,
                                      const ui::Event& event) {
   DialogDelegate* const delegate = GetDialogDelegate();
-  if (delegate && !input_protector_.IsPossiblyUnintendedInteraction(event)) {
+  if (delegate && !input_protector_->IsPossiblyUnintendedInteraction(event)) {
     (type == ui::DIALOG_BUTTON_OK) ? delegate->AcceptDialog()
                                    : delegate->CancelDialog();
   }
@@ -340,7 +351,7 @@ void DialogClientView::SetupLayout() {
       button_row_container_->AddChildViewAt(extra_view_.get(), 0);
   }
 
-  if (std::count(views.begin(), views.end(), nullptr) == kNumButtons)
+  if (base::ranges::count(views, nullptr) == kNumButtons)
     return;
 
   // This will also clobber any existing layout manager and clear any settings
@@ -369,10 +380,10 @@ void DialogClientView::SetupLayout() {
       .AddColumn(LayoutAlignment::kStretch, LayoutAlignment::kStretch, kFixed,
                  TableLayout::ColumnSize::kUsePreferred, 0, 0)
       .AddPaddingColumn(kStretchy, GetExtraViewSpacing())
-      .AddColumn(LayoutAlignment::kStretch, LayoutAlignment::kStretch, kFixed,
+      .AddColumn(LayoutAlignment::kStretch, LayoutAlignment::kEnd, kFixed,
                  TableLayout::ColumnSize::kUsePreferred, 0, 0)
       .AddPaddingColumn(kFixed, button_spacing)
-      .AddColumn(LayoutAlignment::kStretch, LayoutAlignment::kStretch, kFixed,
+      .AddColumn(LayoutAlignment::kStretch, LayoutAlignment::kEnd, kFixed,
                  TableLayout::ColumnSize::kUsePreferred, 0, 0)
       .AddPaddingColumn(kFixed, button_row_insets_.right())
       .AddPaddingRow(kFixed, button_row_insets_.top())
@@ -382,7 +393,7 @@ void DialogClientView::SetupLayout() {
           DISTANCE_BUTTON_MAX_LINKABLE_WIDTH));
 
   // Track which columns to link sizes under MD.
-  constexpr int kViewToColumnIndex[] = {1, 3, 5};
+  constexpr size_t kViewToColumnIndex[] = {1, 3, 5};
   std::vector<size_t> columns_to_link;
 
   // Skip views that are not a button, or are a specific subclass of Button
