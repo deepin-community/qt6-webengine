@@ -1,3 +1,10 @@
+qt6-webengine (6.6.1+dfsg-2deepin1) experimental; urgency=medium
+
+  [ Dmitry Shachnev ]
+  * Add a patch from Gentoo to fix build with ICU 74.
+
+ -- Tianyu Chen <sweetyfish@deepin.org>  Fri, 08 Mar 2024 17:45:13 +0800
+
 qt6-webengine (6.6.1+dfsg-2) experimental; urgency=medium
 
   [ Patrick Franz ]

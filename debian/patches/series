@@ -13,3 +13,5 @@ disable_32bit_node_check.patch
 
 # enable support for i386
 support-i386.patch
+
+icu74.patch
