@@ -7,13 +7,13 @@ if(NOT QT_CONFIGURE_RUNNING)
     find_package(GLIB2 COMPONENTS GIO)
     find_package(GSSAPI)
     find_package(PkgConfig)
-    if(PkgConfig_FOUND)
+    if(PkgConfig_FOUND AND QT_FEATURE_pkg_config)
         pkg_check_modules(ALSA alsa IMPORTED_TARGET)
         pkg_check_modules(PULSEAUDIO libpulse>=0.9.10 libpulse-mainloop-glib)
         pkg_check_modules(XDAMAGE xdamage)
         pkg_check_modules(POPPLER_CPP poppler-cpp IMPORTED_TARGET)
         pkg_check_modules(GBM gbm)
-        pkg_check_modules(LIBVA libva)
+        pkg_check_modules(LIBVA libva>=1.14)
         if(NOT GIO_FOUND)
             pkg_check_modules(GIO gio-2.0)
         endif()
@@ -66,7 +66,7 @@ qt_feature("webengine-system-alsa" PRIVATE
 )
 qt_feature("webengine-v8-context-snapshot" PRIVATE
     LABEL "Use v8 context snapshot"
-    CONDITION NOT CMAKE_CROSSCOMPILING
+    AUTODETECT NOT CMAKE_CROSSCOMPILING
 )
 qt_feature("webengine-geolocation" PUBLIC
     LABEL "Geolocation"
@@ -168,7 +168,7 @@ qt_feature("webengine-vaapi" PRIVATE
 )
 # internal testing feature
 qt_feature("webengine-system-poppler" PRIVATE
-    LABEL "popler"
+    LABEL "poppler"
     CONDITION UNIX AND TEST_poppler
 )
 qt_configure_add_summary_section(NAME "Qt WebEngineCore")

@@ -48,7 +48,7 @@ foreach(arch ${archs})
         get_forward_declaration_macro(forwardDeclarationMacro)
         get_target_property(qtWebEngineProcessName WebEngineCore QTWEBENGINEPROCESS_NAME)
 
-        if(QT_FEATURE_debug_and_release AND ("${config}" STREQUAL "Debug"))
+        if("${config}" STREQUAL "Debug")
             set(qtWebEngineProcessName "${qtWebEngineProcessName}${CMAKE_DEBUG_POSTFIX}")
         endif()
 
@@ -78,6 +78,7 @@ foreach(arch ${archs})
                 ${gnCxxCompileOptions}
             SOURCES
                 accessibility_tree_formatter_qt.cpp
+                browser_accessibility_qt.cpp browser_accessibility_qt.h
                 authentication_dialog_controller.cpp authentication_dialog_controller.h authentication_dialog_controller_p.h
                 autofill_client_qt.cpp autofill_client_qt.h
                 autofill_popup_controller.cpp autofill_popup_controller.h autofill_popup_controller_p.h
@@ -152,6 +153,7 @@ foreach(arch ${archs})
                 ozone/platform_window_qt.cpp ozone/platform_window_qt.h
                 ozone/surface_factory_qt.cpp ozone/surface_factory_qt.h
                 permission_manager_qt.cpp permission_manager_qt.h
+                pdf_util_qt.cpp pdf_util_qt.h
                 platform_notification_service_qt.cpp platform_notification_service_qt.h
                 pointer_device_qt.cpp
                 pref_service_adapter.cpp pref_service_adapter.h
@@ -201,7 +203,6 @@ foreach(arch ${archs})
         extend_gn_target(${buildGn} CONDITION QT_FEATURE_accessibility
             SOURCES
                 accessibility_activation_observer.cpp accessibility_activation_observer.h
-                browser_accessibility_qt.cpp browser_accessibility_qt.h
         )
 
         extend_gn_target(${buildGn} CONDITION QT_FEATURE_webengine_ozone_x11
@@ -355,9 +356,14 @@ foreach(arch ${archs})
         )
         extend_gn_list(gnArgArg
             ARGS enable_plugins
-            CONDITION QT_FEATURE_webengine_pepper_plugins
+            CONDITION QT_FEATURE_webengine_printing_and_pdf OR
+            QT_FEATURE_webengine_pepper_plugins
         )
         extend_gn_list(gnArgArg
+            ARGS enable_ppapi
+            CONDITION QT_FEATURE_webengine_pepper_plugins
+        )
+         extend_gn_list(gnArgArg
             ARGS enable_spellcheck
             CONDITION QT_FEATURE_webengine_spellchecker
         )
@@ -497,7 +503,7 @@ foreach(arch ${archs})
                      external_gssapi_include_dir="${GSSAPI_INCLUDE_DIRS}/gssapi"
                 )
             endif()
-
+            get_gn_arch(cpu ${TEST_architecture_arch})
             if(CMAKE_CROSSCOMPILING AND cpu STREQUAL "arm")
                 check_thumb(armThumb)
                 if(NOT armThumb AND NOT QT_FEATURE_webengine_system_ffmpeg)
@@ -514,6 +520,7 @@ foreach(arch ${archs})
                     )
                 endif()
             endif()
+            unset(cpu)
         endif()
 
         if(MACOS)
@@ -566,7 +573,7 @@ if(QT_FEATURE_webengine_v8_context_snapshot)
     set(dataStamp obj/tools/v8_context_snapshot/v8_context_snapshot.stamp)
 endif()
 
-add_gn_build_aritfacts_to_target(
+add_gn_build_artifacts_to_target(
     CMAKE_TARGET WebEngineCore
     NINJA_TARGET QtWebEngineCore
     MODULE core
@@ -616,7 +623,7 @@ if(QT_FEATURE_webengine_spellchecker AND NOT CMAKE_CROSSCOMPILING)
         ../3rdparty/chromium/third_party/boringssl/src/include
         ${buildDir}/$<CONFIG>/${arch}/gen
     )
-    add_gn_build_aritfacts_to_target(
+    add_gn_build_artifacts_to_target(
         CMAKE_TARGET ${dict_target_name}
         NINJA_TARGET convert_dict
         MODULE core

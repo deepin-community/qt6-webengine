@@ -220,6 +220,11 @@ namespace {
 // The window which we dobounce load info updates in.
 constexpr auto kUpdateLoadStatesInterval = base::Milliseconds(250);
 
+// Kill switch for crash immediately on dangling BrowserContext.
+BASE_FEATURE(kCrashOnDanglingBrowserContext,
+             "CrashOnDanglingBrowserContext",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
 using LifecycleState = RenderFrameHost::LifecycleState;
 using LifecycleStateImpl = RenderFrameHostImpl::LifecycleStateImpl;
 
@@ -795,6 +800,9 @@ void WebContentsImpl::WebContentsTreeNode::AttachInnerWebContents(
   inner_web_contents_node.outer_contents_frame_tree_node_id_ =
       render_frame_host->frame_tree_node()->frame_tree_node_id();
 
+  if (inner_web_contents) {
+    inner_web_contents->SetOwnerLocationForDebug(FROM_HERE);
+  }
   inner_web_contents_.push_back(std::move(inner_web_contents));
 
   render_frame_host->frame_tree_node()->AddObserver(&inner_web_contents_node);
@@ -814,6 +822,9 @@ WebContentsImpl::WebContentsTreeNode::DetachInnerWebContents(
       std::swap(web_contents, inner_web_contents_.back());
       inner_web_contents_.pop_back();
       current_web_contents_->InnerWebContentsDetached(inner_web_contents);
+      if (detached_contents) {
+        detached_contents->SetOwnerLocationForDebug(absl::nullopt);
+      }
       return detached_contents;
     }
   }
@@ -922,12 +933,28 @@ class WebContentsOfBrowserContext : public base::SupportsUserData::Data {
     // RenderFrameHosts, SiteInstances, etc.) risk causing
     // use-after-free bugs.  For more discussion about managing the
     // lifetime of WebContents please see https://crbug.com/1376879#c44.
-    for (WebContents* web_contents_with_dangling_ptr_to_browser_context :
+    for (WebContentsImpl* web_contents_with_dangling_ptr_to_browser_context :
          web_contents_set_) {
       std::string creator = web_contents_with_dangling_ptr_to_browser_context
                                 ->GetCreatorLocation()
                                 .ToString();
       SCOPED_CRASH_KEY_STRING256("shutdown", "web_contents/creator", creator);
+
+      const absl::optional<base::Location>& ownership_location =
+          web_contents_with_dangling_ptr_to_browser_context
+              ->ownership_location();
+      std::string owner;
+      if (ownership_location) {
+        if (ownership_location->has_source_info()) {
+          owner = std::string(ownership_location->function_name()) + "@" +
+                  ownership_location->file_name();
+        } else {
+          owner = "no_source_info";
+        }
+      } else {
+        owner = "unknown";
+      }
+      SCOPED_CRASH_KEY_STRING256("shutdown", "web_contents/owner", owner);
 
 #if BUILDFLAG(IS_ANDROID)
       // On Android, also report the Java stack trace from WebContents's
@@ -936,11 +963,18 @@ class WebContentsOfBrowserContext : public base::SupportsUserData::Data {
           env, web_contents_with_dangling_ptr_to_browser_context);
 #endif  // BUILDFLAG(IS_ANDROID)
 
-      NOTREACHED()
-          << "BrowserContext is getting destroyed without first closing all "
-          << "WebContents (for more info see https://crbug.com/1376879#c44); "
-          << "creator = " << creator;
-      base::debug::DumpWithoutCrashing();
+      if (base::FeatureList::IsEnabled(kCrashOnDanglingBrowserContext)) {
+        LOG(FATAL)
+            << "BrowserContext is getting destroyed without first closing all "
+            << "WebContents (for more info see https://crbug.com/1376879#c44); "
+            << "creator = " << creator;
+      } else {
+        NOTREACHED()
+            << "BrowserContext is getting destroyed without first closing all "
+            << "WebContents (for more info see https://crbug.com/1376879#c44); "
+            << "creator = " << creator;
+        base::debug::DumpWithoutCrashing();
+      }
     }
   }
 
@@ -974,7 +1008,7 @@ class WebContentsOfBrowserContext : public base::SupportsUserData::Data {
   // Usage of `raw_ptr` below is okay (i.e. it shouldn't dangle), because
   // when `WebContentsImpl`'s destructor runs, then it removes the set entry
   // (by calling `Detach`).
-  std::set<raw_ptr<WebContents>> web_contents_set_;
+  std::set<raw_ptr<WebContentsImpl>> web_contents_set_;
 };
 
 }  // namespace
@@ -3600,7 +3634,12 @@ void WebContentsImpl::ExitFullscreenMode(bool will_cause_resize) {
     static_cast<RenderWidgetHostViewBase*>(view)->ExitFullscreenMode();
 
   if (delegate_) {
+    // This may spin the message loop and destroy this object crbug.com/1506535
+    base::WeakPtr<WebContentsImpl> weak_ptr = weak_factory_.GetWeakPtr();
     delegate_->ExitFullscreenModeForTab(this);
+    if (!weak_ptr) {
+      return;
+    }
 
     if (keyboard_lock_widget_)
       delegate_->CancelKeyboardLockRequest(this);
@@ -4321,6 +4360,17 @@ void WebContentsImpl::ShowCreatedWindow(
   // mojom::CreateNewWindowStatus::kReuse is used). Ignore the request then.
   if (!owned_created || !owned_created->contents)
     return;
+
+  if (base::FeatureList::IsEnabled(kWindowOpenFileSelectFix) &&
+      active_file_chooser_) {
+    // Do not allow opening a new window or tab while a file select is active
+    // file chooser to avoid user confusion over which tab triggered the file
+    // chooser.
+    opener->AddMessageToConsole(
+        blink::mojom::ConsoleMessageLevel::kWarning,
+        "window.open blocked due to active file chooser.");
+    return;
+  }
 
   WebContentsImpl* created = owned_created->contents.get();
 
@@ -6157,8 +6207,8 @@ void WebContentsImpl::DidInferColorScheme(PageImpl& page) {
                   blink::mojom::PreferredColorScheme::kDark;
       base::UmaHistogramBoolean("Power.DarkMode.InferredDarkPageColorScheme",
                                 dark);
-      if (web_preferences_->preferred_color_scheme ==
-          blink::mojom::PreferredColorScheme::kDark) {
+      if (web_preferences_ && web_preferences_->preferred_color_scheme ==
+                                  blink::mojom::PreferredColorScheme::kDark) {
         base::UmaHistogramBoolean(
             "Power.DarkMode.DarkColorScheme.InferredDarkPageColorScheme", dark);
       }
@@ -9690,6 +9740,11 @@ std::unique_ptr<PrerenderHandle> WebContentsImpl::StartPrerendering(
         prerendering_url);
   }
   return nullptr;
+}
+
+void WebContentsImpl::SetOwnerLocationForDebug(
+    absl::optional<base::Location> owner_location) {
+  ownership_location_ = owner_location;
 }
 
 void WebContentsImpl::AboutToBeDiscarded(WebContents* new_contents) {

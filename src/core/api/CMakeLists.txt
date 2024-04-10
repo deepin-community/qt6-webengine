@@ -55,6 +55,8 @@ qt_internal_add_module(WebEngineCore
         Qt::Gui
         Qt::Network
         Qt::Quick
+    EXTRA_CMAKE_FILES
+        "${CMAKE_CURRENT_LIST_DIR}/${INSTALL_CMAKE_NAMESPACE}WebEngineCoreDeploySupport.cmake"
 )
 
 set_target_properties(WebEngineCore PROPERTIES QTWEBENGINEPROCESS_NAME ${qtWebEngineProcessName})
@@ -131,6 +133,10 @@ if(QT_FEATURE_webengine_v8_context_snapshot)
        foreach(config ${configs})
            if(MACOS)
                set(ext_arch ".${arch}")
+               # QTBUG-118120 gn does not support x86_64h
+               if(ext_arch STREQUAL "x86_64h")
+                   set(ext_arch "x86_64")
+               endif()
            else()
                unset(ext_arch)
            endif()
