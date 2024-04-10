@@ -197,18 +197,6 @@ int main(void) {
 }"
 )
 
-qt_config_compile_test(winversion
-    LABEL "winversion"
-    CODE
-"
-#if !defined(__clang__) && _MSC_VER < 1922
-#error unsupported Visual Studio version
-#endif
-int main(void){
-    return 0;
-}"
-)
-
 qt_config_compile_test(libavformat
     LABEL "libavformat"
     LIBRARIES
@@ -485,12 +473,13 @@ add_check_for_support(
    MESSAGE "Build can be done only on Linux, Windows, macO, iOS and Android(on non-Windows hosts only)."
 )
 if(LINUX AND CMAKE_CROSSCOMPILING)
-   get_gn_arch(testArch ${TEST_architecture_arch})
+   set(supportedTargets "arm" "arm64" "armv7-a" "x86_64")
    add_check_for_support(
        MODULES QtWebEngine QtPdf
-       CONDITION testArch
+       CONDITION TEST_architecture_arch IN_LIST supportedTargets
        MESSAGE "Cross compiling is not supported for ${TEST_architecture_arch}."
    )
+   unset(supportedTargets)
 endif()
 add_check_for_support(
    MODULES QtWebEngine
@@ -504,9 +493,9 @@ add_check_for_support(
 )
 add_check_for_support(
     MODULES QtWebEngine
-    CONDITION NOT (Nodejs_ARCH STREQUAL ia32) AND
-              NOT (Nodejs_ARCH STREQUAL x86) AND
-              NOT (Nodejs_ARCH STREQUAL arm)
+    CONDITION NOT (Nodejs_ARCH STREQUAL "ia32") AND
+              NOT (Nodejs_ARCH STREQUAL "x86") AND
+              NOT (Nodejs_ARCH STREQUAL "arm")
     MESSAGE "32bit version of Nodejs is not supported."
 )
 add_check_for_support(
@@ -587,9 +576,9 @@ ${xcbErrorMessage}"
 add_check_for_support(
    MODULES QtWebEngine
    CONDITION MSVC OR
-       (LINUX AND CMAKE_CXX_COMPILER_ID STREQUAL GNU) OR
-       (LINUX AND CMAKE_CXX_COMPILER_ID STREQUAL Clang) OR
-       (MACOS AND CMAKE_CXX_COMPILER_ID STREQUAL AppleClang)
+       (LINUX AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU") OR
+       (LINUX AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang") OR
+       (MACOS AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
    MESSAGE
        "${CMAKE_CXX_COMPILER_ID} compiler is not supported."
 )
@@ -597,22 +586,32 @@ add_check_for_support(
 add_check_for_support(
    MODULES QtPdf
    CONDITION MSVC OR
-       (LINUX AND CMAKE_CXX_COMPILER_ID STREQUAL GNU) OR
-       (LINUX AND CMAKE_CXX_COMPILER_ID STREQUAL Clang) OR
-       (APPLE AND CMAKE_CXX_COMPILER_ID STREQUAL AppleClang) OR
-       (ANDROID AND CMAKE_CXX_COMPILER_ID STREQUAL Clang) OR
-       (MINGW AND CMAKE_CXX_COMPILER_ID STREQUAL GNU) OR
-       (MINGW AND CMAKE_CXX_COMPILER_ID STREQUAL Clang)
+       (LINUX AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU") OR
+       (LINUX AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang") OR
+       (APPLE AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang") OR
+       (ANDROID AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang") OR
+       (MINGW AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU") OR
+       (MINGW AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
    MESSAGE
        "${CMAKE_CXX_COMPILER_ID} compiler is not supported."
 )
 if(WIN32)
     if(MSVC)
-        add_check_for_support(
-            MODULES QtWebEngine QtPdf
-            CONDITION NOT MSVC_VERSION LESS 1922
-            MESSAGE "VS compiler version must be at least 14.22"
-        )
+        if(MSVC_TOOLSET_VERSION EQUAL 142) # VS 2019 (16.0)
+            add_check_for_support(
+                MODULES QtWebEngine QtPdf
+                CONDITION NOT MSVC_VERSION LESS 1929
+                MESSAGE "VS compiler version must be at least 14.29"
+            )
+        elseif(MSVC_TOOLSET_VERSION EQUAL 143) # VS 2022 (17.0)
+            add_check_for_support(
+                MODULES QtWebEngine QtPdf
+                CONDITION NOT MSVC_VERSION LESS 1936
+                MESSAGE "VS compiler version must be at least 14.36"
+            )
+        else()
+            message(FATAL_ERROR "Build requires Visual Studio 2019 or higher.")
+        endif()
     endif()
     set(windowsSdkVersion $ENV{WindowsSDKVersion})
     string(REGEX REPLACE "([0-9.]+).*" "\\1" windowsSdkVersion "${windowsSdkVersion}")
@@ -624,11 +623,6 @@ if(WIN32)
         MESSAGE "Build requires Windows 11 SDK at least version 10.0.22621.0"
     )
 endif()
-add_check_for_support(
-   MODULES QtWebEngine QtPdf
-   CONDITION NOT MSVC OR TEST_winversion
-   MESSAGE "Build requires Visual Studio 2019 or higher."
-)
 
 #### Summary
 

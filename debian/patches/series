@@ -8,10 +8,5 @@ reduce_debugging_info.patch
 # rewrite compressing files in devtools-frontend
 compressing_files.patch
 
-# disable check for 32bit Node.js
-disable_32bit_node_check.patch
-
 # enable support for i386
 support-i386.patch
-
-icu74.patch

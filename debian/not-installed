@@ -11,4 +11,3 @@ usr/lib/${DEB_HOST_MULTIARCH}/qt6/mkspecs/modules/qt_lib_pdf_private.pri
 usr/lib/${DEB_HOST_MULTIARCH}/qt6/mkspecs/modules/qt_lib_pdfquick_private.pri
 usr/lib/${DEB_HOST_MULTIARCH}/qt6/mkspecs/modules/qt_lib_pdfwidgets_private.pri
 usr/lib/qt6/libexec/gn
-usr/share/qt6/resources/v8_context_snapshot.bin

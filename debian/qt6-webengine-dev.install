@@ -101,6 +101,7 @@ usr/lib/${DEB_HOST_MULTIARCH}/cmake/Qt6WebEngineCore/Qt6WebEngineCoreConfig.cmak
 usr/lib/${DEB_HOST_MULTIARCH}/cmake/Qt6WebEngineCore/Qt6WebEngineCoreConfigVersion.cmake
 usr/lib/${DEB_HOST_MULTIARCH}/cmake/Qt6WebEngineCore/Qt6WebEngineCoreConfigVersionImpl.cmake
 usr/lib/${DEB_HOST_MULTIARCH}/cmake/Qt6WebEngineCore/Qt6WebEngineCoreDependencies.cmake
+usr/lib/${DEB_HOST_MULTIARCH}/cmake/Qt6WebEngineCore/Qt6WebEngineCoreDeploySupport.cmake
 usr/lib/${DEB_HOST_MULTIARCH}/cmake/Qt6WebEngineCore/Qt6WebEngineCoreMacros.cmake
 usr/lib/${DEB_HOST_MULTIARCH}/cmake/Qt6WebEngineCore/Qt6WebEngineCoreTargets-none.cmake
 usr/lib/${DEB_HOST_MULTIARCH}/cmake/Qt6WebEngineCore/Qt6WebEngineCoreTargets.cmake

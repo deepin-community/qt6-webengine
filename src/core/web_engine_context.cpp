@@ -105,6 +105,7 @@
 #include <qopenglcontext_platform.h>
 #endif
 #include <QQuickWindow>
+#include <QRegularExpression>
 #include <QStringList>
 #include <QSurfaceFormat>
 #include <QNetworkProxy>
@@ -926,6 +927,22 @@ base::CommandLine *WebEngineContext::initCommandLine(bool &useEmbeddedSwitches,
     appArgs.removeAll(QStringLiteral("--disable-embedded-switches"));
     appArgs.removeAll(QStringLiteral("--enable-embedded-switches"));
 
+    bool isRemoteDebugPort =
+            (-1
+             != appArgs.indexOf(QRegularExpression(QStringLiteral("--remote-debugging-port=.*"),
+                                                   QRegularExpression::CaseInsensitiveOption)))
+            || !qEnvironmentVariable("QTWEBENGINE_REMOTE_DEBUGGING").isEmpty();
+    bool isRemoteAllowOrigins =
+            (-1
+             != appArgs.indexOf(QRegularExpression(QStringLiteral("--remote-allow-origins=.*"),
+                                                   QRegularExpression::CaseInsensitiveOption)));
+
+    if (isRemoteDebugPort && !isRemoteAllowOrigins) {
+        appArgs.append(QStringLiteral("--remote-allow-origins=*"));
+        qWarning("Added {--remote-allow-origins=*} to command-line arguments "
+                 "to avoid web socket connection errors during remote debugging.");
+    }
+
     base::CommandLine::StringVector argv;
     argv.resize(appArgs.size());
 #if defined(Q_OS_WIN)
@@ -965,7 +982,7 @@ const char *qWebEngineChromiumVersion() noexcept
 
 const char *qWebEngineChromiumSecurityPatchVersion() noexcept
 {
-    return "119.0.6045.123"; // FIXME: Remember to update
+    return "122.0.6261.128"; // FIXME: Remember to update
 }
 
 QT_END_NAMESPACE

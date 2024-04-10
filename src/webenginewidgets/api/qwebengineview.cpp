@@ -1,6 +1,7 @@
 // Copyright (C) 2021 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
+#include "qapplication.h"
 #include "qwebenginenotificationpresenter_p.h"
 #include "qwebengineview.h"
 #include "qwebengineview_p.h"
@@ -67,6 +68,14 @@
 #include <QPrinter>
 #include <QThread>
 #endif
+
+QT_BEGIN_NAMESPACE
+class QSpontaneKeyEvent
+{
+public:
+    static inline void makeSpontaneous(QEvent *ev) { ev->setSpontaneous(); }
+};
+QT_END_NAMESPACE
 
 namespace QtWebEngineCore {
 class WebEngineQuickWidget : public QQuickWidget, public WidgetDelegate
@@ -148,6 +157,7 @@ public:
     }
     void SetClearColor(const QColor &color) override
     {
+        setUpdatesEnabled(false);
         QQuickWidget::setClearColor(color);
         // QQuickWidget is usually blended by punching holes into widgets
         // above it to simulate the visual stacking order. If we want it to be
@@ -156,7 +166,8 @@ public:
         bool isTranslucent = color.alpha() < 255;
         setAttribute(Qt::WA_AlwaysStackOnTop, isTranslucent);
         setAttribute(Qt::WA_OpaquePaintEvent, !isTranslucent);
-        update();
+        setUpdatesEnabled(true);
+        window()->update();
     }
     void MoveWindow(const QPoint &screenPos) override
     {
@@ -171,6 +182,14 @@ public:
         if (const QWidget *root = QQuickWidget::window())
             return root->windowHandle();
         return nullptr;
+    }
+    void unhandledWheelEvent(QWheelEvent *ev) override
+    {
+        auto parentWidget = QQuickWidget::parentWidget();
+        if (parentWidget) {
+            QSpontaneKeyEvent::makeSpontaneous(ev);
+            qApp->notify(parentWidget, ev);
+        }
     }
 
 protected:
@@ -425,6 +444,8 @@ void QWebEngineViewPrivate::widgetChanged(QtWebEngineCore::WebEngineQuickWidget 
 #endif
         q->layout()->addWidget(newWidget);
         q->setFocusProxy(newWidget);
+        if (oldWidget && oldWidget == QApplication::focusWidget())
+            newWidget->setFocus();
         newWidget->show();
     }
 }
@@ -537,8 +558,10 @@ bool QWebEngineViewPrivate::showAuthorizationDialog(const QString &title, const 
 {
 #if QT_CONFIG(messagebox)
     Q_Q(QWebEngineView);
-    return QMessageBox::question(q, title, message, QMessageBox::Yes, QMessageBox::No)
-            == QMessageBox::Yes;
+    QMessageBox msgBox(QMessageBox::Question, title, message, QMessageBox::Yes | QMessageBox::No,
+                       q, Qt::Dialog | Qt::MSWindowsFixedSizeDialogHint);
+    msgBox.setTextFormat(Qt::PlainText);
+    return msgBox.exec() == QMessageBox::Yes;
 #else
     return false;
 #endif // QT_CONFIG(messagebox)
@@ -548,8 +571,12 @@ void QWebEngineViewPrivate::javaScriptAlert(const QUrl &url, const QString &msg)
 {
 #if QT_CONFIG(messagebox)
     Q_Q(QWebEngineView);
-    QMessageBox::information(q, QStringLiteral("Javascript Alert - %1").arg(url.toString()),
-                             msg.toHtmlEscaped());
+    QMessageBox msgBox(QMessageBox::Information,
+                       QStringLiteral("Javascript Alert - %1").arg(url.toString()),
+                       msg, QMessageBox::Ok, q,
+                       Qt::Dialog | Qt::MSWindowsFixedSizeDialogHint);
+    msgBox.setTextFormat(Qt::PlainText);
+    msgBox.exec();
 #else
     Q_UNUSED(msg);
 #endif // QT_CONFIG(messagebox)
@@ -559,10 +586,12 @@ bool QWebEngineViewPrivate::javaScriptConfirm(const QUrl &url, const QString &ms
 {
 #if QT_CONFIG(messagebox)
     Q_Q(QWebEngineView);
-    return (QMessageBox::information(q,
-                                     QStringLiteral("Javascript Confirm - %1").arg(url.toString()),
-                                     msg.toHtmlEscaped(), QMessageBox::Ok, QMessageBox::Cancel)
-            == QMessageBox::Ok);
+    QMessageBox msgBox(QMessageBox::Information,
+                       QStringLiteral("Javascript Confirm - %1").arg(url.toString()),
+                       msg, QMessageBox::Ok | QMessageBox::Cancel, q,
+                       Qt::Dialog | Qt::MSWindowsFixedSizeDialogHint);
+    msgBox.setTextFormat(Qt::PlainText);
+    return msgBox.exec() == QMessageBox::Ok;
 #else
     Q_UNUSED(msg);
     return false;
@@ -575,10 +604,16 @@ bool QWebEngineViewPrivate::javaScriptPrompt(const QUrl &url, const QString &msg
 #if QT_CONFIG(inputdialog)
     Q_Q(QWebEngineView);
     bool ret = false;
+
+    // Workaround: Do not interpret text as Qt::RichText
+    // QInputDialog uses Qt::AutoText that interprets the text string as
+    // Qt::RichText if Qt::mightBeRichText() returns true, otherwise as Qt::PlainText.
+    const QString message = Qt::mightBeRichText(msg) ? msg.toHtmlEscaped() : msg;
+
     if (result)
         *result = QInputDialog::getText(
                 q, QStringLiteral("Javascript Prompt - %1").arg(url.toString()),
-                msg.toHtmlEscaped(), QLineEdit::Normal, defaultValue.toHtmlEscaped(), &ret);
+                message, QLineEdit::Normal, defaultValue, &ret);
     return ret;
 #else
     Q_UNUSED(msg);
@@ -731,9 +766,9 @@ void QWebEngineViewPrivate::bindPageAndWidget(QWebEnginePagePrivate *pagePrivate
     }
 }
 
-QIcon QWebEngineViewPrivate::webActionIcon(QWebEnginePage::WebAction action)
+QIcon QWebEngineViewPrivate::webActionIcon(QWebEnginePage::WebAction action) const
 {
-    Q_Q(QWebEngineView);
+    Q_Q(const QWebEngineView);
     QIcon icon;
     QStyle *style = q->style();
 
@@ -1105,7 +1140,16 @@ QString QWebEngineView::selectedText() const
 #if QT_CONFIG(action)
 QAction* QWebEngineView::pageAction(QWebEnginePage::WebAction action) const
 {
-    return page()->action(action);
+    Q_D(const QWebEngineView);
+    QAction *pageAction = page()->action(action);
+
+    if (pageAction->icon().isNull()) {
+        auto icon = d->webActionIcon(action);
+        if (!icon.isNull())
+            pageAction->setIcon(icon);
+    }
+
+    return pageAction;
 }
 #endif
 
@@ -1463,79 +1507,79 @@ void QContextMenuBuilder::addMenuItem(ContextMenuItem menuItem)
 
     switch (menuItem) {
     case ContextMenuItem::Back:
-        action = thisRef->action(QWebEnginePage::Back);
+        action = m_view->pageAction(QWebEnginePage::Back);
         break;
     case ContextMenuItem::Forward:
-        action = thisRef->action(QWebEnginePage::Forward);
+        action = m_view->pageAction(QWebEnginePage::Forward);
         break;
     case ContextMenuItem::Reload:
-        action = thisRef->action(QWebEnginePage::Reload);
+        action = m_view->pageAction(QWebEnginePage::Reload);
         break;
     case ContextMenuItem::Cut:
-        action = thisRef->action(QWebEnginePage::Cut);
+        action = m_view->pageAction(QWebEnginePage::Cut);
         break;
     case ContextMenuItem::Copy:
-        action = thisRef->action(QWebEnginePage::Copy);
+        action = m_view->pageAction(QWebEnginePage::Copy);
         break;
     case ContextMenuItem::Paste:
-        action = thisRef->action(QWebEnginePage::Paste);
+        action = m_view->pageAction(QWebEnginePage::Paste);
         break;
     case ContextMenuItem::Undo:
-        action = thisRef->action(QWebEnginePage::Undo);
+        action = m_view->pageAction(QWebEnginePage::Undo);
         break;
     case ContextMenuItem::Redo:
-        action = thisRef->action(QWebEnginePage::Redo);
+        action = m_view->pageAction(QWebEnginePage::Redo);
         break;
     case ContextMenuItem::SelectAll:
-        action = thisRef->action(QWebEnginePage::SelectAll);
+        action = m_view->pageAction(QWebEnginePage::SelectAll);
         break;
     case ContextMenuItem::PasteAndMatchStyle:
-        action = thisRef->action(QWebEnginePage::PasteAndMatchStyle);
+        action = m_view->pageAction(QWebEnginePage::PasteAndMatchStyle);
         break;
     case ContextMenuItem::OpenLinkInNewWindow:
-        action = thisRef->action(QWebEnginePage::OpenLinkInNewWindow);
+        action = m_view->pageAction(QWebEnginePage::OpenLinkInNewWindow);
         break;
     case ContextMenuItem::OpenLinkInNewTab:
-        action = thisRef->action(QWebEnginePage::OpenLinkInNewTab);
+        action = m_view->pageAction(QWebEnginePage::OpenLinkInNewTab);
         break;
     case ContextMenuItem::CopyLinkToClipboard:
-        action = thisRef->action(QWebEnginePage::CopyLinkToClipboard);
+        action = m_view->pageAction(QWebEnginePage::CopyLinkToClipboard);
         break;
     case ContextMenuItem::DownloadLinkToDisk:
-        action = thisRef->action(QWebEnginePage::DownloadLinkToDisk);
+        action = m_view->pageAction(QWebEnginePage::DownloadLinkToDisk);
         break;
     case ContextMenuItem::CopyImageToClipboard:
-        action = thisRef->action(QWebEnginePage::CopyImageToClipboard);
+        action = m_view->pageAction(QWebEnginePage::CopyImageToClipboard);
         break;
     case ContextMenuItem::CopyImageUrlToClipboard:
-        action = thisRef->action(QWebEnginePage::CopyImageUrlToClipboard);
+        action = m_view->pageAction(QWebEnginePage::CopyImageUrlToClipboard);
         break;
     case ContextMenuItem::DownloadImageToDisk:
-        action = thisRef->action(QWebEnginePage::DownloadImageToDisk);
+        action = m_view->pageAction(QWebEnginePage::DownloadImageToDisk);
         break;
     case ContextMenuItem::CopyMediaUrlToClipboard:
-        action = thisRef->action(QWebEnginePage::CopyMediaUrlToClipboard);
+        action = m_view->pageAction(QWebEnginePage::CopyMediaUrlToClipboard);
         break;
     case ContextMenuItem::ToggleMediaControls:
-        action = thisRef->action(QWebEnginePage::ToggleMediaControls);
+        action = m_view->pageAction(QWebEnginePage::ToggleMediaControls);
         break;
     case ContextMenuItem::ToggleMediaLoop:
-        action = thisRef->action(QWebEnginePage::ToggleMediaLoop);
+        action = m_view->pageAction(QWebEnginePage::ToggleMediaLoop);
         break;
     case ContextMenuItem::DownloadMediaToDisk:
-        action = thisRef->action(QWebEnginePage::DownloadMediaToDisk);
+        action = m_view->pageAction(QWebEnginePage::DownloadMediaToDisk);
         break;
     case ContextMenuItem::InspectElement:
-        action = thisRef->action(QWebEnginePage::InspectElement);
+        action = m_view->pageAction(QWebEnginePage::InspectElement);
         break;
     case ContextMenuItem::ExitFullScreen:
-        action = thisRef->action(QWebEnginePage::ExitFullScreen);
+        action = m_view->pageAction(QWebEnginePage::ExitFullScreen);
         break;
     case ContextMenuItem::SavePage:
-        action = thisRef->action(QWebEnginePage::SavePage);
+        action = m_view->pageAction(QWebEnginePage::SavePage);
         break;
     case ContextMenuItem::ViewSource:
-        action = thisRef->action(QWebEnginePage::ViewSource);
+        action = m_view->pageAction(QWebEnginePage::ViewSource);
         break;
     case ContextMenuItem::SpellingSuggestions:
         for (int i = 0; i < m_contextData->spellCheckerSuggestions().size() && i < 4; i++) {
