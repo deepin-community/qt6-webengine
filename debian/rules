@@ -2,7 +2,7 @@
 
 include /usr/share/dpkg/architecture.mk
 
-export DEB_BUILD_MAINT_OPTIONS = hardening=+all optimize=+lto
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all optimize=-lto
 
 PARALLEL_OPTION = $(filter parallel=%,$(DEB_BUILD_OPTIONS))
 ifneq (,$(PARALLEL_OPTION))
