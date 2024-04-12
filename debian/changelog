@@ -1,3 +1,9 @@
+qt6-webengine (6.6.3-0deepin2) unstable; urgency=medium
+
+  * fix: add loong64 support
+
+ -- Chang Yang <yangchang@deepin.org>  Fri, 12 Apr 2024 11:39:59 +0800
+
 qt6-webengine (6.6.3-0deepin1) unstable; urgency=medium
 
   * fix: disable lto to fix segfault
