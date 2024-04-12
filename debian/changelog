@@ -1,3 +1,9 @@
+qt6-webengine (6.6.3-0deepin3) unstable; urgency=medium
+
+  * fix: add riscv64 support
+
+ -- Chang Yang <yangchang@deepin.org>  Fri, 12 Apr 2024 17:02:16 +0800
+
 qt6-webengine (6.6.3-0deepin2) unstable; urgency=medium
 
   * fix: add loong64 support

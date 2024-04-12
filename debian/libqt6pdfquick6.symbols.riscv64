@@ -1,0 +1,17 @@
+# SymbolsHelper-Confirmed: 6.6.0 amd64
+libQt6PdfQuick.so.6 libqt6pdfquick6 #MINVER#
+| libqt6pdfquick6 #MINVER#, qt6-webengine-private-abi (= 6.6.1)
+* Build-Depends-Packages: qt6-webengine-dev, qt6-webengine-private-dev
+ Qt_6@Qt_6 6.6.0
+ (symver)Qt_6_PRIVATE_API 0
+ _Z30qml_register_types_QtQuick_Pdfv@Qt_6 6.6.0
+ _ZGVZN9QMetaType21registerConverterImplI5QListI8QPdfLinkE9QIterableI13QMetaSequenceEEEbSt8functionIFbPKvPvEES_S_E10unregister@Qt_6 6.6.0
+ _ZGVZN9QMetaType21registerConverterImplI5QListI9QPolygonFE9QIterableI13QMetaSequenceEEEbSt8functionIFbPKvPvEES_S_E10unregister@Qt_6 6.6.0
+ _ZGVZN9QMetaType23registerMutableViewImplI5QListI8QPdfLinkE9QIterableI13QMetaSequenceEEEbSt8functionIFbPvS8_EES_S_E10unregister@Qt_6 6.6.0
+ _ZGVZN9QMetaType23registerMutableViewImplI5QListI9QPolygonFE9QIterableI13QMetaSequenceEEEbSt8functionIFbPvS8_EES_S_E10unregister@Qt_6 6.6.0
+ _ZTI18QQuickImagePrivate@Qt_6 6.6.0
+ _ZTS18QQuickImagePrivate@Qt_6 6.6.0
+ (optional=templinst)_ZZN9QMetaType21registerConverterImplI5QListI8QPdfLinkE9QIterableI13QMetaSequenceEEEbSt8functionIFbPKvPvEES_S_E10unregister@Qt_6 6.6.0
+ (optional=templinst)_ZZN9QMetaType21registerConverterImplI5QListI9QPolygonFE9QIterableI13QMetaSequenceEEEbSt8functionIFbPKvPvEES_S_E10unregister@Qt_6 6.6.0
+ (optional=templinst)_ZZN9QMetaType23registerMutableViewImplI5QListI8QPdfLinkE9QIterableI13QMetaSequenceEEEbSt8functionIFbPvS8_EES_S_E10unregister@Qt_6 6.6.0
+ (optional=templinst)_ZZN9QMetaType23registerMutableViewImplI5QListI9QPolygonFE9QIterableI13QMetaSequenceEEEbSt8functionIFbPvS8_EES_S_E10unregister@Qt_6 6.6.0
