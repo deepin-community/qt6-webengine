@@ -10,3 +10,16 @@ compressing_files.patch
 
 # enable support for i386
 support-i386.patch
+
+riscv-angle.patch
+riscv-base.patch
+riscv-crashpad.patch
+riscv-dav1d.patch
+riscv-libgav1.patch
+# old libyuv, no rvv support
+# riscv-libyuv.patch
+riscv-sandbox.patch
+riscv-ffmpeg-script.patch
+riscv-ffmpeg-generated.patch
+riscv-ffmpeg-generated-files.patch
+riscv-hack-devtools-remove-terser.patch

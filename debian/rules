@@ -32,6 +32,14 @@ ifeq (loong64, $(DEB_HOST_ARCH))
 	TARGET_PATCH = patch_loong64
 endif
 
+ifeq (riscv64, $(DEB_HOST_ARCH))
+	USE_CC = clang-17
+	USE_CXX = clang++-17
+else
+	USE_CC = gcc
+	USE_CXX = g++
+endif
+
 patch_loong64:
 	patch -p1 < debian/patches/loong64.patch
 
@@ -74,7 +82,9 @@ override_dh_auto_configure:
 		-DFEATURE_qtpdf_widgets_build=ON \
 		-DFEATURE_qtpdf_quick_build=ON \
 		-DFEATURE_webengine_proprietary_codecs=ON \
-		-DFEATURE_webengine_kerberos=ON
+		-DFEATURE_webengine_kerberos=ON \
+		-DCMAKE_C_COMPILER=/usr/bin/$(USE_CC) \
+		-DCMAKE_CXX_COMPILER=/usr/bin/$(USE_CXX)
 
 override_dh_auto_build:
 	dh_auto_build
