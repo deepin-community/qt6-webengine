@@ -1,3 +1,15 @@
+qt6-webengine (6.6.3-0deepin4) unstable; urgency=medium
+
+  * Fix up public header before build.
+  * Re-enable LTO on !riscv64. Previously, disabled LTO due to compiler flag
+    incompatibility (-ffat-lto-objects) on riscv64, as it uses Clang to
+    work around a bug in GCC. This change is not needed for other
+    architectures, so make this change specific to riscv64.
+  * Mark libqt6webengine6-data as any, as it contains architecture-specific
+    v8_context_snapshot.bin.
+
+ -- Mingcong Bai <baimingcong@uniontech.com>  Mon, 27 May 2024 14:35:39 +0800
+
 qt6-webengine (6.6.3-0deepin3) unstable; urgency=medium
 
   * fix: add riscv64 support

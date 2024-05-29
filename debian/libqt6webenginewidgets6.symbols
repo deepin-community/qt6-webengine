@@ -70,7 +70,6 @@ libQt6WebEngineWidgets.so.6 libqt6webenginewidgets6 #MINVER#
  _ZNK14QWebEngineView7iconUrlEv@Qt_6 6.6.0
  _ZNK14QWebEngineView8settingsEv@Qt_6 6.6.0
  _ZNK14QWebEngineView8sizeHintEv@Qt_6 6.6.0
- _ZNSt8_Rb_treeIiSt4pairIKi6QImageESt10_Select1stIS3_ESt4lessIiESaIS3_EE16_M_insert_uniqueIS3_EES0_ISt17_Rb_tree_iteratorIS3_EbEOT_@Qt_6 6.6.3
  _ZTI14QWebEngineView@Qt_6 6.6.0
  _ZTIFvSt10unique_ptrI22QWebEngineNotificationSt14default_deleteIS0_EEE@Qt_6 6.6.0
  _ZTIN15QtWebEngineCore23RenderViewContextMenuQtE@Qt_6 6.6.0
