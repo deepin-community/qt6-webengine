@@ -11,6 +11,7 @@ compressing_files.patch
 # enable support for i386
 support-i386.patch
 
+# enable support for riscv64
 riscv-angle.patch
 riscv-base.patch
 riscv-crashpad.patch
@@ -23,3 +24,10 @@ riscv-ffmpeg-script.patch
 riscv-ffmpeg-generated.patch
 riscv-ffmpeg-generated-files.patch
 riscv-hack-devtools-remove-terser.patch
+
+# enable support for loong64
+#
+# FIXME: Applied as target specific patch (debian/rules: patch_loong64),
+# further triage needed.
+#
+# loong64.patch

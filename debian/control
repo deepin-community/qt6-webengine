@@ -191,8 +191,8 @@ Description: Qt 6 WebEngine Widgets library
  This package contains the Qt 6 WebEngine Widgets library.
 
 Package: libqt6webengine6-data
-Architecture: all
-Multi-Arch: foreign
+Architecture: amd64 arm64 armhf i386 riscv64 loong64
+Multi-Arch: same
 Depends: ${misc:Depends},
 Pre-Depends: ${misc:Pre-Depends},
 Description: Qt 6 Web content engine library - data
