@@ -1,4 +1,4 @@
-# SymbolsHelper-Confirmed: 6.6.0 amd64
+# SymbolsHelper-Confirmed: 6.6.3 amd64
 libQt6WebEngineQuick.so.6 libqt6webenginequick6 #MINVER#
 | libqt6webenginequick6 #MINVER#, qt6-webengine-private-abi (= 6.6.1)
 * Build-Depends-Packages: qt6-webengine-dev, qt6-webengine-private-dev
@@ -86,6 +86,7 @@ libQt6WebEngineQuick.so.6 libqt6webenginequick6 #MINVER#
  _ZNK22QQuickWebEngineProfile23persistentCookiesPolicyEv@Qt_6 6.6.0
  _ZNK22QQuickWebEngineProfile8settingsEv@Qt_6 6.6.0
  _ZNK22QQuickWebEngineProfile9cachePathEv@Qt_6 6.6.0
+ _ZSt19piecewise_construct@Qt_6 6.6.3
  _ZTI22QQuickWebEngineProfile@Qt_6 6.6.0
  _ZTIFP7QObjectP10QQmlEngineP9QJSEngineE@Qt_6 6.6.0
  _ZTIN15QtWebEngineCore20ProfileAdapterClientE@Qt_6 6.6.0
