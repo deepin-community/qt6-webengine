@@ -1,3 +1,9 @@
+qt6-webengine (6.6.3-0deepin5) unstable; urgency=medium
+
+  * Add missing dependencies to avoid compilation errors
+
+ -- xiangzelong <xiangzelong@deepin.org>  Mon, 12 Aug 2024 15:04:47 +0800
+
 qt6-webengine (6.6.3-0deepin4) unstable; urgency=medium
 
   * Fix up public header before build.

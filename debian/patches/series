@@ -31,3 +31,5 @@ riscv-hack-devtools-remove-terser.patch
 # further triage needed.
 #
 # loong64.patch
+
+Add-missing-dependencies-to-avoid-compilation-errors.patch
