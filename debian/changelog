@@ -1,3 +1,9 @@
+qt6-webengine (6.6.3-0deepin6) unstable; urgency=medium
+
+ * soupport Qt6.8 rebuild.
+
+ -- lichenggang <lichenggang@deepin.org>  Tue, 05 Nov 2024 17:47:13 +0800
+
 qt6-webengine (6.6.3-0deepin5) unstable; urgency=medium
 
   * Add missing dependencies to avoid compilation errors
