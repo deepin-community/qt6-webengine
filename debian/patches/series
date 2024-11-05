@@ -33,3 +33,5 @@ riscv-hack-devtools-remove-terser.patch
 # loong64.patch
 
 Add-missing-dependencies-to-avoid-compilation-errors.patch
+suopport-Qt6.8-rebuild.patch
+suopport-Qt6.8-rebuild2.patch

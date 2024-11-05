@@ -11,3 +11,14 @@ usr/lib/${DEB_HOST_MULTIARCH}/qt6/mkspecs/modules/qt_lib_pdf_private.pri
 usr/lib/${DEB_HOST_MULTIARCH}/qt6/mkspecs/modules/qt_lib_pdfquick_private.pri
 usr/lib/${DEB_HOST_MULTIARCH}/qt6/mkspecs/modules/qt_lib_pdfwidgets_private.pri
 usr/lib/qt6/libexec/gn
+usr/include/${DEB_HOST_MULTIARCH}/qt6/QtPdfQuick/qtpdfquickexports.h
+usr/include/${DEB_HOST_MULTIARCH}/qt6/QtPdfWidgets/qtpdfwidgetsexports.h
+usr/include/${DEB_HOST_MULTIARCH}/qt6/QtWebEngineQuick/qtwebenginequickexports.h
+usr/include/${DEB_HOST_MULTIARCH}/qt6/QtWebEngineWidgets/qtwebenginewidgetsexports.h
+usr/lib/${DEB_HOST_MULTIARCH}/cmake/Qt6Pdf/Qt6PdfVersionlessAliasTargets.cmake
+usr/lib/${DEB_HOST_MULTIARCH}/cmake/Qt6PdfQuick/Qt6PdfQuickVersionlessAliasTargets.cmake
+usr/lib/${DEB_HOST_MULTIARCH}/cmake/Qt6PdfWidgets/Qt6PdfWidgetsVersionlessAliasTargets.cmake
+usr/lib/${DEB_HOST_MULTIARCH}/cmake/Qt6WebEngineCore/Qt6WebEngineCoreVersionlessAliasTargets.cmake
+usr/lib/${DEB_HOST_MULTIARCH}/cmake/Qt6WebEngineQuick/Qt6WebEngineQuickVersionlessAliasTargets.cmake
+usr/lib/${DEB_HOST_MULTIARCH}/cmake/Qt6WebEngineQuickDelegatesQml/Qt6WebEngineQuickDelegatesQmlVersionlessAliasTargets.cmake
+usr/lib/${DEB_HOST_MULTIARCH}/cmake/Qt6WebEngineWidgets/Qt6WebEngineWidgetsVersionlessAliasTargets.cmake
