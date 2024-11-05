@@ -165,3 +165,10 @@ usr/lib/${DEB_HOST_MULTIARCH}/qt6/modules/WebEngineQuick.json
 usr/lib/${DEB_HOST_MULTIARCH}/qt6/modules/WebEngineQuickDelegatesQml.json
 usr/lib/${DEB_HOST_MULTIARCH}/qt6/modules/WebEngineWidgets.json
 usr/lib/${DEB_HOST_MULTIARCH}/qt6/plugins/designer/libqwebengineview.so
+usr/lib/${DEB_HOST_MULTIARCH}/cmake/Qt6WebEngineCore/Qt6WebEngineCoreVersionlessAliasTargets.cmake
+usr/include/${DEB_HOST_MULTIARCH}/qt6/QtWebEngineQuick/qtwebenginequickexports.h
+usr/include/${DEB_HOST_MULTIARCH}/qt6/QtWebEngineWidgets/qtwebenginewidgetsexports.h
+usr/lib/${DEB_HOST_MULTIARCH}/cmake/Qt6PdfWidgets/Qt6PdfWidgetsVersionlessAliasTargets.cmake
+usr/lib/${DEB_HOST_MULTIARCH}/cmake/Qt6WebEngineQuick/Qt6WebEngineQuickVersionlessAliasTargets.cmake
+usr/lib/${DEB_HOST_MULTIARCH}/cmake/Qt6WebEngineQuickDelegatesQml/Qt6WebEngineQuickDelegatesQmlVersionlessAliasTargets.cmake
+usr/lib/${DEB_HOST_MULTIARCH}/cmake/Qt6WebEngineWidgets/Qt6WebEngineWidgetsVersionlessAliasTargets.cmake

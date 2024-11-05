@@ -1,3 +1,9 @@
+qt6-webengine (6.6.3-0deepin7) unstable; urgency=medium
+
+  * add update debian/*.install
+
+ -- lichenggang <lichenggang@deepin.org>  Tue, 05 Nov 2024 23:12:15 +0800
+
 qt6-webengine (6.6.3-0deepin6) unstable; urgency=medium
 
  * soupport Qt6.8 rebuild.
