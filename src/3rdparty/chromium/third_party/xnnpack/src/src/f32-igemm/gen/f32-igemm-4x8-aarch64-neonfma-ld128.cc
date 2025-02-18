@@ -29,9 +29,9 @@ class Generator : public MacroAssembler {
 //     size_t nc,                         x1
 //     size_t kc,                         x2 / x0
 //     size_t ks,                         x3 / x9
-//     const float**restrict a,           x4
-//     const float*restrict w,            x5
-//     float*restrict c,                  x6
+//     const float** restrict a,           x4
+//     const float* restrict w,            x5
+//     float* restrict c,                  x6
 //     size_t cm_stride,                  x7
 //     size_t cn_stride,                  [sp] -> x10
 //     size_t a_offset,                   [sp + 8] -> x11
@@ -56,7 +56,7 @@ class Generator : public MacroAssembler {
 void Generator::generate(size_t max_mr, size_t nc_mod_nr, size_t kc, size_t ks, const jit_gemm_params* jit_gemm_params)
 {
   assert(max_mr <= 4);
-  assert(nc_mod_nr < 8);
+  assert(nc_mod_nr < 8 || nc_mod_nr == SIZE_MAX);
   assert(kc != 0);
   assert(kc % sizeof(float) == 0);
   assert(ks != 0);
@@ -120,8 +120,16 @@ void Generator::generate(size_t max_mr, size_t nc_mod_nr, size_t kc, size_t ks, 
 
   bind(l1);
   // Load next 4 A pointers
-  ldp(x8, x13, mem[x4], 16);
-  if (max_mr > 2) {
+  if (max_mr == 1) {
+    ldr(x8, mem[x4], 8);
+  }
+  if (max_mr > 1) {
+    ldp(x8, x13, mem[x4], 16);
+  }
+  if (max_mr == 3) {
+    ldr(x14, mem[x4], 8);
+  }
+  if (max_mr > 3) {
     ldp(x14, x15, mem[x4], 16);
   }
 

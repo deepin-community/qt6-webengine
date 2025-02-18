@@ -5,13 +5,15 @@
 #ifndef COMPONENTS_CAST_STREAMING_RENDERER_FRAME_FRAME_INJECTING_DEMUXER_H_
 #define COMPONENTS_CAST_STREAMING_RENDERER_FRAME_FRAME_INJECTING_DEMUXER_H_
 
+#include "base/memory/raw_ptr.h"
 #include "base/task/sequenced_task_runner.h"
-#include "components/cast_streaming/public/mojom/demuxer_connector.mojom.h"
+#include "components/cast_streaming/common/public/mojom/demuxer_connector.mojom.h"
 #include "media/base/demuxer.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace cast_streaming {
 
+class StreamTimestampOffsetTracker;
 class FrameInjectingAudioDemuxerStream;
 class FrameInjectingVideoDemuxerStream;
 class DemuxerConnector;
@@ -44,7 +46,8 @@ class FrameInjectingDemuxer final : public media::Demuxer {
   void OnStreamInitializationComplete();
 
   // media::Demuxer implementation.
-  std::vector<media::DemuxerStream*> GetAllStreams() override;
+  std::vector<raw_ptr<media::DemuxerStream, VectorExperimental>> GetAllStreams()
+      override;
   std::string GetDisplayName() const override;
   media::DemuxerType GetDemuxerType() const override;
   void Initialize(media::DemuxerHost* host,
@@ -69,6 +72,7 @@ class FrameInjectingDemuxer final : public media::Demuxer {
       const std::vector<media::MediaTrack::Id>& track_ids,
       base::TimeDelta curr_time,
       TrackChangeCB change_completed_cb) override;
+  void SetPlaybackRate(double rate) override {}
 
   // The number of initialized streams that have yet to call
   // OnStreamInitializationComplete().
@@ -76,14 +80,16 @@ class FrameInjectingDemuxer final : public media::Demuxer {
 
   scoped_refptr<base::SequencedTaskRunner> media_task_runner_;
   scoped_refptr<base::SequencedTaskRunner> original_task_runner_;
-  media::DemuxerHost* host_ = nullptr;
+  raw_ptr<media::DemuxerHost, ExperimentalRenderer> host_ = nullptr;
+
+  scoped_refptr<StreamTimestampOffsetTracker> timestamp_tracker_;
   std::unique_ptr<FrameInjectingAudioDemuxerStream> audio_stream_;
   std::unique_ptr<FrameInjectingVideoDemuxerStream> video_stream_;
 
   // Set to true if the Demuxer was successfully initialized.
   bool was_initialization_successful_ = false;
   media::PipelineStatusCallback initialized_cb_;
-  DemuxerConnector* const demuxer_connector_;
+  const raw_ptr<DemuxerConnector, ExperimentalRenderer> demuxer_connector_;
 
   base::WeakPtrFactory<FrameInjectingDemuxer> weak_factory_;
 };

@@ -2,14 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import * as Host from '../../../core/host/host.js';
 import * as i18n from '../../../core/i18n/i18n.js';
+import type * as Protocol from '../../../generated/protocol.js';
 import * as Persistence from '../../../models/persistence/persistence.js';
 import * as Workspace from '../../../models/workspace/workspace.js';
 import * as Buttons from '../../../ui/components/buttons/buttons.js';
 import * as ComponentHelpers from '../../../ui/components/helpers/helpers.js';
 import * as UI from '../../../ui/legacy/legacy.js';
 import * as LitHtml from '../../../ui/lit-html/lit-html.js';
-import type * as Protocol from '../../../generated/protocol.js';
+import * as VisualLogging from '../../../ui/visual_logging/visual_logging.js';
 
 import HeadersViewStyles from './HeadersView.css.js';
 
@@ -41,12 +43,19 @@ const UIStrings = {
    *@description Button text for a button which adds an additional header override rule.
    */
   addOverrideRule: 'Add override rule',
+  /**
+   *@description Text which is a hyperlink to more documentation
+   */
+  learnMore: 'Learn more',
 };
 const str_ = i18n.i18n.registerUIStrings('panels/sources/components/HeadersView.ts', UIStrings);
 const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
 
-const plusIconUrl = new URL('../../../Images/plus_icon.svg', import.meta.url).toString();
-const trashIconUrl = new URL('../../../Images/trash_bin_material_icon.svg', import.meta.url).toString();
+const plusIconUrl = new URL('../../../Images/plus.svg', import.meta.url).toString();
+const trashIconUrl = new URL('../../../Images/bin.svg', import.meta.url).toString();
+
+const DEFAULT_HEADER_VALUE = 'header value';
+const getDefaultHeaderName = (i: number): string => `header-name-${i}`;
 
 export class HeadersView extends UI.View.SimpleView {
   readonly #headersViewComponent = new HeadersViewComponent();
@@ -54,6 +63,7 @@ export class HeadersView extends UI.View.SimpleView {
 
   constructor(uiSourceCode: Workspace.UISourceCode.UISourceCode) {
     super(i18n.i18n.lockedString('HeadersView'));
+    this.element.setAttribute('jslog', `${VisualLogging.pane().context('headers-view')}`);
     this.#uiSourceCode = uiSourceCode;
     this.#uiSourceCode.addEventListener(
         Workspace.UISourceCode.Events.WorkingCopyChanged, this.#onWorkingCopyChanged, this);
@@ -87,10 +97,6 @@ export class HeadersView extends UI.View.SimpleView {
       uiSourceCode: this.#uiSourceCode,
       parsingError,
     };
-  }
-
-  commitEditing(): void {
-    this.#uiSourceCode.commitWorkingCopy();
   }
 
   #onWorkingCopyChanged(): void {
@@ -218,6 +224,8 @@ export class HeadersViewComponent extends HTMLElement {
     // clear selection
     const selection = window.getSelection();
     selection?.removeAllRanges();
+
+    this.#uiSourceCode?.commitWorkingCopy();
   }
 
   #onContextMenu(event: Event): void {
@@ -232,10 +240,10 @@ export class HeadersViewComponent extends HTMLElement {
   #generateNextHeaderName(headers: Protocol.Fetch.HeaderEntry[]): string {
     const takenNames = new Set<string>(headers.map(header => header.name));
     let idx = 1;
-    while (takenNames.has('header-name-' + idx)) {
+    while (takenNames.has(getDefaultHeaderName(idx))) {
       idx++;
     }
-    return 'header-name-' + idx;
+    return getDefaultHeaderName(idx);
   }
 
   #onClick(event: Event): void {
@@ -246,13 +254,14 @@ export class HeadersViewComponent extends HTMLElement {
     if (target.matches('.add-header')) {
       this.#headerOverrides[blockIndex].headers.splice(
           headerIndex + 1, 0,
-          {name: this.#generateNextHeaderName(this.#headerOverrides[blockIndex].headers), value: 'header value'});
+          {name: this.#generateNextHeaderName(this.#headerOverrides[blockIndex].headers), value: DEFAULT_HEADER_VALUE});
       this.#focusElement = {blockIndex, headerIndex: headerIndex + 1};
       this.#onHeadersChanged();
     } else if (target.matches('.remove-header')) {
       this.#removeHeader(blockIndex, headerIndex);
     } else if (target.matches('.add-block')) {
-      this.#headerOverrides.push({applyTo: '*', headers: [{name: 'header-name-1', value: 'header value'}]});
+      this.#headerOverrides.push(
+          {applyTo: '*', headers: [{name: getDefaultHeaderName(1), value: DEFAULT_HEADER_VALUE}]});
       this.#focusElement = {blockIndex: this.#headerOverrides.length - 1};
       this.#onHeadersChanged();
     } else if (target.matches('.remove-block')) {
@@ -261,11 +270,18 @@ export class HeadersViewComponent extends HTMLElement {
     }
   }
 
+  #isDeletable(blockIndex: number, headerIndex: number): boolean {
+    const isOnlyDefaultHeader = headerIndex === 0 && this.#headerOverrides[blockIndex].headers.length === 1 &&
+        this.#headerOverrides[blockIndex].headers[headerIndex].name === getDefaultHeaderName(1) &&
+        this.#headerOverrides[blockIndex].headers[headerIndex].value === DEFAULT_HEADER_VALUE;
+    return !isOnlyDefaultHeader;
+  }
+
   #removeHeader(blockIndex: number, headerIndex: number): void {
     this.#headerOverrides[blockIndex].headers.splice(headerIndex, 1);
     if (this.#headerOverrides[blockIndex].headers.length === 0) {
       this.#headerOverrides[blockIndex].headers.push(
-          {name: this.#generateNextHeaderName(this.#headerOverrides[blockIndex].headers), value: 'header value'});
+          {name: this.#generateNextHeaderName(this.#headerOverrides[blockIndex].headers), value: DEFAULT_HEADER_VALUE});
     }
     this.#onHeadersChanged();
   }
@@ -294,6 +310,7 @@ export class HeadersViewComponent extends HTMLElement {
 
   #onHeadersChanged(): void {
     this.#uiSourceCode?.setWorkingCopy(JSON.stringify(this.#headerOverrides, null, 2));
+    Host.userMetrics.actionTaken(Host.UserMetrics.Action.HeaderOverrideHeadersFileEdited);
   }
 
   #onPaste(event: Event): void {
@@ -352,9 +369,18 @@ export class HeadersViewComponent extends HTMLElement {
           )}
         `,
       )}
-      <${Buttons.Button.Button.litTagName} .variant=${Buttons.Button.Variant.SECONDARY} class="add-block">
+      <${Buttons.Button.Button.litTagName}
+          .variant=${Buttons.Button.Variant.SECONDARY}
+          .jslog=${VisualLogging.action().track({click: true}).context('headers-view.add-override-rule')}
+          class="add-block">
         ${i18nString(UIStrings.addOverrideRule)}
       </${Buttons.Button.Button.litTagName}>
+      <div class="learn-more-row">
+        <x-link
+            href="https://goo.gle/devtools-override"
+            class="link"
+            jslog=${VisualLogging.link().track({click: true}).context('learn-more')}>${i18nString(UIStrings.learnMore)}</x-link>
+      </div>
     `, this.#shadow, {host: this});
     // clang-format on
 
@@ -387,6 +413,7 @@ export class HeadersViewComponent extends HTMLElement {
         .iconWidth=${'14px'}
         .iconHeight=${'14px'}
         .variant=${Buttons.Button.Variant.ROUND}
+        .jslog=${VisualLogging.action().track({click: true}).context('headers-view.remove-apply-to-section')}
         class="remove-block inline-button"
       ></${Buttons.Button.Button.litTagName}>
       </div>
@@ -406,18 +433,17 @@ export class HeadersViewComponent extends HTMLElement {
           title=${i18nString(UIStrings.addHeader)}
           .size=${Buttons.Button.Size.SMALL}
           .iconUrl=${plusIconUrl}
-          .iconWidth=${'16px'}
-          .iconHeight=${'16px'}
           .variant=${Buttons.Button.Variant.ROUND}
+          .jslog=${VisualLogging.action().track({click: true}).context('headers-view.add-header')}
           class="add-header inline-button"
         ></${Buttons.Button.Button.litTagName}>
         <${Buttons.Button.Button.litTagName}
           title=${i18nString(UIStrings.removeHeader)}
           .size=${Buttons.Button.Size.SMALL}
           .iconUrl=${trashIconUrl}
-          .iconWidth=${'14px'}
-          .iconHeight=${'14px'}
           .variant=${Buttons.Button.Variant.ROUND}
+          ?hidden=${!this.#isDeletable(blockIndex, headerIndex)}
+          .jslog=${VisualLogging.action().track({click: true}).context('headers-view.remove-header')}
           class="remove-header inline-button"
         ></${Buttons.Button.Button.litTagName}>
       </div>

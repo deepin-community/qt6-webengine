@@ -8,19 +8,27 @@
 #include <tuple>
 #include <utility>
 
+#include <optional>
 #include "base/check_op.h"
+#include "base/feature_list.h"
 #include "base/memory/ref_counted.h"
 #include "base/notreached.h"
 #include "base/threading/platform_thread.h"
 #include "base/threading/thread_restrictions.h"
 #include "mojo/core/ipcz_api.h"
 #include "mojo/core/ipcz_driver/data_pipe.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/ipcz/include/ipcz/ipcz.h"
 
 namespace mojo::core::ipcz_driver {
 
 namespace {
+
+// A feature which enables a tentative fix for https://crbug.com/1468933, which
+// is caused by overly aggressive trap event suppression. Gated by a feature so
+// we can evaluate performance impact.
+BASE_FEATURE(kFixDataPipeTrapBug,
+             "FixDataPipeTrapBug",
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 // Translates Mojo signal conditions to equivalent IpczTrapConditions for any
 // portal used as a message pipe endpoint.
@@ -423,10 +431,27 @@ void MojoTrap::HandleEvent(const IpczTrapEvent& event) {
   };
   if (trigger->data_pipe) {
     if (!PopulateEventForDataPipe(*trigger->data_pipe, trigger->signals,
-                                  mojo_event)) {
-      // This event may be spurious if the DataPipe itself is closing but its
-      // its control portal is not yet closed. In that case it's safe to drop
-      // without firing.
+                                  mojo_event) &&
+        !base::FeatureList::IsEnabled(kFixDataPipeTrapBug)) {
+      // Default behavior was at some point to return early here any time
+      // PopulateEventForDataPipe returned false, effectively suppressing what
+      // was deemed to be a spurious event. This rested on the incorrect
+      // assumption that we only reach this point for a DataPipe that's been
+      // recently closed; but in fact another thread may also race to flush data
+      // out of the pipe and make the event appear to be spurious by the time we
+      // get here.
+      //
+      // Suppressing such events can have bad (and subtle) consequences: for a
+      // brief window of time the trap is still armed, so another thread trying
+      // trying to arm it will fail to do so while appearing to succeed. And
+      // since this event doesn't fire either, the application may therefore
+      // never see another reason to attempt reading the pipe; effectively
+      // stalling all progress.
+      //
+      // kFixDataPipeTrapBug was added to eliminate this incorrect suppression
+      // behavior (when it's enabled we NEVER return early here). It's behind a
+      // feature flag so we can evaluate the performance impact of allowing any
+      // actually-redundant events to fire.
       return;
     }
   } else {
@@ -531,14 +556,16 @@ void MojoTrap::DispatchOrQueueEvent(Trigger& trigger,
   if (dispatching_thread_ == base::PlatformThread::CurrentRef()) {
     // This thread is already dispatching an event, so queue this one. It will
     // be dispatched before the thread fully unwinds from its current dispatch.
-    pending_mojo_events_->emplace_back(base::WrapRefCounted(&trigger), event);
+    pending_mojo_events_.emplace_back(base::WrapRefCounted(&trigger), event);
     return;
   }
 
   // Block as long as any other thread is dispatching.
   while (dispatching_thread_.has_value()) {
     base::ScopedAllowBaseSyncPrimitivesOutsideBlockingScope allow_wait;
+    waiters_++;
     dispatching_condition_.Wait();
+    waiters_--;
   }
 
   dispatching_thread_ = base::PlatformThread::CurrentRef();
@@ -554,17 +581,19 @@ void MojoTrap::DispatchOrQueueEvent(Trigger& trigger,
 
   // NOTE: This vector is only shrunk by the clear() below, but it may
   // accumulate more events during each iteration. Hence we iterate by index.
-  for (size_t i = 0; i < pending_mojo_events_->size(); ++i) {
+  for (size_t i = 0; i < pending_mojo_events_.size(); ++i) {
     if (!pending_mojo_events_[i].trigger->removed ||
         pending_mojo_events_[i].event.result == MOJO_RESULT_CANCELLED) {
       DispatchEvent(pending_mojo_events_[i].event);
     }
   }
-  pending_mojo_events_->clear();
+  pending_mojo_events_.clear();
 
   // We're done. Give other threads a chance.
   dispatching_thread_.reset();
-  dispatching_condition_.Signal();
+  if (waiters_ > 0) {
+    dispatching_condition_.Signal();
+  }
 }
 
 void MojoTrap::DispatchEvent(const MojoTrapEvent& event) {

@@ -1,4 +1,4 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -31,7 +31,7 @@ bool CriticalOriginTrialsThrottle::IsNavigationRequest(
 
 CriticalOriginTrialsThrottle::CriticalOriginTrialsThrottle(
     OriginTrialsControllerDelegate& origin_trials_delegate,
-    absl::optional<url::Origin> top_frame_origin)
+    std::optional<url::Origin> top_frame_origin)
     : origin_trials_delegate_(origin_trials_delegate),
       top_frame_origin_(std::move(top_frame_origin)) {}
 

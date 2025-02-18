@@ -12,6 +12,7 @@
 #include "third_party/blink/public/common/origin_trials/scoped_test_origin_trial_policy.h"
 #include "third_party/blink/public/platform/web_url_response.h"
 #include "third_party/blink/public/web/web_navigation_params.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
@@ -19,6 +20,7 @@
 #include "third_party/blink/renderer/core/html/html_script_element.h"
 #include "third_party/blink/renderer/core/speculation_rules/stub_speculation_host.h"
 #include "third_party/blink/renderer/core/testing/dummy_page_holder.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
@@ -43,7 +45,7 @@ HTMLScriptElement* InsertSpeculationRules(Document& document,
                                           const String& speculation_script) {
   HTMLScriptElement* script =
       MakeGarbageCollected<HTMLScriptElement>(document, CreateElementFlags());
-  script->setAttribute(html_names::kTypeAttr, "SpEcUlAtIoNrUlEs");
+  script->setAttribute(html_names::kTypeAttr, AtomicString("SpEcUlAtIoNrUlEs"));
   script->setText(speculation_script);
   document.head()->appendChild(script);
   return script;
@@ -69,6 +71,7 @@ HTMLScriptElement* InsertSpeculationRules(Document& document,
     "jogMTk4NTgzMDkyM30=";
 
 TEST(PrefetchNoVarySearchOriginTrialTest, CanEnableFromToken) {
+  test::TaskEnvironment task_environment;
   ScopedTestOriginTrialPolicy using_test_keys;
   DummyPageHolder page_holder;
   LocalFrame& frame = page_holder.GetFrame();
@@ -79,11 +82,14 @@ TEST(PrefetchNoVarySearchOriginTrialTest, CanEnableFromToken) {
   // This should have enabled the origin trial and all its dependent features.
   EXPECT_TRUE(
       RuntimeEnabledFeatures::NoVarySearchPrefetchEnabled(frame.DomWindow()));
-  EXPECT_TRUE(RuntimeEnabledFeatures::SpeculationRulesPrefetchProxyEnabled(
+  EXPECT_TRUE(RuntimeEnabledFeatures::SpeculationRulesNoVarySearchHintEnabled(
+      frame.DomWindow()));
+  EXPECT_TRUE(RuntimeEnabledFeatures::SpeculationRulesEagernessEnabled(
       frame.DomWindow()));
 }
 
 TEST(PrefetchNoVarySearchOriginTrialTest, DoesNotEnableWithoutToken) {
+  test::TaskEnvironment task_environment;
   ScopedTestOriginTrialPolicy using_test_keys;
   DummyPageHolder page_holder;
   LocalFrame& frame = page_holder.GetFrame();
@@ -116,7 +122,14 @@ void NoVarySearchPrefetchEnabledTest(StubSpeculationHost& speculation_host) {
             "urls": ["https://example.com/foo"],
             "requires": ["anonymous-client-ip-when-cross-origin"]}
          ]})";
-  InsertSpeculationRules(page_holder.GetDocument(), speculation_script);
+  {
+    auto* script_state = ToScriptStateForMainWorld(&frame);
+    v8::MicrotasksScope microtasks_scope(script_state->GetIsolate(),
+                                         ToMicrotaskQueue(script_state),
+                                         v8::MicrotasksScope::kRunMicrotasks);
+    InsertSpeculationRules(page_holder.GetDocument(), speculation_script);
+    page_holder.GetFrameView().UpdateAllLifecyclePhasesForTest();
+  }
   run_loop.Run();
 
   broker.SetBinderForTesting(mojom::blink::SpeculationHost::Name_, {});
@@ -124,6 +137,7 @@ void NoVarySearchPrefetchEnabledTest(StubSpeculationHost& speculation_host) {
 
 TEST(PrefetchNoVarySearchOriginTrialTest,
      EnabledNoVarySearchPrefetchInBrowser) {
+  test::TaskEnvironment task_environment;
   ScopedNoVarySearchPrefetchForTest enable_no_vary_search_prefetch_{true};
   StubSpeculationHost speculation_host;
   NoVarySearchPrefetchEnabledTest(speculation_host);
@@ -132,6 +146,8 @@ TEST(PrefetchNoVarySearchOriginTrialTest,
 
 TEST(PrefetchNoVarySearchOriginTrialTest,
      DoNotEnableNoVarySearchPrefetchInBrowser) {
+  test::TaskEnvironment task_environment;
+  ScopedNoVarySearchPrefetchForTest enable_no_vary_search_prefetch_{false};
   StubSpeculationHost speculation_host;
   NoVarySearchPrefetchEnabledTest(speculation_host);
   EXPECT_FALSE(speculation_host.sent_no_vary_search_support_to_browser());

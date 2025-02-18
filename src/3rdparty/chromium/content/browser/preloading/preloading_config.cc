@@ -9,17 +9,10 @@
 #include "base/strings/string_piece.h"
 #include "base/values.h"
 #include "content/browser/preloading/preloading.h"
+#include "content/common/features.h"
 #include "content/public/browser/preloading.h"
 
 namespace content {
-
-namespace features {
-
-BASE_FEATURE(kPreloadingConfig,
-             "PreloadingConfig",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
-}  // namespace features
 
 namespace {
 
@@ -31,43 +24,113 @@ namespace {
 //  * holdback: whether this preloading_type, predictor combination should be
 //    held back for counterfactual evaluation.
 //  * sampling_likelihood: the fraction of preloading attempts that will be
-//    logged in UKM.
-//
-// Example configuration:
-// [{
-//   "preloading_type": "Preconnect",
-//   "preloading_predictor": "UrlPointerDownOnAnchor",
-//   "holdback": true,
-//   "sampling_likelihood": 0.5
-// },{
-//   "preloading_type": "Prerender",
-//   "preloading_predictor": "UrlPointerHoverOnAnchor",
-//   "holdback": false,
-//   "sampling_likelihood": 0.75
-// }]
+//    logged in UKM. See crbug.com/1411841#c3 to see how the sampling_likelihood
+//    default values are determined.
 constexpr base::FeatureParam<std::string> kPreloadingConfigParam{
-    &features::kPreloadingConfig, "preloading_config", ""};
+    &::features::kPreloadingConfig, "preloading_config", R"(
+[{
+  "preloading_type": "NoStatePrefetch",
+  "preloading_predictor": "LinkRel",
+  "sampling_likelihood": "0.007824"
+}, {
+  "preloading_type": "NoStatePrefetch",
+  "preloading_predictor": "OmniboxDirectURLInput",
+  "sampling_likelihood": "1.000000"
+}, {
+  "preloading_type": "Preconnect",
+  "preloading_predictor": "PointerDownOnAnchor",
+  "sampling_likelihood": "0.000190"
+}, {
+  "preloading_type": "Prefetch",
+  "preloading_predictor": "DefaultSearchEngine",
+  "sampling_likelihood": "0.023205"
+}, {
+  "preloading_type": "Prefetch",
+  "preloading_predictor": "OmniboxMousePredictor",
+  "sampling_likelihood": "1.000000"
+}, {
+  "preloading_type": "Prefetch",
+  "preloading_predictor": "OmniboxSearchPredictor",
+  "sampling_likelihood": "1.000000"
+}, {
+  "preloading_type": "Prefetch",
+  "preloading_predictor": "SpeculationRules",
+  "sampling_likelihood": "0.004185"
+}, {
+  "preloading_type": "Prerender",
+  "preloading_predictor": "BackButtonHover",
+  "sampling_likelihood": "0.010113"
+}, {
+  "preloading_type": "Prerender",
+  "preloading_predictor": "BackGestureNavigation",
+  "sampling_likelihood": "0.340065"
+}, {
+  "preloading_type": "Prerender",
+  "preloading_predictor": "DefaultSearchEngine",
+  "sampling_likelihood": "0.057099"
+}, {
+  "preloading_type": "Prerender",
+  "preloading_predictor": "MouseBackButton",
+  "sampling_likelihood": "0.111760"
+}, {
+  "preloading_type": "Prerender",
+  "preloading_predictor": "MouseHoverOnBookmarkBar",
+  "sampling_likelihood": "0.306493"
+}, {
+  "preloading_type": "Prerender",
+  "preloading_predictor": "OmniboxDirectURLInput",
+  "sampling_likelihood": "0.010774"
+}, {
+  "preloading_type": "Prerender",
+  "preloading_predictor": "PointerDownOnBookmarkBar",
+  "sampling_likelihood": "1.000000"
+}, {
+  "preloading_type": "Prerender",
+  "preloading_predictor": "SpeculationRules",
+  "sampling_likelihood": "1.000000"
+}, {
+  "preloading_type": "Prerender",
+  "preloading_predictor": "SpeculationRulesFromIsolatedWorld",
+  "sampling_likelihood": "1.000000"
+}]
+)"};
+
+static PreloadingConfig* g_config_override = nullptr;
 
 }  // namespace
 
 PreloadingConfig& PreloadingConfig::GetInstance() {
   static base::NoDestructor<PreloadingConfig> config;
+  static bool initialized = false;
+  if (!initialized) {
+    config->ParseConfig();
+    initialized = true;
+  }
+
+  if (g_config_override) {
+    return *g_config_override;
+  }
   return *config;
 }
 
-PreloadingConfig::PreloadingConfig() {
-  ParseConfig();
+PreloadingConfig::PreloadingConfig() = default;
+
+PreloadingConfig* PreloadingConfig::OverrideForTesting(
+    PreloadingConfig* config_override) {
+  raw_ptr<PreloadingConfig> old_override = g_config_override;
+  g_config_override = config_override;
+  return old_override;
 }
 
 void PreloadingConfig::ParseConfig() {
   entries_.clear();
 
-  if (!base::FeatureList::IsEnabled(features::kPreloadingConfig)) {
+  if (!base::FeatureList::IsEnabled(::features::kPreloadingConfig)) {
     return;
   }
   // Throughout parsing the config, if we fail to parse, we silently skip the
   // config and use the default values.
-  absl::optional<base::Value> config_value =
+  std::optional<base::Value> config_value =
       base::JSONReader::Read(kPreloadingConfigParam.Get());
   if (!config_value) {
     return;
@@ -111,6 +174,23 @@ bool PreloadingConfig::ShouldHoldback(PreloadingType preloading_type,
   return entry.holdback_;
 }
 
+void PreloadingConfig::SetHoldbackForTesting(PreloadingType preloading_type,
+                                             PreloadingPredictor predictor,
+                                             bool holdback) {
+  Entry entry;
+  entry.holdback_ = holdback;
+  entries_.emplace(
+      Key(PreloadingTypeToString(preloading_type), predictor.name()), entry);
+}
+
+void PreloadingConfig::SetHoldbackForTesting(base::StringPiece preloading_type,
+                                             base::StringPiece predictor,
+                                             bool holdback) {
+  Entry entry;
+  entry.holdback_ = holdback;
+  entries_.emplace(Key(preloading_type, predictor), entry);
+}
+
 double PreloadingConfig::SamplingLikelihood(PreloadingType preloading_type,
                                             PreloadingPredictor predictor) {
   Entry entry = entries_[Key::FromEnums(preloading_type, predictor)];
@@ -130,11 +210,11 @@ PreloadingConfig::Key PreloadingConfig::Key::FromEnums(
 PreloadingConfig::Entry PreloadingConfig::Entry::FromDict(
     const base::Value::Dict* dict) {
   Entry entry;
-  absl::optional<bool> holdback = dict->FindBool("holdback");
+  std::optional<bool> holdback = dict->FindBool("holdback");
   if (holdback) {
     entry.holdback_ = *holdback;
   }
-  absl::optional<double> sampling_likelihood =
+  std::optional<double> sampling_likelihood =
       dict->FindDouble("sampling_likelihood");
   if (sampling_likelihood) {
     entry.sampling_likelihood_ = *sampling_likelihood;

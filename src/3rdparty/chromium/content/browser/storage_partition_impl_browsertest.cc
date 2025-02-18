@@ -71,6 +71,7 @@ class ClientCertBrowserClient : public ContentBrowserTestContentBrowserClient {
   // dialog. The callback simulates Android's cancellation callback by deleting
   // |delegate|.
   base::OnceClosure SelectClientCertificate(
+      BrowserContext* browser_context,
       WebContents* web_contents,
       net::SSLCertRequestInfo* cert_request_info,
       net::ClientCertIdentityList client_certs,
@@ -135,7 +136,7 @@ std::unique_ptr<network::SimpleURLLoader> DownloadUrl(
   SimpleURLLoaderTestHelper url_loader_helper;
   url_loader->DownloadToString(
       partition->GetURLLoaderFactoryForBrowserProcess().get(),
-      url_loader_helper.GetCallback(),
+      url_loader_helper.GetCallbackDeprecated(),
       /*max_body_size=*/1024 * 1024);
   url_loader_helper.WaitForCallback();
   return url_loader;

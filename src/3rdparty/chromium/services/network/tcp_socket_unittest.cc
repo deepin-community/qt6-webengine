@@ -42,6 +42,7 @@
 #include "services/network/socket_factory.h"
 #include "services/network/tcp_connected_socket.h"
 #include "services/network/tcp_server_socket.h"
+#include "services/network/test/test_socket_broker_impl.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 #if BUILDFLAG(IS_MAC)
@@ -63,7 +64,9 @@ class MockServerSocket : public net::ServerSocket {
   ~MockServerSocket() override {}
 
   // net::ServerSocket implementation.
-  int Listen(const net::IPEndPoint& address, int backlog) override {
+  int Listen(const net::IPEndPoint& address,
+             int backlog,
+             absl::optional<bool> ipv6_only) override {
     return net::OK;
   }
 
@@ -160,11 +163,13 @@ class TestServer {
         server_addr_(server_addr) {}
   ~TestServer() {}
 
-  void Start(uint32_t backlog) {
+  void Start(uint32_t backlog, bool should_fail_socket_creation = false) {
     int net_error = net::ERR_FAILED;
     base::RunLoop run_loop;
+    auto options = mojom::TCPServerSocketOptions::New();
+    options->backlog = backlog;
     factory_.CreateTCPServerSocket(
-        server_addr_, backlog, TRAFFIC_ANNOTATION_FOR_TESTS,
+        server_addr_, std::move(options), TRAFFIC_ANNOTATION_FOR_TESTS,
         server_socket_.BindNewPipeAndPassReceiver(),
         base::BindLambdaForTesting(
             [&](int result, const absl::optional<net::IPEndPoint>& local_addr) {
@@ -174,8 +179,22 @@ class TestServer {
               run_loop.Quit();
             }));
     run_loop.Run();
-    EXPECT_EQ(net::OK, net_error);
+    if (should_fail_socket_creation) {
+      EXPECT_EQ(net::ERR_CONNECTION_FAILED, net_error);
+    } else {
+      EXPECT_EQ(net::OK, net_error);
+    }
   }
+
+#if BUILDFLAG(IS_WIN)
+  void StartWithBroker(uint32_t backlog, bool should_fail_socket_creation) {
+    socket_broker_impl_.SetConnectionFailure(should_fail_socket_creation);
+    mojo::Receiver<mojom::SocketBroker> receiver(&socket_broker_impl_);
+    factory_.BindSocketBroker(receiver.BindNewPipeAndPassRemote());
+
+    Start(backlog, should_fail_socket_creation);
+  }
+#endif
 
   // Accepts one connection. Upon successful completion, |callback| will be
   // invoked.
@@ -256,6 +275,10 @@ class TestServer {
     }
   }
 
+#if BUILDFLAG(IS_WIN)
+  TestSocketBrokerImpl socket_broker_impl_;
+#endif
+
   std::unique_ptr<net::URLRequestContext> url_request_context_;
   SocketFactory factory_;
   mojo::Remote<mojom::TCPServerSocket> server_socket_;
@@ -321,8 +344,9 @@ class TCPSocketTest : public testing::Test {
         factory_.get(), nullptr /*netlog*/, TRAFFIC_ANNOTATION_FOR_TESTS);
     server_socket_impl->SetSocketForTest(std::move(socket));
     net::IPEndPoint local_addr;
-    EXPECT_EQ(net::OK,
-              server_socket_impl->Listen(local_addr, backlog, &local_addr));
+    auto result = server_socket_impl->Listen(local_addr, backlog,
+                                             /*ipv6_only=*/absl::nullopt);
+    EXPECT_TRUE(result.has_value());
     tcp_server_socket_receiver_.Add(std::move(server_socket_impl),
                                     std::move(receiver));
   }
@@ -387,6 +411,18 @@ class TCPSocketTest : public testing::Test {
   TestSocketObserver test_observer_;
   mojo::UniqueReceiverSet<mojom::TCPServerSocket> tcp_server_socket_receiver_;
 };
+
+#if BUILDFLAG(IS_WIN)
+TEST_F(TCPSocketTest, BrokerCreateTCPServerSocketSuccess) {
+  TestServer server;
+  server.StartWithBroker(1 /*backlog*/, false /*fail_server_socket_creation*/);
+}
+
+TEST_F(TCPSocketTest, BrokerCreateTCPServerSocketFailure) {
+  TestServer server;
+  server.StartWithBroker(1 /*backlog*/, true /*fail_server_socket_creation*/);
+}
+#endif  // BUILDFLAG(IS_WIN)
 
 TEST_F(TCPSocketTest, ReadAndWrite) {
   const struct TestData {
@@ -1556,7 +1592,9 @@ TEST(TCPServerSocketTest, GetLocalAddressFailedInListen) {
                          TRAFFIC_ANNOTATION_FOR_TESTS);
   socket.SetSocketForTest(std::make_unique<FailingServerSocket>());
   net::IPEndPoint local_addr;
-  EXPECT_EQ(net::ERR_FAILED, socket.Listen(local_addr, 1, &local_addr));
+  auto result = socket.Listen(local_addr, 1, /*ipv6_only=*/absl::nullopt);
+  ASSERT_FALSE(result.has_value());
+  EXPECT_EQ(net::ERR_FAILED, result.error());
 }
 
 }  // namespace network

@@ -9,13 +9,11 @@
 #include "base/containers/contains.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
-#include "base/functional/callback_helpers.h"
 #include "base/logging.h"
 #include "base/values.h"
 #include "chromeos/ash/components/login/login_state/login_state.h"
 #include "chromeos/ash/components/network/device_state.h"
 #include "chromeos/ash/components/network/managed_network_configuration_handler.h"
-#include "chromeos/ash/components/network/network_activation_handler.h"
 #include "chromeos/ash/components/network/network_certificate_handler.h"
 #include "chromeos/ash/components/network/network_connection_handler.h"
 #include "chromeos/ash/components/network/network_device_handler.h"
@@ -27,18 +25,14 @@
 #include "chromeos/ash/components/network/onc/onc_translator.h"
 #include "chromeos/ash/components/network/portal_detector/network_portal_detector.h"
 #include "chromeos/ash/components/network/technology_state_controller.h"
-#include "chromeos/components/onc/onc_signature.h"
 #include "components/onc/onc_constants.h"
-#include "components/proxy_config/proxy_prefs.h"
 #include "content/public/browser/browser_context.h"
 #include "extensions/browser/api/networking_private/networking_private_api.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extensions_browser_client.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_set.h"
-#include "extensions/common/permissions/api_permission.h"
 #include "extensions/common/permissions/permissions_data.h"
-#include "third_party/cros_system_api/dbus/service_constants.h"
 
 using ::ash::NetworkCertificateHandler;
 using ::ash::NetworkHandler;
@@ -80,8 +74,9 @@ bool IsSharedNetwork(const std::string& service_path) {
   const ash::NetworkState* network =
       GetStateHandler()->GetNetworkStateFromServicePath(
           service_path, true /* configured only */);
-  if (!network)
+  if (!network) {
     return false;
+  }
 
   return !network->IsPrivate();
 }
@@ -100,73 +95,76 @@ bool GetPrimaryUserIdHash(content::BrowserContext* browser_context,
     // to avoid complexities with the policy code.
     LOG(ERROR) << "networkingPrivate API call from non primary user: "
                << context_user_hash;
-    if (error)
+    if (error) {
       *error = "Error.NonPrimaryUser";
+    }
     return false;
   }
-  if (user_hash)
+  if (user_hash) {
     *user_hash = context_user_hash;
+  }
   return true;
 }
 
 void AppendDeviceState(
     const std::string& type,
     const ash::DeviceState* device,
-    NetworkingPrivateDelegate::DeviceStateList* device_state_list) {
+    NetworkingPrivateDelegate::DeviceStateList& device_state_list) {
   DCHECK(!type.empty());
   NetworkTypePattern pattern = ash::onc::NetworkTypePatternFromOncType(type);
   NetworkStateHandler::TechnologyState technology_state =
       GetStateHandler()->GetTechnologyState(pattern);
-  private_api::DeviceStateType state = private_api::DEVICE_STATE_TYPE_NONE;
+  private_api::DeviceStateType state = private_api::DeviceStateType::kNone;
   switch (technology_state) {
     case NetworkStateHandler::TECHNOLOGY_UNAVAILABLE:
-      if (!device)
+      if (!device) {
         return;
+      }
       // If we have a DeviceState entry but the technology is not available,
       // assume the technology is not initialized.
-      state = private_api::DEVICE_STATE_TYPE_UNINITIALIZED;
+      state = private_api::DeviceStateType::kUninitialized;
       break;
     case NetworkStateHandler::TECHNOLOGY_AVAILABLE:
-      state = private_api::DEVICE_STATE_TYPE_DISABLED;
+      state = private_api::DeviceStateType::kDisabled;
       break;
     case NetworkStateHandler::TECHNOLOGY_DISABLING:
-      state = private_api::DEVICE_STATE_TYPE_DISABLED;
+      state = private_api::DeviceStateType::kDisabled;
       break;
     case NetworkStateHandler::TECHNOLOGY_UNINITIALIZED:
-      state = private_api::DEVICE_STATE_TYPE_UNINITIALIZED;
+      state = private_api::DeviceStateType::kUninitialized;
       break;
     case NetworkStateHandler::TECHNOLOGY_ENABLING:
-      state = private_api::DEVICE_STATE_TYPE_ENABLING;
+      state = private_api::DeviceStateType::kEnabling;
       break;
     case NetworkStateHandler::TECHNOLOGY_ENABLED:
-      state = private_api::DEVICE_STATE_TYPE_ENABLED;
+      state = private_api::DeviceStateType::kEnabled;
       break;
     case NetworkStateHandler::TECHNOLOGY_PROHIBITED:
-      state = private_api::DEVICE_STATE_TYPE_PROHIBITED;
+      state = private_api::DeviceStateType::kProhibited;
       break;
   }
-  DCHECK_NE(private_api::DEVICE_STATE_TYPE_NONE, state);
-  std::unique_ptr<private_api::DeviceStateProperties> properties(
-      new private_api::DeviceStateProperties);
-  properties->type = private_api::ParseNetworkType(type);
-  properties->state = state;
-  if (device && state == private_api::DEVICE_STATE_TYPE_ENABLED)
-    properties->scanning = device->scanning();
+  DCHECK_NE(private_api::DeviceStateType::kNone, state);
+  private_api::DeviceStateProperties& properties =
+      device_state_list.emplace_back();
+  properties.type = private_api::ParseNetworkType(type);
+  properties.state = state;
+  if (device && state == private_api::DeviceStateType::kEnabled) {
+    properties.scanning = device->scanning();
+  }
   if (device && type == ::onc::network_config::kCellular) {
     bool sim_present = !device->IsSimAbsent();
-    properties->sim_present = sim_present;
+    properties.sim_present = sim_present;
     if (sim_present) {
-      properties->sim_lock_status.emplace();
-      properties->sim_lock_status->lock_enabled = device->sim_lock_enabled();
-      properties->sim_lock_status->lock_type = device->sim_lock_type();
-      properties->sim_lock_status->retries_left = device->sim_retries_left();
+      properties.sim_lock_status.emplace();
+      properties.sim_lock_status->lock_enabled = device->sim_lock_enabled();
+      properties.sim_lock_status->lock_type = device->sim_lock_type();
+      properties.sim_lock_status->retries_left = device->sim_retries_left();
     }
   }
   if (device && type == ::onc::network_config::kWiFi) {
-    properties->managed_network_available =
+    properties.managed_network_available =
         GetStateHandler()->GetAvailableManagedWifiNetwork();
   }
-  device_state_list->push_back(std::move(properties));
 }
 
 void NetworkHandlerFailureCallback(
@@ -213,8 +211,9 @@ base::Value::Dict* GetThirdPartyVPNDictionary(base::Value::Dict* dictionary) {
 
 const ash::DeviceState* GetCellularDeviceState(const std::string& guid) {
   const ash::NetworkState* network_state = nullptr;
-  if (!guid.empty())
+  if (!guid.empty()) {
     network_state = GetStateHandler()->GetNetworkStateFromGuid(guid);
+  }
   const ash::DeviceState* device_state = nullptr;
   if (network_state) {
     device_state =
@@ -235,10 +234,12 @@ private_api::Certificate GetCertDictionary(
   api_cert.issued_to = cert.issued_to;
   api_cert.hardware_backed = cert.hardware_backed;
   api_cert.device_wide = cert.device_wide;
-  if (!cert.pem.empty())
+  if (!cert.pem.empty()) {
     api_cert.pem = cert.pem;
-  if (!cert.pkcs11_id.empty())
+  }
+  if (!cert.pkcs11_id.empty()) {
     api_cert.pkcs11_id = cert.pkcs11_id;
+  }
   return api_cert;
 }
 
@@ -285,14 +286,14 @@ void NetworkingPrivateChromeOS::GetProperties(const std::string& guid,
   std::string service_path, error;
   if (!GetServicePathFromGuid(guid, &service_path, &error)) {
     NET_LOG(ERROR) << "GetProperties failed: " << error;
-    std::move(callback).Run(absl::nullopt, error);
+    std::move(callback).Run(std::nullopt, error);
     return;
   }
 
   std::string user_id_hash;
   if (!GetPrimaryUserIdHash(browser_context_, &user_id_hash, &error)) {
     NET_LOG(ERROR) << "GetProperties failed: " << error;
-    std::move(callback).Run(absl::nullopt, error);
+    std::move(callback).Run(std::nullopt, error);
     return;
   }
 
@@ -309,14 +310,14 @@ void NetworkingPrivateChromeOS::GetManagedProperties(
   std::string service_path, error;
   if (!GetServicePathFromGuid(guid, &service_path, &error)) {
     NET_LOG(ERROR) << "GetManagedProperties failed: " << error;
-    std::move(callback).Run(absl::nullopt, error);
+    std::move(callback).Run(std::nullopt, error);
     return;
   }
 
   std::string user_id_hash;
   if (!GetPrimaryUserIdHash(browser_context_, &user_id_hash, &error)) {
     NET_LOG(ERROR) << "GetManagedProperties failed: " << error;
-    std::move(callback).Run(absl::nullopt, error);
+    std::move(callback).Run(std::nullopt, error);
     return;
   }
 
@@ -389,8 +390,7 @@ void NetworkingPrivateChromeOS::SetProperties(
   NET_LOG(USER) << "networkingPrivate.setProperties for: "
                 << NetworkId(network);
   GetManagedConfigurationHandler()->SetProperties(
-      network->path(), base::Value(std::move(properties)),
-      std::move(success_callback),
+      network->path(), properties, std::move(success_callback),
       base::BindOnce(&NetworkHandlerFailureCallback,
                      std::move(failure_callback)));
 }
@@ -404,7 +404,7 @@ void NetworkHandlerCreateCallback(
 
 void NetworkingPrivateChromeOS::CreateNetwork(
     bool shared,
-    base::Value properties,
+    base::Value::Dict properties,
     StringCallback success_callback,
     FailureCallback failure_callback) {
   std::string user_id_hash, error;
@@ -415,8 +415,8 @@ void NetworkingPrivateChromeOS::CreateNetwork(
     return;
   }
 
-  const std::string guid = GetStringFromDictionary(
-      properties.GetDict(), ::onc::network_config::kGUID);
+  const std::string guid =
+      GetStringFromDictionary(properties, ::onc::network_config::kGUID);
   NET_LOG(USER) << "networkingPrivate.CreateNetwork. GUID=" << guid;
   GetManagedConfigurationHandler()->CreateConfiguration(
       user_id_hash, properties,
@@ -559,8 +559,9 @@ void NetworkingPrivateChromeOS::StartActivate(
     return;
   }
 
-  if (ui_delegate())
+  if (ui_delegate()) {
     ui_delegate()->ShowAccountDetails(guid);
+  }
   std::move(success_callback).Run();
 }
 
@@ -690,12 +691,15 @@ void NetworkingPrivateChromeOS::GetEnabledNetworkTypes(
 
   base::Value::List network_list;
 
-  if (state_handler->IsTechnologyEnabled(NetworkTypePattern::Ethernet()))
+  if (state_handler->IsTechnologyEnabled(NetworkTypePattern::Ethernet())) {
     network_list.Append(::onc::network_type::kEthernet);
-  if (state_handler->IsTechnologyEnabled(NetworkTypePattern::WiFi()))
+  }
+  if (state_handler->IsTechnologyEnabled(NetworkTypePattern::WiFi())) {
     network_list.Append(::onc::network_type::kWiFi);
-  if (state_handler->IsTechnologyEnabled(NetworkTypePattern::Cellular()))
+  }
+  if (state_handler->IsTechnologyEnabled(NetworkTypePattern::Cellular())) {
     network_list.Append(::onc::network_type::kCellular);
+  }
 
   std::move(callback).Run(std::move(network_list));
 }
@@ -706,11 +710,11 @@ void NetworkingPrivateChromeOS::GetDeviceStateList(
   NetworkStateHandler::DeviceStateList devices;
   NetworkHandler::Get()->network_state_handler()->GetDeviceList(&devices);
 
-  std::unique_ptr<DeviceStateList> device_state_list(new DeviceStateList);
+  DeviceStateList device_state_list;
   for (const ash::DeviceState* device : devices) {
     std::string onc_type =
         ash::network_util::TranslateShillTypeToONC(device->type());
-    AppendDeviceState(onc_type, device, device_state_list.get());
+    AppendDeviceState(onc_type, device, device_state_list);
     technologies_found.insert(onc_type);
   }
 
@@ -720,10 +724,10 @@ void NetworkingPrivateChromeOS::GetDeviceStateList(
                                     ::onc::network_type::kWiFi,
                                     ::onc::network_type::kCellular};
   for (const char* technology : technology_types) {
-    if (base::Contains(technologies_found, technology))
+    if (base::Contains(technologies_found, technology)) {
       continue;
-    AppendDeviceState(technology, nullptr /* device */,
-                      device_state_list.get());
+    }
+    AppendDeviceState(technology, nullptr /* device */, device_state_list);
   }
   std::move(callback).Run(std::move(device_state_list));
 }
@@ -800,8 +804,8 @@ void NetworkingPrivateChromeOS::GetPropertiesCallback(
     const std::string& guid,
     PropertiesCallback callback,
     const std::string& service_path,
-    absl::optional<base::Value::Dict> dictionary,
-    absl::optional<std::string> error) {
+    std::optional<base::Value::Dict> dictionary,
+    std::optional<std::string> error) {
   if (dictionary) {
     AppendThirdPartyProviderName(&dictionary.value());
   }

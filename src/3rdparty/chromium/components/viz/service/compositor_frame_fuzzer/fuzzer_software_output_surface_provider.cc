@@ -56,8 +56,7 @@ class PNGSoftwareOutputDevice : public SoftwareOutputDevice {
         /*discard_transparency=*/false,
         /*comments=*/{}, &output);
 
-    base::WriteFile(NextOutputFilePath(),
-                    reinterpret_cast<char*>(output.data()), output.size());
+    base::WriteFile(NextOutputFilePath(), output);
   }
 
  private:
@@ -106,4 +105,15 @@ FuzzerSoftwareOutputSurfaceProvider::CreateOutputSurface(
   return std::make_unique<SoftwareOutputSurface>(
       std::move(software_output_device));
 }
+
+gpu::SharedImageManager*
+FuzzerSoftwareOutputSurfaceProvider::GetSharedImageManager() {
+  return nullptr;
+}
+
+gpu::SyncPointManager*
+FuzzerSoftwareOutputSurfaceProvider::GetSyncPointManager() {
+  return nullptr;
+}
+
 }  // namespace viz

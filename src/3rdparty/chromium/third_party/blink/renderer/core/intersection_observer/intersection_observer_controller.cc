@@ -63,10 +63,12 @@ void IntersectionObserverController::DeliverNotifications(
 bool IntersectionObserverController::ComputeIntersections(
     unsigned flags,
     LocalFrameUkmAggregator* metrics_aggregator,
-    absl::optional<base::TimeTicks>& monotonic_time) {
+    absl::optional<base::TimeTicks>& monotonic_time,
+    gfx::Vector2dF accumulated_scroll_delta_since_last_update) {
   needs_occlusion_tracking_ = false;
-  if (!GetExecutionContext())
+  if (!GetExecutionContext()) {
     return false;
+  }
   TRACE_EVENT0("blink,devtools.timeline",
                "IntersectionObserverController::"
                "computeIntersections");
@@ -81,10 +83,12 @@ bool IntersectionObserverController::ComputeIntersections(
     if (metrics_aggregator)
       metrics_timer.emplace(*metrics_aggregator);
     for (auto& observer : observers_to_process) {
+      DCHECK(!observer->RootIsImplicit());
       if (observer->HasObservations()) {
         if (metrics_timer)
           metrics_timer->StartInterval(observer->GetUkmMetricId());
-        int64_t count = observer->ComputeIntersections(flags, monotonic_time);
+        int64_t count = observer->ComputeIntersections(
+            flags, monotonic_time, accumulated_scroll_delta_since_last_update);
         if (observer->IsInternal())
           internal_observation_count += count;
         else
@@ -97,7 +101,10 @@ bool IntersectionObserverController::ComputeIntersections(
     for (auto& observation : observations_to_process) {
       if (metrics_timer)
         metrics_timer->StartInterval(observation->Observer()->GetUkmMetricId());
-      int64_t count = observation->ComputeIntersection(flags, monotonic_time);
+      absl::optional<IntersectionGeometry::RootGeometry> root_geometry;
+      int64_t count = observation->ComputeIntersection(
+          flags, accumulated_scroll_delta_since_last_update, monotonic_time,
+          root_geometry);
       if (observation->Observer()->IsInternal())
         internal_observation_count += count;
       else
@@ -173,6 +180,19 @@ void IntersectionObserverController::RemoveTrackedObservation(
   if (!observer->RootIsImplicit())
     return;
   tracked_implicit_root_observations_.erase(&observation);
+}
+
+void IntersectionObserverController::
+    InvalidateCachedRectsIfPaintPropertiesChanged() {
+  DCHECK(RuntimeEnabledFeatures::IntersectionOptimizationEnabled());
+  for (auto& observer : tracked_explicit_root_observers_) {
+    for (auto& observation : observer->Observations()) {
+      observation->InvalidateCachedRectsIfPaintPropertiesChanged();
+    }
+  }
+  for (auto& observation : tracked_implicit_root_observations_) {
+    observation->InvalidateCachedRectsIfPaintPropertiesChanged();
+  }
 }
 
 void IntersectionObserverController::Trace(Visitor* visitor) const {

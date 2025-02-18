@@ -26,6 +26,7 @@
  *   http://www.pcisys.net/~melanson/codecs/
  */
 
+#include "libavutil/emms.h"
 #include "avcodec.h"
 #include "codec_internal.h"
 #include "encode.h"
@@ -118,7 +119,7 @@ static void svq1_write_header(SVQ1EncContext *s, PutBitContext *pb, int frame_ty
         /* output 5 unknown bits (2 + 2 + 1) */
         put_bits(pb, 5, 2); /* 2 needed by quicktime decoder */
 
-        i = ff_match_2uint16((void*)ff_svq1_frame_size_table,
+        i = ff_match_2uint16(ff_svq1_frame_size_table,
                              FF_ARRAY_ELEMS(ff_svq1_frame_size_table),
                              s->frame_width, s->frame_height);
         put_bits(pb, 3, i);
@@ -548,10 +549,10 @@ static av_cold int svq1_encode_end(AVCodecContext *avctx)
     SVQ1EncContext *const s = avctx->priv_data;
     int i;
 
-    if (avctx->frame_number)
+    if (avctx->frame_num)
         av_log(avctx, AV_LOG_DEBUG, "RD: %f\n",
                s->rd_total / (double)(avctx->width * avctx->height *
-                                      avctx->frame_number));
+                                      avctx->frame_num));
 
     s->m.mb_type = NULL;
     ff_mpv_common_end(&s->m);
@@ -569,6 +570,7 @@ static av_cold int svq1_encode_end(AVCodecContext *avctx)
 
     av_frame_free(&s->current_picture);
     av_frame_free(&s->last_picture);
+    av_frame_free(&s->m.new_picture);
 
     return 0;
 }
@@ -631,10 +633,11 @@ static av_cold int svq1_encode_init(AVCodecContext *avctx)
     s->dummy               = av_mallocz((s->y_block_width + 1) *
                                         s->y_block_height * sizeof(int32_t));
     s->m.me.map            = av_mallocz(2 * ME_MAP_SIZE * sizeof(*s->m.me.map));
+    s->m.new_picture       = av_frame_alloc();
     s->svq1encdsp.ssd_int8_vs_int16 = ssd_int8_vs_int16_c;
 
-    if (!s->m.me.temp || !s->m.me.scratchpad || !s->m.me.map ||
-        !s->mb_type || !s->dummy)
+    if (!s->m.me.scratchpad || !s->m.me.map ||
+        !s->mb_type || !s->dummy || !s->m.new_picture)
         return AVERROR(ENOMEM);
     s->m.me.score_map = s->m.me.map + ME_MAP_SIZE;
 
@@ -684,7 +687,7 @@ static int svq1_encode_frame(AVCodecContext *avctx, AVPacket *pkt,
 
     FFSWAP(AVFrame*, s->current_picture, s->last_picture);
 
-    if (avctx->gop_size && (avctx->frame_number % avctx->gop_size))
+    if (avctx->gop_size && (avctx->frame_num % avctx->gop_size))
         s->pict_type = AV_PICTURE_TYPE_P;
     else
         s->pict_type = AV_PICTURE_TYPE_I;

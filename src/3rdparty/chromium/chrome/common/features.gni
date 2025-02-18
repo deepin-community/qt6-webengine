@@ -7,9 +7,11 @@ import("//build/config/chromeos/ui_mode.gni")
 import("//build/config/compiler/compiler.gni")
 import("//build/config/dcheck_always_on.gni")
 import("//build/config/features.gni")
+import("//components/compose/features.gni")
 import("//components/feed/features.gni")
 import("//components/nacl/features.gni")
 import("//components/safe_browsing/buildflags.gni")
+import("//components/services/screen_ai/buildflags/features.gni")
 import("//components/signin/features.gni")
 import("//components/supervised_user/buildflags.gni")
 import("//crypto/features.gni")
@@ -31,13 +33,17 @@ declare_args() {
   # This is intended for use only in developer builds.
   chrome_enable_logging_by_default = is_debug
 
-  # Platforms where the ChromeRootStoreEnabled enterprise policy is
+  # Platforms where Chrome x509 server certificate enterprise policies are
   # supported. This must must match the supported_on/future_on list of the
-  # policy in policy_templates.json and be a subset of the
-  # chrome_root_store_supported platforms.
-  # See https://crbug.com/1228958. This can be removed when the Chrome Root
-  # Store is unconditionally enabled on all platforms.
-  chrome_root_store_policy_supported = is_mac || is_win
+  # policy in the following policies stored in
+  # components/policy/resources/templates/policy_definitions/:
+  #
+  # * CertificateManagement/CACertificates.yaml
+  # * CertificateManagement/CADistrustedCertificates.yaml
+  # * CertificateManagement/CAHintCertificates.yaml
+  # * CertificateManagement/CAPlatformIntegrationEnabled.yaml
+  #
+  chrome_certificate_policies_supported = is_mac || is_win || is_linux
 
   # Enables support for background apps.
   enable_background_contents = !is_android
@@ -73,10 +79,6 @@ declare_args() {
   # Enables the webui certificate viewer dialog.
   enable_webui_certificate_viewer = toolkit_views
 
-  # Compile time flag for bound session Credentials.
-  # Warning: This must not be enabled in official builds.
-  enable_bound_session_credentials = false
-
   # optimize_webui was moved to ui/base/ui_features.gni
 }
 
@@ -92,15 +94,19 @@ use_brlapi = is_chromeos_ash
 # Every grit target in //chrome should apply these defines so that the
 # proper build flags can be set.
 chrome_grit_defines = [
-  "chrome_root_store_supported=$chrome_root_store_supported",
   "enable_arcore=$enable_arcore",
+  "enable_cardboard=$enable_cardboard",
+  "enable_compose=$enable_compose",
+  "enable_openxr=$enable_openxr",
   "enable_printing=$enable_printing",
   "enable_extensions=$enable_extensions",
   "enable_hangout_services_extension=$enable_hangout_services_extension",
+  "enable_ink=$enable_ink",
   "enable_nacl=$enable_nacl",
   "enable_dice_support=$enable_dice_support",
   "enable_pdf=$enable_pdf",
   "enable_print_preview=$enable_print_preview",
+  "enable_screen_ai_service=$enable_screen_ai_service",
   "enable_supervised_users=$enable_supervised_users",
   "enable_vr=$enable_vr",
   "enable_webrtc=$enable_webrtc",

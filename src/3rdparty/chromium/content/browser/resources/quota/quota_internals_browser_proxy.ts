@@ -23,6 +23,9 @@ interface GetGlobalUsageResult {
   unlimitedUsage: bigint;
 }
 
+interface SimulateStoragePressureAvailableResult {
+  available: boolean;
+}
 export interface RetrieveBucketsTableResult {
   entries: BucketTableEntry[];
 }
@@ -60,12 +63,18 @@ export class QuotaInternalsBrowserProxy {
     const originToTest = (document.body.querySelector<HTMLInputElement>(
         '#origin-to-test'))!.value;
     const originUrl = new URL(originToTest);
-    const newOrigin = new Origin();
-    newOrigin.scheme = originUrl.protocol.replace(/:$/, '');
-    newOrigin.host = originUrl.host;
-    newOrigin.port = urlPort(originUrl);
+    const newOrigin: Origin = {
+      scheme: originUrl.protocol.replace(/:$/, ''),
+      host: originUrl.host,
+      port: urlPort(originUrl),
+    };
 
     this.handler.simulateStoragePressure(newOrigin);
+  }
+
+  isSimulateStoragePressureAvailable():
+      Promise<SimulateStoragePressureAvailableResult> {
+    return this.handler.isSimulateStoragePressureAvailable();
   }
 
   retrieveBucketsTable(): Promise<RetrieveBucketsTableResult> {

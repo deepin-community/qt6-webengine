@@ -8,10 +8,11 @@
 
 #include "base/functional/bind.h"
 #include "base/logging.h"
+#include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_functions.h"
 #include "ui/display/manager/configure_displays_task.h"
 #include "ui/display/manager/display_layout_manager.h"
-#include "ui/display/manager/display_manager_util.h"
+#include "ui/display/manager/util/display_manager_util.h"
 #include "ui/display/types/display_snapshot.h"
 #include "ui/display/types/native_display_delegate.h"
 
@@ -20,7 +21,8 @@ namespace display {
 namespace {
 
 bool InternalDisplayThrottled(
-    const std::vector<DisplaySnapshot*>& cached_displays) {
+    const std::vector<raw_ptr<DisplaySnapshot, VectorExperimental>>&
+        cached_displays) {
   for (const DisplaySnapshot* display : cached_displays) {
     if (display->type() == DISPLAY_CONNECTION_TYPE_INTERNAL) {
       if (!display->current_mode())
@@ -42,7 +44,8 @@ bool InternalDisplayThrottled(
 
 // Move all internal panel displays to the front of the display list. Otherwise,
 // the list remains in order.
-void MoveInternalDisplaysToTheFront(std::vector<DisplaySnapshot*>& displays) {
+void MoveInternalDisplaysToTheFront(
+    std::vector<raw_ptr<DisplaySnapshot, VectorExperimental>>& displays) {
   DisplayConfigurator::DisplayStateList sorted_displays;
 
   // First pass for internal panels.
@@ -94,7 +97,6 @@ UpdateDisplayConfigurationTask::~UpdateDisplayConfigurationTask() {
 }
 
 void UpdateDisplayConfigurationTask::Run() {
-  start_timestamp_ = base::TimeTicks::Now();
   requesting_displays_ = true;
   delegate_->GetDisplays(
       base::BindOnce(&UpdateDisplayConfigurationTask::OnDisplaysUpdated,
@@ -114,7 +116,7 @@ void UpdateDisplayConfigurationTask::OnDisplaySnapshotsInvalidated() {
 }
 
 void UpdateDisplayConfigurationTask::OnDisplaysUpdated(
-    const std::vector<DisplaySnapshot*>& displays) {
+    const std::vector<raw_ptr<DisplaySnapshot, VectorExperimental>>& displays) {
   cached_displays_ = displays;
   MoveInternalDisplaysToTheFront(cached_displays_);
   requesting_displays_ = false;
@@ -207,13 +209,8 @@ void UpdateDisplayConfigurationTask::OnEnableSoftwareMirroring(
 }
 
 void UpdateDisplayConfigurationTask::FinishConfiguration(bool success) {
-  DCHECK(start_timestamp_);
-  base::UmaHistogramTimes(
-      "DisplayManager.UpdateDisplayConfigurationTask.ExecutionTime",
-      base::TimeTicks::Now() - *start_timestamp_);
   base::UmaHistogramBoolean(
       "DisplayManager.UpdateDisplayConfigurationTask.Success", success);
-  start_timestamp_.reset();
 
   std::move(callback_).Run(success, cached_displays_,
                            cached_unassociated_displays_, new_display_state_,

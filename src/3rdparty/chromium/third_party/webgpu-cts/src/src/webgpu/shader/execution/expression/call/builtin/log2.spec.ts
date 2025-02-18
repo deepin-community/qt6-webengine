@@ -9,33 +9,13 @@ Returns the base-2 logarithm of e. Component-wise when T is a vector.
 
 import { makeTestGroup } from '../../../../../../common/framework/test_group.js';
 import { GPUTest } from '../../../../../gpu_test.js';
-import { kValue } from '../../../../../util/constants.js';
-import { TypeF32 } from '../../../../../util/conversion.js';
-import { log2Interval } from '../../../../../util/f32_interval.js';
-import { biasedRange, fullF32Range, linearRange } from '../../../../../util/math.js';
-import { makeCaseCache } from '../../case_cache.js';
-import { allInputSources, generateUnaryToF32IntervalCases, run } from '../../expression.js';
+import { TypeF16, TypeF32 } from '../../../../../util/conversion.js';
+import { allInputSources, run } from '../../expression.js';
 
 import { builtin } from './builtin.js';
+import { d } from './log2.cache.js';
 
 export const g = makeTestGroup(GPUTest);
-
-// log2's accuracy is defined in three regions { [0, 0.5), [0.5, 2.0], (2.0, +∞] }
-const inputs = [
-  ...linearRange(kValue.f32.positive.min, 0.5, 20),
-  ...linearRange(0.5, 2.0, 20),
-  ...biasedRange(2.0, 2 ** 32, 1000),
-  ...fullF32Range(),
-];
-
-export const d = makeCaseCache('log2', {
-  f32_const: () => {
-    return generateUnaryToF32IntervalCases(inputs, 'f32-only', log2Interval);
-  },
-  f32_non_const: () => {
-    return generateUnaryToF32IntervalCases(inputs, 'unfiltered', log2Interval);
-  },
-});
 
 g.test('abstract_float')
   .specURL('https://www.w3.org/TR/WGSL/#float-builtin-functions')
@@ -68,4 +48,10 @@ g.test('f16')
   .params(u =>
     u.combine('inputSource', allInputSources).combine('vectorize', [undefined, 2, 3, 4] as const)
   )
-  .unimplemented();
+  .beforeAllSubcases(t => {
+    t.selectDeviceOrSkipTestCase('shader-f16');
+  })
+  .fn(async t => {
+    const cases = await d.get(t.params.inputSource === 'const' ? 'f16_const' : 'f16_non_const');
+    await run(t, builtin('log2'), [TypeF16], TypeF16, t.params, cases);
+  });

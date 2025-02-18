@@ -41,6 +41,8 @@ if (enable_vulkan) {
 
     public_configs = [ ":vulkan_config" ]
 
+    configs += [ "//build/config/compiler:wexit_time_destructors" ]
+
     defines = [ "IS_VULKAN_IMPL" ]
 
     deps = [
@@ -65,6 +67,8 @@ if (enable_vulkan) {
     ]
 
     defines = [ "IS_VULKAN_IMPL" ]
+
+    configs += [ "//build/config/compiler:wexit_time_destructors" ]
 
     deps = [
       ":vulkan_function_pointers",
@@ -113,12 +117,15 @@ if (enable_vulkan) {
       defines += [ "OZONE_PLATFORM_IS_X11" ]
     }
 
+    configs += [ "//build/config/compiler:wexit_time_destructors" ]
+
     deps = [
       ":buildflags",
       "//base",
       "//build:chromeos_buildflags",
       "//components/crash/core/common:crash_key",
       "//gpu/ipc/common:vulkan_ycbcr_info",
+      "//ui/base:ozone_buildflags",
       "//ui/gfx",
       "//ui/gl",
     ]
@@ -152,6 +159,19 @@ if (enable_vulkan) {
         "vulkan_image_win.cc",
         "vulkan_util_win32.cc",
       ]
+    }
+
+    if (use_ozone) {
+      sources += [
+        "drm_modifiers_filter_vulkan.cc",
+        "drm_modifiers_filter_vulkan.h",
+      ]
+
+      deps += [ "//ui/ozone:drm_modifiers_filter" ]
+    }
+
+    if (is_chromeos_ash) {
+      deps += [ "//ui/gfx/linux:drm" ]
     }
 
     if (is_fuchsia) {
@@ -246,6 +266,8 @@ if (enable_vulkan) {
       }
 
       if (use_ozone) {
+        sources += [ "drm_modifiers_filter_vulkan_unittest.cc" ]
+
         deps += [ "//ui/ozone" ]
       }
     }

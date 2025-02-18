@@ -10,6 +10,7 @@
  */
 
 #include <assert.h>
+#include <stdbool.h>
 #include <stddef.h>
 
 #include "config/aom_config.h"
@@ -1274,9 +1275,13 @@ static AOM_INLINE void decode_partition(AV1Decoder *const pbi,
     const int num_planes = av1_num_planes(cm);
     for (int plane = 0; plane < num_planes; ++plane) {
       int rcol0, rcol1, rrow0, rrow1;
+
+      // Skip some unnecessary work if loop restoration is disabled
+      if (cm->rst_info[plane].frame_restoration_type == RESTORE_NONE) continue;
+
       if (av1_loop_restoration_corners_in_sb(cm, plane, mi_row, mi_col, bsize,
                                              &rcol0, &rcol1, &rrow0, &rrow1)) {
-        const int rstride = cm->rst_info[plane].horz_units_per_tile;
+        const int rstride = cm->rst_info[plane].horz_units;
         for (int rrow = rrow0; rrow < rrow1; ++rrow) {
           for (int rcol = rcol0; rcol < rcol1; ++rcol) {
             const int runit_idx = rcol + rrow * rstride;
@@ -2435,6 +2440,7 @@ static AOM_INLINE void decoder_alloc_tile_data(AV1Decoder *pbi,
                                                const int n_tiles) {
   AV1_COMMON *const cm = &pbi->common;
   aom_free(pbi->tile_data);
+  pbi->allocated_tiles = 0;
   CHECK_MEM_ERROR(cm, pbi->tile_data,
                   aom_memalign(32, n_tiles * sizeof(*pbi->tile_data)));
   pbi->allocated_tiles = n_tiles;
@@ -3175,18 +3181,16 @@ static int row_mt_worker_hook(void *arg1, void *arg2) {
     pthread_mutex_lock(pbi->row_mt_mutex_);
 #endif
     frame_row_mt_info->row_mt_exit = 1;
-
+#if CONFIG_MULTITHREAD
+    pthread_cond_broadcast(pbi->row_mt_cond_);
+    pthread_mutex_unlock(pbi->row_mt_mutex_);
+#endif
     // If any SB row (erroneous row) processed by a thread encounters an
     // internal error, there is a need to indicate other threads that decoding
     // of the erroneous row is complete. This ensures that other threads which
     // wait upon the completion of SB's present in erroneous row are not waiting
     // indefinitely.
     signal_decoding_done_for_erroneous_row(pbi, &thread_data->td->dcb.xd);
-
-#if CONFIG_MULTITHREAD
-    pthread_cond_broadcast(pbi->row_mt_cond_);
-    pthread_mutex_unlock(pbi->row_mt_mutex_);
-#endif
     return 0;
   }
   thread_data->error_info.setjmp = 1;
@@ -4325,10 +4329,8 @@ static int read_global_motion_params(WarpedMotionParams *params,
                        trans_dec_factor;
   }
 
-  if (params->wmtype <= AFFINE) {
-    int good_shear_params = av1_get_shear_params(params);
-    if (!good_shear_params) return 0;
-  }
+  int good_shear_params = av1_get_shear_params(params);
+  if (!good_shear_params) return 0;
 
   return 1;
 }
@@ -5218,7 +5220,10 @@ static AOM_INLINE void setup_frame_info(AV1Decoder *pbi) {
   if (cm->rst_info[0].frame_restoration_type != RESTORE_NONE ||
       cm->rst_info[1].frame_restoration_type != RESTORE_NONE ||
       cm->rst_info[2].frame_restoration_type != RESTORE_NONE) {
-    av1_alloc_restoration_buffers(cm);
+    av1_alloc_restoration_buffers(cm, /*is_sgr_enabled =*/true);
+    for (int p = 0; p < av1_num_planes(cm); p++) {
+      av1_alloc_restoration_struct(cm, &cm->rst_info[p], p > 0);
+    }
   }
 
   const int use_highbd = cm->seq_params->use_highbitdepth;
@@ -5238,6 +5243,7 @@ void av1_decode_tg_tiles_and_wrapup(AV1Decoder *pbi, const uint8_t *data,
   MACROBLOCKD *const xd = &pbi->dcb.xd;
   const int tile_count_tg = end_tile - start_tile + 1;
 
+  xd->error_info = cm->error;
   if (initialize_flag) setup_frame_info(pbi);
   const int num_planes = av1_num_planes(cm);
 

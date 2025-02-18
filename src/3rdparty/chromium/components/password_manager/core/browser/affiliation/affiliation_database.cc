@@ -13,12 +13,16 @@
 
 #include "base/containers/flat_set.h"
 #include "base/files/file_path.h"
+#include "base/files/file_util.h"
 #include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
+#include "base/metrics/histogram_functions.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/parameter_pack.h"
 #include "build/build_config.h"
 #include "components/password_manager/core/browser/affiliation/affiliation_utils.h"
+#include "components/password_manager/core/browser/sql_table_builder.h"
 #include "sql/database.h"
 #include "sql/error_delegate_util.h"
 #include "sql/meta_table.h"
@@ -30,7 +34,7 @@ namespace password_manager {
 namespace {
 
 // The current version number of the affiliation database schema.
-const int kVersion = 5;
+const int kVersion = 6;
 
 // The oldest version of the schema such that a legacy Chrome client using that
 // version can still read/write the current database.
@@ -39,7 +43,7 @@ const int kCompatibleVersion = 1;
 // Struct to hold table builder for "eq_classes", "eq_class_members",
 // and "eq_class_groups" tables.
 struct SQLTableBuilders {
-  std::vector<raw_ptr<SQLTableBuilder>> AsVector() const {
+  std::vector<SQLTableBuilder*> AsVector() const {
     // It's important to keep builders in this order as tables are migrated one
     // by one.
     return {eq_classes, eq_class_members, eq_class_groups, psl_extensions};
@@ -107,6 +111,14 @@ void InitializeTableBuilders(SQLTableBuilders builders) {
 
   builders.psl_extensions->AddColumnToUniqueKey("domain", "VARCHAR NOT NULL");
   SealVersion(builders, /*expected_version=*/5u);
+
+  // Add index on eq_class_groups.facet_uri and eq_class_groups.set_id
+  // manually (to prevent linear scan when joining).
+  builders.eq_class_groups->AddIndex("index_on_eq_groups_url_index",
+                                     {"facet_uri"});
+  builders.eq_class_groups->AddIndex("index_on_eq_groups_set_id_index",
+                                     {"set_id"});
+  SealVersion(builders, /*expected_version=*/6u);
 }
 
 // Migrates from a given version or creates table depending if table exists or
@@ -128,7 +140,7 @@ AffiliationDatabase::AffiliationDatabase() = default;
 AffiliationDatabase::~AffiliationDatabase() = default;
 
 bool AffiliationDatabase::Init(const base::FilePath& path) {
-  sql_connection_ = std::make_unique<sql::Database>();
+  sql_connection_ = std::make_unique<sql::Database>(sql::DatabaseOptions{});
   sql_connection_->set_histogram_tag("Affiliation");
   sql_connection_->set_error_callback(base::BindRepeating(
       &AffiliationDatabase::SQLErrorCallback, base::Unretained(this)));
@@ -163,7 +175,7 @@ bool AffiliationDatabase::Init(const base::FilePath& path) {
   InitializeTableBuilders(builders);
 
   int version = metatable.GetVersionNumber();
-  for (raw_ptr<SQLTableBuilder> builder : builders.AsVector()) {
+  for (SQLTableBuilder* builder : builders.AsVector()) {
     if (!EnsureCurrentVersion(sql_connection_.get(), version, builder)) {
       LOG(WARNING) << "Failed to set up " << builder->TableName() << " table.";
       sql_connection_->Poison();
@@ -175,6 +187,12 @@ bool AffiliationDatabase::Init(const base::FilePath& path) {
     if (!metatable.SetVersionNumber(kVersion)) {
       return false;
     }
+  }
+
+  int64_t db_size;
+  if (base::GetFileSize(path, &db_size)) {
+    base::UmaHistogramMemoryKB(
+        "PasswordManager.AffiliationDatabase.DatabaseSize", db_size / 1024);
   }
 
   return true;
@@ -269,6 +287,49 @@ std::vector<GroupedFacets> AffiliationDatabase::GetAllGroups() const {
   return results;
 }
 
+GroupedFacets AffiliationDatabase::GetGroup(const FacetURI& facet_uri) const {
+  sql::Statement statement(sql_connection_->GetCachedStatement(
+      SQL_FROM_HERE,
+      "SELECT m2.facet_uri, m2.main_domain, c.group_display_name, "
+      "c.group_icon_url, c.id "
+      "FROM eq_class_groups m1, eq_class_groups m2, eq_classes c "
+      "WHERE m1.facet_uri = ? AND m1.set_id = m2.set_id AND m1.set_id = c.id "
+      "ORDER BY c.id"));
+  statement.BindString(0, facet_uri.potentially_invalid_spec());
+
+  GroupedFacets result;
+  if (!statement.Step()) {
+    // No such |facet_uri| in the database, return group with requested facet.
+    result.facets.emplace_back(facet_uri);
+    return result;
+  }
+
+  int64_t group_id = statement.ColumnInt64(4);
+
+  // Add branding info for a group as it's the same for all steps.
+  result.branding_info.name = statement.ColumnString(2);
+  result.branding_info.icon_url = GURL(statement.ColumnString(3));
+
+  result.facets.emplace_back(
+      FacetURI::FromCanonicalSpec(statement.ColumnString(0)),
+      FacetBrandingInfo(), /*change_password_url=*/GURL(),
+      statement.ColumnString(1));
+
+  while (statement.Step()) {
+    // Return only the first group from the response, as other groups are exact
+    // duplicates.
+    if (group_id != statement.ColumnInt64(4)) {
+      break;
+    }
+    result.facets.emplace_back(
+        FacetURI::FromCanonicalSpec(statement.ColumnString(0)),
+        FacetBrandingInfo(), /*change_password_url=*/GURL(),
+        statement.ColumnString(1));
+  }
+
+  return result;
+}
+
 std::vector<std::string> AffiliationDatabase::GetPSLExtensions() const {
   std::vector<std::string> result;
 
@@ -309,7 +370,7 @@ void AffiliationDatabase::DeleteAffiliationsAndBrandingForFacetURI(
   transaction.Commit();
 }
 
-bool AffiliationDatabase::Store(
+AffiliationDatabase::StoreAffiliationResult AffiliationDatabase::Store(
     const AffiliatedFacetsWithUpdateTime& affiliated_facets,
     const GroupedFacets& group) {
   DCHECK(!affiliated_facets.facets.empty());
@@ -330,15 +391,17 @@ bool AffiliationDatabase::Store(
       "VALUES (?, ?, ?)"));
 
   sql::Transaction transaction(sql_connection_.get());
-  if (!transaction.Begin())
-    return false;
+  if (!transaction.Begin()) {
+    return StoreAffiliationResult::kFailedToStartTransaction;
+  }
 
   statement_parent.BindTime(0, affiliated_facets.last_update_time);
   statement_parent.BindString(1, group.branding_info.name);
   statement_parent.BindString(
       2, group.branding_info.icon_url.possibly_invalid_spec());
-  if (!statement_parent.Run())
-    return false;
+  if (!statement_parent.Run()) {
+    return StoreAffiliationResult::kFailedToAddSet;
+  }
 
   int64_t eq_class_id = sql_connection_->GetLastInsertRowId();
   for (const Facet& facet : affiliated_facets.facets) {
@@ -348,19 +411,25 @@ bool AffiliationDatabase::Store(
     statement_child.BindString(
         2, facet.branding_info.icon_url.possibly_invalid_spec());
     statement_child.BindInt64(3, eq_class_id);
-    if (!statement_child.Run())
-      return false;
+    if (!statement_child.Run()) {
+      return StoreAffiliationResult::kFailedToAddAffiliation;
+    }
   }
   for (const Facet& facet : group.facets) {
     statement_groups.Reset(true);
     statement_groups.BindString(0, facet.uri.canonical_spec());
     statement_groups.BindString(1, facet.main_domain);
     statement_groups.BindInt64(2, eq_class_id);
-    if (!statement_groups.Run())
-      return false;
+    if (!statement_groups.Run()) {
+      return StoreAffiliationResult::kFailedToAddGroup;
+    }
   }
 
-  return transaction.Commit();
+  if (!transaction.Commit()) {
+    return StoreAffiliationResult::kFailedToCloseTransaction;
+  }
+
+  return StoreAffiliationResult::kSuccess;
 }
 
 void AffiliationDatabase::StoreAndRemoveConflicting(
@@ -386,8 +455,9 @@ void AffiliationDatabase::StoreAndRemoveConflicting(
     }
   }
 
-  if (!Store(affiliation, group))
-    NOTREACHED();
+  StoreAffiliationResult result = Store(affiliation, group);
+  UMA_HISTOGRAM_ENUMERATION("PasswordManager.AffiliationDatabase.StoreResult",
+                            result);
 
   transaction.Commit();
 }
@@ -477,18 +547,16 @@ void AffiliationDatabase::UpdatePslExtensions(
 
 void AffiliationDatabase::SQLErrorCallback(int error,
                                            sql::Statement* statement) {
-  if (sql::IsErrorCatastrophic(error)) {
+  sql::UmaHistogramSqliteResult("PasswordManager.AffiliationDatabase.Error",
+                                error);
+
+  if (sql::IsErrorCatastrophic(error) && sql_connection_->is_open()) {
     // Normally this will poison the database, causing any subsequent operations
-    // to silently fail without any side effects. However, if RazeAndClose() is
+    // to silently fail without any side effects. However, if RazeAndPoison() is
     // called from the error callback in response to an error raised from within
     // sql::Database::Open, opening the now-razed database will be retried.
-    sql_connection_->RazeAndClose();
-    return;
+    sql_connection_->RazeAndPoison();
   }
-
-  // The default handling is to assert on debug and to ignore on release.
-  if (!sql::Database::IsExpectedSqliteError(error))
-    DLOG(FATAL) << sql_connection_->GetErrorMessage();
 }
 
 }  // namespace password_manager

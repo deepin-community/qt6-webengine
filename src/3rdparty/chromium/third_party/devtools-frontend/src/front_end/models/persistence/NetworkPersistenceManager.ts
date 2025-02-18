@@ -5,13 +5,14 @@
 import * as Common from '../../core/common/common.js';
 import * as Host from '../../core/host/host.js';
 import * as Platform from '../../core/platform/platform.js';
-import * as Root from '../../core/root/root.js';
 import * as SDK from '../../core/sdk/sdk.js';
 import * as Protocol from '../../generated/protocol.js';
-import * as Bindings from '../bindings/bindings.js';
+import * as UI from '../../ui/legacy/legacy.js';
+import * as Breakpoints from '../breakpoints/breakpoints.js';
 import * as Workspace from '../workspace/workspace.js';
 
-import {FileSystemWorkspaceBinding, type FileSystem} from './FileSystemWorkspaceBinding.js';
+import {type FileSystem, FileSystemWorkspaceBinding} from './FileSystemWorkspaceBinding.js';
+import {IsolatedFileSystemManager} from './IsolatedFileSystemManager.js';
 import {PersistenceBinding, PersistenceImpl} from './PersistenceImpl.js';
 
 let networkPersistenceManagerInstance: NetworkPersistenceManager|null;
@@ -71,7 +72,7 @@ export class NetworkPersistenceManager extends Common.ObjectWrapper.ObjectWrappe
     });
 
     PersistenceImpl.instance().addNetworkInterceptor(this.canHandleNetworkUISourceCode.bind(this));
-    Bindings.BreakpointManager.BreakpointManager.instance().addUpdateBindingsCallback(
+    Breakpoints.BreakpointManager.BreakpointManager.instance().addUpdateBindingsCallback(
         this.networkUISourceCodeAdded.bind(this));
 
     this.eventDescriptors = [];
@@ -125,6 +126,7 @@ export class NetworkPersistenceManager extends Common.ObjectWrapper.ObjectWrappe
     }
     this.enabled = this.enabledSetting.get();
     if (this.enabled) {
+      Host.userMetrics.actionTaken(Host.UserMetrics.Action.PersistenceNetworkOverridesEnabled);
       this.eventDescriptors = [
         Workspace.Workspace.WorkspaceImpl.instance().addEventListener(
             Workspace.Workspace.Events.UISourceCodeRenamed,
@@ -147,9 +149,11 @@ export class NetworkPersistenceManager extends Common.ObjectWrapper.ObjectWrappe
       ];
       await this.updateActiveProject();
     } else {
+      Host.userMetrics.actionTaken(Host.UserMetrics.Action.PersistenceNetworkOverridesDisabled);
       Common.EventTarget.removeEventListeners(this.eventDescriptors);
       await this.updateActiveProject();
     }
+    this.dispatchEventToListeners(Events.LocalOverridesProjectUpdated, this.enabled);
   }
 
   private async uiSourceCodeRenamedListener(
@@ -172,7 +176,7 @@ export class NetworkPersistenceManager extends Common.ObjectWrapper.ObjectWrappe
   private async updateActiveProject(): Promise<void> {
     const wasActive = this.activeInternal;
     this.activeInternal = Boolean(
-        this.enabledSetting.get() && SDK.TargetManager.TargetManager.instance().mainTarget() && this.projectInternal);
+        this.enabledSetting.get() && SDK.TargetManager.TargetManager.instance().rootTarget() && this.projectInternal);
     if (this.activeInternal === wasActive) {
       return;
     }
@@ -293,6 +297,7 @@ export class NetworkPersistenceManager extends Common.ObjectWrapper.ObjectWrappe
       const encodedFilePath = this.encodedPathFromUrl(url, /* ignoreNoActive */ true);
       const encodedPath = Common.ParsedURL.ParsedURL.substring(encodedFilePath, 0, encodedFilePath.lastIndexOf('/'));
       uiSourceCode = await this.projectInternal.createFile(encodedPath, HEADERS_FILENAME, '');
+      Host.userMetrics.actionTaken(Host.UserMetrics.Action.HeaderOverrideFileCreated);
     }
     return uiSourceCode;
   }
@@ -308,14 +313,12 @@ export class NetworkPersistenceManager extends Common.ObjectWrapper.ObjectWrappe
 
   async #unbind(uiSourceCode: Workspace.UISourceCode.UISourceCode): Promise<void> {
     const binding = this.bindings.get(uiSourceCode);
+    const headerBinding = uiSourceCode.url().endsWith(HEADERS_FILENAME);
     if (binding) {
       const mutex = this.#getOrCreateMutex(binding.network);
-      const release = await mutex.acquire();
-      try {
-        await this.#innerUnbind(binding);
-      } finally {
-        release();
-      }
+      await mutex.run(this.#innerUnbind.bind(this, binding));
+    } else if (headerBinding) {
+      this.dispatchEventToListeners(Events.RequestsForHeaderOverridesFileChanged, uiSourceCode);
     }
   }
 
@@ -336,8 +339,7 @@ export class NetworkPersistenceManager extends Common.ObjectWrapper.ObjectWrappe
       networkUISourceCode: Workspace.UISourceCode.UISourceCode,
       fileSystemUISourceCode: Workspace.UISourceCode.UISourceCode): Promise<void> {
     const mutex = this.#getOrCreateMutex(networkUISourceCode);
-    const release = await mutex.acquire();
-    try {
+    await mutex.run(async () => {
       const existingBinding = this.bindings.get(networkUISourceCode);
       if (existingBinding) {
         const {network, fileSystem} = existingBinding;
@@ -349,9 +351,7 @@ export class NetworkPersistenceManager extends Common.ObjectWrapper.ObjectWrappe
       }
 
       await this.#innerAddBinding(networkUISourceCode, fileSystemUISourceCode);
-    } finally {
-      release();
-    }
+    });
   }
 
   #getOrCreateMutex(networkUISourceCode: Workspace.UISourceCode.UISourceCode): Common.Mutex.Mutex {
@@ -381,13 +381,68 @@ export class NetworkPersistenceManager extends Common.ObjectWrapper.ObjectWrappe
     this.updateInterceptionPatterns();
   }
 
-  canSaveUISourceCodeForOverrides(uiSourceCode: Workspace.UISourceCode.UISourceCode): boolean {
-    return this.activeInternal && uiSourceCode.project().type() === Workspace.Workspace.projectTypes.Network &&
-        !this.bindings.has(uiSourceCode) && !this.savingForOverrides.has(uiSourceCode);
+  isActiveHeaderOverrides(uiSourceCode: Workspace.UISourceCode.UISourceCode): boolean {
+    // If this overriden file is actively in use at the moment.
+    if (!this.enabledSetting.get()) {
+      return false;
+    }
+    return uiSourceCode.url().endsWith(HEADERS_FILENAME) &&
+        this.hasMatchingNetworkUISourceCodeForHeaderOverridesFile(uiSourceCode);
+  }
+
+  isUISourceCodeOverridable(uiSourceCode: Workspace.UISourceCode.UISourceCode): boolean {
+    return uiSourceCode.project().type() === Workspace.Workspace.projectTypes.Network;
+  }
+
+  #isUISourceCodeAlreadyOverridden(uiSourceCode: Workspace.UISourceCode.UISourceCode): boolean {
+    return this.bindings.has(uiSourceCode) || this.savingForOverrides.has(uiSourceCode);
+  }
+
+  #shouldPromptSaveForOverridesDialog(uiSourceCode: Workspace.UISourceCode.UISourceCode): boolean {
+    return this.isUISourceCodeOverridable(uiSourceCode) && !this.#isUISourceCodeAlreadyOverridden(uiSourceCode) &&
+        !this.activeInternal && !this.projectInternal;
+  }
+
+  #canSaveUISourceCodeForOverrides(uiSourceCode: Workspace.UISourceCode.UISourceCode): boolean {
+    return this.activeInternal && this.isUISourceCodeOverridable(uiSourceCode) &&
+        !this.#isUISourceCodeAlreadyOverridden(uiSourceCode);
+  }
+
+  async setupAndStartLocalOverrides(uiSourceCode: Workspace.UISourceCode.UISourceCode): Promise<boolean> {
+    // No overrides folder, set it up
+    if (this.#shouldPromptSaveForOverridesDialog(uiSourceCode)) {
+      Host.userMetrics.actionTaken(Host.UserMetrics.Action.OverrideContentContextMenuSetup);
+      await new Promise<void>(
+          resolve => UI.InspectorView.InspectorView.instance().displaySelectOverrideFolderInfobar(resolve));
+      await IsolatedFileSystemManager.instance().addFileSystem('overrides');
+    }
+
+    if (!this.project()) {
+      Host.userMetrics.actionTaken(Host.UserMetrics.Action.OverrideContentContextMenuAbandonSetup);
+      return false;
+    }
+
+    // Already have an overrides folder, enable setting
+    if (!this.enabledSetting.get()) {
+      Host.userMetrics.actionTaken(Host.UserMetrics.Action.OverrideContentContextMenuActivateDisabled);
+      this.enabledSetting.set(true);
+      await this.once(Events.LocalOverridesProjectUpdated);
+    }
+
+    // Save new file
+    if (!this.#isUISourceCodeAlreadyOverridden(uiSourceCode)) {
+      Host.userMetrics.actionTaken(Host.UserMetrics.Action.OverrideContentContextMenuSaveNewFile);
+      uiSourceCode.commitWorkingCopy();
+      await this.saveUISourceCodeForOverrides(uiSourceCode as Workspace.UISourceCode.UISourceCode);
+    } else {
+      Host.userMetrics.actionTaken(Host.UserMetrics.Action.OverrideContentContextMenuOpenExistingFile);
+    }
+
+    return true;
   }
 
   async saveUISourceCodeForOverrides(uiSourceCode: Workspace.UISourceCode.UISourceCode): Promise<void> {
-    if (!this.canSaveUISourceCodeForOverrides(uiSourceCode)) {
+    if (!this.#canSaveUISourceCodeForOverrides(uiSourceCode)) {
       return;
     }
     this.savingForOverrides.add(uiSourceCode);
@@ -429,13 +484,24 @@ export class NetworkPersistenceManager extends Common.ObjectWrapper.ObjectWrappe
     return 'http?://' + path;
   }
 
+  // 'chrome://'-URLs and the Chrome Web Store are privileged URLs. We don't want users
+  // to be able to override those. Ideally we'd have a similar check in the backend,
+  // because the fix here has no effect on non-DevTools CDP clients.
+  private isForbiddenUrl(uiSourceCode: Workspace.UISourceCode.UISourceCode): boolean {
+    const relativePathParts = FileSystemWorkspaceBinding.relativePath(uiSourceCode);
+    // Decode twice to handle paths generated on Windows OS.
+    const host = this.decodeLocalPathToUrlPath(this.decodeLocalPathToUrlPath(relativePathParts[0] || ''));
+    const forbiddenUrls = ['chrome:', 'chromewebstore.google.com', 'chrome.google.com'];
+    return forbiddenUrls.includes(host);
+  }
+
   private async onUISourceCodeAdded(uiSourceCode: Workspace.UISourceCode.UISourceCode): Promise<void> {
     await this.networkUISourceCodeAdded(uiSourceCode);
     await this.filesystemUISourceCodeAdded(uiSourceCode);
   }
 
   private canHandleNetworkUISourceCode(uiSourceCode: Workspace.UISourceCode.UISourceCode): boolean {
-    return this.activeInternal && !uiSourceCode.url().startsWith('snippet://');
+    return this.activeInternal && !Common.ParsedURL.schemeIs(uiSourceCode.url(), 'snippet:');
   }
 
   private async networkUISourceCodeAdded(uiSourceCode: Workspace.UISourceCode.UISourceCode): Promise<void> {
@@ -628,9 +694,11 @@ export class NetworkPersistenceManager extends Common.ObjectWrapper.ObjectWrappe
     }
     let patterns = new Set<string>();
     for (const uiSourceCode of this.projectInternal.uiSourceCodes()) {
+      if (this.isForbiddenUrl(uiSourceCode)) {
+        continue;
+      }
       const pattern = this.patternForFileSystemUISourceCode(uiSourceCode);
-      if (Root.Runtime.experiments.isEnabled(Root.Runtime.ExperimentName.HEADER_OVERRIDES) &&
-          uiSourceCode.name() === HEADERS_FILENAME) {
+      if (uiSourceCode.name() === HEADERS_FILENAME) {
         const {headerPatterns, path, overridesWithRegex} = await this.generateHeaderPatterns(uiSourceCode);
         if (headerPatterns.size > 0) {
           patterns = new Set([...patterns, ...headerPatterns]);
@@ -771,6 +839,9 @@ export class NetworkPersistenceManager extends Common.ObjectWrapper.ObjectWrappe
   }
 
   private async onProjectRemoved(project: Workspace.Workspace.Project): Promise<void> {
+    for (const uiSourceCode of project.uiSourceCodes()) {
+      await this.networkUISourceCodeRemoved(uiSourceCode);
+    }
     if (project === this.projectInternal) {
       await this.setProject(null);
     }
@@ -852,10 +923,7 @@ export class NetworkPersistenceManager extends Common.ObjectWrapper.ObjectWrappe
     const proj = this.projectInternal as FileSystem;
     const path = this.fileUrlFromNetworkUrl(interceptedRequest.request.url as Platform.DevToolsPath.UrlString);
     const fileSystemUISourceCode = proj.uiSourceCodeForURL(path);
-    let responseHeaders: Protocol.Fetch.HeaderEntry[] = [];
-    if (Root.Runtime.experiments.isEnabled(Root.Runtime.ExperimentName.HEADER_OVERRIDES)) {
-      responseHeaders = this.handleHeaderInterception(interceptedRequest);
-    }
+    let responseHeaders = this.handleHeaderInterception(interceptedRequest);
     if (!fileSystemUISourceCode && !responseHeaders.length) {
       return;
     }
@@ -863,16 +931,7 @@ export class NetworkPersistenceManager extends Common.ObjectWrapper.ObjectWrappe
       responseHeaders = interceptedRequest.responseHeaders || [];
     }
 
-    let mimeType = '';
-    if (interceptedRequest.responseHeaders) {
-      for (const header of interceptedRequest.responseHeaders) {
-        if (header.name.toLowerCase() === 'content-type') {
-          mimeType = header.value;
-          break;
-        }
-      }
-    }
-
+    let {mimeType} = interceptedRequest.getMimeTypeAndCharset();
     if (!mimeType) {
       const expectedResourceType =
           Common.ResourceType.resourceTypes[interceptedRequest.resourceType] || Common.ResourceType.resourceTypes.Other;
@@ -885,18 +944,10 @@ export class NetworkPersistenceManager extends Common.ObjectWrapper.ObjectWrappe
     if (fileSystemUISourceCode) {
       this.originalResponseContentPromises.set(
           fileSystemUISourceCode, interceptedRequest.responseBody().then(response => {
-            if (response.error || response.content === null) {
+            if (SDK.ContentData.ContentData.isError(response) || !response.isTextContent) {
               return null;
             }
-            if (response.encoded) {
-              const text = atob(response.content);
-              const data = new Uint8Array(text.length);
-              for (let i = 0; i < text.length; ++i) {
-                data[i] = text.charCodeAt(i);
-              }
-              return new TextDecoder('utf-8').decode(data);
-            }
-            return response.content;
+            return response.text;
           }));
 
       const project = fileSystemUISourceCode.project() as FileSystem;
@@ -910,9 +961,10 @@ export class NetworkPersistenceManager extends Common.ObjectWrapper.ObjectWrappe
           new Blob([], {type: mimeType}), /* encoded */ true, responseHeaders, /* isBodyOverridden */ false);
     } else {
       const responseBody = await interceptedRequest.responseBody();
-      if (!responseBody.error && responseBody.content) {
+      if (!SDK.ContentData.ContentData.isError(responseBody)) {
+        const content = responseBody.isTextContent ? responseBody.text : responseBody.base64;
         void interceptedRequest.continueRequestWithContent(
-            new Blob([responseBody.content], {type: mimeType}), /* encoded */ true, responseHeaders,
+            new Blob([content], {type: mimeType}), /* encoded */ true, responseHeaders,
             /* isBodyOverridden */ false);
       }
     }
@@ -926,16 +978,16 @@ const RESERVED_FILENAMES = new Set<string>([
 
 export const HEADERS_FILENAME = '.headers';
 
-// TODO(crbug.com/1167717): Make this a const enum again
-// eslint-disable-next-line rulesdir/const_enum
-export enum Events {
+export const enum Events {
   ProjectChanged = 'ProjectChanged',
   RequestsForHeaderOverridesFileChanged = 'RequestsForHeaderOverridesFileChanged',
+  LocalOverridesProjectUpdated = 'LocalOverridesProjectUpdated',
 }
 
 export type EventTypes = {
   [Events.ProjectChanged]: Workspace.Workspace.Project|null,
   [Events.RequestsForHeaderOverridesFileChanged]: Workspace.UISourceCode.UISourceCode,
+  [Events.LocalOverridesProjectUpdated]: boolean,
 };
 
 export interface HeaderOverride {

@@ -31,9 +31,10 @@ class TestBackForwardCacheLoaderHelper : public BackForwardCacheLoaderHelper {
   TestBackForwardCacheLoaderHelper() = default;
 
   void EvictFromBackForwardCache(
-      mojom::RendererEvictionReason reason) override {}
+      mojom::blink::RendererEvictionReason reason) override {}
 
-  void DidBufferLoadWhileInBackForwardCache(size_t num_bytes) override {}
+  void DidBufferLoadWhileInBackForwardCache(bool update_process_wide_count,
+                                            size_t num_bytes) override {}
 
   void Detach() override {}
 };
@@ -797,6 +798,25 @@ TEST_F(ResponseBodyLoaderTest, CancelDrainedBytesConsumer) {
   EXPECT_TRUE(client->LoadingIsCancelled());
   EXPECT_FALSE(client->LoadingIsFinished());
   EXPECT_FALSE(client->LoadingIsFailed());
+}
+
+TEST_F(ResponseBodyLoaderTest, AbortDrainAsBytesConsumerWhileLoading) {
+  auto task_runner = base::MakeRefCounted<scheduler::FakeTaskRunner>();
+  auto* original_consumer =
+      MakeGarbageCollected<ReplayingBytesConsumer>(task_runner);
+  original_consumer->Add(Command(Command::kData, "hello"));
+  original_consumer->Add(Command(Command::kDone));
+
+  auto* client = MakeGarbageCollected<TestClient>();
+  auto* body_loader =
+      MakeResponseBodyLoader(*original_consumer, *client, task_runner);
+  BytesConsumer& consumer = body_loader->DrainAsBytesConsumer();
+
+  EXPECT_EQ(PublicState::kReadableOrWaiting, consumer.GetPublicState());
+
+  body_loader->Abort();
+  EXPECT_EQ(PublicState::kErrored, consumer.GetPublicState());
+  EXPECT_EQ("Response body loading was aborted", consumer.GetError().Message());
 }
 
 TEST_F(ResponseBodyLoaderTest, DrainAsBytesConsumerWithError) {

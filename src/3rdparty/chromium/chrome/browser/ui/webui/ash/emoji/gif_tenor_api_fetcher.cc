@@ -160,7 +160,7 @@ std::vector<emoji_picker::mojom::GifResponsePtr> ParseGifs(
   return gifs;
 }
 
-GURL GetUrl(const char* endpoint, const absl::optional<std::string>& pos) {
+GURL GetUrl(const char* endpoint, const std::optional<std::string>& pos) {
   GURL url = net::AppendQueryParameter(GURL(kTenorBaseUrl).Resolve(endpoint),
                                        kContentFilterName, kContentFilterValue);
   url = net::AppendQueryParameter(url, kArRangeName, kArRangeValue);
@@ -218,7 +218,7 @@ void GifTenorApiFetcher::OnGifsJsonParsed(
             "", std::vector<emoji_picker::mojom::GifResponsePtr>{}));
     return;
   }
-  const auto* next = result->FindStringKey("next");
+  const auto* next = result->GetDict().FindString("next");
   std::move(callback).Run(emoji_picker::mojom::Status::kHttpOk,
                           emoji_picker::mojom::TenorGifResponse::New(
                               next ? *next : "", ParseGifs(gifs)));
@@ -312,7 +312,7 @@ void GifTenorApiFetcher::OnCategoriesJsonParsed(
 void GifTenorApiFetcher::FetchFeaturedGifs(
     TenorGifsApiCallback callback,
     const scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
-    const absl::optional<std::string>& pos) {
+    const std::optional<std::string>& pos) {
   constexpr char kFeaturedApi[] = "/v2/featured";
   constexpr net::NetworkTrafficAnnotationTag kTrafficAnnotation =
       net::DefineNetworkTrafficAnnotation(
@@ -356,7 +356,7 @@ void GifTenorApiFetcher::FetchGifSearch(
     TenorGifsApiCallback callback,
     const scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
     const std::string& query,
-    const absl::optional<std::string>& pos) {
+    const std::optional<std::string>& pos) {
   constexpr char kSearchApi[] = "/v2/search";
   constexpr net::NetworkTrafficAnnotationTag kTrafficAnnotation =
       net::DefineNetworkTrafficAnnotation(

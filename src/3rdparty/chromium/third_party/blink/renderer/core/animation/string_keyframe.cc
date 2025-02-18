@@ -35,7 +35,10 @@ MutableCSSPropertyValueSet* CreateCssPropertyValueSet() {
 using PropertyResolver = StringKeyframe::PropertyResolver;
 
 StringKeyframe::StringKeyframe(const StringKeyframe& copy_from)
-    : Keyframe(copy_from.offset_, copy_from.composite_, copy_from.easing_),
+    : Keyframe(copy_from.offset_,
+               copy_from.timeline_offset_,
+               copy_from.composite_,
+               copy_from.easing_),
       tree_scope_(copy_from.tree_scope_),
       input_properties_(copy_from.input_properties_),
       presentation_attribute_map_(
@@ -172,6 +175,7 @@ PropertyHandleSet StringKeyframe::Properties() const {
   // worry about caching this result.
   EnsureCssPropertyMap();
   PropertyHandleSet properties;
+
   for (unsigned i = 0; i < css_property_map_->PropertyCount(); ++i) {
     CSSPropertyValueSet::PropertyReference property_reference =
         css_property_map_->PropertyAt(i);
@@ -215,7 +219,7 @@ void StringKeyframe::AddKeyframePropertiesToV8Object(
         AnimationInputHelpers::PropertyHandleToKeyframeAttribute(
             property_handle);
 
-    object_builder.Add(property_name, property_value->CssText());
+    object_builder.AddString(property_name, property_value->CssText());
   }
 
   // Legacy code path for SVG and Presentation attributes.
@@ -237,7 +241,7 @@ void StringKeyframe::AddKeyframePropertiesToV8Object(
       DCHECK(property.IsSVGAttribute());
       property_value = SvgPropertyValue(property.SvgAttribute());
     }
-    object_builder.Add(property_name, property_value);
+    object_builder.AddString(property_name, property_value);
   }
 }
 
@@ -413,14 +417,14 @@ const CSSValue* PropertyResolver::CssValue() {
   DCHECK(IsValid());
 
   if (css_value_)
-    return css_value_;
+    return css_value_.Get();
 
   // For shorthands create a special wrapper value, |CSSKeyframeShorthandValue|,
   // which can be used to correctly serialize it given longhands that are
   // present in this set.
   css_value_ = MakeGarbageCollected<CSSKeyframeShorthandValue>(
       property_id_, css_property_value_set_);
-  return css_value_;
+  return css_value_.Get();
 }
 
 void PropertyResolver::AppendTo(MutableCSSPropertyValueSet* property_value_set,

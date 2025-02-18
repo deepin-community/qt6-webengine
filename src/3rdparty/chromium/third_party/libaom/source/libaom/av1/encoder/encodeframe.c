@@ -81,7 +81,7 @@
 //  purposes of activity masking.
 // Eventually this should be replaced by custom no-reference routines,
 //  which will be faster.
-const uint8_t AV1_VAR_OFFS[MAX_SB_SIZE] = {
+static const uint8_t AV1_VAR_OFFS[MAX_SB_SIZE] = {
   128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128,
   128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128,
   128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128,
@@ -93,6 +93,7 @@ const uint8_t AV1_VAR_OFFS[MAX_SB_SIZE] = {
   128, 128, 128, 128, 128, 128, 128, 128
 };
 
+#if CONFIG_AV1_HIGHBITDEPTH
 static const uint16_t AV1_HIGH_VAR_OFFS_8[MAX_SB_SIZE] = {
   128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128,
   128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128,
@@ -145,7 +146,30 @@ static const uint16_t AV1_HIGH_VAR_OFFS_12[MAX_SB_SIZE] = {
   128 * 16, 128 * 16, 128 * 16, 128 * 16, 128 * 16, 128 * 16, 128 * 16,
   128 * 16, 128 * 16
 };
+#endif  // CONFIG_AV1_HIGHBITDEPTH
 /*!\endcond */
+
+// For the given bit depth, returns a constant array used to assist the
+// calculation of source block variance, which will then be used to decide
+// adaptive quantizers.
+static const uint8_t *get_var_offs(int use_hbd, int bd) {
+#if CONFIG_AV1_HIGHBITDEPTH
+  if (use_hbd) {
+    assert(bd == 8 || bd == 10 || bd == 12);
+    const int off_index = (bd - 8) >> 1;
+    static const uint16_t *high_var_offs[3] = { AV1_HIGH_VAR_OFFS_8,
+                                                AV1_HIGH_VAR_OFFS_10,
+                                                AV1_HIGH_VAR_OFFS_12 };
+    return CONVERT_TO_BYTEPTR(high_var_offs[off_index]);
+  }
+#else
+  (void)use_hbd;
+  (void)bd;
+  assert(!use_hbd);
+#endif
+  assert(bd == 8);
+  return AV1_VAR_OFFS;
+}
 
 void av1_init_rtc_counters(MACROBLOCK *const x) {
   av1_init_cyclic_refresh_counters(x);
@@ -167,21 +191,9 @@ unsigned int av1_get_perpixel_variance(const AV1_COMP *cpi,
   const int subsampling_y = xd->plane[plane].subsampling_y;
   const BLOCK_SIZE plane_bsize =
       get_plane_block_size(bsize, subsampling_x, subsampling_y);
-  unsigned int var, sse;
-  if (use_hbd) {
-    const int bd = xd->bd;
-    assert(bd == 8 || bd == 10 || bd == 12);
-    const int off_index = (bd - 8) >> 1;
-    static const uint16_t *high_var_offs[3] = { AV1_HIGH_VAR_OFFS_8,
-                                                AV1_HIGH_VAR_OFFS_10,
-                                                AV1_HIGH_VAR_OFFS_12 };
-    var = cpi->ppi->fn_ptr[plane_bsize].vf(
-        ref->buf, ref->stride, CONVERT_TO_BYTEPTR(high_var_offs[off_index]), 0,
-        &sse);
-  } else {
-    var = cpi->ppi->fn_ptr[plane_bsize].vf(ref->buf, ref->stride, AV1_VAR_OFFS,
-                                           0, &sse);
-  }
+  unsigned int sse;
+  const unsigned int var = cpi->ppi->fn_ptr[plane_bsize].vf(
+      ref->buf, ref->stride, get_var_offs(use_hbd, xd->bd), 0, &sse);
   return ROUND_POWER_OF_TWO(var, num_pels_log2_lookup[plane_bsize]);
 }
 
@@ -511,7 +523,7 @@ static AOM_INLINE void encode_nonrd_sb(AV1_COMP *cpi, ThreadData *td,
   MB_MODE_INFO **mi = cm->mi_params.mi_grid_base +
                       get_mi_grid_idx(&cm->mi_params, mi_row, mi_col);
   const BLOCK_SIZE sb_size = cm->seq_params->sb_size;
-  PC_TREE *const pc_root = td->rt_pc_root;
+  PC_TREE *const pc_root = td->pc_root;
 
 #if CONFIG_RT_ML_PARTITIONING
   if (sf->part_sf.partition_search_type == ML_BASED_PARTITION) {
@@ -523,11 +535,17 @@ static AOM_INLINE void encode_nonrd_sb(AV1_COMP *cpi, ThreadData *td,
   }
 #endif
   // Set the partition
-  if (sf->part_sf.partition_search_type == FIXED_PARTITION || seg_skip) {
+  if (sf->part_sf.partition_search_type == FIXED_PARTITION || seg_skip ||
+      (sf->rt_sf.use_fast_fixed_part &&
+       x->content_state_sb.source_sad_nonrd < kMedSad)) {
     // set a fixed-size partition
     av1_set_offsets(cpi, tile_info, x, mi_row, mi_col, sb_size);
-    const BLOCK_SIZE bsize =
-        seg_skip ? sb_size : sf->part_sf.fixed_partition_size;
+    BLOCK_SIZE bsize_select = sf->part_sf.fixed_partition_size;
+    if (sf->rt_sf.use_fast_fixed_part &&
+        x->content_state_sb.source_sad_nonrd < kLowSad) {
+      bsize_select = BLOCK_64X64;
+    }
+    const BLOCK_SIZE bsize = seg_skip ? sb_size : bsize_select;
     av1_set_fixed_partitioning(cpi, tile_info, mi, mi_row, mi_col, bsize);
   } else if (sf->part_sf.partition_search_type == VAR_BASED_PARTITION) {
     // set a variance-based partition
@@ -599,7 +617,7 @@ static INLINE void init_encode_rd_sb(AV1_COMP *cpi, ThreadData *td,
       }
 
       // TODO(jingning): revisit this function.
-      if (cpi->oxcf.algo_cfg.enable_tpl_model && 0) {
+      if (cpi->oxcf.algo_cfg.enable_tpl_model && (0)) {
         adjust_rdmult_tpl_model(cpi, x, mi_row, mi_col);
       }
     }
@@ -719,9 +737,12 @@ static int sb_qp_sweep(AV1_COMP *const cpi, ThreadData *td,
     av1_restore_sb_state(sb_org_stats, cpi, td, tile_data, mi_row, mi_col);
     cm->mi_params.mi_alloc[alloc_mi_idx].current_qindex = backup_current_qindex;
 
-    PC_TREE *const pc_root = av1_alloc_pc_tree_node(bsize);
+    td->pc_root = av1_alloc_pc_tree_node(bsize);
+    if (!td->pc_root)
+      aom_internal_error(x->e_mbd.error_info, AOM_CODEC_MEM_ERROR,
+                         "Failed to allocate PC_TREE");
     av1_rd_pick_partition(cpi, td, tile_data, tp, mi_row, mi_col, bsize,
-                          &cur_rdc, cur_rdc, pc_root, sms_tree, NULL,
+                          &cur_rdc, cur_rdc, td->pc_root, sms_tree, NULL,
                           SB_DRY_PASS, NULL);
 
     if ((rdc_winner.rdcost > cur_rdc.rdcost) ||
@@ -748,6 +769,7 @@ static AOM_INLINE void encode_rd_sb(AV1_COMP *cpi, ThreadData *td,
                                     const int seg_skip) {
   AV1_COMMON *const cm = &cpi->common;
   MACROBLOCK *const x = &td->mb;
+  MACROBLOCKD *const xd = &x->e_mbd;
   const SPEED_FEATURES *const sf = &cpi->sf;
   const TileInfo *const tile_info = &tile_data->tile_info;
   MB_MODE_INFO **mi = cm->mi_params.mi_grid_base +
@@ -775,10 +797,15 @@ static AOM_INLINE void encode_rd_sb(AV1_COMP *cpi, ThreadData *td,
 #if CONFIG_COLLECT_COMPONENT_TIMING
     start_timing(cpi, rd_use_partition_time);
 #endif
-    PC_TREE *const pc_root = av1_alloc_pc_tree_node(sb_size);
+    td->pc_root = av1_alloc_pc_tree_node(sb_size);
+    if (!td->pc_root)
+      aom_internal_error(xd->error_info, AOM_CODEC_MEM_ERROR,
+                         "Failed to allocate PC_TREE");
     av1_rd_use_partition(cpi, td, tile_data, mi, tp, mi_row, mi_col, sb_size,
-                         &dummy_rate, &dummy_dist, 1, pc_root);
-    av1_free_pc_tree_recursive(pc_root, num_planes, 0, 0);
+                         &dummy_rate, &dummy_dist, 1, td->pc_root);
+    av1_free_pc_tree_recursive(td->pc_root, num_planes, 0, 0,
+                               sf->part_sf.partition_search_type);
+    td->pc_root = NULL;
 #if CONFIG_COLLECT_COMPONENT_TIMING
     end_timing(cpi, rd_use_partition_time);
 #endif
@@ -790,19 +817,16 @@ static AOM_INLINE void encode_rd_sb(AV1_COMP *cpi, ThreadData *td,
     const BLOCK_SIZE bsize =
         seg_skip ? sb_size : sf->part_sf.fixed_partition_size;
     av1_set_fixed_partitioning(cpi, tile_info, mi, mi_row, mi_col, bsize);
-    PC_TREE *const pc_root = av1_alloc_pc_tree_node(sb_size);
+    td->pc_root = av1_alloc_pc_tree_node(sb_size);
+    if (!td->pc_root)
+      aom_internal_error(xd->error_info, AOM_CODEC_MEM_ERROR,
+                         "Failed to allocate PC_TREE");
     av1_rd_use_partition(cpi, td, tile_data, mi, tp, mi_row, mi_col, sb_size,
-                         &dummy_rate, &dummy_dist, 1, pc_root);
-    av1_free_pc_tree_recursive(pc_root, num_planes, 0, 0);
+                         &dummy_rate, &dummy_dist, 1, td->pc_root);
+    av1_free_pc_tree_recursive(td->pc_root, num_planes, 0, 0,
+                               sf->part_sf.partition_search_type);
+    td->pc_root = NULL;
   } else {
-    SB_FIRST_PASS_STATS *sb_org_stats = NULL;
-
-    if (cpi->oxcf.sb_qp_sweep) {
-      CHECK_MEM_ERROR(
-          cm, sb_org_stats,
-          (SB_FIRST_PASS_STATS *)aom_malloc(sizeof(SB_FIRST_PASS_STATS)));
-      av1_backup_sb_state(sb_org_stats, cpi, td, tile_data, mi_row, mi_col);
-    }
     // The most exhaustive recursive partition search
     SuperBlockEnc *sb_enc = &x->sb_enc;
     // No stats for overlay frames. Exclude key frame.
@@ -829,12 +853,16 @@ static AOM_INLINE void encode_rd_sb(AV1_COMP *cpi, ThreadData *td,
         !(has_no_stats_stage(cpi) && cpi->oxcf.mode == REALTIME &&
           cpi->oxcf.gf_cfg.lag_in_frames == 0) &&
         cm->delta_q_info.delta_q_present_flag) {
+      AOM_CHECK_MEM_ERROR(
+          x->e_mbd.error_info, td->mb.sb_stats_cache,
+          (SB_FIRST_PASS_STATS *)aom_malloc(sizeof(*td->mb.sb_stats_cache)));
+      av1_backup_sb_state(td->mb.sb_stats_cache, cpi, td, tile_data, mi_row,
+                          mi_col);
       assert(x->rdmult_delta_qindex == x->delta_qindex);
-      assert(sb_org_stats);
 
       const int best_qp_diff =
           sb_qp_sweep(cpi, td, tile_data, tp, mi_row, mi_col, sb_size, sms_root,
-                      sb_org_stats) -
+                      td->mb.sb_stats_cache) -
           x->rdmult_delta_qindex;
 
       sb_qp_sweep_init_quantizers(cpi, td, tile_data, sms_root, &dummy_rdc,
@@ -845,10 +873,13 @@ static AOM_INLINE void encode_rd_sb(AV1_COMP *cpi, ThreadData *td,
           cm->mi_params.mi_alloc[alloc_mi_idx].current_qindex;
 
       av1_reset_mbmi(&cm->mi_params, sb_size, mi_row, mi_col);
-      av1_restore_sb_state(sb_org_stats, cpi, td, tile_data, mi_row, mi_col);
+      av1_restore_sb_state(td->mb.sb_stats_cache, cpi, td, tile_data, mi_row,
+                           mi_col);
 
       cm->mi_params.mi_alloc[alloc_mi_idx].current_qindex =
           backup_current_qindex;
+      aom_free(td->mb.sb_stats_cache);
+      td->mb.sb_stats_cache = NULL;
     }
     if (num_passes == 1) {
 #if CONFIG_PARTITION_SEARCH_ORDER
@@ -859,24 +890,36 @@ static AOM_INLINE void encode_rd_sb(AV1_COMP *cpi, ThreadData *td,
         av1_rd_partition_search(cpi, td, tile_data, tp, sms_root, mi_row,
                                 mi_col, sb_size, &this_rdc);
       } else {
-        PC_TREE *const pc_root = av1_alloc_pc_tree_node(sb_size);
+        td->pc_root = av1_alloc_pc_tree_node(sb_size);
+        if (!td->pc_root)
+          aom_internal_error(xd->error_info, AOM_CODEC_MEM_ERROR,
+                             "Failed to allocate PC_TREE");
         av1_rd_pick_partition(cpi, td, tile_data, tp, mi_row, mi_col, sb_size,
-                              &dummy_rdc, dummy_rdc, pc_root, sms_root, NULL,
-                              SB_SINGLE_PASS, NULL);
+                              &dummy_rdc, dummy_rdc, td->pc_root, sms_root,
+                              NULL, SB_SINGLE_PASS, NULL);
       }
 #else
-      PC_TREE *const pc_root = av1_alloc_pc_tree_node(sb_size);
+      td->pc_root = av1_alloc_pc_tree_node(sb_size);
+      if (!td->pc_root)
+        aom_internal_error(xd->error_info, AOM_CODEC_MEM_ERROR,
+                           "Failed to allocate PC_TREE");
       av1_rd_pick_partition(cpi, td, tile_data, tp, mi_row, mi_col, sb_size,
-                            &dummy_rdc, dummy_rdc, pc_root, sms_root, NULL,
+                            &dummy_rdc, dummy_rdc, td->pc_root, sms_root, NULL,
                             SB_SINGLE_PASS, NULL);
 #endif  // CONFIG_PARTITION_SEARCH_ORDER
     } else {
       // First pass
-      SB_FIRST_PASS_STATS sb_fp_stats;
-      av1_backup_sb_state(&sb_fp_stats, cpi, td, tile_data, mi_row, mi_col);
-      PC_TREE *const pc_root_p0 = av1_alloc_pc_tree_node(sb_size);
+      AOM_CHECK_MEM_ERROR(
+          x->e_mbd.error_info, td->mb.sb_fp_stats,
+          (SB_FIRST_PASS_STATS *)aom_malloc(sizeof(*td->mb.sb_fp_stats)));
+      av1_backup_sb_state(td->mb.sb_fp_stats, cpi, td, tile_data, mi_row,
+                          mi_col);
+      td->pc_root = av1_alloc_pc_tree_node(sb_size);
+      if (!td->pc_root)
+        aom_internal_error(xd->error_info, AOM_CODEC_MEM_ERROR,
+                           "Failed to allocate PC_TREE");
       av1_rd_pick_partition(cpi, td, tile_data, tp, mi_row, mi_col, sb_size,
-                            &dummy_rdc, dummy_rdc, pc_root_p0, sms_root, NULL,
+                            &dummy_rdc, dummy_rdc, td->pc_root, sms_root, NULL,
                             SB_DRY_PASS, NULL);
 
       // Second pass
@@ -885,14 +928,19 @@ static AOM_INLINE void encode_rd_sb(AV1_COMP *cpi, ThreadData *td,
       av1_reset_mbmi(&cm->mi_params, sb_size, mi_row, mi_col);
       av1_reset_simple_motion_tree_partition(sms_root, sb_size);
 
-      av1_restore_sb_state(&sb_fp_stats, cpi, td, tile_data, mi_row, mi_col);
+      av1_restore_sb_state(td->mb.sb_fp_stats, cpi, td, tile_data, mi_row,
+                           mi_col);
 
-      PC_TREE *const pc_root_p1 = av1_alloc_pc_tree_node(sb_size);
+      td->pc_root = av1_alloc_pc_tree_node(sb_size);
+      if (!td->pc_root)
+        aom_internal_error(xd->error_info, AOM_CODEC_MEM_ERROR,
+                           "Failed to allocate PC_TREE");
       av1_rd_pick_partition(cpi, td, tile_data, tp, mi_row, mi_col, sb_size,
-                            &dummy_rdc, dummy_rdc, pc_root_p1, sms_root, NULL,
+                            &dummy_rdc, dummy_rdc, td->pc_root, sms_root, NULL,
                             SB_WET_PASS, NULL);
+      aom_free(td->mb.sb_fp_stats);
+      td->mb.sb_fp_stats = NULL;
     }
-    aom_free(sb_org_stats);
 
     // Reset to 0 so that it wouldn't be used elsewhere mistakenly.
     sb_enc->tpl_data_count = 0;
@@ -1110,6 +1158,17 @@ static AOM_INLINE void encode_sb_row(AV1_COMP *cpi, ThreadData *td,
     // top-right superblock to finish encoding.
     enc_row_mt->sync_read_ptr(
         row_mt_sync, sb_row, sb_col_in_tile - delay_wait_for_top_right_sb(cpi));
+
+#if CONFIG_MULTITHREAD
+    if (row_mt_enabled) {
+      pthread_mutex_lock(enc_row_mt->mutex_);
+      const bool row_mt_exit = enc_row_mt->row_mt_exit;
+      pthread_mutex_unlock(enc_row_mt->mutex_);
+      // Exit in case any worker has encountered an error.
+      if (row_mt_exit) return;
+    }
+#endif
+
     const int update_cdf = tile_data->allow_update_cdf && row_mt_enabled;
     if (update_cdf && (tile_info->mi_row_start != mi_row)) {
       if ((tile_info->mi_col_start == mi_col)) {
@@ -1134,12 +1193,16 @@ static AOM_INLINE void encode_sb_row(AV1_COMP *cpi, ThreadData *td,
     // Reset color coding related parameters
     av1_zero(x->color_sensitivity_sb);
     av1_zero(x->color_sensitivity_sb_g);
+    av1_zero(x->color_sensitivity_sb_alt);
     av1_zero(x->color_sensitivity);
     x->content_state_sb.source_sad_nonrd = kMedSad;
     x->content_state_sb.source_sad_rd = kMedSad;
     x->content_state_sb.lighting_change = 0;
     x->content_state_sb.low_sumdiff = 0;
     x->force_zeromv_skip_for_sb = 0;
+    x->sb_me_block = 0;
+    x->sb_me_partition = 0;
+    x->sb_me_mv.as_int = 0;
 
     if (cpi->oxcf.mode == ALLINTRA) {
       x->intra_sb_rdmult_modifier = 128;
@@ -1210,17 +1273,32 @@ static AOM_INLINE void init_encode_frame_mb_context(AV1_COMP *cpi) {
 
 void av1_alloc_tile_data(AV1_COMP *cpi) {
   AV1_COMMON *const cm = &cpi->common;
+  AV1EncRowMultiThreadInfo *const enc_row_mt = &cpi->mt_info.enc_row_mt;
   const int tile_cols = cm->tiles.cols;
   const int tile_rows = cm->tiles.rows;
 
   av1_row_mt_mem_dealloc(cpi);
 
-  if (cpi->tile_data != NULL) aom_free(cpi->tile_data);
+  aom_free(cpi->tile_data);
+  cpi->allocated_tiles = 0;
+  enc_row_mt->allocated_tile_cols = 0;
+  enc_row_mt->allocated_tile_rows = 0;
+
   CHECK_MEM_ERROR(
       cm, cpi->tile_data,
       aom_memalign(32, tile_cols * tile_rows * sizeof(*cpi->tile_data)));
 
   cpi->allocated_tiles = tile_cols * tile_rows;
+  enc_row_mt->allocated_tile_cols = tile_cols;
+  enc_row_mt->allocated_tile_rows = tile_rows;
+  for (int tile_row = 0; tile_row < tile_rows; ++tile_row) {
+    for (int tile_col = 0; tile_col < tile_cols; ++tile_col) {
+      const int tile_index = tile_row * tile_cols + tile_col;
+      TileDataEnc *const this_tile = &cpi->tile_data[tile_index];
+      av1_zero(this_tile->row_mt_sync);
+      this_tile->row_ctx = NULL;
+    }
+  }
 }
 
 void av1_init_tile_data(AV1_COMP *cpi) {
@@ -1416,15 +1494,17 @@ static AOM_INLINE void encode_tiles(AV1_COMP *cpi) {
       cpi->td.mb.e_mbd.tile_ctx = &this_tile->tctx;
       cpi->td.mb.tile_pb_ctx = &this_tile->tctx;
       av1_init_rtc_counters(&cpi->td.mb);
+      cpi->td.mb.palette_pixels = 0;
       av1_encode_tile(cpi, &cpi->td, tile_row, tile_col);
       if (!frame_is_intra_only(&cpi->common))
         av1_accumulate_rtc_counters(cpi, &cpi->td.mb);
+      cpi->palette_pixel_num += cpi->td.mb.palette_pixels;
       cpi->intrabc_used |= cpi->td.intrabc_used;
       cpi->deltaq_used |= cpi->td.deltaq_used;
     }
   }
 
-  av1_dealloc_mb_data(cm, mb);
+  av1_dealloc_mb_data(mb, av1_num_planes(cm));
 }
 
 // Set the relative distance of a reference frame w.r.t. current frame
@@ -1509,20 +1589,12 @@ static int check_skip_mode_enabled(AV1_COMP *const cpi) {
   // High Latency: Turn off skip mode if all refs are fwd.
   if (cpi->all_one_sided_refs && cpi->oxcf.gf_cfg.lag_in_frames > 0) return 0;
 
-  static const int flag_list[REF_FRAMES] = { 0,
-                                             AOM_LAST_FLAG,
-                                             AOM_LAST2_FLAG,
-                                             AOM_LAST3_FLAG,
-                                             AOM_GOLD_FLAG,
-                                             AOM_BWD_FLAG,
-                                             AOM_ALT2_FLAG,
-                                             AOM_ALT_FLAG };
   const int ref_frame[2] = {
     cm->current_frame.skip_mode_info.ref_frame_idx_0 + LAST_FRAME,
     cm->current_frame.skip_mode_info.ref_frame_idx_1 + LAST_FRAME
   };
-  if (!(cpi->ref_frame_flags & flag_list[ref_frame[0]]) ||
-      !(cpi->ref_frame_flags & flag_list[ref_frame[1]]))
+  if (!(cpi->ref_frame_flags & av1_ref_frame_flag_list[ref_frame[0]]) ||
+      !(cpi->ref_frame_flags & av1_ref_frame_flag_list[ref_frame[1]]))
     return 0;
 
   return 1;
@@ -1653,6 +1725,19 @@ static void populate_thresh_to_force_zeromv_skip(AV1_COMP *cpi) {
   }
 }
 
+static void free_block_hash_buffers(uint32_t *block_hash_values[2][2],
+                                    int8_t *is_block_same[2][3]) {
+  for (int k = 0; k < 2; ++k) {
+    for (int j = 0; j < 2; ++j) {
+      aom_free(block_hash_values[k][j]);
+    }
+
+    for (int j = 0; j < 3; ++j) {
+      aom_free(is_block_same[k][j]);
+    }
+  }
+}
+
 /*!\brief Encoder setup(only for the current frame), encoding, and recontruction
  * for a single frame
  *
@@ -1723,26 +1808,34 @@ static AOM_INLINE void encode_frame_internal(AV1_COMP *cpi) {
     // add to hash table
     const int pic_width = cpi->source->y_crop_width;
     const int pic_height = cpi->source->y_crop_height;
-    uint32_t *block_hash_values[2][2];
-    int8_t *is_block_same[2][3];
+    uint32_t *block_hash_values[2][2] = { { NULL } };
+    int8_t *is_block_same[2][3] = { { NULL } };
     int k, j;
+    bool error = false;
 
-    for (k = 0; k < 2; k++) {
-      for (j = 0; j < 2; j++) {
-        CHECK_MEM_ERROR(cm, block_hash_values[k][j],
-                        aom_malloc(sizeof(uint32_t) * pic_width * pic_height));
+    for (k = 0; k < 2 && !error; ++k) {
+      for (j = 0; j < 2; ++j) {
+        block_hash_values[k][j] = (uint32_t *)aom_malloc(
+            sizeof(*block_hash_values[0][0]) * pic_width * pic_height);
+        if (!block_hash_values[k][j]) {
+          error = true;
+          break;
+        }
       }
 
-      for (j = 0; j < 3; j++) {
-        CHECK_MEM_ERROR(cm, is_block_same[k][j],
-                        aom_malloc(sizeof(int8_t) * pic_width * pic_height));
+      for (j = 0; j < 3 && !error; ++j) {
+        is_block_same[k][j] = (int8_t *)aom_malloc(
+            sizeof(*is_block_same[0][0]) * pic_width * pic_height);
+        if (!is_block_same[k][j]) error = true;
       }
     }
 
     av1_hash_table_init(intrabc_hash_info);
-    if (!av1_hash_table_create(&intrabc_hash_info->intrabc_hash_table)) {
+    if (error ||
+        !av1_hash_table_create(&intrabc_hash_info->intrabc_hash_table)) {
+      free_block_hash_buffers(block_hash_values, is_block_same);
       aom_internal_error(cm->error, AOM_CODEC_MEM_ERROR,
-                         "Error allocating intrabc_hash_table");
+                         "Error allocating intrabc_hash_table and buffers");
     }
     hash_table_created = 1;
     av1_generate_block_2x2_hash_value(intrabc_hash_info, cpi->source,
@@ -1752,7 +1845,6 @@ static AOM_INLINE void encode_frame_internal(AV1_COMP *cpi) {
     const int max_sb_size =
         (1 << (cm->seq_params->mib_size_log2 + MI_SIZE_LOG2));
     int src_idx = 0;
-    bool error = false;
     for (int size = 4; size <= max_sb_size; size *= 2, src_idx = !src_idx) {
       const int dst_idx = !src_idx;
       av1_generate_block_hash_value(
@@ -1770,15 +1862,7 @@ static AOM_INLINE void encode_frame_internal(AV1_COMP *cpi) {
       }
     }
 
-    for (k = 0; k < 2; k++) {
-      for (j = 0; j < 2; j++) {
-        aom_free(block_hash_values[k][j]);
-      }
-
-      for (j = 0; j < 3; j++) {
-        aom_free(is_block_same[k][j]);
-      }
-    }
+    free_block_hash_buffers(block_hash_values, is_block_same);
 
     if (error) {
       aom_internal_error(cm->error, AOM_CODEC_MEM_ERROR,
@@ -1854,11 +1938,12 @@ static AOM_INLINE void encode_frame_internal(AV1_COMP *cpi) {
     // base_qindex
     cm->delta_q_info.delta_q_present_flag &= quant_params->base_qindex > 0;
     cm->delta_q_info.delta_lf_present_flag &= quant_params->base_qindex > 0;
-  } else {
+  } else if (cpi->cyclic_refresh->apply_cyclic_refresh ||
+             cpi->svc.number_temporal_layers == 1) {
     cpi->cyclic_refresh->actual_num_seg1_blocks = 0;
     cpi->cyclic_refresh->actual_num_seg2_blocks = 0;
-    cpi->rc.cnt_zeromv = 0;
   }
+  cpi->rc.cnt_zeromv = 0;
 
   av1_frame_init_quantizer(cpi);
   init_encode_frame_mb_context(cpi);
@@ -1939,11 +2024,19 @@ static AOM_INLINE void encode_frame_internal(AV1_COMP *cpi) {
       // Preallocate the pc_tree for realtime coding to reduce the cost of
       // memory allocation.
       const int use_nonrd_mode = cpi->sf.rt_sf.use_nonrd_pick_mode;
-      td->rt_pc_root = use_nonrd_mode
-                           ? av1_alloc_pc_tree_node(cm->seq_params->sb_size)
-                           : NULL;
+      if (use_nonrd_mode) {
+        td->pc_root = av1_alloc_pc_tree_node(cm->seq_params->sb_size);
+        if (!td->pc_root)
+          aom_internal_error(xd->error_info, AOM_CODEC_MEM_ERROR,
+                             "Failed to allocate PC_TREE");
+      } else {
+        td->pc_root = NULL;
+      }
+
       encode_tiles(cpi);
-      av1_free_pc_tree_recursive(td->rt_pc_root, av1_num_planes(cm), 0, 0);
+      av1_free_pc_tree_recursive(td->pc_root, av1_num_planes(cm), 0, 0,
+                                 cpi->sf.part_sf.partition_search_type);
+      td->pc_root = NULL;
     }
   }
 
@@ -2212,7 +2305,6 @@ void av1_encode_frame(AV1_COMP *cpi) {
   AV1_COMMON *const cm = &cpi->common;
   CurrentFrame *const current_frame = &cm->current_frame;
   FeatureFlags *const features = &cm->features;
-  const int num_planes = av1_num_planes(cm);
   RD_COUNTS *const rdc = &cpi->td.rd_counts;
   const AV1EncoderConfig *const oxcf = &cpi->oxcf;
   // Indicates whether or not to use a default reduced set for ext-tx
@@ -2257,12 +2349,11 @@ void av1_encode_frame(AV1_COMP *cpi) {
 #endif  // !defined(NDEBUG) && !CONFIG_REALTIME_ONLY
 
 #if CONFIG_MISMATCH_DEBUG
-  mismatch_reset_frame(num_planes);
-#else
-  (void)num_planes;
+  mismatch_reset_frame(av1_num_planes(cm));
 #endif
 
   rdc->newmv_or_intra_blocks = 0;
+  cpi->palette_pixel_num = 0;
 
   if (cpi->sf.hl_sf.frame_parameter_update ||
       cpi->sf.rt_sf.use_comp_ref_nonrd) {

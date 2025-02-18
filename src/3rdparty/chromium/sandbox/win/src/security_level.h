@@ -95,9 +95,6 @@ enum TokenLevel {
 //  JobLevel        |General                            |Quota               |
 //                  |restrictions                       |restrictions        |
 // -----------------|---------------------------------- |--------------------|
-// kNone            | No job is assigned to the         | None               |
-//                  | sandboxed process.                |                    |
-// -----------------|---------------------------------- |--------------------|
 // kUnprotected     | None                              | *Kill on Job close.|
 // -----------------|---------------------------------- |--------------------|
 // kInteractive     | *Forbid system-wide changes using |                    |
@@ -123,13 +120,7 @@ enum TokenLevel {
 // In the context of the above table, 'user handles' refers to the handles of
 // windows, bitmaps, menus, etc. Files, treads and registry handles are kernel
 // handles and are not affected by the job level settings.
-enum class JobLevel {
-  kLockdown = 0,
-  kLimitedUser,
-  kInteractive,
-  kUnprotected,
-  kNone
-};
+enum class JobLevel { kLockdown = 0, kLimitedUser, kInteractive, kUnprotected };
 
 // These flags correspond to various process-level mitigations (eg. ASLR and
 // DEP). Most are implemented via UpdateProcThreadAttribute() plus flags for
@@ -290,6 +281,11 @@ const MitigationFlags MITIGATION_CET_ALLOW_DYNAMIC_APIS = 0x01000000;
 // include third party code. Corresponds to
 // PROCESS_CREATION_MITIGATION_POLICY2_CET_USER_SHADOW_STACKS_STRICT_MODE.
 const MitigationFlags MITIGATION_CET_STRICT_MODE = 0x02000000;
+
+// Prevents application from sending FSCTL* control codes to NtFsControlFile,
+// with a few exceptions for named pipes as documented on MSDN. Corresponds to
+// PROCESS_CREATION_MITIGATION_POLICY2_FSCTL_SYSTEM_CALL_DISABLE_ALWAYS_ON.
+const MitigationFlags MITIGATION_FSCTL_DISABLED = 0x04000000;
 
 }  // namespace sandbox
 

@@ -4,6 +4,7 @@
 
 #include "content/browser/first_party_sets/first_party_sets_handler_database_helper.h"
 
+#include <optional>
 #include <string>
 
 #include "base/files/scoped_temp_dir.h"
@@ -18,7 +19,6 @@
 #include "testing/gmock/include/gmock/gmock-matchers.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/gurl.h"
 
 using ::testing::Eq;
@@ -43,7 +43,7 @@ TEST(FirstPartySetsHandlerDatabaseHelper, ComputeSetsDiff_SitesJoined) {
       kVersion,
       /*entries=*/
       {{example, net::FirstPartySetEntry(example, net::SiteType::kPrimary,
-                                         absl::nullopt)},
+                                         std::nullopt)},
        {member1,
         net::FirstPartySetEntry(example, net::SiteType::kAssociated, 0)},
        {member3,
@@ -55,13 +55,13 @@ TEST(FirstPartySetsHandlerDatabaseHelper, ComputeSetsDiff_SitesJoined) {
       /*entries=*/
       {
           {example, net::FirstPartySetEntry(example, net::SiteType::kPrimary,
-                                            absl::nullopt)},
+                                            std::nullopt)},
           {member1,
            net::FirstPartySetEntry(example, net::SiteType::kAssociated, 0)},
           {member3,
            net::FirstPartySetEntry(example, net::SiteType::kAssociated, 1)},
-          {foo, net::FirstPartySetEntry(foo, net::SiteType::kPrimary,
-                                        absl::nullopt)},
+          {foo,
+           net::FirstPartySetEntry(foo, net::SiteType::kPrimary, std::nullopt)},
           {member2,
            net::FirstPartySetEntry(foo, net::SiteType::kAssociated, 0)},
       },
@@ -87,13 +87,13 @@ TEST(FirstPartySetsHandlerDatabaseHelper, ComputeSetsDiff_SitesLeft) {
       kVersion,
       /*entries=*/
       {{example, net::FirstPartySetEntry(example, net::SiteType::kPrimary,
-                                         absl::nullopt)},
+                                         std::nullopt)},
        {member1,
         net::FirstPartySetEntry(example, net::SiteType::kAssociated, 0)},
        {member3,
         net::FirstPartySetEntry(example, net::SiteType::kAssociated, 1)},
        {foo,
-        net::FirstPartySetEntry(foo, net::SiteType::kPrimary, absl::nullopt)},
+        net::FirstPartySetEntry(foo, net::SiteType::kPrimary, std::nullopt)},
        {member2, net::FirstPartySetEntry(foo, net::SiteType::kAssociated, 0)}},
       /*aliases=*/{});
 
@@ -101,7 +101,7 @@ TEST(FirstPartySetsHandlerDatabaseHelper, ComputeSetsDiff_SitesLeft) {
       kVersion,
       /*entries=*/
       {{example, net::FirstPartySetEntry(example, net::SiteType::kPrimary,
-                                         absl::nullopt)},
+                                         std::nullopt)},
        {member1,
         net::FirstPartySetEntry(example, net::SiteType::kAssociated, 0)}},
       /*aliases=*/{});
@@ -115,7 +115,7 @@ TEST(FirstPartySetsHandlerDatabaseHelper, ComputeSetsDiff_SitesLeft) {
       UnorderedElementsAre(foo, member2, member3));
 }
 
-TEST(FirstPartySetsHandlerDatabaseHelper, ComputeSetsDiff_OwnerChanged) {
+TEST(FirstPartySetsHandlerDatabaseHelper, ComputeSetsDiff_PrimaryChanged) {
   net::SchemefulSite example(GURL("https://example.test"));
   net::SchemefulSite foo(GURL("https://foo.test"));
   net::SchemefulSite member1(GURL("https://member1.test"));
@@ -126,11 +126,11 @@ TEST(FirstPartySetsHandlerDatabaseHelper, ComputeSetsDiff_OwnerChanged) {
       kVersion,
       /*entries=*/
       {{example, net::FirstPartySetEntry(example, net::SiteType::kPrimary,
-                                         absl::nullopt)},
+                                         std::nullopt)},
        {member1,
         net::FirstPartySetEntry(example, net::SiteType::kAssociated, 0)},
        {foo,
-        net::FirstPartySetEntry(foo, net::SiteType::kPrimary, absl::nullopt)},
+        net::FirstPartySetEntry(foo, net::SiteType::kPrimary, std::nullopt)},
        {member2, net::FirstPartySetEntry(foo, net::SiteType::kAssociated, 0)},
        {member3, net::FirstPartySetEntry(foo, net::SiteType::kAssociated, 1)}},
       /*aliases=*/{});
@@ -139,17 +139,17 @@ TEST(FirstPartySetsHandlerDatabaseHelper, ComputeSetsDiff_OwnerChanged) {
       kVersion,
       /*entries=*/
       {{example, net::FirstPartySetEntry(example, net::SiteType::kPrimary,
-                                         absl::nullopt)},
+                                         std::nullopt)},
        {member1,
         net::FirstPartySetEntry(example, net::SiteType::kAssociated, 0)},
        {member3,
         net::FirstPartySetEntry(example, net::SiteType::kAssociated, 1)},
        {foo,
-        net::FirstPartySetEntry(foo, net::SiteType::kPrimary, absl::nullopt)},
+        net::FirstPartySetEntry(foo, net::SiteType::kPrimary, std::nullopt)},
        {member2, net::FirstPartySetEntry(foo, net::SiteType::kAssociated, 0)}},
       /*aliases=*/{});
 
-  // Expected diff: "https://member3.test" changed owner.
+  // Expected diff: "https://member3.test" changed primary.
   EXPECT_THAT(
       FirstPartySetsHandlerDatabaseHelper::ComputeSetsDiff(
           old_sets, /*old_config=*/net::FirstPartySetsContextConfig(),
@@ -157,7 +157,7 @@ TEST(FirstPartySetsHandlerDatabaseHelper, ComputeSetsDiff_OwnerChanged) {
       UnorderedElementsAre(member3));
 }
 
-TEST(FirstPartySetsHandlerDatabaseHelper, ComputeSetsDiff_OwnerLeft) {
+TEST(FirstPartySetsHandlerDatabaseHelper, ComputeSetsDiff_PrimaryLeft) {
   net::SchemefulSite example(GURL("https://example.test"));
   net::SchemefulSite foo(GURL("https://foo.test"));
   net::SchemefulSite bar(GURL("https://bar.test"));
@@ -166,7 +166,7 @@ TEST(FirstPartySetsHandlerDatabaseHelper, ComputeSetsDiff_OwnerLeft) {
       kVersion,
       /*entries=*/
       {{example, net::FirstPartySetEntry(example, net::SiteType::kPrimary,
-                                         absl::nullopt)},
+                                         std::nullopt)},
        {foo, net::FirstPartySetEntry(example, net::SiteType::kAssociated, 0)},
        {bar, net::FirstPartySetEntry(example, net::SiteType::kAssociated, 1)}},
       /*aliases=*/{});
@@ -175,12 +175,12 @@ TEST(FirstPartySetsHandlerDatabaseHelper, ComputeSetsDiff_OwnerLeft) {
       kVersion,
       /*entries=*/
       {{foo,
-        net::FirstPartySetEntry(foo, net::SiteType::kPrimary, absl::nullopt)},
+        net::FirstPartySetEntry(foo, net::SiteType::kPrimary, std::nullopt)},
        {bar, net::FirstPartySetEntry(foo, net::SiteType::kAssociated, 0)}},
       /*aliases=*/{});
 
   // Expected diff: "https://example.test" left FPSs, "https://foo.test" and
-  // "https://bar.test" changed owner.
+  // "https://bar.test" changed primary.
   // It would be valid to only have example.test in the diff, but our logic
   // isn't sophisticated enough yet to know that foo.test and bar.test don't
   // need to be included in the result.
@@ -191,7 +191,7 @@ TEST(FirstPartySetsHandlerDatabaseHelper, ComputeSetsDiff_OwnerLeft) {
       UnorderedElementsAre(example, foo, bar));
 }
 
-TEST(FirstPartySetsHandlerDatabaseHelper, ComputeSetsDiff_OwnerMemberRotate) {
+TEST(FirstPartySetsHandlerDatabaseHelper, ComputeSetsDiff_PrimaryMemberRotate) {
   net::SchemefulSite example(GURL("https://example.test"));
   net::SchemefulSite foo(GURL("https://foo.test"));
 
@@ -199,7 +199,7 @@ TEST(FirstPartySetsHandlerDatabaseHelper, ComputeSetsDiff_OwnerMemberRotate) {
       kVersion,
       /*entries=*/
       {{example, net::FirstPartySetEntry(example, net::SiteType::kPrimary,
-                                         absl::nullopt)},
+                                         std::nullopt)},
        {foo, net::FirstPartySetEntry(example, net::SiteType::kAssociated, 0)}},
       /*aliases=*/{});
 
@@ -208,12 +208,12 @@ TEST(FirstPartySetsHandlerDatabaseHelper, ComputeSetsDiff_OwnerMemberRotate) {
       /*entries=*/
       {{example, net::FirstPartySetEntry(foo, net::SiteType::kAssociated, 0)},
        {foo,
-        net::FirstPartySetEntry(foo, net::SiteType::kPrimary, absl::nullopt)}},
+        net::FirstPartySetEntry(foo, net::SiteType::kPrimary, std::nullopt)}},
       /*aliases=*/{});
 
-  // Expected diff: "https://example.test" and "https://foo.test" changed owner.
-  // It would be valid to not include example.test and foo.test in the result,
-  // but our logic isn't sophisticated enough yet to know that.ß
+  // Expected diff: "https://example.test" and "https://foo.test" changed
+  // primary. It would be valid to not include example.test and foo.test in the
+  // result, but our logic isn't sophisticated enough yet to know that.ß
   EXPECT_THAT(
       FirstPartySetsHandlerDatabaseHelper::ComputeSetsDiff(
           old_sets, /*old_config=*/net::FirstPartySetsContextConfig(),
@@ -230,7 +230,7 @@ TEST(FirstPartySetsHandlerDatabaseHelper, ComputeSetsDiff_EmptyOldSets) {
       kVersion,
       /*entries=*/
       {{example, net::FirstPartySetEntry(example, net::SiteType::kPrimary,
-                                         absl::nullopt)},
+                                         std::nullopt)},
        {member1,
         net::FirstPartySetEntry(example, net::SiteType::kAssociated, 0)}},
       /*aliases=*/{});
@@ -252,7 +252,7 @@ TEST(FirstPartySetsHandlerDatabaseHelper, ComputeSetsDiff_EmptyCurrentSets) {
       kVersion,
       /*entries=*/
       {{example, net::FirstPartySetEntry(example, net::SiteType::kPrimary,
-                                         absl::nullopt)},
+                                         std::nullopt)},
        {member1,
         net::FirstPartySetEntry(example, net::SiteType::kAssociated, 0)}},
       /*aliases=*/{});
@@ -270,7 +270,7 @@ TEST(FirstPartySetsHandlerDatabaseHelper, ComputeSetsDiff_PolicySitesJoined) {
 
   net::FirstPartySetsContextConfig current_config({
       {foo, net::FirstPartySetEntryOverride(net::FirstPartySetEntry(
-                foo, net::SiteType::kPrimary, absl::nullopt))},
+                foo, net::SiteType::kPrimary, std::nullopt))},
       {member2, net::FirstPartySetEntryOverride(net::FirstPartySetEntry(
                     foo, net::SiteType::kAssociated, 0))},
   });
@@ -295,7 +295,7 @@ TEST(FirstPartySetsHandlerDatabaseHelper,
       kVersion,
       /*entries=*/
       {{example, net::FirstPartySetEntry(example, net::SiteType::kPrimary,
-                                         absl::nullopt)},
+                                         std::nullopt)},
        {member1,
         net::FirstPartySetEntry(example, net::SiteType::kAssociated, 0)}},
       /*aliases=*/{});
@@ -303,7 +303,7 @@ TEST(FirstPartySetsHandlerDatabaseHelper,
   // "https://example.test" was removed from FPSs by policy modifications.
   net::FirstPartySetsContextConfig old_config({
       {foo, net::FirstPartySetEntryOverride(net::FirstPartySetEntry(
-                foo, net::SiteType::kPrimary, absl::nullopt))},
+                foo, net::SiteType::kPrimary, std::nullopt))},
       {member1, net::FirstPartySetEntryOverride(net::FirstPartySetEntry(
                     foo, net::SiteType::kAssociated, 0))},
       {example, net::FirstPartySetEntryOverride()},
@@ -312,7 +312,7 @@ TEST(FirstPartySetsHandlerDatabaseHelper,
   // "https://example.test" added back to FPSs.
   net::FirstPartySetsContextConfig current_config({
       {foo, net::FirstPartySetEntryOverride(net::FirstPartySetEntry(
-                foo, net::SiteType::kPrimary, absl::nullopt))},
+                foo, net::SiteType::kPrimary, std::nullopt))},
       {member1, net::FirstPartySetEntryOverride(net::FirstPartySetEntry(
                     foo, net::SiteType::kAssociated, 0))},
       {example, net::FirstPartySetEntryOverride(net::FirstPartySetEntry(
@@ -334,7 +334,7 @@ TEST(FirstPartySetsHandlerDatabaseHelper, ComputeSetsDiff_PolicyMemberLeft) {
 
   net::FirstPartySetsContextConfig old_config({
       {foo, net::FirstPartySetEntryOverride(net::FirstPartySetEntry(
-                foo, net::SiteType::kPrimary, absl::nullopt))},
+                foo, net::SiteType::kPrimary, std::nullopt))},
       {member1, net::FirstPartySetEntryOverride(net::FirstPartySetEntry(
                     foo, net::SiteType::kAssociated, 0))},
       {member2, net::FirstPartySetEntryOverride(net::FirstPartySetEntry(
@@ -344,7 +344,7 @@ TEST(FirstPartySetsHandlerDatabaseHelper, ComputeSetsDiff_PolicyMemberLeft) {
   // "https://member2.test" left FPSs via enterprise policy.
   net::FirstPartySetsContextConfig current_config({
       {foo, net::FirstPartySetEntryOverride(net::FirstPartySetEntry(
-                foo, net::SiteType::kPrimary, absl::nullopt))},
+                foo, net::SiteType::kPrimary, std::nullopt))},
       {member1, net::FirstPartySetEntryOverride(net::FirstPartySetEntry(
                     foo, net::SiteType::kAssociated, 0))},
   });
@@ -355,14 +355,14 @@ TEST(FirstPartySetsHandlerDatabaseHelper, ComputeSetsDiff_PolicyMemberLeft) {
               UnorderedElementsAre(member2));
 }
 
-TEST(FirstPartySetsHandlerDatabaseHelper, ComputeSetsDiff_PolicyOwnerLeft) {
+TEST(FirstPartySetsHandlerDatabaseHelper, ComputeSetsDiff_PolicyPrimaryLeft) {
   net::SchemefulSite example(GURL("https://example.test"));
   net::SchemefulSite member1(GURL("https://member1.test"));
   net::SchemefulSite member2(GURL("https://member2.test"));
 
   net::FirstPartySetsContextConfig old_config({
       {example, net::FirstPartySetEntryOverride(net::FirstPartySetEntry(
-                    example, net::SiteType::kPrimary, absl::nullopt))},
+                    example, net::SiteType::kPrimary, std::nullopt))},
       {member1, net::FirstPartySetEntryOverride(net::FirstPartySetEntry(
                     example, net::SiteType::kAssociated, 0))},
       {member2, net::FirstPartySetEntryOverride(net::FirstPartySetEntry(
@@ -371,13 +371,13 @@ TEST(FirstPartySetsHandlerDatabaseHelper, ComputeSetsDiff_PolicyOwnerLeft) {
 
   net::FirstPartySetsContextConfig current_config({
       {member1, net::FirstPartySetEntryOverride(net::FirstPartySetEntry(
-                    member1, net::SiteType::kPrimary, absl::nullopt))},
+                    member1, net::SiteType::kPrimary, std::nullopt))},
       {member2, net::FirstPartySetEntryOverride(net::FirstPartySetEntry(
                     member1, net::SiteType::kAssociated, 0))},
   });
 
   // Expected diff: "https://example.test" left FPSs, "https://member1.test" and
-  // "https://member2.test" changed owner.
+  // "https://member2.test" changed primary.
   // It would be valid to only have example.test in the diff, but our logic
   // isn't sophisticated enough yet to know that member1.test and member2.test
   // don't need to be included in the result.
@@ -397,22 +397,22 @@ TEST(FirstPartySetsHandlerDatabaseHelper,
 
   net::FirstPartySetsContextConfig old_config({
       {foo, net::FirstPartySetEntryOverride(net::FirstPartySetEntry(
-                foo, net::SiteType::kPrimary, absl::nullopt))},
+                foo, net::SiteType::kPrimary, std::nullopt))},
       {member1, net::FirstPartySetEntryOverride(net::FirstPartySetEntry(
                     foo, net::SiteType::kAssociated, 0))},
       {bar, net::FirstPartySetEntryOverride(net::FirstPartySetEntry(
-                bar, net::SiteType::kPrimary, absl::nullopt))},
+                bar, net::SiteType::kPrimary, std::nullopt))},
       {member2, net::FirstPartySetEntryOverride(net::FirstPartySetEntry(
                     bar, net::SiteType::kAssociated, 0))},
   });
 
   net::FirstPartySetsContextConfig current_config({
       {foo, net::FirstPartySetEntryOverride(net::FirstPartySetEntry(
-                foo, net::SiteType::kPrimary, absl::nullopt))},
+                foo, net::SiteType::kPrimary, std::nullopt))},
       {member2, net::FirstPartySetEntryOverride(net::FirstPartySetEntry(
                     foo, net::SiteType::kAssociated, 0))},
       {bar, net::FirstPartySetEntryOverride(net::FirstPartySetEntry(
-                bar, net::SiteType::kPrimary, absl::nullopt))},
+                bar, net::SiteType::kPrimary, std::nullopt))},
       {member1, net::FirstPartySetEntryOverride(net::FirstPartySetEntry(
                     bar, net::SiteType::kAssociated, 0))},
   });
@@ -453,13 +453,13 @@ TEST_F(FirstPartySetsHandlerDatabaseHelperTest,
           base::Version("0.0.1"),
           /*entries=*/
           {{example, net::FirstPartySetEntry(example, net::SiteType::kPrimary,
-                                             absl::nullopt)},
+                                             std::nullopt)},
            {member1,
             net::FirstPartySetEntry(example, net::SiteType::kAssociated, 0)},
            {member3,
             net::FirstPartySetEntry(example, net::SiteType::kAssociated, 1)},
            {foo, net::FirstPartySetEntry(foo, net::SiteType::kPrimary,
-                                         absl::nullopt)},
+                                         std::nullopt)},
            {member2,
             net::FirstPartySetEntry(foo, net::SiteType::kAssociated, 0)}},
           /*aliases=*/{}),
@@ -469,7 +469,7 @@ TEST_F(FirstPartySetsHandlerDatabaseHelperTest,
       kVersion,
       /*entries=*/
       {{example, net::FirstPartySetEntry(example, net::SiteType::kPrimary,
-                                         absl::nullopt)},
+                                         std::nullopt)},
        {member1,
         net::FirstPartySetEntry(example, net::SiteType::kAssociated, 0)}},
       /*aliases=*/{});

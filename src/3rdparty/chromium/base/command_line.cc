@@ -9,6 +9,7 @@
 #include "base/check_op.h"
 #include "base/containers/contains.h"
 #include "base/containers/span.h"
+#include "base/debug/debugging_buildflags.h"
 #include "base/files/file_path.h"
 #include "base/logging.h"
 #include "base/notreached.h"
@@ -260,6 +261,13 @@ bool CommandLine::InitializedForCurrentProcess() {
   return !!current_process_commandline_;
 }
 
+// static
+CommandLine CommandLine::FromArgvWithoutProgram(const StringVector& argv) {
+  CommandLine cmd(NO_PROGRAM);
+  cmd.AppendSwitchesAndArguments(argv);
+  return cmd;
+}
+
 #if BUILDFLAG(IS_WIN)
 // static
 CommandLine CommandLine::FromString(StringPieceType command_line) {
@@ -282,7 +290,9 @@ void CommandLine::InitFromArgv(const StringVector& argv) {
   switches_.clear();
   begin_args_ = 1;
   SetProgram(argv.empty() ? FilePath() : FilePath(argv[0]));
-  AppendSwitchesAndArguments(argv);
+  if (!argv.empty()) {
+    AppendSwitchesAndArguments(make_span(argv).subspan(1));
+  }
 }
 
 FilePath CommandLine::GetProgram() const {
@@ -290,6 +300,9 @@ FilePath CommandLine::GetProgram() const {
 }
 
 void CommandLine::SetProgram(const FilePath& program) {
+#if BUILDFLAG(ENABLE_COMMANDLINE_SEQUENCE_CHECKS)
+  sequence_checker_.Check();
+#endif
 #if BUILDFLAG(IS_WIN)
   argv_[0] = StringType(TrimWhitespace(program.value(), TRIM_ALL));
 #elif BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
@@ -347,6 +360,9 @@ void CommandLine::AppendSwitchPath(StringPiece switch_string,
 
 void CommandLine::AppendSwitchNative(StringPiece switch_string,
                                      CommandLine::StringPieceType value) {
+#if BUILDFLAG(ENABLE_COMMANDLINE_SEQUENCE_CHECKS)
+  sequence_checker_.Check();
+#endif
 #if BUILDFLAG(IS_WIN)
   const std::string switch_key = ToLowerASCII(switch_string);
   StringType combined_switch_string(UTF8ToWide(switch_key));
@@ -387,6 +403,9 @@ void CommandLine::AppendSwitchASCII(StringPiece switch_string,
 }
 
 void CommandLine::RemoveSwitch(base::StringPiece switch_key_without_prefix) {
+#if BUILDFLAG(ENABLE_COMMANDLINE_SEQUENCE_CHECKS)
+  sequence_checker_.Check();
+#endif
 #if BUILDFLAG(IS_WIN)
   StringType switch_key_native = UTF8ToWide(switch_key_without_prefix);
 #elif BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
@@ -419,11 +438,11 @@ void CommandLine::RemoveSwitch(base::StringPiece switch_key_without_prefix) {
 }
 
 void CommandLine::CopySwitchesFrom(const CommandLine& source,
-                                   const char* const switches[],
-                                   size_t count) {
-  for (size_t i = 0; i < count; ++i) {
-    if (source.HasSwitch(switches[i]))
-      AppendSwitchNative(switches[i], source.GetSwitchValueNative(switches[i]));
+                                   span<const char* const> switches) {
+  for (const char* entry : switches) {
+    if (source.HasSwitch(entry)) {
+      AppendSwitchNative(entry, source.GetSwitchValueNative(entry));
+    }
   }
 }
 
@@ -453,6 +472,9 @@ void CommandLine::AppendArgPath(const FilePath& path) {
 }
 
 void CommandLine::AppendArgNative(StringPieceType value) {
+#if BUILDFLAG(ENABLE_COMMANDLINE_SEQUENCE_CHECKS)
+  sequence_checker_.Check();
+#endif
   argv_.push_back(StringType(value));
 }
 
@@ -460,10 +482,15 @@ void CommandLine::AppendArguments(const CommandLine& other,
                                   bool include_program) {
   if (include_program)
     SetProgram(other.GetProgram());
-  AppendSwitchesAndArguments(other.argv());
+  if (!other.argv().empty()) {
+    AppendSwitchesAndArguments(make_span(other.argv()).subspan(1));
+  }
 }
 
 void CommandLine::PrependWrapper(StringPieceType wrapper) {
+#if BUILDFLAG(ENABLE_COMMANDLINE_SEQUENCE_CHECKS)
+  sequence_checker_.Check();
+#endif
   if (wrapper.empty())
     return;
   // Split the wrapper command based on whitespace (with quoting).
@@ -492,7 +519,7 @@ void CommandLine::ParseFromString(StringPieceType command_line) {
   int num_args = 0;
   wchar_t** args = NULL;
   // When calling CommandLineToArgvW, use the apiset if available.
-  // Doing so will bypass loading shell32.dll on Win8+.
+  // Doing so will bypass loading shell32.dll on Windows.
   HMODULE downlevel_shell32_dll =
       ::LoadLibraryEx(L"api-ms-win-downlevel-shell32-l1-1-0.dll", nullptr,
                       LOAD_LIBRARY_SEARCH_SYSTEM32);
@@ -521,14 +548,12 @@ void CommandLine::ParseFromString(StringPieceType command_line) {
 
 #endif  // BUILDFLAG(IS_WIN)
 
-void CommandLine::AppendSwitchesAndArguments(
-    const CommandLine::StringVector& argv) {
+void CommandLine::AppendSwitchesAndArguments(span<const StringType> argv) {
   bool parse_switches = true;
 #if BUILDFLAG(IS_WIN)
   const bool is_parsed_from_string = !raw_command_line_string_.empty();
 #endif
-  for (size_t i = 1; i < argv.size(); ++i) {
-    CommandLine::StringType arg = argv[i];
+  for (StringType arg : argv) {
 #if BUILDFLAG(IS_WIN)
     arg = CommandLine::StringType(TrimWhitespace(arg, TRIM_ALL));
 #elif BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
@@ -688,5 +713,11 @@ void CommandLine::ParseAsSingleArgument(
   }
 }
 #endif  // BUILDFLAG(IS_WIN)
+
+void CommandLine::DetachFromCurrentSequence() {
+#if BUILDFLAG(ENABLE_COMMANDLINE_SEQUENCE_CHECKS)
+  sequence_checker_.Detach();
+#endif  // BUILDFLAG(ENABLE_COMMANDLINE_SEQUENCE_CHECKS)
+}
 
 }  // namespace base

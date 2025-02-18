@@ -7,14 +7,14 @@
 #include <utility>
 
 #include "core/fxcrt/cfx_read_only_span_stream.h"
-#include "third_party/base/span.h"
+#include "third_party/base/containers/span.h"
 
 CFX_ReadOnlyVectorStream::CFX_ReadOnlyVectorStream(DataVector<uint8_t> data)
     : data_(std::move(data)),
       stream_(pdfium::MakeRetain<CFX_ReadOnlySpanStream>(data_)) {}
 
 CFX_ReadOnlyVectorStream::CFX_ReadOnlyVectorStream(
-    FixedUninitDataVector<uint8_t> data)
+    FixedSizeDataVector<uint8_t> data)
     : fixed_data_(std::move(data)),
       stream_(pdfium::MakeRetain<CFX_ReadOnlySpanStream>(fixed_data_)) {}
 

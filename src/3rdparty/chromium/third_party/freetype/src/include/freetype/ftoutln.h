@@ -112,13 +112,13 @@ FT_BEGIN_HEADER
    *   Degenerate contours, segments, and Bezier arcs may be reported.  In
    *   most cases, it is best to filter these out before using the outline
    *   for stroking or other path modification purposes (which may cause
-   *   degenerate segments to become non-degenrate and visible, like when
+   *   degenerate segments to become non-degenerate and visible, like when
    *   stroke caps are used or the path is otherwise outset).  Some glyph
    *   outlines may contain deliberate degenerate single points for mark
    *   attachement.
    *
    *   Similarly, the function returns success for an empty outline also
-   *   (doing nothing, this is, not calling any emitter); if necessary, you
+   *   (doing nothing, that is, not calling any emitter); if necessary, you
    *   should filter this out, too.
    */
   FT_EXPORT( FT_Error )

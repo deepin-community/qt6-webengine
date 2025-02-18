@@ -9,7 +9,6 @@
 #include "base/numerics/safe_conversions.h"
 #include "base/ranges/algorithm.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/strings/string_piece.h"
 #include "base/values.h"
 #include "services/network/public/mojom/trust_tokens.mojom.h"
 #include "services/network/trust_tokens/suitable_trust_token_origin.h"
@@ -29,7 +28,7 @@ namespace {
 // Parses a single key label. If |in| is the string representation of an integer
 // in in the representable range of uint32_t, returns true. Otherwise, returns
 // false.
-bool ParseSingleKeyLabel(base::StringPiece in) {
+bool ParseSingleKeyLabel(std::string_view in) {
   uint64_t key_label_in_uint64;
   if (!base::StringToUint64(in, &key_label_in_uint64))
     return false;
@@ -87,8 +86,11 @@ mojom::TrustTokenKeyCommitmentResultPtr ParseSingleIssuer(
   // Confirm that the protocol_version field is present. If the server supports
   // multiple versions, we prefer the VOPRF version, since it's more efficient
   // (and we're free to choose which version to use).
-  for (auto version : {mojom::TrustTokenProtocolVersion::kTrustTokenV3Voprf,
-                       mojom::TrustTokenProtocolVersion::kTrustTokenV3Pmb}) {
+  for (auto version :
+       {mojom::TrustTokenProtocolVersion::kPrivateStateTokenV1Voprf,
+        mojom::TrustTokenProtocolVersion::kPrivateStateTokenV1Pmb,
+        mojom::TrustTokenProtocolVersion::kTrustTokenV3Voprf,
+        mojom::TrustTokenProtocolVersion::kTrustTokenV3Pmb}) {
     std::string version_label = internal::ProtocolVersionToString(version);
     if (commitments_dict.contains(version_label)) {
       dict = commitments_dict.FindDict(version_label);
@@ -165,7 +167,7 @@ mojom::TrustTokenKeyCommitmentResultPtr& commitment(Entry& e) {
 }  // namespace
 
 mojom::TrustTokenKeyCommitmentResultPtr TrustTokenKeyCommitmentParser::Parse(
-    base::StringPiece response_body) {
+    std::string_view response_body) {
   absl::optional<base::Value> maybe_value =
       base::JSONReader::Read(response_body);
   if (!maybe_value)
@@ -177,7 +179,7 @@ mojom::TrustTokenKeyCommitmentResultPtr TrustTokenKeyCommitmentParser::Parse(
 std::unique_ptr<base::flat_map<SuitableTrustTokenOrigin,
                                mojom::TrustTokenKeyCommitmentResultPtr>>
 TrustTokenKeyCommitmentParser::ParseMultipleIssuers(
-    base::StringPiece response_body) {
+    std::string_view response_body) {
   absl::optional<base::Value> maybe_value =
       base::JSONReader::Read(response_body);
   if (!maybe_value)
@@ -195,7 +197,7 @@ TrustTokenKeyCommitmentParser::ParseMultipleIssuers(
 
   std::vector<Entry> parsed_entries;
 
-  for (auto kv : maybe_value->DictItems()) {
+  for (auto kv : maybe_value->GetDict()) {
     const std::string& raw_key_from_json = kv.first;
     absl::optional<SuitableTrustTokenOrigin> maybe_issuer =
         SuitableTrustTokenOrigin::Create(GURL(raw_key_from_json));

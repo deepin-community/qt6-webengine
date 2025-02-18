@@ -1,8 +1,9 @@
 # Copyright (C) 2022 The Qt Company Ltd.
-# SPDX-License-Identifier: BSD-3-Clause
+# SPDX-License-Identifier: LicenseRef-Qt-Commercial OR BSD-3-Clause
 
 qt_internal_add_example(contentmanipulation)
 qt_internal_add_example(cookiebrowser)
+qt_internal_add_example(permissionbrowser)
 qt_internal_add_example(notifications)
 qt_internal_add_example(simplebrowser)
 qt_internal_add_example(push-notifications)

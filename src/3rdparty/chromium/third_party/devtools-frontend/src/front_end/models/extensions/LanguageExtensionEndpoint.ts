@@ -2,12 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import {type Chrome} from '../../../extension-api/ExtensionAPI.js';  // eslint-disable-line rulesdir/es_modules_import
 import type * as SDK from '../../core/sdk/sdk.js';
 import * as Bindings from '../bindings/bindings.js';
-import {type Chrome} from '../../../extension-api/ExtensionAPI.js';  // eslint-disable-line rulesdir/es_modules_import
-import {ExtensionEndpoint} from './ExtensionEndpoint.js';
 
 import {PrivateAPI} from './ExtensionAPI.js';
+import {ExtensionEndpoint} from './ExtensionEndpoint.js';
 
 class LanguageExtensionEndpointImpl extends ExtensionEndpoint {
   private plugin: LanguageExtensionEndpoint;
@@ -15,14 +15,12 @@ class LanguageExtensionEndpointImpl extends ExtensionEndpoint {
     super(port);
     this.plugin = plugin;
   }
-  protected handleEvent({event}: {event: string}): void {
+  protected override handleEvent({event}: {event: string}): void {
     switch (event) {
       case PrivateAPI.LanguageExtensionPluginEvents.UnregisteredLanguageExtensionPlugin: {
         this.disconnect();
         const {pluginManager} = Bindings.DebuggerWorkspaceBinding.DebuggerWorkspaceBinding.instance();
-        if (pluginManager) {
-          pluginManager.removePlugin(this.plugin);
-        }
+        pluginManager.removePlugin(this.plugin);
         break;
       }
     }
@@ -132,49 +130,12 @@ export class LanguageExtensionEndpoint implements Bindings.DebuggerLanguagePlugi
         Promise<Chrome.DevTools.RawLocationRange[]>;
   }
 
-  getTypeInfo(expression: string, context: Chrome.DevTools.RawLocation): Promise<{
-    typeInfos: Array<Chrome.DevTools.TypeInfo>,
-    base: Chrome.DevTools.EvalBase,
-  }|null> {
-    return this.endpoint.sendRequest(PrivateAPI.LanguageExtensionPluginCommands.GetTypeInfo, {expression, context}) as
-        Promise<{
-             typeInfos: Array<Chrome.DevTools.TypeInfo>,
-             base: Chrome.DevTools.EvalBase,
-           }|null>;
-  }
-
-  getFormatter(
-      expressionOrField: string|{
-        base: Chrome.DevTools.EvalBase,
-        field: Array<Chrome.DevTools.FieldInfo>,
-      },
-      context: Chrome.DevTools.RawLocation): Promise<{
-    js: string,
-  }> {
-    return this.endpoint.sendRequest(
-               PrivateAPI.LanguageExtensionPluginCommands.GetFormatter, {expressionOrField, context}) as Promise<{
-             js: string,
-           }>;
-  }
-
-  getInspectableAddress(field: {
-    base: Chrome.DevTools.EvalBase,
-    field: Array<Chrome.DevTools.FieldInfo>,
-  }): Promise<{
-    js: string,
-  }> {
-    return this.endpoint.sendRequest(PrivateAPI.LanguageExtensionPluginCommands.GetInspectableAddress, {field}) as
-        Promise<{
-             js: string,
-           }>;
-  }
-
   async getMappedLines(rawModuleId: string, sourceFileURL: string): Promise<number[]|undefined> {
     return this.endpoint.sendRequest(
         PrivateAPI.LanguageExtensionPluginCommands.GetMappedLines, {rawModuleId, sourceFileURL});
   }
 
-  evaluate(expression: string, context: Chrome.DevTools.RawLocation, stopId: number):
+  async evaluate(expression: string, context: Chrome.DevTools.RawLocation, stopId: number):
       Promise<Chrome.DevTools.RemoteObject> {
     return this.endpoint.sendRequest(
         PrivateAPI.LanguageExtensionPluginCommands.FormatValue, {expression, context, stopId});

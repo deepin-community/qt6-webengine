@@ -5,6 +5,7 @@
 #include "headless/lib/browser/headless_content_browser_client.h"
 
 #include <string>
+#include <string_view>
 #include <unordered_set>
 #include <vector>
 
@@ -15,10 +16,10 @@
 #include "base/i18n/rtl.h"
 #include "base/path_service.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/string_split.h"
 #include "build/build_config.h"
 #include "components/embedder_support/switches.h"
+#include "components/headless/command_handler/headless_command_switches.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/client_certificate_delegate.h"
@@ -113,12 +114,7 @@ HeadlessContentBrowserClient::~HeadlessContentBrowserClient() = default;
 std::unique_ptr<content::BrowserMainParts>
 HeadlessContentBrowserClient::CreateBrowserMainParts(
     bool /* is_integration_test */) {
-  auto browser_main_parts =
-      std::make_unique<HeadlessBrowserMainParts>(browser_);
-
-  browser_->set_browser_main_parts(browser_main_parts.get());
-
-  return browser_main_parts;
+  return std::make_unique<HeadlessBrowserMainParts>(*browser_);
 }
 
 void HeadlessContentBrowserClient::OverrideWebkitPrefs(
@@ -201,6 +197,9 @@ void HeadlessContentBrowserClient::AppendExtraCommandLineSwitches(
       *base::CommandLine::ForCurrentProcess());
   if (old_command_line.HasSwitch(switches::kDisablePDFTagging))
     command_line->AppendSwitch(switches::kDisablePDFTagging);
+  if (old_command_line.HasSwitch(switches::kGeneratePDFDocumentOutline)) {
+    command_line->AppendSwitch(switches::kGeneratePDFDocumentOutline);
+  }
 
   // If we're spawning a renderer, then override the language switch.
   std::string process_type =
@@ -214,7 +213,7 @@ void HeadlessContentBrowserClient::AppendExtraCommandLineSwitches(
           HeadlessBrowserContextImpl::From(
               render_process_host->GetBrowserContext());
 
-      std::vector<base::StringPiece> languages = base::SplitStringPiece(
+      std::vector<std::string_view> languages = base::SplitStringPiece(
           headless_browser_context_impl->options()->accept_language(), ",",
           base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
       if (!languages.empty()) {
@@ -226,11 +225,9 @@ void HeadlessContentBrowserClient::AppendExtraCommandLineSwitches(
     // Please keep this in alphabetical order.
     static const char* const kSwitchNames[] = {
         embedder_support::kOriginTrialDisabledFeatures,
-        embedder_support::kOriginTrialDisabledTokens,
         embedder_support::kOriginTrialPublicKey,
     };
-    command_line->CopySwitchesFrom(old_command_line, kSwitchNames,
-                                   std::size(kSwitchNames));
+    command_line->CopySwitchesFrom(old_command_line, kSwitchNames);
   }
 }
 
@@ -267,6 +264,7 @@ void HeadlessContentBrowserClient::AllowCertificateError(
 }
 
 base::OnceClosure HeadlessContentBrowserClient::SelectClientCertificate(
+    content::BrowserContext* browser_context,
     content::WebContents* web_contents,
     net::SSLCertRequestInfo* cert_request_info,
     net::ClientCertIdentityList client_certs,
@@ -319,6 +317,10 @@ std::string HeadlessContentBrowserClient::GetUserAgent() {
   return browser_->options()->user_agent;
 }
 
+blink::UserAgentMetadata HeadlessContentBrowserClient::GetUserAgentMetadata() {
+  return HeadlessBrowser::GetUserAgentMetadata();
+}
+
 void HeadlessContentBrowserClient::BindBadgeService(
     content::RenderFrameHost* render_frame_host,
     mojo::PendingReceiver<blink::mojom::BadgeService> receiver) {
@@ -338,11 +340,19 @@ bool HeadlessContentBrowserClient::CanAcceptUntrustedExchangesIfNeeded() {
 device::GeolocationManager*
 HeadlessContentBrowserClient::GetGeolocationManager() {
 #if BUILDFLAG(IS_MAC)
-  return browser_->browser_main_parts()->GetGeolocationManager();
+  return browser_->GetGeolocationManager();
 #else
   return nullptr;
 #endif
 }
+
+#if BUILDFLAG(IS_WIN)
+void HeadlessContentBrowserClient::SessionEnding(
+    std::optional<DWORD> control_type) {
+  DCHECK_LT(control_type.value_or(0), 0x7fu);
+  browser_->ShutdownWithExitCode(control_type.value_or(0) + 0x80u);
+}
+#endif
 
 #if defined(HEADLESS_USE_POLICY)
 std::vector<std::unique_ptr<content::NavigationThrottle>>

@@ -13,6 +13,7 @@
 
 #include "base/check_op.h"
 #include "base/functional/bind.h"
+#include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/test/task_environment.h"
@@ -213,7 +214,8 @@ class DnsRequest {
     if (parameters.source == net::HostResolverSource::MULTICAST_DNS &&
         (parameters.include_canonical_name || parameters.loopback_only ||
          parameters.cache_usage !=
-             net::HostResolver::ResolveHostParameters::CacheUsage::ALLOWED)) {
+             net::HostResolver::ResolveHostParameters::CacheUsage::ALLOWED ||
+         parameters.dns_query_type == net::DnsQueryType::HTTPS)) {
       return false;
     }
 
@@ -223,9 +225,9 @@ class DnsRequest {
   // Cancel the request, if not already completed. Otherwise, does nothing.
   void Cancel() { request_.reset(); }
 
-  net::HostResolver* host_resolver_;
-  FuzzedDataProvider* data_provider_;
-  std::vector<std::unique_ptr<DnsRequest>>* dns_requests_;
+  raw_ptr<net::HostResolver> host_resolver_;
+  raw_ptr<FuzzedDataProvider> data_provider_;
+  raw_ptr<std::vector<std::unique_ptr<DnsRequest>>> dns_requests_;
 
   // Non-null only while running.
   std::unique_ptr<net::HostResolver::ResolveHostRequest> request_;

@@ -30,11 +30,12 @@ RenderWidgetHostViewQtDelegateItem::RenderWidgetHostViewQtDelegateItem(RenderWid
         setFocus(true);
         setActiveFocusOnTab(true);
     }
-    bind(client->compositorId());
+    bind(client->compositorId()); // Compositor::Observer
 }
 
 RenderWidgetHostViewQtDelegateItem::~RenderWidgetHostViewQtDelegateItem()
 {
+    unbind(); // Compositor::Observer
     releaseTextureResources();
     if (m_widgetDelegate) {
         m_widgetDelegate->Unbind();
@@ -126,6 +127,8 @@ void RenderWidgetHostViewQtDelegateItem::readyToSwap()
 
 void RenderWidgetHostViewQtDelegateItem::updateCursor(const QCursor &cursor)
 {
+    if (m_widgetDelegate)
+        m_widgetDelegate->SetCursor(cursor);
     setCursor(cursor);
 }
 
@@ -317,9 +320,18 @@ void RenderWidgetHostViewQtDelegateItem::itemChange(ItemChange change, const Ite
 {
     QQuickItem::itemChange(change, value);
     if (change == QQuickItem::ItemSceneChange) {
-        for (const QMetaObject::Connection &c : std::as_const(m_windowConnections))
-            disconnect(c);
-        m_windowConnections.clear();
+        if (!m_windowConnections.isEmpty()) {
+            for (const QMetaObject::Connection &c : std::as_const(m_windowConnections))
+                disconnect(c);
+            m_windowConnections.clear();
+
+            auto comp = compositor();
+            if (comp && comp->type() == Compositor::Type::Native) {
+                comp->releaseTexture();
+                comp->releaseResources();
+            }
+        }
+
         if (value.window) {
             m_windowConnections.append(connect(value.window, &QQuickWindow::beforeRendering,
                                                this, &RenderWidgetHostViewQtDelegateItem::onBeforeRendering, Qt::DirectConnection));
@@ -327,13 +339,12 @@ void RenderWidgetHostViewQtDelegateItem::itemChange(ItemChange change, const Ite
                                                &RenderWidgetHostViewQtDelegateItem::onAfterFrameEnd,
                                                Qt::DirectConnection));
             m_windowConnections.append(connect(value.window, SIGNAL(xChanged(int)), SLOT(onWindowPosChanged())));
-            m_windowConnections.append(connect(value.window, SIGNAL(yChanged(int)), SLOT(onWindowPosChanged())));
-#if QT_CONFIG(webengine_vulkan)
+            m_windowConnections.append(
+                    connect(value.window, SIGNAL(yChanged(int)), SLOT(onWindowPosChanged())));
             m_windowConnections.append(
                     connect(value.window, &QQuickWindow::sceneGraphAboutToStop, this,
                             &RenderWidgetHostViewQtDelegateItem::releaseTextureResources,
                             Qt::DirectConnection));
-#endif
             if (!m_isPopup)
                 m_windowConnections.append(connect(value.window, SIGNAL(closing(QQuickCloseEvent *)), SLOT(onHide())));
         }
@@ -346,6 +357,8 @@ void RenderWidgetHostViewQtDelegateItem::itemChange(ItemChange change, const Ite
             if (!m_isPopup)
                 onHide();
         }
+    } else if (change == QQuickItem::ItemDevicePixelRatioHasChanged) {
+        m_client->visualPropertiesChanged();
     }
 }
 
@@ -408,7 +421,7 @@ void RenderWidgetHostViewQtDelegateItem::onBeforeRendering()
 void RenderWidgetHostViewQtDelegateItem::onAfterFrameEnd()
 {
     auto comp = compositor();
-    if (!comp || comp->type() != Compositor::Type::NativeBuffer)
+    if (!comp || comp->type() != Compositor::Type::Native)
         return;
     comp->releaseTexture();
 }
@@ -427,10 +440,10 @@ void RenderWidgetHostViewQtDelegateItem::onHide()
 void RenderWidgetHostViewQtDelegateItem::releaseTextureResources()
 {
     auto comp = compositor();
-    if (!comp || (comp->type() != Compositor::Type::Vulkan && comp->type() != Compositor::Type::NativeBuffer))
+    if (!comp || comp->type() != Compositor::Type::Native)
         return;
 
-    comp->releaseResources(QQuickItem::window());
+    comp->releaseResources();
 }
 
 void RenderWidgetHostViewQtDelegateItem::adapterClientChanged(WebContentsAdapterClient *client)

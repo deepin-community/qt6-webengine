@@ -6,6 +6,9 @@ import type * as Common from '../../core/common/common.js';
 import * as i18n from '../../core/i18n/i18n.js';
 import * as Platform from '../../core/platform/platform.js';
 import * as UI from '../../ui/legacy/legacy.js';
+import * as VisualLogging from '../../ui/visual_logging/visual_logging.js';
+
+import * as ApplicationComponents from './components/components.js';
 
 const UIStrings = {
   /**
@@ -29,8 +32,10 @@ const UIStrings = {
    */
   refreshedStatus: 'Table refreshed',
 };
+
 const str_ = i18n.i18n.registerUIStrings('panels/application/StorageItemsView.ts', UIStrings);
 const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
+
 export class StorageItemsView extends UI.Widget.VBox {
   private filterRegex: RegExp|null;
   readonly refreshButton: UI.Toolbar.ToolbarButton;
@@ -38,15 +43,18 @@ export class StorageItemsView extends UI.Widget.VBox {
   readonly filterItem: UI.Toolbar.ToolbarInput;
   readonly deleteAllButton: UI.Toolbar.ToolbarButton;
   readonly deleteSelectedButton: UI.Toolbar.ToolbarButton;
+  readonly metadataView = new ApplicationComponents.StorageMetadataView.StorageMetadataView();
 
   constructor(_title: string, _filterName: string) {
     super(false);
     this.filterRegex = null;
 
-    this.refreshButton = this.addButton(i18nString(UIStrings.refresh), 'largeicon-refresh', () => {
+    this.refreshButton = this.addButton(i18nString(UIStrings.refresh), 'refresh', () => {
       this.refreshItems();
       UI.ARIAUtils.alert(i18nString(UIStrings.refreshedStatus));
     });
+    this.refreshButton.element.setAttribute(
+        'jslog', `${VisualLogging.action().track({click: true}).context('storage-items-view.refresh')}`);
 
     this.mainToolbar = new UI.Toolbar.Toolbar('top-resources-toolbar', this.element);
 
@@ -54,16 +62,20 @@ export class StorageItemsView extends UI.Widget.VBox {
     this.filterItem.addEventListener(UI.Toolbar.ToolbarInput.Event.TextChanged, this.filterChanged, this);
 
     const toolbarSeparator = new UI.Toolbar.ToolbarSeparator();
-    this.deleteAllButton = this.addButton(i18nString(UIStrings.clearAll), 'largeicon-clear', this.deleteAllItems);
-    this.deleteSelectedButton =
-        this.addButton(i18nString(UIStrings.deleteSelected), 'largeicon-delete', this.deleteSelectedItem);
+    this.deleteAllButton = this.addButton(i18nString(UIStrings.clearAll), 'clear', this.deleteAllItems);
+    this.deleteSelectedButton = this.addButton(i18nString(UIStrings.deleteSelected), 'cross', this.deleteSelectedItem);
+    this.deleteSelectedButton.element.setAttribute(
+        'jslog', `${VisualLogging.action().track({click: true}).context('storage-items-view.delete-selected')}`);
     this.deleteAllButton.element.id = 'storage-items-delete-all';
+    this.deleteAllButton.element.setAttribute(
+        'jslog', `${VisualLogging.action().track({click: true}).context('storage-items-view.clear-all')}`);
 
     const toolbarItems =
         [this.refreshButton, this.filterItem, toolbarSeparator, this.deleteAllButton, this.deleteSelectedButton];
     for (const item of toolbarItems) {
       this.mainToolbar.appendToolbarItem(item);
     }
+    this.contentElement.appendChild(this.metadataView);
   }
 
   setDeleteAllTitle(title: string): void {
@@ -76,6 +88,10 @@ export class StorageItemsView extends UI.Widget.VBox {
 
   appendToolbarItem(item: UI.Toolbar.ToolbarItem): void {
     this.mainToolbar.appendToolbarItem(item);
+  }
+
+  setStorageKey(storageKey: string): void {
+    this.metadataView.setStorageKey(storageKey);
   }
 
   private addButton(label: string, glyph: string, callback: (arg0: Common.EventTarget.EventTargetEvent<Event>) => void):
@@ -102,7 +118,7 @@ export class StorageItemsView extends UI.Widget.VBox {
     return Boolean(this.filterRegex);
   }
 
-  wasShown(): void {
+  override wasShown(): void {
     this.refreshItems();
   }
 

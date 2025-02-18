@@ -42,6 +42,7 @@
 #endif
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
+#include "ash/constants/ash_pref_names.h"
 #include "ash/constants/ash_switches.h"
 #include "chrome/browser/ash/borealis/borealis_prefs.h"
 #include "chrome/browser/ash/borealis/borealis_switches.h"
@@ -93,7 +94,7 @@ const CommandLinePrefStore::BooleanSwitchToPreferenceMapEntry
 #endif
 #if BUILDFLAG(IS_CHROMEOS_ASH)
         {ash::switches::kEnableTouchpadThreeFingerClick,
-         prefs::kEnableTouchpadThreeFingerClick, true},
+         ash::prefs::kEnableTouchpadThreeFingerClick, true},
         {switches::kEnableUnifiedDesktop,
          prefs::kUnifiedDesktopEnabledByDefault, true},
         {ash::switches::kEnableCastReceiver, prefs::kCastReceiverEnabled, true},
@@ -141,10 +142,10 @@ bool ChromeCommandLinePrefStore::ValidateProxySwitches() {
 
 void ChromeCommandLinePrefStore::ApplySimpleSwitches() {
   // Look for each switch we know about and set its preference accordingly.
-  ApplyStringSwitches(string_switch_map_, std::size(string_switch_map_));
-  ApplyPathSwitches(path_switch_map_, std::size(path_switch_map_));
-  ApplyIntegerSwitches(integer_switch_map_, std::size(integer_switch_map_));
-  ApplyBooleanSwitches(boolean_switch_map_, std::size(boolean_switch_map_));
+  ApplyStringSwitches(string_switch_map_);
+  ApplyPathSwitches(path_switch_map_);
+  ApplyIntegerSwitches(integer_switch_map_);
+  ApplyBooleanSwitches(boolean_switch_map_);
 }
 
 void ChromeCommandLinePrefStore::ApplyProxyMode() {

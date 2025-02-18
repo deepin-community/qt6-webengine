@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "components/exo/wayland/zwp_linux_dmabuf.h"
+#include "base/memory/raw_ptr.h"
 
 #include <drm_fourcc.h>
 #include <linux-dmabuf-unstable-v1-server-protocol.h>
@@ -48,7 +49,7 @@ struct LinuxBufferParams {
   explicit LinuxBufferParams(WaylandDmabufFeedbackManager* feedback_manager)
       : feedback_manager(feedback_manager) {}
 
-  WaylandDmabufFeedbackManager* const feedback_manager;
+  const raw_ptr<WaylandDmabufFeedbackManager> feedback_manager;
   std::map<uint32_t, Plane> planes;
 };
 
@@ -158,20 +159,7 @@ wl_resource* create_buffer(wl_client* client,
 
   gfx::NativePixmapHandle handle;
 
-  // A lot of clients (arc++, arcvm, sommelier etc) pass 0
-  // (DRM_FORMAT_MOD_LINEAR) when they don't know the format modifier.
-  // They're supposed to pass DRM_FORMAT_MOD_INVALID, which triggers
-  // EGL import without an explicit modifier and lets the driver pick
-  // up the buffer layout from out-of-band channels like kernel ioctls.
-  //
-  // We can't fix all the clients in one go, but we can preserve the
-  // behaviour that 0 means implicit modifier, but only setting the
-  // handle modifier if we get a non-0 modifier.
-  //
-  // TODO(hoegsberg): Once we've fixed all relevant clients, we should
-  // remove this so as to catch future misuse.
-  if (linux_buffer_params->planes[0].modifier != 0)
-    handle.modifier = linux_buffer_params->planes[0].modifier;
+  handle.modifier = linux_buffer_params->planes[0].modifier;
 
   for (uint32_t i = 0; i < linux_buffer_params->planes.size(); ++i) {
     auto& plane = linux_buffer_params->planes[i];

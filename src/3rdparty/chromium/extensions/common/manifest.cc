@@ -4,6 +4,7 @@
 
 #include "extensions/common/manifest.h"
 
+#include <string_view>
 #include <utility>
 
 #include "base/check.h"
@@ -278,11 +279,7 @@ Manifest::Manifest(ManifestLocation location,
 
 Manifest::~Manifest() = default;
 
-bool Manifest::ValidateManifest(
-    std::string* error,
-    std::vector<InstallWarning>* warnings) const {
-  *error = "";
-
+void Manifest::ValidateManifest(std::vector<InstallWarning>* warnings) const {
   // Check every feature to see if it's in the manifest. Note that this means
   // we will ignore keys that are not features; we do this for forward
   // compatibility.
@@ -296,57 +293,48 @@ bool Manifest::ValidateManifest(
     Feature::Availability result = map_entry.second->IsAvailableToManifest(
         hashed_id_, type_, location_, manifest_version_, kUnspecifiedContextId);
     if (!result.is_available())
-      warnings->push_back(InstallWarning(result.message(), map_entry.first));
+      warnings->emplace_back(result.message(), map_entry.first);
   }
 
   // Also generate warnings for keys that are not features.
   for (const auto item : value_) {
     if (!manifest_feature_provider->GetFeature(item.first)) {
-      warnings->push_back(InstallWarning(
+      warnings->emplace_back(
           ErrorUtils::FormatErrorMessage(
               manifest_errors::kUnrecognizedManifestKey, item.first),
-          item.first));
+          item.first);
     }
   }
 
   if (IsUnpackedLocation(location_) &&
       value_.FindByDottedPath(manifest_keys::kDifferentialFingerprint)) {
-    warnings->push_back(
-        InstallWarning(manifest_errors::kHasDifferentialFingerprint,
-                       manifest_keys::kDifferentialFingerprint));
+    warnings->emplace_back(manifest_errors::kHasDifferentialFingerprint,
+                           manifest_keys::kDifferentialFingerprint);
   }
-  return true;
 }
 
-const base::Value* Manifest::FindKey(base::StringPiece key) const {
+const base::Value* Manifest::FindKey(std::string_view key) const {
   return available_values_.Find(key);
 }
 
-const base::Value* Manifest::FindPath(base::StringPiece path) const {
+const base::Value* Manifest::FindPath(std::string_view path) const {
   return available_values_.FindByDottedPath(path);
 }
 
-absl::optional<bool> Manifest::FindBoolPath(base::StringPiece path) const {
+std::optional<bool> Manifest::FindBoolPath(std::string_view path) const {
   return available_values_.FindBoolByDottedPath(path);
 }
 
-absl::optional<int> Manifest::FindIntPath(base::StringPiece path) const {
+std::optional<int> Manifest::FindIntPath(std::string_view path) const {
   return available_values_.FindIntByDottedPath(path);
 }
 
-const std::string* Manifest::FindStringPath(base::StringPiece path) const {
+const std::string* Manifest::FindStringPath(std::string_view path) const {
   return available_values_.FindStringByDottedPath(path);
 }
 
-const base::Value::Dict* Manifest::FindDictPath(base::StringPiece path) const {
+const base::Value::Dict* Manifest::FindDictPath(std::string_view path) const {
   return available_values_.FindDictByDottedPath(path);
-}
-
-const base::Value* Manifest::FindDictPathAsValue(base::StringPiece path) const {
-  const base::Value* result = available_values_.FindByDottedPath(path);
-  if (result && result->is_dict())
-    return result;
-  return nullptr;
 }
 
 bool Manifest::GetList(const std::string& path,

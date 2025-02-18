@@ -7,7 +7,7 @@
 #include <algorithm>
 #include <utility>
 
-#include "base/cxx17_backports.h"
+#include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/memory/raw_ptr.h"
@@ -18,25 +18,26 @@
 #include "base/task/sequenced_task_runner.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
+#include "components/viz/common/surfaces/video_capture_target.h"
 #include "content/browser/media/capture/web_contents_video_capture_device.h"
 #include "content/browser/renderer_host/render_widget_host_view_base.h"
 #include "content/browser/web_contents/web_contents_impl.h"
-#include "content/public/browser/browser_task_traits.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_media_capture_id.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "media/base/media_switches.h"
 #include "media/base/video_util.h"
+#include "media/capture/mojom/video_capture_types.mojom.h"
 #include "media/capture/video_capture_types.h"
-#include "ui/base/layout.h"
 #include "ui/gfx/geometry/dip_util.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/geometry/size_conversions.h"
 #include "ui/gfx/geometry/vector2d_f.h"
 #include "ui/gfx/native_widget_types.h"
 
-#if !BUILDFLAG(IS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
 #include "content/browser/media/capture/mouse_cursor_overlay_controller.h"
 #endif
 
@@ -57,17 +58,17 @@ class WebContentsContext : public WebContentsFrameTracker::Context {
   ~WebContentsContext() override = default;
 
   // WebContextFrameTracker::Context overrides.
-  absl::optional<gfx::Rect> GetScreenBounds() override {
+  std::optional<gfx::Rect> GetScreenBounds() override {
     if (auto* view = GetCurrentView()) {
       // If we know the available size of the screen, we don't want to exceed
       // it as it may result in strange capture behavior in some cases.
       return view->GetScreenInfo().rect;
     }
-    return absl::nullopt;
+    return std::nullopt;
   }
 
-  viz::FrameSinkId GetFrameSinkIdForCapture() override {
-    return static_cast<WebContentsImpl*>(contents_)->GetCaptureFrameSinkId();
+  WebContentsImpl::CaptureTarget GetCaptureTarget() override {
+    return static_cast<WebContentsImpl*>(contents_)->GetCaptureTarget();
   }
 
   void IncrementCapturerCount(const gfx::Size& capture_size) override {
@@ -127,7 +128,7 @@ WebContentsFrameTracker::WebContentsFrameTracker(
     MouseCursorOverlayController* cursor_controller)
     : device_(std::move(device)),
       device_task_runner_(std::move(device_task_runner))
-#if !BUILDFLAG(IS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
       ,
       cursor_controller_(cursor_controller->GetWeakPtr())
 #endif
@@ -138,7 +139,7 @@ WebContentsFrameTracker::WebContentsFrameTracker(
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   CHECK(device_task_runner_);
 
-#if !BUILDFLAG(IS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
   CHECK(cursor_controller_);
 #endif
 }
@@ -184,8 +185,9 @@ void WebContentsFrameTracker::SetCapturedContentSize(
     const gfx::Size& content_size) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  if (!web_contents())
+  if (!web_contents()) {
     return;
+  }
 
   // For efficiency, this function should only be called when the captured
   // content size changes. The caller is responsible for enforcing that.
@@ -240,7 +242,7 @@ gfx::Size WebContentsFrameTracker::CalculatePreferredSize(
   // If we know the available size of the screen, we don't want to exceed
   // it as it may result in strange capture behavior in some cases.
   if (context_) {
-    const absl::optional<gfx::Rect> screen_bounds = context_->GetScreenBounds();
+    const std::optional<gfx::Rect> screen_bounds = context_->GetScreenBounds();
     if (screen_bounds) {
       if (screen_bounds->size().IsEmpty()) {
         return {};
@@ -327,8 +329,8 @@ float WebContentsFrameTracker::CalculatePreferredScaleFactor(
   // Finally, we return a value bounded by [kMinCaptureScaleOverride,
   // kMaxCaptureScaleOverride] rounded to the nearest quarter.
   const float preferred_factor =
-      base::clamp(std::round(largest_factor * 4) / 4, kMinCaptureScaleOverride,
-                  kMaxCaptureScaleOverride);
+      std::clamp(std::round(largest_factor * 4) / 4, kMinCaptureScaleOverride,
+                 kMaxCaptureScaleOverride);
 
   DVLOG(3) << __func__ << ":"
            << " capture_size_=" << capture_size_.ToString()
@@ -422,46 +424,57 @@ void WebContentsFrameTracker::SetWebContentsAndContextFromRoutingId(
   OnPossibleTargetChange();
 }
 
-void WebContentsFrameTracker::Crop(
-    const base::Token& crop_id,
-    uint32_t crop_version,
-    base::OnceCallback<void(media::mojom::CropRequestResult)> callback) {
+void WebContentsFrameTracker::ApplySubCaptureTarget(
+    media::mojom::SubCaptureTargetType type,
+    const base::Token& target_token,
+    uint32_t sub_capture_target_version,
+    base::OnceCallback<void(media::mojom::ApplySubCaptureTargetResult)>
+        callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(callback);
 
-  if (crop_version_ >= crop_version) {
+  if (sub_capture_target_version_ >= sub_capture_target_version) {
     // This will trigger a BadMessage from MediaStreamDispatcherHost.
     // (MediaStreamDispatcherHost knows the capturer, whereas here we know
     // the capturee.)
     std::move(callback).Run(
-        media::mojom::CropRequestResult::kNonIncreasingCropVersion);
+        media::mojom::ApplySubCaptureTargetResult::kNonIncreasingVersion);
     return;
   }
 
-  crop_id_ = crop_id;
-  crop_version_ = crop_version;
+  sub_capture_target_ =
+      target_token.is_zero()
+          ? std::nullopt
+          : std::make_optional<SubCaptureTargetInfo>(type, target_token);
 
-  // If we don't have a target yet, we can store the crop ID but cannot actually
-  // crop yet.
-  if (!target_frame_sink_id_.is_valid())
+  sub_capture_target_version_ = sub_capture_target_version;
+
+  // If we don't have a target yet, we can store the sub-capture target,
+  // but cannot actually apply it yet.
+  if (!target_frame_sink_id_.is_valid()) {
     return;
+  }
 
-  const viz::VideoCaptureTarget target(target_frame_sink_id_, crop_id_);
+  const viz::VideoCaptureTarget target(target_frame_sink_id_,
+                                       DeriveSubTarget());
   device_task_runner_->PostTask(
       FROM_HERE,
       base::BindOnce(
-          [](const viz::VideoCaptureTarget& target, uint32_t crop_version,
-             base::OnceCallback<void(media::mojom::CropRequestResult)> callback,
+          [](const viz::VideoCaptureTarget& target,
+             uint32_t sub_capture_target_version,
+             base::OnceCallback<void(media::mojom::ApplySubCaptureTargetResult)>
+                 callback,
              base::WeakPtr<WebContentsVideoCaptureDevice> device) {
             if (!device) {
               std::move(callback).Run(
-                  media::mojom::CropRequestResult::kErrorGeneric);
+                  media::mojom::ApplySubCaptureTargetResult::kErrorGeneric);
               return;
             }
-            device->OnTargetChanged(target, crop_version);
-            std::move(callback).Run(media::mojom::CropRequestResult::kSuccess);
+            device->OnTargetChanged(target, sub_capture_target_version);
+            std::move(callback).Run(
+                media::mojom::ApplySubCaptureTargetResult::kSuccess);
           },
-          target, crop_version_, std::move(callback), device_));
+          target, sub_capture_target_version_, std::move(callback), device_));
 }
 
 void WebContentsFrameTracker::SetWebContentsAndContextForTesting(
@@ -485,18 +498,18 @@ void WebContentsFrameTracker::OnPossibleTargetChange() {
     return;
   }
 
-  viz::FrameSinkId frame_sink_id;
-  if (context_) {
-    frame_sink_id = context_->GetFrameSinkIdForCapture();
-  }
+  const WebContentsImpl::CaptureTarget capture_target =
+      context_ ? context_->GetCaptureTarget()
+               : WebContentsImpl::CaptureTarget{};
 
-  // TODO(crbug.com/1264849): Clear |crop_id_| when share-this-tab-instead
-  // is clicked.
-  if (frame_sink_id != target_frame_sink_id_) {
-    target_frame_sink_id_ = frame_sink_id;
-    absl::optional<viz::VideoCaptureTarget> target;
-    if (frame_sink_id.is_valid()) {
-      target = viz::VideoCaptureTarget(frame_sink_id, crop_id_);
+  // TODO(crbug.com/1264849): Clear |sub_capture_target_| when
+  // share-this-tab-instead is clicked.
+  if (capture_target.sink_id != target_frame_sink_id_) {
+    target_frame_sink_id_ = capture_target.sink_id;
+    std::optional<viz::VideoCaptureTarget> target;
+    if (capture_target.sink_id.is_valid()) {
+      target =
+          viz::VideoCaptureTarget(capture_target.sink_id, DeriveSubTarget());
     }
 
     // The target may change to an invalid one, but we don't consider it
@@ -504,21 +517,22 @@ void WebContentsFrameTracker::OnPossibleTargetChange() {
     device_task_runner_->PostTask(
         FROM_HERE,
         base::BindOnce(&WebContentsVideoCaptureDevice::OnTargetChanged, device_,
-                       std::move(target), crop_version_));
+                       std::move(target), sub_capture_target_version_));
   }
 
   // Note: MouseCursorOverlayController runs on the UI thread. SetTargetView()
   // must be called synchronously since the NativeView pointer is not valid
   // across task switches, cf. https://crbug.com/818679
-  SetTargetView(web_contents()->GetNativeView());
+  SetTargetView(capture_target.view);
 }
 
 void WebContentsFrameTracker::SetTargetView(gfx::NativeView view) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  if (view == target_native_view_)
+  if (view == target_native_view_) {
     return;
+  }
   target_native_view_ = view;
-#if !BUILDFLAG(IS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
   if (cursor_controller_) {
     cursor_controller_->SetTargetView(view);
   }
@@ -549,8 +563,9 @@ void WebContentsFrameTracker::SetCaptureScaleOverride(float new_value) {
 float WebContentsFrameTracker::DetermineMaxScaleOverride() {
   // If we have no feedback or don't want to apply a scale factor, leave it
   // unchanged.
-  if (!capture_feedback_ || !content_size_)
+  if (!capture_feedback_ || !content_size_) {
     return max_capture_scale_override_;
+  }
 
   // First, determine if we need to lower the max scale override.
   // Clue 1: we are above 80% resource utilization.
@@ -597,6 +612,22 @@ float WebContentsFrameTracker::DetermineMaxScaleOverride() {
            ", utilization=",
            base::NumberToString(capture_feedback_->resource_utilization)}));
   return max_capture_scale_override_;
+}
+
+viz::VideoCaptureSubTarget WebContentsFrameTracker::DeriveSubTarget() const {
+  if (!sub_capture_target_.has_value()) {
+    return base::Token();
+  }
+
+  const SubCaptureTargetInfo& sub_capture_target = sub_capture_target_.value();
+  switch (sub_capture_target.type) {
+    case media::mojom::SubCaptureTargetType::kCropTarget:
+      return sub_capture_target.token;
+    case media::mojom::SubCaptureTargetType::kRestrictionTarget:
+      return viz::SubtreeCaptureId(sub_capture_target.token);
+  }
+
+  NOTREACHED_NORETURN();
 }
 
 }  // namespace content

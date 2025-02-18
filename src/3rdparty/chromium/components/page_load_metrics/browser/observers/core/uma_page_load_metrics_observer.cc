@@ -15,6 +15,8 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/strcat.h"
 #include "base/trace_event/trace_event.h"
+#include "base/trace_event/trace_id_helper.h"
+#include "base/tracing/protos/chrome_track_event.pbzero.h"
 #include "build/chromeos_buildflags.h"
 #include "components/metrics/metrics_data_validation.h"
 #include "components/page_load_metrics/browser/observers/core/largest_contentful_paint_handler.h"
@@ -27,14 +29,13 @@
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/input/web_gesture_event.h"
 #include "third_party/blink/public/common/input/web_mouse_event.h"
+#include "third_party/perfetto/include/perfetto/tracing/track.h"
 #include "ui/base/page_transition_types.h"
 #include "ui/events/blink/blink_features.h"
 
 namespace {
 
-// Used to generate a unique id when emitting the "Long Navigation to First
-// Contentful Paint" trace event.
-int g_num_trace_events_in_process = 0;
+static constexpr uint64_t kInstantPageLoadEventsTraceTrackId = 13839844603789;
 
 // The threshold to emit a trace event is the 99th percentile
 // of the histogram on Windows Stable as of Feb 26th, 2020.
@@ -76,30 +77,6 @@ std::unique_ptr<base::trace_event::TracedValue> FirstInputDelayTraceData(
       timing.interactive_timing->first_input_timestamp->InMillisecondsF());
   return data;
 }
-
-// TODO(crbug/1097328): Remove collecting visits to support.google.com after
-// language settings update fully launches.
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-void RecordVisitToLanguageSettingsSupportPage(const GURL& url) {
-  if (url.is_empty() || !url.DomainIs("support.google.com"))
-    return;
-
-  // Keep these pages in order with SettingsLanguagesSupportPage in enums.xml
-  std::vector<std::string> kSupportPages = {
-      "chrome/answer/173424?co=GENIE.Platform%3DDesktop",
-      "chromebook/answer/1059490",
-      "chromebook/answer/1059492",
-  };
-  const size_t num_pages = 3;
-  for (size_t i = 0; i < num_pages; ++i) {
-    if (url.spec().find(kSupportPages[i]) != std::string::npos) {
-      UMA_HISTOGRAM_ENUMERATION("ChromeOS.Settings.Languages.SupportPageVisits",
-                                i, num_pages);
-      return;
-    }
-  }
-}
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
 }  // namespace
 
@@ -146,16 +123,8 @@ const char kHistogramNumInteractions[] =
 const char kHistogramUserInteractionLatencyHighPercentile2MaxEventDuration[] =
     "PageLoad.InteractiveTiming.UserInteractionLatency.HighPercentile2."
     "MaxEventDuration";
-const char kHistogramAverageUserInteractionLatencyOverBudgetMaxEventDuration[] =
-    "PageLoad.InteractiveTiming.AverageUserInteractionLatencyOverBudget."
-    "MaxEventDuration";
-const char
-    kHistogramSlowUserInteractionLatencyOverBudgetHighPercentile2MaxEventDuration
-        [] = "PageLoad.InteractiveTiming.SlowUserInteractionLatencyOverBudget."
-             "HighPercentile2.MaxEventDuration";
-const char kHistogramSumOfUserInteractionLatencyOverBudgetMaxEventDuration[] =
-    "PageLoad.InteractiveTiming.SumOfUserInteractionLatencyOverBudget."
-    "MaxEventDuration";
+const char kHistogramInpOffset[] = "PageLoad.InteractiveTiming.INPOffset";
+const char kHistogramInpTime[] = "PageLoad.InteractiveTiming.INPTime";
 const char kHistogramWorstUserInteractionLatencyMaxEventDuration[] =
     "PageLoad.InteractiveTiming.WorstUserInteractionLatency.MaxEventDuration";
 
@@ -248,46 +217,12 @@ const char kHistogramResourceLoadTimePrefix[] =
 const char kHistogramTotalSubresourceLoadTimeAtFirstContentfulPaint[] =
     "PageLoad.Experimental.PageTiming."
     "TotalSubresourceLoadTimeAtFirstContentfulPaint";
-const char kHistogramFirstEligibleToPaint[] =
-    "PageLoad.Experimental.PaintTiming.NavigationToFirstEligibleToPaint";
 const char kHistogramFirstEligibleToPaintToFirstPaint[] =
     "PageLoad.Experimental.PaintTiming.FirstEligibleToPaintToFirstPaint";
-
-const char kHistogramPageLoadTotalBytes[] =
-    "PageLoad.Experimental.Bytes.Total2";
-const char kHistogramPageLoadNetworkBytes[] =
-    "PageLoad.Experimental.Bytes.Network";
-const char kHistogramPageLoadCacheBytes[] =
-    "PageLoad.Experimental.Bytes.Cache2";
-const char kHistogramPageLoadNetworkBytesIncludingHeaders[] =
-    "PageLoad.Experimental.Bytes.NetworkIncludingHeaders";
-const char kHistogramPageLoadUnfinishedBytes[] =
-    "PageLoad.Experimental.Bytes.Unfinished";
 
 const char kHistogramPageLoadCpuTotalUsage[] = "PageLoad.Cpu.TotalUsage";
 const char kHistogramPageLoadCpuTotalUsageForegrounded[] =
     "PageLoad.Cpu.TotalUsageForegrounded";
-
-const char kHistogramLoadTypeTotalBytesForwardBack[] =
-    "PageLoad.Experimental.Bytes.Total2.LoadType.ForwardBackNavigation";
-const char kHistogramLoadTypeNetworkBytesForwardBack[] =
-    "PageLoad.Experimental.Bytes.Network.LoadType.ForwardBackNavigation";
-const char kHistogramLoadTypeCacheBytesForwardBack[] =
-    "PageLoad.Experimental.Bytes.Cache2.LoadType.ForwardBackNavigation";
-
-const char kHistogramLoadTypeTotalBytesReload[] =
-    "PageLoad.Experimental.Bytes.Total2.LoadType.Reload";
-const char kHistogramLoadTypeNetworkBytesReload[] =
-    "PageLoad.Experimental.Bytes.Network.LoadType.Reload";
-const char kHistogramLoadTypeCacheBytesReload[] =
-    "PageLoad.Experimental.Bytes.Cache2.LoadType.Reload";
-
-const char kHistogramLoadTypeTotalBytesNewNavigation[] =
-    "PageLoad.Experimental.Bytes.Total2.LoadType.NewNavigation";
-const char kHistogramLoadTypeNetworkBytesNewNavigation[] =
-    "PageLoad.Experimental.Bytes.Network.LoadType.NewNavigation";
-const char kHistogramLoadTypeCacheBytesNewNavigation[] =
-    "PageLoad.Experimental.Bytes.Cache2.LoadType.NewNavigation";
 
 const char kHistogramInputToNavigation[] =
     "PageLoad.Experimental.InputTiming.InputToNavigationStart";
@@ -297,14 +232,8 @@ const char kHistogramInputToNavigationLinkClick[] =
     "PageLoad.Experimental.InputTiming.InputToNavigationStart.FromLinkClick";
 const char kHistogramInputToNavigationOmnibox[] =
     "PageLoad.Experimental.InputTiming.InputToNavigationStart.FromOmnibox";
-const char kHistogramInputToFirstPaint[] =
-    "PageLoad.Experimental.PaintTiming.InputToFirstPaint";
-const char kBackgroundHistogramInputToFirstPaint[] =
-    "PageLoad.Experimental.PaintTiming.InputToFirstPaint.Background";
 const char kHistogramInputToFirstContentfulPaint[] =
     "PageLoad.Experimental.PaintTiming.InputToFirstContentfulPaint";
-const char kBackgroundHistogramInputToFirstContentfulPaint[] =
-    "PageLoad.Experimental.PaintTiming.InputToFirstContentfulPaint.Background";
 
 const char kHistogramBackForwardCacheEvent[] =
     "PageLoad.BackForwardCache.Event";
@@ -355,8 +284,6 @@ const char kHistogramMemorySubframeAggregate[] =
     "PageLoad.Experimental.Memory.Core.Subframe.Aggregate.Max";
 const char kHistogramMemoryTotal[] =
     "PageLoad.Experimental.Memory.Core.Total.Max";
-const char kHistogramMemoryUpdateReceived[] =
-    "PageLoad.Experimental.Memory.Core.UpdateReceived";
 
 }  // namespace internal
 
@@ -409,12 +336,6 @@ UmaPageLoadMetricsObserver::OnCommit(
         headers->HasHeaderValue("cache-control", "no-store");
   }
   navigation_handle_timing_ = navigation_handle->GetNavigationHandleTiming();
-
-  // TODO(crbug/1097328): Remove collecting visits to support.google.com after
-  // language settings update fully launches.
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  RecordVisitToLanguageSettingsSupportPage(navigation_handle->GetURL());
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
   return CONTINUE_OBSERVING;
 }
 
@@ -431,6 +352,10 @@ void UmaPageLoadMetricsObserver::OnDomContentLoadedEventStart(
         internal::kBackgroundHistogramDomContentLoaded,
         timing.document_timing->dom_content_loaded_event_start.value());
   }
+
+  EmitInstantTraceEvent(
+      timing.document_timing->dom_content_loaded_event_start.value(),
+      "PageLoadMetrics.NavigationToDOMContentLoadedEventFired");
 }
 
 void UmaPageLoadMetricsObserver::OnLoadEventStart(
@@ -443,6 +368,9 @@ void UmaPageLoadMetricsObserver::OnLoadEventStart(
     PAGE_LOAD_HISTOGRAM(internal::kBackgroundHistogramLoad,
                         timing.document_timing->load_event_start.value());
   }
+
+  EmitInstantTraceEvent(timing.document_timing->load_event_start.value(),
+                        "PageLoadMetrics.NavigationToMainFrameOnLoad");
 }
 
 void UmaPageLoadMetricsObserver::OnFirstPaintInPage(
@@ -454,27 +382,14 @@ void UmaPageLoadMetricsObserver::OnFirstPaintInPage(
     PAGE_LOAD_HISTOGRAM(internal::kHistogramFirstPaint,
                         timing.paint_timing->first_paint.value());
     if (timing.paint_timing->first_eligible_to_paint) {
-      PAGE_LOAD_HISTOGRAM(internal::kHistogramFirstEligibleToPaint,
-                          timing.paint_timing->first_eligible_to_paint.value());
       PAGE_LOAD_HISTOGRAM(
           internal::kHistogramFirstEligibleToPaintToFirstPaint,
           timing.paint_timing->first_paint.value() -
               timing.paint_timing->first_eligible_to_paint.value());
     }
-
-    if (timing.input_to_navigation_start) {
-      PAGE_LOAD_HISTOGRAM(internal::kHistogramInputToFirstPaint,
-                          timing.input_to_navigation_start.value() +
-                              timing.paint_timing->first_paint.value());
-    }
   } else {
     PAGE_LOAD_HISTOGRAM(internal::kBackgroundHistogramFirstPaint,
                         timing.paint_timing->first_paint.value());
-    if (timing.input_to_navigation_start) {
-      PAGE_LOAD_HISTOGRAM(internal::kBackgroundHistogramInputToFirstPaint,
-                          timing.input_to_navigation_start.value() +
-                              timing.paint_timing->first_paint.value());
-    }
   }
 }
 
@@ -495,6 +410,7 @@ void UmaPageLoadMetricsObserver::OnFirstContentfulPaintInPage(
   DCHECK(timing.paint_timing->first_contentful_paint);
   if (page_load_metrics::WasStartedInForegroundOptionalEventInForeground(
           timing.paint_timing->first_contentful_paint, GetDelegate())) {
+    EmitFCPTraceEvent(timing.paint_timing->first_contentful_paint.value());
     PAGE_LOAD_HISTOGRAM(internal::kHistogramFirstContentfulPaint,
                         timing.paint_timing->first_contentful_paint.value());
     PAGE_LOAD_HISTOGRAM(internal::kHistogramParseStartToFirstContentfulPaint,
@@ -509,16 +425,18 @@ void UmaPageLoadMetricsObserver::OnFirstContentfulPaintInPage(
     // paint.
     if (timing.paint_timing->first_contentful_paint.value() >
         kFirstContentfulPaintTraceThreshold) {
+      auto trace_id = TRACE_ID_WITH_SCOPE(
+          "UmaPageLoadMetricsObserver::OnFirstContentfulPaintInPage_for_"
+          "LongNavigation",
+          TRACE_ID_LOCAL(this));
       base::TimeTicks navigation_start = GetDelegate().GetNavigationStart();
       TRACE_EVENT_NESTABLE_ASYNC_BEGIN_WITH_TIMESTAMP0(
-          "latency", "Long Navigation to First Contentful Paint",
-          TRACE_ID_LOCAL(g_num_trace_events_in_process), navigation_start);
+          "latency", "Long Navigation to First Contentful Paint", trace_id,
+          navigation_start);
       TRACE_EVENT_NESTABLE_ASYNC_END_WITH_TIMESTAMP0(
-          "latency", "Long Navigation to First Contentful Paint",
-          TRACE_ID_LOCAL(g_num_trace_events_in_process),
+          "latency", "Long Navigation to First Contentful Paint", trace_id,
           navigation_start +
               timing.paint_timing->first_contentful_paint.value());
-      g_num_trace_events_in_process++;
     }
 
     UMA_HISTOGRAM_ENUMERATION(
@@ -615,10 +533,6 @@ void UmaPageLoadMetricsObserver::OnFirstContentfulPaintInPage(
     if (timing.input_to_navigation_start) {
       PAGE_LOAD_HISTOGRAM(internal::kBackgroundHistogramInputToNavigation,
                           timing.input_to_navigation_start.value());
-      PAGE_LOAD_HISTOGRAM(
-          internal::kBackgroundHistogramInputToFirstContentfulPaint,
-          timing.input_to_navigation_start.value() +
-              timing.paint_timing->first_contentful_paint.value());
     }
   }
 
@@ -963,6 +877,7 @@ void UmaPageLoadMetricsObserver::RecordTimingHistograms(
   if (all_frames_largest_contentful_paint.ContainsValidTime() &&
       WasStartedInForegroundOptionalEventInForeground(
           all_frames_largest_contentful_paint.Time(), GetDelegate())) {
+    EmitLCPTraceEvent(all_frames_largest_contentful_paint.Time().value());
     PAGE_LOAD_HISTOGRAM(internal::kHistogramLargestContentfulPaint,
                         all_frames_largest_contentful_paint.Time().value());
     // The pseudo metric of |kHistogramLargestContentfulPaint|. Only used to
@@ -981,54 +896,37 @@ void UmaPageLoadMetricsObserver::RecordTimingHistograms(
         "data", all_frames_largest_contentful_paint.DataAsTraceValue());
   }
 
-  if (main_frame_timing.interactive_timing->longest_input_timestamp) {
-    DCHECK(main_frame_timing.interactive_timing->longest_input_delay);
-  }
-
   RecordNormalizedResponsivenessMetrics();
 }
 
 void UmaPageLoadMetricsObserver::RecordNormalizedResponsivenessMetrics() {
-  const page_load_metrics::NormalizedResponsivenessMetrics&
-      normalized_responsiveness_metrics =
-          GetDelegate().GetNormalizedResponsivenessMetrics();
-  if (!normalized_responsiveness_metrics.num_user_interactions)
+  const page_load_metrics::ResponsivenessMetricsNormalization&
+      responsiveness_metrics_normalization =
+          GetDelegate().GetResponsivenessMetricsNormalization();
+  absl::optional<page_load_metrics::mojom::UserInteractionLatency> inp =
+      responsiveness_metrics_normalization.ApproximateHighPercentile();
+  if (!inp.has_value()) {
     return;
-  auto& max_event_durations =
-      normalized_responsiveness_metrics.normalized_max_event_durations;
+  }
 
   UmaHistogramCustomTimes(
       internal::kHistogramWorstUserInteractionLatencyMaxEventDuration,
-      max_event_durations.worst_latency, base::Milliseconds(1),
-      base::Seconds(60), 50);
-  UmaHistogramCustomTimes(
-      internal::kHistogramSumOfUserInteractionLatencyOverBudgetMaxEventDuration,
-      max_event_durations.sum_of_latency_over_budget, base::Milliseconds(1),
-      base::Seconds(60), 50);
-  UmaHistogramCustomTimes(
-      internal::
-          kHistogramAverageUserInteractionLatencyOverBudgetMaxEventDuration,
-      max_event_durations.sum_of_latency_over_budget /
-          normalized_responsiveness_metrics.num_user_interactions,
-      base::Milliseconds(1), base::Seconds(60), 50);
-  UmaHistogramCustomTimes(
-      internal::
-          kHistogramSlowUserInteractionLatencyOverBudgetHighPercentile2MaxEventDuration,
-      page_load_metrics::ResponsivenessMetricsNormalization::
-          ApproximateHighPercentile(
-              normalized_responsiveness_metrics.num_user_interactions,
-              max_event_durations.worst_ten_latencies_over_budget),
+      responsiveness_metrics_normalization.worst_latency()
+          .value()
+          .interaction_latency,
       base::Milliseconds(1), base::Seconds(60), 50);
   UmaHistogramCustomTimes(
       internal::kHistogramUserInteractionLatencyHighPercentile2MaxEventDuration,
-      page_load_metrics::ResponsivenessMetricsNormalization::
-          ApproximateHighPercentile(
-              normalized_responsiveness_metrics.num_user_interactions,
-              max_event_durations.worst_ten_latencies),
-      base::Milliseconds(1), base::Seconds(60), 50);
+      inp->interaction_latency, base::Milliseconds(1), base::Seconds(60), 50);
+  base::TimeDelta interaction_time =
+      inp->interaction_time - GetDelegate().GetNavigationStart();
+  UmaHistogramCustomTimes(internal::kHistogramInpTime, interaction_time,
+                          base::Milliseconds(1), base::Seconds(3600), 100);
+  base::UmaHistogramCounts1000(internal::kHistogramInpOffset,
+                               inp->interaction_offset);
   base::UmaHistogramCounts1000(
       internal::kHistogramNumInteractions,
-      normalized_responsiveness_metrics.num_user_interactions);
+      responsiveness_metrics_normalization.num_user_interactions());
 }
 
 void UmaPageLoadMetricsObserver::RecordForegroundDurationHistograms(
@@ -1086,52 +984,6 @@ void UmaPageLoadMetricsObserver::RecordByteAndResourceHistograms(
     const page_load_metrics::mojom::PageLoadTiming& timing) {
   DCHECK_GE(network_bytes_, 0);
   DCHECK_GE(cache_bytes_, 0);
-  int64_t total_bytes = network_bytes_ + cache_bytes_;
-
-  PAGE_BYTES_HISTOGRAM(internal::kHistogramPageLoadNetworkBytes,
-                       network_bytes_);
-  PAGE_BYTES_HISTOGRAM(internal::kHistogramPageLoadCacheBytes, cache_bytes_);
-  PAGE_BYTES_HISTOGRAM(internal::kHistogramPageLoadTotalBytes, total_bytes);
-  PAGE_BYTES_HISTOGRAM(internal::kHistogramPageLoadNetworkBytesIncludingHeaders,
-                       network_bytes_including_headers_);
-
-  size_t unfinished_bytes = 0;
-  for (auto const& kv :
-       GetDelegate().GetResourceTracker().unfinished_resources())
-    unfinished_bytes += kv.second->received_data_length;
-  PAGE_BYTES_HISTOGRAM(internal::kHistogramPageLoadUnfinishedBytes,
-                       unfinished_bytes);
-
-  switch (GetPageLoadType(transition_)) {
-    case LOAD_TYPE_RELOAD:
-      PAGE_BYTES_HISTOGRAM(internal::kHistogramLoadTypeNetworkBytesReload,
-                           network_bytes_);
-      PAGE_BYTES_HISTOGRAM(internal::kHistogramLoadTypeCacheBytesReload,
-                           cache_bytes_);
-      PAGE_BYTES_HISTOGRAM(internal::kHistogramLoadTypeTotalBytesReload,
-                           total_bytes);
-      break;
-    case LOAD_TYPE_FORWARD_BACK:
-      PAGE_BYTES_HISTOGRAM(internal::kHistogramLoadTypeNetworkBytesForwardBack,
-                           network_bytes_);
-      PAGE_BYTES_HISTOGRAM(internal::kHistogramLoadTypeCacheBytesForwardBack,
-                           cache_bytes_);
-      PAGE_BYTES_HISTOGRAM(internal::kHistogramLoadTypeTotalBytesForwardBack,
-                           total_bytes);
-      break;
-    case LOAD_TYPE_NEW_NAVIGATION:
-      PAGE_BYTES_HISTOGRAM(
-          internal::kHistogramLoadTypeNetworkBytesNewNavigation,
-          network_bytes_);
-      PAGE_BYTES_HISTOGRAM(internal::kHistogramLoadTypeCacheBytesNewNavigation,
-                           cache_bytes_);
-      PAGE_BYTES_HISTOGRAM(internal::kHistogramLoadTypeTotalBytesNewNavigation,
-                           total_bytes);
-      break;
-    case LOAD_TYPE_NONE:
-      NOTREACHED();
-      break;
-  }
   click_tracker_.RecordClickBurst(GetDelegate().GetPageUkmSourceId());
 }
 
@@ -1195,12 +1047,73 @@ void UmaPageLoadMetricsObserver::RecordV8MemoryHistograms() {
                          aggregate_subframe_memory_usage_.max_bytes_used());
     PAGE_BYTES_HISTOGRAM(internal::kHistogramMemoryTotal,
                          aggregate_total_memory_usage_.max_bytes_used());
-    UMA_HISTOGRAM_BOOLEAN(internal::kHistogramMemoryUpdateReceived,
-                          memory_update_received_);
   }
 }
 
 void UmaPageLoadMetricsObserver::MemoryUsage::UpdateUsage(int64_t delta_bytes) {
   current_bytes_used_ += delta_bytes;
   max_bytes_used_ = std::max(max_bytes_used_, current_bytes_used_);
+}
+
+// Perfetto trace events for page load events need to be in sync with UMA
+// histogram data for metric accuracy; they are recorded together accordingly.
+// Navigation ID is used to join all related trace events.
+void UmaPageLoadMetricsObserver::EmitFCPTraceEvent(
+    base::TimeDelta first_contentful_paint_timing) {
+  const base::TimeTicks navigation_start = GetDelegate().GetNavigationStart();
+  const perfetto::Track track(base::trace_event::GetNextGlobalTraceId(),
+                              perfetto::ProcessTrack::Current());
+
+  TRACE_EVENT_BEGIN(
+      "loading,interactions",
+      "PageLoadMetrics.NavigationToFirstContentfulPaint", track,
+      navigation_start, [&](perfetto::EventContext& ctx) {
+        auto* page_load_proto =
+            ctx.event<perfetto::protos::pbzero::ChromeTrackEvent>()
+                ->set_page_load();
+        page_load_proto->set_url(
+            GetDelegate().GetUrl().possibly_invalid_spec());
+        page_load_proto->set_navigation_id(GetDelegate().GetNavigationId());
+      });
+
+  TRACE_EVENT_END("loading,interactions", track,
+                  navigation_start + first_contentful_paint_timing);
+}
+
+void UmaPageLoadMetricsObserver::EmitLCPTraceEvent(
+    base::TimeDelta largest_contentful_paint_timing) {
+  const base::TimeTicks navigation_start = GetDelegate().GetNavigationStart();
+  const perfetto::Track track(base::trace_event::GetNextGlobalTraceId(),
+                              perfetto::ProcessTrack::Current());
+  TRACE_EVENT_BEGIN(
+      "loading,interactions",
+      "PageLoadMetrics.NavigationToLargestContentfulPaint", track,
+      navigation_start, [&](perfetto::EventContext& ctx) {
+        auto* page_load_proto =
+            ctx.event<perfetto::protos::pbzero::ChromeTrackEvent>()
+                ->set_page_load();
+        page_load_proto->set_navigation_id(GetDelegate().GetNavigationId());
+
+        // URL is not needed here, as it will already be recorded in the FCP
+        // trace event. We can join the events using the navigation id.
+      });
+
+  TRACE_EVENT_END("loading,interactions", track,
+                  navigation_start + largest_contentful_paint_timing);
+}
+
+void UmaPageLoadMetricsObserver::EmitInstantTraceEvent(
+    base::TimeDelta duration,
+    const char event_name[]) {
+  const base::TimeTicks navigation_start = GetDelegate().GetNavigationStart();
+  const perfetto::Track track(kInstantPageLoadEventsTraceTrackId,
+                              perfetto::ProcessTrack::Current());
+  TRACE_EVENT_INSTANT(
+      "loading,interactions", perfetto::StaticString{event_name}, track,
+      navigation_start + duration, [&](perfetto::EventContext ctx) {
+        auto* page_load_proto =
+            ctx.event<perfetto::protos::pbzero::ChromeTrackEvent>()
+                ->set_page_load();
+        page_load_proto->set_navigation_id(GetDelegate().GetNavigationId());
+      });
 }

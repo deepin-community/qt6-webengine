@@ -5,6 +5,10 @@ qt6-webengine source: license-problem-json-evil src/3rdparty/chromium/third_part
 # see also https://bugs.chromium.org/p/google-breakpad/issues/detail?id=270
 qt6-webengine source: license-problem-convert-utf-code [src/3rdparty/chromium/third_party/breakpad/breakpad/src/common/convert_UTF.cc]
 
+# University of Illinois/NCSA Open Source License is not a non-free license
+# lintian is probably mixing things up
+qt6-webengine source: license-problem-convert-utf-code [src/3rdparty/chromium/third_party/dawn/third_party/dxc/lib/Support/ConvertUTF.c]
+
 # That file says: "To avoid the problematic JSON license in your own projects, it's sufficient to exclude the bin/jsonchecker/ directory,
 # as it's the only code under the JSON license". We have added that directory to Files-Excluded.
 qt6-webengine source: license-problem-json-evil [src/3rdparty/chromium/third_party/angle/third_party/rapidjson/src/license.txt]

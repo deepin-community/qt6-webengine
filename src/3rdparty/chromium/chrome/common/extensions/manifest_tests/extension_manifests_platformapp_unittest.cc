@@ -10,7 +10,6 @@
 #include "extensions/common/error_utils.h"
 #include "extensions/common/features/simple_feature.h"
 #include "extensions/common/manifest_constants.h"
-#include "extensions/common/manifest_handlers/app_isolation_info.h"
 #include "extensions/common/manifest_handlers/csp_info.h"
 #include "extensions/common/manifest_handlers/incognito_info.h"
 #include "extensions/common/switches.h"
@@ -18,16 +17,37 @@
 
 namespace extensions {
 
+namespace {
+
+static constexpr char kBackgroundDisallowedWarning[] =
+    "'background' is only allowed for extensions, legacy packaged "
+    "apps, hosted apps, login screen extensions, and chromeos "
+    "system extensions, but this is a packaged app.";
+
+static constexpr char kBackgroundScriptsDisallowedWarning[] =
+    "'background.scripts' is only allowed for extensions, legacy packaged "
+    "apps, hosted apps, login screen extensions, and chromeos system "
+    "extensions, but this is a packaged app.";
+
+static constexpr char kBackgroundPageDisallowedWarning[] =
+    "'background.page' is only allowed for extensions, legacy packaged "
+    "apps, hosted apps, login screen extensions, and chromeos system "
+    "extensions, but this is a packaged app.";
+
+}  // namespace
+
 namespace errors = manifest_errors;
 namespace keys = manifest_keys;
 
-class PlatformAppsManifestTest : public ChromeManifestTest {
-};
+using PlatformAppsManifestTest = ChromeManifestTest;
 
 TEST_F(PlatformAppsManifestTest, PlatformApps) {
   scoped_refptr<Extension> extension =
       LoadAndExpectSuccess("init_valid_platform_app.json");
-  EXPECT_TRUE(AppIsolationInfo::HasIsolatedStorage(extension.get()));
+  // Ensure this is treated as platform app, which causes it to have isolated
+  // storage in the browser process. See also
+  // ExtensionUtilUnittest.HasIsolatedStorage.
+  EXPECT_TRUE(extension->is_platform_app());
   EXPECT_FALSE(IncognitoInfo::IsSplitMode(extension.get()));
 
   extension =
@@ -52,14 +72,6 @@ TEST_F(PlatformAppsManifestTest, PlatformApps) {
           "init_invalid_platform_app_1.json",
           "'app.launch' is only allowed for legacy packaged apps and hosted "
           "apps, but this is a packaged app."),
-      Testcase("init_invalid_platform_app_4.json",
-               "'background' is only allowed for extensions, legacy packaged "
-               "apps, hosted apps, login screen extensions, and chromeos "
-               "system extensions, but this is a packaged app."),
-      Testcase("init_invalid_platform_app_5.json",
-               "'background' is only allowed for extensions, legacy packaged "
-               "apps, hosted apps, login screen extensions, and chromeos "
-               "system extensions, but this is a packaged app."),
       Testcase("incognito_invalid_platform_app.json",
                "'incognito' is only allowed for extensions and legacy packaged "
                "apps, "
@@ -67,6 +79,13 @@ TEST_F(PlatformAppsManifestTest, PlatformApps) {
   };
   RunTestcases(warning_testcases, std::size(warning_testcases),
                EXPECT_TYPE_WARNING);
+
+  LoadAndExpectWarnings(
+      "init_invalid_platform_app_4.json",
+      {kBackgroundDisallowedWarning, kBackgroundScriptsDisallowedWarning});
+  LoadAndExpectWarnings(
+      "init_invalid_platform_app_5.json",
+      {kBackgroundDisallowedWarning, kBackgroundPageDisallowedWarning});
 }
 
 TEST_F(PlatformAppsManifestTest, PlatformAppContentSecurityPolicy) {
@@ -120,7 +139,7 @@ TEST_F(PlatformAppsManifestTest, CertainApisRequirePlatformApps) {
   // testing. The requirements are that (1) it be a valid platform app, and (2)
   // it contain no permissions dictionary.
   std::string error;
-  absl::optional<base::Value::Dict> platform_app_manifest =
+  std::optional<base::Value::Dict> platform_app_manifest =
       LoadManifest("init_valid_platform_app.json", &error);
   ASSERT_TRUE(platform_app_manifest);
 

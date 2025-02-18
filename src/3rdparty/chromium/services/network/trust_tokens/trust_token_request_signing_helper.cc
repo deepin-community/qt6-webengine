@@ -7,6 +7,7 @@
 #include <iterator>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <tuple>
 
 #include "base/base64.h"
@@ -16,7 +17,6 @@
 #include "base/strings/strcat.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
-#include "base/time/time_to_iso8601.h"
 #include "base/values.h"
 #include "components/cbor/values.h"
 #include "components/cbor/writer.h"
@@ -39,13 +39,10 @@ namespace {
 
 const char kRedemptionRecordHeaderRedemptionRecordKey[] = "redemption-record";
 
-void LogOutcome(const net::NetLogWithSource& log, base::StringPiece outcome) {
-  log.EndEvent(net::NetLogEventType::TRUST_TOKEN_OPERATION_BEGIN_SIGNING,
-               [outcome]() {
-                 base::Value ret(base::Value::Type::DICT);
-                 ret.SetStringKey("outcome", outcome);
-                 return ret;
-               });
+void LogOutcome(const net::NetLogWithSource& log, std::string_view outcome) {
+  log.EndEvent(
+      net::NetLogEventType::TRUST_TOKEN_OPERATION_BEGIN_SIGNING,
+      [outcome]() { return base::Value::Dict().Set("outcome", outcome); });
 }
 
 }  // namespace
@@ -75,7 +72,7 @@ absl::optional<std::string> ConstructRedemptionRecordHeader(
         net::structured_headers::Item::ItemType::kStringType);
     net::structured_headers::Item redemption_record_item(
         issuer_and_record.second.body(),
-        net::structured_headers::Item::ItemType::kByteSequenceType);
+        net::structured_headers::Item::ItemType::kStringType);
     header_items.emplace_back(net::structured_headers::ParameterizedMember(
         std::move(issuer_item), {{kRedemptionRecordHeaderRedemptionRecordKey,
                                   std::move(redemption_record_item)}}));

@@ -12,6 +12,7 @@
 #include "base/test/scoped_feature_list.h"
 #include "base/threading/thread.h"
 #include "base/threading/threading_features.h"
+#include "build/blink_buildflags.h"
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -424,8 +425,12 @@ TEST(PlatformThreadTest,
 TEST(PlatformThreadTest, CanChangeThreadType) {
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
   // On Ubuntu, RLIMIT_NICE and RLIMIT_RTPRIO are 0 by default, so we won't be
-  // able to increase priority to any level.
-  constexpr bool kCanIncreasePriority = false;
+  // able to increase priority to any level unless we are root (euid == 0).
+  bool kCanIncreasePriority = false;
+  if (geteuid() == 0) {
+    kCanIncreasePriority = true;
+  }
+
 #else
   constexpr bool kCanIncreasePriority = true;
 #endif
@@ -488,27 +493,28 @@ TEST(PlatformThreadTest, SetCurrentThreadTypeTest) {
                                       ThreadPriorityForTest::kBackground);
   TestPriorityResultingFromThreadType(ThreadType::kUtility,
                                       ThreadPriorityForTest::kUtility);
+
 #if BUILDFLAG(IS_APPLE)
   TestPriorityResultingFromThreadType(ThreadType::kResourceEfficient,
                                       ThreadPriorityForTest::kUtility);
+#elif BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_LINUX)
+  TestPriorityResultingFromThreadType(
+      ThreadType::kResourceEfficient,
+      ThreadPriorityForTest::kResourceEfficient);
 #else
   TestPriorityResultingFromThreadType(ThreadType::kResourceEfficient,
                                       ThreadPriorityForTest::kNormal);
 #endif  // BUILDFLAG(IS_APPLE)
+
   TestPriorityResultingFromThreadType(ThreadType::kDefault,
                                       ThreadPriorityForTest::kNormal);
+
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_CHROMEOS)
   TestPriorityResultingFromThreadType(ThreadType::kCompositing,
                                       ThreadPriorityForTest::kDisplay);
-#if BUILDFLAG(IS_WIN)
-  TestPriorityResultingFromThreadType(ThreadType::kCompositing,
-                                      MessagePumpType::UI,
-                                      ThreadPriorityForTest::kNormal);
-#else
   TestPriorityResultingFromThreadType(ThreadType::kCompositing,
                                       MessagePumpType::UI,
                                       ThreadPriorityForTest::kDisplay);
-#endif  // BUILDFLAG(IS_WIN)
   TestPriorityResultingFromThreadType(ThreadType::kCompositing,
                                       MessagePumpType::IO,
                                       ThreadPriorityForTest::kDisplay);
@@ -539,7 +545,9 @@ TEST(PlatformThreadTest, SetHugeThreadName) {
 
 TEST(PlatformThreadTest, GetDefaultThreadStackSize) {
   size_t stack_size = PlatformThread::GetDefaultThreadStackSize();
-#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_IOS) || BUILDFLAG(IS_FUCHSIA) ||        \
+#if BUILDFLAG(IS_IOS) && BUILDFLAG(USE_BLINK)
+  EXPECT_EQ(1024u * 1024u, stack_size);
+#elif BUILDFLAG(IS_WIN) || BUILDFLAG(IS_IOS) || BUILDFLAG(IS_FUCHSIA) ||      \
     ((BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)) && defined(__GLIBC__) && \
      !defined(THREAD_SANITIZER)) ||                                           \
     (BUILDFLAG(IS_ANDROID) && !defined(ADDRESS_SANITIZER))
@@ -596,9 +604,6 @@ class RealtimeTestThread : public FunctionTestThread {
     mach_timebase_info(&tb_info);
 
     if (FeatureList::IsEnabled(kOptimizedRealtimeThreadingMac) &&
-#if BUILDFLAG(IS_MAC)
-        !mac::IsOS10_14() &&  // Should not be applied on 10.14.
-#endif
         !realtime_period_.is_zero()) {
       uint32_t abs_realtime_period = saturated_cast<uint32_t>(
           realtime_period_.InNanoseconds() *

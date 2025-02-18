@@ -255,10 +255,6 @@ class FakePeerConnectionBase : public PeerConnectionInternal {
     return {};
   }
 
-  sigslot::signal1<SctpDataChannel*>& SignalSctpDataChannelCreated() override {
-    return SignalSctpDataChannelCreated_;
-  }
-
   absl::optional<std::string> sctp_transport_name() const override {
     return absl::nullopt;
   }
@@ -324,7 +320,9 @@ class FakePeerConnectionBase : public PeerConnectionInternal {
   cricket::PortAllocator* port_allocator() override { return nullptr; }
   LegacyStatsCollector* legacy_stats() override { return nullptr; }
   PeerConnectionObserver* Observer() const override { return nullptr; }
-  bool GetSctpSslRole(rtc::SSLRole* role) override { return false; }
+  absl::optional<rtc::SSLRole> GetSctpSslRole_n() override {
+    return absl::nullopt;
+  }
   PeerConnectionInterface::IceConnectionState ice_connection_state_internal()
       override {
     return PeerConnectionInterface::IceConnectionState::kIceConnectionNew;
@@ -341,9 +339,6 @@ class FakePeerConnectionBase : public PeerConnectionInternal {
     return false;
   }
 
-  absl::optional<std::string> GetDataMid() const override {
-    return absl::nullopt;
-  }
   RTCErrorOr<rtc::scoped_refptr<RtpTransceiverInterface>> AddTransceiver(
       cricket::MediaType media_type,
       rtc::scoped_refptr<MediaStreamTrackInterface> track,
@@ -360,18 +355,15 @@ class FakePeerConnectionBase : public PeerConnectionInternal {
 
   Call* call_ptr() override { return nullptr; }
   bool SrtpRequired() const override { return false; }
-  bool SetupDataChannelTransport_n(const std::string& mid) override {
+  bool CreateDataChannelTransport(absl::string_view mid) override {
     return false;
   }
-  void TeardownDataChannelTransport_n() override {}
-  void SetSctpDataMid(const std::string& mid) override {}
-  void ResetSctpDataMid() override {}
+  void DestroyDataChannelTransport(RTCError error) override {}
 
   const FieldTrialsView& trials() const override { return field_trials_; }
 
  protected:
-  webrtc::test::ScopedKeyValueConfig field_trials_;
-  sigslot::signal1<SctpDataChannel*> SignalSctpDataChannelCreated_;
+  test::ScopedKeyValueConfig field_trials_;
 };
 
 }  // namespace webrtc

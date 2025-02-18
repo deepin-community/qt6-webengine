@@ -38,7 +38,9 @@ export class AddDebugInfoURLDialog extends UI.Widget.HBox {
     this.input.addEventListener('keydown', this.onKeyDown.bind(this), false);
     this.contentElement.appendChild(this.input);
 
-    const addButton = UI.UIUtils.createTextButton(i18nString(UIStrings.add), this.apply.bind(this));
+    const addButton = UI.UIUtils.createTextButton(i18nString(UIStrings.add), this.apply.bind(this), {
+      jslogContext: 'sources.add-source-map-url',
+    });
     this.contentElement.appendChild(addButton);
 
     this.dialog = new UI.Dialog.Dialog();
@@ -57,7 +59,7 @@ export class AddDebugInfoURLDialog extends UI.Widget.HBox {
     return new AddDebugInfoURLDialog(i18nString(UIStrings.debugInfoUrl), callback);
   }
 
-  show(): void {
+  override show(): void {
     super.show(this.dialog.contentElement);
     // UI.Dialog extends GlassPane and overrides the `show` method with a wider
     // accepted type. However, TypeScript uses the supertype declaration to
@@ -81,7 +83,7 @@ export class AddDebugInfoURLDialog extends UI.Widget.HBox {
       this.apply();
     }
   }
-  wasShown(): void {
+  override wasShown(): void {
     super.wasShown();
     this.registerCSSFiles([dialogStyles]);
   }

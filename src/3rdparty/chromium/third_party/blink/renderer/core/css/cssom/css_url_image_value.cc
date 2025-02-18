@@ -35,6 +35,7 @@ ResourceStatus CSSURLImageValue::Status() const {
 }
 
 scoped_refptr<Image> CSSURLImageValue::GetSourceImageForCanvas(
+    FlushReason,
     SourceImageStatus*,
     const gfx::SizeF&,
     const AlphaDisposition alpha_disposition) {
@@ -61,7 +62,7 @@ bool CSSURLImageValue::IsAccelerated() const {
 }
 
 const CSSValue* CSSURLImageValue::ToCSSValue() const {
-  return value_;
+  return value_.Get();
 }
 
 void CSSURLImageValue::Trace(Visitor* visitor) const {

@@ -157,7 +157,7 @@ void OnDownloadDisplayNamesReturned(
 }
 
 void OnPathReserved(
-    DownloadItemImplDelegate::DownloadTargetCallback callback,
+    DownloadTargetCallback callback,
     DownloadDangerType danger_type,
     DownloadItem::InsecureDownloadStatus insecure_download_status,
     const InProgressDownloadManager::IntermediatePathCallback&
@@ -177,16 +177,16 @@ void OnPathReserved(
     }
   }
 
-  RecordBackgroundTargetDeterminationResult(
-      intermediate_path.empty()
-          ? BackgroudTargetDeterminationResultTypes::kPathReservationFailed
-          : BackgroudTargetDeterminationResultTypes::kSuccess);
-  std::move(callback).Run(
-      target_path, DownloadItem::TARGET_DISPOSITION_OVERWRITE, danger_type,
-      insecure_download_status, intermediate_path, base::FilePath(),
-      std::string() /*mime_type*/,
-      intermediate_path.empty() ? DOWNLOAD_INTERRUPT_REASON_FILE_FAILED
-                                : DOWNLOAD_INTERRUPT_REASON_NONE);
+  DownloadTargetInfo target_info;
+  target_info.target_path = target_path;
+  target_info.intermediate_path = intermediate_path;
+  target_info.danger_type = danger_type;
+  target_info.interrupt_reason = intermediate_path.empty()
+                                     ? DOWNLOAD_INTERRUPT_REASON_FILE_FAILED
+                                     : DOWNLOAD_INTERRUPT_REASON_NONE;
+  target_info.insecure_download_status = insecure_download_status;
+
+  std::move(callback).Run(std::move(target_info));
 }
 #endif
 
@@ -402,26 +402,29 @@ void InProgressDownloadManager::DetermineDownloadTarget(
                                    : download->GetForcedFilePath();
 #if BUILDFLAG(IS_ANDROID)
   if (target_path.empty()) {
-    std::move(callback).Run(
-        target_path, DownloadItem::TARGET_DISPOSITION_OVERWRITE,
-        download->GetDangerType(), download->GetInsecureDownloadStatus(),
-        target_path, base::FilePath(), std::string() /*mime_type*/,
-        DOWNLOAD_INTERRUPT_REASON_FILE_FAILED);
-    RecordBackgroundTargetDeterminationResult(
-        BackgroudTargetDeterminationResultTypes::kTargetPathMissing);
+    download::DownloadTargetInfo target_info;
+    target_info.target_path = target_path;
+    target_info.intermediate_path = target_path;
+    target_info.danger_type = download->GetDangerType();
+    target_info.interrupt_reason = DOWNLOAD_INTERRUPT_REASON_FILE_FAILED;
+    target_info.insecure_download_status =
+        download->GetInsecureDownloadStatus();
+
+    std::move(callback).Run(std::move(target_info));
     return;
   }
 
   // If final target is a content URI, the intermediate path should
   // be identical to it.
   if (target_path.IsContentUri()) {
-    std::move(callback).Run(
-        target_path, DownloadItem::TARGET_DISPOSITION_OVERWRITE,
-        download->GetDangerType(), download->GetInsecureDownloadStatus(),
-        target_path, base::FilePath(), std::string() /*mime_type*/,
-        DOWNLOAD_INTERRUPT_REASON_NONE);
-    RecordBackgroundTargetDeterminationResult(
-        BackgroudTargetDeterminationResultTypes::kSuccess);
+    download::DownloadTargetInfo target_info;
+    target_info.target_path = target_path;
+    target_info.intermediate_path = target_path;
+    target_info.danger_type = download->GetDangerType();
+    target_info.insecure_download_status =
+        download->GetInsecureDownloadStatus();
+
+    std::move(callback).Run(std::move(target_info));
     return;
   }
 
@@ -436,14 +439,15 @@ void InProgressDownloadManager::DetermineDownloadTarget(
                      download->GetInsecureDownloadStatus(),
                      intermediate_path_cb_, download->GetForcedFilePath()));
 #else
-  // For non-android, the code below is only used by tests.
-  base::FilePath intermediate_path =
+  // For non-Android, the code below is only used by tests.
+  DownloadTargetInfo target_info;
+  target_info.target_path = target_path;
+  target_info.intermediate_path =
       download->GetFullPath().empty() ? target_path : download->GetFullPath();
-  std::move(callback).Run(
-      target_path, DownloadItem::TARGET_DISPOSITION_OVERWRITE,
-      download->GetDangerType(), download->GetInsecureDownloadStatus(),
-      intermediate_path, base::FilePath(), std::string() /*mime_type*/,
-      DOWNLOAD_INTERRUPT_REASON_NONE);
+  target_info.danger_type = download->GetDangerType();
+  target_info.insecure_download_status = download->GetInsecureDownloadStatus();
+
+  std::move(callback).Run(std::move(target_info));
 #endif  // BUILDFLAG(IS_ANDROID)
 }
 
@@ -609,7 +613,6 @@ void InProgressDownloadManager::OnDownloadNamesRetrieved(
     std::unique_ptr<std::vector<DownloadDBEntry>> entries,
     DisplayNames display_names) {
   std::set<uint32_t> download_ids;
-  int num_duplicates = 0;
   display_names_ = std::move(display_names);
   for (const auto& entry : *entries) {
     auto item = CreateDownloadItemImpl(
@@ -621,7 +624,6 @@ void InProgressDownloadManager::OnDownloadNamesRetrieved(
     if (download_id != DownloadItem::kInvalidId &&
         base::Contains(download_ids, download_id)) {
       RemoveInProgressDownload(item->GetGuid());
-      num_duplicates++;
       continue;
     }
 #if BUILDFLAG(IS_ANDROID)
@@ -642,8 +644,6 @@ void InProgressDownloadManager::OnDownloadNamesRetrieved(
     in_progress_downloads_.emplace_back(std::move(item));
     download_ids.insert(download_id);
   }
-  if (num_duplicates > 0)
-    RecordDuplicateInProgressDownloadIdCount(num_duplicates);
   OnInitialized();
   OnDownloadsInitialized();
 }

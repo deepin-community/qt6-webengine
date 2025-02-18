@@ -103,6 +103,7 @@ export function outline(state: CodeMirror.EditorState): OutlineItem[] {
               prefix += '*';
               break;
             case 'PropertyDefinition':
+            case 'PrivatePropertyDefinition':
             case 'VariableDefinition': {
               const title = prefix + state.sliceDoc(cursor.from, cursor.to);
               const {lineNumber, columnNumber} = toLineColumn(cursor.from);
@@ -266,7 +267,7 @@ export class OutlineQuickOpen extends QuickOpen.FilteredListWidget.Provider {
   private items: OutlineItem[] = [];
   private active: boolean = false;
 
-  attach(): void {
+  override attach(): void {
     const sourceFrame = this.currentSourceFrame();
     if (sourceFrame) {
       this.active = true;
@@ -280,21 +281,21 @@ export class OutlineQuickOpen extends QuickOpen.FilteredListWidget.Provider {
     }
   }
 
-  detach(): void {
+  override detach(): void {
     this.active = false;
     this.items = [];
   }
 
-  itemCount(): number {
+  override itemCount(): number {
     return this.items.length;
   }
 
-  itemKeyAt(itemIndex: number): string {
+  override itemKeyAt(itemIndex: number): string {
     const item = this.items[itemIndex];
     return item.title + (item.subtitle ? item.subtitle : '');
   }
 
-  itemScoreAt(itemIndex: number, query: string): number {
+  override itemScoreAt(itemIndex: number, query: string): number {
     const item = this.items[itemIndex];
     const methodName = query.split('(')[0];
     if (methodName.toLowerCase() === item.title.toLowerCase()) {
@@ -303,7 +304,7 @@ export class OutlineQuickOpen extends QuickOpen.FilteredListWidget.Provider {
     return -item.lineNumber - 1;
   }
 
-  renderItem(itemIndex: number, query: string, titleElement: Element, _subtitleElement: Element): void {
+  override renderItem(itemIndex: number, query: string, titleElement: Element, _subtitleElement: Element): void {
     const item = this.items[itemIndex];
     titleElement.textContent = item.title + (item.subtitle ? item.subtitle : '');
     QuickOpen.FilteredListWidget.FilteredListWidget.highlightRanges(titleElement, query);
@@ -328,7 +329,7 @@ export class OutlineQuickOpen extends QuickOpen.FilteredListWidget.Provider {
     }
   }
 
-  selectItem(itemIndex: number|null, _promptValue: string): void {
+  override selectItem(itemIndex: number|null, _promptValue: string): void {
     if (itemIndex === null) {
       return;
     }
@@ -345,7 +346,7 @@ export class OutlineQuickOpen extends QuickOpen.FilteredListWidget.Provider {
     return sourcesView && sourcesView.currentSourceFrame();
   }
 
-  notFoundText(): string {
+  override notFoundText(): string {
     if (!this.currentSourceFrame()) {
       return i18nString(UIStrings.noFileSelected);
     }

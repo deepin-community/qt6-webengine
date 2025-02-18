@@ -167,7 +167,7 @@ class NetErrorHelperCoreTest : public testing::Test,
 #if BUILDFLAG(IS_ANDROID)
   // State of auto fetch, as reported to Delegate. Unset if SetAutoFetchState
   // was not called.
-  absl::optional<chrome::mojom::OfflinePageAutoFetcherScheduleResult>
+  std::optional<chrome::mojom::OfflinePageAutoFetcherScheduleResult>
   auto_fetch_state() const {
     return auto_fetch_state_;
   }
@@ -303,7 +303,7 @@ class NetErrorHelperCoreTest : public testing::Test,
   std::string offline_content_json_;
   std::string offline_content_summary_json_;
 #if BUILDFLAG(IS_ANDROID)
-  absl::optional<chrome::mojom::OfflinePageAutoFetcherScheduleResult>
+  std::optional<chrome::mojom::OfflinePageAutoFetcherScheduleResult>
       auto_fetch_state_;
 #endif
   bool offline_content_feature_enabled_ = false;
@@ -381,12 +381,12 @@ TEST_F(NetErrorHelperCoreTest,
 
   auto* suggestions_details = page_state.strings.FindList("suggestionsDetails");
   ASSERT_TRUE(suggestions_details);
-  EXPECT_FALSE(suggestions_details->empty());
+  ASSERT_TRUE(suggestions_details->empty());
 
   auto* suggestions_summary_list =
       page_state.strings.FindList("suggestionsSummaryList");
   ASSERT_TRUE(suggestions_summary_list);
-  EXPECT_FALSE(suggestions_summary_list->empty());
+  EXPECT_TRUE(suggestions_summary_list->empty());
 }
 
 TEST_F(NetErrorHelperCoreTest,
@@ -898,10 +898,10 @@ TEST_F(NetErrorHelperCoreTest, AlternativeErrorPageNoUpdates) {
            skia::SkColorToHexString(SK_ColorYELLOW));
   dict.Set("app_short_name", "Test Short Name");
   dict.Set(
-      "web_app_default_offline_message",
+      "web_app_error_page_message",
       l10n_util::GetStringUTF16(IDS_ERRORPAGES_HEADING_INTERNET_DISCONNECTED));
   alternative_error_page_info->alternative_error_page_params = std::move(dict);
-  alternative_error_page_info->resource_id = IDR_WEBAPP_DEFAULT_OFFLINE_HTML;
+  alternative_error_page_info->resource_id = IDR_WEBAPP_ERROR_PAGE_HTML;
 
   // Loading fails, and an error page is requested.
   std::string html;
@@ -1055,14 +1055,6 @@ TEST_F(NetErrorHelperCoreAvailableOfflineContentTest, ListAvailableContent) {
   EXPECT_TRUE(list_visible_by_prefs());
   EXPECT_EQ(GetExpectedAvailableContentAsJson(), offline_content_json());
 
-  histogram_tester_.ExpectTotalCount("Net.ErrorPageCounts.SuggestionPresented",
-                                     2);
-  histogram_tester_.ExpectBucketCount(
-      "Net.ErrorPageCounts.SuggestionPresented",
-      chrome::mojom::AvailableContentType::kPrefetchedPage, 1);
-  histogram_tester_.ExpectBucketCount(
-      "Net.ErrorPageCounts.SuggestionPresented",
-      chrome::mojom::AvailableContentType::kOtherPage, 1);
   histogram_tester_.ExpectBucketCount(
       "Net.ErrorPageCounts",
       error_page::NETWORK_ERROR_PAGE_OFFLINE_SUGGESTIONS_SHOWN, 1);
@@ -1071,9 +1063,6 @@ TEST_F(NetErrorHelperCoreAvailableOfflineContentTest, ListAvailableContent) {
       error_page::NETWORK_ERROR_PAGE_OFFLINE_SUGGESTIONS_SHOWN_COLLAPSED, 0);
 
   core()->LaunchOfflineItem("ID", "name_space");
-  histogram_tester_.ExpectBucketCount(
-      "Net.ErrorPageCounts.SuggestionPresented",
-      chrome::mojom::AvailableContentType::kPrefetchedPage, 1);
   histogram_tester_.ExpectBucketCount(
       "Net.ErrorPageCounts",
       error_page::NETWORK_ERROR_PAGE_OFFLINE_SUGGESTION_CLICKED, 1);
@@ -1094,14 +1083,6 @@ TEST_F(NetErrorHelperCoreAvailableOfflineContentTest, ListHiddenByPrefs) {
   EXPECT_FALSE(list_visible_by_prefs());
   EXPECT_EQ(GetExpectedAvailableContentAsJson(), offline_content_json());
 
-  histogram_tester_.ExpectTotalCount("Net.ErrorPageCounts.SuggestionPresented",
-                                     2);
-  histogram_tester_.ExpectBucketCount(
-      "Net.ErrorPageCounts.SuggestionPresented",
-      chrome::mojom::AvailableContentType::kPrefetchedPage, 1);
-  histogram_tester_.ExpectBucketCount(
-      "Net.ErrorPageCounts.SuggestionPresented",
-      chrome::mojom::AvailableContentType::kOtherPage, 1);
   histogram_tester_.ExpectBucketCount(
       "Net.ErrorPageCounts",
       error_page::NETWORK_ERROR_PAGE_OFFLINE_SUGGESTIONS_SHOWN, 0);
@@ -1110,9 +1091,6 @@ TEST_F(NetErrorHelperCoreAvailableOfflineContentTest, ListHiddenByPrefs) {
       error_page::NETWORK_ERROR_PAGE_OFFLINE_SUGGESTIONS_SHOWN_COLLAPSED, 1);
 
   core()->LaunchOfflineItem("ID", "name_space");
-  histogram_tester_.ExpectBucketCount(
-      "Net.ErrorPageCounts.SuggestionPresented",
-      chrome::mojom::AvailableContentType::kPrefetchedPage, 1);
   histogram_tester_.ExpectBucketCount(
       "Net.ErrorPageCounts",
       error_page::NETWORK_ERROR_PAGE_OFFLINE_SUGGESTION_CLICKED, 1);
@@ -1149,8 +1127,6 @@ TEST_F(NetErrorHelperCoreAvailableOfflineContentTest, NotAllowed) {
 
   EXPECT_TRUE(list_visible_by_prefs());
   EXPECT_EQ("", offline_content_json());
-  histogram_tester_.ExpectTotalCount("Net.ErrorPageCounts.SuggestionPresented",
-                                     0);
   histogram_tester_.ExpectBucketCount(
       "Net.ErrorPageCounts",
       error_page::NETWORK_ERROR_PAGE_OFFLINE_SUGGESTIONS_SHOWN, 0);

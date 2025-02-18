@@ -87,6 +87,10 @@ build_recipe(
 )
 
 build_recipe(
+    name = "recipe:android/device_flasher",
+)
+
+build_recipe(
     name = "recipe:android/sdk_packager",
 )
 
@@ -116,7 +120,15 @@ build_recipe(
 )
 
 build_recipe(
-    name = "recipe:build_perf",
+    name = "recipe:chrome_build/build_perf",
+)
+
+build_recipe(
+    name = "recipe:chrome_build/build_perf_siso",
+)
+
+build_recipe(
+    name = "recipe:chrome_build/build_perf_developer",
 )
 
 build_recipe(
@@ -130,6 +142,15 @@ build_recipe(
 
 build_recipe(
     name = "recipe:chromium/builder_config_verifier",
+)
+
+build_recipe(
+    name = "recipe:chromium/autosharder",
+    bootstrappable = True,
+)
+
+build_recipe(
+    name = "recipe:chromium/generic_script_runner",
 )
 
 build_recipe(
@@ -148,6 +169,18 @@ build_recipe(
 )
 
 build_recipe(
+    name = "recipe:chromium/gn_args_verifier",
+)
+
+build_recipe(
+    name = "recipe:chromium/targets_config_verifier",
+)
+
+build_recipe(
+    name = "recipe:chromium_licenses/scan",
+)
+
+build_recipe(
     name = "recipe:chromium_polymorphic/launcher",
 )
 
@@ -156,7 +189,11 @@ build_recipe(
 )
 
 build_recipe(
-    name = "recipe:chromium_afl",
+    name = "recipe:chromium/fuzz",
+)
+
+build_recipe(
+    name = "recipe:chromium/mega_cq_launcher",
 )
 
 build_recipe(
@@ -181,15 +218,11 @@ build_recipe(
 )
 
 build_recipe(
-    name = "recipe:chromium_libfuzzer",
-)
-
-build_recipe(
-    name = "recipe:chromium_libfuzzer_trybot",
-)
-
-build_recipe(
     name = "recipe:chromium_rts/create_model",
+)
+
+build_recipe(
+    name = "recipe:chromium_rts/rts_analyze",
 )
 
 build_recipe(
@@ -198,7 +231,11 @@ build_recipe(
 )
 
 build_recipe(
-    name = "recipe:chromium_upload_clang",
+    name = "recipe:chromium_toolchain/package_clang",
+)
+
+build_recipe(
+    name = "recipe:chromium_toolchain/package_rust",
 )
 
 build_recipe(
@@ -206,16 +243,7 @@ build_recipe(
 )
 
 build_recipe(
-    name = "recipe:flakiness/generate_builder_test_data",
-)
-
-build_recipe(
     name = "recipe:flakiness/reproducer",
-)
-
-build_recipe(
-    name = "recipe:findit/chromium/single_revision",
-    bootstrappable = POLYMORPHIC,
 )
 
 build_recipe(
@@ -224,7 +252,8 @@ build_recipe(
 )
 
 build_recipe(
-    name = "recipe:perf/crossbench",
+    name = "recipe:gofindit/chromium/test_single_revision",
+    bootstrappable = POLYMORPHIC,
 )
 
 build_recipe(
@@ -233,10 +262,6 @@ build_recipe(
 
 build_recipe(
     name = "recipe:reclient_config_deploy_check/tester",
-)
-
-build_recipe(
-    name = "recipe:reclient_goma_comparison",
 )
 
 build_recipe(
@@ -254,10 +279,6 @@ build_recipe(
 
 build_recipe(
     name = "recipe:swarming/deterministic_build",
-)
-
-build_recipe(
-    name = "recipe:swarming/staging",
 )
 
 build_recipe(

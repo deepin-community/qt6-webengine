@@ -21,6 +21,7 @@
 #include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "base/thread_annotations.h"
+#include "base/types/expected.h"
 #include "components/reporting/compression/compression_module.h"
 #include "components/reporting/compression/test_compression_module.h"
 #include "components/reporting/encryption/test_encryption_module.h"
@@ -28,6 +29,7 @@
 #include "components/reporting/resources/resource_manager.h"
 #include "components/reporting/storage/storage_configuration.h"
 #include "components/reporting/util/status.h"
+#include "components/reporting/util/status_macros.h"
 #include "components/reporting/util/statusor.h"
 #include "components/reporting/util/test_support_callbacks.h"
 #include "crypto/sha2.h"
@@ -86,7 +88,7 @@ class TestUploadClient : public UploaderInterface {
       std::string serialized_record;
       wrapped_record.record().SerializeToString(&serialized_record);
       const auto record_digest = crypto::SHA256HashString(serialized_record);
-      DCHECK_EQ(record_digest.size(), crypto::kSHA256Length);
+      CHECK_EQ(record_digest.size(), crypto::kSHA256Length);
       ASSERT_THAT(record_digest, Eq(wrapped_record.record_digest()));
       // Store record digest for the next record in sequence to verify.
       last_record_digest_map_->emplace(
@@ -126,7 +128,7 @@ class TestUploadClient : public UploaderInterface {
 
   absl::optional<int64_t> generation_id_
       GUARDED_BY_CONTEXT(test_uploader_checker_);
-  const base::raw_ptr<LastRecordDigestMap> last_record_digest_map_
+  const raw_ptr<LastRecordDigestMap> last_record_digest_map_
       GUARDED_BY_CONTEXT(test_uploader_checker_);
 };
 
@@ -163,8 +165,8 @@ class StorageQueueStressTest : public ::testing::TestWithParam<size_t> {
     StatusOr<scoped_refptr<StorageQueue>> storage_queue_result =
         storage_queue_create_event.result();
     ASSERT_OK(storage_queue_result) << "Failed to create StorageQueue, error="
-                                    << storage_queue_result.status();
-    storage_queue_ = std::move(storage_queue_result.ValueOrDie());
+                                    << storage_queue_result.error();
+    storage_queue_ = std::move(storage_queue_result.value());
   }
 
   void ResetTestStorageQueue() {
@@ -194,17 +196,17 @@ class StorageQueueStressTest : public ::testing::TestWithParam<size_t> {
       LOG(ERROR) << "Upload not expected, reason="
                  << UploaderInterface::ReasonToString(reason);
       std::move(start_uploader_cb)
-          .Run(Status(
+          .Run(base::unexpected(Status(
               error::CANCELLED,
               base::StrCat({"Unexpected upload ignored, reason=",
-                            UploaderInterface::ReasonToString(reason)})));
+                            UploaderInterface::ReasonToString(reason)}))));
       return;
     }
     std::move(start_uploader_cb)
         .Run(std::make_unique<TestUploadClient>(&last_record_digest_map_));
   }
 
-  void WriteStringAsync(base::StringPiece data,
+  void WriteStringAsync(std::string_view data,
                         base::OnceCallback<void(Status)> cb) {
     EXPECT_TRUE(storage_queue_) << "StorageQueue not created yet";
     Record record;
@@ -265,7 +267,7 @@ TEST_P(StorageQueueStressTest,
       base::ThreadPool::PostTask(
           FROM_HERE, {base::TaskPriority::BEST_EFFORT},
           base::BindOnce(
-              [](base::StringPiece rec_prefix, size_t iRec,
+              [](std::string_view rec_prefix, size_t iRec,
                  StorageQueueStressTest* test,
                  base::RepeatingCallback<void(Status)> cb) {
                 test->WriteStringAsync(

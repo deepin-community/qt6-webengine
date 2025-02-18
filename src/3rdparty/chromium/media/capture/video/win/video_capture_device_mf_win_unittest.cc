@@ -74,21 +74,20 @@ class MockClient : public VideoCaptureDevice::Client {
                               bool flip_y,
                               base::TimeTicks reference_time,
                               base::TimeDelta timestamp,
-                              int frame_feedback_id = 0) override {}
+                              int frame_feedback_id) override {}
 
   void OnIncomingCapturedGfxBuffer(gfx::GpuMemoryBuffer* buffer,
                                    const VideoCaptureFormat& frame_format,
                                    int clockwise_rotation,
                                    base::TimeTicks reference_time,
                                    base::TimeDelta timestamp,
-                                   int frame_feedback_id = 0) override {}
+                                   int frame_feedback_id) override {}
 
   void OnIncomingCapturedExternalBuffer(
       CapturedExternalVideoBuffer buffer,
-      std::vector<CapturedExternalVideoBuffer> scaled_buffers,
       base::TimeTicks reference_time,
       base::TimeDelta timestamp,
-      gfx::Rect visible_rect) override {}
+      const gfx::Rect& visible_rect) override {}
 
   MOCK_METHOD4(ReserveOutputBuffer,
                ReserveResult(const gfx::Size&, VideoPixelFormat, int, Buffer*));
@@ -192,8 +191,7 @@ class MockAMCameraControl final : public MockInterface<IAMCameraControl> {
         *flags = CameraControl_Flags_Auto;
         return S_OK;
       default:
-        NOTREACHED();
-        return E_NOTIMPL;
+        NOTREACHED_NORETURN();
     }
   }
   IFACEMETHODIMP GetRange(long property,
@@ -217,8 +215,7 @@ class MockAMCameraControl final : public MockInterface<IAMCameraControl> {
         *caps_flags = CameraControl_Flags_Auto | CameraControl_Flags_Manual;
         return S_OK;
       default:
-        NOTREACHED();
-        return E_NOTIMPL;
+        NOTREACHED_NORETURN();
     }
   }
   IFACEMETHODIMP Set(long property, long value, long flags) override {
@@ -247,8 +244,7 @@ class MockAMVideoProcAmp final : public MockInterface<IAMVideoProcAmp> {
         *flags = VideoProcAmp_Flags_Auto;
         return S_OK;
       default:
-        NOTREACHED();
-        return E_NOTIMPL;
+        NOTREACHED_NORETURN();
     }
   }
   IFACEMETHODIMP GetRange(long property,
@@ -275,8 +271,7 @@ class MockAMVideoProcAmp final : public MockInterface<IAMVideoProcAmp> {
         *caps_flags = VideoProcAmp_Flags_Auto | VideoProcAmp_Flags_Manual;
         return S_OK;
       default:
-        NOTREACHED();
-        return E_NOTIMPL;
+        NOTREACHED_NORETURN();
     }
   }
   IFACEMETHODIMP Set(long property, long value, long flags) override {
@@ -297,6 +292,13 @@ class MockMFExtendedCameraControl final
       case KSPROPERTY_CAMERACONTROL_EXTENDED_BACKGROUNDSEGMENTATION:
         return (KSCAMERA_EXTENDEDPROP_BACKGROUNDSEGMENTATION_OFF |
                 KSCAMERA_EXTENDEDPROP_BACKGROUNDSEGMENTATION_BLUR);
+      case KSPROPERTY_CAMERACONTROL_EXTENDED_DIGITALWINDOW:
+        return (KSCAMERA_EXTENDEDPROP_DIGITALWINDOW_AUTOFACEFRAMING |
+                KSCAMERA_EXTENDEDPROP_DIGITALWINDOW_MANUAL);
+      case KSPROPERTY_CAMERACONTROL_EXTENDED_EYEGAZECORRECTION:
+        return (KSCAMERA_EXTENDEDPROP_EYEGAZECORRECTION_OFF |
+                KSCAMERA_EXTENDEDPROP_EYEGAZECORRECTION_ON |
+                KSCAMERA_EXTENDEDPROP_EYEGAZECORRECTION_STARE);
       default:
         return 0;
     }
@@ -305,6 +307,10 @@ class MockMFExtendedCameraControl final
     switch (property_id_) {
       case KSPROPERTY_CAMERACONTROL_EXTENDED_BACKGROUNDSEGMENTATION:
         return KSCAMERA_EXTENDEDPROP_BACKGROUNDSEGMENTATION_OFF;
+      case KSPROPERTY_CAMERACONTROL_EXTENDED_DIGITALWINDOW:
+        return KSCAMERA_EXTENDEDPROP_DIGITALWINDOW_MANUAL;
+      case KSPROPERTY_CAMERACONTROL_EXTENDED_EYEGAZECORRECTION:
+        return KSCAMERA_EXTENDEDPROP_EYEGAZECORRECTION_OFF;
       default:
         return 0;
     }
@@ -1992,6 +1998,28 @@ TEST_F(VideoCaptureDeviceMFWinTest, GetPhotoStateViaPhotoStream) {
                                 mojom::BackgroundBlurMode::BLUR),
             1);
   EXPECT_EQ(state->background_blur_mode, mojom::BackgroundBlurMode::OFF);
+
+  ASSERT_TRUE(state->supported_eye_gaze_correction_modes);
+  EXPECT_EQ(state->supported_eye_gaze_correction_modes->size(), 3u);
+  EXPECT_EQ(base::ranges::count(*state->supported_eye_gaze_correction_modes,
+                                mojom::EyeGazeCorrectionMode::OFF),
+            1);
+  EXPECT_EQ(base::ranges::count(*state->supported_eye_gaze_correction_modes,
+                                mojom::EyeGazeCorrectionMode::ON),
+            1);
+  EXPECT_EQ(base::ranges::count(*state->supported_eye_gaze_correction_modes,
+                                mojom::EyeGazeCorrectionMode::STARE),
+            1);
+  EXPECT_EQ(state->current_eye_gaze_correction_mode,
+            mojom::EyeGazeCorrectionMode::OFF);
+
+  ASSERT_TRUE(state->supported_face_framing_modes);
+  EXPECT_EQ(2u, state->supported_face_framing_modes->size());
+  EXPECT_EQ(1, base::ranges::count(*state->supported_face_framing_modes,
+                                   mojom::MeteringMode::CONTINUOUS));
+  EXPECT_EQ(1, base::ranges::count(*state->supported_face_framing_modes,
+                                   mojom::MeteringMode::NONE));
+  EXPECT_EQ(mojom::MeteringMode::NONE, state->current_face_framing_mode);
 }
 
 // Given an |IMFCaptureSource| offering a video stream and a photo stream to

@@ -40,19 +40,6 @@ namespace {
 
 const uint32_t kDefaultNumberOfBitstreamBuffers = 4;
 
-int32_t PP_FromMediaEncodeAcceleratorError(
-    media::VideoEncodeAccelerator::Error error) {
-  switch (error) {
-    case media::VideoEncodeAccelerator::kInvalidArgumentError:
-      return PP_ERROR_MALFORMED_INPUT;
-    case media::VideoEncodeAccelerator::kIllegalStateError:
-    case media::VideoEncodeAccelerator::kPlatformFailureError:
-      return PP_ERROR_RESOURCE_FAILED;
-    // No default case, to catch unhandled enum values.
-  }
-  return PP_ERROR_FAILED;
-}
-
 // TODO(llandwerlin): move following to media_conversion.cc/h?
 media::VideoCodecProfile PP_ToMediaVideoProfile(PP_VideoProfile profile) {
   switch (profile) {
@@ -341,7 +328,7 @@ int32_t PepperVideoEncoderHost::OnHostMsgRequestEncodingParametersChange(
     return encoder_last_error_;
 
   encoder_->RequestEncodingParametersChange(
-      media::Bitrate::ConstantBitrate(bitrate), framerate);
+      media::Bitrate::ConstantBitrate(bitrate), framerate, std::nullopt);
 
   return PP_OK;
 }
@@ -427,10 +414,14 @@ void PepperVideoEncoderHost::BitstreamBufferReady(
           metadata.key_frame));
 }
 
-void PepperVideoEncoderHost::NotifyError(
-    media::VideoEncodeAccelerator::Error error) {
+void PepperVideoEncoderHost::NotifyErrorStatus(
+    const media::EncoderStatus& status) {
   DCHECK(RenderThreadImpl::current());
-  NotifyPepperError(PP_FromMediaEncodeAcceleratorError(error));
+  CHECK(!status.is_ok());
+  LOG(ERROR) << "NotifyErrorStatus() is called, code="
+             << static_cast<int32_t>(status.code())
+             << ", message=" << status.message();
+  NotifyPepperError(PP_ERROR_RESOURCE_FAILED);
 }
 
 void PepperVideoEncoderHost::GetSupportedProfiles(

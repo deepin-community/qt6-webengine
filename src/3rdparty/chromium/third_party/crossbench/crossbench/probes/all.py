@@ -6,33 +6,58 @@ from __future__ import annotations
 
 from typing import Tuple, Type
 
-from crossbench.probes.base import Probe
+from crossbench.probes import internal
+from crossbench.probes.debugger import DebuggerProbe
+from crossbench.probes.dtrace import DTraceProbe
 from crossbench.probes.json import JsonResultProbe
+from crossbench.probes.perfetto import PerfettoProbe
 from crossbench.probes.performance_entries import PerformanceEntriesProbe
+from crossbench.probes.polling import ShellPollingProbe
 from crossbench.probes.power_sampler import PowerSamplerProbe
-from crossbench.probes.profiling import ProfilingProbe
-from crossbench.probes.runner import (RunDurationsProbe, RunResultsSummaryProbe,
-                                      RunRunnerLogProbe)
+from crossbench.probes.powermetrics import PowerMetricsProbe
+from crossbench.probes.probe import Probe
+from crossbench.probes.profiling.browser_profiling import BrowserProfilingProbe
+from crossbench.probes.profiling.system_profiling import ProfilingProbe
 from crossbench.probes.system_stats import SystemStatsProbe
 from crossbench.probes.tracing import TracingProbe
-from crossbench.probes.v8 import (V8BuiltinsPGOProbe, V8LogProbe, V8RCSProbe,
-                                  V8TurbolizerProbe)
+from crossbench.probes.v8.builtins_pgo import V8BuiltinsPGOProbe
+from crossbench.probes.v8.log import V8LogProbe
+from crossbench.probes.v8.rcs import V8RCSProbe
+from crossbench.probes.v8.turbolizer import V8TurbolizerProbe
 from crossbench.probes.video import VideoProbe
+from crossbench.probes.web_page_replay.recorder import WebPageReplayProbe
 
 ABSTRACT_PROBES: Tuple[Type[Probe], ...] = (Probe, JsonResultProbe)
 
 # Probes that are not user-configurable
-INTERNAL_PROBES: Tuple[Type[Probe], ...] = (
-    RunResultsSummaryProbe,
-    RunRunnerLogProbe,
-    RunDurationsProbe,
+# Order matters, not alpha-sorted:
+# Internal probes depend on each other, for instance the ResultsSummaryProbe
+# reads the values of the other internal probes and thus needs to be the first
+# to be initialized and the last to be teared down to write out a summary
+# result of all the other probes.
+INTERNAL_PROBES: Tuple[Type[internal.InternalProbe], ...] = (
+    internal.ResultsSummaryProbe,
+    internal.DurationsProbe,
+    internal.ErrorsProbe,
+    internal.LogProbe,
+    internal.SystemDetailsProbe,
 )
+# ResultsSummaryProbe should always be processed last, and thus must be the
+# first probe to be added to any browser.
+assert INTERNAL_PROBES[0] == internal.ResultsSummaryProbe
+assert INTERNAL_PROBES[1] == internal.DurationsProbe
 
 # Probes that can be used on arbitrary stories and may be user configurable.
 GENERAL_PURPOSE_PROBES: Tuple[Type[Probe], ...] = (
+    BrowserProfilingProbe,
+    DebuggerProbe,
+    DTraceProbe,
+    PerfettoProbe,
     PerformanceEntriesProbe,
+    PowerMetricsProbe,
     PowerSamplerProbe,
     ProfilingProbe,
+    ShellPollingProbe,
     SystemStatsProbe,
     TracingProbe,
     V8BuiltinsPGOProbe,
@@ -40,6 +65,7 @@ GENERAL_PURPOSE_PROBES: Tuple[Type[Probe], ...] = (
     V8RCSProbe,
     V8TurbolizerProbe,
     VideoProbe,
+    WebPageReplayProbe,
 )
 
 for probe_cls in GENERAL_PURPOSE_PROBES:

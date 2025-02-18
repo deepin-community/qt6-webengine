@@ -137,7 +137,7 @@ class ImageSanitizerTest : public testing::Test {
       return false;
 
     base::FilePath path = temp_dir_.GetPath().Append(file_name);
-    return base::WriteFile(path, binary.data(), binary.size());
+    return base::WriteFile(path, binary);
   }
 
   void SetUp() override { ASSERT_TRUE(temp_dir_.CreateUniqueTempDir()); }
@@ -301,7 +301,7 @@ TEST_F(ImageSanitizerTest, DontHoldOnToCallbacksOnSuccess) {
 TEST_F(ImageSanitizerTest, DataDecoderServiceCrashes) {
   constexpr base::FilePath::CharType kGoodPngName[] =
       FILE_PATH_LITERAL("good.png");
-  in_process_data_decoder().service().SimulateImageDecoderCrashForTesting(true);
+  in_process_data_decoder().SimulateImageDecoderCrash(true);
   CreateValidImage(kGoodPngName);
   base::FilePath good_png(kGoodPngName);
   CreateAndStartSanitizer({good_png});

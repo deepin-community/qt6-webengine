@@ -2,17 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import * as SDK from '../../../core/sdk/sdk.js';
-import * as ComponentHelpers from '../../../ui/components/helpers/helpers.js';
-import * as LitHtml from '../../../ui/lit-html/lit-html.js';
-
-import type * as Protocol from '../../../generated/protocol.js';
-import * as i18n from '../../../core/i18n/i18n.js';
 import * as Host from '../../../core/host/host.js';
-import * as IconButton from '../../../ui/components/icon_button/icon_button.js';
-import * as ClientVariations from '../../../third_party/chromium/client-variations/client-variations.js';
+import * as i18n from '../../../core/i18n/i18n.js';
 import * as Platform from '../../../core/platform/platform.js';
+import * as SDK from '../../../core/sdk/sdk.js';
+import type * as Protocol from '../../../generated/protocol.js';
+import * as ClientVariations from '../../../third_party/chromium/client-variations/client-variations.js';
 import * as Buttons from '../../../ui/components/buttons/buttons.js';
+import * as ComponentHelpers from '../../../ui/components/helpers/helpers.js';
+import * as IconButton from '../../../ui/components/icon_button/icon_button.js';
+import * as LitHtml from '../../../ui/lit-html/lit-html.js';
+import * as VisualLogging from '../../../ui/visual_logging/visual_logging.js';
 
 import {EditableSpan, type EditableSpanData} from './EditableSpan.js';
 import headerSectionRowStyles from './HeaderSectionRow.css.js';
@@ -61,19 +61,22 @@ const UIStrings = {
 const str_ = i18n.i18n.registerUIStrings('panels/network/components/HeaderSectionRow.ts', UIStrings);
 const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
 
-const trashIconUrl = new URL('../../../Images/trash_bin_material_icon.svg', import.meta.url).toString();
-const editIconUrl = new URL('../../../Images/edit-icon.svg', import.meta.url).toString();
+const trashIconUrl = new URL('../../../Images/bin.svg', import.meta.url).toString();
+const editIconUrl = new URL('../../../Images/edit.svg', import.meta.url).toString();
 
 export const isValidHeaderName = (headerName: string): boolean => {
   return /^[a-z0-9_\-]+$/i.test(headerName);
 };
 
 export const compareHeaders = (first: string|null|undefined, second: string|null|undefined): boolean => {
-  // Replaces non-breaking spaces(NBSPs) with regular spaces.
-  // When working with contenteditables, their content can contain (non-obvious) NBSPs.
-  // It would be tricky to get rid of NBSPs during editing and saving, so we just
-  // handle them after reading them in.
-  return first?.replaceAll('\xa0', ' ') === second?.replaceAll('\xa0', ' ');
+  // Replaces all whitespace characters with regular spaces.
+  // When working with contenteditables, their content can contain (non-obvious)
+  // non-breaking spaces (NBSPs). It would be tricky to get rid of NBSPs during
+  // editing and saving, so we just handle them after reading them in.
+  // Tab characters are invalid in headers (and DevTools shows a warning for
+  // them), the replacement here ensures that headers containing tabs are not
+  // incorrectly marked as being overridden.
+  return first?.replaceAll(/\s/g, ' ') === second?.replaceAll(/\s/g, ' ');
 };
 
 export class HeaderEditedEvent extends Event {
@@ -149,6 +152,17 @@ export class HeaderSectionRow extends HTMLElement {
       'header-deleted': Boolean(this.#header.isDeleted),
     });
 
+    const headerNameClasses = LitHtml.Directives.classMap({
+      'header-name': true,
+      'pseudo-header': this.#header.name.startsWith(':'),
+    });
+
+    const headerValueClasses = LitHtml.Directives.classMap({
+      'header-value': true,
+      'header-warning': Boolean(this.#header.headerValueIncorrect),
+      'flex-columns': this.#header.name === 'x-client-data' && !this.#header.isResponseHeader,
+    });
+
     // The header name is only editable when the header value is editable as well.
     // This ensures the header name's editability reacts correctly to enabling or
     // disabling local overrides.
@@ -165,16 +179,17 @@ export class HeaderSectionRow extends HTMLElement {
     // clang-format off
     render(html`
       <div class=${rowClasses}>
-        <div class="header-name">
+        <div class=${headerNameClasses}>
           ${this.#header.headerNotSet ?
             html`<div class="header-badge header-badge-text">${i18n.i18n.lockedString('not-set')}</div> ` :
             LitHtml.nothing
           }
           ${isHeaderNameEditable && !this.#isValidHeaderName ?
             html`<${IconButton.Icon.Icon.litTagName} class="inline-icon disallowed-characters" title=${UIStrings.headerNamesOnlyLetters} .data=${{
-              iconName: 'error_icon',
-              width: '12px',
-              height: '12px',
+              iconName: 'cross-circle-filled',
+              width: '16px',
+              height: '16px',
+              color: 'var(--icon-error)',
             } as IconButton.Icon.IconData}>
             </${IconButton.Icon.Icon.litTagName}>` : LitHtml.nothing
           }
@@ -189,17 +204,17 @@ export class HeaderSectionRow extends HTMLElement {
             this.#header.name}:
         </div>
         <div
-          class="header-value ${this.#header.headerValueIncorrect ? 'header-warning' : ''}"
+          class=${headerValueClasses}
           @copy=${():void => Host.userMetrics.actionTaken(Host.UserMetrics.Action.NetworkPanelCopyValue)}
         >
           ${this.#renderHeaderValue()}
         </div>
         ${showReloadInfoIcon ?
           html`<${IconButton.Icon.Icon.litTagName} class="row-flex-icon flex-right" title=${UIStrings.reloadPrompt} .data=${{
-            iconName: 'info-icon',
-            width: '12px',
-            height: '12px',
-            color: 'var(--color-text-secondary)',
+            iconName: 'info',
+            width: '16px',
+            height: '16px',
+            color: 'var(--icon-default)',
           } as IconButton.Icon.IconData}>
           </${IconButton.Icon.Icon.litTagName}>` : LitHtml.nothing
         }
@@ -207,12 +222,20 @@ export class HeaderSectionRow extends HTMLElement {
       ${this.#maybeRenderBlockedDetails(this.#header.blockedDetails)}
     `, this.#shadow, {host: this});
     // clang-format on
+
+    if (this.#header.highlight) {
+      this.scrollIntoView({behavior: 'auto'});
+    }
   }
 
   #renderHeaderValue(): LitHtml.LitTemplate {
     if (!this.#header) {
       return LitHtml.nothing;
     }
+    if (this.#header.name === 'x-client-data' && !this.#header.isResponseHeader) {
+      return this.#renderXClientDataHeader(this.#header);
+    }
+
     if (this.#header.isDeleted || !this.#header.valueEditable) {
       // clang-format off
       return html`
@@ -224,11 +247,10 @@ export class HeaderSectionRow extends HTMLElement {
           .size=${Buttons.Button.Size.TINY}
           .iconUrl=${editIconUrl}
           .variant=${Buttons.Button.Variant.ROUND}
-          .iconWidth=${'13px'}
-          .iconHeight=${'13px'}
           @click=${(): void => {
             this.dispatchEvent(new EnableHeaderEditingEvent());
           }}
+          jslog=${VisualLogging.action().track({click: true}).context('enable-header-overrides')}
           class="enable-editing inline-button"
         ></${Buttons.Button.Button.litTagName}>
       ` : LitHtml.nothing}
@@ -248,16 +270,29 @@ export class HeaderSectionRow extends HTMLElement {
         .size=${Buttons.Button.Size.TINY}
         .iconUrl=${trashIconUrl}
         .variant=${Buttons.Button.Variant.ROUND}
-        .iconWidth=${'13px'}
-        .iconHeight=${'13px'}
         class="remove-header inline-button"
         @click=${this.#onRemoveOverrideClick}
+        jslog=${VisualLogging.action().track({click: true}).context('remove-header-override')}
       ></${Buttons.Button.Button.litTagName}>
     `;
     // clang-format on
   }
 
-  focus(): void {
+  #renderXClientDataHeader(header: HeaderDescriptor): LitHtml.LitTemplate {
+    const data = ClientVariations.parseClientVariations(header.value || '');
+    const output = ClientVariations.formatClientVariations(
+        data, i18nString(UIStrings.activeClientExperimentVariation),
+        i18nString(UIStrings.activeClientExperimentVariationIds));
+    // clang-format off
+    return html`
+      <div>${header.value || ''}</div>
+      <div>${i18nString(UIStrings.decoded)}</div>
+      <code>${output}</code>
+    `;
+    // clang-format on
+  }
+
+  override focus(): void {
     requestAnimationFrame(() => {
       const editableName = this.#shadow.querySelector<HTMLElement>('.header-name devtools-editable-span');
       editableName?.focus();
@@ -272,26 +307,15 @@ export class HeaderSectionRow extends HTMLElement {
       // clang-format off
       return html`
         <${IconButton.Icon.Icon.litTagName} class="row-flex-icon" title=${titleText} .data=${{
-            iconName: 'clear-warning_icon',
-            width: '12px',
-            height: '12px',
+            iconName: 'warning-filled',
+            color: 'var(--icon-warning)',
+            width: '16px',
+            height: '16px',
           } as IconButton.Icon.IconData}>
         </${IconButton.Icon.Icon.litTagName}>
       `;
       // clang-format on
     }
-
-    if (header.name === 'x-client-data') {
-      const data = ClientVariations.parseClientVariations(header.value || '');
-      const output = ClientVariations.formatClientVariations(
-          data, i18nString(UIStrings.activeClientExperimentVariation),
-          i18nString(UIStrings.activeClientExperimentVariationIds));
-      return html`
-        <div>${i18nString(UIStrings.decoded)}</div>
-        <code>${output}</code>
-      `;
-    }
-
     return LitHtml.nothing;
   }
 
@@ -327,8 +351,8 @@ export class HeaderSectionRow extends HTMLElement {
       return html`
         <div class="devtools-link" @click=${blockedDetails.reveal}>
           <${IconButton.Icon.Icon.litTagName} class="inline-icon" .data=${{
-            iconName: 'issue-exclamation-icon',
-            color: 'var(--issue-color-yellow)',
+            iconName: 'issue-exclamation-filled',
+            color: 'var(--icon-warning)',
             width: '16px',
             height: '16px',
           } as IconButton.Icon.IconData}>
@@ -344,10 +368,10 @@ export class HeaderSectionRow extends HTMLElement {
       return html`
         <x-link href=${blockedDetails.link.url} class="link">
           <${IconButton.Icon.Icon.litTagName} class="inline-icon" .data=${{
-            iconName: 'link_icon',
-            color: 'var(--color-link)',
-            width: '16px',
-            height: '16px',
+            iconName: 'open-externally',
+            color: 'var(--icon-link)',
+            width: '20px',
+            height: '20px',
           } as IconButton.Icon.IconData}>
           </${IconButton.Icon.Icon.litTagName}
           >${i18nString(UIStrings.learnMore)}
@@ -433,7 +457,8 @@ export class HeaderSectionRow extends HTMLElement {
 
   #onHeaderValueEdit(event: Event): void {
     const editable = event.target as EditableSpan;
-    const isEdited = this.#header?.originalValue !== undefined && this.#header?.originalValue !== editable.value;
+    const isEdited =
+        this.#header?.originalValue !== undefined && !compareHeaders(this.#header?.originalValue || '', editable.value);
     if (this.#isHeaderValueEdited !== isEdited) {
       this.#isHeaderValueEdited = isEdited;
       if (this.#header) {

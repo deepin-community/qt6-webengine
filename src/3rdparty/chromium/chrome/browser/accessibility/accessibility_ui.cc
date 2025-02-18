@@ -5,6 +5,7 @@
 #include "chrome/browser/accessibility/accessibility_ui.h"
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -39,7 +40,6 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "content/public/browser/web_ui_data_source.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/accessibility/accessibility_features.h"
 #include "ui/accessibility/platform/ax_platform_node.h"
 #include "ui/accessibility/platform/ax_platform_node_delegate.h"
@@ -56,11 +56,8 @@
 #include "ui/views/widget/widget_delegate.h"
 #endif
 
-#if defined(TOOLKIT_QT)
-#include "qtwebengine/grit/qt_webengine_resources.h"
-#else
-#include "chrome/grit/dev_ui_browser_resources.h"
-#endif
+#include "chrome/grit/accessibility_resources.h"
+#include "chrome/grit/accessibility_resources_map.h"
 
 static const char kTargetsDataFile[] = "targets-data.json";
 
@@ -351,13 +348,16 @@ AccessibilityUI::AccessibilityUI(content::WebUI* web_ui)
 
   // Add required resources.
   html_source->UseStringsJs();
-  html_source->AddResourcePath("accessibility.css", IDR_ACCESSIBILITY_CSS);
-  html_source->AddResourcePath("accessibility.js", IDR_ACCESSIBILITY_JS);
-  html_source->SetDefaultResource(IDR_ACCESSIBILITY_HTML);
+  html_source->AddResourcePaths(
+      base::make_span(kAccessibilityResources, kAccessibilityResourcesSize));
+  html_source->SetDefaultResource(IDR_ACCESSIBILITY_ACCESSIBILITY_HTML);
   html_source->SetRequestFilter(
       base::BindRepeating(&ShouldHandleAccessibilityRequestCallback),
       base::BindRepeating(&HandleAccessibilityRequestCallback,
                           web_ui->GetWebContents()->GetBrowserContext()));
+  html_source->OverrideContentSecurityPolicy(
+      network::mojom::CSPDirectiveName::TrustedTypes,
+      "trusted-types parse-html-subset sanitize-inner-html;");
 
   web_ui->AddMessageHandler(std::make_unique<AccessibilityUIMessageHandler>());
 }
@@ -692,7 +692,7 @@ void AccessibilityUIMessageHandler::Callback(const std::string& str) {
 
 void AccessibilityUIMessageHandler::StopRecording(
     content::WebContents* web_contents) {
-  web_contents->RecordAccessibilityEvents(false, absl::nullopt);
+  web_contents->RecordAccessibilityEvents(false, std::nullopt);
   observer_.reset(nullptr);
 }
 

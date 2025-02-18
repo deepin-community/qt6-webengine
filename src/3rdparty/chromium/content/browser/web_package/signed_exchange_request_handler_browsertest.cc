@@ -19,7 +19,8 @@
 #include "base/threading/thread_restrictions.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
-#include "content/browser/loader/prefetch_url_loader_service.h"
+#include "content/browser/loader/prefetch_url_loader_service_context.h"
+#include "content/browser/loader/subresource_proxying_url_loader_service.h"
 #include "content/browser/renderer_host/navigation_request.h"
 #include "content/browser/renderer_host/render_frame_host_impl.h"
 #include "content/browser/storage_partition_impl.h"
@@ -37,13 +38,13 @@
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/network_service_instance.h"
+#include "content/public/browser/network_service_util.h"
 #include "content/public/browser/ssl_status.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/content_features.h"
 #include "content/public/common/content_paths.h"
-#include "content/public/common/network_service_util.h"
 #include "content/public/common/page_type.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
@@ -107,10 +108,10 @@ class RedirectObserver : public WebContentsObserver {
       response_code_ = response->response_code();
   }
 
-  const absl::optional<int>& response_code() const { return response_code_; }
+  const std::optional<int>& response_code() const { return response_code_; }
 
  private:
-  absl::optional<int> response_code_;
+  std::optional<int> response_code_;
 };
 
 class AssertNavigationHandleFlagObserver : public WebContentsObserver {
@@ -144,11 +145,11 @@ class FinishNavigationObserver : public WebContentsObserver {
     std::move(done_closure_).Run();
   }
 
-  const absl::optional<net::Error>& error_code() const { return error_code_; }
+  const std::optional<net::Error>& error_code() const { return error_code_; }
 
  private:
   base::OnceClosure done_closure_;
-  absl::optional<net::Error> error_code_;
+  std::optional<net::Error> error_code_;
 };
 
 class MockContentBrowserClient final
@@ -224,9 +225,9 @@ class SignedExchangeRequestHandlerBrowserTestBase
     net::CertVerifyResult dummy_result;
     dummy_result.verified_cert = original_cert;
     dummy_result.cert_status = net::OK;
-    dummy_result.ocsp_result.response_status = net::OCSPVerifyResult::PROVIDED;
+    dummy_result.ocsp_result.response_status = bssl::OCSPVerifyResult::PROVIDED;
     dummy_result.ocsp_result.revocation_status =
-        net::OCSPRevocationStatus::GOOD;
+        bssl::OCSPRevocationStatus::GOOD;
     dummy_result.is_issued_by_known_root = true;
     mock_cert_verifier()->AddResultForCertAndHost(
         original_cert, "test.example.org", dummy_result, net::OK);
@@ -239,7 +240,9 @@ class SignedExchangeRequestHandlerBrowserTestBase
                                                ->web_contents()
                                                ->GetBrowserContext()
                                                ->GetDefaultStoragePartition());
-    partition->GetPrefetchURLLoaderService()->SetAcceptLanguages(langs);
+    partition->GetSubresourceProxyingURLLoaderService()
+        ->prefetch_url_loader_service_context_for_testing()
+        .SetAcceptLanguages(langs);
   }
 
   std::unique_ptr<InactiveRenderFrameHostDeletionObserver>
@@ -1076,15 +1079,14 @@ IN_PROC_BROWSER_TEST_P(SignedExchangeRequestHandlerBrowserTest,
       "  try {"
       "    const registration = await navigator.serviceWorker.register("
       "        'publisher-service-worker.js', {scope: './'});"
-      "    window.domAutomationController.send(true);"
+      "    return true;"
       "  } catch (e) {"
-      "    window.domAutomationController.send(false);"
+      "    return false;"
       "  }"
       "})();";
   // serviceWorker.register() fails because the document URL of
   // ServiceWorkerHost is empty.
-  EXPECT_EQ(false, EvalJs(shell()->web_contents(), register_sw_script,
-                          EXECUTE_SCRIPT_USE_MANUAL_REPLY));
+  EXPECT_EQ(false, EvalJs(shell()->web_contents(), register_sw_script));
 }
 
 class SignedExchangeAcceptHeaderBrowserTest
@@ -1170,12 +1172,11 @@ class SignedExchangeAcceptHeaderBrowserTest
     }
   }
 
-  absl::optional<std::string> GetInterceptedAcceptHeader(
-      const GURL& url) const {
+  std::optional<std::string> GetInterceptedAcceptHeader(const GURL& url) const {
     base::AutoLock lock(url_accept_header_map_lock_);
     const auto it = url_accept_header_map_.find(url);
     if (it == url_accept_header_map_.end())
-      return absl::nullopt;
+      return std::nullopt;
     return it->second;
   }
 
@@ -1351,12 +1352,12 @@ IN_PROC_BROWSER_TEST_P(SignedExchangeAcceptHeaderBrowserTest, ServiceWorker) {
         is_generated_scope
             ? (IsSignedExchangeEnabled() ? frame_accept_with_sxg : frame_accept)
             : "Done";
-    const absl::optional<std::string> expected_target_accept_header =
+    const std::optional<std::string> expected_target_accept_header =
         is_generated_scope
-            ? absl::nullopt
-            : absl::optional<std::string>(IsSignedExchangeEnabled()
-                                              ? frame_accept_with_sxg
-                                              : frame_accept);
+            ? std::nullopt
+            : std::optional<std::string>(IsSignedExchangeEnabled()
+                                             ? frame_accept_with_sxg
+                                             : frame_accept);
 
     NavigateAndWaitForTitle(target_url, expected_title);
     EXPECT_EQ(expected_target_accept_header,
@@ -1397,25 +1398,26 @@ IN_PROC_BROWSER_TEST_P(SignedExchangeAcceptHeaderBrowserTest,
       "    link.href = url;"
       "    document.body.appendChild(link);"
       "  }"
-      "  function check() {"
-      "    const entries = performance.getEntriesByType('resource');"
-      "    const url_set = new Set(urls);"
-      "    for (let entry of entries) {"
-      "      url_set.delete(entry.name);"
-      "    }"
-      "    if (!url_set.size) {"
-      "      window.domAutomationController.send(true);"
-      "    } else {"
-      "      setTimeout(check, 100);"
+      "  async function check() {"
+      "    while (true) {"
+      "      const entries = performance.getEntriesByType('resource');"
+      "      const url_set = new Set(urls);"
+      "      for (let entry of entries) {"
+      "        url_set.delete(entry.name);"
+      "      }"
+      "      if (!url_set.size) {"
+      "        return true;"
+      "      } else {"
+      "        await new Promise(resolve => setTimeout(resolve, 100));"
+      "      }"
       "    }"
       "  }"
-      "  check();"
+      "  return check();"
       "})(['%s'])",
       prefetch_target.spec().c_str());
 
   NavigateAndWaitForTitle(target_url, "Done");
-  EXPECT_EQ(true, EvalJs(shell()->web_contents(), load_prefetch_script,
-                         EXECUTE_SCRIPT_USE_MANUAL_REPLY));
+  EXPECT_EQ(true, EvalJs(shell()->web_contents(), load_prefetch_script));
   CheckPrefetchAcceptHeader({prefetch_target});
   ClearInterceptedAcceptHeaders();
 }
@@ -1433,8 +1435,6 @@ class SignedExchangeReportingBrowserTest
     feature_list_.InitWithFeatures(
         // enabled_features
         {net::features::kPartitionNelAndReportingByNetworkIsolationKey,
-         // These last two are not strictly necessary, but make this test more
-         // robust against enabling NetworkIsolationKeys everywhere.
          net::features::kPartitionConnectionsByNetworkIsolationKey,
          net::features::kPartitionSSLSessionsByNetworkIsolationKey},
         // disabled_features

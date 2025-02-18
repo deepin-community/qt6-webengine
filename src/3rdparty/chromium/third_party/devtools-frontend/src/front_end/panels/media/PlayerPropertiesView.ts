@@ -4,12 +4,12 @@
 
 import * as i18n from '../../core/i18n/i18n.js';
 import * as Platform from '../../core/platform/platform.js';
+import type * as Protocol from '../../generated/protocol.js';
 import * as SourceFrame from '../../ui/legacy/components/source_frame/source_frame.js';
 import * as UI from '../../ui/legacy/legacy.js';
+import * as VisualLogging from '../../ui/visual_logging/visual_logging.js';
 
 import playerPropertiesViewStyles from './playerPropertiesView.css.js';
-
-import type * as Protocol from '../../generated/protocol.js';
 
 const UIStrings = {
   /**
@@ -147,7 +147,7 @@ export const enum PlayerPropertyKeys {
   Bitrate = 'kBitrate',
   MaxDuration = 'kMaxDuration',
   StartTime = 'kStartTime',
-  IsVideoEncrypted = 'kIsVideoEncrypted',
+  IsCdmAttached = 'kIsCdmAttached',
   IsStreaming = 'kIsStreaming',
   FrameUrl = 'kFrameUrl',
   FrameTitle = 'kFrameTitle',
@@ -265,7 +265,7 @@ export class FormattedPropertyRenderer extends PropertyRenderer {
     this.formatfunction = formatfunction;
   }
 
-  updateDataInternal(propname: string, propvalue: string|null): void {
+  override updateDataInternal(propname: string, propvalue: string|null): void {
     if (propvalue === null) {
       this.changeContents(null);
     } else {
@@ -298,7 +298,7 @@ export class DimensionPropertyRenderer extends PropertyRenderer {
     this.height = 0;
   }
 
-  updateDataInternal(propname: string, propvalue: string|null): void {
+  override updateDataInternal(propname: string, propvalue: string|null): void {
     let needsUpdate = false;
     if (propname === 'width' && Number(propvalue) !== this.width) {
       this.width = Number(propvalue);
@@ -477,6 +477,9 @@ export class PlayerPropertiesView extends UI.Widget.VBox {
 
   constructor() {
     super();
+
+    this.element.setAttribute('jslog', `${VisualLogging.pane().context('properties')}`);
+
     this.contentElement.classList.add('media-properties-frame');
 
     this.mediaElements = [];
@@ -665,7 +668,7 @@ export class PlayerPropertiesView extends UI.Widget.VBox {
     const textTrackManager = new TextTrackManager(this);
     this.attributeMap.set(PlayerPropertyKeys.TextTracks, textTrackManager);
   }
-  wasShown(): void {
+  override wasShown(): void {
     super.wasShown();
     this.registerCSSFiles([playerPropertiesViewStyles]);
   }

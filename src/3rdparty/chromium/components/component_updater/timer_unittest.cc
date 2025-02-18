@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "components/component_updater/timer.h"
+
 #include <string>
 #include <utility>
 
@@ -9,10 +11,7 @@
 #include "base/run_loop.h"
 #include "base/test/task_environment.h"
 #include "base/time/time.h"
-#include "components/component_updater/timer.h"
 #include "testing/gtest/include/gtest/gtest.h"
-
-using std::string;
 
 namespace component_updater {
 
@@ -37,8 +36,9 @@ TEST_F(ComponentUpdaterTimerTest, Start) {
 
     void OnTimerEvent() {
       ++count_;
-      if (count_ >= max_count_)
+      if (count_ >= max_count_) {
         std::move(quit_closure_).Run();
+      }
     }
 
     int count() const { return count_; }

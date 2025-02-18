@@ -17,6 +17,7 @@
 #include "base/trace_event/trace_event.h"
 #include "base/win/windows_version.h"
 #include "ui/gl/direct_composition_support.h"
+#include "ui/gl/gl_angle_util_win.h"
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_display.h"
 #include "ui/gl/gl_egl_api_implementation.h"
@@ -125,7 +126,7 @@ bool InitializeStaticEGLInternal(GLImplementationParts implementation) {
 }
 
 bool InitializeStaticWGLInternal() {
-#ifdef TOOLKIT_QT
+#if BUILDFLAG(IS_QTWEBENGINE)
   const wchar_t *libraryName = L"opengl32.dll";
   if (usingSoftwareDynamicGL())
       libraryName = L"opengl32sw.dll";
@@ -204,7 +205,7 @@ bool InitializeStaticWGLInternal() {
 
 }  // namespace
 
-#if !defined(TOOLKIT_QT)
+#if !BUILDFLAG(IS_QTWEBENGINE)
 GLDisplay* InitializeGLOneOffPlatform(gl::GpuPreference gpu_preference) {
   VSyncProviderWin::InitializeOneOff();
 
@@ -216,13 +217,16 @@ GLDisplay* InitializeGLOneOffPlatform(gl::GpuPreference gpu_preference) {
         return false;
       }
       break;
-    case kGLImplementationEGLANGLE:
+    case kGLImplementationEGLANGLE: {
       if (!InitializeDisplay(display, EGLDisplayPlatform(GetDC(nullptr)))) {
         LOG(ERROR) << "GLDisplayEGL::Initialize failed.";
         return nullptr;
       }
-      InitializeDirectComposition(display);
+      if (auto d3d11_device = QueryD3D11DeviceObjectFromANGLE()) {
+        InitializeDirectComposition(std::move(d3d11_device));
+      }
       break;
+    }
     case kGLImplementationMockGL:
     case kGLImplementationStubGL:
       break;

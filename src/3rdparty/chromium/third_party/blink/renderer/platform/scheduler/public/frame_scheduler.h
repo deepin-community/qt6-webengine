@@ -40,6 +40,10 @@ class FrameScheduler : public FrameOrWorkerScheduler {
     virtual void UpdateTaskTime(base::TimeDelta time) = 0;
 
     virtual const base::UnguessableToken& GetAgentClusterId() const = 0;
+
+    virtual void OnTaskCompleted(base::TimeTicks start_time,
+                                 base::TimeTicks end_time) = 0;
+    virtual void MainFrameInteractive() {}
   };
 
   ~FrameScheduler() override = default;
@@ -59,6 +63,16 @@ class FrameScheduler : public FrameOrWorkerScheduler {
   // The scheduler may throttle tasks associated with offscreen frames.
   virtual void SetFrameVisible(bool) = 0;
   virtual bool IsFrameVisible() const = 0;
+
+  // The scheduler may throttle tasks associated with cross origin frames using
+  // small proportion of the page's visible area.
+  virtual void SetVisibleAreaLarge(bool) = 0;
+  virtual bool IsVisibleAreaLarge() const = 0;
+
+  // The scheduler may throttle tasks associated with cross origin frames
+  // without user activation.
+  virtual void SetHadUserActivation(bool) = 0;
+  virtual bool HadUserActivation() const = 0;
 
   // Query the page visibility state for the page associated with this frame.
   // The scheduler may throttle tasks associated with pages that are not
@@ -116,21 +130,35 @@ class FrameScheduler : public FrameOrWorkerScheduler {
   virtual void DidStartProvisionalLoad() = 0;
 
   // Tells the scheduler that a provisional load has committed, the scheduler
-  // may reset the task cost estimators and the UserModel. Must be called from
-  // the main thread.
-  virtual void DidCommitProvisionalLoad(bool is_web_history_inert_commit,
-                                        NavigationType navigation_type) = 0;
+  // may reset the task cost estimators and the UserModel.
+  // `DidCommitProvisionalLoadParams` contains information from the old
+  // FrameScheduler that this one's replacing (if it exists) that the new one
+  // might carry over, e.g. the unreported task time, which is aggregated
+  // per-frame and thus needs to be carried over after cross-document
+  // navigations.
+  // Must be called from the main thread.
+  struct DidCommitProvisionalLoadParams {
+    base::TimeDelta previous_document_unreported_task_time;
+  };
+  virtual void DidCommitProvisionalLoad(
+      bool is_web_history_inert_commit,
+      NavigationType navigation_type,
+      DidCommitProvisionalLoadParams params = {base::TimeDelta()}) = 0;
 
   // Tells the scheduler that the first contentful paint has occurred for this
   // frame. Only for main frames.
   virtual void OnFirstContentfulPaintInMainFrame() = 0;
 
+  // Tells the scheduler the Frame's Document is interactive. Only for main
+  // frames.
+  virtual void OnMainFrameInteractive() = 0;
+
   // Tells the scheduler that the first meaningful paint has occurred for this
   // frame.
-  virtual void OnFirstMeaningfulPaint() = 0;
+  virtual void OnFirstMeaningfulPaint(base::TimeTicks timestamp) = 0;
 
-  // Tells the scheduler that the "onload" event has occurred for this frame.
-  virtual void OnLoad() = 0;
+  // Tells the scheduler that the load event has been dispatched for this frame.
+  virtual void OnDispatchLoadEvent() = 0;
 
   // Returns true if this frame is should not throttled (e.g. due to an active
   // connection).

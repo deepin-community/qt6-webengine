@@ -20,9 +20,7 @@
 #include "base/rand_util.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
-#if !defined(TOOLKIT_QT)
-#include "components/sync/base/features.h"
-#endif
+#include "components/history/core/browser/history_types.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "sql/database.h"
 #include "sql/meta_table.h"
@@ -30,7 +28,7 @@
 #include "sql/transaction.h"
 
 #if BUILDFLAG(IS_APPLE)
-#include "base/mac/backup_util.h"
+#include "base/apple/backup_util.h"
 #endif
 
 namespace history {
@@ -40,7 +38,7 @@ namespace {
 // Current version number. We write databases at the "current" version number,
 // but any previous version that can read the "compatible" one can make do with
 // our database without *too* many bad effects.
-const int kCurrentVersionNumber = 62;
+const int kCurrentVersionNumber = 69;
 const int kCompatibleVersionNumber = 16;
 
 const char kEarlyExpirationThresholdKey[] = "early_expiration_threshold";
@@ -100,8 +98,7 @@ HistoryDatabase::HistoryDatabase(
            // value, tells us how much memory the cache will use maximum.
            // 1000 * 4kB = 4MB
            .cache_size = 1000})
-#if !defined(TOOLKIT_QT)
-      , typed_url_metadata_db_(&db_, &meta_table_)
+#if !BUILDFLAG(IS_QTWEBENGINE)
       , history_metadata_db_(&db_, &meta_table_)
 #endif
 {}
@@ -122,7 +119,7 @@ sql::InitStatus HistoryDatabase::Init(const base::FilePath& history_name) {
 
 #if BUILDFLAG(IS_APPLE)
   // Exclude the history file from backups.
-  base::mac::SetBackupExclusion(history_name);
+  base::apple::SetBackupExclusion(history_name);
 #endif
 
   // Prime the cache.
@@ -134,23 +131,16 @@ sql::InitStatus HistoryDatabase::Init(const base::FilePath& history_name) {
     return LogInitFailure(InitStep::META_TABLE_INIT);
   if (!CreateURLTable(false) || !InitVisitTable() ||
       !InitKeywordSearchTermsTable() || !InitDownloadTable() ||
-      !InitSegmentTables() ||
-#if !defined(TOOLKIT_QT)
-      !typed_url_metadata_db_.Init() ||
+      !InitSegmentTables() || !InitVisitAnnotationsTables() ||
+      !CreateVisitedLinkTable()
+#if !BUILDFLAG(IS_QTWEBENGINE)
+      || !history_metadata_db_.Init()
 #endif
-      !InitVisitAnnotationsTables()) {
+      )
+  {
     return LogInitFailure(InitStep::CREATE_TABLES);
   }
-#if !defined(TOOLKIT_QT)
-  if (base::FeatureList::IsEnabled(syncer::kSyncEnableHistoryDataType) &&
-      !history_metadata_db_.Init()) {
-    return LogInitFailure(InitStep::CREATE_TABLES);
-  }
-#endif
   CreateMainURLIndex();
-
-  // TODO(benjhayden) Remove at some point.
-  meta_table_.DeleteKey("next_download_id");
 
   // Version check.
   sql::InitStatus version_status = EnsureCurrentVersion();
@@ -167,6 +157,7 @@ sql::InitStatus HistoryDatabase::Init(const base::FilePath& history_name) {
 void HistoryDatabase::ComputeDatabaseMetrics(
     const base::FilePath& history_name) {
   base::TimeTicks start_time = base::TimeTicks::Now();
+#if !BUILDFLAG(IS_QTWEBENGINE)
   int64_t file_size = 0;
   if (!base::GetFileSize(history_name, &file_size))
     return;
@@ -184,89 +175,94 @@ void HistoryDatabase::ComputeDatabaseMetrics(
     return;
   UMA_HISTOGRAM_COUNTS_1M("History.VisitTableCount", visit_count.ColumnInt(0));
 
+  sql::Statement visited_link_count(
+      db_.GetUniqueStatement("SELECT count(*) FROM visited_links"));
+  if (!visited_link_count.Step()) {
+    return;
+  }
+  UMA_HISTOGRAM_COUNTS_1M("History.VisitedLinkTableCount",
+                          visited_link_count.ColumnInt(0));
+
   UMA_HISTOGRAM_TIMES("History.DatabaseBasicMetricsTime",
                       base::TimeTicks::Now() - start_time);
 
-#if !defined(TOOLKIT_QT)
-  if (base::FeatureList::IsEnabled(syncer::kSyncEnableHistoryDataType)) {
-    // Compute metrics about foreign visits (i.e. visits coming from other
-    // devices) in the DB.
-    start_time = base::TimeTicks::Now();
+  // Compute metrics about foreign visits (i.e. visits coming from other
+  // devices) in the DB.
+  start_time = base::TimeTicks::Now();
 
-    sql::Statement foreign_visits_sql(db_.GetUniqueStatement(
-        "SELECT from_visit, opener_visit, originator_cache_guid, "
-        "originator_visit_id, originator_from_visit, originator_opener_visit "
-        "FROM visits WHERE originator_cache_guid IS NOT NULL AND "
-        "originator_cache_guid != ''"));
+  sql::Statement foreign_visits_sql(db_.GetUniqueStatement(
+      "SELECT from_visit, opener_visit, originator_cache_guid, "
+      "originator_visit_id, originator_from_visit, originator_opener_visit "
+      "FROM visits WHERE originator_cache_guid IS NOT NULL AND "
+      "originator_cache_guid != ''"));
 
-    size_t total_foreign_visits = 0;
-    size_t legacy_foreign_visits = 0;
-    size_t unmapped_foreign_visits = 0;
-    size_t mappable_from_visits = 0;
-    size_t mappable_opener_visits = 0;
-    while (foreign_visits_sql.Step()) {
-      ++total_foreign_visits;
+  size_t total_foreign_visits = 0;
+  size_t legacy_foreign_visits = 0;
+  size_t unmapped_foreign_visits = 0;
+  size_t mappable_from_visits = 0;
+  size_t mappable_opener_visits = 0;
+  while (foreign_visits_sql.Step()) {
+    ++total_foreign_visits;
 
-      VisitID from_visit = foreign_visits_sql.ColumnInt64(0);
-      VisitID opener_visit = foreign_visits_sql.ColumnInt64(1);
-      std::string originator_cache_guid = foreign_visits_sql.ColumnString(2);
-      VisitID originator_visit = foreign_visits_sql.ColumnInt64(3);
-      VisitID originator_from_visit = foreign_visits_sql.ColumnInt64(4);
-      VisitID originator_opener_visit = foreign_visits_sql.ColumnInt64(5);
+    VisitID from_visit = foreign_visits_sql.ColumnInt64(0);
+    VisitID opener_visit = foreign_visits_sql.ColumnInt64(1);
+    std::string originator_cache_guid = foreign_visits_sql.ColumnString(2);
+    VisitID originator_visit = foreign_visits_sql.ColumnInt64(3);
+    VisitID originator_from_visit = foreign_visits_sql.ColumnInt64(4);
+    VisitID originator_opener_visit = foreign_visits_sql.ColumnInt64(5);
 
-      // Foreign visits that don't have an originator_visit_id must have come
-      // from a "legacy" client, i.e. one that's using the Sessions integration
-      // to sync history.
-      if (originator_visit == 0) {
-        ++legacy_foreign_visits;
-      }
+    // Foreign visits that don't have an originator_visit_id must have come
+    // from a "legacy" client, i.e. one that's using the Sessions integration
+    // to sync history.
+    if (originator_visit == 0) {
+      ++legacy_foreign_visits;
+    }
 
-      bool missing_from_visit = (from_visit == 0 && originator_from_visit != 0);
-      bool missing_opener_visit =
-          (opener_visit == 0 && originator_opener_visit != 0);
-      if (missing_from_visit || missing_opener_visit) {
-        // Found a visit that's missing the local from/opener_visit values.
-        ++unmapped_foreign_visits;
-        // Check if a matching referrer/opener visits actually exist in the DB.
-        sql::Statement matching_visit(db_.GetCachedStatement(
-            SQL_FROM_HERE,
-            "SELECT id FROM visits WHERE originator_cache_guid=? AND "
-            "originator_visit_id=?"));
-        if (missing_from_visit) {
-          matching_visit.BindString(0, originator_cache_guid);
-          matching_visit.BindInt64(1, originator_from_visit);
-          if (matching_visit.Step()) {
-            ++mappable_from_visits;
-          }
-          matching_visit.Reset(/*clear_bound_vars=*/true);
+    bool missing_from_visit = (from_visit == 0 && originator_from_visit != 0);
+    bool missing_opener_visit =
+        (opener_visit == 0 && originator_opener_visit != 0);
+    if (missing_from_visit || missing_opener_visit) {
+      // Found a visit that's missing the local from/opener_visit values.
+      ++unmapped_foreign_visits;
+      // Check if a matching referrer/opener visits actually exist in the DB.
+      sql::Statement matching_visit(db_.GetCachedStatement(
+          SQL_FROM_HERE,
+          "SELECT id FROM visits WHERE originator_cache_guid=? AND "
+          "originator_visit_id=?"));
+      if (missing_from_visit) {
+        matching_visit.BindString(0, originator_cache_guid);
+        matching_visit.BindInt64(1, originator_from_visit);
+        if (matching_visit.Step()) {
+          ++mappable_from_visits;
         }
-        if (missing_opener_visit) {
-          matching_visit.BindString(0, originator_cache_guid);
-          matching_visit.BindInt64(1, originator_opener_visit);
-          if (matching_visit.Step()) {
-            ++mappable_opener_visits;
-          }
+        matching_visit.Reset(/*clear_bound_vars=*/true);
+      }
+      if (missing_opener_visit) {
+        matching_visit.BindString(0, originator_cache_guid);
+        matching_visit.BindInt64(1, originator_opener_visit);
+        if (matching_visit.Step()) {
+          ++mappable_opener_visits;
         }
       }
     }
-    // Only record these metrics if there are any foreign visits in the DB.
-    if (total_foreign_visits > 0) {
-      base::UmaHistogramCounts1M("History.ForeignVisitsTotal",
-                                 total_foreign_visits);
-      base::UmaHistogramCounts1M("History.ForeignVisitsLegacy",
-                                 legacy_foreign_visits);
-      base::UmaHistogramCounts1M("History.ForeignVisitsNotRemapped",
-                                 unmapped_foreign_visits);
-      base::UmaHistogramCounts1M("History.ForeignVisitsRemappableFrom",
-                                 mappable_from_visits);
-      base::UmaHistogramCounts1M("History.ForeignVisitsRemappableOpener",
-                                 mappable_opener_visits);
-    }
-
-    base::UmaHistogramTimes("History.DatabaseForeignVisitMetricsTime",
-                            base::TimeTicks::Now() - start_time);
   }
-#endif  // !defined(TOOLKIT_QT)
+  // Only record these metrics if there are any foreign visits in the DB.
+  if (total_foreign_visits > 0) {
+    base::UmaHistogramCounts1M("History.ForeignVisitsTotal",
+                               total_foreign_visits);
+    base::UmaHistogramCounts1M("History.ForeignVisitsLegacy",
+                               legacy_foreign_visits);
+    base::UmaHistogramCounts1M("History.ForeignVisitsNotRemapped",
+                               unmapped_foreign_visits);
+    base::UmaHistogramCounts1M("History.ForeignVisitsRemappableFrom",
+                               mappable_from_visits);
+    base::UmaHistogramCounts1M("History.ForeignVisitsRemappableOpener",
+                               mappable_opener_visits);
+  }
+#endif  // !BUILDFLAG(IS_QTWEBENGINE)
+
+  base::UmaHistogramTimes("History.DatabaseForeignVisitMetricsTime",
+                          base::TimeTicks::Now() - start_time);
 
   // Compute the advanced metrics even less often, pending timing data showing
   // that's not necessary.
@@ -308,7 +304,6 @@ void HistoryDatabase::ComputeDatabaseMetrics(
 }
 
 int HistoryDatabase::CountUniqueHostsVisitedLastMonth() {
-  base::TimeTicks start_time = base::TimeTicks::Now();
   // Collect all URLs visited within the last month.
   base::Time one_month_ago = base::Time::Now() - base::Days(30);
 
@@ -325,31 +320,39 @@ int HistoryDatabase::CountUniqueHostsVisitedLastMonth() {
     hosts.insert(url.host());
   }
 
-  UMA_HISTOGRAM_TIMES("History.DatabaseMonthlyHostCountTime",
-                      base::TimeTicks::Now() - start_time);
   return hosts.size();
 }
 
-int HistoryDatabase::CountUniqueDomainsVisited(base::Time begin_time,
-                                               base::Time end_time) {
+DomainsVisitedResult HistoryDatabase::GetUniqueDomainsVisited(
+    base::Time begin_time,
+    base::Time end_time) {
   sql::Statement url_sql(db_.GetUniqueStatement(
-      "SELECT urls.url FROM urls JOIN visits "
-      "WHERE urls.id = visits.url "
-      "AND (transition & ?) != 0 "              // CHAIN_END
-      "AND (transition & ?) NOT IN (?, ?, ?) "  // NO SUBFRAME or
+      "SELECT urls.url, visits.originator_cache_guid, "
+      "IFNULL(visit_source.source, ?) "  // SOURCE_BROWSED
+      "FROM urls "
+      "INNER JOIN visits ON urls.id = visits.url "
+      "LEFT JOIN visit_source ON visits.id = visit_source.id "
+      "WHERE (transition & ?) != 0 "            // CHAIN_END
+      "AND (transition & ?) NOT IN (?, ?, ?) "  // No *_SUBFRAME or
                                                 // KEYWORD_GENERATED
-      "AND hidden = 0 AND visit_time >= ? AND visit_time < ?"));
+      "AND hidden = 0 AND visit_time >= ? AND visit_time < ? "
+      "ORDER BY visit_time DESC, visits.id DESC"));
 
-  url_sql.BindInt64(0, ui::PAGE_TRANSITION_CHAIN_END);
-  url_sql.BindInt64(1, ui::PAGE_TRANSITION_CORE_MASK);
-  url_sql.BindInt64(2, ui::PAGE_TRANSITION_AUTO_SUBFRAME);
-  url_sql.BindInt64(3, ui::PAGE_TRANSITION_MANUAL_SUBFRAME);
-  url_sql.BindInt64(4, ui::PAGE_TRANSITION_KEYWORD_GENERATED);
+  url_sql.BindInt64(0, VisitSource::SOURCE_BROWSED);
+  url_sql.BindInt64(1, ui::PAGE_TRANSITION_CHAIN_END);
+  url_sql.BindInt64(2, ui::PAGE_TRANSITION_CORE_MASK);
+  url_sql.BindInt64(3, ui::PAGE_TRANSITION_AUTO_SUBFRAME);
+  url_sql.BindInt64(4, ui::PAGE_TRANSITION_MANUAL_SUBFRAME);
+  url_sql.BindInt64(5, ui::PAGE_TRANSITION_KEYWORD_GENERATED);
 
-  url_sql.BindTime(5, begin_time);
-  url_sql.BindTime(6, end_time);
+  url_sql.BindTime(6, begin_time);
+  url_sql.BindTime(7, end_time);
 
-  std::set<std::string> domains;
+  DomainsVisitedResult result;
+
+  std::set<std::string> all_visited_domains_set;
+  std::set<std::string> locally_visited_domains_set;
+
   while (url_sql.Step()) {
     GURL url(url_sql.ColumnString(0));
     std::string domain = net::registry_controlled_domains::GetDomainAndRegistry(
@@ -357,10 +360,33 @@ int HistoryDatabase::CountUniqueDomainsVisited(base::Time begin_time,
 
     // IP addresses, empty URLs, and URLs with empty or unregistered TLDs are
     // all excluded.
-    if (!domain.empty())
-      domains.insert(domain);
+    if (domain.empty()) {
+      continue;
+    }
+
+    if (!all_visited_domains_set.contains(domain)) {
+      all_visited_domains_set.insert(domain);
+      result.all_visited_domains.push_back(domain);
+    }
+
+    bool is_local = url_sql.ColumnString(1).empty() &&
+                    url_sql.ColumnInt(2) == VisitSource::SOURCE_BROWSED;
+
+    if (is_local && !locally_visited_domains_set.contains(domain)) {
+      locally_visited_domains_set.insert(domain);
+      result.locally_visited_domains.push_back(domain);
+    }
   }
-  return domains.size();
+
+  return result;
+}
+
+std::pair<int, int> HistoryDatabase::CountUniqueDomainsVisited(
+    base::Time begin_time,
+    base::Time end_time) {
+  DomainsVisitedResult result = GetUniqueDomainsVisited(begin_time, end_time);
+  return {result.locally_visited_domains.size(),
+          result.all_visited_domains.size()};
 }
 
 void HistoryDatabase::BeginExclusiveMode() {
@@ -427,7 +453,8 @@ bool HistoryDatabase::SetSegmentID(VisitID visit_id, SegmentID segment_id) {
       "UPDATE visits SET segment_id = ? WHERE id = ?"));
   s.BindInt64(0, segment_id);
   s.BindInt64(1, visit_id);
-  DCHECK(db_.GetLastChangeCount() == 1);
+  DCHECK_EQ(db_.GetLastChangeCount(), 1)
+      << "segment_id: " << segment_id << ", visit_id: " << visit_id;
 
   return s.Run();
 }
@@ -495,15 +522,15 @@ void HistoryDatabase::SetKnownToSyncVisitsExist(bool exist) {
   meta_table_.SetValue(kKnownToSyncVisitsExist, exist ? 1 : 0);
 }
 
-#if !defined(TOOLKIT_QT)
-TypedURLSyncMetadataDatabase* HistoryDatabase::GetTypedURLMetadataDB() {
-  return &typed_url_metadata_db_;
-}
-
+#if !BUILDFLAG(IS_QTWEBENGINE)
 HistorySyncMetadataDatabase* HistoryDatabase::GetHistoryMetadataDB() {
   return &history_metadata_db_;
 }
-#endif  // !defined(TOOLKIT_QT)
+#endif
+
+sql::Database& HistoryDatabase::GetDBForTesting() {
+  return db_;
+}
 
 sql::Database& HistoryDatabase::GetDB() {
   return db_;
@@ -741,15 +768,10 @@ sql::InitStatus HistoryDatabase::EnsureCurrentVersion() {
     std::ignore = meta_table_.SetVersionNumber(cur_version);
   }
 
-#if !defined(TOOLKIT_QT)
+#if !BUILDFLAG(IS_QTWEBENGINE)
   if (cur_version == 40) {
-    std::vector<URLID> visited_url_rowids_sorted;
-    if (!GetAllVisitedURLRowidsForMigrationToVersion40(
-            &visited_url_rowids_sorted) ||
-        !typed_url_metadata_db_.CleanOrphanedMetadataForMigrationToVersion40(
-            visited_url_rowids_sorted)) {
-      return LogMigrationFailure(40);
-    }
+    // The migration to version 40 concerned Sync metadata for TypedURLs, which
+    // doesn't exist anymore in current versions (68+). So nothing to do here.
     cur_version++;
     // TODO(crbug.com/1414092): Handle failure instead of ignoring it.
     std::ignore = meta_table_.SetVersionNumber(cur_version);
@@ -925,6 +947,69 @@ sql::InitStatus HistoryDatabase::EnsureCurrentVersion() {
     std::ignore = meta_table_.SetVersionNumber(cur_version);
   }
 
+  if (cur_version == 62) {
+    if (!MigrateVisitsAddConsiderForNewTabPageMostVisitedColumn()) {
+      return LogMigrationFailure(62);
+    }
+    cur_version++;
+    // TODO(crbug.com/1414092): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 63) {
+    if (!MigrateDownloadByWebApp()) {
+      return LogMigrationFailure(63);
+    }
+    cur_version++;
+    // TODO(crbug.com/1414092): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 64) {
+    if (!MigrateClustersAndVisitsAddInteractionState()) {
+      return LogMigrationFailure(64);
+    }
+    cur_version++;
+    // TODO(crbug.com/1414092): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 65) {
+    if (!MigrateVisitsAddExternalReferrerUrlColumn()) {
+      return LogMigrationFailure(65);
+    }
+    cur_version++;
+    // TODO(crbug.com/1414092): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 66) {
+    if (!MigrateVisitsAddVisitedLinkIdColumn()) {
+      return LogMigrationFailure(66);
+    }
+    cur_version++;
+    // TODO(crbug.com/1414092): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 67) {
+    if (!MigrateRemoveTypedUrlMetadata()) {
+      return LogMigrationFailure(67);
+    }
+    cur_version++;
+    // TODO(crbug.com/1414092): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 68) {
+    if (!MigrateVisitsAddAppId()) {
+      return LogMigrationFailure(68);
+    }
+    cur_version++;
+    // TODO(crbug.com/1414092): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
   // =========================       ^^ new migration code goes here ^^
   // ADDING NEW MIGRATION CODE
   // =========================
@@ -966,5 +1051,15 @@ void HistoryDatabase::MigrateTimeEpoch() {
       "WHERE id IN (SELECT id FROM segment_usage WHERE time_slot > 0);");
 }
 #endif
+
+bool HistoryDatabase::MigrateRemoveTypedUrlMetadata() {
+  if (!meta_table_.DeleteKey("typed_url_model_type_state")) {
+    return false;
+  }
+  if (!db_.Execute("DROP TABLE IF EXISTS typed_url_sync_metadata;")) {
+    return false;
+  }
+  return true;
+}
 
 }  // namespace history

@@ -19,6 +19,8 @@
 
 #include "render_view_context_menu_qt.h"
 
+#include <QtCore/qpointer.h>
+
 namespace QtWebEngineCore {
 class AutofillPopupController;
 class QWebEngineContextMenuRequest;
@@ -71,6 +73,7 @@ public:
     void didPrintPage(QPrinter *&printer, QSharedPointer<QByteArray> result) override;
     void didPrintPageToPdf(const QString &filePath, bool success) override;
     void printRequested() override;
+    void printRequestedByFrame(QWebEngineFrame frame) override;
     void showAutofillPopup(QtWebEngineCore::AutofillPopupController *controller,
                            const QRect &bounds, bool autoselectFirstSuggestion) override;
     void hideAutofillPopup() override;

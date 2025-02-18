@@ -1,4 +1,4 @@
-load("//bazel:macros.bzl", "exports_files_legacy", "skia_cc_deps", "skia_filegroup", "split_srcs_and_hdrs")
+load("//bazel:skia_rules.bzl", "exports_files_legacy", "skia_cc_deps", "skia_filegroup", "split_srcs_and_hdrs")
 
 licenses(["notice"])
 
@@ -12,7 +12,10 @@ VK_FILES = [
     "VulkanInterface.h",
     "VulkanMemory.cpp",
     "VulkanMemory.h",
+    "VulkanUtilsPriv.cpp",
     "VulkanUtilsPriv.h",
+    "VulkanMutableTextureStatePriv.h",
+    "VulkanMutableTextureState.cpp",
 ]
 
 split_srcs_and_hdrs(

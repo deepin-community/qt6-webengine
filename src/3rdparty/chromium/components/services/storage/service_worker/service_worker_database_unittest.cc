@@ -20,10 +20,12 @@
 #include "components/services/storage/service_worker/service_worker_database.pb.h"
 #include "net/base/features.h"
 #include "services/network/public/cpp/web_sandbox_flags.h"
+#include "services/network/public/mojom/fetch_api.mojom-shared.h"
 #include "services/network/public/mojom/referrer_policy.mojom-shared.h"
 #include "services/network/public/mojom/web_sandbox_flags.mojom-shared.h"
-#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/common/safe_url_pattern.h"
+#include "third_party/blink/public/common/service_worker/service_worker_router_rule.h"
 #include "third_party/blink/public/mojom/frame/policy_container.mojom.h"
 #include "third_party/blink/public/mojom/service_worker/service_worker_object.mojom.h"
 #include "third_party/blink/public/mojom/service_worker/service_worker_registration.mojom.h"
@@ -94,6 +96,7 @@ void VerifyRegistrationData(const RegistrationData& expected,
   EXPECT_EQ(expected.ancestor_frame_type, actual.ancestor_frame_type);
   EXPECT_EQ(expected.policy_container_policies,
             actual.policy_container_policies);
+  EXPECT_EQ(expected.router_rules, actual.router_rules);
 }
 
 void VerifyResourceRecords(const std::vector<ResourceRecordPtr>& expected,
@@ -490,6 +493,8 @@ TEST(ServiceWorkerDatabaseTest, GetStorageKeysWithRegistrations) {
             database->WriteRegistration(data6, resources6, &deleted_version));
 
   scoped_feature_list.Reset();
+  scoped_feature_list.InitAndDisableFeature(
+      net::features::kThirdPartyStoragePartitioning);
   // Because kThirdPartyStoragePartitioning is disabled now we shouldn't get the
   // partitioned keys in the following checks.
 
@@ -551,6 +556,7 @@ TEST(ServiceWorkerDatabaseTest, GetStorageKeysWithRegistrations) {
 
   // Now re-enable kThirdPartyStoragePartitioning and check for the partitioned
   // keys.
+  scoped_feature_list.Reset();
   scoped_feature_list.InitAndEnableFeature(
       net::features::kThirdPartyStoragePartitioning);
 
@@ -596,7 +602,7 @@ TEST(ServiceWorkerDatabaseTest, GetRegistrationsForStorageKey) {
   data1.script = URL(origin1, "/script1.js");
   data1.version_id = 1000;
   data1.resources_total_size_bytes = 100;
-  data1.script_response_time = base::Time::FromJsTime(0);
+  data1.script_response_time = base::Time::UnixEpoch();
   data1.ancestor_frame_type = blink::mojom::AncestorFrameType::kNormalFrame;
   data1.policy_container_policies =
       blink::mojom::PolicyContainerPolicies::New();
@@ -622,7 +628,7 @@ TEST(ServiceWorkerDatabaseTest, GetRegistrationsForStorageKey) {
   data2.script = URL(origin2, "/script2.js");
   data2.version_id = 2000;
   data2.resources_total_size_bytes = 200;
-  data2.script_response_time = base::Time::FromJsTime(42);
+  data2.script_response_time = base::Time::FromMillisecondsSinceUnixEpoch(42);
   data2.ancestor_frame_type = blink::mojom::AncestorFrameType::kFencedFrame;
   data2.policy_container_policies =
       blink::mojom::PolicyContainerPolicies::New();
@@ -650,7 +656,7 @@ TEST(ServiceWorkerDatabaseTest, GetRegistrationsForStorageKey) {
   data3.script = URL(origin3, "/script3.js");
   data3.version_id = 3000;
   data3.resources_total_size_bytes = 300;
-  data3.script_response_time = base::Time::FromJsTime(420);
+  data3.script_response_time = base::Time::FromMillisecondsSinceUnixEpoch(420);
   data3.policy_container_policies =
       blink::mojom::PolicyContainerPolicies::New();
   data3.policy_container_policies->cross_origin_embedder_policy =
@@ -668,7 +674,7 @@ TEST(ServiceWorkerDatabaseTest, GetRegistrationsForStorageKey) {
   data4.script = URL(origin3, "/script4.js");
   data4.version_id = 4000;
   data4.resources_total_size_bytes = 400;
-  data4.script_response_time = base::Time::FromJsTime(4200);
+  data4.script_response_time = base::Time::FromMillisecondsSinceUnixEpoch(4200);
   data4.policy_container_policies =
       blink::mojom::PolicyContainerPolicies::New();
   data4.policy_container_policies->cross_origin_embedder_policy =
@@ -830,6 +836,8 @@ TEST(ServiceWorkerDatabaseTest, GetAllRegistrations) {
 
   // Disable partitioning to ensure the partitioned keys are not found.
   scoped_feature_list.Reset();
+  scoped_feature_list.InitAndDisableFeature(
+      net::features::kThirdPartyStoragePartitioning);
 
   // Keys with nonces should always be gettable.
   GURL origin7 = GURL("https://www7.example.com");
@@ -863,6 +871,7 @@ TEST(ServiceWorkerDatabaseTest, GetAllRegistrations) {
   VerifyRegistrationData(data7, *registrations[4]);
 
   // Re-enable partitioning and check for the partitioned keys.
+  scoped_feature_list.Reset();
   scoped_feature_list.InitAndEnableFeature(
       net::features::kThirdPartyStoragePartitioning);
 
@@ -2547,14 +2556,12 @@ void DeleteAllDataForStorageKeyTest::TestDeleteAllDataForStorageKey(
                                     CreateUserData(exiting_data.registration_id,
                                                    {{"key1", "value1"}})));
 
-  // invoke DeleteAllDataForStorageKeys
+  // invoke DeleteAllDataForOrigins
   std::vector<int64_t> newly_purgeable_resources;
   auto origin_obj = url::Origin::Create(GURL(deleted_origin));
-  const blink::StorageKey deleted_key =
-      blink::StorageKey::CreateFirstParty(origin_obj);
   ASSERT_EQ(ServiceWorkerDatabase::Status::kOk,
-            database->DeleteAllDataForStorageKeys({deleted_key},
-                                                  &newly_purgeable_resources));
+            database->DeleteAllDataForOrigins({origin_obj},
+                                              &newly_purgeable_resources));
 
   if (expect_key_deleted) {
     // `registered_key` should be removed from the unique origin list.
@@ -2725,21 +2732,20 @@ void DeleteAllDataForStorageKeyTest::
                 data2.registration_id, registered_key,
                 CreateUserData(data2.registration_id, {{"key4", "value4"}})));
 
-  // invoke DeleteAllDataForStorageKeys
+  // invoke DeleteAllDataForOrigins
   std::vector<int64_t> newly_purgeable_resources;
-  auto make_key = [](std::string origin) {
-    return blink::StorageKey::CreateFirstParty(
-        url::Origin::Create(GURL(origin)));
+  auto make_origin = [](std::string origin) {
+    return url::Origin::Create(GURL(origin));
   };
   ASSERT_EQ(ServiceWorkerDatabase::Status::kOk,
-            database->DeleteAllDataForStorageKeys(
+            database->DeleteAllDataForOrigins(
                 {
                     // This key does not correspond to the registered data.
-                    make_key("https://other.com"),
+                    make_origin("https://other.com"),
                     // Delete the registered data precisely.
-                    make_key("https://example.com"),
+                    make_origin("https://example.com"),
                     // With 3PSP enabled, this will delete the same data.
-                    make_key("https://sub2.example.com"),
+                    make_origin("https://sub2.example.com"),
                 },
                 &newly_purgeable_resources));
 
@@ -3357,7 +3363,7 @@ TEST(ServiceWorkerDatabaseTest, PolicyContainerPoliciesStoreRestore) {
 // impl can still be correctly read by the blink::StorageKey impl.
 TEST(ServiceWorkerDatabaseTest, StorageKeyImplCanReadPreviousOriginImplDB) {
   base::FilePath root_path;
-  base::PathService::Get(base::DIR_SOURCE_ROOT, &root_path);
+  base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &root_path);
   base::FilePath database_dir = root_path.AppendASCII(
       "components/test/data/service_worker/created_by_origin_impl/Database/");
 
@@ -3544,6 +3550,383 @@ TEST(ServiceWorkerDatabaseTest, FetchHandlerTypeStoreRestore) {
   store_and_restore(blink::mojom::ServiceWorkerFetchHandlerType::kNotSkippable);
   store_and_restore(
       blink::mojom::ServiceWorkerFetchHandlerType::kEmptyFetchHandler);
+}
+
+TEST(ServiceWorkerDatabaseTest, RouterRulesStoreRestore) {
+  auto store_and_restore = [](blink::ServiceWorkerRouterRules rules) {
+    GURL origin("https://example.com");
+    RegistrationData data;
+    data.registration_id = 123;
+    data.scope = URL(origin, "/foo");
+    data.key =
+        blink::StorageKey::CreateFirstParty(url::Origin::Create(data.scope));
+    data.script = URL(origin, "/script.js");
+    data.version_id = 456;
+    data.fetch_handler_type =
+        blink::mojom::ServiceWorkerFetchHandlerType::kNoHandler;
+    data.resources_total_size_bytes = 100;
+    data.policy_container_policies =
+        blink::mojom::PolicyContainerPolicies::New();
+    data.router_rules = rules;
+    std::vector<ResourceRecordPtr> resources;
+    resources.push_back(CreateResource(1, data.script, 100));
+
+    // Store.
+    std::unique_ptr<ServiceWorkerDatabase> database(CreateDatabaseInMemory());
+    ServiceWorkerDatabase::DeletedVersion deleted_version;
+    ASSERT_EQ(ServiceWorkerDatabase::Status::kOk,
+              database->WriteRegistration(data, resources, &deleted_version));
+
+    // Restore.
+    std::vector<mojom::ServiceWorkerRegistrationDataPtr> registrations;
+    std::vector<std::vector<ResourceRecordPtr>> resources_list;
+    EXPECT_EQ(
+        ServiceWorkerDatabase::Status::kOk,
+        database->GetRegistrationsForStorageKey(
+            blink::StorageKey::CreateFirstParty(url::Origin::Create(origin)),
+            &registrations, &resources_list));
+
+    // The data must not have been altered.
+    VerifyRegistrationData(data, *registrations[0]);
+  };
+
+  // simple
+  {
+    blink::ServiceWorkerRouterRules router_rules;
+    blink::ServiceWorkerRouterRule rule;
+    blink::SafeUrlPattern url_pattern;
+    url_pattern.protocol.emplace_back(liburlpattern::PartType::kFixed, "https",
+                                      liburlpattern::Modifier::kNone);
+    url_pattern.username.emplace_back(liburlpattern::PartType::kFixed,
+                                      "username",
+                                      liburlpattern::Modifier::kNone);
+    url_pattern.password.emplace_back(liburlpattern::PartType::kFixed,
+                                      "password",
+                                      liburlpattern::Modifier::kNone);
+    url_pattern.hostname.emplace_back(liburlpattern::PartType::kFixed,
+                                      "example.com",
+                                      liburlpattern::Modifier::kNone);
+    url_pattern.port.emplace_back(liburlpattern::PartType::kFixed, "8000",
+                                  liburlpattern::Modifier::kNone);
+    url_pattern.pathname.emplace_back(liburlpattern::PartType::kFixed,
+                                      "/test_data",
+                                      liburlpattern::Modifier::kNone);
+    url_pattern.search.emplace_back(liburlpattern::PartType::kFixed, "search",
+                                    liburlpattern::Modifier::kNone);
+    url_pattern.hash.emplace_back(liburlpattern::PartType::kFixed, "hash",
+                                  liburlpattern::Modifier::kNone);
+    url_pattern.options.ignore_case = true;
+    rule.condition =
+        blink::ServiceWorkerRouterCondition::WithUrlPattern(url_pattern);
+
+    blink::ServiceWorkerRouterSource source;
+    source.type = blink::ServiceWorkerRouterSource::Type::kNetwork;
+    source.network_source = blink::ServiceWorkerRouterNetworkSource{};
+    rule.sources.emplace_back(source);
+    router_rules.rules.emplace_back(rule);
+
+    store_and_restore(router_rules);
+  }
+
+  // `or` condition
+  {
+    blink::ServiceWorkerRouterRules router_rules;
+    blink::ServiceWorkerRouterRule rule;
+    blink::ServiceWorkerRouterOrCondition or_condition;
+    {
+      or_condition.conditions =
+          std::vector(3, blink::ServiceWorkerRouterCondition::WithRequest({}));
+    }
+    rule.condition =
+        blink::ServiceWorkerRouterCondition::WithOrCondition(or_condition);
+
+    blink::ServiceWorkerRouterSource source;
+    source.type = blink::ServiceWorkerRouterSource::Type::kNetwork;
+    source.network_source = blink::ServiceWorkerRouterNetworkSource{};
+    rule.sources.emplace_back(source);
+    router_rules.rules.emplace_back(rule);
+
+    store_and_restore(router_rules);
+  }
+
+  // empty request
+  {
+    blink::ServiceWorkerRouterRules router_rules;
+    blink::ServiceWorkerRouterRule rule;
+    {
+      // test with request.
+      rule.condition = blink::ServiceWorkerRouterCondition::WithRequest({});
+    }
+
+    blink::ServiceWorkerRouterSource source;
+    source.type = blink::ServiceWorkerRouterSource::Type::kNetwork;
+    source.network_source = blink::ServiceWorkerRouterNetworkSource{};
+    rule.sources.emplace_back(source);
+    router_rules.rules.emplace_back(rule);
+
+    store_and_restore(router_rules);
+  }
+
+  // multiple conditions
+  {
+    blink::ServiceWorkerRouterRules router_rules;
+    blink::ServiceWorkerRouterRule rule;
+    {
+      blink::SafeUrlPattern url_pattern;
+      {
+        url_pattern.protocol.emplace_back(liburlpattern::PartType::kFixed,
+                                          "https",
+                                          liburlpattern::Modifier::kNone);
+        url_pattern.username.emplace_back(liburlpattern::PartType::kFixed,
+                                          "username",
+                                          liburlpattern::Modifier::kNone);
+        url_pattern.password.emplace_back(liburlpattern::PartType::kFixed,
+                                          "password",
+                                          liburlpattern::Modifier::kNone);
+        url_pattern.hostname.emplace_back(liburlpattern::PartType::kFixed,
+                                          "example.com",
+                                          liburlpattern::Modifier::kNone);
+        url_pattern.port.emplace_back(liburlpattern::PartType::kFixed, "8000",
+                                      liburlpattern::Modifier::kNone);
+        url_pattern.pathname.emplace_back(liburlpattern::PartType::kFixed,
+                                          "/test_data",
+                                          liburlpattern::Modifier::kNone);
+        url_pattern.search.emplace_back(liburlpattern::PartType::kFixed,
+                                        "search",
+                                        liburlpattern::Modifier::kNone);
+        url_pattern.hash.emplace_back(liburlpattern::PartType::kFixed, "hash",
+                                      liburlpattern::Modifier::kNone);
+      }
+      // test with request.
+      blink::ServiceWorkerRouterRequestCondition request;
+      {
+        request.method = "GET";
+        request.mode = network::mojom::RequestMode::kNavigate;
+        request.destination = network::mojom::RequestDestination::kDocument;
+      }
+      // test for running status.
+      blink::ServiceWorkerRouterRunningStatusCondition running_status;
+      {
+        running_status.status =
+            blink::ServiceWorkerRouterRunningStatusCondition::
+                RunningStatusEnum::kRunning;
+      }
+      rule.condition = {url_pattern, request, running_status, absl::nullopt};
+    }
+
+    blink::ServiceWorkerRouterSource source;
+    source.type = blink::ServiceWorkerRouterSource::Type::kNetwork;
+    source.network_source = blink::ServiceWorkerRouterNetworkSource{};
+    rule.sources.emplace_back(source);
+    router_rules.rules.emplace_back(rule);
+
+    store_and_restore(router_rules);
+  }
+
+  // multiple pathnames.
+  {
+    blink::ServiceWorkerRouterRules router_rules;
+    blink::ServiceWorkerRouterRule rule;
+    blink::SafeUrlPattern url_pattern;
+    url_pattern.pathname.emplace_back(liburlpattern::PartType::kFixed,
+                                      "/test_data",
+                                      liburlpattern::Modifier::kNone);
+    url_pattern.pathname.emplace_back(liburlpattern::PartType::kFullWildcard,
+                                      "name", "prefix", "", "suffix",
+                                      liburlpattern::Modifier::kZeroOrMore);
+    url_pattern.pathname.emplace_back(liburlpattern::PartType::kSegmentWildcard,
+                                      "name", "prefix", "", "suffix",
+                                      liburlpattern::Modifier::kOptional);
+    url_pattern.pathname.emplace_back(liburlpattern::PartType::kSegmentWildcard,
+                                      "name", "prefix", "", "suffix",
+                                      liburlpattern::Modifier::kOneOrMore);
+    rule.condition =
+        blink::ServiceWorkerRouterCondition::WithUrlPattern(url_pattern);
+
+    blink::ServiceWorkerRouterSource source;
+    source.type = blink::ServiceWorkerRouterSource::Type::kNetwork;
+    source.network_source = blink::ServiceWorkerRouterNetworkSource{};
+    rule.sources.emplace_back(source);
+    router_rules.rules.emplace_back(rule);
+
+    store_and_restore(router_rules);
+  }
+
+  // multiple hostnames.
+  {
+    blink::ServiceWorkerRouterRules router_rules;
+    blink::ServiceWorkerRouterRule rule;
+    blink::SafeUrlPattern url_pattern;
+    url_pattern.hostname.emplace_back(liburlpattern::PartType::kFixed,
+                                      "example.com",
+                                      liburlpattern::Modifier::kNone);
+    url_pattern.hostname.emplace_back(liburlpattern::PartType::kFullWildcard,
+                                      "name", "prefix", "", "suffix",
+                                      liburlpattern::Modifier::kZeroOrMore);
+    url_pattern.hostname.emplace_back(liburlpattern::PartType::kSegmentWildcard,
+                                      "name", "prefix", "", "suffix",
+                                      liburlpattern::Modifier::kOptional);
+    url_pattern.hostname.emplace_back(liburlpattern::PartType::kSegmentWildcard,
+                                      "name", "prefix", "", "suffix",
+                                      liburlpattern::Modifier::kOneOrMore);
+    rule.condition =
+        blink::ServiceWorkerRouterCondition::WithUrlPattern(url_pattern);
+
+    blink::ServiceWorkerRouterSource source;
+    source.type = blink::ServiceWorkerRouterSource::Type::kNetwork;
+    source.network_source = blink::ServiceWorkerRouterNetworkSource{};
+    rule.sources.emplace_back(source);
+    router_rules.rules.emplace_back(rule);
+
+    store_and_restore(router_rules);
+  }
+
+  // multiple sources
+  {
+    blink::ServiceWorkerRouterRules router_rules;
+    blink::ServiceWorkerRouterRule rule;
+    blink::SafeUrlPattern url_pattern;
+    url_pattern.hostname.emplace_back(liburlpattern::PartType::kFixed,
+                                      "example.com",
+                                      liburlpattern::Modifier::kNone);
+    url_pattern.pathname.emplace_back(liburlpattern::PartType::kFixed,
+                                      "/test_data",
+                                      liburlpattern::Modifier::kNone);
+    rule.condition =
+        blink::ServiceWorkerRouterCondition::WithUrlPattern(url_pattern);
+
+    {
+      blink::ServiceWorkerRouterSource source;
+      source.type = blink::ServiceWorkerRouterSource::Type::kNetwork;
+      source.network_source.emplace();
+      rule.sources.push_back(source);
+    }
+    {
+      blink::ServiceWorkerRouterSource source;
+      source.type = blink::ServiceWorkerRouterSource::Type::kRace;
+      source.race_source.emplace();
+      rule.sources.push_back(source);
+    }
+    {
+      blink::ServiceWorkerRouterSource source;
+      source.type = blink::ServiceWorkerRouterSource::Type::kFetchEvent;
+      source.fetch_event_source.emplace();
+      rule.sources.push_back(source);
+    }
+    {  // cache source without cache_name.
+      blink::ServiceWorkerRouterSource source;
+      source.type = blink::ServiceWorkerRouterSource::Type::kCache;
+      source.cache_source.emplace();
+      rule.sources.push_back(source);
+    }
+    {  // cache source with cache_name.
+      blink::ServiceWorkerRouterSource source;
+      source.type = blink::ServiceWorkerRouterSource::Type::kCache;
+      blink::ServiceWorkerRouterCacheSource cache_source;
+      cache_source.cache_name = "example_cache_name";
+      source.cache_source = cache_source;
+      rule.sources.push_back(source);
+    }
+    router_rules.rules.emplace_back(rule);
+
+    store_and_restore(router_rules);
+  }
+
+  // multiple routes
+  {
+    blink::ServiceWorkerRouterRules router_rules;
+    blink::ServiceWorkerRouterRule rule;
+    blink::SafeUrlPattern url_pattern;
+    url_pattern.pathname.emplace_back(liburlpattern::PartType::kFixed,
+                                      "/test_data",
+                                      liburlpattern::Modifier::kNone);
+    rule.condition =
+        blink::ServiceWorkerRouterCondition::WithUrlPattern(url_pattern);
+
+    blink::ServiceWorkerRouterSource source;
+    source.type = blink::ServiceWorkerRouterSource::Type::kNetwork;
+    source.network_source = blink::ServiceWorkerRouterNetworkSource{};
+    rule.sources.emplace_back(source);
+    router_rules.rules.push_back(rule);
+    router_rules.rules.push_back(rule);
+
+    store_and_restore(router_rules);
+  }
+}
+
+TEST(ServiceWorkerDatabaseTest, RouterRulesLegacyPathname) {
+  std::unique_ptr<ServiceWorkerDatabase> database(CreateDatabaseInMemory());
+
+  ServiceWorkerRegistrationData data;
+  data.set_registration_id(1);
+  data.set_scope_url("https://example.com");
+  data.set_script_url("https://example.com/sw");
+  data.set_version_id(1);
+  data.set_is_active(true);
+  data.set_has_fetch_handler(true);
+  data.set_last_update_check_time(
+      base::Time::Now().ToDeltaSinceWindowsEpoch().InMicroseconds());
+
+  database->next_avail_registration_id_ = 2;
+  database->next_avail_version_id_ = 2;
+
+  blink::StorageKey key =
+      blink::StorageKey::CreateFromStringForTesting(data.scope_url());
+
+  {
+    {
+      auto* rules = data.mutable_router_rules();
+      // service_worker_internals::kRouterRuleVersion
+      // in service_worker_database.cc
+      rules->set_version(1);
+      auto* v1 = rules->add_v1();
+      auto* condition = v1->add_condition();
+      auto* mutable_url_pattern = condition->mutable_url_pattern();
+      auto* legacy_pathname = mutable_url_pattern->mutable_legacy_pathname();
+      auto* part = legacy_pathname->Add();
+      part->set_modifier(ServiceWorkerRegistrationData::RouterRules::RuleV1::
+                             Condition::URLPattern::Part::kNone);
+      auto* fixed = part->mutable_fixed();
+      fixed->set_value("/fake");
+      auto* source = v1->add_source();
+      source->mutable_network_source();
+    }
+
+    // Write the serialization.
+    std::string value;
+    ASSERT_TRUE(data.SerializeToString(&value));
+
+    // Parse the serialized data.
+    // The legacy path should be converted to the new URLPattern.
+    RegistrationDataPtr registration;
+    ASSERT_EQ(ServiceWorkerDatabase::Status::kOk,
+              database->ParseRegistrationData(value, key, &registration));
+    EXPECT_FALSE(registration->router_rules->rules.empty());
+
+    blink::SafeUrlPattern url_pattern;
+    {
+      liburlpattern::Part part;
+      part.modifier = liburlpattern::Modifier::kNone;
+      part.type = liburlpattern::PartType::kFullWildcard;
+      part.name = "0";
+
+      url_pattern.protocol.push_back(part);
+      url_pattern.username.push_back(part);
+      url_pattern.password.push_back(part);
+      url_pattern.hostname.push_back(part);
+      url_pattern.port.push_back(part);
+      url_pattern.pathname.emplace_back(liburlpattern::PartType::kFixed,
+                                        "/fake",
+                                        liburlpattern::Modifier::kNone);
+      url_pattern.search.push_back(part);
+      url_pattern.hash.push_back(part);
+    }
+
+    const auto& registered_url_pattern =
+        std::get<absl::optional<blink::SafeUrlPattern>&>(
+            registration->router_rules->rules[0].condition.get());
+    EXPECT_EQ(url_pattern, registered_url_pattern);
+  }
 }
 
 }  // namespace storage

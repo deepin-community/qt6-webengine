@@ -15,11 +15,15 @@
 #include "components/prefs/testing_pref_service.h"
 #include "components/variations/client_filterable_state.h"
 #include "components/variations/pref_names.h"
+#include "components/variations/service/safe_seed_manager_base.h"
+#include "components/variations/variations_safe_seed_store_local_state.h"
 #include "components/variations/variations_seed_store.h"
 #include "components/variations/variations_switches.h"
+#include "components/variations/variations_test_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace variations {
+
 namespace {
 
 const char kTestSeed[] = "compressed, base-64 encoded serialized seed data";
@@ -37,7 +41,9 @@ base::Time GetTestFetchTime() {
 class FakeSeedStore : public VariationsSeedStore {
  public:
   explicit FakeSeedStore(TestingPrefServiceSimple* local_state)
-      : VariationsSeedStore(local_state) {
+      : VariationsSeedStore(
+            local_state,
+            std::make_unique<VariationsSafeSeedStoreLocalState>(local_state)) {
     VariationsSeedStore::RegisterPrefs(local_state->registry());
   }
 
@@ -92,8 +98,7 @@ class FakeSeedStore : public VariationsSeedStore {
 void SetDefaultActiveState(SafeSeedManager* safe_seed_manager,
                            PrefService* local_state) {
   std::unique_ptr<ClientFilterableState> client_state =
-      std::make_unique<ClientFilterableState>(
-          base::BindOnce([] { return false; }));
+      CreateDummyClientFilterableState();
   client_state->locale = kTestLocale;
   client_state->permanent_consistency_country =
       kTestPermanentConsistencyCountry;
@@ -123,7 +128,7 @@ void ExpectDefaultActiveState(const FakeSeedStore& seed_store) {
 
 }  // namespace
 
-class SafeSeedManagerTest : public testing::Test {
+class SafeSeedManagerTest : public ::testing::Test {
  public:
   SafeSeedManagerTest() {
     metrics::CleanExitBeacon::RegisterPrefs(prefs_.registry());

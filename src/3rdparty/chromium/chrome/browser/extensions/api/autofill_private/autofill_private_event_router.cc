@@ -5,6 +5,7 @@
 #include "chrome/browser/extensions/api/autofill_private/autofill_private_event_router.h"
 
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -20,7 +21,6 @@
 #include "chrome/common/extensions/api/autofill_private.h"
 #include "components/autofill/core/browser/personal_data_manager.h"
 #include "content/public/browser/browser_context.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace extensions {
 namespace {
@@ -59,7 +59,33 @@ void AutofillPrivateEventRouter::Shutdown() {
     personal_data_->RemoveObserver(this);
 }
 
+void AutofillPrivateEventRouter::RebindPersonalDataManagerForTesting(
+    autofill::PersonalDataManager* personal_data) {
+  if (personal_data_) {
+    personal_data_->RemoveObserver(this);
+  }
+  personal_data_ = personal_data;
+  if (personal_data_) {
+    personal_data_->AddObserver(this);
+  }
+}
+
+void AutofillPrivateEventRouter::UnbindPersonalDataManagerForTesting() {
+  if (personal_data_) {
+    personal_data_->RemoveObserver(this);
+    personal_data_ = nullptr;
+  }
+}
+
 void AutofillPrivateEventRouter::OnPersonalDataChanged() {
+  BroadcastCurrentData();
+}
+
+void AutofillPrivateEventRouter::OnPersonalDataSyncStateChanged() {
+  BroadcastCurrentData();
+}
+
+void AutofillPrivateEventRouter::BroadcastCurrentData() {
   // Ignore any updates before data is loaded. This can happen in tests.
   if (!(personal_data_ && personal_data_->IsDataLoaded()))
     return;
@@ -73,7 +99,7 @@ void AutofillPrivateEventRouter::OnPersonalDataChanged() {
   autofill_util::IbanEntryList ibanList =
       extensions::autofill_util::GenerateIbanList(*personal_data_);
 
-  absl::optional<api::autofill_private::AccountInfo> account_info =
+  std::optional<api::autofill_private::AccountInfo> account_info =
       extensions::autofill_util::GetAccountInfo(*personal_data_);
 
   base::Value::List args;
@@ -90,11 +116,6 @@ void AutofillPrivateEventRouter::OnPersonalDataChanged() {
                 std::move(args)));
 
   event_router_->BroadcastEvent(std::move(extension_event));
-}
-
-AutofillPrivateEventRouter* AutofillPrivateEventRouter::Create(
-    content::BrowserContext* context) {
-  return new AutofillPrivateEventRouter(context);
 }
 
 }  // namespace extensions

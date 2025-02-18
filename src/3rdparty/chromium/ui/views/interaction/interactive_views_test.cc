@@ -4,6 +4,10 @@
 
 #include "ui/views/interaction/interactive_views_test.h"
 
+#include <functional>
+
+#include "base/functional/callback_forward.h"
+#include "base/functional/overloaded.h"
 #include "base/strings/strcat.h"
 #include "base/test/bind.h"
 #include "build/build_config.h"
@@ -92,6 +96,13 @@ InteractiveViewsTestApi::NameDescendantView(ElementSpecifier parent,
               base::StringPrintf("NameDescendantView( \"%s\" )", name.data())));
 }
 
+InteractiveViewsTestApi::StepBuilder InteractiveViewsTestApi::ScrollIntoView(
+    ElementSpecifier view) {
+  return std::move(WithView(view, [](View* v) {
+                     v->ScrollViewToVisible();
+                   }).SetDescription("ScrollIntoView()"));
+}
+
 InteractiveViewsTestApi::StepBuilder InteractiveViewsTestApi::MoveMouseTo(
     ElementSpecifier reference,
     RelativePositionSpecifier position) {
@@ -102,11 +113,14 @@ InteractiveViewsTestApi::StepBuilder InteractiveViewsTestApi::MoveMouseTo(
       [](InteractiveViewsTestApi* test, RelativePositionCallback pos_callback,
          ui::InteractionSequence* seq, ui::TrackedElement* el) {
         test->test_impl().mouse_error_message_.clear();
+        const auto weak_seq = seq->AsWeakPtr();
         if (!test->mouse_util().PerformGestures(
                 test->test_impl().GetWindowHintFor(el),
                 InteractionTestUtilMouse::MoveTo(
                     std::move(pos_callback).Run(el)))) {
-          seq->FailForTesting();
+          if (weak_seq) {
+            weak_seq->FailForTesting();
+          }
         }
       },
       base::Unretained(this), GetPositionCallback(std::move(position))));
@@ -129,12 +143,15 @@ InteractiveViewsTestApi::StepBuilder InteractiveViewsTestApi::ClickMouse(
       [](InteractiveViewsTestApi* test, ui_controls::MouseButton button,
          bool release, ui::InteractionSequence* seq, ui::TrackedElement* el) {
         test->test_impl().mouse_error_message_.clear();
+        const auto weak_seq = seq->AsWeakPtr();
         if (!test->mouse_util().PerformGestures(
                 test->test_impl().GetWindowHintFor(el),
                 release ? InteractionTestUtilMouse::Click(button)
                         : InteractionTestUtilMouse::MouseGestures{
                               InteractionTestUtilMouse::MouseDown(button)})) {
-          seq->FailForTesting();
+          if (weak_seq) {
+            weak_seq->FailForTesting();
+          }
         }
       },
       base::Unretained(this), button, release));
@@ -154,11 +171,14 @@ InteractiveViewsTestApi::StepBuilder InteractiveViewsTestApi::DragMouseTo(
          bool release, ui::InteractionSequence* seq, ui::TrackedElement* el) {
         test->test_impl().mouse_error_message_.clear();
         const gfx::Point target = std::move(pos_callback).Run(el);
+        const auto weak_seq = seq->AsWeakPtr();
         if (!test->mouse_util().PerformGestures(
                 test->test_impl().GetWindowHintFor(el),
                 release ? InteractionTestUtilMouse::DragAndRelease(target)
                         : InteractionTestUtilMouse::DragAndHold(target))) {
-          seq->FailForTesting();
+          if (weak_seq) {
+            weak_seq->FailForTesting();
+          }
         }
       },
       base::Unretained(this), GetPositionCallback(std::move(position)),
@@ -182,10 +202,13 @@ InteractiveViewsTestApi::StepBuilder InteractiveViewsTestApi::ReleaseMouse(
       [](InteractiveViewsTestApi* test, ui_controls::MouseButton button,
          ui::InteractionSequence* seq, ui::TrackedElement* el) {
         test->test_impl().mouse_error_message_.clear();
+        const auto weak_seq = seq->AsWeakPtr();
         if (!test->mouse_util().PerformGestures(
                 test->test_impl().GetWindowHintFor(el),
                 InteractionTestUtilMouse::MouseUp(button))) {
-          return seq->FailForTesting();
+          if (weak_seq) {
+            weak_seq->FailForTesting();
+          }
         }
       },
       base::Unretained(this), button));
@@ -194,66 +217,75 @@ InteractiveViewsTestApi::StepBuilder InteractiveViewsTestApi::ReleaseMouse(
 }
 
 // static
-InteractiveViewsTestApi::FindViewCallback<View>
+InteractiveViewsTestApi::FindViewCallback
 InteractiveViewsTestApi::GetFindViewCallback(AbsoluteViewSpecifier spec) {
-  if (View** view = absl::get_if<View*>(&spec)) {
-    CHECK(*view) << "NameView(View*): view must be set.";
-    return base::BindOnce(
-        [](const std::unique_ptr<ViewTracker>& ref, View*) {
-          LOG_IF(ERROR, !ref->view()) << "NameView(View*): view ceased to be "
-                                         "valid before step was executed.";
-          return ref->view();
-        },
-        std::make_unique<ViewTracker>(*view));
-  }
-
-  if (View*** view = absl::get_if<View**>(&spec)) {
-    CHECK(*view) << "NameView(View**): view pointer is null.";
-    return base::BindOnce(
-        [](View** view, View*) {
-          LOG_IF(ERROR, !*view) << "NameView(View**): view pointer is null.";
-          return *view;
-        },
-        base::Unretained(*view));
-  }
-
-  return base::RectifyCallback<FindViewCallback<View>>(
-      std::move(absl::get<base::OnceCallback<View*()>>(spec)));
+  return absl::visit(
+      base::Overloaded{
+          [](View* view) {
+            CHECK(view) << "NameView(View*): view must be set.";
+            return base::BindOnce(
+                [](const std::unique_ptr<ViewTracker>& ref, View*) {
+                  LOG_IF(ERROR, !ref->view())
+                      << "NameView(View*): view ceased to be "
+                         "valid before step was executed.";
+                  return ref->view();
+                },
+                std::make_unique<ViewTracker>(view));
+          },
+          [](std::reference_wrapper<View*> ref) {
+            return base::BindOnce(
+                [](std::reference_wrapper<View*> ref, View*) {
+                  LOG_IF(ERROR, !ref.get())
+                      << "NameView(View*): view ceased to be "
+                         "valid before step was executed.";
+                  return ref.get();
+                },
+                ref);
+          },
+          [](base::OnceCallback<View*()>& callback) {
+            return base::RectifyCallback<FindViewCallback>(std::move(callback));
+          }},
+      spec);
 }
 
 // static
-InteractiveViewsTestApi::FindViewCallback<View>
+InteractiveViewsTestApi::FindViewCallback
 InteractiveViewsTestApi::GetFindViewCallback(ChildViewSpecifier spec) {
-  if (size_t* index = absl::get_if<size_t>(&spec)) {
-    return base::BindOnce(
-        [](size_t index, View* parent) -> View* {
-          if (index >= parent->children().size()) {
-            LOG(ERROR) << "NameChildView(int): Child index out of bounds; got "
-                       << index << " but only " << parent->children().size()
-                       << " children.";
-            return nullptr;
-          }
-          return parent->children()[index];
-        },
-        *index);
-  }
-
-  return base::BindOnce(
-      [](ViewMatcher matcher, View* parent) -> View* {
-        auto* const result =
-            FindMatchingView(parent, matcher, /*recursive =*/false);
-        LOG_IF(ERROR, !result)
-            << "NameChildView(ViewMatcher): No child matches matcher.";
-        return result;
-      },
-      absl::get<ViewMatcher>(spec));
+  return absl::visit(
+      base::Overloaded{
+          [](size_t index) {
+            return base::BindOnce(
+                [](size_t index, View* parent) -> View* {
+                  if (index >= parent->children().size()) {
+                    LOG(ERROR)
+                        << "NameChildView(int): Child index out of bounds; got "
+                        << index << " but only " << parent->children().size()
+                        << " children.";
+                    return nullptr;
+                  }
+                  return parent->children()[index];
+                },
+                index);
+          },
+          [](ViewMatcher& matcher) {
+            return base::BindOnce(
+                [](ViewMatcher matcher, View* parent) -> View* {
+                  auto* const result =
+                      FindMatchingView(parent, matcher, /*recursive =*/false);
+                  LOG_IF(ERROR, !result) << "NameChildView(ViewMatcher): No "
+                                            "child matches matcher.";
+                  return result;
+                },
+                std::move(matcher));
+          }},
+      spec);
 }
 
 // static
 View* InteractiveViewsTestApi::FindMatchingView(const View* from,
                                                 ViewMatcher& matcher,
                                                 bool recursive) {
-  for (auto* const child : from->children()) {
+  for (views::View* const child : from->children()) {
     if (matcher.Run(child))
       return child;
     if (recursive) {
@@ -266,7 +298,7 @@ View* InteractiveViewsTestApi::FindMatchingView(const View* from,
 }
 
 void InteractiveViewsTestApi::SetContextWidget(Widget* widget) {
-  context_widget_ = widget;
+  context_widget_ = widget ? widget->GetWeakPtr() : nullptr;
   if (widget) {
     CHECK(!test_impl().mouse_util_)
         << "Changing the context widget during a test is not supported.";
@@ -280,51 +312,41 @@ void InteractiveViewsTestApi::SetContextWidget(Widget* widget) {
 // static
 InteractiveViewsTestApi::RelativePositionCallback
 InteractiveViewsTestApi::GetPositionCallback(AbsolutePositionSpecifier spec) {
-  if (auto* point = absl::get_if<gfx::Point>(&spec)) {
-    return base::BindOnce([](gfx::Point p, ui::TrackedElement*) { return p; },
-                          *point);
-  }
-
-  if (auto** point = absl::get_if<gfx::Point*>(&spec)) {
-    return base::BindOnce([](gfx::Point* p, ui::TrackedElement*) { return *p; },
-                          base::Unretained(*point));
-  }
-
-  CHECK(absl::holds_alternative<AbsolutePositionCallback>(spec));
-  return base::RectifyCallback<RelativePositionCallback>(
-      std::move(absl::get<AbsolutePositionCallback>(spec)));
+  return absl::visit(
+      base::Overloaded{
+          [](const gfx::Point& point) {
+            return base::BindOnce(
+                [](gfx::Point p, ui::TrackedElement*) { return p; }, point);
+          },
+          [](std::reference_wrapper<gfx::Point> point) {
+            return base::BindOnce([](std::reference_wrapper<gfx::Point> p,
+                                     ui::TrackedElement*) { return p.get(); },
+                                  point);
+          },
+          [](AbsolutePositionCallback& callback) {
+            return base::RectifyCallback<RelativePositionCallback>(
+                std::move(callback));
+          }},
+      spec);
 }
 
 // static
 InteractiveViewsTestApi::RelativePositionCallback
 InteractiveViewsTestApi::GetPositionCallback(RelativePositionSpecifier spec) {
-  if (auto* cb = absl::get_if<RelativePositionCallback>(&spec)) {
-    return std::move(*cb);
-  }
-
-  CHECK(absl::holds_alternative<CenterPoint>(spec));
-  return base::BindOnce([](ui::TrackedElement* el) {
-    return el->AsA<views::TrackedElementViews>()
-        ->view()
-        ->GetBoundsInScreen()
-        .CenterPoint();
-  });
-}
-
-InteractiveViewsTest::InteractiveViewsTest(
-    std::unique_ptr<base::test::TaskEnvironment> task_environment)
-    : ViewsTestBase(std::move(task_environment)) {}
-
-InteractiveViewsTest::~InteractiveViewsTest() = default;
-
-void InteractiveViewsTest::SetUp() {
-  ViewsTestBase::SetUp();
-  private_test_impl().DoTestSetUp();
-}
-
-void InteractiveViewsTest::TearDown() {
-  private_test_impl().DoTestTearDown();
-  ViewsTestBase::TearDown();
+  return absl::visit(
+      base::Overloaded{[](RelativePositionCallback& callback) {
+                         return std::move(callback);
+                       },
+                       [](CenterPoint) {
+                         return base::BindOnce([](ui::TrackedElement* el) {
+                           CHECK(el->IsA<views::TrackedElementViews>());
+                           return el->AsA<views::TrackedElementViews>()
+                               ->view()
+                               ->GetBoundsInScreen()
+                               .CenterPoint();
+                         });
+                       }},
+      spec);
 }
 
 }  // namespace views::test

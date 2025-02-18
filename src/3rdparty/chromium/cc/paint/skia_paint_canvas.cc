@@ -4,12 +4,16 @@
 
 #include "cc/paint/skia_paint_canvas.h"
 
+#include <cstdint>
+#include <cstring>
 #include <utility>
 
 #include "base/functional/bind.h"
 #include "base/notreached.h"
 #include "base/trace_event/trace_event.h"
 #include "cc/paint/display_item_list.h"
+#include "cc/paint/paint_op.h"
+#include "cc/paint/paint_op_buffer.h"
 #include "cc/paint/paint_recorder.h"
 #include "cc/paint/scoped_raster_flags.h"
 #include "cc/paint/skottie_wrapper.h"
@@ -20,6 +24,7 @@
 #include "third_party/skia/include/core/SkPoint.h"
 #include "third_party/skia/include/core/SkTextBlob.h"
 #include "third_party/skia/include/docs/SkPDFDocument.h"
+#include "third_party/skia/include/gpu/GrDirectContext.h"
 #include "third_party/skia/include/gpu/GrRecordingContext.h"
 
 namespace cc {
@@ -60,7 +65,10 @@ void* SkiaPaintCanvas::accessTopLayerPixels(SkImageInfo* info,
 }
 
 void SkiaPaintCanvas::flush() {
-  canvas_->flush();
+  if (GrDirectContext* direct_context =
+          GrAsDirectContext(canvas_->recordingContext())) {
+    direct_context->flushAndSubmit();
+  }
 }
 
 bool SkiaPaintCanvas::NeedsFlush() const {
@@ -275,7 +283,7 @@ void SkiaPaintCanvas::drawImage(const PaintImage& image,
                                 const SkSamplingOptions& sampling,
                                 const PaintFlags* flags) {
   DCHECK(!image.IsPaintWorklet());
-  absl::optional<ScopedRasterFlags> scoped_flags;
+  std::optional<ScopedRasterFlags> scoped_flags;
   if (flags) {
     scoped_flags.emplace(flags, image_provider_, canvas_->getTotalMatrix(),
                          GetMaxTextureSize(), 1.0f);
@@ -296,7 +304,7 @@ void SkiaPaintCanvas::drawImageRect(const PaintImage& image,
                                     const SkSamplingOptions& sampling,
                                     const PaintFlags* flags,
                                     SkCanvas::SrcRectConstraint constraint) {
-  absl::optional<ScopedRasterFlags> scoped_flags;
+  std::optional<ScopedRasterFlags> scoped_flags;
   if (flags) {
     scoped_flags.emplace(flags, image_provider_, canvas_->getTotalMatrix(),
                          GetMaxTextureSize(), 1.0f);
@@ -310,6 +318,26 @@ void SkiaPaintCanvas::drawImageRect(const PaintImage& image,
                                      constraint);
   DrawImageRectOp::RasterWithFlags(&draw_image_rect_op, raster_flags, canvas_,
                                    params);
+  FlushAfterDrawIfNeeded();
+}
+
+void SkiaPaintCanvas::drawVertices(
+    scoped_refptr<RefCountedBuffer<SkPoint>> vertices,
+    scoped_refptr<RefCountedBuffer<SkPoint>> uvs,
+    scoped_refptr<RefCountedBuffer<uint16_t>> indices,
+    const PaintFlags& flags) {
+  ScopedRasterFlags raster_flags(&flags, image_provider_,
+                                 canvas_->getTotalMatrix(), GetMaxTextureSize(),
+                                 /*alpha=*/1.0f);
+  DrawVerticesOp op(std::move(vertices), std::move(uvs), std::move(indices),
+                    flags);
+  if (!raster_flags.flags() || !op.IsValid()) {
+    return;
+  }
+
+  PlaybackParams params(image_provider_);
+  DrawVerticesOp::RasterWithFlags(&op, raster_flags.flags(), canvas_, params);
+
   FlushAfterDrawIfNeeded();
 }
 
@@ -371,13 +399,13 @@ void SkiaPaintCanvas::Annotate(AnnotationType type,
                                const SkRect& rect,
                                sk_sp<SkData> data) {
   switch (type) {
-    case AnnotationType::URL:
+    case AnnotationType::kUrl:
       SkAnnotateRectWithURL(canvas_, rect, data.get());
       break;
-    case AnnotationType::LINK_TO_DESTINATION:
+    case AnnotationType::kLinkToDestination:
       SkAnnotateLinkToDestination(canvas_, rect, data.get());
       break;
-    case AnnotationType::NAMED_DESTINATION: {
+    case AnnotationType::kNameDestination: {
       SkPoint point = SkPoint::Make(rect.x(), rect.y());
       SkAnnotateNamedDestination(canvas_, point, data.get());
       break;
@@ -410,7 +438,10 @@ void SkiaPaintCanvas::FlushAfterDrawIfNeeded() {
     num_of_ops_ = 0;
     TRACE_EVENT0("cc",
                  "SkiaPaintCanvas::FlushAfterDrawIfNeeded::FlushGrContext");
-    canvas_->flush();
+    if (GrDirectContext* direct_context =
+            GrAsDirectContext(canvas_->recordingContext())) {
+      direct_context->flushAndSubmit();
+    }
   }
 }
 

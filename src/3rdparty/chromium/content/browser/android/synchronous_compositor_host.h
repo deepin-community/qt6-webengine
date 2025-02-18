@@ -59,6 +59,8 @@ class CONTENT_EXPORT SynchronousCompositorHost
   ~SynchronousCompositorHost() override;
 
   // SynchronousCompositor overrides.
+  void OnCompositorVisible() override;
+  void OnCompositorHidden() override;
   scoped_refptr<FrameFuture> DemandDrawHwAsync(
       const gfx::Size& viewport_size,
       const gfx::Rect& viewport_rect_for_tile_priority,
@@ -87,7 +89,7 @@ class CONTENT_EXPORT SynchronousCompositorHost
   void UpdateFrameMetaData(
       uint32_t version,
       viz::CompositorFrameMetadata frame_metadata,
-      absl::optional<viz::LocalSurfaceId> new_local_surface_id);
+      std::optional<viz::LocalSurfaceId> new_local_surface_id);
 
   // Called when the mojo channel should be created.
   void InitMojo();
@@ -183,6 +185,9 @@ class CONTENT_EXPORT SynchronousCompositorHost
   // fling_controller should advance the fling only when OnComputeScroll is not
   // overridden.
   bool on_compute_scroll_called_ = false;
+
+  // Whether `DemandDrawHwAsync` has ever been called.
+  bool draw_hw_called_ = false;
 
   // From renderer.
   uint32_t renderer_param_version_;

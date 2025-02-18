@@ -32,19 +32,18 @@ import * as Common from '../../core/common/common.js';
 import * as i18n from '../../core/i18n/i18n.js';
 import * as Platform from '../../core/platform/platform.js';
 import * as SDK from '../../core/sdk/sdk.js';
+import type * as Protocol from '../../generated/protocol.js';
 import * as UI from '../../ui/legacy/legacy.js';
+import * as VisualLogging from '../../ui/visual_logging/visual_logging.js';
 
 import layerDetailsViewStyles from './layerDetailsView.css.js';
-
-import type * as Protocol from '../../generated/protocol.js';
-
 import {
-  ScrollRectSelection,
-  Type,
   type LayerView,
   type LayerViewHost,
+  ScrollRectSelection,
   type Selection,
   type SnapshotSelection,
+  Type,
 } from './LayerViewHost.js';
 
 const UIStrings = {
@@ -180,6 +179,7 @@ export class LayerDetailsView extends Common.ObjectWrapper.eventMixin<EventTypes
 
   constructor(layerViewHost: LayerViewHost) {
     super(true);
+    this.element.setAttribute('jslog', `${VisualLogging.pane().context('layers-details')}`);
 
     this.layerViewHost = layerViewHost;
     this.layerViewHost.registerView(this);
@@ -203,7 +203,7 @@ export class LayerDetailsView extends Common.ObjectWrapper.eventMixin<EventTypes
   setLayerTree(_layerTree: SDK.LayerTreeBase.LayerTreeBase|null): void {
   }
 
-  wasShown(): void {
+  override wasShown(): void {
     super.wasShown();
     this.registerCSSFiles([layerDetailsViewStyles]);
     this.update();
@@ -246,6 +246,7 @@ export class LayerDetailsView extends Common.ObjectWrapper.eventMixin<EventTypes
       PH5: scrollRect.rect.y,
     });
     element.addEventListener('click', this.onScrollRectClicked.bind(this, index), false);
+    element.setAttribute('jslog', `${VisualLogging.action().track({click: true}).context('layers.select-object')}`);
   }
 
   private formatStickyAncestorLayer(title: string, layer: SDK.LayerTreeBase.Layer|null): string {
@@ -316,7 +317,7 @@ export class LayerDetailsView extends Common.ObjectWrapper.eventMixin<EventTypes
     }
     this.paintCountCell.textContent = String(layer.paintCount());
     this.memoryEstimateCell.textContent = Platform.NumberUtilities.bytesToString(layer.gpuMemoryUsage());
-    void layer.requestCompositingReasonIds().then(this.updateCompositingReasons.bind(this));
+    void layer.requestCompositingReasons().then(this.updateCompositingReasons.bind(this));
     this.scrollRectsCell.removeChildren();
     layer.scrollRects().forEach(this.createScrollRectElement.bind(this));
     this.populateStickyPositionConstraintCell(layer.stickyPositionConstraint());
@@ -350,6 +351,8 @@ export class LayerDetailsView extends Common.ObjectWrapper.eventMixin<EventTypes
         this.invokeProfilerLink();
       }
     });
+    this.paintProfilerLink.setAttribute(
+        'jslog', `${VisualLogging.action().track({click: true, keydown: 'Enter'}).context('layers.paint-profiler')}`);
   }
 
   private createRow(title: string): HTMLElement {
@@ -359,122 +362,20 @@ export class LayerDetailsView extends Common.ObjectWrapper.eventMixin<EventTypes
     return tr.createChild('td');
   }
 
-  private updateCompositingReasons(compositingReasonIds: string[]): void {
-    if (!compositingReasonIds || !compositingReasonIds.length) {
+  private updateCompositingReasons(compositingReasons: string[]): void {
+    if (!compositingReasons || !compositingReasons.length) {
       this.compositingReasonsCell.textContent = 'n/a';
       return;
     }
     this.compositingReasonsCell.removeChildren();
     const list = this.compositingReasonsCell.createChild('ul');
-    const compositingReasons = LayerDetailsView.getCompositingReasons(compositingReasonIds);
     for (const compositingReason of compositingReasons) {
       list.createChild('li').textContent = compositingReason;
     }
   }
-
-  static getCompositingReasons(compositingReasonIds: string[]): string[] {
-    const compositingReasons = [];
-    for (const compositingReasonId of compositingReasonIds) {
-      const compositingReason = compositingReasonIdToReason.get(compositingReasonId);
-      if (compositingReason) {
-        compositingReasons.push(compositingReason);
-      } else {
-        console.error(`Compositing reason id '${compositingReasonId}' is not recognized.`);
-      }
-    }
-    return compositingReasons;
-  }
 }
 
-// The compositing reason IDs are defined in third_party/blink/renderer/platform/graphics/compositing_reasons.cc
-// These strings are not translated because they are implementation details from chromium that are hard to translate.
-const compositingReasonIdToReason = new Map([
-  ['transform3D', 'Has a 3D transform.'],
-  ['video', 'Is an accelerated video.'],
-  [
-    'canvas',
-    'Is an accelerated canvas, or is a display list backed canvas that was promoted to a layer based on a performance heuristic.',
-  ],
-  ['plugin', 'Is an accelerated plugin.'],
-  ['iFrame', 'Is an accelerated iFrame.'],
-  ['backfaceVisibilityHidden', 'Has backface-visibility: hidden.'],
-  ['activeTransformAnimation', 'Has an active accelerated transform animation or transition.'],
-  ['activeOpacityAnimation', 'Has an active accelerated opacity animation or transition.'],
-  ['activeFilterAnimation', 'Has an active accelerated filter animation or transition.'],
-  ['activeBackdropFilterAnimation', 'Has an active accelerated backdrop filter animation or transition.'],
-  ['immersiveArOverlay', 'Is DOM overlay for WebXR immersive-ar mode.'],
-  ['scrollDependentPosition', 'Is fixed or sticky position.'],
-  ['overflowScrolling', 'Is a scrollable overflow element.'],
-  ['overflowScrollingParent', 'Scroll parent is not an ancestor.'],
-  ['outOfFlowClipping', 'Has clipping ancestor.'],
-  ['videoOverlay', 'Is overlay controls for video.'],
-  ['willChangeTransform', 'Has a will-change: transform compositing hint.'],
-  ['willChangeOpacity', 'Has a will-change: opacity compositing hint.'],
-  ['willChangeOther', 'Has a will-change compositing hint other than transform and opacity.'],
-  ['backdropFilter', 'Has a backdrop filter.'],
-  ['rootScroller', 'Is the document.rootScroller.'],
-  ['assumedOverlap', 'Might overlap other composited content.'],
-  ['overlap', 'Overlaps other composited content.'],
-  ['negativeZIndexChildren', 'Parent with composited negative z-index content.'],
-  ['squashingDisallowed', 'Layer was separately composited because it could not be squashed.'],
-  [
-    'opacityWithCompositedDescendants',
-    'Has opacity that needs to be applied by the compositor because of composited descendants.',
-  ],
-  [
-    'maskWithCompositedDescendants',
-    'Has a mask that needs to be known by the compositor because of composited descendants.',
-  ],
-  [
-    'reflectionWithCompositedDescendants',
-    'Has a reflection that needs to be known by the compositor because of composited descendants.',
-  ],
-  [
-    'filterWithCompositedDescendants',
-    'Has a filter effect that needs to be known by the compositor because of composited descendants.',
-  ],
-  [
-    'blendingWithCompositedDescendants',
-    'Has a blending effect that needs to be known by the compositor because of composited descendants.',
-  ],
-  [
-    'clipsCompositingDescendants',
-    'Has a clip that needs to be known by the compositor because of composited descendants.',
-  ],
-  [
-    'perspectiveWith3DDescendants',
-    'Has a perspective transform that needs to be known by the compositor because of 3D descendants.',
-  ],
-  [
-    'preserve3DWith3DDescendants',
-    'Has a preserves-3D property that needs to be known by the compositor because of 3D descendants.',
-  ],
-  ['isolateCompositedDescendants', 'Should isolate descendants to apply a blend effect.'],
-  ['positionFixedWithCompositedDescendants', 'Is a position:fixed element with composited descendants.'],
-  ['root', 'Is the root layer.'],
-  ['layerForHorizontalScrollbar', 'Secondary layer, the horizontal scrollbar layer.'],
-  ['layerForVerticalScrollbar', 'Secondary layer, the vertical scrollbar layer.'],
-  ['layerForOverflowControlsHost', 'Secondary layer, the overflow controls host layer.'],
-  ['layerForScrollCorner', 'Secondary layer, the scroll corner layer.'],
-  ['layerForScrollingContents', 'Secondary layer, to house contents that can be scrolled.'],
-  ['layerForScrollingContainer', 'Secondary layer, used to position the scrolling contents while scrolling.'],
-  ['layerForSquashingContents', 'Secondary layer, home for a group of squashable content.'],
-  [
-    'layerForSquashingContainer',
-    'Secondary layer, no-op layer to place the squashing layer correctly in the composited layer tree.',
-  ],
-  [
-    'layerForForeground',
-    'Secondary layer, to contain any normal flow and positive z-index contents on top of a negative z-index layer.',
-  ],
-  ['layerForMask', 'Secondary layer, to contain the mask contents.'],
-  ['layerForDecoration', 'Layer painted on top of other layers as decoration.'],
-  ['layerForOther', 'Layer for link highlight, frame overlay, etc.'],
-]);
-
-// TODO(crbug.com/1167717): Make this a const enum again
-// eslint-disable-next-line rulesdir/const_enum
-export enum Events {
+export const enum Events {
   PaintProfilerRequested = 'PaintProfilerRequested',
 }
 

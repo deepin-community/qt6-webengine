@@ -9,12 +9,11 @@
 #include <memory>
 #include <utility>
 
-#include "base/allocator/buildflags.h"
-#include "base/allocator/dispatcher/dispatcher.h"
 #include "base/allocator/dispatcher/reentry_guard.h"
 #include "base/allocator/dispatcher/tls.h"
 #include "base/check.h"
 #include "base/compiler_specific.h"
+#include "base/memory/raw_ptr.h"
 #include "base/no_destructor.h"
 #include "base/rand_util.h"
 #include "base/ranges/algorithm.h"
@@ -35,10 +34,12 @@ const intptr_t kAccumulatedBytesOffset = 1 << 29;
 bool g_deterministic = false;
 
 // Pointer to the current |LockFreeAddressHashSet|.
-std::atomic<LockFreeAddressHashSet*> g_sampled_addresses_set{nullptr};
+ABSL_CONST_INIT std::atomic<LockFreeAddressHashSet*> g_sampled_addresses_set{
+    nullptr};
 
 // Sampling interval parameter, the mean value for intervals between samples.
-std::atomic_size_t g_sampling_interval{kDefaultSamplingIntervalBytes};
+ABSL_CONST_INIT std::atomic_size_t g_sampling_interval{
+    kDefaultSamplingIntervalBytes};
 
 struct ThreadLocalData {
   // Accumulated bytes towards sample.
@@ -65,7 +66,7 @@ ThreadLocalData* GetThreadLocalData() {
   // Clang's implementation of thread_local.
   static base::NoDestructor<
       base::allocator::dispatcher::ThreadLocalStorage<ThreadLocalData>>
-      thread_local_data;
+      thread_local_data("poisson_allocation_sampler");
   return thread_local_data->GetThreadLocalData();
 #else
   // Notes on TLS usage:
@@ -172,27 +173,13 @@ PoissonAllocationSampler::ScopedMuteHookedSamplesForTesting::
 }
 
 // static
-PoissonAllocationSampler* PoissonAllocationSampler::instance_ = nullptr;
-
-// static
 ABSL_CONST_INIT std::atomic<PoissonAllocationSampler::ProfilingStateFlagMask>
     PoissonAllocationSampler::profiling_state_{0};
 
 PoissonAllocationSampler::PoissonAllocationSampler() {
-  CHECK_EQ(nullptr, instance_);
-  instance_ = this;
   Init();
   auto* sampled_addresses = new LockFreeAddressHashSet(64);
   g_sampled_addresses_set.store(sampled_addresses, std::memory_order_release);
-
-  // Install the allocator hooks immediately, to better match the behaviour
-  // of base::allocator::Initializer.
-  //
-  // TODO(crbug/1137393): Use base::allocator::Initializer to install the
-  // PoissonAllocationSampler hooks. All observers need to be passed to the
-  // initializer at the same time so this will install the hooks even
-  // earlier in process startup.
-  allocator::dispatcher::InstallStandardAllocatorHooks();
 }
 
 // static
@@ -209,7 +196,7 @@ void PoissonAllocationSampler::Init() {
 void PoissonAllocationSampler::SetSamplingInterval(
     size_t sampling_interval_bytes) {
   // TODO(alph): Reset the sample being collected if running.
-  g_sampling_interval = sampling_interval_bytes;
+  g_sampling_interval.store(sampling_interval_bytes, std::memory_order_relaxed);
 }
 
 size_t PoissonAllocationSampler::SamplingInterval() const {
@@ -310,7 +297,7 @@ void PoissonAllocationSampler::DoRecordAllocation(
   }
 
   ScopedMuteThreadSamples no_reentrancy_scope;
-  std::vector<SamplesObserver*> observers_copy;
+  std::vector<raw_ptr<SamplesObserver, VectorExperimental>> observers_copy;
   {
     AutoLock lock(mutex_);
 
@@ -325,7 +312,8 @@ void PoissonAllocationSampler::DoRecordAllocation(
   }
 
   size_t total_allocated = mean_interval * samples;
-  for (auto* observer : observers_copy) {
+  for (base::PoissonAllocationSampler::SamplesObserver* observer :
+       observers_copy) {
     observer->SampleAdded(address, size, total_allocated, type, context);
   }
 }
@@ -336,13 +324,14 @@ void PoissonAllocationSampler::DoRecordFree(void* address) {
   // thus reenter DoRecordAlloc. However the call chain won't build up further
   // as RecordAlloc accesses are guarded with pthread TLS-based ReentryGuard.
   ScopedMuteThreadSamples no_reentrancy_scope;
-  std::vector<SamplesObserver*> observers_copy;
+  std::vector<raw_ptr<SamplesObserver, VectorExperimental>> observers_copy;
   {
     AutoLock lock(mutex_);
     observers_copy = observers_;
     sampled_addresses_set().Remove(address);
   }
-  for (auto* observer : observers_copy) {
+  for (base::PoissonAllocationSampler::SamplesObserver* observer :
+       observers_copy) {
     observer->SampleRemoved(address);
   }
 }

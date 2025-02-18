@@ -10,7 +10,6 @@
 
 #include "base/allocator/allocator_extension.h"
 #include "base/files/file_enumerator.h"
-#include "base/files/file_util.h"
 #include "base/logging.h"
 #include "base/posix/unix_domain_socket.h"
 #include "base/process/kill.h"
@@ -159,19 +158,13 @@ pid_t ZygoteHostImpl::LaunchZygote(
     base::ScopedFD* control_fd,
     base::FileHandleMappingVector additional_remapped_fds) {
   int fds[2];
-#if !defined(TOOLKIT_QT)
-  CHECK_EQ(0, socketpair(AF_UNIX, SOCK_SEQPACKET, 0, fds));
-#else
   CHECK_EQ(0, socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0, fds));
-#endif
   CHECK(base::UnixDomainSocket::EnableReceiveProcessId(fds[0]));
 
   base::LaunchOptions options;
   options.fds_to_remap = std::move(additional_remapped_fds);
   options.fds_to_remap.emplace_back(fds[1], kZygoteSocketPairFd);
-#if defined(TOOLKIT_QT)
-  options.zygote_control_fd = fds[1];
-#endif
+  options.fds_to_remove_cloexec.push_back(fds[1]);
 
   const bool is_sandboxed_zygote =
       !cmd_line->HasSwitch(sandbox::policy::switches::kNoZygoteSandbox);
@@ -205,8 +198,8 @@ pid_t ZygoteHostImpl::LaunchZygote(
 
     // First we receive a message from the zygote boot process.
     base::ProcessId boot_pid;
-    CHECK(ReceiveFixedMessage(fds[0], kZygoteBootMessage,
-                              sizeof(kZygoteBootMessage), &boot_pid));
+    PCHECK(ReceiveFixedMessage(fds[0], kZygoteBootMessage,
+                               sizeof(kZygoteBootMessage), &boot_pid));
 
     // Within the PID namespace, the zygote boot process thinks it's PID 1,
     // but its real PID can never be 1. This gives us a reliable test that
@@ -219,8 +212,8 @@ pid_t ZygoteHostImpl::LaunchZygote(
     // Now receive the message that the zygote's ready to go, along with the
     // main zygote process's ID.
     pid_t real_pid;
-    CHECK(ReceiveFixedMessage(fds[0], kZygoteHelloMessage,
-                              sizeof(kZygoteHelloMessage), &real_pid));
+    PCHECK(ReceiveFixedMessage(fds[0], kZygoteHelloMessage,
+                               sizeof(kZygoteHelloMessage), &real_pid));
     CHECK_GT(real_pid, 1);
 
     if (real_pid != pid) {
@@ -305,13 +298,18 @@ void ZygoteHostImpl::AdjustRendererOOMScore(base::ProcessHandle pid,
 #if BUILDFLAG(IS_CHROMEOS)
 void ZygoteHostImpl::ReinitializeLogging(uint32_t logging_dest,
                                          base::PlatformFile log_file_fd) {
+  if (!HasZygote()) {
+    return;
+  }
+
   content::ZygoteCommunication* generic_zygote = content::GetGenericZygote();
   content::ZygoteCommunication* unsandboxed_zygote =
       content::GetUnsandboxedZygote();
-  if (generic_zygote)
-    generic_zygote->ReinitializeLogging(logging_dest, log_file_fd);
-  if (unsandboxed_zygote)
+
+  generic_zygote->ReinitializeLogging(logging_dest, log_file_fd);
+  if (unsandboxed_zygote) {
     unsandboxed_zygote->ReinitializeLogging(logging_dest, log_file_fd);
+  }
 }
 #endif  // BUILDFLAG(IS_CHROMEOS)
 

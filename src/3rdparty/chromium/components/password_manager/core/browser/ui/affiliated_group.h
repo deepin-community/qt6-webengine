@@ -1,4 +1,4 @@
-// Copyright 2022 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -34,6 +34,9 @@ class AffiliatedGroup {
 
   // Method that returns the icon URL for this affiliated group.
   const GURL& GetIconURL() const { return branding_info_.icon_url; }
+
+  // Fallback icon when icon returned by the affiliation service can't be used.
+  GURL GetFallbackIconURL() const;
 
  private:
   // The branding information for the affiliated group. Corresponds to the

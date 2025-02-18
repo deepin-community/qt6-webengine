@@ -23,20 +23,25 @@
 #include "ui/base/ui_base_features.h"
 #include "ui/events/devices/device_data_manager.h"
 #include "ui/events/devices/input_device.h"
+#include "ui/events/devices/keyboard_device.h"
 #include "ui/events/devices/touchscreen_device.h"
 #include "ui/events/ozone/layout/keyboard_layout_engine_manager.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/ozone/common/features.h"
+#include "ui/ozone/platform/wayland/common/wayland_object.h"
+#include "ui/ozone/platform/wayland/host/fractional_scale_manager.h"
 #include "ui/ozone/platform/wayland/host/gtk_primary_selection_device_manager.h"
 #include "ui/ozone/platform/wayland/host/gtk_shell1.h"
 #include "ui/ozone/platform/wayland/host/org_kde_kwin_idle.h"
 #include "ui/ozone/platform/wayland/host/overlay_prioritizer.h"
 #include "ui/ozone/platform/wayland/host/proxy/wayland_proxy_impl.h"
+#include "ui/ozone/platform/wayland/host/single_pixel_buffer.h"
 #include "ui/ozone/platform/wayland/host/surface_augmenter.h"
 #include "ui/ozone/platform/wayland/host/wayland_buffer_factory.h"
 #include "ui/ozone/platform/wayland/host/wayland_buffer_manager_host.h"
 #include "ui/ozone/platform/wayland/host/wayland_cursor.h"
 #include "ui/ozone/platform/wayland/host/wayland_cursor_position.h"
+#include "ui/ozone/platform/wayland/host/wayland_cursor_shape.h"
 #include "ui/ozone/platform/wayland/host/wayland_data_device_manager.h"
 #include "ui/ozone/platform/wayland/host/wayland_drm.h"
 #include "ui/ozone/platform/wayland/host/wayland_event_source.h"
@@ -48,6 +53,7 @@
 #include "ui/ozone/platform/wayland/host/wayland_shm.h"
 #include "ui/ozone/platform/wayland/host/wayland_window.h"
 #include "ui/ozone/platform/wayland/host/wayland_window_drag_controller.h"
+#include "ui/ozone/platform/wayland/host/wayland_zaura_output_manager.h"
 #include "ui/ozone/platform/wayland/host/wayland_zaura_shell.h"
 #include "ui/ozone/platform/wayland/host/wayland_zcr_color_management_output.h"
 #include "ui/ozone/platform/wayland/host/wayland_zcr_color_manager.h"
@@ -76,7 +82,7 @@ constexpr uint32_t kMaxXdgShellVersion = 5;
 constexpr uint32_t kMaxWpPresentationVersion = 1;
 constexpr uint32_t kMaxWpViewporterVersion = 1;
 constexpr uint32_t kMaxTextInputManagerVersion = 1;
-constexpr uint32_t kMaxTextInputExtensionVersion = 7;
+constexpr uint32_t kMaxTextInputExtensionVersion = 13;
 constexpr uint32_t kMaxExplicitSyncVersion = 2;
 constexpr uint32_t kMaxAlphaCompositingVersion = 1;
 constexpr uint32_t kMaxXdgDecorationVersion = 1;
@@ -125,9 +131,11 @@ WaylandConnection::WaylandConnection() = default;
 
 WaylandConnection::~WaylandConnection() = default;
 
-bool WaylandConnection::Initialize() {
+bool WaylandConnection::Initialize(bool use_threaded_polling) {
   // Register factories for classes that implement wl::GlobalObjectRegistrar<T>.
   // Keep alphabetical order for convenience.
+  RegisterGlobalObjectFactory(FractionalScaleManager::kInterfaceName,
+                              &FractionalScaleManager::Instantiate);
   RegisterGlobalObjectFactory(GtkPrimarySelectionDeviceManager::kInterfaceName,
                               &GtkPrimarySelectionDeviceManager::Instantiate);
   RegisterGlobalObjectFactory(GtkShell1::kInterfaceName,
@@ -136,8 +144,12 @@ bool WaylandConnection::Initialize() {
                               &OrgKdeKwinIdle::Instantiate);
   RegisterGlobalObjectFactory(OverlayPrioritizer::kInterfaceName,
                               &OverlayPrioritizer::Instantiate);
+  RegisterGlobalObjectFactory(SinglePixelBuffer::kInterfaceName,
+                              &SinglePixelBuffer::Instantiate);
   RegisterGlobalObjectFactory(SurfaceAugmenter::kInterfaceName,
                               &SurfaceAugmenter::Instantiate);
+  RegisterGlobalObjectFactory(WaylandZAuraOutputManager::kInterfaceName,
+                              &WaylandZAuraOutputManager::Instantiate);
   RegisterGlobalObjectFactory(WaylandDataDeviceManager::kInterfaceName,
                               &WaylandDataDeviceManager::Instantiate);
   RegisterGlobalObjectFactory(WaylandDrm::kInterfaceName,
@@ -154,6 +166,8 @@ bool WaylandConnection::Initialize() {
     RegisterGlobalObjectFactory(WaylandZcrColorManager::kInterfaceName,
                                 &WaylandZcrColorManager::Instantiate);
   }
+  RegisterGlobalObjectFactory(WaylandCursorShape::kInterfaceName,
+                              &WaylandCursorShape::Instantiate);
   RegisterGlobalObjectFactory(WaylandZcrCursorShapes::kInterfaceName,
                               &WaylandZcrCursorShapes::Instantiate);
   RegisterGlobalObjectFactory(WaylandZcrTouchpadHaptics::kInterfaceName,
@@ -177,11 +191,6 @@ bool WaylandConnection::Initialize() {
   RegisterGlobalObjectFactory(ZwpPrimarySelectionDeviceManager::kInterfaceName,
                               &ZwpPrimarySelectionDeviceManager::Instantiate);
 
-  static constexpr wl_registry_listener registry_listener = {
-      &Global,
-      &GlobalRemove,
-  };
-
   display_.reset(wl_display_connect(nullptr));
   if (!display_) {
     PLOG(ERROR) << "Failed to connect to Wayland display";
@@ -201,18 +210,44 @@ bool WaylandConnection::Initialize() {
     return false;
   }
 
+  // UnitTest doesn't support threaded polling wayland event
+  if (UseTestConfigForPlatformWindows()) {
+    use_threaded_polling = false;
+  }
+
   // Now that the connection with the display server has been properly
   // estabilished, initialize the event source and input objects.
   DCHECK(!event_source_);
   event_source_ = std::make_unique<WaylandEventSource>(
-      display(), event_queue_.get(), window_manager(), this);
+      display(), event_queue_.get(), window_manager(), this,
+      use_threaded_polling);
 
   // Create the buffer factory before registry listener is set so that shm, drm,
   // zwp_linux_dmabuf objects are able to be stored.
   buffer_factory_ = std::make_unique<WaylandBufferFactory>();
 
-  wl_registry_add_listener(registry_.get(), &registry_listener, this);
-  while (!output_manager_ || !output_manager_->IsOutputReady()) {
+  static constexpr wl_registry_listener kRegistryListener = {
+      .global = &OnGlobal,
+      .global_remove = &OnGlobalRemove,
+  };
+  wl_registry_add_listener(registry_.get(), &kRegistryListener, this);
+
+  // "To mark the end of the initial burst of events, the client can
+  // use the wl_display.sync request immediately after calling
+  // wl_display.get_registry."
+  // https://gitlab.freedesktop.org/wayland/wayland/-/blob/main/protocol/wayland.xml
+  //
+  // `RoundTripQueue()` internally calls `wl_display_roundtrip_queue()`, which
+  // blocks until wl_display.sync is done. Use it to ensure the required globals
+  // are emitted.
+  while (!WlGlobalsReady()) {
+    RoundTripQueue();
+  }
+
+  // Some wl_globals emits important information when bound.
+  // E.g. server version.
+  // Synchronously wait for it as well.
+  while (!WlObjectsReady()) {
     RoundTripQueue();
   }
 
@@ -242,11 +277,6 @@ bool WaylandConnection::Initialize() {
 }
 
 void WaylandConnection::RoundTripQueue() {
-  if (roundtrip_closure_for_testing_) {
-    roundtrip_closure_for_testing_.Run();
-    return;
-  }
-
   DCHECK(event_source_);
   DCHECK(event_queue_.get());
   event_source_->RoundTripQueue();
@@ -254,6 +284,12 @@ void WaylandConnection::RoundTripQueue() {
 
 void WaylandConnection::SetShutdownCb(base::OnceCallback<void()> shutdown_cb) {
   event_source()->SetShutdownCb(std::move(shutdown_cb));
+}
+
+base::Version WaylandConnection::GetServerVersion() const {
+  return zaura_shell()
+             ? zaura_shell()->server_version().value_or(base::Version{})
+             : base::Version{};
 }
 
 void WaylandConnection::SetPlatformCursor(wl_cursor* cursor_data,
@@ -308,6 +344,30 @@ void WaylandConnection::RegisterGlobalObjectFactory(
   global_object_factories_[interface_name] = factory;
 }
 
+bool WaylandConnection::WlGlobalsReady() const {
+  bool ready = !!compositor_;
+
+  // Output manager must be able to instantiate a valid WaylandScreen when
+  // requested by the upper layers.
+  ready &= output_manager_ && output_manager_->IsOutputReady();
+
+  return ready;
+}
+
+bool WaylandConnection::WlObjectsReady() const {
+  DCHECK(WlGlobalsReady());
+
+  bool ready = true;
+
+  // Lacros requires server version synchronously for gpu init.
+  if (zaura_shell_ && zaura_shell_get_version(zaura_shell_->wl_object()) >=
+                          ZAURA_SHELL_COMPOSITOR_VERSION_SINCE_VERSION) {
+    ready &= zaura_shell_->server_version().has_value();
+  }
+
+  return ready;
+}
+
 void WaylandConnection::Flush() {
   wl_display_flush(display_.get());
 }
@@ -329,8 +389,8 @@ std::vector<InputDevice> WaylandConnection::CreateMouseDevices() const {
   return devices;
 }
 
-std::vector<InputDevice> WaylandConnection::CreateKeyboardDevices() const {
-  std::vector<InputDevice> devices;
+std::vector<KeyboardDevice> WaylandConnection::CreateKeyboardDevices() const {
+  std::vector<KeyboardDevice> devices;
   if (const auto* keyboard = seat_->keyboard()) {
     devices.emplace_back(keyboard->id(), InputDeviceType::INPUT_DEVICE_UNKNOWN,
                          "keyboard");
@@ -385,181 +445,6 @@ void WaylandConnection::CreateDataObjectsIfReady() {
   }
 }
 
-// static
-void WaylandConnection::Global(void* data,
-                               wl_registry* registry,
-                               uint32_t name,
-                               const char* interface,
-                               uint32_t version) {
-  static constexpr xdg_wm_base_listener shell_listener = {
-      &Ping,
-  };
-  static constexpr wp_presentation_listener presentation_listener = {
-      &ClockId,
-  };
-
-  auto* connection = static_cast<WaylandConnection*>(data);
-
-  auto factory_it = connection->global_object_factories_.find(interface);
-  if (factory_it != connection->global_object_factories_.end()) {
-    (*factory_it->second)(connection, registry, name, interface, version);
-  } else if (!connection->compositor_ &&
-             strcmp(interface, "wl_compositor") == 0) {
-    connection->compositor_ = wl::Bind<wl_compositor>(
-        registry, name, std::min(version, kMaxCompositorVersion));
-    connection->compositor_version_ = version;
-    if (!connection->compositor_) {
-      LOG(ERROR) << "Failed to bind to wl_compositor global";
-      return;
-    }
-  } else if (!connection->subcompositor_ &&
-             strcmp(interface, "wl_subcompositor") == 0) {
-    connection->subcompositor_ = wl::Bind<wl_subcompositor>(registry, name, 1);
-    if (!connection->subcompositor_) {
-      LOG(ERROR) << "Failed to bind to wl_subcompositor global";
-      return;
-    }
-  } else if (!connection->shell_ && strcmp(interface, "xdg_wm_base") == 0) {
-    connection->shell_ = wl::Bind<xdg_wm_base>(
-        registry, name, std::min(version, kMaxXdgShellVersion));
-    if (!connection->shell_) {
-      LOG(ERROR) << "Failed to bind to xdg_wm_base global";
-      return;
-    }
-    xdg_wm_base_add_listener(connection->shell_.get(), &shell_listener,
-                             connection);
-    ReportShellUMA(UMALinuxWaylandShell::kXdgWmBase);
-  } else if (!connection->alpha_compositing_ &&
-             (strcmp(interface, "zcr_alpha_compositing_v1") == 0)) {
-    connection->alpha_compositing_ = wl::Bind<zcr_alpha_compositing_v1>(
-        registry, name, std::min(version, kMaxAlphaCompositingVersion));
-    if (!connection->alpha_compositing_) {
-      LOG(ERROR) << "Failed to bind zcr_alpha_compositing_v1";
-      return;
-    }
-  } else if (!connection->linux_explicit_synchronization_ &&
-             (strcmp(interface, "zwp_linux_explicit_synchronization_v1") ==
-              0)) {
-    connection->linux_explicit_synchronization_ =
-        wl::Bind<zwp_linux_explicit_synchronization_v1>(
-            registry, name, std::min(version, kMaxExplicitSyncVersion));
-    if (!connection->linux_explicit_synchronization_) {
-      LOG(ERROR) << "Failed to bind zwp_linux_explicit_synchronization_v1";
-      return;
-    }
-  } else if (!connection->content_type_manager_v1_ &&
-             (strcmp(interface, "wp_content_type_manager_v1") == 0)) {
-    connection->content_type_manager_v1_ = wl::Bind<wp_content_type_manager_v1>(
-        registry, name, std::min(version, kMaxWpContentTypeVersion));
-    if (!connection->content_type_manager_v1_) {
-      LOG(ERROR) << "Failed to bind wp_content_type_v1";
-      return;
-    }
-  } else if (!connection->presentation_ &&
-             (strcmp(interface, "wp_presentation") == 0)) {
-    connection->presentation_ = wl::Bind<wp_presentation>(
-        registry, name, std::min(version, kMaxWpPresentationVersion));
-    if (!connection->presentation_) {
-      LOG(ERROR) << "Failed to bind wp_presentation";
-      return;
-    }
-    wp_presentation_add_listener(connection->presentation_.get(),
-                                 &presentation_listener, connection);
-  } else if (!connection->viewporter_ &&
-             (strcmp(interface, "wp_viewporter") == 0)) {
-    connection->viewporter_ = wl::Bind<wp_viewporter>(
-        registry, name, std::min(version, kMaxWpViewporterVersion));
-    if (!connection->viewporter_) {
-      LOG(ERROR) << "Failed to bind wp_viewporter";
-      return;
-    }
-  } else if (!connection->keyboard_extension_v1_ &&
-             strcmp(interface, "zcr_keyboard_extension_v1") == 0) {
-    connection->keyboard_extension_v1_ = wl::Bind<zcr_keyboard_extension_v1>(
-        registry, name, std::min(version, kMaxKeyboardExtensionVersion));
-    if (!connection->keyboard_extension_v1_) {
-      LOG(ERROR) << "Failed to bind zcr_keyboard_extension_v1";
-      return;
-    }
-    // CreateKeyboard may fail if we do not have keyboard seat capabilities yet.
-    // We will create the keyboard when get them in that case.
-    if (connection->seat_)
-      connection->seat_->RefreshKeyboard();
-  } else if (!connection->keyboard_shortcuts_inhibit_manager_v1_ &&
-             strcmp(interface, "zwp_keyboard_shortcuts_inhibit_manager_v1") ==
-                 0) {
-    connection->keyboard_shortcuts_inhibit_manager_v1_ =
-        wl::Bind<zwp_keyboard_shortcuts_inhibit_manager_v1>(
-            registry, name,
-            std::min(version, kMaxKeyboardShortcutsInhibitManagerVersion));
-    if (!connection->keyboard_shortcuts_inhibit_manager_v1_) {
-      LOG(ERROR) << "Failed to bind zwp_keyboard_shortcuts_inhibit_manager_v1";
-      return;
-    }
-  } else if (!connection->text_input_manager_v1_ &&
-             strcmp(interface, "zwp_text_input_manager_v1") == 0) {
-    connection->text_input_manager_v1_ = wl::Bind<zwp_text_input_manager_v1>(
-        registry, name, std::min(version, kMaxTextInputManagerVersion));
-    if (!connection->text_input_manager_v1_) {
-      LOG(ERROR) << "Failed to bind to zwp_text_input_manager_v1 global";
-      return;
-    }
-  } else if (!connection->text_input_extension_v1_ &&
-             strcmp(interface, "zcr_text_input_extension_v1") == 0) {
-    connection->text_input_extension_v1_ =
-        wl::Bind<zcr_text_input_extension_v1>(
-            registry, name, std::min(version, kMaxTextInputExtensionVersion));
-  } else if (!connection->xdg_decoration_manager_ &&
-             strcmp(interface, "zxdg_decoration_manager_v1") == 0) {
-    connection->xdg_decoration_manager_ =
-        wl::Bind<struct zxdg_decoration_manager_v1>(
-            registry, name, std::min(version, kMaxXdgDecorationVersion));
-    if (!connection->xdg_decoration_manager_) {
-      LOG(ERROR) << "Failed to bind zxdg_decoration_manager_v1";
-      return;
-    }
-  } else if (!connection->extended_drag_v1_ &&
-             strcmp(interface, "zcr_extended_drag_v1") == 0) {
-    connection->extended_drag_v1_ = wl::Bind<zcr_extended_drag_v1>(
-        registry, name, std::min(version, kMaxExtendedDragVersion));
-    if (!connection->extended_drag_v1_) {
-      LOG(ERROR) << "Failed to bind to zcr_extended_drag_v1 global";
-      return;
-    }
-  } else if (!connection->xdg_output_manager_ &&
-             strcmp(interface, "zxdg_output_manager_v1") == 0) {
-    connection->xdg_output_manager_ = wl::Bind<struct zxdg_output_manager_v1>(
-        registry, name, std::min(version, kMaxXdgOutputManagerVersion));
-    if (!connection->xdg_output_manager_) {
-      LOG(ERROR) << "Failed to bind zxdg_output_manager_v1";
-      return;
-    }
-    if (connection->output_manager_) {
-      connection->output_manager_->InitializeAllXdgOutputs();
-    }
-  } else if (strcmp(interface, "org_kde_plasma_shell") == 0) {
-    // Recognized but not yet supported.
-    NOTIMPLEMENTED_LOG_ONCE();
-    ReportShellUMA(UMALinuxWaylandShell::kOrgKdePlasmaShell);
-  } else if (strcmp(interface, "zwlr_layer_shell_v1") == 0) {
-    // Recognized but not yet supported.
-    NOTIMPLEMENTED_LOG_ONCE();
-    ReportShellUMA(UMALinuxWaylandShell::kZwlrLayerShellV1);
-  } else if (!connection->zcr_stylus_v2_ &&
-             strcmp(interface, "zcr_stylus_v2") == 0) {
-    connection->zcr_stylus_v2_ = wl::Bind<zcr_stylus_v2>(
-        registry, name, std::min(version, kMaxStylusVersion));
-    if (!connection->zcr_stylus_v2_) {
-      LOG(ERROR) << "Failed to bind to zcr_stylus_v2";
-      return;
-    }
-  }
-
-  connection->available_globals_.emplace_back(interface, version);
-
-  connection->Flush();
-}
-
 base::TimeTicks WaylandConnection::ConvertPresentationTime(uint32_t tv_sec_hi,
                                                            uint32_t tv_sec_lo,
                                                            uint32_t tv_nsec) {
@@ -601,37 +486,263 @@ const gfx::PointF WaylandConnection::MaybeConvertLocation(
   return converted;
 }
 
+void WaylandConnection::DumpState(std::ostream& out) const {
+  out << "available globals:";
+  for (const auto& pair : available_globals_) {
+    out << pair.first << ',';
+  }
+  out << std::endl;
+
+  if (event_source_) {
+    event_source_->DumpState(out);
+    out << std::endl;
+  }
+  window_manager_.DumpState(out);
+  out << std::endl;
+
+  if (window_drag_controller_) {
+    window_drag_controller_->DumpState(out);
+    out << std::endl;
+  }
+
+  if (data_drag_controller_) {
+    data_drag_controller_->DumpState(out);
+    out << std::endl;
+  }
+
+  if (cursor_position_) {
+    cursor_position_->DumpState(out);
+    out << std::endl;
+  }
+
+  if (output_manager_) {
+    output_manager_->DumpState(out);
+    out << std::endl;
+  }
+
+  if (zaura_output_manager_) {
+    zaura_output_manager_->DumpState(out);
+    out << std::endl;
+  }
+}
+
+bool WaylandConnection::ShouldUseOverlayDelegation() const {
+  return IsWaylandOverlayDelegationEnabled() && !overlay_delegation_disabled_;
+}
+
 // static
-void WaylandConnection::GlobalRemove(void* data,
-                                     wl_registry* registry,
-                                     uint32_t name) {
-  auto* connection = static_cast<WaylandConnection*>(data);
+void WaylandConnection::OnGlobal(void* data,
+                                 wl_registry* registry,
+                                 uint32_t name,
+                                 const char* interface,
+                                 uint32_t version) {
+  auto* self = static_cast<WaylandConnection*>(data);
+  DCHECK(self);
+  self->HandleGlobal(registry, name, interface, version);
+}
+
+// static
+void WaylandConnection::OnGlobalRemove(void* data,
+                                       wl_registry* registry,
+                                       uint32_t name) {
+  auto* self = static_cast<WaylandConnection*>(data);
   // The Wayland protocol distinguishes global objects by unique numeric names,
   // which the WaylandOutputManager uses as unique output ids. But, it is only
   // possible to figure out, what global object is going to be removed on the
   // WaylandConnection::GlobalRemove call. Thus, whatever unique |name| comes,
   // it's forwarded to the WaylandOutputManager, which checks if such a global
   // output object exists and removes it.
-  if (connection->output_manager_) {
-    connection->output_manager_->RemoveWaylandOutput(name);
+  if (self->output_manager_) {
+    self->output_manager_->RemoveWaylandOutput(name);
   }
 }
 
 // static
-void WaylandConnection::Ping(void* data, xdg_wm_base* shell, uint32_t serial) {
+void WaylandConnection::OnPing(void* data,
+                               xdg_wm_base* shell,
+                               uint32_t serial) {
   auto* connection = static_cast<WaylandConnection*>(data);
   xdg_wm_base_pong(shell, serial);
   connection->Flush();
 }
 
 // static
-void WaylandConnection::ClockId(void* data,
-                                wp_presentation* presentation,
-                                uint32_t clk_id) {
+void WaylandConnection::OnClockId(void* data,
+                                  wp_presentation* presentation,
+                                  uint32_t clk_id) {
   DCHECK_EQ(base::TimeTicks::GetClock(),
             base::TimeTicks::Clock::LINUX_CLOCK_MONOTONIC);
   auto* connection = static_cast<WaylandConnection*>(data);
   connection->presentation_clk_id_ = clk_id;
+}
+
+void WaylandConnection::HandleGlobal(wl_registry* registry,
+                                     uint32_t name,
+                                     const char* interface,
+                                     uint32_t version) {
+  auto factory_it = global_object_factories_.find(interface);
+  if (factory_it != global_object_factories_.end()) {
+    (*factory_it->second)(this, registry, name, interface, version);
+  } else if (!compositor_ && strcmp(interface, "wl_compositor") == 0) {
+    compositor_ = wl::Bind<wl_compositor>(
+        registry, name, std::min(version, kMaxCompositorVersion));
+    compositor_version_ = version;
+    if (!compositor_) {
+      LOG(ERROR) << "Failed to bind to wl_compositor global";
+      return;
+    }
+  } else if (!subcompositor_ && strcmp(interface, "wl_subcompositor") == 0) {
+    subcompositor_ = wl::Bind<wl_subcompositor>(registry, name, 1);
+    if (!subcompositor_) {
+      LOG(ERROR) << "Failed to bind to wl_subcompositor global";
+      return;
+    }
+  } else if (!shell_ && strcmp(interface, "xdg_wm_base") == 0) {
+    shell_ = wl::Bind<xdg_wm_base>(registry, name,
+                                   std::min(version, kMaxXdgShellVersion));
+    if (!shell_) {
+      LOG(ERROR) << "Failed to bind to xdg_wm_base global";
+      return;
+    }
+    static constexpr xdg_wm_base_listener kShellBaseListener = {
+        .ping = &OnPing,
+    };
+    xdg_wm_base_add_listener(shell_.get(), &kShellBaseListener, this);
+    ReportShellUMA(UMALinuxWaylandShell::kXdgWmBase);
+  } else if (!alpha_compositing_ &&
+             (strcmp(interface, "zcr_alpha_compositing_v1") == 0)) {
+    alpha_compositing_ = wl::Bind<zcr_alpha_compositing_v1>(
+        registry, name, std::min(version, kMaxAlphaCompositingVersion));
+    if (!alpha_compositing_) {
+      LOG(ERROR) << "Failed to bind zcr_alpha_compositing_v1";
+      return;
+    }
+  } else if (!linux_explicit_synchronization_ &&
+             (strcmp(interface, "zwp_linux_explicit_synchronization_v1") ==
+              0)) {
+    linux_explicit_synchronization_ =
+        wl::Bind<zwp_linux_explicit_synchronization_v1>(
+            registry, name, std::min(version, kMaxExplicitSyncVersion));
+    if (!linux_explicit_synchronization_) {
+      LOG(ERROR) << "Failed to bind zwp_linux_explicit_synchronization_v1";
+      return;
+    }
+  } else if (!content_type_manager_v1_ &&
+             (strcmp(interface, "wp_content_type_manager_v1") == 0)) {
+    content_type_manager_v1_ = wl::Bind<wp_content_type_manager_v1>(
+        registry, name, std::min(version, kMaxWpContentTypeVersion));
+    if (!content_type_manager_v1_) {
+      LOG(ERROR) << "Failed to bind wp_content_type_v1";
+      return;
+    }
+  } else if (!presentation_ && (strcmp(interface, "wp_presentation") == 0)) {
+    presentation_ = wl::Bind<wp_presentation>(
+        registry, name, std::min(version, kMaxWpPresentationVersion));
+    if (!presentation_) {
+      LOG(ERROR) << "Failed to bind wp_presentation";
+      return;
+    }
+    static constexpr wp_presentation_listener kPresentationListener = {
+        .clock_id = &OnClockId,
+    };
+    wp_presentation_add_listener(presentation_.get(), &kPresentationListener,
+                                 this);
+  } else if (!viewporter_ && (strcmp(interface, "wp_viewporter") == 0)) {
+    viewporter_ = wl::Bind<wp_viewporter>(
+        registry, name, std::min(version, kMaxWpViewporterVersion));
+    if (!viewporter_) {
+      LOG(ERROR) << "Failed to bind wp_viewporter";
+      return;
+    }
+  } else if (!keyboard_extension_v1_ &&
+             strcmp(interface, "zcr_keyboard_extension_v1") == 0) {
+    keyboard_extension_v1_ = wl::Bind<zcr_keyboard_extension_v1>(
+        registry, name, std::min(version, kMaxKeyboardExtensionVersion));
+    if (!keyboard_extension_v1_) {
+      LOG(ERROR) << "Failed to bind zcr_keyboard_extension_v1";
+      return;
+    }
+    // CreateKeyboard may fail if we do not have keyboard seat capabilities yet.
+    // We will create the keyboard when get them in that case.
+    if (seat_) {
+      seat_->RefreshKeyboard();
+    }
+  } else if (!keyboard_shortcuts_inhibit_manager_v1_ &&
+             strcmp(interface, "zwp_keyboard_shortcuts_inhibit_manager_v1") ==
+                 0) {
+    keyboard_shortcuts_inhibit_manager_v1_ =
+        wl::Bind<zwp_keyboard_shortcuts_inhibit_manager_v1>(
+            registry, name,
+            std::min(version, kMaxKeyboardShortcutsInhibitManagerVersion));
+    if (!keyboard_shortcuts_inhibit_manager_v1_) {
+      LOG(ERROR) << "Failed to bind zwp_keyboard_shortcuts_inhibit_manager_v1";
+      return;
+    }
+  } else if (!text_input_manager_v1_ &&
+             strcmp(interface, "zwp_text_input_manager_v1") == 0) {
+    text_input_manager_v1_ = wl::Bind<zwp_text_input_manager_v1>(
+        registry, name, std::min(version, kMaxTextInputManagerVersion));
+    if (!text_input_manager_v1_) {
+      LOG(ERROR) << "Failed to bind to zwp_text_input_manager_v1 global";
+      return;
+    }
+  } else if (!text_input_extension_v1_ &&
+             strcmp(interface, "zcr_text_input_extension_v1") == 0) {
+    text_input_extension_v1_ = wl::Bind<zcr_text_input_extension_v1>(
+        registry, name, std::min(version, kMaxTextInputExtensionVersion));
+  } else if (!xdg_decoration_manager_ &&
+             strcmp(interface, "zxdg_decoration_manager_v1") == 0) {
+    xdg_decoration_manager_ = wl::Bind<zxdg_decoration_manager_v1>(
+        registry, name, std::min(version, kMaxXdgDecorationVersion));
+    if (!xdg_decoration_manager_) {
+      LOG(ERROR) << "Failed to bind zxdg_decoration_manager_v1";
+      return;
+    }
+  } else if (!extended_drag_v1_ &&
+             strcmp(interface, "zcr_extended_drag_v1") == 0) {
+    extended_drag_v1_ = wl::Bind<zcr_extended_drag_v1>(
+        registry, name, std::min(version, kMaxExtendedDragVersion));
+    if (!extended_drag_v1_) {
+      LOG(ERROR) << "Failed to bind to zcr_extended_drag_v1 global";
+      return;
+    }
+  } else if (!xdg_output_manager_ &&
+             strcmp(interface, "zxdg_output_manager_v1") == 0) {
+    // Responsibilities of zxdg_output_manager_v1 have been subsumed into the
+    // zaura_output_manager. If using the zaura_output_manager avoid binding
+    // unnecessarily.
+    if (zaura_output_manager_) {
+      LOG(WARNING) << "Skipping bind to zxdg_output_manager_v1";
+      return;
+    }
+    xdg_output_manager_ = wl::Bind<zxdg_output_manager_v1>(
+        registry, name, std::min(version, kMaxXdgOutputManagerVersion));
+    if (!xdg_output_manager_) {
+      LOG(ERROR) << "Failed to bind zxdg_output_manager_v1";
+      return;
+    }
+    if (output_manager_) {
+      output_manager_->InitializeAllXdgOutputs();
+    }
+  } else if (strcmp(interface, "org_kde_plasma_shell") == 0) {
+    // Recognized but not yet supported.
+    NOTIMPLEMENTED_LOG_ONCE();
+    ReportShellUMA(UMALinuxWaylandShell::kOrgKdePlasmaShell);
+  } else if (strcmp(interface, "zwlr_layer_shell_v1") == 0) {
+    // Recognized but not yet supported.
+    NOTIMPLEMENTED_LOG_ONCE();
+    ReportShellUMA(UMALinuxWaylandShell::kZwlrLayerShellV1);
+  } else if (!zcr_stylus_v2_ && strcmp(interface, "zcr_stylus_v2") == 0) {
+    zcr_stylus_v2_ = wl::Bind<zcr_stylus_v2>(
+        registry, name, std::min(version, kMaxStylusVersion));
+    if (!zcr_stylus_v2_) {
+      LOG(ERROR) << "Failed to bind to zcr_stylus_v2";
+      return;
+    }
+  }
+
+  available_globals_.emplace_back(interface, version);
+  Flush();
 }
 
 }  // namespace ui

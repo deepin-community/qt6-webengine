@@ -93,6 +93,10 @@ class MEDIA_GPU_EXPORT Fourcc {
     // with the bottom six bits ignored.
     P010 = ComposeFourcc('P', '0', '1', '0'),
 
+    // Two-plane Mediatek variant of P010. See
+    // https://tinyurl.com/mtk-10bit-video-format for details.
+    MT2T = ComposeFourcc('M', 'T', '2', 'T'),
+
     // Single plane 8-bit little-endian ARGB (bytes in reverse B-G-R-A order).
     AR24 = ComposeFourcc('A', 'R', '2', '4'),
     // V4L2 proprietary format.
@@ -103,7 +107,11 @@ class MEDIA_GPU_EXPORT Fourcc {
     Q08C = ComposeFourcc('Q', '0', '8', 'C'),
     // Maps to V4L2_PIX_FMT_QC10C.
     Q10C = ComposeFourcc('Q', '1', '0', 'C'),
+
+    UNDEFINED = ComposeFourcc(0, 0, 0, 0),
   };
+
+  constexpr Fourcc() = default;
 
   explicit constexpr Fourcc(Fourcc::Value fourcc) : value_(fourcc) {}
 
@@ -159,7 +167,7 @@ class MEDIA_GPU_EXPORT Fourcc {
   std::string ToString() const;
 
  private:
-  Value value_;
+  Value value_ = Fourcc::Value::UNDEFINED;
 };
 
 MEDIA_GPU_EXPORT bool operator!=(const Fourcc& lhs, const Fourcc& rhs);

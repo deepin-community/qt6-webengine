@@ -5,8 +5,10 @@
 #ifndef CHROME_BROWSER_UI_WEBUI_ASH_LOCK_SCREEN_REAUTH_LOCK_SCREEN_REAUTH_DIALOGS_H_
 #define CHROME_BROWSER_UI_WEBUI_ASH_LOCK_SCREEN_REAUTH_LOCK_SCREEN_REAUTH_DIALOGS_H_
 
+#include "base/memory/raw_ptr.h"
 #include "base/observer_list.h"
 #include "base/scoped_observation.h"
+#include "chrome/browser/ash/http_auth_dialog.h"
 #include "chrome/browser/ash/login/helper.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/chrome_web_modal_dialog_manager_delegate.h"
@@ -15,8 +17,6 @@
 #include "chromeos/ash/components/network/network_state_handler.h"
 #include "chromeos/ash/components/network/network_state_handler_observer.h"
 #include "components/web_modal/web_contents_modal_dialog_host.h"
-#include "content/public/browser/notification_observer.h"
-#include "content/public/browser/notification_registrar.h"
 #include "ui/web_dialogs/web_dialog_ui.h"
 
 namespace ash {
@@ -29,7 +29,7 @@ class LockScreenStartReauthDialog
       public NetworkStateInformer::NetworkStateInformerObserver,
       public ChromeWebModalDialogManagerDelegate,
       public web_modal::WebContentsModalDialogHost,
-      public content::NotificationObserver {
+      public HttpAuthDialog::Observer {
  public:
   LockScreenStartReauthDialog();
   LockScreenStartReauthDialog(LockScreenStartReauthDialog const&) = delete;
@@ -41,7 +41,7 @@ class LockScreenStartReauthDialog
       const content::MediaStreamRequest& request,
       content::MediaResponseCallback callback) override;
   bool CheckMediaAccessPermission(content::RenderFrameHost* render_frame_host,
-                                  const GURL& security_origin,
+                                  const url::Origin& security_origin,
                                   blink::mojom::MediaStreamType type) override;
 
   // Creates singleton instance of LockScreenStartReauthDialog. It will
@@ -117,10 +117,13 @@ class LockScreenStartReauthDialog
   void AddObserver(web_modal::ModalDialogHostObserver* observer) override;
   void RemoveObserver(web_modal::ModalDialogHostObserver* observer) override;
 
-  // content::NotificationObserver:
-  void Observe(int type,
-               const content::NotificationSource& source,
-               const content::NotificationDetails& details) override;
+  // HttpAuthDialog::Observer implementation:
+  void HttpAuthDialogShown(content::WebContents* web_contents) override;
+  void HttpAuthDialogCancelled(content::WebContents* web_contents) override;
+  void HttpAuthDialogSupplied(content::WebContents* web_contents) override;
+
+  // Returns whether `web_contents` is associated with this instance.
+  bool Matches(content::WebContents* web_contents);
 
   // Copies proxy authentication details that were entered in the lock screen
   // profile to system network context and to the profile of active user.
@@ -139,11 +142,12 @@ class LockScreenStartReauthDialog
       scoped_observation_{this};
 
   std::unique_ptr<LockScreenNetworkDialog> lock_screen_network_dialog_;
-  Profile* profile_ = nullptr;
+  raw_ptr<Profile> profile_ = nullptr;
 
   std::unique_ptr<LockScreenCaptivePortalDialog> captive_portal_dialog_;
 
-  content::NotificationRegistrar registrar_;
+  // Once Lacros is shipped, this will no longer be necessary.
+  std::unique_ptr<HttpAuthDialog::ScopedEnabler> enable_ash_httpauth_;
 
   // Callbacks and flags that are used in tests to check that the corresponding
   // dialog is loaded or closed.

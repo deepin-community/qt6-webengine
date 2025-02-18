@@ -7,7 +7,10 @@
 
 #include <stdint.h>
 
+#include <optional>
+
 #include "base/memory/raw_ptr.h"
+#include "base/observer_list_types.h"
 #include "base/process/kill.h"
 #include "base/process/process_handle.h"
 #include "base/threading/thread_restrictions.h"
@@ -21,12 +24,12 @@
 #include "mojo/public/cpp/system/message_pipe.h"
 #include "services/network/public/mojom/fetch_api.mojom-forward.h"
 #include "services/service_manager/public/cpp/bind_source_info.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/common/input/web_input_event.h"
 #include "third_party/blink/public/common/user_agent/user_agent_metadata.h"
 #include "third_party/blink/public/mojom/css/preferred_color_scheme.mojom.h"
 #include "third_party/blink/public/mojom/devtools/console_message.mojom.h"
 #include "third_party/blink/public/mojom/favicon/favicon_url.mojom-forward.h"
+#include "third_party/blink/public/mojom/frame/lifecycle.mojom.h"
 #include "third_party/blink/public/mojom/loader/resource_load_info.mojom-forward.h"
 #include "third_party/blink/public/mojom/media/capture_handle_config.mojom-forward.h"
 #include "third_party/skia/include/core/SkColor.h"
@@ -49,8 +52,13 @@ namespace ui::mojom {
 enum class VirtualKeyboardMode;
 }  // namespace ui::mojom
 
+namespace network::mojom {
+class SharedDictionaryAccessDetails;
+}  // namespace network::mojom
+
 namespace content {
 
+class MediaSession;
 class NavigationEntry;
 class NavigationHandle;
 class RenderFrameHost;
@@ -69,6 +77,7 @@ struct LoadCommittedDetails;
 struct MediaPlayerId;
 struct PrunedDetails;
 struct Referrer;
+struct TrustTokenAccessDetails;
 
 // Note: before adding a new `WebContentsObserver` subclass, consider if simpler
 // helpers will suffice:
@@ -101,12 +110,11 @@ struct Referrer;
 //
 // Usually, observers should only care about the current RenderViewHost as
 // returned by GetRenderViewHost().
-//
-// TODO(creis): Hide the fact that there are several RenderViewHosts
-// from the WebContentsObserver API. http://crbug.com/173325
-class CONTENT_EXPORT WebContentsObserver {
+class CONTENT_EXPORT WebContentsObserver : public base::CheckedObserver {
  public:
+  WebContentsObserver(WebContentsObserver&&) = delete;
   WebContentsObserver(const WebContentsObserver&) = delete;
+  WebContentsObserver& operator=(WebContentsObserver&&) = delete;
   WebContentsObserver& operator=(const WebContentsObserver&) = delete;
 
   // Frames and Views ----------------------------------------------------------
@@ -351,13 +359,9 @@ class CONTENT_EXPORT WebContentsObserver {
   // DocumentUserData for more details).
   virtual void DidFinishNavigation(NavigationHandle* navigation_handle) {}
 
-  // Called after the contents replaces the |predecessor_contents| in its
-  // container due to portal activation. The |predecessor_contents| is now a
-  // portal pending adoption. |predecessor_contents| is non-null, but may
-  // subsequently be destroyed if it is not adopted.
-  // |activation_time| is the time the activation happened.
-  virtual void DidActivatePortal(WebContents* predecessor_web_contents,
-                                 base::TimeTicks activation_time) {}
+  // Called after the WebContents completes the previewed page activation steps.
+  // `activation_time` is the time the activation happened.
+  virtual void DidActivatePreviewedPage(base::TimeTicks activation_time) {}
 
   // Document load events ------------------------------------------------------
 
@@ -470,6 +474,26 @@ class CONTENT_EXPORT WebContentsObserver {
   virtual void OnCookiesAccessed(NavigationHandle* navigation_handle,
                                  const CookieAccessDetails& details) {}
 
+  // Called when document accesses a Trust Token (via document.hasTrustToken or
+  // issuing a network request).
+  // Trust Token accesses for a dedicated worker are attributed to the
+  // RenderFrameHost which created it.
+  virtual void OnTrustTokensAccessed(RenderFrameHost* render_frame_host,
+                                     const TrustTokenAccessDetails& details) {}
+
+  // Called when a network request issued by the navigation accesses a Trust
+  // Token. If a notification is received after the navigation has committed, it
+  // will be attributed to the RenderFrameHost created by the navigation.
+  virtual void OnTrustTokensAccessed(NavigationHandle* navigation_handle,
+                                     const TrustTokenAccessDetails& details) {}
+
+  virtual void OnSharedDictionaryAccessed(
+      RenderFrameHost* render_frame_host,
+      const network::mojom::SharedDictionaryAccessDetails& details) {}
+  virtual void OnSharedDictionaryAccessed(
+      NavigationHandle* navigation_handle,
+      const network::mojom::SharedDictionaryAccessDetails& details) {}
+
   // This method is invoked when a new non-pending navigation entry is created.
   // This corresponds to one NavigationController entry being created
   // (in the case of new navigations) or renavigated to (for back/forward
@@ -554,7 +578,7 @@ class CONTENT_EXPORT WebContentsObserver {
   // WebContents is updated (either because the primary main document's color
   // has been inferred or the primary main document has changed).
   virtual void InferredColorSchemeUpdated(
-      absl::optional<blink::mojom::PreferredColorScheme> color_scheme) {}
+      std::optional<blink::mojom::PreferredColorScheme> color_scheme) {}
 
   // Called when a frame receives user activation. This may be called multiple
   // times for the same frame. This should not be used to determine a
@@ -563,6 +587,11 @@ class CONTENT_EXPORT WebContentsObserver {
   // details.
   virtual void FrameReceivedUserActivation(RenderFrameHost* render_frame_host) {
   }
+
+  // Called when the given `render_frame_host` successfully completes a Web
+  // Authentication API assertion request.
+  virtual void WebAuthnAssertionRequestSucceeded(
+      RenderFrameHost* render_frame_host) {}
 
   // Invoked when the display state of the frame changes.
   virtual void FrameDisplayStateChanged(RenderFrameHost* render_frame_host,
@@ -659,6 +688,21 @@ class CONTENT_EXPORT WebContentsObserver {
   // Called when the audio state of an individual frame changes.
   virtual void OnFrameAudioStateChanged(RenderFrameHost* rfh, bool audible) {}
 
+  // Called when an individual frame's visibility inside the viewport of the
+  // page changes. Note that this value is independent from the visibility of
+  // the page.
+  virtual void OnFrameVisibilityChanged(
+      RenderFrameHost* rfh,
+      blink::mojom::FrameVisibility visibility) {}
+
+  // Called when an individual frame starts/stops capturing at least one media
+  // stream (audio or video). For example, the frame could be capturing audio
+  // from the microphone using getUserMedia(), or it could be capturing another
+  // window using getDisplayMedia().
+  virtual void OnFrameIsCapturingMediaStreamChanged(
+      RenderFrameHost* rfh,
+      bool is_capturing_media_stream) {}
+
   // Called when the connected to USB device state changes.
   virtual void OnIsConnectedToUsbDeviceChanged(
       bool is_connected_to_usb_device) {}
@@ -732,7 +776,7 @@ class CONTENT_EXPORT WebContentsObserver {
       const std::u16string& message,
       int32_t line_no,
       const std::u16string& source_id,
-      const absl::optional<std::u16string>& untrusted_stack_trace) {}
+      const std::optional<std::u16string>& untrusted_stack_trace) {}
 
   // Invoked when media is playing or paused.  |id| is unique per player and per
   // RenderFrameHost.  There may be multiple players within a RenderFrameHost
@@ -771,6 +815,10 @@ class CONTENT_EXPORT WebContentsObserver {
   virtual void MediaPictureInPictureChanged(bool is_picture_in_picture) {}
   virtual void MediaMutedStatusChanged(const MediaPlayerId& id, bool muted) {}
   virtual void MediaDestroyed(const MediaPlayerId& id) {}
+
+  // Invoked when a MediaSession associated with this WebContents has been
+  // created and initialized.
+  virtual void MediaSessionCreated(MediaSession* media_session) {}
 
   // Invoked when the renderer process changes the page scale factor.
   virtual void OnPageScaleFactorChanged(float page_scale_factor) {}
@@ -850,8 +898,7 @@ class CONTENT_EXPORT WebContentsObserver {
   // part of its lifetime.  It can then call Observe() to start and stop
   // observing.
   WebContentsObserver();
-
-  virtual ~WebContentsObserver();
+  ~WebContentsObserver() override;
 
   // Start observing a different WebContents; used with the default constructor.
   void Observe(WebContents* web_contents);

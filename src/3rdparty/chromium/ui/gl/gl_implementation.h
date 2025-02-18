@@ -14,6 +14,7 @@
 #include "build/build_config.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/gfx/extension_set.h"
+#include "ui/gl/angle_implementation.h"
 #include "ui/gl/buildflags.h"
 #include "ui/gl/gl_export.h"
 #include "ui/gl/gl_switches.h"
@@ -45,20 +46,6 @@ enum GLImplementation {
   kMaxValue = kGLImplementationEGLANGLE,
 };
 
-enum class ANGLEImplementation {
-  kNone = 0,
-  kD3D9 = 1,
-  kD3D11 = 2,
-  kOpenGL = 3,
-  kOpenGLES = 4,
-  kNull = 5,
-  kVulkan = 6,
-  kSwiftShader = 7,
-  kMetal = 8,
-  kDefault = 9,
-  kMaxValue = kDefault,
-};
-
 struct GL_EXPORT GLImplementationParts {
   constexpr explicit GLImplementationParts(const ANGLEImplementation angle_impl)
       : gl(kGLImplementationEGLANGLE),
@@ -75,13 +62,22 @@ struct GL_EXPORT GLImplementationParts {
   constexpr bool operator==(const GLImplementationParts& other) const {
     return (gl == other.gl && angle == other.angle);
   }
+  constexpr bool operator!=(const GLImplementationParts& other) const {
+    return !operator==(other);
+  }
 
   constexpr bool operator==(const ANGLEImplementation angle_impl) const {
     return operator==(GLImplementationParts(angle_impl));
   }
+  constexpr bool operator!=(const ANGLEImplementation angle_impl) const {
+    return !operator==(angle_impl);
+  }
 
   constexpr bool operator==(const GLImplementation gl_impl) const {
     return operator==(GLImplementationParts(gl_impl));
+  }
+  constexpr bool operator!=(const GLImplementation gl_impl) const {
+    return !operator==(gl_impl);
   }
 
   bool IsValid() const;

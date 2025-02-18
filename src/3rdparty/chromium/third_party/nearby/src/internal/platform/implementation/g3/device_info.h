@@ -30,26 +30,26 @@ namespace g3 {
 
 class DeviceInfo : public api::DeviceInfo {
  public:
-  std::optional<std::u16string> GetOsDeviceName() const override {
-    return u"Windows";
+  std::optional<std::string> GetOsDeviceName() const override {
+    return "Windows";
   }
 
   api::DeviceInfo::DeviceType GetDeviceType() const override {
     return api::DeviceInfo::DeviceType::kLaptop;
   }
 
-  api::DeviceInfo::OsType GetOsType() const override{
+  api::DeviceInfo::OsType GetOsType() const override {
     return api::DeviceInfo::OsType::kChromeOs;
   }
 
-  std::optional<std::u16string> GetFullName() const override {
-    return u"nearby";
+  std::optional<std::string> GetFullName() const override {
+    return "nearby";
   }
-  std::optional<std::u16string> GetGivenName() const override {
-    return u"nearby";
+  std::optional<std::string> GetGivenName() const override {
+    return "nearby";
   }
-  std::optional<std::u16string> GetLastName() const override {
-    return u"nearby";
+  std::optional<std::string> GetLastName() const override {
+    return "nearby";
   }
   std::optional<std::string> GetProfileUserName() const override {
     return "nearby";
@@ -91,6 +91,10 @@ class DeviceInfo : public api::DeviceInfo {
       absl::string_view listener_name) override {
     screen_locked_listeners_.erase(listener_name);
   }
+
+  bool PreventSleep() override { return true; }
+
+  bool AllowSleep() override { return true; }
 
  private:
   absl::flat_hash_map<std::string,

@@ -10,7 +10,7 @@
 #include "components/autofill/core/browser/form_structure.h"
 #include "components/autofill/core/browser/metrics/autofill_metrics.h"
 
-namespace autofill {
+namespace autofill::autofill_metrics {
 
 // Helper struct to count the `FieldFillingStatus` for a form group like
 // addresses and credit cards.
@@ -52,6 +52,11 @@ struct FormGroupFillingStats {
 // Returns the filling status of `field`.
 AutofillMetrics::FieldFillingStatus GetFieldFillingStatus(
     const AutofillField& field);
+
+// Merge `first` into `second` by summing each attribute from
+// `FormGroupFillingStats`.
+void MergeFormGroupFillingStats(const FormGroupFillingStats& first,
+                                FormGroupFillingStats& second);
 
 // kAccount profiles are synced from an external source and have potentially
 // originated from outside of Autofill. In order to determine the added value
@@ -96,8 +101,8 @@ enum class SettingsVisibleFieldTypeForMetrics {
 // Converts a server field type that can be edited in the settings to an enum
 // used for metrics.
 SettingsVisibleFieldTypeForMetrics ConvertSettingsVisibleFieldTypeForMetrics(
-    ServerFieldType field_type);
+    FieldType field_type);
 
-}  // namespace autofill
+}  // namespace autofill::autofill_metrics
 
 #endif  // COMPONENTS_AUTOFILL_CORE_BROWSER_METRICS_AUTOFILL_METRICS_UTILS_H_

@@ -6,11 +6,18 @@ import * as Host from '../../../core/host/host.js';
 import * as Platform from '../../../core/platform/platform.js';
 import * as UI from '../../legacy/legacy.js';
 import * as LitHtml from '../../lit-html/lit-html.js';
+import * as VisualLogging from '../../visual_logging/visual_logging.js';
 import * as ComponentHelpers from '../helpers/helpers.js';
 import * as Coordinator from '../render_coordinator/render_coordinator.js';
 
 import dataGridStyles from './dataGrid.css.js';
-import {BodyCellFocusedEvent, ColumnHeaderClickEvent, ContextMenuHeaderResetClickEvent} from './DataGridEvents.js';
+import {
+  BodyCellFocusedEvent,
+  ColumnHeaderClickEvent,
+  ContextMenuHeaderResetClickEvent,
+  RowMouseEnterEvent,
+  RowMouseLeaveEvent,
+} from './DataGridEvents.js';
 
 const coordinator = Coordinator.RenderCoordinator.RenderCoordinator.instance();
 
@@ -77,6 +84,7 @@ export interface DataGridData {
   label?: string;
   paddingRowsCount?: number;
   showScrollbar?: boolean;
+  striped?: boolean;
 }
 
 const enum UserScrollState {
@@ -87,7 +95,7 @@ const enum UserScrollState {
 
 const KEYS_TREATED_AS_CLICKS = new Set([' ', 'Enter']);
 
-const ROW_HEIGHT_PIXELS = 18;
+const ROW_HEIGHT_PIXELS = 20;
 
 export class DataGrid extends HTMLElement {
   static readonly litTagName = LitHtml.literal`devtools-data-grid`;
@@ -102,6 +110,7 @@ export class DataGrid extends HTMLElement {
   #label?: string = undefined;
   #paddingRowsCount = 10;
   #showScrollbar?: boolean = false;
+  #striped?: boolean = false;
   #currentResize: {
     rightCellCol: HTMLTableColElement,
     leftCellCol: HTMLTableColElement,
@@ -150,6 +159,7 @@ export class DataGrid extends HTMLElement {
   connectedCallback(): void {
     this.#shadow.adoptedStyleSheets = [dataGridStyles];
     ComponentHelpers.SetCSSProperty.set(this, '--table-row-height', `${ROW_HEIGHT_PIXELS}px`);
+    void this.#render();
   }
 
   get data(): DataGridData {
@@ -161,6 +171,7 @@ export class DataGrid extends HTMLElement {
       label: this.#label,
       paddingRowsCount: this.#paddingRowsCount,
       showScrollbar: this.#showScrollbar,
+      striped: this.#striped,
     };
   }
 
@@ -174,6 +185,7 @@ export class DataGrid extends HTMLElement {
     this.#contextMenus = data.contextMenus;
     this.#label = data.label;
     this.#showScrollbar = data.showScrollbar;
+    this.#striped = data.striped;
 
     /**
      * On first render, now we have data, we can figure out which cell is the
@@ -566,7 +578,8 @@ export class DataGrid extends HTMLElement {
    * data grid.
    */
   #onHeaderContextMenu(event: MouseEvent): void {
-    if (event.button !== 2) {
+    if (event.button !== 2 && event.button !== -1) {
+      // -1 = right click invoked by keyboard, for example 'Shift + F10'.
       // 2 = secondary button = right click. We only show context menus if the
       // user has right clicked.
       return;
@@ -589,7 +602,8 @@ export class DataGrid extends HTMLElement {
   }
 
   #onBodyRowContextMenu(event: MouseEvent): void {
-    if (event.button !== 2) {
+    if (event.button !== 2 && event.button !== -1) {
+      // -1 = right click invoked by keyboard, for example 'Shift + F10'.
       // 2 = secondary button = right click. We only show context menus if the
       // user has right clicked.
       return;
@@ -730,6 +744,9 @@ export class DataGrid extends HTMLElement {
    * padding).
    */
   async #render(): Promise<void> {
+    if (!this.isConnected) {
+      return;
+    }
     if (this.#isRendering) {
       // If we receive a request to render during a previous render call, we block
       // the newly requested render (since we could receive a lot of them in quick
@@ -748,6 +765,7 @@ export class DataGrid extends HTMLElement {
     const containerClassMap = {
       'wrapping-container': true,
       'show-scrollbar': this.#showScrollbar === true,
+      'striped': this.#striped === true,
     };
 
     await coordinator.write(() => {
@@ -792,6 +810,7 @@ export class DataGrid extends HTMLElement {
                 const cellIsFocusableCell = anyColumnsSortable && columnIndex === tabbableCell[0] && tabbableCell[1] === 0;
 
                 return LitHtml.html`<th class=${thClasses}
+                  jslog=${VisualLogging.tableHeader().track({click: anyColumnsSortable}).context(col.id)}
                   style=${LitHtml.Directives.ifDefined(col.styles ? LitHtml.Directives.styleMap(col.styles) : undefined)}
                   data-grid-header-cell=${col.id}
                   @focus=${(): void => {
@@ -809,7 +828,6 @@ export class DataGrid extends HTMLElement {
                   }}
                   title=${col.title}
                   aria-sort=${LitHtml.Directives.ifDefined(this.#ariaSortForHeader(col))}
-                  role=${col.sortable ? 'button' : 'columnheader'}
                   aria-colindex=${columnIndex + 1}
                   data-row-index='0'
                   data-col-index=${columnIndex}
@@ -845,6 +863,12 @@ export class DataGrid extends HTMLElement {
                   class=${rowClasses}
                   style=${LitHtml.Directives.ifDefined(row.styles ? LitHtml.Directives.styleMap(row.styles) : undefined)}
                   @contextmenu=${this.#onBodyRowContextMenu}
+                  @mouseenter=${(): void => {
+                    this.dispatchEvent(new RowMouseEnterEvent(row));
+                  }}
+                  @mouseleave=${(): void => {
+                    this.dispatchEvent(new RowMouseLeaveEvent(row));
+                  }}
                 >${this.#columns.map((col, columnIndex) => {
                   const cell = getRowEntryForColumnId(row, col.id);
                   const cellClasses = LitHtml.Directives.classMap({
@@ -855,6 +879,7 @@ export class DataGrid extends HTMLElement {
                   const cellOutput = col.visible ? renderCellValue(cell) : null;
                   return LitHtml.html`<td
                     class=${cellClasses}
+                    jslog=${VisualLogging.tableCell().track({click: true}).context(col.id)}
                     style=${LitHtml.Directives.ifDefined(col.styles ? LitHtml.Directives.styleMap(col.styles) : undefined)}
                     tabindex=${cellIsFocusableCell ? '0' : '-1'}
                     aria-colindex=${columnIndex + 1}

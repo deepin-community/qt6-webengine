@@ -12,6 +12,7 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/logging.h"
 #include "base/path_service.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "components/password_manager/core/browser/affiliation/affiliation_utils.h"
 #include "sql/test/scoped_error_expecter.h"
 #include "sql/test/test_helpers.h"
@@ -103,9 +104,13 @@ class AffiliationDatabaseTest : public testing::Test {
   void CloseDatabase() { db_.reset(); }
 
   void StoreInitialTestData() {
-    ASSERT_TRUE(db_->Store(TestEquivalenceClass1(), GroupedFacets()));
-    ASSERT_TRUE(db_->Store(TestEquivalenceClass2(), GroupedFacets()));
-    ASSERT_TRUE(db_->Store(TestEquivalenceClass3(), GroupedFacets()));
+    std::vector<AffiliatedFacetsWithUpdateTime> removed;
+    db_->StoreAndRemoveConflicting(TestEquivalenceClass1(), GroupedFacets(),
+                                   &removed);
+    db_->StoreAndRemoveConflicting(TestEquivalenceClass2(), GroupedFacets(),
+                                   &removed);
+    db_->StoreAndRemoveConflicting(TestEquivalenceClass3(), GroupedFacets(),
+                                   &removed);
   }
 
   AffiliationDatabase& db() { return *db_; }
@@ -119,35 +124,6 @@ class AffiliationDatabaseTest : public testing::Test {
   base::ScopedTempDir temp_directory_;
   std::unique_ptr<AffiliationDatabase> db_;
 };
-
-TEST_F(AffiliationDatabaseTest, Store) {
-  LOG(ERROR) << "During this test, SQL errors (number 19) will be logged to "
-                "the console. This is expected.";
-
-  ASSERT_NO_FATAL_FAILURE(StoreInitialTestData());
-
-  // Verify that duplicate equivalence classes are not allowed to be stored.
-  {
-    sql::test::ScopedErrorExpecter expecter;
-    expecter.ExpectError(SQLITE_CONSTRAINT);
-    AffiliatedFacetsWithUpdateTime duplicate = TestEquivalenceClass1();
-    EXPECT_FALSE(db().Store(duplicate, GroupedFacets()));
-    EXPECT_TRUE(expecter.SawExpectedErrors());
-  }
-
-  // Verify that intersecting equivalence classes are not allowed to be stored.
-  {
-    sql::test::ScopedErrorExpecter expecter;
-    expecter.ExpectError(SQLITE_CONSTRAINT);
-    AffiliatedFacetsWithUpdateTime intersecting;
-    intersecting.facets = {
-        Facet(FacetURI::FromCanonicalSpec(kTestFacetURI3)),
-        Facet(FacetURI::FromCanonicalSpec(kTestFacetURI4)),
-    };
-    EXPECT_FALSE(db().Store(intersecting, GroupedFacets()));
-    EXPECT_TRUE(expecter.SawExpectedErrors());
-  }
-}
 
 TEST_F(AffiliationDatabaseTest, GetAllAffiliationsAndBranding) {
   std::vector<AffiliatedFacetsWithUpdateTime> affiliations;
@@ -288,14 +264,20 @@ TEST_F(AffiliationDatabaseTest, CorruptDBIsRazedThenOpened) {
 // Verify that when the DB becomes corrupt after it has been opened, it gets
 // poisoned so that operations fail silently without side effects.
 TEST_F(AffiliationDatabaseTest, CorruptDBGetsPoisoned) {
-  ASSERT_TRUE(db().Store(TestEquivalenceClass1(), GroupedFacets()));
-
+  base::HistogramTester histogram_tester;
   ASSERT_TRUE(sql::test::CorruptSizeInHeader(db_path()));
 
-  EXPECT_FALSE(db().Store(TestEquivalenceClass2(), GroupedFacets()));
+  std::vector<AffiliatedFacetsWithUpdateTime> removed;
+  db().StoreAndRemoveConflicting(TestEquivalenceClass2(), GroupedFacets(),
+                                 &removed);
   std::vector<AffiliatedFacetsWithUpdateTime> affiliations;
   db().GetAllAffiliationsAndBranding(&affiliations);
   EXPECT_EQ(0u, affiliations.size());
+
+  histogram_tester.ExpectUniqueSample(
+      "PasswordManager.AffiliationDatabase.Error", SQLITE_INTERRUPT, 1);
+  histogram_tester.ExpectTotalCount(
+      "PasswordManager.AffiliationDatabase.StoreResult", 1);
 }
 
 // Verify that all files get deleted.
@@ -313,7 +295,8 @@ TEST_F(AffiliationDatabaseTest, MigrateFromVersion1) {
   CloseDatabase();
   AffiliationDatabase::Delete(db_path());
   base::FilePath src_root_dir;
-  ASSERT_TRUE(base::PathService::Get(base::DIR_SOURCE_ROOT, &src_root_dir));
+  ASSERT_TRUE(
+      base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &src_root_dir));
   base::FilePath sql_path_v1 = src_root_dir.AppendASCII("components")
                                    .AppendASCII("test")
                                    .AppendASCII("data")
@@ -325,7 +308,7 @@ TEST_F(AffiliationDatabaseTest, MigrateFromVersion1) {
   OpenDatabase();
 
   // Check that migration was successful and existing data was untouched.
-  EXPECT_EQ(5, db().GetDatabaseVersionForTesting());
+  EXPECT_EQ(6, db().GetDatabaseVersionForTesting());
   std::vector<AffiliatedFacetsWithUpdateTime> affiliations;
   db().GetAllAffiliationsAndBranding(&affiliations);
   ASSERT_EQ(3u, affiliations.size());
@@ -354,7 +337,8 @@ TEST_F(AffiliationDatabaseTest, InitializeFromVersion2) {
   CloseDatabase();
   AffiliationDatabase::Delete(db_path());
   base::FilePath src_root_dir;
-  ASSERT_TRUE(base::PathService::Get(base::DIR_SOURCE_ROOT, &src_root_dir));
+  ASSERT_TRUE(
+      base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &src_root_dir));
   base::FilePath sql_path_v2 = src_root_dir.AppendASCII("components")
                                    .AppendASCII("test")
                                    .AppendASCII("data")
@@ -383,7 +367,8 @@ TEST_F(AffiliationDatabaseTest, InitializeFromVersion3) {
   CloseDatabase();
   AffiliationDatabase::Delete(db_path());
   base::FilePath src_root_dir;
-  ASSERT_TRUE(base::PathService::Get(base::DIR_SOURCE_ROOT, &src_root_dir));
+  ASSERT_TRUE(
+      base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &src_root_dir));
   base::FilePath sql_path_v3 = src_root_dir.AppendASCII("components")
                                    .AppendASCII("test")
                                    .AppendASCII("data")
@@ -424,7 +409,8 @@ TEST_F(AffiliationDatabaseTest, InitializeFromVersion4) {
   CloseDatabase();
   AffiliationDatabase::Delete(db_path());
   base::FilePath src_root_dir;
-  ASSERT_TRUE(base::PathService::Get(base::DIR_SOURCE_ROOT, &src_root_dir));
+  ASSERT_TRUE(
+      base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &src_root_dir));
   base::FilePath sql_path_v3 = src_root_dir.AppendASCII("components")
                                    .AppendASCII("test")
                                    .AppendASCII("data")
@@ -468,7 +454,8 @@ TEST_F(AffiliationDatabaseTest, InitializeFromVersion5) {
   CloseDatabase();
   AffiliationDatabase::Delete(db_path());
   base::FilePath src_root_dir;
-  ASSERT_TRUE(base::PathService::Get(base::DIR_SOURCE_ROOT, &src_root_dir));
+  ASSERT_TRUE(
+      base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &src_root_dir));
   base::FilePath sql_path_v5 = src_root_dir.AppendASCII("components")
                                    .AppendASCII("test")
                                    .AppendASCII("data")
@@ -543,7 +530,8 @@ TEST_F(AffiliationDatabaseTest, StoreAndRemoveConflictingUpdatesGrouping) {
   };
 
   OpenDatabase();
-  db().Store(affiliation, group);
+  std::vector<AffiliatedFacetsWithUpdateTime> removed;
+  db().StoreAndRemoveConflicting(affiliation, group, &removed);
 
   std::vector<GroupedFacets> groupings = db().GetAllGroups();
   EXPECT_EQ(1u, groupings.size());
@@ -551,10 +539,98 @@ TEST_F(AffiliationDatabaseTest, StoreAndRemoveConflictingUpdatesGrouping) {
               testing::UnorderedElementsAreArray(group.facets));
   EXPECT_THAT(groupings[0].branding_info, testing::Eq(group.branding_info));
 
-  std::vector<AffiliatedFacetsWithUpdateTime> removed;
   db().StoreAndRemoveConflicting(affiliation, GroupedFacets(), &removed);
 
   EXPECT_EQ(0u, db().GetAllGroups().size());
+}
+
+TEST_F(AffiliationDatabaseTest, GetMatchingGroupOneMatch) {
+  AffiliatedFacetsWithUpdateTime affiliation;
+  affiliation.facets = {
+      Facet(FacetURI::FromCanonicalSpec(kTestFacetURI1)),
+  };
+
+  GroupedFacets group;
+  group.branding_info =
+      FacetBrandingInfo{kTestAndroidPlayName, GURL(kTestAndroidIconURL)};
+  group.facets = {
+      Facet(FacetURI::FromCanonicalSpec(kTestFacetURI1)),
+      Facet(FacetURI::FromCanonicalSpec(kTestFacetURI2)),
+      Facet(FacetURI::FromCanonicalSpec(kTestFacetURI3)),
+  };
+
+  OpenDatabase();
+  std::vector<AffiliatedFacetsWithUpdateTime> removed;
+  db().StoreAndRemoveConflicting(affiliation, group, &removed);
+
+  EXPECT_EQ(group, db().GetGroup(FacetURI::FromCanonicalSpec(kTestFacetURI1)));
+  EXPECT_EQ(group, db().GetGroup(FacetURI::FromCanonicalSpec(kTestFacetURI2)));
+  EXPECT_EQ(group, db().GetGroup(FacetURI::FromCanonicalSpec(kTestFacetURI3)));
+}
+
+// Test scenario when grouping info are stored for two facets, meaning they are
+// grouped but aren't affiliated.
+TEST_F(AffiliationDatabaseTest, GetMatchingGroupTwoMatches) {
+  AffiliatedFacetsWithUpdateTime affiliation1;
+  affiliation1.facets = {
+      Facet(FacetURI::FromCanonicalSpec(kTestFacetURI1)),
+  };
+
+  AffiliatedFacetsWithUpdateTime affiliation2;
+  affiliation2.facets = {
+      Facet(FacetURI::FromCanonicalSpec(kTestFacetURI2)),
+  };
+
+  GroupedFacets group;
+  group.branding_info =
+      FacetBrandingInfo{kTestAndroidPlayName, GURL(kTestAndroidIconURL)};
+  group.facets = {
+      Facet(FacetURI::FromCanonicalSpec(kTestFacetURI1)),
+      Facet(FacetURI::FromCanonicalSpec(kTestFacetURI2)),
+      Facet(FacetURI::FromCanonicalSpec(kTestFacetURI3)),
+  };
+
+  OpenDatabase();
+  std::vector<AffiliatedFacetsWithUpdateTime> removed;
+  db().StoreAndRemoveConflicting(affiliation1, group, &removed);
+  db().StoreAndRemoveConflicting(affiliation2, group, &removed);
+
+  EXPECT_EQ(group, db().GetGroup(FacetURI::FromCanonicalSpec(kTestFacetURI1)));
+  EXPECT_EQ(group, db().GetGroup(FacetURI::FromCanonicalSpec(kTestFacetURI2)));
+  EXPECT_EQ(group, db().GetGroup(FacetURI::FromCanonicalSpec(kTestFacetURI3)));
+}
+
+// Test scenario when grouping info are stored for unrelated facets.
+TEST_F(AffiliationDatabaseTest, GetMatchingGroupNoMatches) {
+  OpenDatabase();
+  std::vector<AffiliatedFacetsWithUpdateTime> removed;
+
+  AffiliatedFacetsWithUpdateTime affiliation;
+  affiliation.facets = {
+      Facet(FacetURI::FromCanonicalSpec(kTestFacetURI1)),
+  };
+  GroupedFacets group;
+  group.facets = {
+      Facet(FacetURI::FromCanonicalSpec(kTestFacetURI1)),
+      Facet(FacetURI::FromCanonicalSpec(kTestFacetURI2)),
+  };
+  db().StoreAndRemoveConflicting(affiliation, group, &removed);
+
+  affiliation.facets = {
+      Facet(FacetURI::FromCanonicalSpec(kTestFacetURI3)),
+  };
+  group.branding_info =
+      FacetBrandingInfo{kTestAndroidPlayName, GURL(kTestAndroidIconURL)};
+  group.facets = {
+      Facet(FacetURI::FromCanonicalSpec(kTestFacetURI3)),
+      Facet(FacetURI::FromCanonicalSpec(kTestFacetURI4)),
+  };
+  db().StoreAndRemoveConflicting(affiliation, group, &removed);
+
+  GroupedFacets expected_group;
+  expected_group.facets = {Facet(FacetURI::FromCanonicalSpec(kTestFacetURI5))};
+  EXPECT_EQ(expected_group,
+            db().GetGroup(FacetURI::FromCanonicalSpec(kTestFacetURI5)));
 }
 
 }  // namespace password_manager

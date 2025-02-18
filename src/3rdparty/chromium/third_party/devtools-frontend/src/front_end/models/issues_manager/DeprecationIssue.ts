@@ -24,7 +24,7 @@ const UIStrings = {
   /**
    * @description Title of issue raised when a deprecated feature is used
    */
-  title: 'Deprecated Feature Used',
+  title: 'Deprecated feature used',
 };
 
 const str_ = i18n.i18n.registerUIStrings('models/issues_manager/DeprecationIssue.ts', UIStrings);
@@ -87,7 +87,7 @@ export class DeprecationIssue extends Issue {
     });
   }
 
-  sources(): Iterable<Protocol.Audits.SourceCodeLocation> {
+  override sources(): Iterable<Protocol.Audits.SourceCodeLocation> {
     if (this.#issueDetails.sourceCodeLocation) {
       return [this.#issueDetails.sourceCodeLocation];
     }

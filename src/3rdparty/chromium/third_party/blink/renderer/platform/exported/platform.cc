@@ -32,7 +32,6 @@
 
 #include <memory>
 
-#include "base/allocator/partition_allocator/memory_reclaimer.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/threading/thread_checker.h"
@@ -43,6 +42,7 @@
 #include "media/base/media_log.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "third_party/blink/public/common/thread_safe_browser_interface_broker_proxy.h"
+#include "third_party/blink/public/mojom/service_worker/service_worker_fetch_handler_bypass_option.mojom-blink-forward.h"
 #include "third_party/blink/public/platform/scheduler/web_thread_scheduler.h"
 #include "third_party/blink/public/platform/web_dedicated_worker_host_factory_client.h"
 #include "third_party/blink/public/platform/web_graphics_context_3d_provider.h"
@@ -50,6 +50,7 @@
 #include "third_party/blink/renderer/platform/bindings/parkable_string_manager.h"
 #include "third_party/blink/renderer/platform/font_family_names.h"
 #include "third_party/blink/renderer/platform/fonts/font_cache_memory_dump_provider.h"
+#include "third_party/blink/renderer/platform/geometry/length.h"
 #include "third_party/blink/renderer/platform/graphics/parkable_image_manager.h"
 #include "third_party/blink/renderer/platform/heap/blink_gc_memory_dump_provider.h"
 #include "third_party/blink/renderer/platform/heap/gc_task_runner.h"
@@ -62,6 +63,7 @@
 #include "third_party/blink/renderer/platform/language.h"
 #include "third_party/blink/renderer/platform/loader/fetch/url_loader/url_loader_factory.h"
 #include "third_party/blink/renderer/platform/scheduler/common/simple_main_thread_scheduler.h"
+#include "third_party/blink/renderer/platform/scheduler/public/dummy_schedulers.h"
 #include "third_party/blink/renderer/platform/scheduler/public/main_thread.h"
 #include "third_party/blink/renderer/platform/scheduler/public/non_main_thread.h"
 #include "third_party/blink/renderer/platform/scheduler/public/post_cross_thread_task.h"
@@ -138,54 +140,6 @@ Platform::Platform() = default;
 
 Platform::~Platform() = default;
 
-namespace {
-
-class SimpleMainThread : public MainThread {
- public:
-  SimpleMainThread() = default;
-
-  // We rely on base::SingleThreadTaskRunner::CurrentDefaultHandle for tasks
-  // posted on the main thread. The task runner handle may not be available on
-  // Blink's startup (== on SimpleMainThread's construction), because some tests
-  // like blink_platform_unittests do not set up a global task environment.  In
-  // those cases, a task environment is set up on a test fixture's creation, and
-  // GetTaskRunner() returns the right task runner during a test.
-  //
-  // If GetTaskRunner() can be called from a non-main thread (including a worker
-  // thread running Mojo callbacks), we need to somehow get a task runner for
-  // the main thread. This is not possible with
-  // SingleThreadTaskRunner::CurrentDefaultHandle. We currently deal with this
-  // issue by setting the main thread task runner on the test startup and
-  // clearing it on the test tear-down. This is what
-  // SetMainThreadTaskRunnerForTesting() for.  This function is called from
-  // Platform::SetMainThreadTaskRunnerForTesting() and
-  // Platform::UnsetMainThreadTaskRunnerForTesting().
-
-  ThreadScheduler* Scheduler() override { return &scheduler_; }
-
-  scoped_refptr<base::SingleThreadTaskRunner> GetTaskRunner(
-      MainThreadTaskRunnerRestricted) const override {
-    if (main_thread_task_runner_for_testing_)
-      return main_thread_task_runner_for_testing_;
-    DCHECK(WTF::IsMainThread());
-    return base::SingleThreadTaskRunner::GetCurrentDefault();
-  }
-
-  void SetMainThreadTaskRunnerForTesting(
-      scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
-    main_thread_task_runner_for_testing_ = std::move(task_runner);
-  }
-
- private:
-  bool IsSimpleMainThread() const override { return true; }
-
-  scheduler::SimpleMainThreadScheduler scheduler_;
-  scoped_refptr<base::SingleThreadTaskRunner>
-      main_thread_task_runner_for_testing_;
-};
-
-}  // namespace
-
 WebThemeEngine* Platform::ThemeEngine() {
   return WebThemeEngineHelper::GetNativeThemeEngine();
 }
@@ -194,6 +148,9 @@ void Platform::InitializeBlink() {
   DCHECK(!did_initialize_blink_);
   WTF::Partitions::Initialize();
   WTF::Initialize();
+  Length::Initialize();
+  ProcessHeap::Init();
+  ThreadState::AttachMainThread();
   did_initialize_blink_ = true;
 }
 
@@ -212,7 +169,7 @@ void Platform::CreateMainThreadAndInitialize(Platform* platform) {
   DCHECK(platform);
   g_platform = platform;
   InitializeBlink();
-  InitializeMainThreadCommon(platform, std::make_unique<SimpleMainThread>());
+  InitializeMainThreadCommon(platform, scheduler::CreateSimpleMainThread());
 }
 
 void Platform::InitializeMainThreadCommon(
@@ -221,9 +178,8 @@ void Platform::InitializeMainThreadCommon(
   DCHECK(did_initialize_blink_);
   MainThread::SetMainThread(std::move(main_thread));
 
-  ProcessHeap::Init();
-
-  ThreadState* thread_state = ThreadState::AttachMainThread();
+  ThreadState* thread_state = ThreadState::Current();
+  CHECK(thread_state->IsMainThread());
   new BlinkGCMemoryDumpProvider(
       thread_state, base::SingleThreadTaskRunner::GetCurrentDefault(),
       BlinkGCMemoryDumpProvider::HeapType::kBlinkMainThread);
@@ -262,7 +218,11 @@ void Platform::InitializeMainThreadCommon(
 
   // Use a delayed idle task as this is low priority work that should stop when
   // the main thread is not doing any work.
-  WTF::Partitions::StartPeriodicReclaim(
+  //
+  // This relies on being called prior to
+  // PartitionAllocSupport::ReconfigureAfterTaskRunnerInit, which would start
+  // memory reclaimer with a regular task runner. The first one prevails.
+  WTF::Partitions::StartMemoryReclaimer(
       base::MakeRefCounted<IdleDelayedTaskHelper>());
 }
 
@@ -273,22 +233,19 @@ void Platform::SetCurrentPlatformForTesting(Platform* platform) {
 
 void Platform::CreateMainThreadForTesting() {
   DCHECK(!Thread::MainThread());
-  MainThread::SetMainThread(std::make_unique<SimpleMainThread>());
+  MainThread::SetMainThread(scheduler::CreateSimpleMainThread());
 }
 
 void Platform::SetMainThreadTaskRunnerForTesting() {
   DCHECK(WTF::IsMainThread());
   DCHECK(Thread::MainThread()->IsSimpleMainThread());
-  static_cast<SimpleMainThread*>(Thread::MainThread())
-      ->SetMainThreadTaskRunnerForTesting(
-          base::SingleThreadTaskRunner::GetCurrentDefault());
+  scheduler::SetMainThreadTaskRunnerForTesting();
 }
 
 void Platform::UnsetMainThreadTaskRunnerForTesting() {
   DCHECK(WTF::IsMainThread());
   DCHECK(Thread::MainThread()->IsSimpleMainThread());
-  static_cast<SimpleMainThread*>(Thread::MainThread())
-      ->SetMainThreadTaskRunnerForTesting(nullptr);
+  scheduler::UnsetMainThreadTaskRunnerForTesting();
 }
 
 Platform* Platform::Current() {
@@ -329,7 +286,7 @@ Platform::CompositorThreadTaskRunner() {
 std::unique_ptr<WebGraphicsContext3DProvider>
 Platform::CreateOffscreenGraphicsContext3DProvider(
     const Platform::ContextAttributes&,
-    const WebURL& top_document_url,
+    const WebURL& document_url,
     Platform::GraphicsInfo*) {
   return nullptr;
 }
@@ -340,10 +297,14 @@ Platform::CreateSharedOffscreenGraphicsContext3DProvider() {
 }
 
 std::unique_ptr<WebGraphicsContext3DProvider>
-Platform::CreateWebGPUGraphicsContext3DProvider(
-    const WebURL& top_document_url) {
+Platform::CreateWebGPUGraphicsContext3DProvider(const WebURL& document_url) {
   return nullptr;
 }
+
+void Platform::CreateWebGPUGraphicsContext3DProviderAsync(
+    const blink::WebURL& document_url,
+    base::OnceCallback<
+        void(std::unique_ptr<blink::WebGraphicsContext3DProvider>)> callback) {}
 
 scoped_refptr<viz::RasterContextProvider>
 Platform::SharedMainThreadContextProvider() {
@@ -373,6 +334,11 @@ std::unique_ptr<media::MediaLog> Platform::GetMediaLog(
     scoped_refptr<base::SingleThreadTaskRunner> owner_task_runner,
     bool is_on_worker) {
   return nullptr;
+}
+
+size_t Platform::GetMaxDecodedImageBytes() {
+  return Current() ? Current()->MaxDecodedImageBytes()
+                   : kNoDecodedImageByteLimit;
 }
 
 }  // namespace blink

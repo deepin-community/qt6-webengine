@@ -11,6 +11,7 @@
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/memory/ptr_util.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/read_only_shared_memory_region.h"
 #include "base/test/bind.h"
 #include "base/test/scoped_feature_list.h"
@@ -31,6 +32,7 @@
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "services/viz/public/mojom/compositing/compositor_frame_sink.mojom-blink.h"
+#include "services/viz/public/mojom/compositing/layer_context.mojom-blink.h"
 #include "services/viz/public/mojom/hit_test/hit_test_region_list.mojom-blink.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -88,6 +90,8 @@ class VideoMockCompositorFrameSink
 
   MOCK_METHOD1(SetNeedsBeginFrame, void(bool));
   MOCK_METHOD0(SetWantsAnimateOnlyBeginFrames, void());
+  MOCK_METHOD0(SetWantsBeginFrameAcks, void());
+  MOCK_METHOD0(SetAutoNeedsBeginFrame, void());
 
   MOCK_METHOD2(DoSubmitCompositorFrame,
                void(const viz::LocalSurfaceId&, viz::CompositorFrame*));
@@ -116,6 +120,8 @@ class VideoMockCompositorFrameSink
   MOCK_METHOD1(DidDeleteSharedBitmap, void(const gpu::Mailbox& id));
   MOCK_METHOD1(InitializeCompositorFrameSinkType,
                void(viz::mojom::CompositorFrameSinkType));
+  MOCK_METHOD1(BindLayerContext,
+               void(viz::mojom::blink::PendingLayerContextPtr));
   MOCK_METHOD1(SetThreadIds, void(const WTF::Vector<int32_t>&));
 
  private:
@@ -187,7 +193,8 @@ class VideoFrameSubmitterTest : public testing::Test,
         context_provider_.get(), nullptr);
     submitter_ = std::make_unique<VideoFrameSubmitter>(
         base::DoNothing(), reporting_cb,
-        base::WrapUnique<MockVideoFrameResourceProvider>(resource_provider_));
+        base::WrapUnique<MockVideoFrameResourceProvider>(
+            resource_provider_.get()));
 
     submitter_->Initialize(video_frame_provider_.get(), false);
     mojo::PendingRemote<viz::mojom::blink::CompositorFrameSink> submitter_sink;
@@ -259,7 +266,8 @@ class VideoFrameSubmitterTest : public testing::Test,
   std::unique_ptr<viz::FakeExternalBeginFrameSource> begin_frame_source_;
   std::unique_ptr<StrictMock<VideoMockCompositorFrameSink>> sink_;
   std::unique_ptr<StrictMock<MockVideoFrameProvider>> video_frame_provider_;
-  StrictMock<MockVideoFrameResourceProvider>* resource_provider_;
+  raw_ptr<StrictMock<MockVideoFrameResourceProvider>, DanglingUntriaged>
+      resource_provider_;
   scoped_refptr<viz::TestContextProvider> context_provider_;
   std::unique_ptr<VideoFrameSubmitter> submitter_;
 

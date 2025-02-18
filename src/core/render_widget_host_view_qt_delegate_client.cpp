@@ -76,8 +76,8 @@ public:
         , flags(flagsFromModifiers(modifiers))
         , index(index)
     {
-        // index is only valid for ACTION_DOWN and ACTION_UP and should correspond to the point causing it
-        // see blink_event_util.cc:ToWebTouchPointState for details
+        // index is only valid for POINTER_DOWN and POINTER_UP and should correspond to the point
+        // causing it see blink_event_util.cc:ToWebTouchPointState for details
         Q_ASSERT_X((action != Action::POINTER_DOWN && action != Action::POINTER_UP && index == -1)
                 || (action == Action::POINTER_DOWN && index >= 0 && touchPoint(index).state() == QEventPoint::Pressed)
                 || (action == Action::POINTER_UP && index >= 0 && touchPoint(index).state() == QEventPoint::Released),
@@ -88,6 +88,11 @@ public:
     Action GetAction() const override { return action; }
     int GetActionIndex() const override { return index; }
     size_t GetPointerCount() const override { return touchPoints.size(); }
+    int32_t GetSourceDeviceId(size_t pointer_index) const override
+    {
+        return static_cast<int32_t>(
+                touchPoints[pointer_index].second.device()->uniqueId().numericId());
+    }
     int GetPointerId(size_t pointer_index) const override
     {
         return touchPoints[pointer_index].first;
@@ -194,8 +199,10 @@ void RenderWidgetHostViewQtDelegateClient::visualPropertiesChanged()
 
     bool screenInfoChanged = m_rwhv->updateScreenInfo();
 
-    if (m_viewRectInDips != oldViewRect || m_windowRectInDips != oldWindowRect)
+    if (m_viewRectInDips != oldViewRect || m_windowRectInDips != oldWindowRect) {
         m_rwhv->host()->SendScreenRects();
+        m_rwhv->synchronizeVisualProperties(std::nullopt);
+    }
 
     if (m_viewRectInDips.size() != oldViewRect.size() || screenInfoChanged)
         m_rwhv->synchronizeVisualProperties(absl::nullopt);
@@ -492,14 +499,14 @@ void RenderWidgetHostViewQtDelegateClient::handleKeyEvent(QKeyEvent *event)
 
     bool keyDownTextInsertion =
             webEvent.GetType() == blink::WebInputEvent::Type::kRawKeyDown && webEvent.text[0];
-    webEvent.skip_in_browser = keyDownTextInsertion;
+    webEvent.skip_if_unhandled = keyDownTextInsertion;
     m_rwhv->GetFocusedWidget()->ForwardKeyboardEvent(webEvent);
 
     if (keyDownTextInsertion) {
         // Blink won't consume the RawKeyDown, but rather the Char event in this case.
         // The RawKeyDown is skipped on the way back (see above).
         // The same os_event will be set on both NativeWebKeyboardEvents.
-        webEvent.skip_in_browser = false;
+        webEvent.skip_if_unhandled = false;
         webEvent.SetType(blink::WebInputEvent::Type::kChar);
         m_rwhv->GetFocusedWidget()->ForwardKeyboardEvent(webEvent);
     }

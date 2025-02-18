@@ -48,13 +48,11 @@ void PermissionsClient::AreSitesImportant(
     entry.second = false;
 }
 
-#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_CHROMEOS_ASH)
 bool PermissionsClient::IsCookieDeletionDisabled(
     content::BrowserContext* browser_context,
     const GURL& origin) {
   return false;
 }
-#endif
 
 void PermissionsClient::GetUkmSourceId(content::BrowserContext* browser_context,
                                        content::WebContents* web_contents,
@@ -77,9 +75,8 @@ PermissionsClient::CreatePermissionUiSelectors(
   return std::vector<std::unique_ptr<PermissionUiSelector>>();
 }
 
-#if !BUILDFLAG(IS_ANDROID)
 void PermissionsClient::TriggerPromptHatsSurveyIfEnabled(
-    content::BrowserContext* context,
+    content::WebContents* web_contents,
     permissions::RequestType request_type,
     absl::optional<permissions::PermissionAction> action,
     permissions::PermissionPromptDisposition prompt_disposition,
@@ -87,8 +84,8 @@ void PermissionsClient::TriggerPromptHatsSurveyIfEnabled(
     permissions::PermissionRequestGestureType gesture_type,
     absl::optional<base::TimeDelta> prompt_display_duration,
     bool is_post_prompt,
+    const GURL& gurl,
     base::OnceCallback<void()> hats_shown_callback_) {}
-#endif
 
 void PermissionsClient::OnPromptResolved(
     RequestType request_type,
@@ -158,7 +155,6 @@ infobars::InfoBar* PermissionsClient::MaybeCreateInfoBar(
   return nullptr;
 }
 
-#if BUILDFLAG(IS_ANDROID)
 std::unique_ptr<PermissionsClient::PermissionMessageDelegate>
 PermissionsClient::MaybeCreateMessageUI(
     content::WebContents* web_contents,
@@ -166,7 +162,6 @@ PermissionsClient::MaybeCreateMessageUI(
     base::WeakPtr<PermissionPromptAndroid> prompt) {
   return nullptr;
 }
-#endif
 
 void PermissionsClient::RepromptForAndroidPermissions(
     content::WebContents* web_contents,
@@ -188,5 +183,19 @@ std::unique_ptr<PermissionPrompt> PermissionsClient::CreatePrompt(
   return nullptr;
 }
 #endif
+
+bool PermissionsClient::HasDevicePermission(ContentSettingsType type) const {
+  return true;
+}
+
+bool PermissionsClient::CanRequestDevicePermission(
+    ContentSettingsType type) const {
+  return false;
+}
+
+favicon::FaviconService* PermissionsClient::GetFaviconService(
+    content::BrowserContext* browser_context) {
+  return nullptr;
+}
 
 }  // namespace permissions

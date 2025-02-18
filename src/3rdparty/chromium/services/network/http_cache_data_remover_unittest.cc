@@ -124,8 +124,9 @@ class HttpCacheDataRemoverTest : public testing::Test {
     request_info.method = "GET";
     request_info.network_isolation_key =
         net::NetworkIsolationKey(kOrigin, kOrigin);
-    request_info.network_anonymization_key = net::NetworkAnonymizationKey(
-        net::SchemefulSite(kOrigin), net::SchemefulSite(kOrigin));
+    request_info.network_anonymization_key =
+        net::NetworkAnonymizationKey::CreateSameSite(
+            net::SchemefulSite(kOrigin));
     return *cache_->GenerateCacheKeyForRequest(&request_info);
   }
 
@@ -157,6 +158,7 @@ class HttpCacheDataRemoverTest : public testing::Test {
 
  protected:
   void InitNetworkContext() {
+    cache_ = nullptr;
     mojom::NetworkContextParamsPtr context_params = CreateContextParams();
     context_params->http_cache_enabled = true;
     network_context_remote_.reset();

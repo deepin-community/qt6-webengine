@@ -35,7 +35,7 @@ class V8_NODISCARD SaveAndClearThreadInWasmFlag {
     }
   }
   ~SaveAndClearThreadInWasmFlag() {
-    if (thread_was_in_wasm_ && !isolate_->has_pending_exception()) {
+    if (thread_was_in_wasm_ && !isolate_->has_exception()) {
       trap_handler::SetThreadInWasm();
     }
   }
@@ -108,10 +108,10 @@ MaybeHandle<String> StringReplaceOneCharWithString(
     return MaybeHandle<String>();
   }
   recursion_limit--;
-  if (subject->IsConsString()) {
-    ConsString cons = ConsString::cast(*subject);
-    Handle<String> first = handle(cons.first(), isolate);
-    Handle<String> second = handle(cons.second(), isolate);
+  if (IsConsString(*subject)) {
+    Tagged<ConsString> cons = ConsString::cast(*subject);
+    Handle<String> first = handle(cons->first(), isolate);
+    Handle<String> second = handle(cons->second(), isolate);
     Handle<String> new_first;
     if (!StringReplaceOneCharWithString(isolate, first, search, replace, found,
                                         recursion_limit).ToHandle(&new_first)) {
@@ -159,17 +159,15 @@ RUNTIME_FUNCTION(Runtime_StringReplaceOneCharWithString) {
                                      kRecursionLimit).ToHandle(&result)) {
     return *result;
   }
-  if (isolate->has_pending_exception())
-    return ReadOnlyRoots(isolate).exception();
+  if (isolate->has_exception()) return ReadOnlyRoots(isolate).exception();
 
   subject = String::Flatten(isolate, subject);
   if (StringReplaceOneCharWithString(isolate, subject, search, replace, &found,
                                      kRecursionLimit).ToHandle(&result)) {
     return *result;
   }
-  if (isolate->has_pending_exception())
-    return ReadOnlyRoots(isolate).exception();
-  // In case of empty handle and no pending exception we have stack overflow.
+  if (isolate->has_exception()) return ReadOnlyRoots(isolate).exception();
+  // In case of empty handle and no exception we have stack overflow.
   return isolate->StackOverflow();
 }
 
@@ -229,6 +227,41 @@ RUNTIME_FUNCTION(Runtime_StringCharCodeAt) {
   return Smi::FromInt(subject->Get(i));
 }
 
+RUNTIME_FUNCTION(Runtime_StringCodePointAt) {
+  HandleScope handle_scope(isolate);
+  DCHECK_EQ(2, args.length());
+
+  Handle<String> subject = args.at<String>(0);
+  uint32_t i = NumberToUint32(args[1]);
+
+  // Flatten the string.  If someone wants to get a char at an index
+  // in a cons string, it is likely that more indices will be
+  // accessed.
+  subject = String::Flatten(isolate, subject);
+
+  if (i >= static_cast<uint32_t>(subject->length())) {
+    return ReadOnlyRoots(isolate).nan_value();
+  }
+
+  int first_code_point = subject->Get(i);
+  if ((first_code_point & 0xFC00) != 0xD800) {
+    return Smi::FromInt(first_code_point);
+  }
+
+  if (i + 1 >= static_cast<uint32_t>(subject->length())) {
+    return Smi::FromInt(first_code_point);
+  }
+
+  int second_code_point = subject->Get(i + 1);
+  if ((second_code_point & 0xFC00) != 0xDC00) {
+    return Smi::FromInt(first_code_point);
+  }
+
+  int surrogate_offset = 0x10000 - (0xD800 << 10) - 0xDC00;
+  return Smi::FromInt((first_code_point << 10) +
+                      (second_code_point + surrogate_offset));
+}
+
 RUNTIME_FUNCTION(Runtime_StringBuilderConcat) {
   HandleScope scope(isolate);
   DCHECK_EQ(3, args.length());
@@ -248,13 +281,13 @@ RUNTIME_FUNCTION(Runtime_StringBuilderConcat) {
 
   {
     DisallowGarbageCollection no_gc;
-    FixedArray fixed_array = *array;
+    Tagged<FixedArray> fixed_array = *array;
 
     if (array_length == 0) {
       return ReadOnlyRoots(isolate).empty_string();
     } else if (array_length == 1) {
-      Object first = fixed_array.get(0);
-      if (first.IsString()) return first;
+      Tagged<Object> first = fixed_array->get(0);
+      if (IsString(first)) return first;
     }
     length = StringBuilderConcatLength(special_length, fixed_array,
                                        array_length, &one_byte);
@@ -310,11 +343,11 @@ RUNTIME_FUNCTION(Runtime_StringToArray) {
     // a LookupSingleCharacterStringFromCode for each of the characters.
     if (content.IsOneByte()) {
       base::Vector<const uint8_t> chars = content.ToOneByteVector();
-      FixedArray one_byte_table =
+      Tagged<FixedArray> one_byte_table =
           isolate->heap()->single_character_string_table();
       for (int i = 0; i < length; ++i) {
-        Object value = one_byte_table.get(chars[i]);
-        DCHECK(value.IsString());
+        Tagged<Object> value = one_byte_table->get(chars[i]);
+        DCHECK(IsString(value));
         DCHECK(ReadOnlyHeap::Contains(HeapObject::cast(value)));
         // The single-character strings are in RO space so it should
         // be safe to skip the write barriers.
@@ -334,7 +367,7 @@ RUNTIME_FUNCTION(Runtime_StringToArray) {
 
 #ifdef DEBUG
   for (int i = 0; i < length; ++i) {
-    DCHECK_EQ(String::cast(elements->get(i)).length(), 1);
+    DCHECK_EQ(String::cast(elements->get(i))->length(), 1);
   }
 #endif
 
@@ -391,6 +424,17 @@ RUNTIME_FUNCTION(Runtime_StringEqual) {
   Handle<String> x = args.at<String>(0);
   Handle<String> y = args.at<String>(1);
   return isolate->heap()->ToBoolean(String::Equals(isolate, x, y));
+}
+
+RUNTIME_FUNCTION(Runtime_StringCompare) {
+  CLEAR_THREAD_IN_WASM_SCOPE;
+  DCHECK_EQ(2, args.length());
+  HandleScope scope(isolate);
+  Handle<String> lhs(String::cast(args[0]), isolate);
+  Handle<String> rhs(String::cast(args[1]), isolate);
+  ComparisonResult result = String::Compare(isolate, lhs, rhs);
+  DCHECK_NE(result, ComparisonResult::kUndefined);
+  return Smi::FromInt(static_cast<int>(result));
 }
 
 RUNTIME_FUNCTION(Runtime_FlattenString) {

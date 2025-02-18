@@ -158,7 +158,7 @@ def parse_and_validate_args():
   if args.config is not None:
     if args.name is not None:
       sys.exit("--name/-n should not be specified with --config/-c.")
-    elif args.event is not None:
+    elif args.event:
       sys.exit("-e/--event should not be specified with --config/-c.")
   elif args.config is None and args.name is None:
     sys.exit("One of --names/-n or --config/-c is required.")
@@ -291,7 +291,7 @@ def get_perfetto_config(args):
 
 def release_or_newer(release):
   """Returns whether a new enough Android release is being used."""
-  SDK = {'R': 30}
+  SDK = {'T': 33}
   sdk = int(
       adb_check_output(
           ['adb', 'shell', 'getprop', 'ro.system.build.version.sdk']).strip())
@@ -335,8 +335,8 @@ def record_trace(config, profile_target):
       'stdout': NULL,
       'stderr': NULL,
   }
-  if not release_or_newer('R'):
-    sys.exit("This tool requires Android R+ to run.")
+  if not release_or_newer('T'):
+    sys.exit("This tool requires Android T+ to run.")
 
   # Push configuration to the device.
   tf = tempfile.NamedTemporaryFile()

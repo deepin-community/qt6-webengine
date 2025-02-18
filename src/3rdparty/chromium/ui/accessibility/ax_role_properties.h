@@ -40,11 +40,6 @@ AX_BASE_EXPORT bool IsButton(const ax::mojom::Role role);
 // Returns true if the provided role belongs to a cell or a table header.
 AX_BASE_EXPORT bool IsCellOrTableHeader(const ax::mojom::Role role);
 
-// Returns true if the role is expected to be the parent of a child tree.
-// Can return false for a child tree owner if an ARIA role was used, e.g.
-// <iframe role="region">.
-AX_BASE_EXPORT bool IsChildTreeOwner(const ax::mojom::Role role);
-
 // Returns true if the provided role belongs to an object on which a click
 // handler is commonly attached, or to an object that carries out an action when
 // clicked, such as activating itself, opening a dialog or closing a menu.
@@ -89,6 +84,14 @@ AX_BASE_EXPORT bool IsDateOrTimeInput(const ax::mojom::Role role);
 
 // Returns true if the provided role represents a dialog.
 AX_BASE_EXPORT bool IsDialog(const ax::mojom::Role role);
+
+// Returns true if the role represents an HTML embedding element, i.e. an
+// element that can embed content from another source such as an <iframe> or a
+// <embed>.
+//
+// Can return false for an embedding element if an ARIA role was used, e.g.
+// <iframe role="region">.
+AX_BASE_EXPORT bool IsEmbeddingElement(const ax::mojom::Role role);
 
 // Returns true if the provided role is a form.
 AX_BASE_EXPORT bool IsForm(const ax::mojom::Role role);
@@ -263,6 +266,16 @@ AX_BASE_EXPORT bool SupportsRequired(const ax::mojom::Role role);
 
 // Returns true if the provided role supports toggle.
 AX_BASE_EXPORT bool SupportsToggle(const ax::mojom::Role role);
+
+// Returns true if the provided role is one of the roles considered plain
+// elements. Check AXObject::IsPlainContent()
+AX_BASE_EXPORT bool IsPlainContentElement(const ax::mojom::Role role);
+
+// Returns true if the provided role allows for arrow keys expanding or
+// collapsing the element.
+// https://www.w3.org/WAI/ARIA/apg/patterns/treeview/examples/treeview-1b/
+AX_BASE_EXPORT bool SupportsArrowKeysForExpandCollapse(
+    const ax::mojom::Role role);
 
 }  // namespace ui
 

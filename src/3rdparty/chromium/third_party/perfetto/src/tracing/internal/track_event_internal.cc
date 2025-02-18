@@ -42,6 +42,8 @@ void TrackEventSessionObserver::OnStop(const DataSourceBase::StopArgs&) {}
 void TrackEventSessionObserver::WillClearIncrementalState(
     const DataSourceBase::ClearIncrementalStateArgs&) {}
 
+TrackEventTlsStateUserData::~TrackEventTlsStateUserData() = default;
+
 namespace internal {
 
 BaseTrackEventInternedDataIndex::~BaseTrackEventInternedDataIndex() = default;
@@ -51,6 +53,7 @@ namespace {
 static constexpr const char kLegacySlowPrefix[] = "disabled-by-default-";
 static constexpr const char kSlowTag[] = "slow";
 static constexpr const char kDebugTag[] = "debug";
+static constexpr const char kFilteredEventName[] = "FILTERED";
 
 constexpr auto kClockIdIncremental =
     TrackEventIncrementalState::kClockIdIncremental;
@@ -199,6 +202,9 @@ static constexpr protos::pbzero::BuiltinClock kDefaultTraceClock =
 
 // static
 protos::pbzero::BuiltinClock TrackEventInternal::clock_ = kDefaultTraceClock;
+
+// static
+bool TrackEventInternal::disallow_merging_with_system_tracks_ = false;
 
 // static
 void TrackEventInternal::EnableTracing(
@@ -510,7 +516,10 @@ void TrackEventInternal::WriteEventName(StaticString event_name,
 void TrackEventInternal::WriteEventName(perfetto::DynamicString event_name,
                                         perfetto::EventContext& event_ctx,
                                         const TrackEventTlsState& tls_state) {
-  if (PERFETTO_LIKELY(!tls_state.filter_dynamic_event_names)) {
+  if (PERFETTO_UNLIKELY(tls_state.filter_dynamic_event_names)) {
+    event_ctx.event()->set_name(kFilteredEventName,
+                                sizeof(kFilteredEventName) - 1);
+  } else {
     event_ctx.event()->set_name(event_name.value, event_name.length);
   }
 }
@@ -519,14 +528,14 @@ void TrackEventInternal::WriteEventName(perfetto::DynamicString event_name,
 EventContext TrackEventInternal::WriteEvent(
     TraceWriterBase* trace_writer,
     TrackEventIncrementalState* incr_state,
-    const TrackEventTlsState& tls_state,
+    TrackEventTlsState& tls_state,
     const Category* category,
     perfetto::protos::pbzero::TrackEvent::Type type,
     const TraceTimestamp& timestamp,
     bool on_current_thread_track) {
   PERFETTO_DCHECK(!incr_state->was_cleared);
   auto packet = NewTracePacket(trace_writer, incr_state, tls_state, timestamp);
-  EventContext ctx(std::move(packet), incr_state, &tls_state);
+  EventContext ctx(trace_writer, std::move(packet), incr_state, &tls_state);
 
   auto track_event = ctx.event();
   if (type != protos::pbzero::TrackEvent::TYPE_UNSPECIFIED)

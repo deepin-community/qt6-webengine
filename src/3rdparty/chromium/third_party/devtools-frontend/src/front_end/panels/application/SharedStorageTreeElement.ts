@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 import type * as Platform from '../../core/platform/platform.js';
+import * as VisualLogging from '../../ui/visual_logging/visual_logging.js';
 
 import {ApplicationPanelTreeElement} from './ApplicationPanelTreeElement.js';
 import {type ResourcesPanel} from './ResourcesPanel.js';
@@ -20,14 +21,15 @@ export class SharedStorageTreeElement extends ApplicationPanelTreeElement {
       Promise<SharedStorageTreeElement> {
     const treeElement = new SharedStorageTreeElement(resourcesPanel, sharedStorage);
     treeElement.view = await SharedStorageItemsView.createView(sharedStorage);
+    treeElement.view.element.setAttribute('jslog', `${VisualLogging.pane().context('shared-storage-data')}`);
     return treeElement;
   }
 
-  get itemURL(): Platform.DevToolsPath.UrlString {
+  override get itemURL(): Platform.DevToolsPath.UrlString {
     return 'shared-storage://' as Platform.DevToolsPath.UrlString;
   }
 
-  onselect(selectedByUser: boolean|undefined): boolean {
+  override onselect(selectedByUser: boolean|undefined): boolean {
     super.onselect(selectedByUser);
     this.resourcesPanel.showView(this.view);
     return false;

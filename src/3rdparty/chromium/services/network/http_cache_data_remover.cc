@@ -16,32 +16,12 @@
 #include "net/http/http_network_session.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_context_getter.h"
+#include "services/network/data_remover_util.h"
 #include "services/network/public/mojom/clear_data_filter.mojom.h"
 #include "services/network/public/mojom/network_context.mojom.h"
 #include "url/gurl.h"
 
 namespace network {
-
-namespace {
-
-bool DoesUrlMatchFilter(mojom::ClearDataFilter_Type filter_type,
-                        const std::set<url::Origin>& origins,
-                        const std::set<std::string>& domains,
-                        const GURL& url) {
-  std::string url_registerable_domain =
-      net::registry_controlled_domains::GetDomainAndRegistry(
-          url, net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
-  bool found_domain = (domains.find(url_registerable_domain != ""
-                                        ? url_registerable_domain
-                                        : url.host()) != domains.end());
-
-  bool found_origin = (origins.find(url::Origin::Create(url)) != origins.end());
-
-  return ((found_domain || found_origin) ==
-          (filter_type == mojom::ClearDataFilter_Type::DELETE_MATCHES));
-}
-
-}  // namespace
 
 HttpCacheDataRemover::HttpCacheDataRemover(
     mojom::ClearDataFilterPtr url_filter,
@@ -54,8 +34,9 @@ HttpCacheDataRemover::HttpCacheDataRemover(
       backend_(nullptr) {
   DCHECK(!done_callback_.is_null());
 
-  if (!url_filter)
+  if (!url_filter) {
     return;
+  }
 
   // Use the filter to create the |url_matcher_| callback.
   std::set<std::string> domains;
@@ -98,7 +79,7 @@ std::unique_ptr<HttpCacheDataRemover> HttpCacheDataRemover::CreateAndStart(
   // TODO(crbug.com/817849): add a browser test to validate the QUIC information
   // is cleared.
   http_cache->GetSession()
-      ->quic_stream_factory()
+      ->quic_session_pool()
       ->ClearCachedStatesInCryptoConfig(remover->url_matcher_);
 
   net::CompletionOnceCallback callback =

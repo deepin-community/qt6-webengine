@@ -155,14 +155,13 @@ void ChromeSetting::HandleFunction(const std::string& method_name,
   if (!binding::IsContextValidOrThrowError(context))
     return;
 
-  std::vector<v8::Local<v8::Value>> argument_list = arguments->GetAll();
+  v8::LocalVector<v8::Value> argument_list = arguments->GetAll();
 
   std::string full_name = "types.ChromeSetting." + method_name;
 
   if (!access_checker_->HasAccessOrThrowError(context, full_name))
     return;
 
-  v8::Local<v8::Function> callback;
   std::string error;
   const APISignature* signature = type_refs_->GetTypeMethodSignature(full_name);
   APISignature::JSONParseResult parse_result =

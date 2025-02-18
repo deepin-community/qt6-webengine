@@ -7,14 +7,16 @@
 #include <algorithm>
 #include <queue>
 #include <set>
+#include <string>
 #include <utility>
 #include <vector>
 
-#include "base/check_op.h"
+#include "base/check.h"
 #include "base/containers/contains.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/location.h"
+#include "base/logging.h"
 #include "base/observer_list.h"
 #include "base/sequence_checker.h"
 #include "base/task/sequenced_task_runner.h"
@@ -23,8 +25,10 @@
 #include "components/update_client/crx_update_item.h"
 #include "components/update_client/persisted_data.h"
 #include "components/update_client/ping_manager.h"
+#include "components/update_client/protocol_definition.h"
 #include "components/update_client/protocol_parser.h"
-#include "components/update_client/task_send_uninstall_ping.h"
+#include "components/update_client/task_check_for_update.h"
+#include "components/update_client/task_send_ping.h"
 #include "components/update_client/task_update.h"
 #include "components/update_client/update_checker.h"
 #include "components/update_client/update_client_errors.h"
@@ -75,8 +79,8 @@ UpdateClientImpl::UpdateClientImpl(
 UpdateClientImpl::~UpdateClientImpl() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  DCHECK(task_queue_.empty());
-  DCHECK(tasks_.empty());
+  CHECK(task_queue_.empty());
+  CHECK(tasks_.empty());
 
   config_ = nullptr;
 }
@@ -93,37 +97,55 @@ base::RepeatingClosure UpdateClientImpl::Install(
     return base::DoNothing();
   }
 
-  std::vector<std::string> ids = {id};
-
-  // Install tasks are run concurrently and never queued up. They are always
-  // considered foreground tasks.
-  constexpr bool kIsForeground = true;
-  constexpr bool kIsInstall = true;
+  // Install tasks are run concurrently in the foreground and never queued up.
   auto task = base::MakeRefCounted<TaskUpdate>(
-      update_engine_.get(), kIsForeground, kIsInstall, ids,
-      std::move(crx_data_callback), crx_state_change_callback,
+      update_engine_.get(), /*is_foreground=*/true, /*is_install=*/true,
+      std::vector<std::string>{id}, std::move(crx_data_callback),
+      crx_state_change_callback,
       base::BindOnce(&UpdateClientImpl::OnTaskComplete, this,
                      std::move(callback)));
   RunTask(task);
   return base::BindRepeating(&Task::Cancel, task);
 }
 
+// Update tasks are background tasks and queued up.
 void UpdateClientImpl::Update(const std::vector<std::string>& ids,
                               CrxDataCallback crx_data_callback,
                               CrxStateChangeCallback crx_state_change_callback,
                               bool is_foreground,
                               Callback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-
-  constexpr bool kIsInstall = false;
-  auto task = base::MakeRefCounted<TaskUpdate>(
-      update_engine_.get(), is_foreground, kIsInstall, ids,
+  RunOrEnqueueTask(base::MakeRefCounted<TaskUpdate>(
+      update_engine_.get(), is_foreground, /*is_install=*/false, ids,
       std::move(crx_data_callback), crx_state_change_callback,
       base::BindOnce(&UpdateClientImpl::OnTaskComplete, this,
-                     std::move(callback)));
+                     std::move(callback))));
+}
 
-  // If no other tasks are running at the moment, run this update task.
-  // Otherwise, queue the task up.
+// Update check tasks are queued up.
+void UpdateClientImpl::CheckForUpdate(
+    const std::string& id,
+    CrxDataCallback crx_data_callback,
+    CrxStateChangeCallback crx_state_change_callback,
+    bool is_foreground,
+    Callback callback) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  RunOrEnqueueTask(base::MakeRefCounted<TaskCheckForUpdate>(
+      update_engine_.get(), id, std::move(crx_data_callback),
+      crx_state_change_callback, is_foreground,
+      base::BindOnce(&UpdateClientImpl::OnTaskComplete, this,
+                     std::move(callback))));
+}
+
+void UpdateClientImpl::RunTask(scoped_refptr<Task> task) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+      FROM_HERE, base::BindOnce(&Task::Run, task));
+  tasks_.insert(task);
+}
+
+void UpdateClientImpl::RunOrEnqueueTask(scoped_refptr<Task> task) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (tasks_.empty()) {
     RunTask(task);
   } else {
@@ -131,29 +153,20 @@ void UpdateClientImpl::Update(const std::vector<std::string>& ids,
   }
 }
 
-void UpdateClientImpl::RunTask(scoped_refptr<Task> task) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
-      FROM_HERE, base::BindOnce(&Task::Run, base::Unretained(task.get())));
-  tasks_.insert(task);
-}
-
 void UpdateClientImpl::OnTaskComplete(Callback callback,
                                       scoped_refptr<Task> task,
                                       Error error) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  DCHECK(task);
+  CHECK(task);
 
   base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE, base::BindOnce(std::move(callback), error));
 
-  // Remove the task from the set of the running tasks. Only tasks handled by
-  // the update engine can be in this data structure.
-  DCHECK_EQ(1u, tasks_.count(task));
   tasks_.erase(task);
 
-  if (is_stopped_)
+  if (is_stopped_) {
     return;
+  }
 
   // Pick up a task from the queue if the queue has pending tasks and no other
   // task is running.
@@ -177,8 +190,9 @@ void UpdateClientImpl::RemoveObserver(Observer* observer) {
 void UpdateClientImpl::NotifyObservers(Observer::Events event,
                                        const std::string& id) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  for (auto& observer : observer_list_)
+  for (auto& observer : observer_list_) {
     observer.OnEvent(event, id);
+  }
 }
 
 bool UpdateClientImpl::GetCrxUpdateState(const std::string& id,
@@ -236,8 +250,23 @@ void UpdateClientImpl::SendUninstallPing(const CrxComponent& crx_component,
                                          Callback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  RunTask(base::MakeRefCounted<TaskSendUninstallPing>(
-      update_engine_.get(), crx_component, reason,
+  RunTask(base::MakeRefCounted<TaskSendPing>(
+      update_engine_.get(), crx_component, protocol_request::kEventUninstall, 1,
+      0, reason,
+      base::BindOnce(&UpdateClientImpl::OnTaskComplete, this,
+                     std::move(callback))));
+}
+
+void UpdateClientImpl::SendInstallPing(const CrxComponent& crx_component,
+                                       bool success,
+                                       int error_code,
+                                       int extra_code1,
+                                       Callback callback) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  RunTask(base::MakeRefCounted<TaskSendPing>(
+      update_engine_.get(), crx_component, protocol_request::kEventInstall,
+      success ? 1 : 0, error_code, extra_code1,
       base::BindOnce(&UpdateClientImpl::OnTaskComplete, this,
                      std::move(callback))));
 }
@@ -246,18 +275,18 @@ scoped_refptr<UpdateClient> UpdateClientFactory(
     scoped_refptr<Configurator> config) {
   return base::MakeRefCounted<UpdateClientImpl>(
       config, base::MakeRefCounted<PingManager>(config),
-      &UpdateChecker::Create);
+      base::BindRepeating(&UpdateChecker::Create));
 }
 
 void RegisterPrefs(PrefRegistrySimple* registry) {
-  PersistedData::RegisterPrefs(registry);
+  RegisterPersistedDataPrefs(registry);
 }
 
 // This function has the exact same implementation as RegisterPrefs. We have
 // this implementation here to make the intention more clear that is local user
 // profile access is needed.
 void RegisterProfilePrefs(PrefRegistrySimple* registry) {
-  PersistedData::RegisterPrefs(registry);
+  RegisterPersistedDataPrefs(registry);
 }
 
 }  // namespace update_client

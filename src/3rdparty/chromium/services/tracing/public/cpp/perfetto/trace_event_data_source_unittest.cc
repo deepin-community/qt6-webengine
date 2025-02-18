@@ -25,7 +25,7 @@
 #include "base/task/common/task_annotator.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/task/thread_pool.h"
-#include "base/threading/thread_id_name_manager.h"
+#include "base/threading/platform_thread.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
@@ -101,9 +101,8 @@ class TraceEventDataSourceTest
     perfetto::internal::TrackRegistry::InitializeInstance();
 #endif  // !BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
 
-    old_thread_name_ =
-        base::ThreadIdNameManager::GetInstance()->GetNameForCurrentThread();
-    base::ThreadIdNameManager::GetInstance()->SetName(kTestThread);
+    old_thread_name_ = base::PlatformThread::GetName();
+    base::PlatformThread::SetName(kTestThread);
     old_process_name_ = base::test::CurrentProcessForTest::GetName();
     old_process_type_ = base::test::CurrentProcessForTest::GetType();
     base::CurrentProcess::GetInstance().SetProcessNameAndType(kTestProcess,
@@ -146,7 +145,7 @@ class TraceEventDataSourceTest
     producer_client_.reset();
 #endif  // !BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
 
-    base::ThreadIdNameManager::GetInstance()->SetName(old_thread_name_);
+    base::PlatformThread::SetName(kTestThread);
     base::CurrentProcess::GetInstance().SetProcessNameAndType(
         old_process_name_, old_process_type_);
 
@@ -899,11 +898,11 @@ void HasMetadataValue(const perfetto::protos::ChromeMetadata& entry,
 }
 
 void HasMetadataValue(const perfetto::protos::ChromeMetadata& entry,
-                      const base::Value& value) {
+                      const base::Value::Dict& value) {
   EXPECT_TRUE(entry.has_json_value());
 
-  absl::optional<base::Value> child_dict =
-      base::JSONReader::Read(entry.json_value());
+  absl::optional<base::Value::Dict> child_dict =
+      base::JSONReader::ReadDict(entry.json_value());
   EXPECT_EQ(*child_dict, value);
 }
 
@@ -948,8 +947,7 @@ TEST_F(TraceEventDataSourceTest, MetadataGeneratorBeforeTracing) {
   MetadataHasNamedValue(metadata, "foo_str", "bar");
   MetadataHasNamedValue(metadata, "foo_bool", true);
 
-  base::Value child_dict(base::Value::Type::DICT);
-  child_dict.SetStringKey("child_str", "child_val");
+  auto child_dict = base::Value::Dict().Set("child_str", "child_val");
   MetadataHasNamedValue(metadata, "child_dict", child_dict);
 }
 
@@ -967,8 +965,7 @@ TEST_F(TraceEventDataSourceTest, MetadataGeneratorWhileTracing) {
   MetadataHasNamedValue(metadata, "foo_str", "bar");
   MetadataHasNamedValue(metadata, "foo_bool", true);
 
-  base::Value child_dict(base::Value::Type::DICT);
-  child_dict.SetStringKey("child_str", "child_val");
+  auto child_dict = base::Value::Dict().Set("child_str", "child_val");
   MetadataHasNamedValue(metadata, "child_dict", child_dict);
 }
 
@@ -997,15 +994,18 @@ TEST_F(TraceEventDataSourceTest, MultipleMetadataGenerators) {
   MetadataHasNamedValue(metadata, "foo_str", "bar");
   MetadataHasNamedValue(metadata, "foo_bool", true);
 
-  base::Value child_dict(base::Value::Type::DICT);
-  child_dict.SetStringKey("child_str", "child_val");
+  auto child_dict = base::Value::Dict().Set("child_str", "child_val");
   MetadataHasNamedValue(metadata, "child_dict", child_dict);
 
   EXPECT_EQ(1, metadata1.size());
   MetadataHasNamedValue(metadata1, "before_int", 42);
 }
 
-#if BUILDFLAG(IS_ANDROID)
+// With Perfetto client library, it's not possible to filter package names
+// based on privacy settings, because privacy settings are per-session while
+// track descriptors are global. But this is not a problem because the filtering
+// is done at upload stage, so package names don't leak into Chrome traces.
+#if BUILDFLAG(IS_ANDROID) && !BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
 TEST_F(TraceEventDataSourceTest,
        PackageNameNotRecordedPrivacyFilteringDisabledTraceLogNotSet) {
   StartTraceEventDataSource(/* privacy_filtering_enabled = false */);
@@ -1054,7 +1054,7 @@ TEST_F(TraceEventDataSourceTest,
       base::android::BuildInfo::GetInstance()->host_package_name(),
       e_packet->track_descriptor().chrome_process().host_app_package_name());
 }
-#endif
+#endif  // BUILDFLAG(IS_ANDROID) && !BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
 
 TEST_F(TraceEventDataSourceTest, BasicTraceEvent) {
   StartTraceEventDataSource();
@@ -2482,7 +2482,8 @@ TEST_F(TraceEventDataSourceTest, HistogramSampleTraceConfigEmpty) {
   EXPECT_EQ(e_packet->interned_data().histogram_names()[0].name(), "Foo.Bar");
 }
 
-TEST_F(TraceEventDataSourceTest, HistogramSampleTraceConfigNotEmpty) {
+// TODO(crbug.com/1464718): The test is flaky across platforms.
+TEST_F(TraceEventDataSourceTest, DISABLED_HistogramSampleTraceConfigNotEmpty) {
   std::vector<std::string> histograms;
   histograms.push_back("Foo1.Bar1");
   histograms.push_back("Foo3.Bar3");

@@ -6,8 +6,12 @@
 #define EXTENSIONS_BROWSER_API_MESSAGING_MESSAGING_API_MESSAGE_FILTER_H_
 
 #include "base/callback_list.h"
-#include "content/public/browser/browser_message_filter.h"
 #include "content/public/browser/browser_thread.h"
+#include "extensions/buildflags/buildflags.h"
+
+#if BUILDFLAG(ENABLE_EXTENSIONS_LEGACY_IPC)
+
+#include "content/public/browser/browser_message_filter.h"
 
 struct ExtensionMsg_ExternalConnectionInfo;
 struct ExtensionMsg_TabTargetConnectionInfo;
@@ -18,6 +22,11 @@ class RenderProcessHost;
 }
 
 namespace extensions {
+
+namespace mojom {
+enum class ChannelType;
+}
+
 struct Message;
 struct PortContext;
 struct PortId;
@@ -56,6 +65,7 @@ class MessagingAPIMessageFilter : public content::BrowserMessageFilter {
 
   void OnOpenChannelToExtension(const PortContext& source_context,
                                 const ExtensionMsg_ExternalConnectionInfo& info,
+                                mojom::ChannelType channel_type,
                                 const std::string& channel_name,
                                 const extensions::PortId& port_id);
   void OnOpenChannelToNativeApp(const PortContext& source_context,
@@ -63,6 +73,7 @@ class MessagingAPIMessageFilter : public content::BrowserMessageFilter {
                                 const extensions::PortId& port_id);
   void OnOpenChannelToTab(const PortContext& source_context,
                           const ExtensionMsg_TabTargetConnectionInfo& info,
+                          mojom::ChannelType channel_type,
                           const std::string& channel_name,
                           const extensions::PortId& port_id);
   void OnOpenMessagePort(const PortContext& port_context,
@@ -84,5 +95,7 @@ class MessagingAPIMessageFilter : public content::BrowserMessageFilter {
 };
 
 }  // namespace extensions
+
+#endif
 
 #endif  // EXTENSIONS_BROWSER_API_MESSAGING_MESSAGING_API_MESSAGE_FILTER_H_

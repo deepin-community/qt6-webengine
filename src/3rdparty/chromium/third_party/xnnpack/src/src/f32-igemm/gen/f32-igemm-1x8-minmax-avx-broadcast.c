@@ -19,9 +19,9 @@ void xnn_f32_igemm_minmax_ukernel_1x8__avx_broadcast(
     size_t nc,
     size_t kc,
     size_t ks,
-    const float**restrict a,
-    const float*restrict w,
-    float*restrict c,
+    const float** restrict a,
+    const float* restrict w,
+    float* restrict c,
     size_t cm_stride,
     size_t cn_stride,
     size_t a_offset,
@@ -70,10 +70,10 @@ void xnn_f32_igemm_minmax_ukernel_1x8__avx_broadcast(
     } while (p != 0);
 
     const __m256 vmin = _mm256_load_ps(params->avx.min);
-    vacc0x01234567 = _mm256_max_ps(vacc0x01234567, vmin);
+    vacc0x01234567 = _mm256_max_ps(vmin, vacc0x01234567);
 
     const __m256 vmax = _mm256_load_ps(params->avx.max);
-    vacc0x01234567 = _mm256_min_ps(vacc0x01234567, vmax);
+    vacc0x01234567 = _mm256_min_ps(vmax, vacc0x01234567);
 
     if XNN_LIKELY(nc >= 8) {
       _mm256_storeu_ps(c0, vacc0x01234567);

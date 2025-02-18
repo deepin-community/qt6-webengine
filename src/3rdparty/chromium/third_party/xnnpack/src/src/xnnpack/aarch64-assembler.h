@@ -9,12 +9,21 @@
 #include <cstdint>
 
 #include <xnnpack/assembler.h>
+#include <xnnpack/microparams.h>
 
 
 namespace xnnpack {
 namespace aarch64 {
 
 constexpr size_t kInstructionSizeInBytesLog2 = 2;
+// Special values used to check that callee-saved registers are properly saved.
+// Low 8 bits should be 0 to encode register code.
+constexpr uint64_t kXRegisterCorruptValue = UINT64_C(0xDEADBEEF12345600);
+constexpr uint64_t kVRegisterCorruptValue = UINT64_C(0x7FF000007F801000);
+constexpr uint8_t kRegisterCorruptMask = UINT8_C(0xFF);
+
+// Instruction used to align code, is a hlt.
+constexpr uint32_t kAlignInstruction = 0xD4400000;
 
 struct WRegister {
   uint8_t code;
@@ -163,6 +172,7 @@ constexpr VRegister v30{30};
 constexpr VRegister v31{31};
 
 struct VRegisterList {
+  // NOLINTNEXTLINE(google-explicit-constructor)
   VRegisterList(VRegister vt1)
       : vt1(vt1), length(1) {}
   VRegisterList(VRegister vt1, VRegister vt2)
@@ -343,6 +353,7 @@ enum class AddressingMode {
 };
 
 struct MemOperand {
+  // NOLINTNEXTLINE(google-explicit-constructor)
   MemOperand(XRegister xn): base(xn), mode(AddressingMode::kOffset), offset(0) {}
   MemOperand(XRegister xn, int32_t offset): base(xn), mode(AddressingMode::kOffset), offset(offset) {}
   MemOperand(XRegister xn, int32_t offset, AddressingMode mode): base(xn), mode(mode), offset(offset) {}
@@ -428,6 +439,8 @@ class Assembler : public AssemblerBase {
   void b_hs(Label& l) { return b(kHS, l); }
   void b_lo(Label& l) { return b(kLO, l); }
   void b_ne(Label& l) { return b(kNE, l); }
+  void bl(int32_t offset);
+  void blr(XRegister xn);
   void cmp(XRegister xn, uint16_t imm12);
   void cmp(XRegister xn, XRegister xm);
   void csel(XRegister xd, XRegister xn, XRegister xm, Condition c);
@@ -437,13 +450,16 @@ class Assembler : public AssemblerBase {
   void ldr(XRegister xt, MemOperand xn);
   void ldr(WRegister xt, MemOperand xn, int32_t imm);
   void ldr(XRegister xt, MemOperand xn, int32_t imm);
+  void mov(XRegister xd, uint16_t imm);
   void mov(XRegister xd, XRegister xn);
+  void movk(XRegister xd, uint16_t imm, uint8_t shift);
   void nop();
   void prfm(PrefetchOp prfop, MemOperand xn);
   void ret();
   void stp(XRegister xt1, XRegister xt2, MemOperand xn);
   void str(XRegister xt1, MemOperand xn);
   void sub(XRegister xd, XRegister xn, XRegister xm);
+  void sub(XRegister xd, XRegister xn, uint16_t imm12);
   void subs(XRegister xd, XRegister xn, uint16_t imm12);
   void tbnz(XRegister xd, uint8_t bit, Label& l);
   void tbz(XRegister xd, uint8_t bit, Label& l);
@@ -483,6 +499,8 @@ class Assembler : public AssemblerBase {
   void ldr(SRegister st, MemOperand xn, int32_t imm);
   void mov(VRegister vd, VRegister vn);
   void movi(VRegister vd, uint8_t imm);
+  // MOV (to general).
+  void mov(XRegister xd, VRegisterLane vn);
   void st1(VRegisterList vs, MemOperand xn, int32_t imm);
   void st1(VRegisterList vs, MemOperand xn, XRegister xm);
   void stp(DRegister dt1, DRegister dt2, MemOperand xn);
@@ -516,6 +534,19 @@ class MacroAssembler : public Assembler {
    void f32_hardswish(VRegister sixth, VRegister three, VRegister six,
                       VRegister zero, const VRegister *accs, size_t num_accs,
                       const VRegister *tmps, size_t num_tmps);
+   void Mov(XRegister xd, uint64_t imm);
+};
+
+class TrampolineGenerator : public MacroAssembler {
+  using MacroAssembler::MacroAssembler;
+
+ public:
+  void generate(size_t args_on_stack);
+ private:
+  // Helper functions to check that registers match. We keep the expected value inside of x0 and return early once we
+  // have a mismatch. x0 then becomes the error code, if it is 0, there are no errors.
+  void CheckRegisterMatch(VRegisterLane actual, Label& exit);
+  void CheckRegisterMatch(XRegister actual, Label& exit);
 };
 
 }  // namespace aarch64

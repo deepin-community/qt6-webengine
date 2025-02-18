@@ -10,6 +10,7 @@
 
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
+#include "ui/base/interaction/element_identifier.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/views/input_event_activation_protector.h"
 #include "ui/views/metadata/view_factory.h"
@@ -19,7 +20,7 @@
 namespace views {
 
 class DialogDelegate;
-class LabelButton;
+class MdTextButton;
 class Widget;
 
 // DialogClientView provides adornments for a dialog's content view, including
@@ -37,8 +38,12 @@ class Widget;
 // //ui/views. Access it through the public interfaces on DialogDelegate. It is
 // only VIEWS_EXPORT to make it available to views_unittests.
 class VIEWS_EXPORT DialogClientView : public ClientView, public DialogObserver {
+  METADATA_HEADER(DialogClientView, ClientView)
+
  public:
-  METADATA_HEADER(DialogClientView);
+  DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kTopViewId);
+  DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kOkButtonElementId);
+  DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kCancelButtonElementId);
 
   DialogClientView(Widget* widget, View* contents_view);
 
@@ -48,8 +53,8 @@ class VIEWS_EXPORT DialogClientView : public ClientView, public DialogObserver {
   ~DialogClientView() override;
 
   // Accessors in case the user wishes to adjust these buttons.
-  LabelButton* ok_button() const { return ok_button_; }
-  LabelButton* cancel_button() const { return cancel_button_; }
+  MdTextButton* ok_button() const { return ok_button_; }
+  MdTextButton* cancel_button() const { return cancel_button_; }
   View* extra_view() const { return extra_view_; }
 
   void SetButtonRowInsets(const gfx::Insets& insets);
@@ -67,8 +72,10 @@ class VIEWS_EXPORT DialogClientView : public ClientView, public DialogObserver {
   // Essentially it prevents clicks that happen within a user's double click
   // interval from when the protection is started as well as any following
   // clicks that happen in shorter succession than the user's double click
-  // interval. Refer to InputEventActivationProtector for more information.
-  void TriggerInputProtection();
+  // interval. Refer to InputEventActivationProtector for more information. If
+  // `force_early` is true, force to trigger even earlier (shortly before the
+  // this view is visible).
+  void TriggerInputProtection(bool force_early = false);
 
   void Layout() override;
   bool AcceleratorPressed(const ui::Accelerator& accelerator) override;
@@ -76,7 +83,7 @@ class VIEWS_EXPORT DialogClientView : public ClientView, public DialogObserver {
       const ViewHierarchyChangedDetails& details) override;
   void OnThemeChanged() override;
 
-  // Update the |view_shown_time_stamp_| of input protector. A short time
+  // Update the `view_shown_time_stamp_` of input protector. A short time
   // from this point onward, input event will be ignored.
   void UpdateInputProtectorTimeStamp();
 
@@ -94,6 +101,8 @@ class VIEWS_EXPORT DialogClientView : public ClientView, public DialogObserver {
     input_protector_ = std::move(input_protector);
   }
 
+  bool IsPossiblyUnintendedInteraction(const ui::Event& event);
+
  private:
   enum {
     // The number of buttons that DialogClientView can support.
@@ -104,20 +113,18 @@ class VIEWS_EXPORT DialogClientView : public ClientView, public DialogObserver {
   // Returns the DialogDelegate for the window.
   DialogDelegate* GetDialogDelegate() const;
 
-  // View implementation.
-  void ChildVisibilityChanged(View* child) override;
-
   // DialogObserver:
   void OnDialogChanged() override;
 
   // Update the dialog buttons to match the dialog's delegate.
   void UpdateDialogButtons();
+  void OnButtonVisibilityChanged(View* view);
 
-  // Creates, deletes, or updates the appearance of the button of type |type|
-  // (which must be pointed to by |member|).  Which action is chosen is based on
-  // whether DialogDelegate::GetDialogButtons() includes |type|, and whether
-  // |member| points to a button that already exists.
-  void UpdateDialogButton(LabelButton** member, ui::DialogButton type);
+  // Creates, deletes, or updates the appearance of the button of type `type`
+  // (which must be pointed to by `member`).  Which action is chosen is based on
+  // whether DialogDelegate::GetDialogButtons() includes `type`, and whether
+  // `member` points to a button that already exists.
+  void UpdateDialogButton(raw_ptr<MdTextButton>* member, ui::DialogButton type);
 
   void ButtonPressed(ui::DialogButton type, const ui::Event& event);
 
@@ -129,12 +136,16 @@ class VIEWS_EXPORT DialogClientView : public ClientView, public DialogObserver {
   // a View should not appear, it will be null.
   std::array<View*, kNumButtons> GetButtonRowViews();
 
-  // Installs and configures the LayoutManager for |button_row_container_|.
+  // Installs and configures the LayoutManager for `button_row_container_`.
   void SetupLayout();
 
   // Creates or deletes any buttons that are required. Updates data members.
   // After calling this, no button row Views will be in the view hierarchy.
-  void SetupViews();
+  void UpdateButtonsFromModel();
+
+  // Ask the delegate for a new extra view. If there is one, replace the
+  // existing extra view with it.
+  void UpdateExtraViewFromDelegate();
 
   // Adds/Removes a filler view depending on whether the corresponding live view
   // is present.
@@ -149,11 +160,11 @@ class VIEWS_EXPORT DialogClientView : public ClientView, public DialogObserver {
   gfx::Size minimum_size_;
 
   // The dialog buttons.
-  LabelButton* ok_button_ = nullptr;
-  LabelButton* cancel_button_ = nullptr;
+  raw_ptr<MdTextButton> ok_button_ = nullptr;
+  raw_ptr<MdTextButton> cancel_button_ = nullptr;
 
-  // The extra view shown in the row of buttons; may be NULL.
-  raw_ptr<View, DanglingUntriaged> extra_view_ = nullptr;
+  // The extra view shown in the row of buttons; may be nullptr.
+  raw_ptr<View> extra_view_ = nullptr;
 
   // Container view for the button row.
   raw_ptr<ButtonRowContainer> button_row_container_ = nullptr;

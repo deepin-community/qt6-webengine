@@ -2,10 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <fuchsia/logger/cpp/fidl.h>
+#include <fidl/fuchsia.logger/cpp/fidl.h>
 
 #include <cstring>
 
+#include <optional>
 #include "base/containers/contains.h"
 #include "base/fuchsia/test_log_listener_safe.h"
 #include "base/strings/string_piece.h"
@@ -14,7 +15,6 @@
 #include "fuchsia_web/webengine/test/context_provider_for_test.h"
 #include "fuchsia_web/webengine/test/isolated_archivist.h"
 #include "fuchsia_web/webengine/web_engine_integration_test_base.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace {
 
@@ -54,7 +54,8 @@ class WebEngineIntegrationLoggingTest : public WebEngineIntegrationTestBase {
   }
 
   void StartWebEngine(base::CommandLine command_line) override {
-    context_provider_.emplace(command_line);
+    context_provider_.emplace(
+        ContextProviderForTest::Create(std::move(command_line)));
     context_provider_->ptr().set_error_handler(
         [](zx_status_t status) { FAIL() << zx_status_get_string(status); });
   }
@@ -63,10 +64,10 @@ class WebEngineIntegrationLoggingTest : public WebEngineIntegrationTestBase {
     return context_provider_->get();
   }
 
-  fuchsia::logger::Log& log() { return isolated_archivist_.log(); }
+  fidl::Client<fuchsia_logger::Log>& log() { return isolated_archivist_.log(); }
 
   IsolatedArchivist isolated_archivist_;
-  absl::optional<ContextProviderForTest> context_provider_;
+  std::optional<ContextProviderForTest> context_provider_;
 };
 
 // Verifies that calling messages from console.debug() calls go to the Fuchsia
@@ -74,7 +75,7 @@ class WebEngineIntegrationLoggingTest : public WebEngineIntegrationTestBase {
 TEST_F(WebEngineIntegrationLoggingTest, SetJavaScriptLogLevel_DEBUG) {
   StartWebEngine(base::CommandLine(base::CommandLine::NO_PROGRAM));
   base::SimpleTestLogListener log_listener;
-  log_listener.ListenToLog(&log(), nullptr);
+  log_listener.ListenToLog(log(), nullptr);
 
   // Create the Context & Frame with all log severities enabled.
   CreateContext(TestContextParams());
@@ -90,21 +91,21 @@ TEST_F(WebEngineIntegrationLoggingTest, SetJavaScriptLogLevel_DEBUG) {
   navigation_listener()->RunUntilTitleEquals("ended");
 
   // Run until the message passed to console.debug() is received.
-  absl::optional<fuchsia::logger::LogMessage> logged_message =
+  std::optional<fuchsia_logger::LogMessage> logged_message =
       log_listener.RunUntilMessageReceived(kLogTestPageDebugMessage);
 
   ASSERT_TRUE(logged_message.has_value());
 
   // console.debug() should map to Fuchsia's DEBUG log severity.
-  EXPECT_EQ(logged_message->severity,
-            static_cast<int32_t>(fuchsia::logger::LogLevelFilter::DEBUG));
+  EXPECT_EQ(logged_message->severity(),
+            static_cast<int32_t>(fuchsia_logger::LogLevelFilter::kDebug));
 
   // Verify that the Frame's |debug_name| is amongst the log message tags.
-  EXPECT_FALSE(logged_message->tags.empty());
-  EXPECT_TRUE(base::Contains(logged_message->tags, kFrameLogTag));
+  EXPECT_FALSE(logged_message->tags().empty());
+  EXPECT_TRUE(base::Contains(logged_message->tags(), kFrameLogTag));
 
   // Verify that the message is formatted as expected.
-  EXPECT_EQ(NormalizeConsoleLogMessage(logged_message->msg),
+  EXPECT_EQ(NormalizeConsoleLogMessage(logged_message->msg()),
             base::StringPrintf("[http://127.0.0.1:%s/console_logging.html(8)] "
                                "This is a debug() message.",
                                kNormalizedPortNumber));

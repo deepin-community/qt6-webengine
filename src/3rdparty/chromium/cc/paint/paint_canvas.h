@@ -12,6 +12,7 @@
 #include "cc/paint/node_id.h"
 #include "cc/paint/paint_export.h"
 #include "cc/paint/paint_image.h"
+#include "cc/paint/refcounted_buffer.h"
 #include "cc/paint/skottie_color_map.h"
 #include "cc/paint/skottie_frame_data.h"
 #include "cc/paint/skottie_text_property_value.h"
@@ -178,6 +179,11 @@ class CC_PAINT_EXPORT PaintCanvas {
     drawImageRect(image, src, dst, SkSamplingOptions(), nullptr, constraint);
   }
 
+  virtual void drawVertices(scoped_refptr<RefCountedBuffer<SkPoint>> vertices,
+                            scoped_refptr<RefCountedBuffer<SkPoint>> uvs,
+                            scoped_refptr<RefCountedBuffer<uint16_t>> indices,
+                            const PaintFlags& flags) = 0;
+
   // Draws the frame of the |skottie| animation specified by the normalized time
   // t [0->first frame..1->last frame] at the destination bounds given by |dst|
   // onto the canvas. |images| is a map from asset id to the corresponding image
@@ -211,9 +217,9 @@ class CC_PAINT_EXPORT PaintCanvas {
 
   // Used for printing
   enum class AnnotationType {
-    URL,
-    NAMED_DESTINATION,
-    LINK_TO_DESTINATION,
+    kUrl,
+    kNameDestination,
+    kLinkToDestination,
   };
   virtual void Annotate(AnnotationType type,
                         const SkRect& rect,
@@ -236,8 +242,9 @@ class CC_PAINT_EXPORT PaintCanvas {
   virtual void setNodeId(int) = 0;
 
  private:
-  printing::MetafileSkia* metafile_ = nullptr;
-  paint_preview::PaintPreviewTracker* tracker_ = nullptr;
+  raw_ptr<printing::MetafileSkia> metafile_ = nullptr;
+  raw_ptr<paint_preview::PaintPreviewTracker, DanglingUntriaged> tracker_ =
+      nullptr;
 };
 
 class CC_PAINT_EXPORT PaintCanvasAutoRestore {

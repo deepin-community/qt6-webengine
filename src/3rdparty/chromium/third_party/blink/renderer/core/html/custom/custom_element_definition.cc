@@ -6,9 +6,11 @@
 #include "third_party/blink/renderer/core/dom/attr.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/html/custom/custom_element.h"
+#include "third_party/blink/renderer/core/html/custom/custom_element_construction_stack.h"
 #include "third_party/blink/renderer/core/html/custom/custom_element_reaction.h"
 #include "third_party/blink/renderer/core/html/custom/custom_element_reaction_factory.h"
 #include "third_party/blink/renderer/core/html/custom/custom_element_reaction_stack.h"
+#include "third_party/blink/renderer/core/html/custom/custom_element_registry.h"
 #include "third_party/blink/renderer/core/html/custom/element_internals.h"
 #include "third_party/blink/renderer/core/html/html_element.h"
 #include "third_party/blink/renderer/core/html_element_factory.h"
@@ -18,15 +20,18 @@
 namespace blink {
 
 CustomElementDefinition::CustomElementDefinition(
+    CustomElementRegistry& registry,
     const CustomElementDescriptor& descriptor)
-    : descriptor_(descriptor) {}
+    : registry_(registry), descriptor_(descriptor) {}
 
 CustomElementDefinition::CustomElementDefinition(
+    CustomElementRegistry& registry,
     const CustomElementDescriptor& descriptor,
     const HashSet<AtomicString>& observed_attributes,
     const Vector<String>& disabled_features,
     FormAssociationFlag form_association_flag)
-    : descriptor_(descriptor),
+    : registry_(registry),
+      descriptor_(descriptor),
       observed_attributes_(observed_attributes),
       has_style_attribute_changed_callback_(
           observed_attributes.Contains(html_names::kStyleAttr.LocalName())),
@@ -37,7 +42,7 @@ CustomElementDefinition::CustomElementDefinition(
 CustomElementDefinition::~CustomElementDefinition() = default;
 
 void CustomElementDefinition::Trace(Visitor* visitor) const {
-  visitor->Trace(construction_stack_);
+  visitor->Trace(registry_);
   ElementRareDataField::Trace(visitor);
 }
 
@@ -158,8 +163,17 @@ HTMLElement* CustomElementDefinition::CreateElement(
   // 6. If definition is non-null, then:
   // 6.1. If the synchronous custom elements flag is set, then run these
   // steps while catching any exceptions:
-  if (!flags.IsAsyncCustomElements())
+  if (!flags.IsAsyncCustomElements()) {
+    // It's impossible to create a custom element with a scoped definition
+    // without push the custom element construction stack. Make sure that
+    // doesn't happen for synchrnous autonomous custom elements, which  don't
+    // push the stack,
+    // TODO(crbug.com/1304439): Alternatively, we can push the construction
+    // stack only when using a scoped definition. Decide the exact behavior.
+    CHECK(!RuntimeEnabledFeatures::ScopedCustomElementRegistryEnabled() ||
+          registry_->IsGlobalRegistry());
     return CreateAutonomousCustomElementSync(document, tag_name);
+  }
 
   // 6.2. Otherwise: (the synchronous custom elements flag is not set)
   // 6.2.1. Set result to a new element that implements the HTMLElement
@@ -172,22 +186,6 @@ HTMLElement* CustomElementDefinition::CreateElement(
   // definition.
   EnqueueUpgradeReaction(*element);
   return element;
-}
-
-CustomElementDefinition::ConstructionStackScope::ConstructionStackScope(
-    CustomElementDefinition& definition,
-    Element& element)
-    : construction_stack_(definition.construction_stack_), element_(&element) {
-  // Push the construction stack.
-  construction_stack_.push_back(&element);
-  depth_ = construction_stack_.size();
-}
-
-CustomElementDefinition::ConstructionStackScope::~ConstructionStackScope() {
-  // Pop the construction stack.
-  DCHECK(!construction_stack_.back() || construction_stack_.back() == element_);
-  DCHECK_EQ(construction_stack_.size(), depth_);  // It's a *stack*.
-  construction_stack_.pop_back();
 }
 
 // https://html.spec.whatwg.org/C/#concept-upgrade-an-element
@@ -218,7 +216,8 @@ void CustomElementDefinition::Upgrade(Element& element) {
   bool succeeded = false;
   {
     // 4.13.5.6: Add element to the end of definition's construction stack.
-    ConstructionStackScope construction_stack_scope(*this, element);
+    CustomElementConstructionStackScope construction_stack_scope(*this,
+                                                                 element);
     // 4.13.5.8: Run the constructor, catching exceptions.
     succeeded = RunConstructor(element);
   }

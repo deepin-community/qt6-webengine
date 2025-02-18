@@ -12,10 +12,13 @@
 #include <vector>
 
 #include "base/feature_list.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/synchronization/lock.h"
 #include "media/base/video_decoder_config.h"
+#include "media/media_buildflags.h"
+#include "media/video/video_encode_accelerator.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 #include "third_party/webrtc/api/video/video_bitrate_allocation.h"
@@ -28,6 +31,7 @@ class SequencedTaskRunner;
 
 namespace media {
 class GpuVideoAcceleratorFactories;
+class MojoVideoEncoderMetricsProviderFactory;
 struct VideoEncoderInfo;
 }  // namespace media
 
@@ -35,6 +39,7 @@ namespace blink {
 
 namespace features {
 PLATFORM_EXPORT BASE_DECLARE_FEATURE(kWebRtcScreenshareSwEncoding);
+PLATFORM_EXPORT BASE_DECLARE_FEATURE(kForcingSoftwareIncludes360);
 }
 
 // RTCVideoEncoder uses a media::VideoEncodeAccelerator to implement a
@@ -48,7 +53,9 @@ class PLATFORM_EXPORT RTCVideoEncoder : public webrtc::VideoEncoder {
  public:
   RTCVideoEncoder(media::VideoCodecProfile profile,
                   bool is_constrained_h264,
-                  media::GpuVideoAcceleratorFactories* gpu_factories);
+                  media::GpuVideoAcceleratorFactories* gpu_factories,
+                  scoped_refptr<media::MojoVideoEncoderMetricsProviderFactory>
+                      encoder_metrics_provider_factory);
   RTCVideoEncoder(const RTCVideoEncoder&) = delete;
   RTCVideoEncoder& operator=(const RTCVideoEncoder&) = delete;
   ~RTCVideoEncoder() override;
@@ -79,6 +86,13 @@ class PLATFORM_EXPORT RTCVideoEncoder : public webrtc::VideoEncoder {
  private:
   class Impl;
 
+  bool IsCodecInitializationPending() const;
+  int32_t InitializeEncoder(
+      const media::VideoEncodeAccelerator::Config& vea_config);
+  void PreInitializeEncoder(
+      const std::vector<media::VideoEncodeAccelerator::Config::SpatialLayer>&
+          spatial_layers,
+      media::VideoPixelFormat pixel_format);
   void UpdateEncoderInfo(
       media::VideoEncoderInfo encoder_info,
       std::vector<webrtc::VideoFrameBuffer::Type> preferred_pixel_formats);
@@ -89,7 +103,11 @@ class PLATFORM_EXPORT RTCVideoEncoder : public webrtc::VideoEncoder {
   const bool is_constrained_h264_;
 
   // Factory for creating VEAs, shared memory buffers, etc.
-  media::GpuVideoAcceleratorFactories* gpu_factories_;
+  const raw_ptr<media::GpuVideoAcceleratorFactories, ExperimentalRenderer>
+      gpu_factories_;
+
+  scoped_refptr<media::MojoVideoEncoderMetricsProviderFactory>
+      encoder_metrics_provider_factory_;
 
   // Task runner that the video accelerator runs on.
   const scoped_refptr<base::SequencedTaskRunner> gpu_task_runner_;
@@ -107,6 +125,16 @@ class PLATFORM_EXPORT RTCVideoEncoder : public webrtc::VideoEncoder {
   SEQUENCE_CHECKER(webrtc_sequence_checker_);
 
   bool has_error_ GUARDED_BY_CONTEXT(webrtc_sequence_checker_){false};
+
+  // If this has value, the value is VideoEncodeAccelerator::Config to be used
+  // in up-coming Initialize().
+  absl::optional<media::VideoEncodeAccelerator::Config> vea_config_
+      GUARDED_BY_CONTEXT(webrtc_sequence_checker_);
+  // This has a value if SetRates() is called between InitEncode() and the first
+  // Encode(). The stored value is used for SetRates() after the encoder
+  // initialization with |vea_config_|.
+  absl::optional<webrtc::VideoEncoder::RateControlParameters>
+      pending_rate_params_ GUARDED_BY_CONTEXT(webrtc_sequence_checker_);
 
   // Execute in SetError(). This can be valid only in testing.
   WTF::CrossThreadOnceClosure error_callback_for_testing_;

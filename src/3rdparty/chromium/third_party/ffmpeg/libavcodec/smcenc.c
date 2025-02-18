@@ -542,7 +542,7 @@ static int smc_encode_frame(AVCodecContext *avctx, AVPacket *pkt,
         return ret;
 
     if (avctx->gop_size == 0 || !s->prev_frame->data[0] ||
-        (avctx->frame_number % avctx->gop_size) == 0) {
+        (avctx->frame_num % avctx->gop_size) == 0) {
         s->key_frame = 1;
     } else {
         s->key_frame = 0;
@@ -566,8 +566,7 @@ static int smc_encode_frame(AVCodecContext *avctx, AVPacket *pkt,
     // write chunk length
     AV_WB24(pkt->data + 1, pkt->size);
 
-    av_frame_unref(s->prev_frame);
-    ret = av_frame_ref(s->prev_frame, frame);
+    ret = av_frame_replace(s->prev_frame, frame);
     if (ret < 0) {
         av_log(avctx, AV_LOG_ERROR, "cannot add reference\n");
         return ret;
@@ -583,7 +582,7 @@ static int smc_encode_frame(AVCodecContext *avctx, AVPacket *pkt,
 
 static int smc_encode_end(AVCodecContext *avctx)
 {
-    SMCContext *s = (SMCContext *)avctx->priv_data;
+    SMCContext *s = avctx->priv_data;
 
     av_frame_free(&s->prev_frame);
 

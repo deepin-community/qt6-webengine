@@ -100,7 +100,8 @@ class HttpCacheDataCounterTest : public testing::Test {
       disk_cache::Entry* entry = result.ReleaseEntry();
       ASSERT_TRUE(entry);
 
-      auto io_buf = base::MakeRefCounted<net::IOBuffer>(test_entry.size);
+      auto io_buf =
+          base::MakeRefCounted<net::IOBufferWithSize>(test_entry.size);
       std::fill(io_buf->data(), io_buf->data() + test_entry.size, 0);
 
       net::TestCompletionCallback write_data_callback;
@@ -185,7 +186,7 @@ class HttpCacheDataCounterTest : public testing::Test {
   void InitNetworkContext() {
     mojom::NetworkContextParamsPtr context_params = CreateContextParams();
     context_params->http_cache_enabled = true;
-    context_params->http_cache_directory = cache_dir_.GetPath();
+    context_params->file_paths->http_cache_directory = cache_dir_.GetPath();
 
     network_context_ = std::make_unique<NetworkContext>(
         network_service_.get(),

@@ -41,6 +41,7 @@
 #include "services/viz/privileged/mojom/compositing/vsync_parameter_observer.mojom-forward.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "third_party/skia/include/core/SkM44.h"
+#include "ui/base/ozone_buildflags.h"
 #include "ui/compositor/compositor_animation_observer.h"
 #include "ui/compositor/compositor_export.h"
 #include "ui/compositor/compositor_lock.h"
@@ -206,6 +207,7 @@ class COMPOSITOR_EXPORT Compositor : public base::PowerSuspendObserver,
   void DisableAnimations();
   void EnableAnimations();
   bool animations_are_enabled() const { return animations_are_enabled_; }
+  bool IsAnimating() const { return animation_started_; }
 
   cc::AnimationTimeline* GetAnimationTimeline() const;
 
@@ -305,6 +307,12 @@ class COMPOSITOR_EXPORT Compositor : public base::PowerSuspendObserver,
   void AddVSyncParameterObserver(
       mojo::PendingRemote<viz::mojom::VSyncParameterObserver> observer);
 
+  // Sets and caches the maximum vsync interval, to be applied to the
+  // |display_private_| when possible, for use with variable refresh rates. An
+  // absent value indicates that VRR is not enabled.
+  void SetMaxVrrInterval(
+      const absl::optional<base::TimeDelta>& max_vrr_interval);
+
   // Sets the widget for the compositor to render into.
   void SetAcceleratedWidget(gfx::AcceleratedWidget widget);
   // Releases the widget previously set through SetAcceleratedWidget().
@@ -393,7 +401,6 @@ class COMPOSITOR_EXPORT Compositor : public base::PowerSuspendObserver,
       bool,
       cc::PaintHoldingReason,
       absl::optional<cc::PaintHoldingCommitTrigger>) override {}
-  void OnPauseRenderingChanged(bool) override {}
   void OnCommitRequested() override {}
   void WillUpdateLayers() override {}
   void DidUpdateLayers() override;
@@ -409,10 +416,12 @@ class COMPOSITOR_EXPORT Compositor : public base::PowerSuspendObserver,
   void DidInitializeLayerTreeFrameSink() override {}
   void DidFailToInitializeLayerTreeFrameSink() override;
   void WillCommit(const cc::CommitState&) override {}
-  void DidCommit(base::TimeTicks, base::TimeTicks) override;
-  void DidCommitAndDrawFrame() override {}
+  void DidCommit(int source_frame_number,
+                 base::TimeTicks,
+                 base::TimeTicks) override;
+  void DidCommitAndDrawFrame(int source_frame_number) override {}
   void DidReceiveCompositorFrameAck() override;
-  void DidCompletePageScaleAnimation() override {}
+  void DidCompletePageScaleAnimation(int source_frame_number) override {}
   void DidPresentCompositorFrame(
       uint32_t frame_token,
       const gfx::PresentationFeedback& feedback) override;
@@ -426,6 +435,7 @@ class COMPOSITOR_EXPORT Compositor : public base::PowerSuspendObserver,
   void NotifyThroughputTrackerResults(
       cc::CustomTrackerResults results) override;
   void DidObserveFirstScrollDelay(
+      int source_frame_number,
       base::TimeDelta first_scroll_delay,
       base::TimeTicks first_scroll_timestamp) override {}
 
@@ -451,11 +461,9 @@ class COMPOSITOR_EXPORT Compositor : public base::PowerSuspendObserver,
   // base::PowerSuspendObserver:
   void OnResume() override;
 
-// TODO(crbug.com/1052397): Revisit the macro expression once build flag switch
-// of lacros-chrome is complete.
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#if BUILDFLAG(IS_LINUX) && BUILDFLAG(IS_OZONE_X11)
   void OnCompleteSwapWithNewSize(const gfx::Size& size);
-#endif
+#endif  // BUILDFLAG(IS_LINUX) && BUILDFLAG(IS_OZONE_X11)
 
   bool IsLocked() { return lock_manager_.IsLocked(); }
 
@@ -491,6 +499,17 @@ class COMPOSITOR_EXPORT Compositor : public base::PowerSuspendObserver,
       mojo::PendingReceiver<gfx::mojom::DelegatedInkPointRenderer> receiver);
 
   const cc::LayerTreeSettings& GetLayerTreeSettings() const;
+
+  size_t saved_events_metrics_count_for_testing() const {
+    return host_->saved_events_metrics_count_for_testing();
+  }
+
+  // Returns true if there are throughput trackers.
+  bool has_throughput_trackers_for_testing() const {
+    return !throughput_tracker_map_.empty();
+  }
+
+  const cc::LayerTreeHost* host_for_testing() const { return host_.get(); }
 
  private:
   friend class base::RefCounted<Compositor>;
@@ -555,6 +574,7 @@ class COMPOSITOR_EXPORT Compositor : public base::PowerSuspendObserver,
   base::TimeTicks vsync_timebase_;
   base::TimeDelta vsync_interval_ = viz::BeginFrameArgs::DefaultInterval();
   bool has_vsync_params_ = false;
+  absl::optional<base::TimeDelta> max_vrr_interval_ = absl::nullopt;
 
   const bool use_external_begin_frame_control_;
   const bool force_software_compositor_;

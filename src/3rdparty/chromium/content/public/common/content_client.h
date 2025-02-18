@@ -15,7 +15,7 @@
 #include "build/build_config.h"
 #include "content/common/content_export.h"
 #include "mojo/public/cpp/system/message_pipe.h"
-#include "ui/base/layout.h"
+#include "ui/base/resource/resource_scale_factor.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 #include "url/url_util.h"
@@ -146,7 +146,7 @@ class CONTENT_EXPORT ContentClient {
     // described in the Custom Handler specification.
     // https://html.spec.whatwg.org/multipage/system-state.html#normalize-protocol-handler-parameters
     std::vector<std::pair<std::string, std::string>> predefined_handler_schemes;
-#if BUILDFLAG(IS_ANDROID) || defined(TOOLKIT_QT)
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_QTWEBENGINE)
     // Normally, non-standard schemes canonicalize to opaque origins. However,
     // Android WebView requires non-standard schemes to still be preserved.
     bool allow_non_standard_schemes_in_origins = true;

@@ -411,6 +411,7 @@ WebSocket::WebSocket(
     const GURL& url,
     const std::vector<std::string>& requested_protocols,
     const net::SiteForCookies& site_for_cookies,
+    bool has_storage_access,
     const net::IsolationInfo& isolation_info,
     std::vector<mojom::HttpHeaderPtr> additional_headers,
     const url::Origin& origin,
@@ -469,12 +470,13 @@ WebSocket::WebSocket(
         FROM_HERE,
         base::BindOnce(&WebSocket::AddChannel, weak_ptr_factory_.GetWeakPtr(),
                        url, requested_protocols, site_for_cookies,
-                       isolation_info, std::move(additional_headers)),
+                       has_storage_access, isolation_info,
+                       std::move(additional_headers)),
         delay_);
     return;
   }
-  AddChannel(url, requested_protocols, site_for_cookies, isolation_info,
-             std::move(additional_headers));
+  AddChannel(url, requested_protocols, site_for_cookies, has_storage_access,
+             isolation_info, std::move(additional_headers));
 }
 
 WebSocket::~WebSocket() {
@@ -602,13 +604,15 @@ void WebSocket::AddChannel(
     const GURL& socket_url,
     const std::vector<std::string>& requested_protocols,
     const net::SiteForCookies& site_for_cookies,
+    bool has_storage_access,
     const net::IsolationInfo& isolation_info,
     std::vector<mojom::HttpHeaderPtr> additional_headers) {
   DVLOG(3) << "WebSocket::AddChannel @" << reinterpret_cast<void*>(this)
            << " socket_url=\"" << socket_url << "\" requested_protocols=\""
            << base::JoinString(requested_protocols, ", ") << "\" origin=\""
            << origin_ << "\" site_for_cookies=\""
-           << site_for_cookies.ToDebugString() << "\"";
+           << site_for_cookies.ToDebugString()
+           << "\" has_storage_access=" << has_storage_access;
 
   DCHECK(!channel_);
 
@@ -630,9 +634,9 @@ void WebSocket::AddChannel(
       headers_to_pass.SetHeader(header->name, header->value);
     }
   }
-  channel_->SendAddChannelRequest(socket_url, requested_protocols, origin_,
-                                  site_for_cookies, isolation_info,
-                                  headers_to_pass, traffic_annotation_);
+  channel_->SendAddChannelRequest(
+      socket_url, requested_protocols, origin_, site_for_cookies,
+      has_storage_access, isolation_info, headers_to_pass, traffic_annotation_);
 }
 
 void WebSocket::OnWritable(MojoResult result,
@@ -758,7 +762,7 @@ void WebSocket::ReadAndSendFromDataPipe(InterruptionReason resume_reason) {
                          base::Unretained(this),
                          InterruptionReason::kInterceptor));
       if (intercept_result == WebSocketInterceptor::kShouldWait) {
-        DCHECK_EQ(outgoing_frames_interrupted_, InterruptionReason::kNone);
+        CHECK_EQ(outgoing_frames_interrupted_, InterruptionReason::kNone);
         outgoing_frames_interrupted_ = InterruptionReason::kInterceptor;
         return;
       }
@@ -779,7 +783,7 @@ void WebSocket::ReadAndSendFromDataPipe(InterruptionReason resume_reason) {
 bool WebSocket::ReadAndSendFrameFromDataPipe(DataFrame* data_frame) {
   while (true) {
     if (data_frame->data_length == 0) {
-      auto data_to_pass = base::MakeRefCounted<net::IOBuffer>(0);
+      auto data_to_pass = base::MakeRefCounted<net::IOBufferWithSize>();
       if (channel_->SendFrame(true, MessageTypeToOpCode(data_frame->type),
                               std::move(data_to_pass),
                               0) == net::WebSocketChannel::CHANNEL_DELETED) {
@@ -789,12 +793,12 @@ bool WebSocket::ReadAndSendFrameFromDataPipe(DataFrame* data_frame) {
       return true;
     }
 
-    const void* buffer;
-    uint32_t readable_size;
+    const void* buffer = nullptr;
+    uint32_t readable_size = 0;
     const MojoResult begin_result = readable_->BeginReadData(
         &buffer, &readable_size, MOJO_READ_DATA_FLAG_NONE);
     if (begin_result == MOJO_RESULT_SHOULD_WAIT) {
-      DCHECK_EQ(outgoing_frames_interrupted_, InterruptionReason::kNone);
+      CHECK_EQ(outgoing_frames_interrupted_, InterruptionReason::kNone);
       outgoing_frames_interrupted_ = InterruptionReason::kMojoPipe;
       if (!blocked_on_websocket_channel_) {
         readable_watcher_.ArmOrNotify();
@@ -804,18 +808,19 @@ bool WebSocket::ReadAndSendFrameFromDataPipe(DataFrame* data_frame) {
     if (begin_result == MOJO_RESULT_FAILED_PRECONDITION) {
       return false;
     }
-    DCHECK_EQ(begin_result, MOJO_RESULT_OK);
+    CHECK_EQ(begin_result, MOJO_RESULT_OK);
 
     if (readable_size < data_frame->data_length &&
         data_frame->do_not_fragment && !message_under_reassembly_) {
       // The cast is needed to unambiguously select a constructor on 32-bit
       // platforms.
-      message_under_reassembly_ = base::MakeRefCounted<net::IOBuffer>(
+      message_under_reassembly_ = base::MakeRefCounted<net::IOBufferWithSize>(
           base::checked_cast<size_t>(data_frame->data_length));
-      DCHECK_EQ(bytes_reassembled_, 0u);
+      CHECK_EQ(bytes_reassembled_, 0u);
     }
 
     if (message_under_reassembly_) {
+      CHECK_GT(data_frame->data_length, bytes_reassembled_);
       const size_t bytes_to_copy =
           std::min(static_cast<uint64_t>(readable_size),
                    data_frame->data_length - bytes_reassembled_);
@@ -824,9 +829,9 @@ bool WebSocket::ReadAndSendFrameFromDataPipe(DataFrame* data_frame) {
       bytes_reassembled_ += bytes_to_copy;
 
       const MojoResult end_result = readable_->EndReadData(bytes_to_copy);
-      DCHECK_EQ(end_result, MOJO_RESULT_OK);
+      CHECK_EQ(end_result, MOJO_RESULT_OK);
 
-      DCHECK_LE(bytes_reassembled_, data_frame->data_length);
+      CHECK_LE(bytes_reassembled_, data_frame->data_length);
       if (bytes_reassembled_ == data_frame->data_length) {
         bytes_reassembled_ = 0;
         blocked_on_websocket_channel_ = true;
@@ -846,7 +851,8 @@ bool WebSocket::ReadAndSendFrameFromDataPipe(DataFrame* data_frame) {
 
     const size_t size_to_send =
         std::min(static_cast<uint64_t>(readable_size), data_frame->data_length);
-    auto data_to_pass = base::MakeRefCounted<net::IOBuffer>(size_to_send);
+    auto data_to_pass =
+        base::MakeRefCounted<net::IOBufferWithSize>(size_to_send);
     const bool is_final = (size_to_send == data_frame->data_length);
     memcpy(data_to_pass->data(), buffer, size_to_send);
     blocked_on_websocket_channel_ = true;
@@ -857,13 +863,13 @@ bool WebSocket::ReadAndSendFrameFromDataPipe(DataFrame* data_frame) {
       return false;
     }
     const MojoResult end_result = readable_->EndReadData(size_to_send);
-    DCHECK_EQ(end_result, MOJO_RESULT_OK);
+    CHECK_EQ(end_result, MOJO_RESULT_OK);
 
     if (size_to_send == data_frame->data_length) {
       return true;
     }
 
-    DCHECK_GT(data_frame->data_length, size_to_send);
+    CHECK_GT(data_frame->data_length, size_to_send);
     data_frame->type = mojom::WebSocketMessageType::CONTINUATION;
     data_frame->data_length -= size_to_send;
   }

@@ -7,6 +7,7 @@
 #include "third_party/blink/renderer/bindings/modules/v8/v8_media_stream_constraints.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/modules/mediastream/media_constraints_impl.h"
+#include "third_party/blink/renderer/modules/mediastream/media_stream_track_video_stats.h"
 #include "third_party/blink/renderer/modules/mediastream/transferred_media_stream_track.h"
 #include "third_party/blink/renderer/modules/mediastream/user_media_client.h"
 #include "third_party/blink/renderer/modules/mediastream/user_media_request.h"
@@ -28,6 +29,9 @@ class GetOpenDeviceRequestCallbacks final : public UserMediaRequest::Callbacks {
 };
 
 }  // namespace
+
+MediaStreamTrack::MediaStreamTrack()
+    : ActiveScriptWrappable<MediaStreamTrack>({}) {}
 
 String ContentHintToString(
     const WebMediaStreamTrack::ContentHintType& content_hint) {
@@ -76,8 +80,9 @@ MediaStreamTrack* MediaStreamTrack::FromTransferredState(
 
   auto* window =
       DynamicTo<LocalDOMWindow>(ExecutionContext::From(script_state));
-  if (!window)
+  if (!window) {
     return nullptr;
+  }
 
   UserMediaClient* user_media_client = UserMediaClient::From(window);
   if (!user_media_client) {
@@ -99,7 +104,7 @@ MediaStreamTrack* MediaStreamTrack::FromTransferredState(
       MakeGarbageCollected<GetOpenDeviceRequestCallbacks>(),
       IdentifiableSurface());
   if (!request) {
-      return nullptr;
+    return nullptr;
   }
 
   // TODO(1288839): Create a TransferredMediaStreamTrack implementing interfaces

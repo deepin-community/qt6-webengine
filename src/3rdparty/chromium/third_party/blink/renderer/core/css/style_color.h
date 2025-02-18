@@ -79,9 +79,40 @@ class CORE_EXPORT StyleColor {
     UnresolvedColorMix& operator=(const UnresolvedColorMix& other);
     Color Resolve(const Color& current_color) const;
 
+    static bool Equals(const ColorOrUnresolvedColorMix& first,
+                       const ColorOrUnresolvedColorMix& second,
+                       UnderlyingColorType type) {
+      switch (type) {
+        case UnderlyingColorType::kCurrentColor:
+          return true;
+
+        case UnderlyingColorType::kColor:
+          return first.color == second.color;
+
+        case UnderlyingColorType::kColorMix:
+          return *first.unresolved_color_mix == *second.unresolved_color_mix;
+      }
+    }
+
+    bool operator==(const UnresolvedColorMix& other) const {
+      if (color_interpolation_space_ != other.color_interpolation_space_ ||
+          hue_interpolation_method_ != other.hue_interpolation_method_ ||
+          percentage_ != other.percentage_ ||
+          alpha_multiplier_ != other.alpha_multiplier_ ||
+          color1_type_ != other.color1_type_ ||
+          color2_type_ != other.color2_type_) {
+        return false;
+      }
+      return Equals(color1_, other.color1_, color1_type_) &&
+             Equals(color2_, other.color2_, color2_type_);
+    }
+
+    bool operator!=(const UnresolvedColorMix& other) const {
+      return !(*this == other);
+    }
+
    private:
-    Color::ColorInterpolationSpace color_interpolation_space_ =
-        Color::ColorInterpolationSpace::kNone;
+    Color::ColorSpace color_interpolation_space_ = Color::ColorSpace::kNone;
     Color::HueInterpolationMethod hue_interpolation_method_ =
         Color::HueInterpolationMethod::kShorter;
     ColorOrUnresolvedColorMix color1_;
@@ -173,8 +204,9 @@ class CORE_EXPORT StyleColor {
     }
 
     if (IsUnresolvedColorMixFunction()) {
-      return color_or_unresolved_color_mix_.unresolved_color_mix ==
-             other.color_or_unresolved_color_mix_.unresolved_color_mix;
+      DCHECK(other.IsUnresolvedColorMixFunction());
+      return *color_or_unresolved_color_mix_.unresolved_color_mix ==
+             *other.color_or_unresolved_color_mix_.unresolved_color_mix;
     }
 
     return color_or_unresolved_color_mix_.color ==
@@ -192,6 +224,10 @@ class CORE_EXPORT StyleColor {
  private:
   CSSValueID EffectiveColorKeyword() const;
 };
+
+// For debugging only.
+CORE_EXPORT std::ostream& operator<<(std::ostream& stream,
+                                     const StyleColor& color);
 
 }  // namespace blink
 

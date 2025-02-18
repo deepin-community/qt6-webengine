@@ -9,6 +9,7 @@
 #define CHROME_BROWSER_EXTENSIONS_API_COOKIES_COOKIES_API_H_
 
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "base/memory/raw_ptr.h"
@@ -118,7 +119,7 @@ class CookiesGetFunction : public ExtensionFunction {
 
   GURL url_;
   mojo::Remote<network::mojom::CookieManager> store_browser_cookie_manager_;
-  std::unique_ptr<api::cookies::Get::Params> parsed_args_;
+  std::optional<api::cookies::Get::Params> parsed_args_;
 };
 
 // Implements the cookies.getAll() extension function.
@@ -147,7 +148,7 @@ class CookiesGetAllFunction : public ExtensionFunction {
 
   GURL url_;
   mojo::Remote<network::mojom::CookieManager> store_browser_cookie_manager_;
-  std::unique_ptr<api::cookies::GetAll::Params> parsed_args_;
+  std::optional<api::cookies::GetAll::Params> parsed_args_;
 };
 
 // Implements the cookies.set() extension function.
@@ -171,7 +172,7 @@ class CookiesSetFunction : public ExtensionFunction {
   GURL url_;
   bool success_;
   mojo::Remote<network::mojom::CookieManager> store_browser_cookie_manager_;
-  std::unique_ptr<api::cookies::Set::Params> parsed_args_;
+  std::optional<api::cookies::Set::Params> parsed_args_;
 };
 
 // Implements the cookies.remove() extension function.
@@ -192,7 +193,7 @@ class CookiesRemoveFunction : public ExtensionFunction {
 
   GURL url_;
   mojo::Remote<network::mojom::CookieManager> store_browser_cookie_manager_;
-  std::unique_ptr<api::cookies::Remove::Params> parsed_args_;
+  std::optional<api::cookies::Remove::Params> parsed_args_;
 };
 
 // Implements the cookies.getAllCookieStores() extension function.

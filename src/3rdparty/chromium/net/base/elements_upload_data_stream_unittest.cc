@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <string_view>
 #include <vector>
 
 #include "base/files/file_path.h"
@@ -16,7 +17,6 @@
 #include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/run_loop.h"
-#include "base/strings/string_piece.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
 #include "net/base/completion_once_callback.h"
@@ -52,7 +52,7 @@ const size_t kTestBufferSize = 1 << 14;  // 16KB.
 // Reads data from the upload data stream, and returns the data as string.
 std::string ReadFromUploadDataStream(UploadDataStream* stream) {
   std::string data_read;
-  scoped_refptr<IOBuffer> buf = base::MakeRefCounted<IOBuffer>(kTestBufferSize);
+  auto buf = base::MakeRefCounted<IOBufferWithSize>(kTestBufferSize);
   while (!stream->IsEOF()) {
     TestCompletionCallback callback;
     const int result =
@@ -183,7 +183,7 @@ TEST_F(ElementsUploadDataStreamTest, ConsumeAllBytes) {
   EXPECT_EQ(kTestDataSize, stream->size());
   EXPECT_EQ(0U, stream->position());
   EXPECT_FALSE(stream->IsEOF());
-  scoped_refptr<IOBuffer> buf = base::MakeRefCounted<IOBuffer>(kTestBufferSize);
+  auto buf = base::MakeRefCounted<IOBufferWithSize>(kTestBufferSize);
   while (!stream->IsEOF()) {
     int bytes_read =
         stream->Read(buf.get(), kTestBufferSize, CompletionOnceCallback());
@@ -197,8 +197,7 @@ TEST_F(ElementsUploadDataStreamTest, File) {
   base::FilePath temp_file_path;
   ASSERT_TRUE(
       base::CreateTemporaryFileInDir(temp_dir_.GetPath(), &temp_file_path));
-  ASSERT_EQ(static_cast<int>(kTestDataSize),
-            base::WriteFile(temp_file_path, kTestData, kTestDataSize));
+  ASSERT_TRUE(base::WriteFile(temp_file_path, kTestData));
 
   element_readers_.push_back(std::make_unique<UploadFileElementReader>(
       base::SingleThreadTaskRunner::GetCurrentDefault().get(), temp_file_path,
@@ -215,7 +214,7 @@ TEST_F(ElementsUploadDataStreamTest, File) {
   EXPECT_EQ(kTestDataSize, stream->size());
   EXPECT_EQ(0U, stream->position());
   EXPECT_FALSE(stream->IsEOF());
-  scoped_refptr<IOBuffer> buf = base::MakeRefCounted<IOBuffer>(kTestBufferSize);
+  auto buf = base::MakeRefCounted<IOBufferWithSize>(kTestBufferSize);
   while (!stream->IsEOF()) {
     TestCompletionCallback read_callback;
     ASSERT_EQ(
@@ -231,8 +230,7 @@ TEST_F(ElementsUploadDataStreamTest, FileSmallerThanLength) {
   base::FilePath temp_file_path;
   ASSERT_TRUE(
       base::CreateTemporaryFileInDir(temp_dir_.GetPath(), &temp_file_path));
-  ASSERT_EQ(static_cast<int>(kTestDataSize),
-            base::WriteFile(temp_file_path, kTestData, kTestDataSize));
+  ASSERT_TRUE(base::WriteFile(temp_file_path, kTestData));
   const uint64_t kFakeSize = kTestDataSize * 2;
 
   UploadFileElementReader::ScopedOverridingContentLengthForTests
@@ -253,7 +251,7 @@ TEST_F(ElementsUploadDataStreamTest, FileSmallerThanLength) {
   EXPECT_EQ(kFakeSize, stream->size());
   EXPECT_EQ(0U, stream->position());
 
-  scoped_refptr<IOBuffer> buf = base::MakeRefCounted<IOBuffer>(kTestBufferSize);
+  auto buf = base::MakeRefCounted<IOBufferWithSize>(kTestBufferSize);
   EXPECT_FALSE(stream->IsEOF());
 
   TestCompletionCallback read_callback;
@@ -295,7 +293,7 @@ TEST_F(ElementsUploadDataStreamTest, ReadErrorSync) {
   EXPECT_FALSE(stream->IsEOF());
 
   // Prepare a buffer filled with non-zero data.
-  scoped_refptr<IOBuffer> buf = base::MakeRefCounted<IOBuffer>(kTestBufferSize);
+  auto buf = base::MakeRefCounted<IOBufferWithSize>(kTestBufferSize);
   std::fill_n(buf->data(), kTestBufferSize, -1);
 
   // Read() results in success even when the reader returns error.
@@ -333,7 +331,7 @@ TEST_F(ElementsUploadDataStreamTest, ReadErrorAsync) {
   EXPECT_FALSE(stream->IsEOF());
 
   // Prepare a buffer filled with non-zero data.
-  scoped_refptr<IOBuffer> buf = base::MakeRefCounted<IOBuffer>(kTestBufferSize);
+  auto buf = base::MakeRefCounted<IOBufferWithSize>(kTestBufferSize);
   std::fill_n(buf->data(), kTestBufferSize, -1);
 
   // Read() results in success even when the reader returns error.
@@ -352,8 +350,7 @@ TEST_F(ElementsUploadDataStreamTest, FileAndBytes) {
   base::FilePath temp_file_path;
   ASSERT_TRUE(
       base::CreateTemporaryFileInDir(temp_dir_.GetPath(), &temp_file_path));
-  ASSERT_EQ(static_cast<int>(kTestDataSize),
-            base::WriteFile(temp_file_path, kTestData, kTestDataSize));
+  ASSERT_TRUE(base::WriteFile(temp_file_path, kTestData));
 
   const uint64_t kFileRangeOffset = 1;
   const uint64_t kFileRangeLength = 4;
@@ -376,7 +373,7 @@ TEST_F(ElementsUploadDataStreamTest, FileAndBytes) {
   EXPECT_EQ(kStreamSize, stream->size());
   EXPECT_EQ(0U, stream->position());
   EXPECT_FALSE(stream->IsEOF());
-  scoped_refptr<IOBuffer> buf = base::MakeRefCounted<IOBuffer>(kTestBufferSize);
+  auto buf = base::MakeRefCounted<IOBufferWithSize>(kTestBufferSize);
   while (!stream->IsEOF()) {
     TestCompletionCallback read_callback;
     const int result =
@@ -479,10 +476,10 @@ TEST_F(ElementsUploadDataStreamTest, ReadAsyncWithExactSizeBuffer) {
   EXPECT_EQ(kTestDataSize, stream->size());
   EXPECT_EQ(0U, stream->position());
   EXPECT_FALSE(stream->IsEOF());
-  scoped_refptr<IOBuffer> buf = base::MakeRefCounted<IOBuffer>(kTestDataSize);
+  auto buf = base::MakeRefCounted<IOBufferWithSize>(kTestDataSize);
   int bytes_read =
       stream->Read(buf.get(), kTestDataSize, CompletionOnceCallback());
-  ASSERT_EQ(static_cast<int>(kTestDataSize), bytes_read);  // Not an error.
+  ASSERT_TRUE(bytes_read);  // Not an error.
   EXPECT_EQ(kTestDataSize, stream->position());
   ASSERT_TRUE(stream->IsEOF());
 }
@@ -522,12 +519,12 @@ TEST_F(ElementsUploadDataStreamTest, ReadAsync) {
               IsError(ERR_IO_PENDING));
   EXPECT_THAT(init_callback.WaitForResult(), IsOk());
 
-  scoped_refptr<IOBuffer> buf = base::MakeRefCounted<IOBuffer>(kTestBufferSize);
+  auto buf = base::MakeRefCounted<IOBufferWithSize>(kTestBufferSize);
 
   // Consume the first element.
   TestCompletionCallback read_callback1;
-  EXPECT_EQ(static_cast<int>(kTestDataSize),
-            stream->Read(buf.get(), kTestDataSize, read_callback1.callback()));
+  EXPECT_TRUE(
+      stream->Read(buf.get(), kTestDataSize, read_callback1.callback()));
   base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(read_callback1.have_result());
 
@@ -535,7 +532,7 @@ TEST_F(ElementsUploadDataStreamTest, ReadAsync) {
   TestCompletionCallback read_callback2;
   ASSERT_EQ(ERR_IO_PENDING,
             stream->Read(buf.get(), kTestDataSize, read_callback2.callback()));
-  EXPECT_EQ(static_cast<int>(kTestDataSize), read_callback2.WaitForResult());
+  EXPECT_TRUE(read_callback2.WaitForResult());
 
   // Consume the third and the fourth elements.
   TestCompletionCallback read_callback3;
@@ -573,8 +570,7 @@ TEST_F(ElementsUploadDataStreamTest, FileChanged) {
   base::FilePath temp_file_path;
   ASSERT_TRUE(
       base::CreateTemporaryFileInDir(temp_dir_.GetPath(), &temp_file_path));
-  ASSERT_EQ(static_cast<int>(kTestDataSize),
-            base::WriteFile(temp_file_path, kTestData, kTestDataSize));
+  ASSERT_TRUE(base::WriteFile(temp_file_path, kTestData));
 
   base::File::Info file_info;
   ASSERT_TRUE(base::GetFileInfo(temp_file_path, &file_info));
@@ -591,8 +587,7 @@ TEST_F(ElementsUploadDataStreamTest, MultipleInit) {
   base::FilePath temp_file_path;
   ASSERT_TRUE(
       base::CreateTemporaryFileInDir(temp_dir_.GetPath(), &temp_file_path));
-  ASSERT_EQ(static_cast<int>(kTestDataSize),
-            base::WriteFile(temp_file_path, kTestData, kTestDataSize));
+  ASSERT_TRUE(base::WriteFile(temp_file_path, kTestData));
 
   // Prepare data.
   element_readers_.push_back(
@@ -636,8 +631,7 @@ TEST_F(ElementsUploadDataStreamTest, MultipleInitAsync) {
   base::FilePath temp_file_path;
   ASSERT_TRUE(
       base::CreateTemporaryFileInDir(temp_dir_.GetPath(), &temp_file_path));
-  ASSERT_EQ(static_cast<int>(kTestDataSize),
-            base::WriteFile(temp_file_path, kTestData, kTestDataSize));
+  ASSERT_TRUE(base::WriteFile(temp_file_path, kTestData));
   TestCompletionCallback test_callback;
 
   // Prepare data.
@@ -680,8 +674,7 @@ TEST_F(ElementsUploadDataStreamTest, InitToReset) {
   base::FilePath temp_file_path;
   ASSERT_TRUE(
       base::CreateTemporaryFileInDir(temp_dir_.GetPath(), &temp_file_path));
-  ASSERT_EQ(static_cast<int>(kTestDataSize),
-            base::WriteFile(temp_file_path, kTestData, kTestDataSize));
+  ASSERT_TRUE(base::WriteFile(temp_file_path, kTestData));
 
   // Prepare data.
   element_readers_.push_back(
@@ -708,8 +701,7 @@ TEST_F(ElementsUploadDataStreamTest, InitToReset) {
   // Read some.
   TestCompletionCallback read_callback1;
   std::vector<char> buf(kTestDataSize + kTestDataSize / 2);
-  scoped_refptr<IOBuffer> wrapped_buffer =
-      base::MakeRefCounted<WrappedIOBuffer>(&buf[0]);
+  auto wrapped_buffer = base::MakeRefCounted<WrappedIOBuffer>(buf);
   EXPECT_EQ(
       ERR_IO_PENDING,
       stream->Read(wrapped_buffer.get(), buf.size(),
@@ -728,8 +720,7 @@ TEST_F(ElementsUploadDataStreamTest, InitToReset) {
   // Read.
   TestCompletionCallback read_callback2;
   std::vector<char> buf2(kTestDataSize * 2);
-  scoped_refptr<IOBuffer> wrapped_buffer2 =
-      base::MakeRefCounted<WrappedIOBuffer>(&buf2[0]);
+  auto wrapped_buffer2 = base::MakeRefCounted<WrappedIOBuffer>(buf2);
   EXPECT_EQ(ERR_IO_PENDING,
             stream->Read(
                 wrapped_buffer2.get(), buf2.size(), read_callback2.callback()));
@@ -741,8 +732,7 @@ TEST_F(ElementsUploadDataStreamTest, InitDuringAsyncInit) {
   base::FilePath temp_file_path;
   ASSERT_TRUE(
       base::CreateTemporaryFileInDir(temp_dir_.GetPath(), &temp_file_path));
-  ASSERT_EQ(static_cast<int>(kTestDataSize),
-            base::WriteFile(temp_file_path, kTestData, kTestDataSize));
+  ASSERT_TRUE(base::WriteFile(temp_file_path, kTestData));
 
   // Prepare data.
   element_readers_.push_back(
@@ -774,8 +764,7 @@ TEST_F(ElementsUploadDataStreamTest, InitDuringAsyncInit) {
   // Read.
   TestCompletionCallback read_callback2;
   std::vector<char> buf2(kTestDataSize * 2);
-  scoped_refptr<IOBuffer> wrapped_buffer2 =
-      base::MakeRefCounted<WrappedIOBuffer>(&buf2[0]);
+  auto wrapped_buffer2 = base::MakeRefCounted<WrappedIOBuffer>(buf2);
   EXPECT_EQ(ERR_IO_PENDING,
             stream->Read(
                 wrapped_buffer2.get(), buf2.size(), read_callback2.callback()));
@@ -791,8 +780,7 @@ TEST_F(ElementsUploadDataStreamTest, InitDuringAsyncRead) {
   base::FilePath temp_file_path;
   ASSERT_TRUE(
       base::CreateTemporaryFileInDir(temp_dir_.GetPath(), &temp_file_path));
-  ASSERT_EQ(static_cast<int>(kTestDataSize),
-            base::WriteFile(temp_file_path, kTestData, kTestDataSize));
+  ASSERT_TRUE(base::WriteFile(temp_file_path, kTestData));
 
   // Prepare data.
   element_readers_.push_back(
@@ -819,8 +807,7 @@ TEST_F(ElementsUploadDataStreamTest, InitDuringAsyncRead) {
   // Start reading.
   TestCompletionCallback read_callback1;
   std::vector<char> buf(kTestDataSize * 2);
-  scoped_refptr<IOBuffer> wrapped_buffer =
-      base::MakeRefCounted<WrappedIOBuffer>(&buf[0]);
+  auto wrapped_buffer = base::MakeRefCounted<WrappedIOBuffer>(buf);
   EXPECT_EQ(
       ERR_IO_PENDING,
       stream->Read(wrapped_buffer.get(), buf.size(),
@@ -837,8 +824,7 @@ TEST_F(ElementsUploadDataStreamTest, InitDuringAsyncRead) {
   // Read.
   TestCompletionCallback read_callback2;
   std::vector<char> buf2(kTestDataSize * 2);
-  scoped_refptr<IOBuffer> wrapped_buffer2 =
-      base::MakeRefCounted<WrappedIOBuffer>(&buf2[0]);
+  auto wrapped_buffer2 = base::MakeRefCounted<WrappedIOBuffer>(buf2);
   EXPECT_EQ(ERR_IO_PENDING,
             stream->Read(
                 wrapped_buffer2.get(), buf2.size(), read_callback2.callback()));

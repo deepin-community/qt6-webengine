@@ -8,23 +8,12 @@ Component i of the result is v ÷ 65535, where v is the interpretation of bits
 import { makeTestGroup } from '../../../../../../common/framework/test_group.js';
 import { GPUTest } from '../../../../../gpu_test.js';
 import { TypeF32, TypeU32, TypeVec } from '../../../../../util/conversion.js';
-import { unpack2x16unormInterval } from '../../../../../util/f32_interval.js';
-import { fullU32Range } from '../../../../../util/math.js';
-import { makeCaseCache } from '../../case_cache.js';
-import { allInputSources, generateU32ToVectorCases, run } from '../../expression.js';
+import { allInputSources, run } from '../../expression.js';
 
 import { builtin } from './builtin.js';
+import { d } from './unpack2x16unorm.cache.js';
 
 export const g = makeTestGroup(GPUTest);
-
-export const d = makeCaseCache('unpack2x16unorm', {
-  u32_const: () => {
-    return generateU32ToVectorCases(fullU32Range(), 'f32-only', unpack2x16unormInterval);
-  },
-  u32_non_const: () => {
-    return generateU32ToVectorCases(fullU32Range(), 'unfiltered', unpack2x16unormInterval);
-  },
-});
 
 g.test('unpack')
   .specURL('https://www.w3.org/TR/WGSL/#unpack-builtin-functions')

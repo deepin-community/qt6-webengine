@@ -70,7 +70,9 @@ enum class WebauthnOptInParameters {
   kMaxValue = kWithRequestChallenge,
 };
 
-// The reason that the FIDO opt-in dialog was not offered to the user.
+// On Desktop, this enum represents the reason that the FIDO opt-in dialog was
+// not offered to the user. On Android, it represents whether the checkbox
+// was shown to the user.
 enum class WebauthnOptInPromoNotOfferedReason {
   // These values are persisted to logs. Entries should not be renumbered and
   // numeric values should never be reused.
@@ -87,7 +89,12 @@ enum class WebauthnOptInPromoNotOfferedReason {
   kCardAuthorizationTokenEmpty = 3,
   // Not offered because it was blocked by the FidoAuthenticationStrikeDatabase.
   kBlockedByStrikeDatabase = 4,
-  kMaxValue = kBlockedByStrikeDatabase,
+  // Used only on Android. Checkbox not shown to the user because the user has
+  // previously opted-in from Settings.
+  kOptedInFromSettings = 5,
+  // According to the server, the user is already opted into FIDO auth.
+  kAlreadyOptedIn = 6,
+  kMaxValue = kAlreadyOptedIn,
 };
 
 // The user decision for the WebAuthn opt-in promo.
@@ -134,19 +141,25 @@ void LogCardUnmaskDurationAfterWebauthn(
 // verifiable.
 void LogCardUnmaskPreflightInitiated();
 
-// Logs the count of calls to PaymentsClient::GetUnmaskDetails() (aka
+// Logs the count of calls to PaymentsNetworkInterface::GetUnmaskDetails() (aka
 // GetDetailsForGetRealPan). If `is_user_opted_in` is true, then the user is
 // opted-in to FIDO auth, and if the user is not opted-in to FIDO auth then
 // `is_user_opted_in` is false.
 void LogCardUnmaskPreflightCalled(bool is_user_opted_in);
 
-// Logs the duration of the PaymentsClient::GetUnmaskDetails() call (aka
-// GetDetailsForGetRealPan).
+// Logs the duration of the PaymentsNetworkInterface::GetUnmaskDetails() call
+// (aka GetDetailsForGetRealPan).
 void LogCardUnmaskPreflightDuration(const base::TimeDelta& duration);
 
 // Logs which unmask type was used for a user with FIDO authentication
 // enabled.
 void LogCardUnmaskTypeDecision(CardUnmaskTypeDecisionMetric metric);
+
+// Tracks whether the response is received before a card is chosen by the user.
+void LogPreflightCallResponseReceivedOnCardSelection(
+    PreflightCallEvent event,
+    bool fido_opted_in,
+    CreditCard::RecordType record_type);
 
 // Logs the existence of any user-perceived latency between selecting a Google
 // Payments server card and seeing a card unmask prompt.
@@ -167,7 +180,7 @@ void LogUserPerceivedLatencyOnCardSelectionTimedOut(bool did_time_out);
 // extremely quick IPC.
 void LogUserVerifiabilityCheckDuration(const base::TimeDelta& duration);
 
-// Logs the count of calls to PaymentsClient::OptChange() (aka
+// Logs the count of calls to PaymentsNetworkInterface::OptChange() (aka
 // UpdateAutofillUserPreference).
 void LogWebauthnOptChangeCalled(bool request_to_opt_in,
                                 bool is_checkout_flow,

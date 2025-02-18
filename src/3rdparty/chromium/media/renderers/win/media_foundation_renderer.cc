@@ -13,7 +13,6 @@
 #include <utility>
 
 #include "base/functional/callback_helpers.h"
-#include "base/guid.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/numerics/clamped_math.h"
 #include "base/numerics/safe_conversions.h"
@@ -92,6 +91,8 @@ const std::string GetErrorReasonString(
     STRINGIFY(kFailedToCreateMediaEngine);
     STRINGIFY(kFailedToCreateDCompTextureWrapper);
     STRINGIFY(kFailedToInitDCompTextureWrapper);
+    STRINGIFY(kFailedToSetPlaybackRate);
+    STRINGIFY(kFailedToGetMediaEngineEx);
   }
 #undef STRINGIFY
 }
@@ -250,6 +251,8 @@ HRESULT MediaFoundationRenderer::CreateMediaEngine(
       base::BindPostTaskToCurrentDefault(
           base::BindRepeating(&MediaFoundationRenderer::OnWaiting, weak_this)),
       base::BindPostTaskToCurrentDefault(base::BindRepeating(
+          &MediaFoundationRenderer::OnFrameStepCompleted, weak_this)),
+      base::BindPostTaskToCurrentDefault(base::BindRepeating(
           &MediaFoundationRenderer::OnTimeUpdate, weak_this))));
 
   ComPtr<IMFAttributes> creation_attributes;
@@ -276,7 +279,7 @@ HRESULT MediaFoundationRenderer::CreateMediaEngine(
     if (rendering_mode_ == MediaFoundationRenderingMode::FrameServer) {
       gfx::Size max_video_size;
       bool has_video = false;
-      for (auto* stream : media_resource->GetAllStreams()) {
+      for (media::DemuxerStream* stream : media_resource->GetAllStreams()) {
         if (stream->type() == media::DemuxerStream::VIDEO) {
           has_video = true;
           gfx::Size video_size = stream->video_decoder_config().natural_size();
@@ -311,7 +314,7 @@ HRESULT MediaFoundationRenderer::CreateMediaEngine(
                                                  &mf_media_engine_));
 
   auto media_resource_type_ = media_resource->GetType();
-  if (media_resource_type_ != MediaResource::Type::STREAM) {
+  if (media_resource_type_ != MediaResource::Type::kStream) {
     DLOG(ERROR) << "MediaResource is not of STREAM";
     return E_INVALIDARG;
   }
@@ -376,6 +379,18 @@ HRESULT MediaFoundationRenderer::InitializeDXGIDeviceManager() {
   UINT device_reset_token;
   RETURN_IF_FAILED(
       MFLockDXGIDeviceManager(&device_reset_token, &dxgi_device_manager_));
+  // `dxgi_device_manager_` returned is a singleton object, thus all
+  // MediaFoundationRenderer instances will all receive the
+  // `dxgi_device_manager_` pointing to the same object. Therefore we only need
+  // to and can only call `ResetDevice()` once, If it's called more than once,
+  // all open device handles become invalid, even when it is the same device as
+  // before. This will cause an existing instance attempting to use the invalid
+  // handle to error out.
+  // https://learn.microsoft.com/en-us/windows/win32/api/mfobjects/nf-mfobjects-imfdxgidevicemanager-resetdevice
+  DXGIDeviceScopedHandle dxgi_device_handle(dxgi_device_manager_.Get());
+  if (dxgi_device_handle.GetDevice()) {
+    return S_OK;
+  }
 
   ComPtr<ID3D11Device> d3d11_device;
   UINT creation_flags =
@@ -390,6 +405,9 @@ HRESULT MediaFoundationRenderer::InitializeDXGIDeviceManager() {
   RETURN_IF_FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory)));
 
   Microsoft::WRL::ComPtr<IDXGIAdapter> adapter_to_use;
+  // TODO(crbug.com/1426249): Need to handle the case when Adapter LUID is
+  // specific per instance of the video playback. This will now allow all
+  // instances to use the default DXGI device manager.
   if (gpu_process_adapter_luid_.LowPart || gpu_process_adapter_luid_.HighPart) {
     Microsoft::WRL::ComPtr<IDXGIAdapter> temp_adapter;
     for (UINT i = 0; SUCCEEDED(factory->EnumAdapters(i, &temp_adapter)); i++) {
@@ -577,8 +595,14 @@ void MediaFoundationRenderer::SetPlaybackRate(double playback_rate) {
   DVLOG_FUNC(2) << "playback_rate=" << playback_rate;
 
   HRESULT hr = mf_media_engine_->SetPlaybackRate(playback_rate);
-  // Ignore error so that the media continues to play rather than stopped.
-  DVLOG_IF(1, FAILED(hr)) << "Failed to set playback rate: " << PrintHr(hr);
+
+  if (SUCCEEDED(hr)) {
+    playback_rate_ = playback_rate;
+  } else {
+    DVLOG_IF(1, FAILED(hr)) << "Failed to set playback rate: " << PrintHr(hr);
+    OnError(PIPELINE_ERROR_COULD_NOT_RENDER,
+            ErrorReason::kFailedToSetPlaybackRate, hr);
+  }
 }
 
 void MediaFoundationRenderer::GetDCompSurface(GetDCompSurfaceCB callback) {
@@ -868,6 +892,22 @@ void MediaFoundationRenderer::OnLoadedData() {
 void MediaFoundationRenderer::OnCanPlayThrough() {
   DVLOG_FUNC(2);
 
+  // If the playback rate in Media Foundations is 0, the video renderer would
+  // not pre-roll and request frames. Use Frame Step function to force
+  // pre-rolling
+  if (playback_rate_ == 0) {
+    ComPtr<IMFMediaEngineEx> mf_media_engine_ex;
+
+    HRESULT hr = mf_media_engine_.As(&mf_media_engine_ex);
+    if (SUCCEEDED(hr)) {
+      mf_media_engine_ex->FrameStep(/*Forward=*/true);
+    } else {
+      OnError(PIPELINE_ERROR_COULD_NOT_RENDER,
+              ErrorReason::kFailedToGetMediaEngineEx, hr);
+      return;
+    }
+  }
+
   // According to HTML5 <video> spec, on "canplaythrough", the video could be
   // rendered at the current playback rate all the way to its end, and it's
   // the time to report BUFFERING_HAVE_ENOUGH.
@@ -906,6 +946,27 @@ void MediaFoundationRenderer::OnWaiting() {
 void MediaFoundationRenderer::OnTimeUpdate() {
   DVLOG_FUNC(3);
   DCHECK(task_runner_->RunsTasksInCurrentSequence());
+}
+
+void MediaFoundationRenderer::OnFrameStepCompleted() {
+  DVLOG_FUNC(2);
+  DCHECK(task_runner_->RunsTasksInCurrentSequence());
+
+  // Frame-Stepping causes Media engine to be in a paused state after finishing.
+  // Thus play and set playback rate is needed to change the state to be
+  // playing.
+
+  // Set playback rate is call again because on start, if SetPlaybackRate of 0
+  // is called before pipeline topology is setup, the playback rate of Media
+  // Engine will be defaulted to 1 as setting playback rate is ignored until
+  // topology is set. Thus, when frame step is finished, setting the playback
+  // rate again ensures consistency.
+  HRESULT hr = mf_media_engine_->Play();
+  if (FAILED(hr)) {
+    OnError(PIPELINE_ERROR_COULD_NOT_RENDER, ErrorReason::kFailedToPlay, hr);
+    return;
+  }
+  SetPlaybackRate(playback_rate_);
 }
 
 void MediaFoundationRenderer::OnProtectionManagerWaiting(WaitingReason reason) {
@@ -1043,6 +1104,12 @@ void MediaFoundationRenderer::RequestNextFrame() {
   if (dxgi_device_manager_ == nullptr ||
       mf_media_engine_->OnVideoStreamTick(&presentation_timestamp_in_hns) !=
           S_OK) {
+    return;
+  }
+
+  if (native_video_size_.IsEmpty()) {
+    MEDIA_LOG(WARNING, media_log_)
+        << "RequestNextFrame ignores empty native_video_size_";
     return;
   }
 

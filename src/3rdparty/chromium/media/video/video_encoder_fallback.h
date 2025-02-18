@@ -36,7 +36,7 @@ class MEDIA_EXPORT VideoEncoderFallback : public VideoEncoder {
                   OutputCB output_cb,
                   EncoderStatusCB done_cb) override;
   void Encode(scoped_refptr<VideoFrame> frame,
-              bool key_frame,
+              const EncodeOptions& encode_options,
               EncoderStatusCB done_cb) override;
   void ChangeOptions(const Options& options,
                      OutputCB output_cb,
@@ -45,10 +45,10 @@ class MEDIA_EXPORT VideoEncoderFallback : public VideoEncoder {
 
  private:
   void FallbackInitialize();
-  void FallbackEncode(PendingEncode args);
+  void FallbackEncode(PendingEncode args, EncoderStatus main_encoder_status);
   void FallbackInitCompleted(EncoderStatus status);
   PendingEncode MakePendingEncode(scoped_refptr<VideoFrame> frame,
-                                  bool key_frame,
+                                  const EncodeOptions& encode_options,
                                   EncoderStatusCB done_cb);
   void CallInfo(const VideoEncoderInfo& info);
   void CallOutput(VideoEncoderOutput output,

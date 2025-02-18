@@ -10,19 +10,19 @@ import * as SDK from '../../core/sdk/sdk.js';
 import * as Protocol from '../../generated/protocol.js';
 import * as NetworkForward from '../../panels/network/forward/forward.js';
 import * as UI from '../../ui/legacy/legacy.js';
+import * as VisualLogging from '../../ui/visual_logging/visual_logging.js';
 
 import lockIconStyles from './lockIcon.css.js';
 import mainViewStyles from './mainView.css.js';
 import originViewStyles from './originView.css.js';
-import sidebarStyles from './sidebar.css.js';
-
 import {
   Events,
+  type PageVisibleSecurityState,
   SecurityModel,
   SecurityStyleExplanation,
   SummaryMessages,
-  type PageVisibleSecurityState,
 } from './SecurityModel.js';
+import sidebarStyles from './sidebar.css.js';
 
 const UIStrings = {
   /**
@@ -492,7 +492,7 @@ export class SecurityPanel extends UI.Panel.PanelWithSidebar implements
     SDK.TargetManager.SDKModelObserver<SecurityModel> {
   readonly mainView: SecurityMainView;
   private readonly sidebarMainViewElement: SecurityPanelSidebarTreeElement;
-  private readonly sidebarTree: SecurityPanelSidebarTree;
+  readonly sidebarTree: SecurityPanelSidebarTree;
   private readonly lastResponseReceivedForLoaderId: Map<string, SDK.NetworkRequest.NetworkRequest>;
   private readonly origins: Map<string, OriginState>;
   private readonly filterRequestCounts: Map<string, number>;
@@ -520,11 +520,14 @@ export class SecurityPanel extends UI.Panel.PanelWithSidebar implements
 
     this.filterRequestCounts = new Map();
 
-    SDK.TargetManager.TargetManager.instance().observeModels(SecurityModel, this);
-
     this.visibleView = null;
     this.eventListeners = [];
     this.securityModel = null;
+
+    SDK.TargetManager.TargetManager.instance().observeModels(SecurityModel, this, {scoped: true});
+    SDK.TargetManager.TargetManager.instance().addModelListener(
+        SDK.ResourceTreeModel.ResourceTreeModel, SDK.ResourceTreeModel.Events.PrimaryPageChanged,
+        this.onPrimaryPageChanged, this);
   }
 
   static instance(opts: {forceNew: boolean|null} = {forceNew: null}): SecurityPanel {
@@ -543,7 +546,7 @@ export class SecurityPanel extends UI.Panel.PanelWithSidebar implements
       if (names.length > 0) {
         Host.InspectorFrontendHost.InspectorFrontendHostInstance.showCertificateViewer(names);
       }
-    }, 'origin-button');
+    }, {className: 'origin-button', jslogContext: 'security.view-certificate-for-origin'});
     UI.ARIAUtils.markAsButton(certificateButton);
     return certificateButton;
   }
@@ -552,7 +555,7 @@ export class SecurityPanel extends UI.Panel.PanelWithSidebar implements
     const certificateButton = UI.UIUtils.createTextButton(text, e => {
       e.consume();
       Host.InspectorFrontendHost.InspectorFrontendHostInstance.showCertificateViewer(names);
-    }, 'origin-button');
+    }, {className: 'origin-button', jslogContext: 'security.view-certificate'});
     UI.ARIAUtils.markAsButton(certificateButton);
     return certificateButton;
   }
@@ -604,14 +607,14 @@ export class SecurityPanel extends UI.Panel.PanelWithSidebar implements
     this.setVisibleView(originState.originView);
   }
 
-  wasShown(): void {
+  override wasShown(): void {
     super.wasShown();
     if (!this.visibleView) {
       this.selectAndSwitchToMainView();
     }
   }
 
-  focus(): void {
+  override focus(): void {
     this.sidebarTree.focus();
   }
 
@@ -727,17 +730,18 @@ export class SecurityPanel extends UI.Panel.PanelWithSidebar implements
   }
 
   modelAdded(securityModel: SecurityModel): void {
-    if (securityModel.target() !== SDK.TargetManager.TargetManager.instance().mainFrameTarget()) {
+    if (securityModel.target() !== securityModel.target().outermostTarget()) {
       return;
     }
 
     this.securityModel = securityModel;
     const resourceTreeModel = securityModel.resourceTreeModel();
     const networkManager = securityModel.networkManager();
+    if (this.eventListeners.length) {
+      Common.EventTarget.removeEventListeners(this.eventListeners);
+    }
     this.eventListeners = [
       securityModel.addEventListener(Events.VisibleSecurityStateChanged, this.onVisibleSecurityStateChanged, this),
-      resourceTreeModel.addEventListener(
-          SDK.ResourceTreeModel.Events.MainFrameNavigated, this.onMainFrameNavigated, this),
       resourceTreeModel.addEventListener(
           SDK.ResourceTreeModel.Events.InterstitialShown, this.onInterstitialShown, this),
       resourceTreeModel.addEventListener(
@@ -760,9 +764,10 @@ export class SecurityPanel extends UI.Panel.PanelWithSidebar implements
     Common.EventTarget.removeEventListeners(this.eventListeners);
   }
 
-  private onMainFrameNavigated(event: Common.EventTarget.EventTargetEvent<SDK.ResourceTreeModel.ResourceTreeFrame>):
-      void {
-    const frame = event.data;
+  private onPrimaryPageChanged(
+      event: Common.EventTarget.EventTargetEvent<
+          {frame: SDK.ResourceTreeModel.ResourceTreeFrame, type: SDK.ResourceTreeModel.PrimaryPageChangeType}>): void {
+    const {frame} = event.data;
     const request = this.lastResponseReceivedForLoaderId.get(frame.loaderId);
 
     this.selectAndSwitchToMainView();
@@ -776,7 +781,7 @@ export class SecurityPanel extends UI.Panel.PanelWithSidebar implements
 
     // If we could not find a matching request (as in the case of clicking
     // through an interstitial, see https://crbug.com/669309), set the origin
-    // based upon the url data from the MainFrameNavigated event itself.
+    // based upon the url data from the PrimaryPageChanged event itself.
     const origin = Common.ParsedURL.ParsedURL.extractOrigin(request ? request.url() : frame.url);
     this.sidebarTree.setMainOrigin(origin);
 
@@ -804,8 +809,11 @@ export class SecurityPanelSidebarTree extends UI.TreeOutline.TreeOutlineInShadow
   private readonly originGroupTitles: Map<OriginGroup, string>;
   private originGroups: Map<OriginGroup, UI.TreeOutline.TreeElement>;
   private readonly elementsByOrigin: Map<string, SecurityPanelSidebarTreeElement>;
+  private readonly mainViewReloadMessage: UI.TreeOutline.TreeElement;
+
   constructor(mainViewElement: SecurityPanelSidebarTreeElement, showOriginInPanel: (arg0: Origin) => void) {
     super();
+    this.element.setAttribute('jslog', `${VisualLogging.pane().context('security.sidebar')}`);
 
     this.appendChild(mainViewElement);
 
@@ -828,14 +836,13 @@ export class SecurityPanelSidebarTree extends UI.TreeOutline.TreeOutlineInShadow
       this.appendChild(element);
     }
 
-    this.clearOriginGroups();
-
-    // This message will be removed by clearOrigins() during the first new page load after the panel was opened.
-    const mainViewReloadMessage = new UI.TreeOutline.TreeElement(i18nString(UIStrings.reloadToViewDetails));
-    mainViewReloadMessage.selectable = false;
-    mainViewReloadMessage.listItemElement.classList.add('security-main-view-reload-message');
+    this.mainViewReloadMessage = new UI.TreeOutline.TreeElement(i18nString(UIStrings.reloadToViewDetails));
+    this.mainViewReloadMessage.selectable = false;
+    this.mainViewReloadMessage.listItemElement.classList.add('security-main-view-reload-message');
     const treeElement = this.originGroups.get(OriginGroup.MainOrigin);
-    (treeElement as UI.TreeOutline.TreeElement).appendChild(mainViewReloadMessage);
+    (treeElement as UI.TreeOutline.TreeElement).appendChild(this.mainViewReloadMessage);
+
+    this.clearOriginGroups();
 
     this.elementsByOrigin = new Map();
   }
@@ -854,7 +861,7 @@ export class SecurityPanelSidebarTree extends UI.TreeOutline.TreeOutlineInShadow
     originGroup.setCollapsible(false);
     originGroup.expand();
     originGroup.listItemElement.classList.add('security-sidebar-origins');
-    UI.ARIAUtils.setAccessibleName(originGroup.childrenListElement, originGroupTitle);
+    UI.ARIAUtils.setLabel(originGroup.childrenListElement, originGroupTitle);
     return originGroup;
   }
 
@@ -865,6 +872,7 @@ export class SecurityPanelSidebarTree extends UI.TreeOutline.TreeOutlineInShadow
   }
 
   addOrigin(origin: Platform.DevToolsPath.UrlString, securityState: Protocol.Security.SecurityState): void {
+    this.mainViewReloadMessage.hidden = true;
     const originElement = new SecurityPanelSidebarTreeElement(
         SecurityPanel.createHighlightedUrl(origin, securityState), this.showOriginInPanel.bind(this, origin),
         'security-sidebar-tree-item', 'security-property');
@@ -889,7 +897,7 @@ export class SecurityPanelSidebarTree extends UI.TreeOutline.TreeOutlineInShadow
       } else {
         newParent.title = i18nString(UIStrings.mainOriginNonsecure);
       }
-      UI.ARIAUtils.setAccessibleName(newParent.childrenListElement, newParent.title);
+      UI.ARIAUtils.setLabel(newParent.childrenListElement, newParent.title);
     } else {
       switch (securityState) {
         case Protocol.Security.SecurityState.Secure:
@@ -918,13 +926,19 @@ export class SecurityPanelSidebarTree extends UI.TreeOutline.TreeOutlineInShadow
   }
 
   private clearOriginGroups(): void {
-    for (const originGroup of this.originGroups.values()) {
-      originGroup.removeChildren();
-      originGroup.hidden = true;
+    for (const [originGroup, originGroupElement] of this.originGroups) {
+      if (originGroup === OriginGroup.MainOrigin) {
+        for (let i = originGroupElement.childCount() - 1; i > 0; i--) {
+          originGroupElement.removeChildAtIndex(i);
+        }
+        originGroupElement.title = this.originGroupTitle(OriginGroup.MainOrigin);
+        originGroupElement.hidden = false;
+        this.mainViewReloadMessage.hidden = false;
+      } else {
+        originGroupElement.removeChildren();
+        originGroupElement.hidden = true;
+      }
     }
-    const mainOrigin = this.originGroupElement(OriginGroup.MainOrigin);
-    mainOrigin.title = this.originGroupTitle(OriginGroup.MainOrigin);
-    mainOrigin.hidden = false;
   }
 
   clearOrigins(): void {
@@ -935,8 +949,6 @@ export class SecurityPanelSidebarTree extends UI.TreeOutline.TreeOutlineInShadow
   }
 }
 
-// TODO(crbug.com/1167717): Make this a const enum again
-// eslint-disable-next-line rulesdir/const_enum
 export enum OriginGroup {
   MainOrigin = 'MainOrigin',
   NonSecure = 'NonSecure',
@@ -975,7 +987,7 @@ export class SecurityPanelSidebarTreeElement extends UI.TreeOutline.TreeElement 
     return this.securityStateInternal;
   }
 
-  onselect(): boolean {
+  override onselect(): boolean {
     this.selectCallback();
     return true;
   }
@@ -992,6 +1004,7 @@ export class SecurityMainView extends UI.Widget.VBox {
   private securityState: Protocol.Security.SecurityState|null;
   constructor(panel: SecurityPanel) {
     super(true);
+    this.element.setAttribute('jslog', `${VisualLogging.pane().context('security.main-view')}`);
 
     this.setMinimumSize(200, 100);
 
@@ -1429,7 +1442,7 @@ export class SecurityMainView extends UI.Widget.VBox {
     void Common.Revealer.reveal(NetworkForward.UIFilter.UIRequestFilter.filters(
         [{filterType: NetworkForward.UIFilter.FilterType.MixedContent, filterValue: filterKey}]));
   }
-  wasShown(): void {
+  override wasShown(): void {
     super.wasShown();
     this.registerCSSFiles([lockIconStyles, mainViewStyles]);
   }
@@ -1440,6 +1453,7 @@ export class SecurityOriginView extends UI.Widget.VBox {
   private readonly originLockIcon: HTMLElement;
   constructor(panel: SecurityPanel, origin: Platform.DevToolsPath.UrlString, originState: OriginState) {
     super();
+    this.element.setAttribute('jslog', `${VisualLogging.pane().context('security.origin-view')}`);
     this.panel = panel;
     this.setMinimumSize(200, 100);
 
@@ -1464,7 +1478,7 @@ export class SecurityOriginView extends UI.Widget.VBox {
         {filterType: NetworkForward.UIFilter.FilterType.Domain, filterValue: parsedURL.host},
         {filterType: NetworkForward.UIFilter.FilterType.Scheme, filterValue: parsedURL.scheme},
       ]));
-    });
+    }, {jslogContext: 'security.view-requests-in-network-panel'});
     originNetworkDiv.appendChild(originNetworkButton);
     UI.ARIAUtils.markAsLink(originNetworkButton);
 
@@ -1599,13 +1613,14 @@ export class SecurityOriginView extends UI.Widget.VBox {
             buttonText = i18nString(UIStrings.hideFullDetails);
           }
           toggleSctsDetailsLink.textContent = buttonText;
-          UI.ARIAUtils.setAccessibleName(toggleSctsDetailsLink, buttonText);
+          UI.ARIAUtils.setLabel(toggleSctsDetailsLink, buttonText);
           UI.ARIAUtils.setExpanded(toggleSctsDetailsLink, !isDetailsShown);
           sctSummaryTable.element().classList.toggle('hidden');
           sctTableWrapper.classList.toggle('hidden');
         }
         const toggleSctsDetailsLink = UI.UIUtils.createTextButton(
-            i18nString(UIStrings.showFullDetails), toggleSctDetailsDisplay, 'details-toggle');
+            i18nString(UIStrings.showFullDetails), toggleSctDetailsDisplay,
+            {className: 'details-toggle', jslogContext: 'security.toggle-scts-details'});
         sctSection.appendChild(toggleSctsDetailsLink);
       }
 
@@ -1678,11 +1693,12 @@ export class SecurityOriginView extends UI.Widget.VBox {
             buttonText = i18nString(UIStrings.showMoreSTotal, {PH1: sanList.length});
           }
           truncatedSANToggle.textContent = buttonText;
-          UI.ARIAUtils.setAccessibleName(truncatedSANToggle, buttonText);
+          UI.ARIAUtils.setLabel(truncatedSANToggle, buttonText);
           UI.ARIAUtils.setExpanded(truncatedSANToggle, isTruncated);
         }
         const truncatedSANToggle = UI.UIUtils.createTextButton(
-            i18nString(UIStrings.showMoreSTotal, {PH1: sanList.length}), toggleSANTruncation);
+            i18nString(UIStrings.showMoreSTotal, {PH1: sanList.length}), toggleSANTruncation,
+            {jslogContext: 'security.toggle-san-truncation'});
         sanDiv.appendChild(truncatedSANToggle);
         toggleSANTruncation();
       }
@@ -1699,7 +1715,7 @@ export class SecurityOriginView extends UI.Widget.VBox {
 
     this.originLockIcon.classList.add('security-property-' + newSecurityState);
   }
-  wasShown(): void {
+  override wasShown(): void {
     super.wasShown();
     this.registerCSSFiles([originViewStyles, lockIconStyles]);
   }

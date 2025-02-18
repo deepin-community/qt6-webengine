@@ -111,12 +111,13 @@ static NodeListSearchRoot SearchRootFromCollectionType(
     case kSelectedOptions:
     case kDataListOptions:
     case kMapAreas:
-    case kPopoverInvokers:
       return NodeListSearchRoot::kOwnerNode;
     case kFormControls:
       if (IsA<HTMLFieldSetElement>(owner))
         return NodeListSearchRoot::kOwnerNode;
       DCHECK(IsA<HTMLFormElement>(owner));
+      return NodeListSearchRoot::kTreeScope;
+    case kPopoverInvokers:
       return NodeListSearchRoot::kTreeScope;
     case kNameNodeListType:
     case kRadioNodeListType:
@@ -263,7 +264,7 @@ static inline bool IsMatchingHTMLElement(const HTMLCollection& html_collection,
     case kPopoverInvokers:
       if (auto* invoker = DynamicTo<HTMLFormControlElement>(
               const_cast<HTMLElement&>(element))) {
-        return invoker->popoverTargetElement().popover;
+        return invoker->popoverTargetElement().popover != nullptr;
       }
       return false;
     case kClassCollectionType:
@@ -456,11 +457,11 @@ Element* HTMLCollection::namedItem(const AtomicString& name) const {
   const NamedItemCache& cache = GetNamedItemCache();
   const auto* id_results = cache.GetElementsById(name);
   if (id_results && !id_results->empty())
-    return id_results->front();
+    return id_results->front().Get();
 
   const auto* name_results = cache.GetElementsByName(name);
   if (name_results && !name_results->empty())
-    return name_results->front();
+    return name_results->front().Get();
 
   return nullptr;
 }

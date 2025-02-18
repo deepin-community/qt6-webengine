@@ -203,23 +203,23 @@ static av_cold int encode_init(AVCodecContext *avctx)
         }
     }
 
-    if (avctx->profile == FF_PROFILE_UNKNOWN) {
-        if (avctx->level != FF_LEVEL_UNKNOWN) {
+    if (avctx->profile == AV_PROFILE_UNKNOWN) {
+        if (avctx->level != AV_LEVEL_UNKNOWN) {
             av_log(avctx, AV_LOG_ERROR, "Set profile and level\n");
             return AVERROR(EINVAL);
         }
         /* Main or 4:2:2 */
-        avctx->profile = avctx->pix_fmt == AV_PIX_FMT_YUV420P ? FF_PROFILE_MPEG2_MAIN
-                                                              : FF_PROFILE_MPEG2_422;
+        avctx->profile = avctx->pix_fmt == AV_PIX_FMT_YUV420P ? AV_PROFILE_MPEG2_MAIN
+                                                              : AV_PROFILE_MPEG2_422;
     }
-    if (avctx->level == FF_LEVEL_UNKNOWN) {
-        if (avctx->profile == FF_PROFILE_MPEG2_422) {   /* 4:2:2 */
+    if (avctx->level == AV_LEVEL_UNKNOWN) {
+        if (avctx->profile == AV_PROFILE_MPEG2_422) {   /* 4:2:2 */
             if (avctx->width <= 720 && avctx->height <= 608)
                 avctx->level = 5;                   /* Main */
             else
                 avctx->level = 2;                   /* High */
         } else {
-            if (avctx->profile != FF_PROFILE_MPEG2_HIGH &&
+            if (avctx->profile != AV_PROFILE_MPEG2_HIGH &&
                 avctx->pix_fmt != AV_PIX_FMT_YUV420P) {
                 av_log(avctx, AV_LOG_ERROR,
                        "Only High(1) and 4:2:2(0) profiles support 4:2:2 color sampling\n");
@@ -249,7 +249,6 @@ static av_cold int encode_init(AVCodecContext *avctx)
         }
     }
 
-    mpeg12->drop_frame_timecode = mpeg12->drop_frame_timecode || !!(avctx->flags2 & AV_CODEC_FLAG2_DROP_FRAME_TIMECODE);
     if (mpeg12->drop_frame_timecode)
         mpeg12->tc.flags |= AV_TIMECODE_FLAG_DROPFRAME;
     if (mpeg12->drop_frame_timecode && mpeg12->frame_rate_index != 4) {
@@ -291,7 +290,7 @@ static void mpeg1_encode_sequence_header(MpegEncContext *s)
     AVRational aspect_ratio = s->avctx->sample_aspect_ratio;
     int aspect_ratio_info;
 
-    if (!s->current_picture.f->key_frame)
+    if (!(s->current_picture.f->flags & AV_FRAME_FLAG_KEY))
         return;
 
     if (aspect_ratio.num == 0 || aspect_ratio.den == 0)
@@ -367,7 +366,7 @@ static void mpeg1_encode_sequence_header(MpegEncContext *s)
         put_header(s, EXT_START_CODE);
         put_bits(&s->pb, 4, 1);                 // seq ext
 
-        put_bits(&s->pb, 1, s->avctx->profile == FF_PROFILE_MPEG2_422); // escx 1 for 4:2:2 profile
+        put_bits(&s->pb, 1, s->avctx->profile == AV_PROFILE_MPEG2_422); // escx 1 for 4:2:2 profile
 
         put_bits(&s->pb, 3, s->avctx->profile); // profile
         put_bits(&s->pb, 4, s->avctx->level);   // level
@@ -420,10 +419,10 @@ static void mpeg1_encode_sequence_header(MpegEncContext *s)
     /* time code: we must convert from the real frame rate to a
      * fake MPEG frame rate in case of low frame rate */
     fps       = (framerate.num + framerate.den / 2) / framerate.den;
-    time_code = s->current_picture_ptr->f->coded_picture_number +
+    time_code = s->current_picture_ptr->coded_picture_number +
                 mpeg12->timecode_frame_start;
 
-    mpeg12->gop_picture_number = s->current_picture_ptr->f->coded_picture_number;
+    mpeg12->gop_picture_number = s->current_picture_ptr->coded_picture_number;
 
     av_assert0(mpeg12->drop_frame_timecode == !!(mpeg12->tc.flags & AV_TIMECODE_FLAG_DROPFRAME));
     if (mpeg12->drop_frame_timecode)
@@ -531,7 +530,7 @@ void ff_mpeg1_encode_picture_header(MpegEncContext *s)
         if (s->progressive_sequence)
             put_bits(&s->pb, 1, 0);             /* no repeat */
         else
-            put_bits(&s->pb, 1, s->current_picture_ptr->f->top_field_first);
+            put_bits(&s->pb, 1, !!(s->current_picture_ptr->f->flags & AV_FRAME_FLAG_TOP_FIELD_FIRST));
         /* XXX: optimize the generation of this flag with entropy measures */
         s->frame_pred_frame_dct = s->progressive_sequence;
 

@@ -17,11 +17,6 @@ KeyboardEventProcessingResult RenderWidgetHostDelegate::PreHandleKeyboardEvent(
   return KeyboardEventProcessingResult::NOT_HANDLED;
 }
 
-bool RenderWidgetHostDelegate::PreHandleMouseEvent(
-    const blink::WebMouseEvent& event) {
-  return false;
-}
-
 bool RenderWidgetHostDelegate::HandleMouseEvent(
     const blink::WebMouseEvent& event) {
   return false;
@@ -89,6 +84,18 @@ bool RenderWidgetHostDelegate::ShouldShowStaleContentOnEviction() {
 
 blink::mojom::DisplayMode RenderWidgetHostDelegate::GetDisplayMode() const {
   return blink::mojom::DisplayMode::kBrowser;
+}
+
+ui::WindowShowState RenderWidgetHostDelegate::GetWindowShowState() {
+  return ui::WindowShowState::SHOW_STATE_DEFAULT;
+}
+
+bool RenderWidgetHostDelegate::GetResizable() {
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
+  return false;
+#else
+  return true;
+#endif
 }
 
 gfx::Rect RenderWidgetHostDelegate::GetWindowsControlsOverlayRect() const {

@@ -28,10 +28,7 @@ const char kSessionManagerStopSessionWithReason[] = "StopSessionWithReason";
 const char kSessionManagerLoadShillProfile[] = "LoadShillProfile";
 const char kSessionManagerRestartJob[] = "RestartJob";
 const char kSessionManagerStorePolicyEx[] = "StorePolicyEx";
-const char kSessionManagerStoreUnsignedPolicyEx[] = "StoreUnsignedPolicyEx";
 const char kSessionManagerRetrievePolicyEx[] = "RetrievePolicyEx";
-const char kSessionManagerListStoredComponentPolicies[] =
-    "ListStoredComponentPolicies";
 const char kSessionManagerRetrieveSessionState[] = "RetrieveSessionState";
 const char kSessionManagerRetrieveActiveSessions[] = "RetrieveActiveSessions";
 const char kSessionManagerRetrievePrimarySession[] = "RetrievePrimarySession";
@@ -46,10 +43,6 @@ const char kSessionManagerUnblockDevModeForInitialStateDetermination[] =
     "UnblockDevModeForInitialStateDetermination";
 const char kSessionManagerUnblockDevModeForCarrierLock[] =
     "UnblockDevModeForCarrierLock";
-const char kSessionManagerHandleSupervisedUserCreationStarting[] =
-    "HandleSupervisedUserCreationStarting";
-const char kSessionManagerHandleSupervisedUserCreationFinished[] =
-    "HandleSupervisedUserCreationFinished";
 const char kSessionManagerLockScreen[] = "LockScreen";
 const char kSessionManagerHandleLockScreenShown[] = "HandleLockScreenShown";
 const char kSessionManagerHandleLockScreenDismissed[] =

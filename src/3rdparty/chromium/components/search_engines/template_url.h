@@ -18,10 +18,10 @@
 #include "components/search_engines/search_terms_data.h"
 #include "components/search_engines/template_url_data.h"
 #include "components/search_engines/template_url_id.h"
-#include "third_party/metrics_proto/chrome_searchbox_stats.pb.h"
 #include "third_party/metrics_proto/omnibox_event.pb.h"
 #include "third_party/metrics_proto/omnibox_focus_type.pb.h"
 #include "third_party/metrics_proto/omnibox_input_type.pb.h"
+#include "third_party/omnibox_proto/chrome_searchbox_stats.pb.h"
 #include "ui/gfx/geometry/size.h"
 #include "url/gurl.h"
 #include "url/third_party/mozilla/url_parse.h"
@@ -116,6 +116,11 @@ class TemplateURLRef {
       // indicates experiment status and server processing results so that
       // can be logged in GWS Sawmill logs for offline analysis for the
       // Related Searches MVP experiment.
+      // The |apply_lang_hint| specifies whether or not the |source_lang| should
+      // be used as a hint for backend language detection. Otherwise, backend
+      // translation is forced using |source_lang|. Note that this only supports
+      // Partial Translate and so may only be enabled for select clients on the
+      // server.
       ContextualSearchParams(int version,
                              int contextual_cards_version,
                              std::string home_country,
@@ -125,7 +130,8 @@ class TemplateURLRef {
                              std::string source_lang,
                              std::string target_lang,
                              std::string fluent_languages,
-                             std::string related_searches_stamp);
+                             std::string related_searches_stamp,
+                             bool apply_lang_hint);
       ContextualSearchParams(const ContextualSearchParams& other);
       ~ContextualSearchParams();
 
@@ -171,6 +177,9 @@ class TemplateURLRef {
       // experiment. The value is an arbitrary string that starts with a
       // schema version number.
       std::string related_searches_stamp;
+
+      // Whether hinted language detection should be used on the backend.
+      bool apply_lang_hint = false;
     };
 
     // Estimates dynamic memory usage.
@@ -190,21 +199,13 @@ class TemplateURLRef {
     metrics::OmniboxFocusType focus_type =
         metrics::OmniboxFocusType::INTERACTION_DEFAULT;
 
-    // The optional assisted query stats, aka AQS, used for logging purposes.
-    // This string contains impressions of all autocomplete matches shown
-    // at the query submission time.  For privacy reasons, we require the
-    // search provider to support HTTPS protocol in order to receive the AQS
-    // param.
-    // For more details, see go/chrome-suggest-logging.
-    std::string assisted_query_stats;
-
     // The optional searchbox stats, reported as gs_lcrp for logging purposes.
     // This proto message contains information such as impressions of all
     // autocomplete matches shown at the query submission time.
     // For privacy reasons, we require the search provider to support HTTPS
     // protocol in order to receive the gs_lcrp param.
     // For more details, see go/chrome-suggest-logging-improvement.
-    metrics::ChromeSearchboxStats searchbox_stats;
+    omnibox::metrics::ChromeSearchboxStats searchbox_stats;
 
     // TODO: Remove along with "aq" CGI param.
     int accepted_suggestion = NO_SUGGESTIONS_AVAILABLE;
@@ -247,6 +248,9 @@ class TemplateURLRef {
     // The content type string for `image_thumbnail_content`.
     std::string image_thumbnail_content_type;
 
+    // The image dimension data for a Google search-by-image query.
+    std::string processed_image_dimensions;
+
     // When searching for an image, the URL of the original image. Callers
     // should leave this empty for images specified via data: URLs.
     GURL image_url;
@@ -257,9 +261,10 @@ class TemplateURLRef {
     // Source of the search or suggest request.
     RequestSource request_source = RequestSource::SEARCHBOX;
 
-    // Whether the query is being fetched as a prefetch request before the user
-    // actually searches for the search terms.
-    bool is_prefetch = false;
+    // When the query is being fetched as a prefetch request, this is the value
+    // corresponding to the GOOGLE_PREFETCH_SOURCE ("pf") query param. Prefetch
+    // query params are not added if this is an empty string.
+    std::string prefetch_param;
 
     ContextualSearchParams contextual_search_params;
 
@@ -427,6 +432,7 @@ class TemplateURLRef {
     GOOGLE_PAGE_CLASSIFICATION,
     GOOGLE_PREFETCH_QUERY,
     GOOGLE_PREFETCH_SOURCE,
+    GOOGLE_PROCESSED_IMAGE_DIMENSIONS,
     GOOGLE_RLZ,
     GOOGLE_SEARCH_CLIENT,
     GOOGLE_SEARCH_FIELDTRIAL_GROUP,
@@ -609,7 +615,8 @@ class TemplateURLRef {
 // is made a friend so that it can be the exception to this pattern.
 class TemplateURL {
  public:
-  using TemplateURLVector = std::vector<TemplateURL*>;
+  using TemplateURLVector =
+      std::vector<raw_ptr<TemplateURL, VectorExperimental>>;
   using OwnedTemplateURLVector = std::vector<std::unique_ptr<TemplateURL>>;
 
   // These values are not persisted and can be freely changed.
@@ -665,8 +672,8 @@ class TemplateURL {
 
   ~TemplateURL();
 
-  // For two engines with the same keyword, |this| and |other|,
-  // returns true if |this| is strictly better than |other|.
+  // For two engines, |this| and |other|, returns true if |this| is strictly
+  // better than |other|.
   //
   // While normal engines must all have distinct keywords, policy-created,
   // extension-controlled and omnibox API engines may have the same keywords as
@@ -682,7 +689,7 @@ class TemplateURL {
   // today, because the sync GUIDs are not actually globally unique, so there
   // can be a genuine tie, which is not good, because then two different clients
   // could choose to resolve the conflict in two different ways.
-  bool IsBetterThanEngineWithConflictingKeyword(const TemplateURL* other) const;
+  bool IsBetterThanConflictingEngine(const TemplateURL* other) const;
 
   // Generates a suitable keyword for the specified url, which must be valid.
   // This is guaranteed not to return an empty string, since TemplateURLs should
@@ -769,8 +776,12 @@ class TemplateURL {
   base::Time last_modified() const { return data_.last_modified; }
   base::Time last_visited() const { return data_.last_visited; }
 
-  bool created_by_policy() const { return data_.created_by_policy; }
+  TemplateURLData::CreatedByPolicy created_by_policy() const {
+    return data_.created_by_policy;
+  }
+  bool enforced_by_policy() const { return data_.enforced_by_policy; }
   bool created_from_play_api() const { return data_.created_from_play_api; }
+  bool featured_by_policy() const { return data_.featured_by_policy; }
 
   int usage_count() const { return data_.usage_count; }
 

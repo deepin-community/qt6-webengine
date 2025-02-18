@@ -215,8 +215,8 @@ MojoResult MojoReadMessageIpcz(MojoHandle message_pipe_handle,
                                MojoMessageHandle* message) {
   ScopedIpczHandle parcel;
   IpczResult result = GetIpczAPI().Get(
-      message_pipe_handle, IPCZ_GET_PARCEL_ONLY, nullptr, nullptr, nullptr,
-      nullptr, nullptr, ScopedIpczHandle::Receiver(parcel));
+      message_pipe_handle, IPCZ_GET_PARTIAL, nullptr, nullptr, nullptr, nullptr,
+      nullptr, ScopedIpczHandle::Receiver(parcel));
   if (result != IPCZ_RESULT_OK) {
     return GetMojoReadResultForIpczGet(result);
   }
@@ -393,7 +393,11 @@ MojoResult MojoCreateDataPipeIpcz(const MojoCreateDataPipeOptions* options,
       config.byte_capacity = options->capacity_num_bytes;
     }
   }
-  absl::optional<DataPipe::Pair> pipe = DataPipe::CreatePair(config);
+  if (!config.byte_capacity || !config.element_size ||
+      config.byte_capacity < config.element_size) {
+    return MOJO_RESULT_INVALID_ARGUMENT;
+  }
+  std::optional<DataPipe::Pair> pipe = DataPipe::CreatePair(config);
   if (!pipe) {
     // This result implies that we failed to allocate or map a new shared memory
     // region and therefore have no transfer buffer for the pipe.

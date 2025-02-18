@@ -42,6 +42,7 @@
 #include "ui/gfx/overlay_transform.h"
 
 namespace cc {
+static constexpr int kInvalidSourceFrameNumber = -1;
 
 // CommitState and ThreadUnsafeCommitState contain all of the information from
 // LayerTreeHost that is needed to run compositor commit. CommitState is
@@ -105,8 +106,6 @@ struct CC_EXPORT CommitState {
   SkColor4f background_color = SkColors::kWhite;
   ViewportPropertyIds viewport_property_ids;
   viz::LocalSurfaceId local_surface_id_from_parent;
-  base::TimeDelta previous_surfaces_visual_update_duration;
-  base::TimeDelta visual_update_duration;
 
   // -------------------------------------------------------------------------
   // Take/reset: these values are reset on the LayerTreeHost between commits.

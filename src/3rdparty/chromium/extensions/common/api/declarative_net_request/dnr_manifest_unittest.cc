@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <string_view>
+
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
@@ -19,11 +21,11 @@
 #include "extensions/common/extension.h"
 #include "extensions/common/file_util.h"
 #include "extensions/common/manifest_constants.h"
-#include "extensions/common/value_builder.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace extensions {
+
 namespace errors = manifest_errors;
 namespace dnr_api = api::declarative_net_request;
 
@@ -100,7 +102,7 @@ class DNRManifestTest : public testing::Test {
       EXPECT_TRUE(base::CreateDirectory(rules_path.DirName()));
 
       // Persist an empty ruleset file.
-      EXPECT_EQ(0, base::WriteFile(rules_path, nullptr /*data*/, 0 /*size*/));
+      EXPECT_TRUE(base::WriteFile(rules_path, std::string_view()));
     }
 
     // Persist manifest file.
@@ -146,12 +148,10 @@ TEST_F(DNRManifestTest, InvalidRulesFileKey) {
 
 TEST_F(DNRManifestTest, InvalidRulesFileFormat) {
   const char kRulesetFile[] = "file1.json";
-  base::Value::Dict manifest = CreateManifest({});
-  manifest.Set(dnr_api::ManifestKeys::kDeclarativeNetRequest,
-               DictionaryBuilder()
-                   .Set(dnr_api::DNRInfo::kRuleResources,
-                        (ListBuilder().Append(kRulesetFile)).Build())
-                   .Build());
+  base::Value::Dict manifest = CreateManifest({}).Set(
+      dnr_api::ManifestKeys::kDeclarativeNetRequest,
+      base::Value::Dict().Set(dnr_api::DNRInfo::kRuleResources,
+                              base::Value::List().Append(kRulesetFile)));
 
   WriteManifestAndRuleset(manifest, {});
 

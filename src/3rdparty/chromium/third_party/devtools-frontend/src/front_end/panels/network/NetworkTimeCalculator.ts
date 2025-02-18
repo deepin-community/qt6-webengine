@@ -300,9 +300,7 @@ export class NetworkTimeCalculator extends Common.ObjectWrapper.ObjectWrapper<Ev
 // eslint-disable-next-line @typescript-eslint/naming-convention
 export const _minimumSpread = 0.1;
 
-// TODO(crbug.com/1167717): Make this a const enum again
-// eslint-disable-next-line rulesdir/const_enum
-export enum Events {
+export const enum Events {
   BoundariesChanged = 'BoundariesChanged',
 }
 
@@ -315,15 +313,15 @@ export class NetworkTransferTimeCalculator extends NetworkTimeCalculator {
     super(false);
   }
 
-  formatValue(value: number, precision?: number): string {
+  override formatValue(value: number, precision?: number): string {
     return i18n.TimeUtilities.secondsToString(value - this.zeroTime(), Boolean(precision));
   }
 
-  lowerBound(request: SDK.NetworkRequest.NetworkRequest): number {
+  override lowerBound(request: SDK.NetworkRequest.NetworkRequest): number {
     return request.issueTime();
   }
 
-  upperBound(request: SDK.NetworkRequest.NetworkRequest): number {
+  override upperBound(request: SDK.NetworkRequest.NetworkRequest): number {
     return request.endTime;
   }
 }
@@ -333,11 +331,11 @@ export class NetworkTransferDurationCalculator extends NetworkTimeCalculator {
     super(true);
   }
 
-  formatValue(value: number, precision?: number): string {
+  override formatValue(value: number, precision?: number): string {
     return i18n.TimeUtilities.secondsToString(value, Boolean(precision));
   }
 
-  upperBound(request: SDK.NetworkRequest.NetworkRequest): number {
+  override upperBound(request: SDK.NetworkRequest.NetworkRequest): number {
     return request.duration;
   }
 }

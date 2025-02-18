@@ -84,17 +84,21 @@ class MODULES_EXPORT WebTransport final
   void OnConnectionEstablished(
       mojo::PendingRemote<network::mojom::blink::WebTransport>,
       mojo::PendingReceiver<network::mojom::blink::WebTransportClient>,
-      network::mojom::blink::HttpResponseHeadersPtr response_headers) override;
+      network::mojom::blink::HttpResponseHeadersPtr response_headers,
+      network::mojom::blink::WebTransportStatsPtr initial_stats) override;
   void OnHandshakeFailed(network::mojom::blink::WebTransportErrorPtr) override;
 
   // WebTransportClient implementation
   void OnDatagramReceived(base::span<const uint8_t> data) override;
   void OnIncomingStreamClosed(uint32_t stream_id, bool fin_received) override;
   void OnOutgoingStreamClosed(uint32_t stream_id) override;
-  void OnReceivedResetStream(uint32_t stream_id, uint8_t code) override;
-  void OnReceivedStopSending(uint32_t stream_id, uint8_t code) override;
+  void OnReceivedResetStream(uint32_t stream_id,
+                             uint32_t stream_error_code) override;
+  void OnReceivedStopSending(uint32_t stream_id,
+                             uint32_t stream_error_code) override;
   void OnClosed(
-      network::mojom::blink::WebTransportCloseInfoPtr close_info) override;
+      network::mojom::blink::WebTransportCloseInfoPtr close_info,
+      network::mojom::blink::WebTransportStatsPtr final_stats) override;
 
   // Implementation of ExecutionContextLifecycleObserver
   void ContextDestroyed() final;
@@ -106,10 +110,10 @@ class MODULES_EXPORT WebTransport final
   void SendFin(uint32_t stream_id);
 
   // Forwards a AbortStream() message to the mojo interface.
-  void ResetStream(uint32_t stream_id, uint8_t code);
+  void ResetStream(uint32_t stream_id, uint32_t code);
 
   // Forwards a StopSending() message to the mojo interface.
-  void StopSending(uint32_t stream_id, uint8_t code);
+  void StopSending(uint32_t stream_id, uint32_t code);
 
   // Removes the reference to a stream.
   void ForgetIncomingStream(uint32_t stream_id);
@@ -128,7 +132,9 @@ class MODULES_EXPORT WebTransport final
 
   WebTransport(ScriptState*, const String& url, ExecutionContext* context);
 
-  void Init(const String& url, const WebTransportOptions&, ExceptionState&);
+  void Init(const String& url_for_diagnostics,
+            const WebTransportOptions&,
+            ExceptionState&);
 
   void Dispose();
   void Cleanup(v8::Local<v8::Value> reason,

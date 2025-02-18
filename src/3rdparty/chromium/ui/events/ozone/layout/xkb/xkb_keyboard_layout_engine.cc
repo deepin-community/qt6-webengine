@@ -16,6 +16,7 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/memory/free_deleter.h"
+#include "base/memory/raw_ptr_exclusion.h"
 #include "base/strings/string_util.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/task/task_runner.h"
@@ -495,7 +496,9 @@ const PrintableSubEntry kU017E[] = {
 // Table mapping unshifted characters to PrintableSubEntry tables.
 struct PrintableMultiEntry {
   char16_t plain_character;
-  const PrintableSubEntry* subtable;
+  // This field is not a raw_ptr<> because it was filtered by the rewriter for:
+  // #global-scope
+  RAW_PTR_EXCLUSION const PrintableSubEntry* subtable;
   size_t subtable_size;
 };
 
@@ -809,8 +812,8 @@ bool XkbKeyboardLayoutEngine::Lookup(DomCode dom_code,
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
   // Classify the keysym and convert to DOM and VKEY representations.
-  if (xkb_keysym != XKB_KEY_at || (flags & EF_CONTROL_DOWN) == 0) {
-    // Non-character key. (We only support NUL as ^@.)
+  if (dom_code != DomCode::DIGIT2 || (flags & EF_CONTROL_DOWN) == 0) {
+    // Non-character key. (We only support NUL as ^@ and ^2.)
     *dom_key = NonPrintableXKeySymToDomKey(xkb_keysym);
     if (*dom_key != DomKey::NONE) {
       *key_code = NonPrintableDomKeyToKeyboardCode(*dom_key);

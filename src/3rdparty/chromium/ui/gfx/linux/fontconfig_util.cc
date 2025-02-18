@@ -6,6 +6,7 @@
 
 #include <fontconfig/fontconfig.h>
 
+#include "base/check_op.h"
 #include "base/memory/raw_ptr.h"
 #include "base/no_destructor.h"
 #include "build/chromeos_buildflags.h"
@@ -14,7 +15,6 @@
 #if BUILDFLAG(IS_CHROMEOS)
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
-#include "ui/gfx/switches.h"
 #endif
 
 namespace gfx {
@@ -49,8 +49,9 @@ class GFX_EXPORT GlobalFontConfig {
     fc_config_ = FcConfigGetCurrent();
     FcConfigReference(fc_config_);
 #if BUILDFLAG(IS_CHROMEOS)
-    if (features::UseVariableGoogleSansFont() &&
-        base::PathExists(base::FilePath(kGoogleSansVariablePath))) {
+    // TODO(b/268691415): Leave until M119 when all builds have the variable
+    // font.
+    if (base::PathExists(base::FilePath(kGoogleSansVariablePath))) {
       const FcChar8* kVariableFontPath =
           reinterpret_cast<const FcChar8*>(kGoogleSansVariablePath);
       // Adds the folder to the available fonts in the application. Returns

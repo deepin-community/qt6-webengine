@@ -23,6 +23,8 @@ component("seatbelt") {
   sources = [
     "sandbox_compiler.cc",
     "sandbox_compiler.h",
+    "sandbox_crash_message.cc",
+    "sandbox_crash_message.h",
     "sandbox_logging.cc",
     "sandbox_logging.h",
     "seatbelt.cc",
@@ -72,6 +74,8 @@ source_set("sandbox_unittests") {
   sources = [
     "mojom/mojom_traits_unittest.cc",
     "sandbox_compiler_unittest.cc",
+    "sandbox_test.cc",
+    "sandbox_test.h",
     "seatbelt_exec_unittest.cc",
     "seatbelt_extension_unittest.cc",
     "seatbelt_unittest.cc",
@@ -86,6 +90,7 @@ source_set("sandbox_unittests") {
     "//base/test:test_config",
     "//base/test:test_support",
     "//mojo/core/test:run_all_unittests",
+    "//mojo/core/test:test_support",
     "//testing/gtest",
   ]
 }

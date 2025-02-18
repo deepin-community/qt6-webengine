@@ -10,8 +10,6 @@
 #include <fuchsia/web/cpp/fidl.h>
 #include <lib/fidl/cpp/binding_set.h>
 #include <lib/inspect/cpp/vmo/types.h>
-#include <lib/syslog/structured_backend/cpp/fuchsia_syslog.h>
-#include <lib/ui/scenic/cpp/view_ref_pair.h>
 #include <lib/zx/channel.h>
 
 #include <list>
@@ -21,8 +19,10 @@
 #include <utility>
 #include <vector>
 
+#include <optional>
 #include "base/fuchsia/scoped_fx_logger.h"
 #include "base/gtest_prod_util.h"
+#include "base/logging.h"
 #include "base/memory/read_only_shared_memory_region.h"
 #include "base/timer/timer.h"
 #include "build/chromecast_buildflags.h"
@@ -36,10 +36,10 @@
 #include "fuchsia_web/webengine/browser/navigation_controller_impl.h"
 #include "fuchsia_web/webengine/browser/theme_manager.h"
 #include "fuchsia_web/webengine/web_engine_export.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/common/web_preferences/web_preferences.h"
 #include "ui/accessibility/platform/fuchsia/accessibility_bridge_fuchsia_impl.h"
 #include "ui/aura/window_tree_host.h"
+#include "ui/platform_window/fuchsia/view_ref_pair.h"
 #include "ui/wm/core/focus_controller.h"
 #include "url/gurl.h"
 
@@ -116,7 +116,7 @@ class WEB_ENGINE_EXPORT FrameImpl : public fuchsia::web::Frame,
   // empty, the default error page will be used.
   void EnableExplicitSitesFilter(std::string error_page);
 
-  const absl::optional<std::string>& explicit_sites_filter_error_page() const {
+  const std::optional<std::string>& explicit_sites_filter_error_page() const {
     return explicit_sites_filter_error_page_;
   }
 
@@ -187,14 +187,14 @@ class WEB_ENGINE_EXPORT FrameImpl : public fuchsia::web::Frame,
   // Creates and initializes WindowTreeHost for the view with the specified
   // |view_token|. |view_token| may be uninitialized in headless mode.
   void SetupWindowTreeHost(fuchsia::ui::views::ViewToken view_token,
-                           scenic::ViewRefPair view_ref_pair);
+                           ui::ViewRefPair view_ref_pair);
 
   // Creates and initializes WindowTreeHost for the view with the specified
   // |view_creation_token|. |view_creation_token| may be uninitialized in
   // headless mode.
   void SetupWindowTreeHost(
       fuchsia::ui::views::ViewCreationToken view_creation_token,
-      scenic::ViewRefPair view_ref_pair);
+      ui::ViewRefPair view_ref_pair);
 
   // Initializes WindowTreeHost.
   void InitWindowTreeHost();
@@ -325,7 +325,7 @@ class WEB_ENGINE_EXPORT FrameImpl : public fuchsia::web::Frame,
       const content::MediaStreamRequest& request,
       content::MediaResponseCallback callback) override;
   bool CheckMediaAccessPermission(content::RenderFrameHost* render_frame_host,
-                                  const GURL& security_origin,
+                                  const url::Origin& security_origin,
                                   blink::mojom::MediaStreamType type) override;
   std::unique_ptr<content::AudioStreamBrokerFactory>
   CreateAudioStreamBrokerFactory(content::WebContents* web_contents) override;
@@ -369,7 +369,7 @@ class WEB_ENGINE_EXPORT FrameImpl : public fuchsia::web::Frame,
 
   // Logger used for console messages from content, depending on |log_level_|.
   base::ScopedFxLogger console_logger_;
-  FuchsiaLogSeverity log_level_ = FUCHSIA_LOG_NONE;
+  logging::LogSeverity log_level_ = logging::LOGGING_NUM_SEVERITIES;
 
   // Parameters applied to popups created by content running in this Frame.
   const fuchsia::web::CreateFrameParams params_for_popups_;
@@ -387,8 +387,8 @@ class WEB_ENGINE_EXPORT FrameImpl : public fuchsia::web::Frame,
   std::unique_ptr<ui::AccessibilityBridgeFuchsiaImpl> accessibility_bridge_;
 
   // Test settings.
-  absl::optional<gfx::Size> window_size_for_test_;
-  absl::optional<float> device_scale_factor_for_test_;
+  std::optional<gfx::Size> window_size_for_test_;
+  std::optional<float> device_scale_factor_for_test_;
 
   EventFilter event_filter_;
   NavigationControllerImpl navigation_controller_;
@@ -418,7 +418,7 @@ class WEB_ENGINE_EXPORT FrameImpl : public fuchsia::web::Frame,
   // The error page to be displayed when a navigation to an explicit site is
   // filtered. Explicit sites are filtered if it has a value. If set to the
   // empty string, the default error page will be displayed.
-  absl::optional<std::string> explicit_sites_filter_error_page_;
+  std::optional<std::string> explicit_sites_filter_error_page_;
 
   // Used to publish Frame details to Inspect.
   inspect::Node inspect_node_;

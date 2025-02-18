@@ -10,11 +10,11 @@
 
 #include "base/check_op.h"
 #include "base/compiler_specific.h"
+#include "base/debug/alias.h"
 #include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
-#include "base/memory/raw_ptr_exclusion.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/rand_util.h"
@@ -79,15 +79,9 @@ class Connector::ActiveDispatchTracker {
 
  private:
   const base::WeakPtr<Connector> connector_;
-  // This field is not a raw_ptr<> because it was filtered by the rewriter for:
-  // #union
-  RAW_PTR_EXCLUSION RunLoopNestingObserver* const nesting_observer_;
-  // This field is not a raw_ptr<> because it was filtered by the rewriter for:
-  // #union
-  RAW_PTR_EXCLUSION ActiveDispatchTracker* outer_tracker_ = nullptr;
-  // This field is not a raw_ptr<> because it was filtered by the rewriter for:
-  // #union
-  RAW_PTR_EXCLUSION ActiveDispatchTracker* inner_tracker_ = nullptr;
+  const raw_ptr<RunLoopNestingObserver> nesting_observer_;
+  raw_ptr<ActiveDispatchTracker> outer_tracker_ = nullptr;
+  raw_ptr<ActiveDispatchTracker> inner_tracker_ = nullptr;
 };
 
 // Watches the MessageLoop on the current thread. Notifies the current chain of
@@ -407,11 +401,21 @@ bool Connector::SimulateReadMessage(ScopedMessageHandle message) {
   return DispatchMessage(std::move(message));
 }
 
-void Connector::OnWatcherHandleReady(MojoResult result) {
+void Connector::OnWatcherHandleReady(const char* interface_name,
+                                     MojoResult result) {
+  // NOTE: `interface_name` always points to static string data, so it's useful
+  // to alias without copying to the stack.
+  base::debug::Alias(&interface_name);
+
   OnHandleReadyInternal(result);
 }
 
-void Connector::OnSyncHandleWatcherHandleReady(MojoResult result) {
+void Connector::OnSyncHandleWatcherHandleReady(const char* interface_name,
+                                               MojoResult result) {
+  // NOTE: `interface_name` always points to static string data, so it's useful
+  // to alias without copying to the stack.
+  base::debug::Alias(&interface_name);
+
   base::WeakPtr<Connector> weak_self(weak_self_);
 
   sync_handle_watcher_callback_count_++;
@@ -456,14 +460,14 @@ void Connector::WaitToReadMore() {
   MojoResult rv = handle_watcher_->Watch(
       message_pipe_.get(), MOJO_HANDLE_SIGNAL_READABLE,
       base::BindRepeating(&Connector::OnWatcherHandleReady,
-                          base::Unretained(this)));
+                          base::Unretained(this), interface_name_));
 
   if (rv != MOJO_RESULT_OK) {
     // If the watch failed because the handle is invalid or its conditions can
     // no longer be met, we signal the error asynchronously to avoid reentry.
     task_runner_->PostTask(
-        FROM_HERE,
-        base::BindOnce(&Connector::OnWatcherHandleReady, weak_self_, rv));
+        FROM_HERE, base::BindOnce(&Connector::OnWatcherHandleReady, weak_self_,
+                                  interface_name_, rv));
   } else {
     handle_watcher_->ArmOrNotify();
   }
@@ -510,7 +514,7 @@ bool Connector::DispatchMessage(ScopedMessageHandle handle) {
   }
 
   base::WeakPtr<Connector> weak_self = weak_self_;
-  absl::optional<ActiveDispatchTracker> dispatch_tracker;
+  std::optional<ActiveDispatchTracker> dispatch_tracker;
   if (!is_dispatching_ && nesting_observer_) {
     is_dispatching_ = true;
     dispatch_tracker.emplace(weak_self);
@@ -684,7 +688,7 @@ void Connector::EnsureSyncWatcherExists() {
   sync_watcher_ = std::make_unique<SyncHandleWatcher>(
       message_pipe_.get(), MOJO_HANDLE_SIGNAL_READABLE,
       base::BindRepeating(&Connector::OnSyncHandleWatcherHandleReady,
-                          base::Unretained(this)));
+                          base::Unretained(this), interface_name_));
 }
 
 }  // namespace mojo

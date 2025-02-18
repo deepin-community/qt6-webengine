@@ -1,13 +1,16 @@
 {
   "$build/chromium_tests_builder_config": {
     "builder_config": {
+      "additional_exclusions": [
+        "infra/config/generated/builders/try/dawn-mac-x64-deps-rel/gn-args.json"
+      ],
       "builder_db": {
         "entries": [
           {
             "builder_id": {
               "bucket": "ci",
               "builder": "Dawn Mac x64 DEPS Builder",
-              "project": "chromium-m112"
+              "project": "chromium-m122"
             },
             "builder_spec": {
               "build_gs_bucket": "chromium-dawn-archive",
@@ -19,6 +22,7 @@
                 ],
                 "build_config": "Release",
                 "config": "chromium",
+                "target_arch": "intel",
                 "target_bits": 64,
                 "target_platform": "mac"
               },
@@ -31,8 +35,8 @@
           {
             "builder_id": {
               "bucket": "ci",
-              "builder": "Dawn Mac x64 DEPS Release (Intel)",
-              "project": "chromium-m112"
+              "builder": "Dawn Mac x64 DEPS Release (AMD)",
+              "project": "chromium-m122"
             },
             "builder_spec": {
               "build_gs_bucket": "chromium-dawn-archive",
@@ -44,6 +48,7 @@
                 ],
                 "build_config": "Release",
                 "config": "chromium",
+                "target_arch": "intel",
                 "target_bits": 64,
                 "target_platform": "mac"
               },
@@ -53,7 +58,38 @@
               "parent": {
                 "bucket": "ci",
                 "builder": "Dawn Mac x64 DEPS Builder",
-                "project": "chromium-m112"
+                "project": "chromium-m122"
+              },
+              "run_tests_serially": true
+            }
+          },
+          {
+            "builder_id": {
+              "bucket": "ci",
+              "builder": "Dawn Mac x64 DEPS Release (Intel)",
+              "project": "chromium-m122"
+            },
+            "builder_spec": {
+              "build_gs_bucket": "chromium-dawn-archive",
+              "builder_group": "chromium.dawn",
+              "execution_mode": "TEST",
+              "legacy_chromium_config": {
+                "apply_configs": [
+                  "mb"
+                ],
+                "build_config": "Release",
+                "config": "chromium",
+                "target_arch": "intel",
+                "target_bits": 64,
+                "target_platform": "mac"
+              },
+              "legacy_gclient_config": {
+                "config": "chromium"
+              },
+              "parent": {
+                "bucket": "ci",
+                "builder": "Dawn Mac x64 DEPS Builder",
+                "project": "chromium-m122"
               },
               "run_tests_serially": true
             }
@@ -64,17 +100,26 @@
         {
           "bucket": "ci",
           "builder": "Dawn Mac x64 DEPS Builder",
-          "project": "chromium-m112"
+          "project": "chromium-m122"
         }
       ],
       "builder_ids_in_scope_for_testing": [
         {
           "bucket": "ci",
+          "builder": "Dawn Mac x64 DEPS Release (AMD)",
+          "project": "chromium-m122"
+        },
+        {
+          "bucket": "ci",
           "builder": "Dawn Mac x64 DEPS Release (Intel)",
-          "project": "chromium-m112"
+          "project": "chromium-m122"
         }
       ]
     }
+  },
+  "$build/flakiness": {
+    "check_for_flakiness": true,
+    "check_for_flakiness_with_resultdb": true
   },
   "$build/reclient": {
     "instance": "rbe-chromium-untrusted",
@@ -91,5 +136,6 @@
     ]
   },
   "builder_group": "tryserver.chromium.dawn",
+  "cq": "path-based",
   "recipe": "chromium_trybot"
 }

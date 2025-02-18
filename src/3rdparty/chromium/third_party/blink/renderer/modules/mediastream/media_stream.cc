@@ -123,6 +123,7 @@ MediaStream::MediaStream(ExecutionContext* context,
                          TransferredMediaStreamTrack* transferred_track,
                          base::OnceCallback<void(MediaStream*)> callback)
     : ExecutionContextClient(context),
+      ActiveScriptWrappable<MediaStream>({}),
       descriptor_(stream_descriptor),
       media_stream_initialized_callback_(std::move(callback)),
       scheduled_event_timer_(
@@ -183,6 +184,7 @@ MediaStream::MediaStream(ExecutionContext* context,
                          const MediaStreamTrackVector& audio_tracks,
                          const MediaStreamTrackVector& video_tracks)
     : ExecutionContextClient(context),
+      ActiveScriptWrappable<MediaStream>({}),
       descriptor_(stream_descriptor),
       scheduled_event_timer_(
           context->GetTaskRunner(TaskType::kMediaElementEvent),
@@ -213,6 +215,7 @@ MediaStream::MediaStream(ExecutionContext* context,
                          const MediaStreamTrackVector& audio_tracks,
                          const MediaStreamTrackVector& video_tracks)
     : ExecutionContextClient(context),
+      ActiveScriptWrappable<MediaStream>({}),
       scheduled_event_timer_(
           context->GetTaskRunner(TaskType::kMediaElementEvent),
           this,
@@ -319,8 +322,14 @@ void MediaStream::addTrack(MediaStreamTrack* track,
     ScheduleDispatchEvent(Event::Create(event_type_names::kActive));
   }
 
-  for (auto& observer : observers_)
-    observer->OnStreamAddTrack(this, track);
+  for (auto& observer : observers_) {
+    observer->OnStreamAddTrack(this, track, exception_state);
+
+    // If processing by the observer failed, it is most likely because it was
+    // not necessary and it became a no-op. The exception can be suppressed,
+    // there is nothing to do.
+    exception_state.ClearException();
+  }
 }
 
 void MediaStream::removeTrack(MediaStreamTrack* track,
@@ -356,8 +365,14 @@ void MediaStream::removeTrack(MediaStreamTrack* track,
     ScheduleDispatchEvent(Event::Create(event_type_names::kInactive));
   }
 
-  for (auto& observer : observers_)
-    observer->OnStreamRemoveTrack(this, track);
+  for (auto& observer : observers_) {
+    observer->OnStreamRemoveTrack(this, track, exception_state);
+
+    // If processing by the observer failed, it is most likely because it was
+    // not necessary and it became a no-op. The exception can be suppressed,
+    // there is nothing to do.
+    exception_state.ClearException();
+  }
 }
 
 MediaStreamTrack* MediaStream::getTrackById(String id) {
@@ -434,8 +449,7 @@ bool MediaStream::AddEventListenerInternal(
                       WebFeature::kMediaStreamOnInactive);
   }
 
-  return EventTargetWithInlineData::AddEventListenerInternal(event_type,
-                                                             listener, options);
+  return EventTarget::AddEventListenerInternal(event_type, listener, options);
 }
 
 const AtomicString& MediaStream::InterfaceName() const {
@@ -574,7 +588,7 @@ void MediaStream::Trace(Visitor* visitor) const {
   visitor->Trace(observers_);
   visitor->Trace(scheduled_event_timer_);
   visitor->Trace(scheduled_events_);
-  EventTargetWithInlineData::Trace(visitor);
+  EventTarget::Trace(visitor);
   ExecutionContextClient::Trace(visitor);
   MediaStreamDescriptorClient::Trace(visitor);
 }

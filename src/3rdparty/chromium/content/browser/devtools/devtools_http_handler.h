@@ -7,6 +7,7 @@
 
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 
@@ -15,7 +16,6 @@
 #include "base/values.h"
 #include "content/public/browser/devtools_agent_host.h"
 #include "net/http/http_status_code.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace base {
 class Thread;
@@ -71,7 +71,8 @@ class DevToolsHttpHandler {
                      const net::HttpServerRequestInfo& info);
   void RespondToJsonList(int connection_id,
                          const std::string& host,
-                         DevToolsAgentHost::List agent_hosts);
+                         DevToolsAgentHost::List agent_hosts,
+                         bool for_tab);
   void OnDiscoveryPageRequest(int connection_id);
   void OnFrontendResourceRequest(int connection_id, const std::string& path);
   void OnWebSocketRequest(int connection_id,
@@ -86,7 +87,7 @@ class DevToolsHttpHandler {
 
   void SendJson(int connection_id,
                 net::HttpStatusCode status_code,
-                absl::optional<base::ValueView> value,
+                std::optional<base::ValueView> value,
                 const std::string& message);
   void Send200(int connection_id,
                const std::string& data,

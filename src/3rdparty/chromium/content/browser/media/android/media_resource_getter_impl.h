@@ -43,13 +43,14 @@ class MediaResourceGetterImpl : public media::MediaResourceGetter {
   void GetCookies(const GURL& url,
                   const net::SiteForCookies& site_for_cookies,
                   const url::Origin& top_frame_origin,
+                  bool has_storage_access,
                   GetCookieCB callback) override;
 
  private:
   // Called when GetAuthCredentials() finishes.
   void GetAuthCredentialsCallback(
       GetAuthCredentialsCB callback,
-      const absl::optional<net::AuthCredentials>& credentials);
+      const std::optional<net::AuthCredentials>& credentials);
 
   // BrowserContext to retrieve URLRequestContext and ResourceContext.
   raw_ptr<BrowserContext> browser_context_;

@@ -5,11 +5,12 @@
 import * as Common from '../../core/common/common.js';
 import * as i18n from '../../core/i18n/i18n.js';
 import type * as Protocol from '../../generated/protocol.js';
+import * as LegacyWrapper from '../../ui/components/legacy_wrapper/legacy_wrapper.js';
 import * as DataGrid from '../../ui/legacy/components/data_grid/data_grid.js';
 import * as SourceFrame from '../../ui/legacy/components/source_frame/source_frame.js';
 import * as UI from '../../ui/legacy/legacy.js';
-import * as ApplicationComponents from './components/components.js';
 
+import * as ApplicationComponents from './components/components.js';
 import {SharedStorageForOrigin} from './SharedStorageModel.js';
 import {StorageItemsView} from './StorageItemsView.js';
 
@@ -17,7 +18,7 @@ const UIStrings = {
   /**
    *@description Text in SharedStorage Items View of the Application panel
    */
-  sharedStorage: 'Shared Storage',
+  sharedStorage: 'Shared storage',
   /**
    *@description Text representing the name of a value stored in the "Shared Storage Items" table
    */
@@ -71,9 +72,7 @@ interface WrappedEntry {
 }
 
 export namespace SharedStorageItemsDispatcher {
-  // TODO(crbug.com/1167717): Make this a const enum.
-  // eslint-disable-next-line rulesdir/const_enum
-  export enum Events {
+  export const enum Events {
     FilteredItemsCleared = 'FilteredItemsCleared',
     ItemDeleted = 'ItemDeleted',
     ItemEdited = 'ItemEdited',
@@ -104,7 +103,8 @@ export class SharedStorageItemsView extends StorageItemsView {
   #sharedStorage: SharedStorageForOrigin;
   readonly outerSplitWidget: UI.SplitWidget.SplitWidget;
   readonly innerSplitWidget: UI.SplitWidget.SplitWidget;
-  #metadataView: ApplicationComponents.SharedStorageMetadataView.SharedStorageMetadataView;
+  #metadataView: LegacyWrapper.LegacyWrapper
+      .LegacyWrapper<UI.Widget.VBox, ApplicationComponents.SharedStorageMetadataView.SharedStorageMetadataView>;
   readonly dataGrid: DataGrid.DataGrid.DataGridImpl<Protocol.Storage.SharedStorageEntry>;
   #noDisplayView: UI.Widget.VBox;
   #eventListeners: Common.EventTarget.EventDescriptor[];
@@ -140,8 +140,10 @@ export class SharedStorageItemsView extends StorageItemsView {
     const dataGridWidget = this.dataGrid.asWidget();
     dataGridWidget.setMinimumSize(0, 100);
 
-    this.#metadataView = new ApplicationComponents.SharedStorageMetadataView.SharedStorageMetadataView(
-        sharedStorage, sharedStorage.securityOrigin);
+    this.#metadataView = LegacyWrapper.LegacyWrapper.legacyWrapper(
+        UI.Widget.VBox,
+        new ApplicationComponents.SharedStorageMetadataView.SharedStorageMetadataView(
+            sharedStorage, sharedStorage.securityOrigin));
     this.#metadataView.setMinimumSize(0, 275);
     const innerResizer = this.#metadataView.element.createChild('div', 'metadata-view-resizer');
 
@@ -199,16 +201,16 @@ export class SharedStorageItemsView extends StorageItemsView {
     await this.refreshItems();
   }
 
-  async refreshItems(): Promise<void> {
+  override async refreshItems(): Promise<void> {
     if (!this.isShowing()) {
       return;
     }
-    await this.#metadataView.doUpdate();
+    await this.#metadataView.getComponent().render();
     await this.updateEntriesOnly();
     this.sharedStorageItemsDispatcher.dispatchEventToListeners(SharedStorageItemsDispatcher.Events.ItemsRefreshed);
   }
 
-  async deleteSelectedItem(): Promise<void> {
+  override async deleteSelectedItem(): Promise<void> {
     if (!this.dataGrid.selectedNode) {
       return;
     }
@@ -216,7 +218,7 @@ export class SharedStorageItemsView extends StorageItemsView {
     await this.#deleteCallback(this.dataGrid.selectedNode);
   }
 
-  async deleteAllItems(): Promise<void> {
+  override async deleteAllItems(): Promise<void> {
     if (!this.hasFilter()) {
       await this.#sharedStorage.clear();
       await this.refreshItems();

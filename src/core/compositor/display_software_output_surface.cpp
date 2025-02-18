@@ -21,6 +21,7 @@ class DisplaySoftwareOutputSurface::Device final : public viz::SoftwareOutputDev
 {
 public:
     Device(bool requiresAlpha);
+    ~Device() override;
 
     // Overridden from viz::SoftwareOutputDevice.
     void Resize(const gfx::Size &sizeInPixels, float devicePixelRatio) override;
@@ -50,13 +51,18 @@ DisplaySoftwareOutputSurface::Device::Device(bool requiresAlpha)
 {
 }
 
+DisplaySoftwareOutputSurface::Device::~Device()
+{
+    unbind();
+}
+
 void DisplaySoftwareOutputSurface::Device::Resize(const gfx::Size &sizeInPixels, float devicePixelRatio)
 {
     if (viewport_pixel_size_ == sizeInPixels && m_devicePixelRatio == devicePixelRatio)
         return;
     m_devicePixelRatio = devicePixelRatio;
     viewport_pixel_size_ = sizeInPixels;
-    surface_ = SkSurface::MakeRaster(SkImageInfo::MakeN32Premul(sizeInPixels.width(), sizeInPixels.height()));
+    surface_ = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(sizeInPixels.width(), sizeInPixels.height()));
 }
 
 void DisplaySoftwareOutputSurface::Device::OnSwapBuffers(SwapBuffersCallback swap_ack_callback, gfx::FrameData data)

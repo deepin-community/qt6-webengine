@@ -170,7 +170,7 @@ inline EDisplay CssValueIDToPlatformEnum(CSSValueID v) {
   if (v == CSSValueID::kInline) {
     return EDisplay::kInline;
   }
-  if (v == CSSValueID::kBlock) {
+  if (v == CSSValueID::kBlock || v == CSSValueID::kFlow) {
     return EDisplay::kBlock;
   }
   if (v == CSSValueID::kFlowRoot) {
@@ -241,6 +241,12 @@ inline EDisplay CssValueIDToPlatformEnum(CSSValueID v) {
   }
   if (v == CSSValueID::kMath) {
     return EDisplay::kMath;
+  }
+  if (v == CSSValueID::kRuby) {
+    return EDisplay::kRuby;
+  }
+  if (v == CSSValueID::kRubyText) {
+    return EDisplay::kRubyText;
   }
 
   NOTREACHED();
@@ -329,6 +335,12 @@ inline CSSValueID PlatformEnumToCSSValueID(EDisplay v) {
   if (v == EDisplay::kMath) {
     return CSSValueID::kMath;
   }
+  if (v == EDisplay::kRuby) {
+    return CSSValueID::kRuby;
+  }
+  if (v == EDisplay::kRubyText) {
+    return CSSValueID::kRubyText;
+  }
 
   NOTREACHED();
   return CSSValueID::kInline;
@@ -402,10 +414,110 @@ inline CSSValueID PlatformEnumToCSSValueID(EWhiteSpace v) {
       return CSSValueID::kPreWrap;
     case EWhiteSpace::kBreakSpaces:
       return CSSValueID::kBreakSpaces;
+  }
+  NOTREACHED();
+  return CSSValueID::kNone;
+}
+
+template <>
+inline WhiteSpaceCollapse CssValueIDToPlatformEnum(CSSValueID v) {
+  switch (v) {
+    case CSSValueID::kCollapse:
+      return WhiteSpaceCollapse::kCollapse;
+    case CSSValueID::kPreserve:
+      return WhiteSpaceCollapse::kPreserve;
+    case CSSValueID::kPreserveBreaks:
+      return WhiteSpaceCollapse::kPreserveBreaks;
+    case CSSValueID::kBreakSpaces:
+      return WhiteSpaceCollapse::kBreakSpaces;
     default:
       NOTREACHED();
-      return CSSValueID::kNone;
+      return WhiteSpaceCollapse::kCollapse;
   }
+}
+
+template <>
+inline CSSValueID PlatformEnumToCSSValueID(WhiteSpaceCollapse v) {
+  switch (v) {
+    case WhiteSpaceCollapse::kCollapse:
+      return CSSValueID::kCollapse;
+    case WhiteSpaceCollapse::kPreserveBreaks:
+      return CSSValueID::kPreserveBreaks;
+    case WhiteSpaceCollapse::kPreserve:
+      return CSSValueID::kPreserve;
+    case WhiteSpaceCollapse::kBreakSpaces:
+      return CSSValueID::kBreakSpaces;
+  }
+  NOTREACHED();
+  return CSSValueID::kNone;
+}
+
+template <>
+inline TextSpacingTrim CssValueIDToPlatformEnum(CSSValueID v) {
+  switch (v) {
+    case CSSValueID::kNormal:
+      return TextSpacingTrim::kNormal;
+    case CSSValueID::kTrimStart:
+      return TextSpacingTrim::kTrimStart;
+    case CSSValueID::kSpaceAll:
+      return TextSpacingTrim::kSpaceAll;
+    case CSSValueID::kSpaceFirst:
+      return TextSpacingTrim::kSpaceFirst;
+    default:
+      NOTREACHED();
+      return TextSpacingTrim::kNormal;
+  }
+}
+
+template <>
+inline CSSValueID PlatformEnumToCSSValueID(TextSpacingTrim v) {
+  switch (v) {
+    case TextSpacingTrim::kNormal:
+      return CSSValueID::kNormal;
+    case TextSpacingTrim::kTrimStart:
+      return CSSValueID::kTrimStart;
+    case TextSpacingTrim::kSpaceAll:
+      return CSSValueID::kSpaceAll;
+    case TextSpacingTrim::kSpaceFirst:
+      return CSSValueID::kSpaceFirst;
+  }
+  NOTREACHED();
+  return CSSValueID::kNone;
+}
+
+template <>
+inline TextWrap CssValueIDToPlatformEnum(CSSValueID v) {
+  switch (v) {
+    case CSSValueID::kWrap:
+      return TextWrap::kWrap;
+    case CSSValueID::kNowrap:
+      return TextWrap::kNoWrap;
+    case CSSValueID::kBalance:
+      return TextWrap::kBalance;
+    case CSSValueID::kPretty:
+      DCHECK(RuntimeEnabledFeatures::CSSTextWrapPrettyEnabled());
+      return TextWrap::kPretty;
+    default:
+      NOTREACHED();
+      return TextWrap::kWrap;
+  }
+}
+
+template <>
+inline CSSValueID PlatformEnumToCSSValueID(TextWrap v) {
+  switch (v) {
+    case TextWrap::kWrap:
+      return CSSValueID::kWrap;
+    case TextWrap::kNoWrap:
+      return CSSValueID::kNowrap;
+    case TextWrap::kBalance:
+      return CSSValueID::kBalance;
+    case TextWrap::kPretty:
+      DCHECK(RuntimeEnabledFeatures::CSSTextWrapPrettyEnabled());
+      return CSSValueID::kPretty;
+  }
+  NOTREACHED();
+  return CSSValueID::kNone;
 }
 
 }  // namespace blink

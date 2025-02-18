@@ -11,6 +11,7 @@
 #include "components/ukm/test_ukm_recorder.h"
 #include "content/browser/preloading/preloading.h"
 #include "content/browser/preloading/preloading_config.h"
+#include "content/common/features.h"
 #include "content/public/browser/preloading.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
@@ -34,7 +35,8 @@ const PreloadingType kTypes[] = {
     PreloadingType::kNoStatePrefetch,
 };
 
-const char* kUmaTriggerOutcome = "Preloading.%s.Attempt.%s.TriggeringOutcome";
+constexpr char kUmaTriggerOutcome[] =
+    "Preloading.%s.Attempt.%s.TriggeringOutcome";
 
 }  // namespace
 
@@ -118,8 +120,17 @@ TEST_F(PreloadingAttemptUKMTest, NoSampling) {
   const char* entry_name =
       ukm::builders::Preloading_Attempt_PreviousPrimaryPage::kEntryName;
 
-  // Make sure the attempt is recorded.
+  // Make sure the attempt is recorded, with a sampling_likelihood of 1,000,000.
   EXPECT_EQ(ukm_recorder()->GetEntriesByName(entry_name).size(), 1ul);
+  auto* entry = ukm_recorder()->GetEntriesByName(entry_name)[0].get();
+  ukm_recorder()->EntryHasMetric(
+      entry, ukm::builders::Preloading_Attempt_PreviousPrimaryPage::
+                 kSamplingLikelihoodName);
+  ukm_recorder()->ExpectEntryMetric(
+      entry,
+      ukm::builders::Preloading_Attempt_PreviousPrimaryPage::
+          kSamplingLikelihoodName,
+      1'000'000);
 }
 
 TEST_F(PreloadingAttemptUKMTest, SampledOut) {

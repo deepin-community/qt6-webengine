@@ -31,13 +31,16 @@
 #include "third_party/blink/renderer/core/html/html_olist_element.h"
 #include "third_party/blink/renderer/core/html/html_paragraph_element.h"
 #include "third_party/blink/renderer/core/html/html_span_element.h"
+#include "third_party/blink/renderer/core/html/html_template_element.h"
 #include "third_party/blink/renderer/core/html/html_ulist_element.h"
 #include "third_party/blink/renderer/core/html/parser/atomic_html_token.h"
 #include "third_party/blink/renderer/core/html/parser/html_construction_site.h"
 #include "third_party/blink/renderer/core/html/parser/html_entity_parser.h"
+#include "third_party/blink/renderer/core/html_names.h"
 #include "third_party/blink/renderer/core/svg/svg_element.h"
 #include "third_party/blink/renderer/core/svg_names.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/text/segmented_string.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string_encoding.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_uchar.h"
@@ -63,6 +66,19 @@ template <int n>
 constexpr bool OnlyContainsLowercaseASCIILetters(const char (&s)[n]) {
   for (int i = 0; i < n - 1; ++i) {
     if (!('a' <= s[i] && s[i] <= 'z')) {
+      return false;
+    }
+  }
+  return true;
+}
+
+template <class Char, size_t n>
+bool SpanMatchesLowercase(base::span<const Char> span, const char (&s)[n]) {
+  DCHECK_EQ(span.size(), n - 1);
+  for (size_t i = 0; i < n - 1; ++i) {
+    Char lower =
+        (span[i] >= 'A' && span[i] <= 'Z') ? span[i] - 'A' + 'a' : span[i];
+    if (lower != s[i]) {
       return false;
     }
   }
@@ -97,6 +113,7 @@ uint32_t TagnameHash(const String& s) {
 #define SUPPORTED_TAGS(V) \
   V(A)                    \
   V(B)                    \
+  V(Body)                 \
   V(Br)                   \
   V(Button)               \
   V(Div)                  \
@@ -112,6 +129,44 @@ uint32_t TagnameHash(const String& s) {
   V(Span)                 \
   V(Strong)               \
   V(Ul)
+
+using UCharLiteralBufferType = UCharLiteralBuffer<32>;
+
+template <class Char>
+struct ScanTextResult {
+  // Converts `text` to a String. This handles converting UChar to LChar if
+  // possible.
+  String TextToString() const;
+
+  // HTML strings of the form '\n<space>*' are widespread on the web. Caching
+  // them saves us allocations, which improves the runtime.
+  String TryCanonicalizeString() const {
+    DCHECK(!text.empty());
+    if (is_newline_then_whitespace_string &&
+        text.size() < WTF::NewlineThenWhitespaceStringsTable::kTableSize) {
+      DCHECK(WTF::NewlineThenWhitespaceStringsTable::IsNewlineThenWhitespaces(
+          String(text.data(), static_cast<unsigned>(text.size()))));
+      return WTF::NewlineThenWhitespaceStringsTable::GetStringForLength(
+          text.size());
+    }
+    return TextToString();
+  }
+
+  base::span<const Char> text;
+  UCharLiteralBufferType* escaped_text = nullptr;
+  bool is_newline_then_whitespace_string = false;
+};
+
+template <>
+String ScanTextResult<LChar>::TextToString() const {
+  return String(text.data(), static_cast<unsigned>(text.size()));
+}
+
+template <>
+String ScanTextResult<UChar>::TextToString() const {
+  return String(StringImpl::Create8BitIfPossible(
+      text.data(), static_cast<wtf_size_t>(text.size())));
+}
 
 // This HTML parser is used as a fast-path for setting innerHTML.
 // It is faster than the general parser by only supporting a subset of valid
@@ -155,13 +210,15 @@ class HTMLFastPathParser {
   STACK_ALLOCATED();
   using Span = base::span<const Char>;
   using USpan = base::span<const UChar>;
+  // 32 matches that used by HTMLToken::Attribute.
+  typedef typename std::conditional<std::is_same_v<Char, UChar>,
+                           UCharLiteralBuffer<32>,
+                           LCharLiteralBuffer<32>>::type LiteralBufferType;
   static_assert(std::is_same_v<Char, UChar> || std::is_same_v<Char, LChar>);
 
  public:
-  HTMLFastPathParser(Span source,
-                     Document& document,
-                     DocumentFragment& fragment)
-      : source_(source), document_(document), fragment_(fragment) {}
+  HTMLFastPathParser(Span source, Document& document, ContainerNode& root_node)
+      : source_(source), document_(document), root_node_(root_node) {}
 
   bool Run(Element& context_element) {
     QualifiedName context_tag = context_element.TagQName();
@@ -207,26 +264,29 @@ class HTMLFastPathParser {
 
   HtmlFastPathResult parse_result() const { return parse_result_; }
 
+  bool bulk_insert_notify() const { return bulk_insert_notify_; }
+
  private:
   Span source_;
   Document& document_;
-  DocumentFragment& fragment_;
+  ContainerNode& root_node_;
 
   const Char* const end_ = source_.data() + source_.size();
   const Char* pos_ = source_.data();
 
+  const bool bulk_insert_notify_ =
+      RuntimeEnabledFeatures::HTMLParserFastPathBulkInsertNotifyEnabled();
   bool failed_ = false;
   bool inside_of_tag_a_ = false;
+  bool inside_of_tag_li_ = false;
   // Used to limit how deep a hierarchy can be created. Also note that
   // HTMLConstructionSite ends up flattening when this depth is reached.
   unsigned element_depth_ = 0;
-  // 32 matches that used by HTMLToken::Attribute.
-  Vector<Char, 32> char_buffer_;
-  Vector<UChar> uchar_buffer_;
+  LiteralBufferType char_buffer_;
+  UCharLiteralBufferType uchar_buffer_;
   // Used if the attribute name contains upper case ascii (which must be
   // mapped to lower case).
-  // 32 matches that used by HTMLToken::Attribute.
-  Vector<Char, 32> attribute_name_buffer_;
+  LiteralBufferType attribute_name_buffer_;
   Vector<Attribute, kAttributePrealloc> attribute_buffer_;
   Vector<StringImpl*> attribute_names_;
   HtmlFastPathResult parse_result_ = HtmlFastPathResult::kSucceeded;
@@ -319,6 +379,16 @@ class HTMLFastPathParser {
       }
     };
 
+    struct Body : ContainerTag<HTMLBodyElement, PermittedParents::kSpecial> {
+      static constexpr const char tagname[] = "body";
+      static HTMLElement* Create(Document& document) {
+        // Body is only supported as an element for adding children, and not
+        // a node that is created by this code.
+        CHECK(false);
+        return nullptr;
+      }
+    };
+
     struct Br
         : VoidTag<HTMLBRElement, PermittedParents::kPhrasingOrFlowContent> {
       static constexpr const char tagname[] = "br";
@@ -334,8 +404,7 @@ class HTMLFastPathParser {
       static constexpr const char tagname[] = "div";
     };
 
-    struct Footer
-        : ContainerTag<HTMLDivElement, PermittedParents::kFlowContent> {
+    struct Footer : ContainerTag<HTMLElement, PermittedParents::kFlowContent> {
       static constexpr const char tagname[] = "footer";
       static HTMLElement* Create(Document& document) {
         return MakeGarbageCollected<HTMLElement>(html_names::kFooterTag,
@@ -361,7 +430,7 @@ class HTMLFastPathParser {
       }
     };
 
-    struct Li : ContainerTag<HTMLLIElement, PermittedParents::kSpecial> {
+    struct Li : ContainerTag<HTMLLIElement, PermittedParents::kFlowContent> {
       static constexpr const char tagname[] = "li";
     };
 
@@ -428,7 +497,7 @@ class HTMLFastPathParser {
 
   template <class ParentTag>
   void ParseCompleteInput() {
-    ParseChildren<ParentTag>(&fragment_);
+    ParseChildren<ParentTag>(&root_node_);
     if (pos_ != end_) {
       Fail(HtmlFastPathResult::kFailedDidntReachEndOfInput);
     }
@@ -478,35 +547,13 @@ class HTMLFastPathParser {
     }
   }
 
-  struct ScanTextResult {
-    // HTML strings of the form '\n<space>*' are widespread on the web. Caching
-    // them saves us allocations, which improves the runtime.
-    String TryCanonicalizeString() const {
-      DCHECK(!text.empty());
-      if (is_newline_then_whitespace_string &&
-          text.size() < WTF::NewlineThenWhitespaceStringsTable::kTableSize) {
-#if DCHECK_IS_ON()
-        DCHECK(WTF::NewlineThenWhitespaceStringsTable::IsNewlineThenWhitespaces(
-            String(text.data(), static_cast<unsigned>(text.size()))));
-#endif  // DCHECK_IS_ON()
-        return WTF::NewlineThenWhitespaceStringsTable::GetStringForLength(
-            text.size());
-      }
-      return String(text.data(), static_cast<unsigned>(text.size()));
-    }
-
-    Span text;
-    USpan escaped_text;
-    bool is_newline_then_whitespace_string = false;
-  };
-
   // We first try to scan text as an unmodified subsequence of the input.
   // However, if there are escape sequences, we have to copy the text to a
   // separate buffer and we might go outside of `Char` range if we are in an
   // `LChar` parser. Therefore, this function returns either a `Span` or a
   // `USpan`. Callers distinguish the two cases by checking if the `Span` is
   // empty, as only one of them can be non-empty.
-  ScanTextResult ScanText() {
+  ScanTextResult<Char> ScanText() {
     const Char* start = pos_;
     bool is_newline_then_whitespace_string = false;
     if (pos_ != end_ && *pos_ == '\n') {
@@ -521,7 +568,7 @@ class HTMLFastPathParser {
         return {Span{}, ScanEscapedText()};
       } else if (UNLIKELY(*pos_ == '\0')) {
         return Fail(HtmlFastPathResult::kFailedContainsNull,
-                    ScanTextResult{Span{}, USpan{}});
+                    ScanTextResult<Char>{Span{}, nullptr});
       }
       if (*pos_ != ' ') {
         is_newline_then_whitespace_string = false;
@@ -529,19 +576,19 @@ class HTMLFastPathParser {
       ++pos_;
     }
     return {{start, static_cast<size_t>(pos_ - start)},
-            USpan{},
+            nullptr,
             is_newline_then_whitespace_string};
   }
 
   // Slow-path of `ScanText()`, which supports escape sequences by copying to a
   // separate buffer.
-  USpan ScanEscapedText() {
-    uchar_buffer_.resize(0);
+  UCharLiteralBufferType* ScanEscapedText() {
+    uchar_buffer_.clear();
     while (pos_ != end_ && *pos_ != '<') {
       if (*pos_ == '&') {
         ScanHTMLCharacterReference(&uchar_buffer_);
         if (failed_) {
-          return USpan{};
+          return nullptr;
         }
       } else if (*pos_ == '\r') {
         // Normalize "\r\n" to "\n" according to
@@ -549,16 +596,16 @@ class HTMLFastPathParser {
         if (pos_ + 1 != end_ && pos_[1] == '\n') {
           ++pos_;
         }
-        uchar_buffer_.push_back('\n');
+        uchar_buffer_.AddChar('\n');
         ++pos_;
       } else if (UNLIKELY(*pos_ == '\0')) {
-        return Fail(HtmlFastPathResult::kFailedContainsNull, USpan{});
+        return Fail(HtmlFastPathResult::kFailedContainsNull, nullptr);
       } else {
-        uchar_buffer_.push_back(*pos_);
+        uchar_buffer_.AddChar(*pos_);
         ++pos_;
       }
     }
-    return {uchar_buffer_.data(), uchar_buffer_.size()};
+    return &uchar_buffer_;
   }
 
   // Scan a tagname and convert to lowercase if necessary.
@@ -569,7 +616,7 @@ class HTMLFastPathParser {
     }
     if (pos_ == end_ || !IsCharAfterTagnameOrAttribute(*pos_)) {
       // Try parsing a case-insensitive tagname.
-      char_buffer_.resize(0);
+      char_buffer_.clear();
       pos_ = start;
       while (pos_ != end_) {
         Char c = *pos_;
@@ -579,7 +626,7 @@ class HTMLFastPathParser {
           break;
         }
         ++pos_;
-        char_buffer_.push_back(c);
+        char_buffer_.AddChar(c);
       }
       if (pos_ == end_ || !IsCharAfterTagnameOrAttribute(*pos_)) {
         return Fail(HtmlFastPathResult::kFailedParsingTagName, Span{});
@@ -597,7 +644,7 @@ class HTMLFastPathParser {
     // input. This path could handle other valid attribute name chars, but they
     // are not as common, so it only looks for lowercase.
     const Char* start = pos_;
-    while (pos_ != end_ && *pos_ >= 'a' && *pos_ <= 'z') {
+    while (pos_ != end_ && ((*pos_ >= 'a' && *pos_ <= 'z') || *pos_ == '-')) {
       ++pos_;
     }
     if (UNLIKELY(pos_ == end_)) {
@@ -610,32 +657,55 @@ class HTMLFastPathParser {
     // At this point name does not contain lowercase. It may contain upper-case,
     // which requires mapping. Assume it does.
     pos_ = start;
-    attribute_name_buffer_.resize(0);
+    attribute_name_buffer_.clear();
     Char c;
     // IsValidAttributeNameChar() returns false if end of input is reached.
     while (c = GetNext(), IsValidAttributeNameChar(c)) {
       if ('A' <= c && c <= 'Z') {
         c = c - ('A' - 'a');
       }
-      attribute_name_buffer_.push_back(c);
+      attribute_name_buffer_.AddChar(c);
       ++pos_;
     }
     return Span(attribute_name_buffer_.data(),
                 static_cast<size_t>(attribute_name_buffer_.size()));
   }
 
+  static constexpr int kSingleQuote = 0x27;     // '
+  static constexpr int kDoubleQuote = 0x22;     // "
+  static constexpr int kAmpersand = 0x26;       // &
+  static constexpr int kCarriageReturn = 0x0D;  // \r
+
   std::pair<Span, USpan> ScanAttrValue() {
     Span result;
     SkipWhitespace();
     const Char* start = pos_;
-    if (Char quote_char = GetNext(); quote_char == '"' || quote_char == '\'') {
+    // clang-format off
+    if (Char quote_char = GetNext();
+        quote_char == '"' || quote_char == '\'') {
+      // clang-format on
       start = ++pos_;
-      while (pos_ != end_ && GetNext() != quote_char) {
-        if (GetNext() == '&' || GetNext() == '\r') {
+      while (pos_ != end_) {
+        uint16_t c = GetNext();
+        static_assert(kSingleQuote > kDoubleQuote);
+        // The c is mostly like to be a~z or A~Z, the ASCII code value of a~z
+        // and A~Z is greater than kSingleQuote, so we just need to compare
+        // kSingleQuote here.
+        if (LIKELY(c > kSingleQuote)) {
+          ++pos_;
+        } else if (c == kAmpersand || c == kCarriageReturn) {
           pos_ = start - 1;
           return {Span{}, ScanEscapedAttrValue()};
+        } else if (c == kDoubleQuote || c == kSingleQuote) {
+          break;
+        } else if (UNLIKELY(c == '\0')) {
+          // \0 is generally mapped to \uFFFD (but there are exceptions).
+          // Fallback to normal path as this generally does not happen often.
+          return Fail(HtmlFastPathResult::kFailedParsingQuotedAttributeValue,
+                      std::pair{Span{}, USpan{}});
+        } else {
+          ++pos_;
         }
-        ++pos_;
       }
       if (pos_ == end_) {
         return Fail(HtmlFastPathResult::kFailedParsingQuotedAttributeValue,
@@ -664,7 +734,7 @@ class HTMLFastPathParser {
   USpan ScanEscapedAttrValue() {
     Span result;
     SkipWhitespace();
-    uchar_buffer_.resize(0);
+    uchar_buffer_.clear();
     const Char* start = pos_;
     if (Char quote_char = GetNext(); quote_char == '"' || quote_char == '\'') {
       start = ++pos_;
@@ -680,10 +750,10 @@ class HTMLFastPathParser {
           if (pos_ + 1 != end_ && pos_[1] == '\n') {
             ++pos_;
           }
-          uchar_buffer_.push_back('\n');
+          uchar_buffer_.AddChar('\n');
           ++pos_;
         } else {
-          uchar_buffer_.push_back(*pos_);
+          uchar_buffer_.AddChar(*pos_);
           ++pos_;
         }
       }
@@ -706,7 +776,7 @@ class HTMLFastPathParser {
     return USpan{uchar_buffer_.data(), uchar_buffer_.size()};
   }
 
-  void ScanHTMLCharacterReference(Vector<UChar>* out) {
+  void ScanHTMLCharacterReference(UCharLiteralBufferType* out) {
     DCHECK_EQ(*pos_, '&');
     ++pos_;
     const Char* start = pos_;
@@ -718,6 +788,8 @@ class HTMLFastPathParser {
           UNLIKELY(*pos_ == '\0')) {
         return Fail(HtmlFastPathResult::kFailedParsingCharacterReference);
       }
+      // Note: the fast path will only parse `;`-terminated character
+      // references, and will fail (above) on others, e.g. `A&ampB`.
       if (ConsumeNext() == ';') {
         break;
       }
@@ -765,21 +837,22 @@ class HTMLFastPathParser {
       DecodedHTMLEntity entity;
       AppendLegalEntityFor(res, entity);
       for (size_t i = 0; i < entity.length; ++i) {
-        out->push_back(entity.data[i]);
+        out->AddChar(entity.data[i]);
       }
       // Handle the most common named references.
     } else if (reference == "amp") {
-      out->push_back('&');
+      out->AddChar('&');
     } else if (reference == "lt") {
-      out->push_back('<');
+      out->AddChar('<');
     } else if (reference == "gt") {
-      out->push_back('>');
+      out->AddChar('>');
     } else if (reference == "nbsp") {
-      out->push_back(0xa0);
+      out->AddChar(0xa0);
     } else {
       // This handles uncommon named references.
-      String input_string{reference.data(),
-                          static_cast<unsigned>(reference.size())};
+      // This does not use `reference` as `reference` does not contain the `;`,
+      // which impacts behavior of ConsumeHTMLEntity().
+      String input_string{start, static_cast<unsigned>(pos_ - start)};
       SegmentedString input_segmented{input_string};
       DecodedHTMLEntity entity;
       bool not_enough_characters = false;
@@ -788,14 +861,11 @@ class HTMLFastPathParser {
         return Fail(HtmlFastPathResult::kFailedParsingCharacterReference);
       }
       for (size_t i = 0; i < entity.length; ++i) {
-        out->push_back(entity.data[i]);
+        out->AddChar(entity.data[i]);
       }
       // ConsumeHTMLEntity() may not have consumed all the input.
       const unsigned remaining_length = input_segmented.length();
       if (remaining_length) {
-        if (*(pos_ - 1) == ';') {
-          --pos_;
-        }
         pos_ -= remaining_length;
       }
     }
@@ -836,26 +906,34 @@ class HTMLFastPathParser {
   template <class ParentTag>
   void ParseChildren(ContainerNode* parent) {
     while (true) {
-      ScanTextResult scanned_text = ScanText();
+      ScanTextResult<Char> scanned_text = ScanText();
       if (failed_) {
         return;
       }
-      DCHECK(scanned_text.text.empty() || scanned_text.escaped_text.empty());
+      DCHECK(scanned_text.text.empty() || !scanned_text.escaped_text);
       if (!scanned_text.text.empty()) {
         const auto text = scanned_text.text;
         if (text.size() >= Text::kDefaultLengthLimit) {
           return Fail(HtmlFastPathResult::kFailedBigText);
         }
-        parent->ParserAppendChild(
-            Text::Create(document_, scanned_text.TryCanonicalizeString()));
-      } else if (!scanned_text.escaped_text.empty()) {
-        if (scanned_text.escaped_text.size() >= Text::kDefaultLengthLimit) {
+        if (bulk_insert_notify_) {
+          parent->ParserAppendChildInDocumentFragment(
+              Text::Create(document_, scanned_text.TryCanonicalizeString()));
+        } else {
+          parent->ParserAppendChild(
+              Text::Create(document_, scanned_text.TryCanonicalizeString()));
+        }
+      } else if (scanned_text.escaped_text) {
+        if (scanned_text.escaped_text->size() >= Text::kDefaultLengthLimit) {
           return Fail(HtmlFastPathResult::kFailedBigText);
         }
-        parent->ParserAppendChild(Text::Create(
-            document_,
-            String(scanned_text.escaped_text.data(),
-                   static_cast<unsigned>(scanned_text.escaped_text.size()))));
+        if (bulk_insert_notify_) {
+          parent->ParserAppendChildInDocumentFragment(
+              Text::Create(document_, scanned_text.escaped_text->AsString()));
+        } else {
+          parent->ParserAppendChild(Text::Create(
+              document_, String(scanned_text.escaped_text->AsString())));
+        }
       }
       if (pos_ == end_) {
         return;
@@ -876,7 +954,11 @@ class HTMLFastPathParser {
         if (failed_) {
           return;
         }
-        parent->ParserAppendChild(child);
+        if (bulk_insert_notify_) {
+          parent->ParserAppendChildInDocumentFragment(child);
+        } else {
+          parent->ParserAppendChild(child);
+        }
       }
     }
   }
@@ -886,27 +968,18 @@ class HTMLFastPathParser {
     QualifiedName name = LookupHTMLAttributeName(
         name_span.data(), static_cast<unsigned>(name_span.size()));
     if (name == g_null_name) {
-      name =
-          QualifiedName(g_null_atom,
-                        AtomicString(name_span.data(),
-                                     static_cast<unsigned>(name_span.size())),
-                        g_null_atom);
+      name = QualifiedName(AtomicString(
+          name_span.data(), static_cast<unsigned>(name_span.size())));
     }
 
-    // The string pointer in |value| is null for attributes with no values, but
-    // the null atom is used to represent absence of attributes; attributes with
-    // no values have the value set to an empty atom instead.
     AtomicString value;
     if (value_span.second.empty()) {
-      value = AtomicString(value_span.first.data(),
-                           static_cast<unsigned>(value_span.first.size()));
+      value = HTMLAtomicStringCache::MakeAttributeValue(value_span.first);
     } else {
-      value = AtomicString(value_span.second.data(),
-                           static_cast<unsigned>(value_span.second.size()));
+      value = HTMLAtomicStringCache::MakeAttributeValue(value_span.second);
     }
-    if (value.IsNull()) {
-      value = g_empty_atom;
-    }
+    DCHECK(!value.IsNull()) << "Attribute value should never be null";
+
     return Attribute(std::move(name), std::move(value));
   }
 
@@ -930,13 +1003,19 @@ class HTMLFastPathParser {
           return Fail(HtmlFastPathResult::kFailedParsingAttributes);
         }
       }
-      if (attr_name.size() >= 2 && attr_name[0] == 'o' && attr_name[1] == 'n') {
+      if (attr_name.size() > 2 && attr_name[0] == 'o' && attr_name[1] == 'n') {
         // These attributes likely contain script that may be executed at random
         // points, which could cause problems if parsing via the fast path
         // fails. For example, an image's onload event.
         return Fail(HtmlFastPathResult::kFailedOnAttribute);
       }
-      SkipWhitespace();
+      if (attr_name.size() == 2 && attr_name[0] == 'i' && attr_name[1] == 's') {
+        // This is for the "is" attribute case.
+        return Fail(HtmlFastPathResult::kFailedParsingAttributes);
+      }
+      if (GetNext() != '=') {
+        SkipWhitespace();
+      }
       std::pair<Span, USpan> attr_value = {};
       if (GetNext() == '=') {
         ++pos_;
@@ -944,11 +1023,8 @@ class HTMLFastPathParser {
         SkipWhitespace();
       }
       Attribute attribute = ProcessAttribute(attr_name, attr_value);
-      attribute_buffer_.push_back(attribute);
-      if (attribute.GetName() == html_names::kIsAttr) {
-        return Fail(HtmlFastPathResult::kFailedParsingAttributes);
-      }
       attribute_names_.push_back(attribute.LocalName().Impl());
+      attribute_buffer_.push_back(std::move(attribute));
     }
     std::sort(attribute_names_.begin(), attribute_names_.end());
     if (std::adjacent_find(attribute_names_.begin(), attribute_names_.end()) !=
@@ -997,39 +1073,68 @@ class HTMLFastPathParser {
     //
     // If this switch has duplicate cases, then `TagnameHash()` needs to be
     // updated.
-    switch (TagnameHash(tagname)) {
-#define TAG_CASE(Tagname)                                                     \
-  case TagnameHash(TagInfo::Tagname::tagname):                                \
-    if (std::is_same_v<typename TagInfo::A, typename TagInfo::Tagname>) {     \
-      goto case_a;                                                            \
-    }                                                                         \
-    if constexpr (non_phrasing_content                                        \
-                      ? TagInfo::Tagname::AllowedInFlowContent()              \
-                      : TagInfo::Tagname::AllowedInPhrasingOrFlowContent()) { \
-      /* See comment in Run() for details on why equality is checked */       \
-      /* here. */                                                             \
-      if (tagname == TagInfo::Tagname::tagname) {                             \
-        return ParseElementAfterTagname<typename TagInfo::Tagname>();         \
-      }                                                                       \
-    }                                                                         \
-    break;
-
-      SUPPORTED_TAGS(TAG_CASE)
-#undef TAG_CASE
-
-    case_a:
-      // <a> tags must not be nested, because HTML parsing would auto-close
-      // the outer one when encountering a nested one.
-      if (tagname == TagInfo::A::tagname && !inside_of_tag_a_) {
-        return non_phrasing_content
-                   ? ParseElementAfterTagname<typename TagInfo::A>()
-                   : ParseElementAfterTagname<
-                         typename TagInfo::AWithPhrasingContent>();
-      }
+    // Clang has a hard time formatting this, disable clang format.
+    // clang-format off
+#define TAG_CASE(Tagname)                                                      \
+    case TagnameHash(TagInfo::Tagname::tagname):                               \
+      if constexpr (non_phrasing_content                                       \
+                      ? TagInfo::Tagname::AllowedInFlowContent()               \
+                      : TagInfo::Tagname::AllowedInPhrasingOrFlowContent()) {  \
+        /* See comment in Run() for details on why equality is checked */      \
+        /* here. */                                                            \
+        if (tagname == TagInfo::Tagname::tagname) {                            \
+          return ParseElementAfterTagname<typename TagInfo::Tagname>();        \
+        }                                                                      \
+      }                                                                        \
       break;
+
+    switch (TagnameHash(tagname)) {
+      case TagnameHash(TagInfo::A::tagname):
+        // <a> tags must not be nested, because HTML parsing would auto-close
+        // the outer one when encountering a nested one.
+        if (tagname == TagInfo::A::tagname && !inside_of_tag_a_) {
+          return non_phrasing_content
+                     ? ParseElementAfterTagname<typename TagInfo::A>()
+                     : ParseElementAfterTagname<
+                           typename TagInfo::AWithPhrasingContent>();
+        }
+        break;
+      TAG_CASE(B)
+      TAG_CASE(Br)
+      TAG_CASE(Button)
+      TAG_CASE(Div)
+      TAG_CASE(Footer)
+      TAG_CASE(I)
+      TAG_CASE(Input)
+      case TagnameHash(TagInfo::Li::tagname):
+        if constexpr (non_phrasing_content
+                          ? TagInfo::Li::AllowedInFlowContent()
+                          : TagInfo::Li::AllowedInPhrasingOrFlowContent()) {
+          // See comment in Run() for details on why equality is checked here.
+          // <li>s autoclose when multiple are encountered. For example,
+          // <li><li></li></li> results in sibling <li>s, not nested <li>s. Fail
+          // in such a case.
+          if (tagname == TagInfo::Li::tagname && !inside_of_tag_li_) {
+            inside_of_tag_li_ = true;
+            Element* result = ParseElementAfterTagname<typename TagInfo::Li>();
+            inside_of_tag_li_ = false;
+            return result;
+          }
+        }
+        break;
+      TAG_CASE(Label)
+      TAG_CASE(Option)
+      TAG_CASE(Ol)
+      TAG_CASE(P)
+      TAG_CASE(Select)
+      TAG_CASE(Span)
+      TAG_CASE(Strong)
+      TAG_CASE(Ul)
+#undef TAG_CASE
       default:
         break;
     }
+    // clang-format on
     return Fail(HtmlFastPathResult::kFailedUnsupportedTag, nullptr);
   }
 
@@ -1058,8 +1163,19 @@ class HTMLFastPathParser {
     // and fails if the the current char is not '/'.
     DCHECK_EQ(*pos_, '/');
     ++pos_;
-    Span endtag = ScanTagname();
-    if (endtag == Tag::tagname) {
+    // -1 as the name includes \0.
+    const size_t tag_length = std::size(Tag::tagname) - 1;
+    DCHECK_LE(pos_, end_);
+    // <= as there needs to be a '>'.
+    if (static_cast<size_t>(end_ - pos_) <= tag_length) {
+      return Fail(HtmlFastPathResult::kFailedUnexpectedTagNameCloseState,
+                  element);
+    }
+    Span tag_name_span(pos_, tag_length);
+    pos_ += tag_length;
+    if (tag_name_span == Tag::tagname ||
+        SpanMatchesLowercase(tag_name_span, Tag::tagname)) {
+      SkipWhitespace();
       if (ConsumeNext() != '>') {
         return Fail(HtmlFastPathResult::kFailedUnexpectedTagNameCloseState,
                     element);
@@ -1083,7 +1199,7 @@ class HTMLFastPathParser {
 };
 
 void LogFastPathResult(HtmlFastPathResult result) {
-  base::UmaHistogramEnumeration("Blink.HTMLFastPathParser.ParseResult", result);
+  UMA_HISTOGRAM_ENUMERATION("Blink.HTMLFastPathParser.ParseResult", result);
   if (result != HtmlFastPathResult::kSucceeded) {
     VLOG(2) << "innerHTML fast-path parser failed, "
             << static_cast<int>(result);
@@ -1118,10 +1234,18 @@ bool CanUseFastPath(Document& document,
   // See HTMLConstructionSite::InitFragmentParsing() and
   // HTMLConstructionSite::CreateElement() for the corresponding code on the
   // slow-path.
-  if (!context_element.GetDocument().IsTemplateDocument() &&
-      Traversal<HTMLFormElement>::FirstAncestorOrSelf(context_element) !=
-          nullptr) {
+  auto* template_element = DynamicTo<HTMLTemplateElement>(context_element);
+  if (!template_element && Traversal<HTMLFormElement>::FirstAncestorOrSelf(
+                               context_element) != nullptr) {
     LogFastPathResult(HtmlFastPathResult::kFailedInForm);
+    return false;
+  }
+
+  // TODO(crbug.com/1453291) For now, declarative DOM Parts are not supported by
+  // the fast path parser.
+  if (RuntimeEnabledFeatures::DOMPartsAPIEnabled() && template_element &&
+      template_element->hasAttribute(html_names::kParsepartsAttr)) {
+    LogFastPathResult(HtmlFastPathResult::kFailedUnsupportedContextTag);
     return false;
   }
   return true;
@@ -1300,28 +1424,27 @@ void LogFastPathUnsupportedTagTypeDetails(uint32_t type_mask,
 template <class Char>
 bool TryParsingHTMLFragmentImpl(const base::span<const Char>& source,
                                 Document& document,
-                                DocumentFragment& fragment,
+                                ContainerNode& root_node,
                                 Element& context_element,
                                 bool* failed_because_unsupported_tag) {
   base::ElapsedTimer parse_timer;
-  bool success;
   int number_of_bytes_parsed;
-  HTMLFastPathParser<Char> parser{source, document, fragment};
-  success = parser.Run(context_element);
+  HTMLFastPathParser<Char> parser{source, document, root_node};
+  const bool success = parser.Run(context_element);
   LogFastPathResult(parser.parse_result());
   number_of_bytes_parsed = parser.NumberOfBytesParsed();
   // The time needed to parse is typically < 1ms (even at the 99%).
-  if (base::TimeTicks::IsHighResolution()) {
-    if (success) {
-      base::UmaHistogramCustomMicrosecondsTimes(
-          "Blink.HTMLFastPathParser.SuccessfulParseTime2",
-          parse_timer.Elapsed(), base::Microseconds(1), base::Milliseconds(10),
-          100);
-    } else {
-      base::UmaHistogramCustomMicrosecondsTimes(
-          "Blink.HTMLFastPathParser.AbortedParseTime2", parse_timer.Elapsed(),
-          base::Microseconds(1), base::Milliseconds(10), 100);
+  if (success) {
+    if (parser.bulk_insert_notify()) {
+      root_node.ParserFinishedBuildingDocumentFragment();
     }
+    UMA_HISTOGRAM_CUSTOM_MICROSECONDS_TIMES(
+        "Blink.HTMLFastPathParser.SuccessfulParseTime2", parse_timer.Elapsed(),
+        base::Microseconds(1), base::Milliseconds(10), 100);
+  } else {
+    UMA_HISTOGRAM_CUSTOM_MICROSECONDS_TIMES(
+        "Blink.HTMLFastPathParser.AbortedParseTime2", parse_timer.Elapsed(),
+        base::Microseconds(1), base::Milliseconds(10), 100);
   }
   if (failed_because_unsupported_tag) {
     *failed_because_unsupported_tag =
@@ -1342,10 +1465,13 @@ bool TryParsingHTMLFragmentImpl(const base::span<const Char>& source,
           kUnsupportedContextTagTypeMaskNames);
     }
   }
-  base::UmaHistogramCounts10M(
-      success ? "Blink.HTMLFastPathParser.SuccessfulParseSize"
-              : "Blink.HTMLFastPathParser.AbortedParseSize",
-      number_of_bytes_parsed);
+  if (success) {
+    UMA_HISTOGRAM_COUNTS_10M("Blink.HTMLFastPathParser.SuccessfulParseSize",
+                             number_of_bytes_parsed);
+  } else {
+    UMA_HISTOGRAM_COUNTS_10M("Blink.HTMLFastPathParser.AbortedParseSize",
+                             number_of_bytes_parsed);
+  }
   return success;
 }
 
@@ -1353,7 +1479,7 @@ bool TryParsingHTMLFragmentImpl(const base::span<const Char>& source,
 
 bool TryParsingHTMLFragment(const String& source,
                             Document& document,
-                            DocumentFragment& fragment,
+                            ContainerNode& parent,
                             Element& context_element,
                             ParserContentPolicy policy,
                             bool include_shadow_roots,
@@ -1363,10 +1489,10 @@ bool TryParsingHTMLFragment(const String& source,
     return false;
   }
   return source.Is8Bit() ? TryParsingHTMLFragmentImpl<LChar>(
-                               source.Span8(), document, fragment,
+                               source.Span8(), document, parent,
                                context_element, failed_because_unsupported_tag)
                          : TryParsingHTMLFragmentImpl<UChar>(
-                               source.Span16(), document, fragment,
+                               source.Span16(), document, parent,
                                context_element, failed_because_unsupported_tag);
 }
 

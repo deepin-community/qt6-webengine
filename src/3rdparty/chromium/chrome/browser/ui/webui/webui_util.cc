@@ -4,12 +4,14 @@
 
 #include "chrome/browser/ui/webui/webui_util.h"
 
-#include "base/containers/cxx20_erase.h"
+#include <string>
+
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
 #include "content/public/browser/web_ui_data_source.h"
 #include "services/network/public/mojom/content_security_policy.mojom.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/base/ui_base_features.h"
 #include "ui/base/webui/web_ui_util.h"
 #include "ui/resources/grit/webui_resources.h"
 
@@ -38,11 +40,7 @@ namespace webui {
 void SetJSModuleDefaults(content::WebUIDataSource* source) {
   source->OverrideContentSecurityPolicy(
       network::mojom::CSPDirectiveName::ScriptSrc,
-      "script-src chrome://resources chrome://webui-test "
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-      "chrome://test "
-#endif
-      "'self';");
+      "script-src chrome://resources chrome://webui-test 'self';");
 
   source->UseStringsJs();
   source->EnableReplaceI18nInJS();
@@ -61,6 +59,9 @@ void SetupWebUIDataSource(content::WebUIDataSource* source,
   source->AddResourcePath("", default_resource);
 }
 
+// There is another method, ash::EnableTrustedTypesCSP, used by ash-only WebUIs.
+// When adding a new policy here, consider whether to add it to that method as
+// well, as these methods should remain mostly the same.
 void EnableTrustedTypesCSP(content::WebUIDataSource* source) {
   source->OverrideContentSecurityPolicy(
       network::mojom::CSPDirectiveName::RequireTrustedTypesFor,
@@ -75,15 +76,23 @@ void EnableTrustedTypesCSP(content::WebUIDataSource* source) {
       // Add TrustedTypes policy for creating the PDF plugin.
       "print-preview-plugin-loader "
       // Add TrustedTypes policies necessary for using Polymer.
-      "polymer-html-literal polymer-template-event-attribute-policy;");
+      "polymer-html-literal polymer-template-event-attribute-policy "
+      // Add TrustedTypes policies necessary for using Desktop's Lit bundle.
+      "lit-html-desktop;");
 }
 
 void AddLocalizedString(content::WebUIDataSource* source,
                         const std::string& message,
                         int id) {
   std::u16string str = l10n_util::GetStringUTF16(id);
-  base::Erase(str, '&');
+  std::erase(str, '&');
   source->AddString(message, str);
+}
+
+void SetupChromeRefresh2023(content::WebUIDataSource* source) {
+  source->AddString(
+      "chromeRefresh2023Attribute",
+      features::IsChromeWebuiRefresh2023() ? "chrome-refresh-2023" : "");
 }
 
 #if defined(TOOLKIT_VIEWS)
@@ -96,7 +105,7 @@ ui::NativeTheme* GetNativeTheme(content::WebContents* web_contents) {
   ui::NativeTheme* native_theme = nullptr;
 
   if (web_contents) {
-    Browser* browser = chrome::FindBrowserWithWebContents(web_contents);
+    Browser* browser = chrome::FindBrowserWithTab(web_contents);
 
     if (browser) {
       // Find for WebContents hosted in a tab.

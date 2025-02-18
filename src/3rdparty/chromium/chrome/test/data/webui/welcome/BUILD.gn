@@ -8,8 +8,6 @@ import("../build_webui_tests.gni")
 assert(!is_chromeos_ash && !is_android)
 
 build_webui_tests("build") {
-  resource_path_prefix = "welcome"
-
   files = [
     "app_chooser_test.ts",
     "module_metrics_test.ts",
@@ -35,6 +33,7 @@ build_webui_tests("build") {
   ts_definitions = [ "//tools/typescript/definitions/bookmarks.d.ts" ]
   ts_deps = [
     "//chrome/browser/resources/welcome:build_ts",
+    "//third_party/polymer/v3_0:library",
     "//ui/webui/resources/cr_elements:build_ts",
     "//ui/webui/resources/js:build_ts",
   ]

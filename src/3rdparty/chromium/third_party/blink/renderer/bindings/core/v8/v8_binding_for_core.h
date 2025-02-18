@@ -36,7 +36,6 @@
 #include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/renderer/bindings/core/v8/native_value_traits.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_value.h"
-#include "third_party/blink/renderer/bindings/core/v8/to_v8_for_core.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/typed_arrays/array_buffer_view_helpers.h"
 #include "third_party/blink/renderer/platform/bindings/dom_data_store.h"
@@ -62,7 +61,6 @@ class EventLoop;
 // new utility function, consider adding it to V8Binding.h instead unless it has
 // dependencies to core/.
 
-class DOMWindow;
 class ExceptionState;
 class ExecutionContext;
 class Frame;
@@ -92,11 +90,11 @@ enum class BlinkState : uint8_t {
   PAINT = 4,
 };
 
-#define ENTER_EMBEDDER_STATE(isolate, frame, state)               \
-  v8::HandleScope scope(isolate);                                 \
-  v8::Local<v8::Context> v8_context =                             \
-      ToV8ContextMaybeEmpty(frame, DOMWrapperWorld::MainWorld()); \
-  v8::EmbedderStateScope embedder_state(                          \
+#define ENTER_EMBEDDER_STATE(isolate, frame, state)                      \
+  v8::HandleScope scope(isolate);                                        \
+  v8::Local<v8::Context> v8_context =                                    \
+      ToV8ContextMaybeEmpty(frame, DOMWrapperWorld::MainWorld(isolate)); \
+  v8::EmbedderStateScope embedder_state(                                 \
       isolate, v8_context, static_cast<v8::EmbedderStateTag>(state));
 
 template <typename CallbackInfo, typename T>
@@ -340,7 +338,7 @@ inline absl::optional<base::Time> ToCoreNullableDate(
   double time_value = object.As<v8::Date>()->ValueOf();
   if (!std::isfinite(time_value))
     return absl::nullopt;
-  return base::Time::FromJsTime(time_value);
+  return base::Time::FromMillisecondsSinceUnixEpoch(time_value);
 }
 
 // USVString conversion helper.
@@ -431,9 +429,11 @@ CORE_EXPORT bool HasCallableIteratorSymbol(v8::Isolate*,
 
 CORE_EXPORT v8::Isolate* ToIsolate(const LocalFrame*);
 
-CORE_EXPORT DOMWindow* ToDOMWindow(v8::Isolate*, v8::Local<v8::Value>);
+CORE_EXPORT LocalDOMWindow* ToLocalDOMWindow(const ScriptState*);
+CORE_EXPORT ExecutionContext* ToExecutionContext(const ScriptState*);
+
 CORE_EXPORT LocalDOMWindow* ToLocalDOMWindow(v8::Local<v8::Context>);
-LocalDOMWindow* EnteredDOMWindow(v8::Isolate*);
+CORE_EXPORT LocalDOMWindow* EnteredDOMWindow(v8::Isolate*);
 LocalDOMWindow* IncumbentDOMWindow(v8::Isolate*);
 CORE_EXPORT LocalDOMWindow* CurrentDOMWindow(v8::Isolate*);
 CORE_EXPORT ExecutionContext* ToExecutionContext(v8::Local<v8::Context>);
@@ -464,6 +464,7 @@ CORE_EXPORT ScriptState* ToScriptState(ExecutionContext*, DOMWrapperWorld&);
 CORE_EXPORT ScriptState* ToScriptState(LocalFrame*, DOMWrapperWorld&);
 // Do not use this method unless you are sure you should use the main world's
 // ScriptState
+CORE_EXPORT ScriptState* ToScriptStateForMainWorld(ExecutionContext*);
 CORE_EXPORT ScriptState* ToScriptStateForMainWorld(LocalFrame*);
 
 // Returns the frame object of the window object associated with
@@ -495,7 +496,7 @@ NotSharedType ToNotShared(v8::Isolate* isolate,
                           ExceptionState& exception_state) {
   using DOMTypedArray = typename NotSharedType::TypedArrayType;
   DOMTypedArray* dom_typed_array =
-      V8TypeOf<DOMTypedArray>::Type::ToImplWithTypeCheck(isolate, value);
+      V8TypeOf<DOMTypedArray>::Type::ToWrappable(isolate, value);
   if (dom_typed_array && dom_typed_array->IsShared()) {
     exception_state.ThrowTypeError(
         "The provided ArrayBufferView value must not be shared.");
@@ -512,7 +513,7 @@ MaybeSharedType ToMaybeShared(v8::Isolate* isolate,
                               ExceptionState& exception_state) {
   using DOMTypedArray = typename MaybeSharedType::TypedArrayType;
   DOMTypedArray* dom_typed_array =
-      V8TypeOf<DOMTypedArray>::Type::ToImplWithTypeCheck(isolate, value);
+      V8TypeOf<DOMTypedArray>::Type::ToWrappable(isolate, value);
   return MaybeSharedType(dom_typed_array);
 }
 

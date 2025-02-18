@@ -35,6 +35,7 @@ int32_t UploadLogWithUploader(const std::string& log_data,
 
 void AndroidMetricsLogUploader::UploadLog(
     const std::string& compressed_log_data,
+    const LogMetadata& /*log_metadata*/,
     const std::string& /*log_hash*/,
     const std::string& /*log_signature*/,
     const ReportingInfo& reporting_info) {
@@ -63,7 +64,8 @@ void AndroidMetricsLogUploader::UploadLog(
 }
 
 void AndroidMetricsLogUploader::OnUploadComplete(const int32_t status) {
-  on_upload_complete_.Run(status, 0, true);
+  on_upload_complete_.Run(status, /*error_code=*/0, /*was_https=*/true,
+                          /*force_discard=*/false, /*force_discard_reason=*/"");
 }
 
 }  // namespace metrics

@@ -26,8 +26,8 @@
 #include "core/fxge/cfx_fillrenderoptions.h"
 #include "core/fxge/cfx_path.h"
 #include "fpdfsdk/cpdfsdk_helpers.h"
+#include "third_party/base/containers/span.h"
 #include "third_party/base/numerics/safe_conversions.h"
-#include "third_party/base/span.h"
 
 namespace {
 
@@ -308,7 +308,7 @@ FPDFPageObj_GetClipPath(FPDF_PAGEOBJECT page_object) {
   if (!pPageObj)
     return nullptr;
 
-  return FPDFClipPathFromCPDFClipPath(&pPageObj->m_ClipPath);
+  return FPDFClipPathFromCPDFClipPath(&pPageObj->mutable_clip_path());
 }
 
 FPDF_EXPORT int FPDF_CALLCONV FPDFClipPath_CountPaths(FPDF_CLIPPATH clip_path) {

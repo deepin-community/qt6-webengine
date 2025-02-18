@@ -57,7 +57,7 @@ void MockUDPSocket::Send(
 }
 
 void MockUDPSocket::MockSend(int32_t result,
-                             const absl::optional<base::span<uint8_t>>& data) {
+                             const std::optional<base::span<uint8_t>>& data) {
   listener_->OnReceived(result, {}, data);
 }
 
@@ -78,7 +78,7 @@ MockNetworkContext::MockNetworkContext(base::StringPiece host_mapping_rules)
     : network::TestNetworkContextWithHostResolver(
           net::HostResolver::CreateStandaloneResolver(
               net::NetLog::Get(),
-              /*options=*/absl::nullopt,
+              /*options=*/std::nullopt,
               host_mapping_rules,
               /*enable_caching=*/false)) {}
 
@@ -88,13 +88,14 @@ void MockNetworkContext::CreateRestrictedUDPSocket(
     const net::IPEndPoint& addr,
     network::mojom::RestrictedUDPSocketMode mode,
     const net::MutableNetworkTrafficAnnotationTag& traffic_annotation,
-    network::mojom::UDPSocketOptionsPtr options,
+    network::mojom::RestrictedUDPSocketParamsPtr params,
     mojo::PendingReceiver<network::mojom::RestrictedUDPSocket> receiver,
     mojo::PendingRemote<network::mojom::UDPSocketListener> listener,
     CreateRestrictedUDPSocketCallback callback) {
   auto socket = CreateMockUDPSocket(std::move(listener));
   DCHECK_EQ(mode, network::mojom::RestrictedUDPSocketMode::CONNECTED);
-  socket->Connect(addr, std::move(options), std::move(callback));
+  socket->Connect(addr, params ? std::move(params->socket_options) : nullptr,
+                  std::move(callback));
   restricted_udp_socket_ = std::make_unique<MockRestrictedUDPSocket>(
       std::move(socket), std::move(receiver));
 }
@@ -167,19 +168,22 @@ bool IsolatedWebAppContentBrowserClient::ShouldUrlUseApplicationIsolationLevel(
   return isolated_app_origin_ == url::Origin::Create(url);
 }
 
-absl::optional<blink::ParsedPermissionsPolicy>
+std::optional<blink::ParsedPermissionsPolicy>
 IsolatedWebAppContentBrowserClient::GetPermissionsPolicyForIsolatedWebApp(
     content::BrowserContext* browser_context,
     const url::Origin& app_origin) {
-  blink::ParsedPermissionsPolicy out;
-  blink::ParsedPermissionsPolicyDeclaration decl(
+  blink::ParsedPermissionsPolicyDeclaration coi_decl(
+      blink::mojom::PermissionsPolicyFeature::kCrossOriginIsolated,
+      /*allowed_origins=*/{},
+      /*self_if_matches=*/std::nullopt,
+      /*matches_all_origins=*/true, /*matches_opaque_src=*/false);
+
+  blink::ParsedPermissionsPolicyDeclaration sockets_decl(
       blink::mojom::PermissionsPolicyFeature::kDirectSockets,
-      /*allowed_origins=*/
-      {blink::OriginWithPossibleWildcards(app_origin,
-                                          /*has_subdomain_wildcard=*/false)},
+      /*allowed_origins=*/{},
+      /*self_if_matches=*/app_origin,
       /*matches_all_origins=*/false, /*matches_opaque_src=*/false);
-  out.push_back(decl);
-  return out;
+  return {{coi_decl, sockets_decl}};
 }
 
 // misc

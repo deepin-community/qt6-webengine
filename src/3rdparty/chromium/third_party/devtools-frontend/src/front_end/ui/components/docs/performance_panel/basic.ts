@@ -4,6 +4,7 @@
 
 import * as FrontendHelpers from '../../../../../test/unittests/front_end/helpers/EnvironmentHelpers.js';
 import * as Common from '../../../../core/common/common.js';
+import * as Root from '../../../../core/root/root.js';
 import * as SDK from '../../../../core/sdk/sdk.js';
 import * as Bindings from '../../../../models/bindings/bindings.js';
 import * as Workspace from '../../../../models/workspace/workspace.js';
@@ -35,10 +36,11 @@ Bindings.IgnoreListManager.IgnoreListManager.instance({
   forceNew: true,
   debuggerWorkspaceBinding: Bindings.DebuggerWorkspaceBinding.DebuggerWorkspaceBinding.instance(),
 });
+SDK.CPUThrottlingManager.CPUThrottlingManager.instance().setHardwareConcurrency(128);
 
 UI.ActionRegistration.registerActionExtension({
   actionId: 'timeline.record-reload',
-  iconClass: UI.ActionRegistration.IconClass.LARGEICON_REFRESH,
+  iconClass: UI.ActionRegistration.IconClass.REFRESH,
   category: UI.ActionRegistration.ActionCategory.PERFORMANCE,
   contextTypes() {
     return [Timeline.TimelinePanel.TimelinePanel];
@@ -60,6 +62,9 @@ UI.ActionRegistration.registerActionExtension({
   contextTypes() {
     return [Timeline.TimelinePanel.TimelinePanel];
   },
+  async loadActionDelegate() {
+    return new Timeline.TimelinePanel.ActionDelegate();
+  },
 });
 UI.ActionRegistration.registerActionExtension({
   actionId: 'components.collect-garbage',
@@ -70,7 +75,7 @@ UI.ActionRegistration.registerActionExtension({
   title: () => 'Toggle recording' as Common.UIString.LocalizedString,
   toggleable: true,
   category: UI.ActionRegistration.ActionCategory.PERFORMANCE,
-  iconClass: UI.ActionRegistration.IconClass.LARGEICON_START_RECORDING,
+  iconClass: UI.ActionRegistration.IconClass.START_RECORDING,
   contextTypes() {
     return [Timeline.TimelinePanel.TimelinePanel];
   },
@@ -85,26 +90,45 @@ UI.ActionRegistration.registerActionExtension({
     },
   ],
 });
+
 const actionRegistry = UI.ActionRegistry.ActionRegistry.instance();
 UI.ShortcutRegistry.ShortcutRegistry.instance({forceNew: true, actionRegistry: actionRegistry});
 Common.Settings.settingForTest('flamechartMouseWheelAction').set('zoom');
 const params = new URLSearchParams(window.location.search);
 const traceFileName = params.get('trace');
+const cpuprofileName = params.get('cpuprofile');
+const nodeMode = params.get('isNode');
+const isNodeMode = nodeMode === 'true' ? true : false;
+Root.Runtime.experiments.setEnabled('timelineInvalidationTracking', params.has('invalidations'));
 
+const timeline = Timeline.TimelinePanel.TimelinePanel.instance({forceNew: true, isNode: isNodeMode});
+const container = document.getElementById('container');
+if (!container) {
+  throw new Error('could not find container');
+}
+container.innerHTML = '';
+timeline.markAsRoot();
+timeline.show(container);
+
+let fileName;
 if (traceFileName) {
-  const timeline = new Timeline.TimelinePanel.TimelinePanel();
-  const container = document.getElementById('container');
-  if (!container) {
-    throw new Error('could not find container');
-  }
-  container.innerHTML = '';
-  timeline.markAsRoot();
-  timeline.show(container);
-  const traceFile = new URL(`../../../../../test/unittests/fixtures/traces/${traceFileName}.json.gz`, import.meta.url);
-  const response = await fetch(traceFile);
+  fileName = `${traceFileName}.json.gz`;
+} else if (cpuprofileName) {
+  fileName = `${cpuprofileName}.cpuprofile.gz`;
+}
+
+if (fileName) {
+  await loadFromFile(fileName);
+}
+
+async function loadFromFile(fileNameWithExtension: string) {
+  const file = new URL(`../../../../../test/unittests/fixtures/traces/${fileNameWithExtension}`, import.meta.url);
+  const response = await fetch(file);
   const asBlob = await response.blob();
-  const asFile = new File([asBlob], `${traceFileName}.json.gz`, {
+  const asFile = new File([asBlob], `${fileNameWithExtension}`, {
     type: 'application/gzip',
   });
-  void timeline.loadFromFile(asFile);
+  await timeline.loadFromFile(asFile);
 }
+// @ts-expect-error
+window.loadFromFile = loadFromFile;

@@ -182,24 +182,25 @@ interface SplitColorFunctionParametersOptions {
 }
 
 export function parse(text: string): Color|null {
-  // Simple - #hex, nickname
-  const value = text.toLowerCase().replace(/\s+/g, '');
-  const simple = /^(?:#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})|(\w+))$/i;
-  let match = value.match(simple);
-  if (match) {
-    if (match[1]) {
-      return Legacy.fromHex(match[1], text);
-    }
+  // #hex, nickname
+  if (!text.match(/\s/)) {
+    const match = text.toLowerCase().match(/^(?:#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})|(\w+))$/i);
+    if (match) {
+      if (match[1]) {
+        return Legacy.fromHex(match[1], text);
+      }
 
-    if (match[2]) {
-      return Legacy.fromName(match[2], text);
-    }
+      if (match[2]) {
+        return Legacy.fromName(match[2], text);
+      }
 
-    return null;
+      return null;
+    }
   }
 
   // rgb/rgba(), hsl/hsla(), hwb/hwba(), lch(), oklch(), lab(), oklab() and color()
-  match = text.toLowerCase().match(/^\s*(?:(rgba?)|(hsla?)|(hwba?)|(lch)|(oklch)|(lab)|(oklab)|(color))\((.*)\)\s*$/);
+  const match =
+      text.toLowerCase().match(/^\s*(?:(rgba?)|(hsla?)|(hwba?)|(lch)|(oklch)|(lab)|(oklab)|(color))\((.*)\)\s*$/);
   if (match) {
     const isRgbaMatch = Boolean(match[1]);   // rgb/rgba()
     const isHslaMatch = Boolean(match[2]);   // hsl/hsla()
@@ -403,9 +404,7 @@ function parseAlphaNumeric(value: string): number|null {
   return parsePercentOrNumber(value);
 }
 
-// TODO(crbug.com/1172300) Ignored during the jsdoc to ts migration
-// eslint-disable-next-line @typescript-eslint/naming-convention
-function hsva2hsla(hsva: Color4D, out_hsla: Color4D): void {
+function hsva2hsla(hsva: Color4D): Color4D {
   const h = hsva[0];
   let s: 0|number = hsva[1];
   const v = hsva[2];
@@ -417,14 +416,10 @@ function hsva2hsla(hsva: Color4D, out_hsla: Color4D): void {
     s *= v / (t < 1 ? t : 2 - t);
   }
 
-  out_hsla[0] = h;
-  out_hsla[1] = s;
-  out_hsla[2] = t / 2;
-  out_hsla[3] = hsva[3];
+  return [h, s, t / 2, hsva[3]];
 }
 
-// eslint-disable-next-line @typescript-eslint/naming-convention
-export function hsl2rgb(hsl: Color4D, out_rgb: Color4D): void {
+export function hsl2rgb(hsl: Color4D): Color4D {
   const h = hsl[0];
   let s: 0|number = hsl[1];
   const l = hsl[2];
@@ -465,34 +460,29 @@ export function hsl2rgb(hsl: Color4D, out_rgb: Color4D): void {
   const tg = h;
   const tb = h - (1 / 3);
 
-  out_rgb[0] = hue2rgb(p, q, tr);
-  out_rgb[1] = hue2rgb(p, q, tg);
-  out_rgb[2] = hue2rgb(p, q, tb);
-  out_rgb[3] = hsl[3];
+  return [hue2rgb(p, q, tr), hue2rgb(p, q, tg), hue2rgb(p, q, tb), hsl[3]];
 }
 
-// eslint-disable-next-line @typescript-eslint/naming-convention
-function hwb2rgb(hwb: Color4D, out_rgb: Color4D): void {
+function hwb2rgb(hwb: Color4D): Color4D {
   const h = hwb[0];
   const w = hwb[1];
   const b = hwb[2];
 
-  if (w + b >= 1) {
-    out_rgb[0] = out_rgb[1] = out_rgb[2] = w / (w + b);
-    out_rgb[3] = hwb[3];
-  } else {
-    hsl2rgb([h, 1, 0.5, hwb[3]], out_rgb);
+  const whiteRatio = w / (w + b);
+  let result: Color4D = [whiteRatio, whiteRatio, whiteRatio, hwb[3]];
+
+  if (w + b < 1) {
+    result = hsl2rgb([h, 1, 0.5, hwb[3]]);
     for (let i = 0; i < 3; ++i) {
-      out_rgb[i] += w - (w + b) * out_rgb[i];
+      result[i] += w - (w + b) * result[i];
     }
   }
+
+  return result;
 }
 
-// eslint-disable-next-line @typescript-eslint/naming-convention
-export function hsva2rgba(hsva: Color4D, out_rgba: Color4D): void {
-  const tmpHSLA: Color4D = [0, 0, 0, 0];
-  hsva2hsla(hsva, tmpHSLA);
-  hsl2rgb(tmpHSLA, out_rgba);
+export function hsva2rgba(hsva: Color4D): Color4D {
+  return hsl2rgb(hsva2hsla(hsva));
 }
 
 export function rgb2hsv(rgba: Color3D): Color3D {
@@ -1449,7 +1439,8 @@ export class ColorFunction implements Color {
    * @param parametersText Inside of the `color()` function. ex, `display-p3 0.1 0.2 0.3 / 0%`
    * @returns `Color` object
    */
-  static fromSpec(authoredText: string, parametersText: string): ColorFunction|null {
+  static fromSpec(authoredText: string, parametersWithAlphaText: string): ColorFunction|null {
+    const [parametersText, alphaText] = parametersWithAlphaText.split('/', 2);
     const parameters = parametersText.trim().split(/\s+/);
     const [colorSpaceText, ...remainingParams] = parameters;
     const colorSpace = getColorSpace(colorSpaceText);
@@ -1459,53 +1450,34 @@ export class ColorFunction implements Color {
     }
 
     // `color(<color-space>)` is a valid syntax
-    if (remainingParams.length === 0) {
+    if (remainingParams.length === 0 && alphaText === undefined) {
       return new ColorFunction(colorSpace, 0, 0, 0, null, authoredText);
     }
 
     // Check if it contains `/ <alpha>` part, if so, it should be at the end
-    const alphaSeparatorIndex = remainingParams.indexOf('/');
-    const containsAlpha = alphaSeparatorIndex !== -1;
-    if (containsAlpha && alphaSeparatorIndex !== remainingParams.length - 2) {
+    if (remainingParams.length === 0 && alphaText !== undefined && alphaText.trim().split(/\s+/).length > 1) {
       // Invalid syntax: like `color(<space> / <alpha> <number>)`
       return null;
     }
 
-    if (containsAlpha) {
-      // Since we know that the last value is <alpha>
-      // we can safely remove the alpha separator
-      // and only leave the numbers (if given correctly)
-      remainingParams.splice(alphaSeparatorIndex, 1);
-    }
-
-    // `color` cannot contain more than 4 parameters when there is alpha
-    // and cannot contain more than 3 parameters when there isn't alpha
-    const maxLength = containsAlpha ? 4 : 3;
-    if (remainingParams.length > maxLength) {
+    // `color` cannot contain more than 3 parameters without alpha
+    if (remainingParams.length > 3) {
       return null;
     }
 
     // Replace `none`s with 0s
-    const nonesReplacesParams = remainingParams.map(param => param === 'none' ? '0' : param);
+    const nonesReplacedParams = remainingParams.map(param => param === 'none' ? '0' : param);
 
     // At this point, we know that all the values are there so we can
     // safely try to parse all the values as number or percentage
-    const values = nonesReplacesParams.map(param => parsePercentOrNumber(param, [0, 1]));
+    const values = nonesReplacedParams.map(param => parsePercentOrNumber(param, [0, 1]));
     const containsNull = values.includes(null);
     // At least one value is malformatted (not a number or percentage)
     if (containsNull) {
       return null;
     }
 
-    let alphaValue = 1;
-    if (containsAlpha) {
-      // We know that `alphaValue` exists at this point.
-      // See the above lines for deciding on `containsAlpha`.
-      alphaValue = values[values.length - 1] as number;
-      // We get rid of the `alpha` from the list
-      // so that all the values map to `r, g, b` from the start
-      values.pop();
-    }
+    const alphaValue = alphaText ? parsePercentOrNumber(alphaText, [0, 1]) ?? 1 : 1;
 
     // Depending on the color space
     // this either reflects `rgb` parameters in that color space
@@ -1570,8 +1542,7 @@ export class HSL implements Color {
   #getRGBArray(withAlpha: true): Color4DOr3D;
   #getRGBArray(withAlpha: false): Color3D;
   #getRGBArray(withAlpha: boolean = true): Color4DOr3D|Color3D {
-    const rgb: Color4D = [0, 0, 0, 0];
-    hsl2rgb([this.h, this.s, this.l, 0], rgb);
+    const rgb = hsl2rgb([this.h, this.s, this.l, 0]);
     if (withAlpha) {
       return [rgb[0], rgb[1], rgb[2], this.alpha ?? undefined];
     }
@@ -1722,8 +1693,7 @@ export class HWB implements Color {
   #getRGBArray(withAlpha: true): Color4DOr3D;
   #getRGBArray(withAlpha: false): Color3D;
   #getRGBArray(withAlpha: boolean = true): Color4DOr3D|Color3D {
-    const rgb: Color4D = [0, 0, 0, 0];
-    hwb2rgb([this.h, this.w, this.b, 0], rgb);
+    const rgb = hwb2rgb([this.h, this.w, this.b, 0]);
     if (withAlpha) {
       return [rgb[0], rgb[1], rgb[2], this.alpha ?? undefined];
     }
@@ -1808,8 +1778,8 @@ export class HWB implements Color {
     return this.#stringify(...this.#rawParams);
   }
   isGamutClipped(): boolean {
-    // Can HWB even be out of gamut?
-    return false;
+    return !lessOrEquals(this.#rawParams[1], 1) || !lessOrEquals(0, this.#rawParams[1]) ||
+        !lessOrEquals(this.#rawParams[2], 1) || !lessOrEquals(0, this.#rawParams[2]);
   }
 
   static fromSpec(spec: ColorParameterSpec, text: string): HWB|null {
@@ -1971,8 +1941,7 @@ export class Legacy implements Color {
   }
 
   static fromHSVA(hsva: Color4D): Legacy {
-    const rgba: Color4D = [0, 0, 0, 0];
-    hsva2rgba(hsva, rgba);
+    const rgba = hsva2rgba(hsva);
     return new Legacy(rgba, Format.RGBA);
   }
 

@@ -12,11 +12,11 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/mock_callback.h"
 #include "base/test/task_environment.h"
-#include "components/password_manager/core/browser/form_parsing/form_parser.h"
+#include "components/password_manager/core/browser/form_parsing/form_data_parser.h"
 #include "components/password_manager/core/browser/leak_detection_dialog_utils.h"
-#include "components/password_manager/core/browser/mock_password_store_interface.h"
 #include "components/password_manager/core/browser/password_form.h"
-#include "components/password_manager/core/browser/test_password_store.h"
+#include "components/password_manager/core/browser/password_store/mock_password_store_interface.h"
+#include "components/password_manager/core/browser/password_store/test_password_store.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -108,13 +108,8 @@ class LeakDetectionDelegateHelperTest
         .WillOnce(testing::WithArg<0>(
             [password_forms, store = store_.get()](
                 base::WeakPtr<PasswordStoreConsumer> consumer) {
-              std::vector<std::unique_ptr<PasswordForm>> results;
-              for (auto& form : password_forms) {
-                results.push_back(
-                    std::make_unique<PasswordForm>(std::move(form)));
-              }
               consumer->OnGetPasswordStoreResultsOrErrorFrom(
-                  store, std::move(results));
+                  store, std::move(password_forms));
             }));
   }
 
@@ -232,10 +227,12 @@ TEST_F(LeakDetectionDelegateHelperTest, SaveLeakedCredentials) {
   // The expected updated forms should have leaked entries.
   leaked_origin.password_issues.insert_or_assign(
       InsecureType::kLeaked,
-      InsecurityMetadata(base::Time::Now(), IsMuted(false)));
+      InsecurityMetadata(base::Time::Now(), IsMuted(false),
+                         TriggerBackendNotification(false)));
   other_origin_same_credential.password_issues.insert_or_assign(
       InsecureType::kLeaked,
-      InsecurityMetadata(base::Time::Now(), IsMuted(false)));
+      InsecurityMetadata(base::Time::Now(), IsMuted(false),
+                         TriggerBackendNotification(false)));
   EXPECT_CALL(*store_, UpdateLogin(leaked_origin, _));
   EXPECT_CALL(*store_, UpdateLogin(other_origin_same_credential, _));
   InitiateGetCredentialLeakType();
@@ -252,7 +249,8 @@ TEST_F(LeakDetectionDelegateHelperTest, SaveLeakedCredentialsCanonicalized) {
   // The expected updated form should have leaked entries.
   non_canonicalized_username.password_issues.insert_or_assign(
       InsecureType::kLeaked,
-      InsecurityMetadata(base::Time::Now(), IsMuted(false)));
+      InsecurityMetadata(base::Time::Now(), IsMuted(false),
+                         TriggerBackendNotification(false)));
   EXPECT_CALL(*store_, UpdateLogin(non_canonicalized_username, _));
   InitiateGetCredentialLeakType();
 }
@@ -264,7 +262,8 @@ TEST_F(LeakDetectionDelegateHelperTest, DontUpdateAlreadyLeakedCredentials) {
       kOtherOrigin, kLeakedUsernameNonCanonicalized, kLeakedPassword);
   non_canonicalized_username.password_issues.insert_or_assign(
       InsecureType::kLeaked,
-      InsecurityMetadata(base::Time::Now(), IsMuted(false)));
+      InsecurityMetadata(base::Time::Now(), IsMuted(false),
+                         TriggerBackendNotification(false)));
   SetGetAutofillableLoginsConsumerInvocation({non_canonicalized_username});
   SetOnShowLeakDetectionNotificationExpectation(
       PasswordForm::Store::kNotSet, IsReused(true), {GURL(kOtherOrigin)});

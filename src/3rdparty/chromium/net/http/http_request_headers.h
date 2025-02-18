@@ -16,15 +16,12 @@
 
 #include "base/containers/flat_set.h"
 #include "base/strings/string_piece.h"
+#include "base/values.h"
 #include "net/base/net_export.h"
 #include "net/filter/source_stream.h"
 #include "net/log/net_log_capture_mode.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/gurl.h"
-
-namespace base {
-class Value;
-}
 
 namespace net {
 
@@ -98,6 +95,7 @@ class NET_EXPORT HttpRequestHeaders {
   static const char kIfUnmodifiedSince[];
   static const char kOrigin[];
   static const char kPragma[];
+  static const char kPriority[];
   static const char kProxyAuthorization[];
   static const char kProxyConnection[];
   static const char kRange[];
@@ -180,9 +178,6 @@ class NET_EXPORT HttpRequestHeaders {
   // Calls SetHeader() on each header from |other|, maintaining order.
   void MergeFrom(const HttpRequestHeaders& other);
 
-  // Copies from |other| to |this|.
-  void CopyFrom(const HttpRequestHeaders& other) { *this = other; }
-
   void Swap(HttpRequestHeaders* other) { headers_.swap(other->headers_); }
 
   // Serializes HttpRequestHeaders to a string representation.  Joins all the
@@ -192,8 +187,8 @@ class NET_EXPORT HttpRequestHeaders {
 
   // Takes in the request line and returns a Value for use with the NetLog
   // containing both the request line and all headers fields.
-  base::Value NetLogParams(const std::string& request_line,
-                           NetLogCaptureMode capture_mode) const;
+  base::Value::Dict NetLogParams(const std::string& request_line,
+                                 NetLogCaptureMode capture_mode) const;
 
   const HeaderVector& GetHeaderVector() const { return headers_; }
 
@@ -203,7 +198,8 @@ class NET_EXPORT HttpRequestHeaders {
       const GURL& url,
       const absl::optional<base::flat_set<SourceStream::SourceType>>&
           accepted_stream_types,
-      bool enable_brotli);
+      bool enable_brotli,
+      bool enable_zstd);
 
  private:
   HeaderVector::iterator FindHeader(base::StringPiece key);
@@ -212,12 +208,6 @@ class NET_EXPORT HttpRequestHeaders {
   void SetHeaderInternal(base::StringPiece key, std::string&& value);
 
   HeaderVector headers_;
-
-  // Allow the copy construction and operator= to facilitate copying in
-  // HttpRequestHeaders.
-  // TODO(willchan): Investigate to see if we can remove the need to copy
-  // HttpRequestHeaders.
-  // DISALLOW_COPY_AND_ASSIGN(HttpRequestHeaders);
 };
 
 }  // namespace net

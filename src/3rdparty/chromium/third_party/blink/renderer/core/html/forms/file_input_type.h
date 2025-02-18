@@ -66,7 +66,6 @@ class CORE_EXPORT FileInputType final : public InputType,
 
  private:
   InputTypeView* CreateView() override;
-  const AtomicString& FormControlType() const override;
   FormControlState SaveFormControlState() const override;
   void RestoreFormControlState(const FormControlState&) override;
   void AppendToFormData(FormData&) const override;
@@ -74,8 +73,7 @@ class CORE_EXPORT FileInputType final : public InputType,
   void HandleDOMActivateEvent(Event&) override;
   void OpenPopupView() override;
   void AdjustStyle(ComputedStyleBuilder&) override;
-  LayoutObject* CreateLayoutObject(const ComputedStyle&,
-                                   LegacyLayout) const override;
+  LayoutObject* CreateLayoutObject(const ComputedStyle&) const override;
   FileList* Files() override;
   bool SetFiles(FileList*) override;
   void SetFilesAndDispatchEvents(FileList*) override;

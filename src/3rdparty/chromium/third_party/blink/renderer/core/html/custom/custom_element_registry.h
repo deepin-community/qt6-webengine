@@ -8,11 +8,13 @@
 #include "base/gtest_prod_util.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_custom_element_constructor.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_custom_element_constructor_hash.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/html/custom/custom_element_definition.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_map.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_set.h"
+#include "third_party/blink/renderer/platform/heap/collection_support/heap_linked_hash_set.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string_hash.h"
@@ -21,6 +23,7 @@ namespace blink {
 
 class CustomElementDefinitionBuilder;
 class CustomElementDescriptor;
+class Document;
 class Element;
 class ElementDefinitionOptions;
 class ExceptionState;
@@ -47,6 +50,7 @@ class CORE_EXPORT CustomElementRegistry final : public ScriptWrappable {
                                   ExceptionState&);
 
   ScriptValue get(const AtomicString& name);
+  const AtomicString& getName(V8CustomElementConstructor* constructor);
   bool NameIsDefined(const AtomicString& name) const;
   CustomElementDefinition* DefinitionForName(const AtomicString& name) const;
   CustomElementDefinition* DefinitionForConstructor(
@@ -66,6 +70,12 @@ class CORE_EXPORT CustomElementRegistry final : public ScriptWrappable {
                             ExceptionState&);
   void upgrade(Node* root);
 
+  const LocalDOMWindow* GetOwnerWindow() const { return owner_.Get(); }
+
+  bool IsGlobalRegistry() const;
+
+  void AssociatedWith(Document& document);
+
   void Trace(Visitor*) const override;
 
  private:
@@ -80,19 +90,6 @@ class CORE_EXPORT CustomElementRegistry final : public ScriptWrappable {
 
   bool element_definition_is_running_;
 
-  // Hashes Member<V8CustomElementConstructor> by their v8 callback objects.
-  struct V8CustomElementConstructorHashTraits
-      : WTF::MemberHashTraits<V8CustomElementConstructor> {
-    static unsigned GetHash(
-        const Member<V8CustomElementConstructor>& constructor) {
-      return constructor->CallbackObject()->GetIdentityHash();
-    }
-    static bool Equal(const Member<V8CustomElementConstructor>& a,
-                      const Member<V8CustomElementConstructor>& b) {
-      return a->CallbackObject() == b->CallbackObject();
-    }
-    static constexpr bool kSafeToCompareToEmptyOrDeleted = false;
-  };
   using ConstructorMap = HeapHashMap<Member<V8CustomElementConstructor>,
                                      Member<CustomElementDefinition>,
                                      V8CustomElementConstructorHashTraits>;
@@ -106,16 +103,25 @@ class CORE_EXPORT CustomElementRegistry final : public ScriptWrappable {
   using UpgradeCandidateSet = HeapHashSet<WeakMember<Element>>;
   using UpgradeCandidateMap =
       HeapHashMap<AtomicString, Member<UpgradeCandidateSet>>;
+
+  // Candidate elements that can be upgraded with this registry later.
+  // To make implementation simpler, we maintain a superset here, and remove
+  // non-candidates before upgrading.
   Member<UpgradeCandidateMap> upgrade_candidates_;
 
   using WhenDefinedPromiseMap =
       HeapHashMap<AtomicString, Member<ScriptPromiseResolver>>;
   WhenDefinedPromiseMap when_defined_promise_map_;
 
+  // Weak ordered set of all documents where this registry is used, in the order
+  // of association between this registry and any tree scope in the document.
+  using AssociatedDocumentSet = HeapLinkedHashSet<WeakMember<Document>>;
+  Member<AssociatedDocumentSet> associated_documents_;
+
   FRIEND_TEST_ALL_PREFIXES(
       CustomElementTest,
       CreateElement_TagNameCaseHandlingCreatingCustomElement);
-  friend class CustomElementRegistryTestingScope;
+  friend class CustomElementRegistryTest;
 };
 
 }  // namespace blink

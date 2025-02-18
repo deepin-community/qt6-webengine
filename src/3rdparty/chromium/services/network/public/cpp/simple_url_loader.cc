@@ -7,6 +7,7 @@
 #include <stdint.h>
 
 #include <algorithm>
+#include <string_view>
 #include <utility>
 
 #include "base/check_op.h"
@@ -20,7 +21,6 @@
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/sequence_checker.h"
-#include "base/strings/string_piece.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
@@ -42,7 +42,6 @@
 #include "services/network/public/cpp/record_ontransfersizeupdate_utils.h"
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/simple_url_loader_stream_consumer.h"
-#include "services/network/public/cpp/simple_url_loader_throttle.h"
 #include "services/network/public/mojom/data_pipe_getter.mojom.h"
 #include "services/network/public/mojom/early_hints.mojom.h"
 #include "services/network/public/mojom/url_loader.mojom.h"
@@ -58,6 +57,18 @@ namespace {
 
 // Used by tests to override the tick clock for the timeout timer.
 const base::TickClock* timeout_tick_clock_ = nullptr;
+
+// A temporary util adapter to wrap the download callback with the response
+// body, and to hop the string content from a unique_ptr<string> into a
+// optional<string>.
+void GetFromUniquePtrToOptional(
+    SimpleURLLoader::BodyAsStringCallback body_as_string_callback,
+    std::unique_ptr<std::string> response_body) {
+  std::move(body_as_string_callback)
+      .Run(response_body
+               ? std::make_optional<std::string>(std::move(*response_body))
+               : std::nullopt);
+}
 
 // This file contains SimpleURLLoaderImpl, several BodyHandler implementations,
 // BodyReader, and StringUploadDataPipeGetter.
@@ -212,8 +223,14 @@ class SimpleURLLoaderImpl : public SimpleURLLoader,
 
   // SimpleURLLoader implementation.
   void DownloadToString(mojom::URLLoaderFactory* url_loader_factory,
+                        BodyAsStringCallbackDeprecated body_as_string_callback,
+                        size_t max_body_size) override;
+  void DownloadToString(mojom::URLLoaderFactory* url_loader_factory,
                         BodyAsStringCallback body_as_string_callback,
                         size_t max_body_size) override;
+  void DownloadToStringOfUnboundedSizeUntilCrashAndDie(
+      mojom::URLLoaderFactory* url_loader_factory,
+      BodyAsStringCallbackDeprecated body_as_string_callback) override;
   void DownloadToStringOfUnboundedSizeUntilCrashAndDie(
       mojom::URLLoaderFactory* url_loader_factory,
       BodyAsStringCallback body_as_string_callback) override;
@@ -257,7 +274,6 @@ class SimpleURLLoaderImpl : public SimpleURLLoader,
   void SetURLLoaderFactoryOptions(uint32_t options) override;
   void SetRequestID(int32_t request_id) override;
   void SetTimeoutDuration(base::TimeDelta timeout_duration) override;
-  void SetAllowBatching() override;
 
   int NetError() const override;
   const mojom::URLResponseHead* ResponseInfo() const override;
@@ -267,7 +283,6 @@ class SimpleURLLoaderImpl : public SimpleURLLoader,
   bool LoadedFromCache() const override;
   int64_t GetContentSize() const override;
   int GetNumRetries() const override;
-  SimpleURLLoaderThrottle* GetThrottleForTesting() override;  // IN-TEST
 
   // Called by BodyHandler when the BodyHandler body handler is done. If |error|
   // is not net::OK, some error occurred reading or consuming the body. If it is
@@ -419,8 +434,6 @@ class SimpleURLLoaderImpl : public SimpleURLLoader,
   // How long |timeout_timer_| should wait before timing out a request. A value
   // of zero means do not set a timeout.
   base::TimeDelta timeout_duration_ = base::TimeDelta();
-
-  std::unique_ptr<SimpleURLLoaderThrottle> throttle_;
 
   SEQUENCE_CHECKER(sequence_checker_);
 
@@ -686,7 +699,7 @@ class SaveToStringBodyHandler : public BodyHandler,
   SaveToStringBodyHandler(
       SimpleURLLoaderImpl* simple_url_loader,
       bool want_download_progress,
-      SimpleURLLoader::BodyAsStringCallback body_as_string_callback,
+      SimpleURLLoader::BodyAsStringCallbackDeprecated body_as_string_callback,
       int64_t max_body_size)
       : BodyHandler(simple_url_loader, want_download_progress),
         max_body_size_(max_body_size),
@@ -747,7 +760,7 @@ class SaveToStringBodyHandler : public BodyHandler,
   const int64_t max_body_size_;
 
   std::unique_ptr<std::string> body_;
-  SimpleURLLoader::BodyAsStringCallback body_as_string_callback_;
+  SimpleURLLoader::BodyAsStringCallbackDeprecated body_as_string_callback_;
 
   const base::Location url_loader_created_from_;
 
@@ -1173,7 +1186,8 @@ class DownloadAsStreamBodyHandler : public BodyHandler,
 
   void NotifyConsumerOfCompletion(bool destroy_results) override {
     body_reader_.reset();
-    stream_consumer_->OnComplete(simple_url_loader()->NetError() == net::OK);
+    stream_consumer_.ExtractAsDangling()->OnComplete(
+        simple_url_loader()->NetError() == net::OK);
   }
 
   void PrepareToRetry(base::OnceClosure retry_callback) override {
@@ -1189,7 +1203,7 @@ class DownloadAsStreamBodyHandler : public BodyHandler,
     base::WeakPtr<DownloadAsStreamBodyHandler> weak_this(
         weak_ptr_factory_.GetWeakPtr());
     stream_consumer_->OnDataReceived(
-        base::StringPiece(data, length),
+        std::string_view(data, length),
         base::BindOnce(&DownloadAsStreamBodyHandler::Resume,
                        weak_ptr_factory_.GetWeakPtr()));
     // Protect against deletion.
@@ -1222,7 +1236,7 @@ class DownloadAsStreamBodyHandler : public BodyHandler,
     body_reader_->Resume();
   }
 
-  raw_ptr<SimpleURLLoaderStreamConsumer, DanglingUntriaged> stream_consumer_;
+  raw_ptr<SimpleURLLoaderStreamConsumer> stream_consumer_;
 
   const base::Location url_loader_created_from_;
 
@@ -1264,7 +1278,7 @@ SimpleURLLoaderImpl::~SimpleURLLoaderImpl() {}
 
 void SimpleURLLoaderImpl::DownloadToString(
     mojom::URLLoaderFactory* url_loader_factory,
-    BodyAsStringCallback body_as_string_callback,
+    BodyAsStringCallbackDeprecated body_as_string_callback,
     size_t max_body_size) {
   DCHECK_LE(max_body_size, kMaxBoundedStringDownloadSize);
   body_handler_ = std::make_unique<SaveToStringBodyHandler>(
@@ -1273,9 +1287,19 @@ void SimpleURLLoaderImpl::DownloadToString(
   Start(url_loader_factory);
 }
 
+void SimpleURLLoaderImpl::DownloadToString(
+    mojom::URLLoaderFactory* url_loader_factory,
+    BodyAsStringCallback body_as_string_callback,
+    size_t max_body_size) {
+  DownloadToString(url_loader_factory,
+                   base::BindOnce(GetFromUniquePtrToOptional,
+                                  std::move(body_as_string_callback)),
+                   max_body_size);
+}
+
 void SimpleURLLoaderImpl::DownloadToStringOfUnboundedSizeUntilCrashAndDie(
     mojom::URLLoaderFactory* url_loader_factory,
-    BodyAsStringCallback body_as_string_callback) {
+    BodyAsStringCallbackDeprecated body_as_string_callback) {
   body_handler_ = std::make_unique<SaveToStringBodyHandler>(
       this, !on_download_progress_callback_.is_null(),
       std::move(body_as_string_callback),
@@ -1283,6 +1307,14 @@ void SimpleURLLoaderImpl::DownloadToStringOfUnboundedSizeUntilCrashAndDie(
       // is an int64_t, not a size_t.
       std::numeric_limits<int64_t>::max());
   Start(url_loader_factory);
+}
+
+void SimpleURLLoaderImpl::DownloadToStringOfUnboundedSizeUntilCrashAndDie(
+    mojom::URLLoaderFactory* url_loader_factory,
+    BodyAsStringCallback body_as_string_callback) {
+  DownloadToStringOfUnboundedSizeUntilCrashAndDie(
+      url_loader_factory, base::BindOnce(GetFromUniquePtrToOptional,
+                                         std::move(body_as_string_callback)));
 }
 
 void SimpleURLLoaderImpl::DownloadHeadersOnly(
@@ -1497,12 +1529,6 @@ void SimpleURLLoaderImpl::SetTimeoutDuration(base::TimeDelta timeout_duration) {
   timeout_duration_ = timeout_duration;
 }
 
-void SimpleURLLoaderImpl::SetAllowBatching() {
-  // Check if a request has not yet been started.
-  DCHECK(!body_handler_);
-  throttle_ = std::make_unique<SimpleURLLoaderThrottle>();
-}
-
 int SimpleURLLoaderImpl::NetError() const {
   // Should only be called once the request is complete.
   DCHECK(request_state_->finished);
@@ -1530,10 +1556,6 @@ int64_t SimpleURLLoaderImpl::GetContentSize() const {
 
 int SimpleURLLoaderImpl::GetNumRetries() const {
   return num_retries_;
-}
-
-SimpleURLLoaderThrottle* SimpleURLLoaderImpl::GetThrottleForTesting() {
-  return throttle_.get();
 }
 
 const mojom::URLResponseHead* SimpleURLLoaderImpl::ResponseInfo() const {
@@ -1637,19 +1659,13 @@ void SimpleURLLoaderImpl::Start(mojom::URLLoaderFactory* url_loader_factory) {
   DCHECK(!url_loader_);
   DCHECK(!request_state_->body_started);
 
-  // Stash the information if retries are enabled or the request can be batched.
-  if (remaining_retries_ > 0 || throttle_) {
+  // Stash the information if retries are enabled.
+  if (remaining_retries_ > 0) {
     // Clone the URLLoaderFactory, to avoid any dependencies on its lifetime.
     // Results in an easier to use API, with no shutdown ordering requirements,
     // at the cost of some resources.
     url_loader_factory->Clone(
         url_loader_factory_remote_.BindNewPipeAndPassReceiver());
-  }
-
-  if (throttle_) {
-    throttle_->NotifyWhenReady(base::BindOnce(
-        &SimpleURLLoaderImpl::OnReadyToStart, weak_ptr_factory_.GetWeakPtr()));
-    return;
   }
 
   StartRequest(url_loader_factory);

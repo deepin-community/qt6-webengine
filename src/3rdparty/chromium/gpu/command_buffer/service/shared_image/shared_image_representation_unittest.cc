@@ -12,7 +12,7 @@
 #include "gpu/command_buffer/service/texture_manager.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/skia/include/core/SkPromiseImageTexture.h"
+#include "third_party/dawn/include/dawn/dawn_proc.h"
 #include "third_party/skia/include/gpu/GrBackendSurface.h"
 
 namespace gpu {
@@ -27,11 +27,12 @@ class SharedImageRepresentationTest : public ::testing::Test {
     auto color_space = gfx::ColorSpace::CreateSRGB();
     auto surface_origin = kTopLeft_GrSurfaceOrigin;
     auto alpha_type = kPremul_SkAlphaType;
-    uint32_t usage = SHARED_IMAGE_USAGE_GLES2;
+    uint32_t usage =
+        SHARED_IMAGE_USAGE_GLES2_READ | SHARED_IMAGE_USAGE_GLES2_WRITE;
 
     auto backing = std::make_unique<TestImageBacking>(
         mailbox_, format, size, color_space, surface_origin, alpha_type, usage,
-        0 /* estimated_size */);
+        /*estimated_size=*/0);
     factory_ref_ = manager_.Register(std::move(backing), tracker_.get());
   }
 
@@ -71,7 +72,7 @@ TEST_F(SharedImageRepresentationTest, GLTextureClearing) {
         SharedImageRepresentation::AllowUnclearedAccess::kYes);
     ASSERT_TRUE(scoped_access);
     representation->GetTexture()->SetLevelCleared(GL_TEXTURE_2D, 0,
-                                                  true /* cleared */);
+                                                  /*cleared=*/true);
   }
   EXPECT_TRUE(representation->IsCleared());
 
@@ -185,14 +186,23 @@ TEST_F(SharedImageRepresentationTest, SkiaClearing) {
 }
 
 TEST_F(SharedImageRepresentationTest, DawnClearing) {
+  // TestImageBacking will return a dummy texture
+  // wgpu::Texture(reinterpret_cast<WGPUTexture>(203)), so we have to override
+  // the texture reference/release procs to avoid crashing.
+  DawnProcTable procs = {};
+  procs.textureReference = [](WGPUTexture) {};
+  procs.textureRelease = [](WGPUTexture) {};
+  dawnProcSetProcs(&procs);
+
   auto representation = manager_.ProduceDawn(
-      mailbox_, tracker_.get(), nullptr /* device */, WGPUBackendType_Null, {});
+      mailbox_, tracker_.get(), /*device=*/nullptr, wgpu::BackendType::Null, {},
+      /*context_state=*/nullptr);
   EXPECT_FALSE(representation->IsCleared());
 
   // We should not be able to begin access with |allow_uncleared| == false.
   {
     auto scoped_access = representation->BeginScopedAccess(
-        WGPUTextureUsage_None,
+        wgpu::TextureUsage::None,
         SharedImageRepresentation::AllowUnclearedAccess::kNo);
     EXPECT_FALSE(scoped_access);
   }
@@ -201,7 +211,7 @@ TEST_F(SharedImageRepresentationTest, DawnClearing) {
   // We can begin access when |allow_uncleared| is true.
   {
     auto scoped_access = representation->BeginScopedAccess(
-        WGPUTextureUsage_None,
+        wgpu::TextureUsage::None,
         SharedImageRepresentation::AllowUnclearedAccess::kYes);
     EXPECT_TRUE(scoped_access);
   }
@@ -214,11 +224,12 @@ TEST_F(SharedImageRepresentationTest, DawnClearing) {
   // We can also begin access with |allow_uncleared| == false.
   {
     auto scoped_access = representation->BeginScopedAccess(
-        WGPUTextureUsage_None,
+        wgpu::TextureUsage::None,
         SharedImageRepresentation::AllowUnclearedAccess::kNo);
     EXPECT_TRUE(scoped_access);
   }
   EXPECT_TRUE(representation->IsCleared());
+  dawnProcSetProcs(nullptr);
 }
 
 TEST_F(SharedImageRepresentationTest, OverlayClearing) {

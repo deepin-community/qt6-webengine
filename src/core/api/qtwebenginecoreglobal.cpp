@@ -10,7 +10,11 @@
 #include <QThread>
 #include <QQuickWindow>
 #include "web_engine_context.h"
+#include "web_engine_library_info.h"
 
+#include "base/base_paths.h"
+#include "base/i18n/icu_util.h"
+#include "base/path_service.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 
 #if QT_CONFIG(opengl) && !defined(Q_OS_MACOS)
@@ -32,13 +36,49 @@ static void deleteShareContext()
     shareContext = 0;
 }
 
+static void ensureShareContext()
+{
+    // No need to override the shared context if QApplication already set one (e.g with Qt::AA_ShareOpenGLContexts).
+    if (qt_gl_global_share_context())
+        return;
+
+    QCoreApplication *app = QCoreApplication::instance();
+    if (!app) {
+        qFatal("QtWebEngineQuick::initialize() but no core application instance.");
+        return;
+    }
+
+    // Bail out silently if the user did not construct a QGuiApplication.
+    if (!qobject_cast<QGuiApplication *>(app))
+        return;
+
+    if (app->thread() != QThread::currentThread()) {
+        qFatal("QtWebEngineQuick::initialize() must be called from the Qt gui thread.");
+        return;
+    }
+
+    if (shareContext)
+        return;
+
+    shareContext = new QOpenGLContext;
+    QSurfaceFormat format = QSurfaceFormat::defaultFormat();
+
+    shareContext->setFormat(format);
+    shareContext->create();
+    qAddPostRoutine(deleteShareContext);
+    qt_gl_set_global_share_context(shareContext);
+
+    // Classes like QOpenGLWidget check for the attribute
+    app->setAttribute(Qt::AA_ShareOpenGLContexts);
+}
+
 #endif
 // ### Qt 6: unify this logic and Qt::AA_ShareOpenGLContexts.
 // QtWebEngineQuick::initialize was introduced first and meant to be called
 // after the QGuiApplication creation, when AA_ShareOpenGLContexts fills
 // the same need but the flag has to be set earlier.
 
-Q_WEBENGINECORE_PRIVATE_EXPORT void initialize()
+Q_WEBENGINECORE_EXPORT void initialize()
 {
 #if QT_CONFIG(opengl) && !defined(Q_OS_MACOS)
 #ifdef Q_OS_WIN32
@@ -52,39 +92,10 @@ Q_WEBENGINECORE_PRIVATE_EXPORT void initialize()
 #endif
     )
         QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
-    // No need to override the shared context if QApplication already set one (e.g with Qt::AA_ShareOpenGLContexts).
-    if (!qt_gl_global_share_context()) {
 
-        QCoreApplication *app = QCoreApplication::instance();
-        if (!app) {
-            qFatal("QtWebEngineQuick::initialize() but no core application instance.");
-            return;
-        }
-
-        // Bail out silently if the user did not construct a QGuiApplication.
-        if (!qobject_cast<QGuiApplication *>(app))
-            return;
-
-        if (app->thread() != QThread::currentThread()) {
-            qFatal("QtWebEngineQuick::initialize() must be called from the Qt gui thread.");
-            return;
-        }
-
-        if (shareContext)
-            return;
-
-        shareContext = new QOpenGLContext;
-        QSurfaceFormat format = QSurfaceFormat::defaultFormat();
-
-        shareContext->setFormat(format);
-        shareContext->create();
-        qAddPostRoutine(deleteShareContext);
-        qt_gl_set_global_share_context(shareContext);
-
-        // Classes like QOpenGLWidget check for the attribute
-        app->setAttribute(Qt::AA_ShareOpenGLContexts);
-    }
-
+    // ensure we have shared OpenGL context
+    if (QQuickWindow::graphicsApi() != QSGRendererInterface::Direct3D11)
+        ensureShareContext();
 #endif // QT_CONFIG(opengl) && !defined(Q_OS_MACOS)
 }
 
@@ -119,6 +130,15 @@ static void initialize()
 QT_BEGIN_NAMESPACE
 
 QString qWebEngineGetDomainAndRegistry(const QUrl &url) {
+    base::FilePath icuDataPath;
+    // Let's assume that ICU is already initialized if DIR_QT_LIBRARY_DATA is set.
+    if (!base::PathService::Get(base::DIR_QT_LIBRARY_DATA, &icuDataPath)) {
+        icuDataPath = WebEngineLibraryInfo::getPath(base::DIR_QT_LIBRARY_DATA);
+        if (!base::PathService::OverrideAndCreateIfNeeded(base::DIR_QT_LIBRARY_DATA, icuDataPath, false, false))
+            qWarning("Failed to set ICU data path.");
+        base::i18n::InitializeICU();
+    }
+
     const QString host = url.host();
     const std::string domain = net::registry_controlled_domains::GetDomainAndRegistry(host.toStdString(), net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
     return QString::fromStdString(domain);

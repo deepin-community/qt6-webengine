@@ -159,7 +159,8 @@ class AX_EXPORT AXNode final {
   // trees that are part of the same webpage, PDF or window into a large global
   // tree.
 
-  const std::vector<AXNode*>& GetAllChildren() const;
+  const std::vector<raw_ptr<AXNode, VectorExperimental>>& GetAllChildren()
+      const;
   size_t GetChildCount() const;
   size_t GetChildCountCrossingTreeBoundary() const;
   size_t GetUnignoredChildCount() const;
@@ -185,16 +186,14 @@ class AX_EXPORT AXNode final {
   AXNode* GetLastUnignoredChild() const;
   AXNode* GetLastUnignoredChildCrossingTreeBoundary() const;
 
-  // TODO(accessibility): Consider renaming all "GetDeepest...Child" methods to
-  // "GetDeepest...Descendant".
-  AXNode* GetDeepestFirstChild() const;
-  AXNode* GetDeepestFirstChildCrossingTreeBoundary() const;
-  AXNode* GetDeepestFirstUnignoredChild() const;
-  AXNode* GetDeepestFirstUnignoredChildCrossingTreeBoundary() const;
-  AXNode* GetDeepestLastChild() const;
-  AXNode* GetDeepestLastChildCrossingTreeBoundary() const;
-  AXNode* GetDeepestLastUnignoredChild() const;
-  AXNode* GetDeepestLastUnignoredChildCrossingTreeBoundary() const;
+  AXNode* GetDeepestFirstDescendant() const;
+  AXNode* GetDeepestFirstDescendantCrossingTreeBoundary() const;
+  AXNode* GetDeepestFirstUnignoredDescendant() const;
+  AXNode* GetDeepestFirstUnignoredDescendantCrossingTreeBoundary() const;
+  AXNode* GetDeepestLastDescendant() const;
+  AXNode* GetDeepestLastDescendantCrossingTreeBoundary() const;
+  AXNode* GetDeepestLastUnignoredDescendant() const;
+  AXNode* GetDeepestLastUnignoredDescendantCrossingTreeBoundary() const;
 
   AXNode* GetNextSibling() const;
   AXNode* GetNextUnignoredSibling() const;
@@ -209,7 +208,9 @@ class AX_EXPORT AXNode final {
   // Deprecated methods for walking the tree.
   //
 
-  const std::vector<AXNode*>& children() const { return children_; }
+  const std::vector<raw_ptr<AXNode, VectorExperimental>>& children() const {
+    return children_;
+  }
   AXNode* parent() const { return parent_; }
   size_t index_in_parent() const { return index_in_parent_; }
 
@@ -314,7 +315,7 @@ class AX_EXPORT AXNode final {
 
   // Swap the internal children vector with |children|. This instance
   // now owns all of the passed children.
-  void SwapChildren(std::vector<AXNode*>* children);
+  void SwapChildren(std::vector<raw_ptr<AXNode, VectorExperimental>>* children);
 
   // Returns true if this node is equal to or a descendant of |ancestor|.
   bool IsDescendantOf(const AXNode* ancestor) const;
@@ -519,13 +520,9 @@ class AX_EXPORT AXNode final {
   // TODO(nektar): Consider changing the return value to std::string.
   const std::u16string& GetHypertext() const;
 
-  // Temporary method that marks `hypertext_` dirty. This will eventually be
-  // handled by the AX tree in a followup patch.
-  void SetNeedsToUpdateHypertext();
   // Temporary accessor methods until hypertext is fully migrated to this class.
   // Hypertext won't eventually need to be accessed outside this class.
   const std::map<int, int>& GetHypertextOffsetToHyperlinkChildIndex() const;
-  const AXHypertext& GetOldHypertext() const;
 
   // Returns the text that is found inside this node and all its descendants;
   // including text found in embedded objects.
@@ -622,7 +619,8 @@ class AX_EXPORT AXNode final {
   // Extra computed nodes for the accessibility tree for macOS:
   // one column node for each table column, followed by one
   // table header container node, or nullptr if not applicable.
-  const std::vector<AXNode*>* GetExtraMacNodes() const;
+  const std::vector<raw_ptr<AXNode, VectorExperimental>>* GetExtraMacNodes()
+      const;
 
   // Return true for mock nodes added to the map, such as extra mac nodes.
   bool IsGenerated() const;
@@ -643,10 +641,12 @@ class AX_EXPORT AXNode final {
   bool IsTableCellOrHeader() const;
   absl::optional<int> GetTableCellIndex() const;
   absl::optional<int> GetTableCellColIndex() const;
+  // The row index of a cell. If a row is passed in, use the first cell.
   absl::optional<int> GetTableCellRowIndex() const;
   absl::optional<int> GetTableCellColSpan() const;
   absl::optional<int> GetTableCellRowSpan() const;
   absl::optional<int> GetTableCellAriaColIndex() const;
+  // The ARIA row index of a cell. If a row is passed in, use the first cell.
   absl::optional<int> GetTableCellAriaRowIndex() const;
   std::vector<AXNodeID> GetTableCellColHeaderNodeIds() const;
   std::vector<AXNodeID> GetTableCellRowHeaderNodeIds() const;
@@ -798,6 +798,9 @@ class AX_EXPORT AXNode final {
   // all nodes that can't be edited are read-only.
   bool IsReadOnlyOrDisabled() const;
 
+  // Returns true if node is from Views (and not web content).
+  bool IsView() const;
+
  private:
   AXTableInfo* GetAncestorTableInfo() const;
   void IdVectorToNodeVector(const std::vector<AXNodeID>& ids,
@@ -824,7 +827,7 @@ class AX_EXPORT AXNode final {
   size_t unignored_index_in_parent_;
   size_t unignored_child_count_ = 0;
   const raw_ptr<AXNode> parent_;
-  std::vector<AXNode*> children_;
+  std::vector<raw_ptr<AXNode, VectorExperimental>> children_;
 
   // Stores information about this node that is immutable and which has been
   // computed by the tree's source, such as `content::BlinkAXTreeSource`.
@@ -833,7 +836,6 @@ class AX_EXPORT AXNode final {
   // See the class comment in "ax_hypertext.h" for an explanation of this
   // member.
   mutable AXHypertext hypertext_;
-  mutable AXHypertext old_hypertext_;
 
   // Stores information about this node that can be computed on demand and
   // cached.

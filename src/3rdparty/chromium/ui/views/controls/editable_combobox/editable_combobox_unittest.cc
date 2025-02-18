@@ -32,6 +32,7 @@
 #include "ui/views/controls/combobox/combobox_util.h"
 #include "ui/views/controls/menu/menu_runner.h"
 #include "ui/views/controls/textfield/textfield.h"
+#include "ui/views/test/button_test_api.h"
 #include "ui/views/test/menu_test_utils.h"
 #include "ui/views/test/views_test_base.h"
 #include "ui/views/view.h"
@@ -76,6 +77,9 @@ class TestContextMenuController : public ContextMenuController {
 
 class EditableComboboxTest : public ViewsTestBase {
  public:
+  static constexpr gfx::Rect kWidgetBounds = gfx::Rect(0, 0, 1000, 1000);
+  static constexpr gfx::Rect kComboboxBounds = gfx::Rect(0, 0, 500, 40);
+
   EditableComboboxTest() { views::test::DisableMenuClosureAnimations(); }
 
   EditableComboboxTest(const EditableComboboxTest&) = delete;
@@ -165,8 +169,12 @@ void EditableComboboxTest::TearDown() {
     GetMenuRunner()->Cancel();
     WaitForMenuClosureAnimation();
   }
-  if (widget_)
-    widget_->Close();
+  if (widget_) {
+    combobox_ = nullptr;
+    dummy_focusable_view_ = nullptr;
+    parent_of_combobox_ = nullptr;
+    widget_.ExtractAsDangling()->Close();
+  }
   ViewsTestBase::TearDown();
 }
 
@@ -195,20 +203,23 @@ void EditableComboboxTest::InitEditableCombobox(
     const std::vector<ui::SimpleComboboxModel::Item>& items,
     const bool filter_on_edit,
     const bool show_on_empty) {
-  parent_of_combobox_ = new View();
-  parent_of_combobox_->SetID(1);
+  InitWidget();
+
+  View* container = widget_->SetContentsView(std::make_unique<View>());
+  parent_of_combobox_ = container->AddChildView(std::make_unique<View>());
+  parent_of_combobox_->SetBoundsRect(kComboboxBounds);
+
   combobox_ =
-      new EditableCombobox(std::make_unique<ui::SimpleComboboxModel>(items),
-                           filter_on_edit, show_on_empty);
+      parent_of_combobox_->AddChildView(std::make_unique<EditableCombobox>(
+          std::make_unique<ui::SimpleComboboxModel>(items), filter_on_edit,
+          show_on_empty));
   combobox_->SetCallback(base::BindRepeating(
       &EditableComboboxTest::OnContentChanged, base::Unretained(this)));
-  combobox_->SetID(2);
   combobox_->SetAccessibleName(u"abc");
-  dummy_focusable_view_ = new View();
-  dummy_focusable_view_->SetFocusBehavior(View::FocusBehavior::ALWAYS);
-  dummy_focusable_view_->SetID(3);
+  combobox_->SetBoundsRect(kComboboxBounds);
 
-  InitWidget();
+  dummy_focusable_view_ = container->AddChildView(std::make_unique<View>());
+  dummy_focusable_view_->SetFocusBehavior(View::FocusBehavior::ALWAYS);
 }
 
 // Initializes the widget where the combobox and the dummy control live.
@@ -216,15 +227,8 @@ void EditableComboboxTest::InitWidget() {
   widget_ = new Widget();
   Widget::InitParams params =
       CreateParams(Widget::InitParams::TYPE_WINDOW_FRAMELESS);
-  params.bounds = gfx::Rect(0, 0, 1000, 1000);
-  parent_of_combobox_->SetBoundsRect(gfx::Rect(0, 0, 500, 40));
-  combobox_->SetBoundsRect(gfx::Rect(0, 0, 500, 40));
-
+  params.bounds = kWidgetBounds;
   widget_->Init(std::move(params));
-  View* container = widget_->SetContentsView(std::make_unique<View>());
-  container->AddChildView(parent_of_combobox_.get());
-  parent_of_combobox_->AddChildView(combobox_.get());
-  container->AddChildView(dummy_focusable_view_.get());
   widget_->Show();
 
 #if BUILDFLAG(IS_MAC)
@@ -268,23 +272,10 @@ ui::ImageModel EditableComboboxTest::GetIconAt(size_t index,
 }
 
 void EditableComboboxTest::ClickArrow() {
-  const gfx::Point arrow_button(combobox_->x() + combobox_->width() - 1,
-                                combobox_->y() + 1);
-  PerformClick(widget_, arrow_button);
-}
-
-void EditableComboboxTest::ClickMenuItem(const int index) {
-  DCHECK(GetMenuRunner());
-  const gfx::Point middle_of_item(
-      combobox_->x() + combobox_->width() / 2,
-      combobox_->y() + combobox_->height() / 2 + combobox_->height() * index);
-  // For the menu, we send the click event to the child widget where the menu is
-  // shown. That child widget is the MenuHost object created inside
-  // EditableCombobox's MenuRunner to host the menu items.
-  std::set<Widget*> child_widgets;
-  Widget::GetAllOwnedWidgets(widget_->GetNativeView(), &child_widgets);
-  ASSERT_EQ(1UL, child_widgets.size());
-  PerformClick(*child_widgets.begin(), middle_of_item);
+  ui::MouseEvent e(ui::ET_MOUSE_PRESSED, gfx::Point(), gfx::Point(),
+                   ui::EventTimeForNow(), 0, 0);
+  views::test::ButtonTestApi test_api(combobox_->GetArrowButtonForTesting());
+  test_api.NotifyClick(e);
 }
 
 void EditableComboboxTest::FocusTextfield() {
@@ -379,7 +370,11 @@ TEST_F(EditableComboboxTest, TabMovesToOtherViewAndClosesMenu) {
   EXPECT_TRUE(IsTextfieldFocused());
   SendKeyEvent(ui::VKEY_TAB);
   EXPECT_FALSE(IsTextfieldFocused());
-  EXPECT_TRUE(dummy_focusable_view_->HasFocus());
+  // In Chrome Refresh the drop down arrow will behave more like a normal button
+  // and therefore will be focusable.
+  if (!features::IsChromeRefresh2023()) {
+    EXPECT_TRUE(dummy_focusable_view_->HasFocus());
+  }
   WaitForMenuClosureAnimation();
   EXPECT_FALSE(IsMenuOpen());
 }
@@ -632,17 +627,6 @@ TEST_F(EditableComboboxTest, TypingInTextfieldUnhighlightsMenuItem) {
   SendKeyEvent(ui::VKEY_C);
   SendKeyEvent(ui::VKEY_RETURN);
   EXPECT_EQ(u"abc", combobox_->GetText());
-}
-
-TEST_F(EditableComboboxTest, ClickOnMenuItemSelectsItAndClosesMenu) {
-  InitEditableCombobox();
-  ClickArrow();
-  ASSERT_TRUE(IsMenuOpen());
-
-  ClickMenuItem(/*index=*/0);
-  WaitForMenuClosureAnimation();
-  EXPECT_FALSE(IsMenuOpen());
-  EXPECT_EQ(u"item[0]", combobox_->GetText());
 }
 
 // This is different from the regular read-only Combobox, where SPACE
@@ -904,6 +888,24 @@ TEST_F(EditableComboboxTest, DragToSelectDoesntOpenTheMenu) {
   PerformMouseEvent(widget_, end_point, ui::ET_MOUSE_RELEASED);
   ASSERT_EQ(u"abc", GetSelectedText());
   EXPECT_FALSE(IsMenuOpen());
+}
+
+TEST_F(EditableComboboxTest, AccessibleNameAndRole) {
+  InitEditableCombobox();
+
+  ui::AXNodeData data;
+  combobox_->GetAccessibleNodeData(&data);
+  EXPECT_EQ(data.role, ax::mojom::Role::kComboBoxGrouping);
+  EXPECT_EQ(data.GetString16Attribute(ax::mojom::StringAttribute::kName),
+            u"abc");
+  EXPECT_EQ(combobox_->GetAccessibleName(), u"abc");
+
+  data = ui::AXNodeData();
+  combobox_->SetAccessibleName(u"New name");
+  combobox_->GetAccessibleNodeData(&data);
+  EXPECT_EQ(data.GetString16Attribute(ax::mojom::StringAttribute::kName),
+            u"New name");
+  EXPECT_EQ(combobox_->GetAccessibleName(), u"New name");
 }
 
 using EditableComboboxDefaultTest = ViewsTestBase;

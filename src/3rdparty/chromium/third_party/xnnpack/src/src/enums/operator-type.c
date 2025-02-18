@@ -14,17 +14,18 @@
 #include <xnnpack/operator-type.h>
 
 
-static const uint16_t offset[127] = {
-  0, 8, 22, 36, 50, 64, 78, 92, 119, 147, 175, 203, 230, 257, 275, 293, 318, 344, 360, 376, 391, 406, 428, 451, 474,
-  497, 520, 543, 566, 584, 607, 625, 648, 672, 696, 720, 744, 768, 792, 816, 830, 845, 860, 886, 912, 938, 964, 996,
-  1028, 1054, 1081, 1108, 1125, 1142, 1156, 1170, 1184, 1200, 1216, 1242, 1268, 1294, 1320, 1354, 1388, 1422, 1456,
-  1490, 1524, 1544, 1564, 1585, 1606, 1627, 1648, 1672, 1696, 1719, 1742, 1760, 1778, 1796, 1814, 1833, 1852, 1871,
-  1890, 1907, 1924, 1940, 1956, 1984, 2012, 2040, 2068, 2095, 2122, 2140, 2158, 2176, 2194, 2209, 2225, 2241, 2259,
-  2277, 2295, 2321, 2348, 2375, 2392, 2409, 2431, 2453, 2482, 2511, 2530, 2549, 2568, 2587, 2602, 2617, 2636, 2656,
-  2676, 2697, 2718
+static const uint16_t offset[155] = {
+  0, 8, 22, 36, 50, 64, 78, 92, 119, 147, 175, 203, 230, 257, 289, 321, 339, 357, 382, 408, 424, 440, 455, 470, 492,
+  515, 538, 561, 584, 607, 630, 653, 676, 694, 717, 740, 764, 782, 805, 829, 853, 877, 901, 936, 971, 995, 1019, 1043,
+  1057, 1072, 1087, 1113, 1139, 1165, 1191, 1223, 1255, 1281, 1308, 1335, 1352, 1369, 1403, 1437, 1451, 1465, 1479,
+  1495, 1511, 1537, 1563, 1595, 1627, 1664, 1701, 1738, 1775, 1801, 1833, 1859, 1893, 1927, 1961, 1995, 2029, 2063,
+  2093, 2123, 2143, 2163, 2184, 2205, 2226, 2247, 2271, 2295, 2318, 2341, 2359, 2377, 2392, 2407, 2425, 2443, 2462,
+  2481, 2500, 2519, 2536, 2553, 2569, 2585, 2613, 2641, 2669, 2697, 2724, 2751, 2768, 2785, 2826, 2867, 2885, 2903,
+  2921, 2939, 2954, 2970, 2986, 3004, 3022, 3040, 3066, 3093, 3120, 3137, 3154, 3176, 3198, 3227, 3256, 3275, 3294,
+  3313, 3332, 3347, 3362, 3377, 3392, 3411, 3431, 3451, 3471, 3492, 3513
 };
 
-static const char data[] = 
+static const char data[] =
   "Invalid\0"
   "Abs (NC, F16)\0"
   "Abs (NC, F32)\0"
@@ -38,6 +39,8 @@ static const char data[] =
   "Average Pooling (NHWC, QU8)\0"
   "Bankers Rounding (NC, F16)\0"
   "Bankers Rounding (NC, F32)\0"
+  "Batch Matrix Multiply (NC, F16)\0"
+  "Batch Matrix Multiply (NC, F32)\0"
   "Ceiling (NC, F16)\0"
   "Ceiling (NC, F32)\0"
   "Channel Shuffle (NC, X8)\0"
@@ -50,17 +53,23 @@ static const char data[] =
   "Constant Pad (ND, X16)\0"
   "Constant Pad (ND, X32)\0"
   "Convert (NC, F16, F32)\0"
+  "Convert (NC, F16, QD8)\0"
   "Convert (NC, F32, F16)\0"
+  "Convert (NC, F32, QD8)\0"
   "Convert (NC, F32, QS8)\0"
   "Convert (NC, F32, QU8)\0"
   "Convert (NC, QS8)\0"
+  "Convert (NC, QS8, F16)\0"
   "Convert (NC, QS8, F32)\0"
+  "Convert (NC, QS16, QS8)\0"
   "Convert (NC, QU8)\0"
   "Convert (NC, QU8, F32)\0"
   "Convolution (NCHW, F16)\0"
   "Convolution (NCHW, F32)\0"
   "Convolution (NHWC, F16)\0"
   "Convolution (NHWC, F32)\0"
+  "Convolution (NHWC, QD8, F16, QC8W)\0"
+  "Convolution (NHWC, QD8, F32, QC8W)\0"
   "Convolution (NHWC, QC8)\0"
   "Convolution (NHWC, QS8)\0"
   "Convolution (NHWC, QU8)\0"
@@ -78,6 +87,8 @@ static const char data[] =
   "Depth To Space (NHWC, X32)\0"
   "Divide (ND, F16)\0"
   "Divide (ND, F32)\0"
+  "Dynamic Fully Connected (NC, F16)\0"
+  "Dynamic Fully Connected (NC, F32)\0"
   "ELU (NC, F16)\0"
   "ELU (NC, F32)\0"
   "ELU (NC, QS8)\0"
@@ -85,7 +96,14 @@ static const char data[] =
   "Floor (NC, F32)\0"
   "Fully Connected (NC, F16)\0"
   "Fully Connected (NC, F32)\0"
+  "Fully Connected (NC, F32, QC4W)\0"
+  "Fully Connected (NC, F32, QC8W)\0"
+  "Fully Connected (NC, QD8, F16, QC8W)\0"
+  "Fully Connected (NC, QD8, F16, QC4W)\0"
+  "Fully Connected (NC, QD8, F32, QC4W)\0"
+  "Fully Connected (NC, QD8, F32, QC8W)\0"
   "Fully Connected (NC, QS8)\0"
+  "Fully Connected (NC, QS8, QC8W)\0"
   "Fully Connected (NC, QU8)\0"
   "Global Average Pooling (NCW, F16)\0"
   "Global Average Pooling (NCW, F32)\0"
@@ -93,6 +111,8 @@ static const char data[] =
   "Global Average Pooling (NWC, F32)\0"
   "Global Average Pooling (NWC, QS8)\0"
   "Global Average Pooling (NWC, QU8)\0"
+  "Global Sum Pooling (NWC, F16)\0"
+  "Global Sum Pooling (NWC, F32)\0"
   "HardSwish (NC, F16)\0"
   "HardSwish (NC, F32)\0"
   "Leaky ReLU (NC, F16)\0"
@@ -105,6 +125,8 @@ static const char data[] =
   "Max Pooling (NHWC, U8)\0"
   "Maximum (ND, F16)\0"
   "Maximum (ND, F32)\0"
+  "Mean (ND, F16)\0"
+  "Mean (ND, F32)\0"
   "Minimum (ND, F16)\0"
   "Minimum (ND, F32)\0"
   "Multiply (ND, F16)\0"
@@ -121,6 +143,10 @@ static const char data[] =
   "Resize Bilinear (NHWC, F32)\0"
   "Resize Bilinear (NHWC, S8)\0"
   "Resize Bilinear (NHWC, U8)\0"
+  "RoPE (NTHC, F16)\0"
+  "RoPE (NTHC, F32)\0"
+  "Scaled Dot-Product Attention (NHTC, F16)\0"
+  "Scaled Dot-Product Attention (NHTC, F32)\0"
   "Sigmoid (NC, F16)\0"
   "Sigmoid (NC, F32)\0"
   "Sigmoid (NC, QS8)\0"
@@ -144,11 +170,14 @@ static const char data[] =
   "Subtract (ND, F32)\0"
   "Subtract (ND, QS8)\0"
   "Subtract (ND, QU8)\0"
+  "Tanh (NC, F16)\0"
+  "Tanh (NC, F32)\0"
   "Tanh (NC, QS8)\0"
   "Tanh (NC, QU8)\0"
   "Transpose (ND, X8)\0"
   "Transpose (ND, X16)\0"
   "Transpose (ND, X32)\0"
+  "Transpose (ND, X64)\0"
   "Truncation (NC, F16)\0"
   "Truncation (NC, F32)\0"
   "Unpooling (NHWC, X32)";

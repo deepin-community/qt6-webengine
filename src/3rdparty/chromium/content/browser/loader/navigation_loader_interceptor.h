@@ -5,16 +5,18 @@
 #ifndef CONTENT_BROWSER_LOADER_NAVIGATION_LOADER_INTERCEPTOR_H_
 #define CONTENT_BROWSER_LOADER_NAVIGATION_LOADER_INTERCEPTOR_H_
 
+#include <optional>
+
 #include "base/functional/callback_forward.h"
 #include "content/common/content_export.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/system/data_pipe.h"
+#include "net/base/load_timing_info.h"
 #include "net/url_request/redirect_info.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/network/public/mojom/url_loader.mojom.h"
 #include "services/network/public/mojom/url_response_head.mojom.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace blink {
 class ThrottlingURLLoader;
@@ -25,6 +27,7 @@ namespace content {
 class BrowserContext;
 struct ResourceRequest;
 struct SubresourceLoaderParams;
+struct ResponseHeadUpdateParams;
 
 // NavigationLoaderInterceptor is given a chance to create a URLLoader and
 // intercept a navigation request before the request is handed off to the
@@ -40,7 +43,8 @@ class CONTENT_EXPORT NavigationLoaderInterceptor {
   using LoaderCallback =
       base::OnceCallback<void(scoped_refptr<network::SharedURLLoaderFactory>)>;
   using FallbackCallback =
-      base::OnceCallback<void(bool /* reset_subresource_loader_params */)>;
+      base::OnceCallback<void(bool /* reset_subresource_loader_params */,
+                              const ResponseHeadUpdateParams&)>;
 
   // Asks this interceptor to handle this resource load request.
   // The interceptor must invoke `callback` eventually with either a non-null
@@ -87,7 +91,7 @@ class CONTENT_EXPORT NavigationLoaderInterceptor {
   // SubresourceLoaderParams here if it does NOT want to handle the specific
   // request given to MaybeCreateLoader() but wants to handle the subsequent
   // resource requests or ensure otherinterceptors are skipped.
-  virtual absl::optional<SubresourceLoaderParams>
+  virtual std::optional<SubresourceLoaderParams>
   MaybeCreateSubresourceLoaderParams();
 
   // Returns true if the interceptor creates a loader for the `response_head`
@@ -113,10 +117,6 @@ class CONTENT_EXPORT NavigationLoaderInterceptor {
   // flag was introduced to skip service worker after signed exchange redirect.
   // Remove this flag when we support service worker and signed exchange
   // integration. See crbug.com/894755#c1. Nullptr is not allowed.
-  // `will_return_unsafe_redirect` is set to true when this interceptor will
-  // return an unsafe redirect response and will handle the redirected request,
-  // therefore regular safety check should be exempted for the redirect.
-  // Nullptr is not allowed.
   virtual bool MaybeCreateLoaderForResponse(
       const network::URLLoaderCompletionStatus& status,
       const network::ResourceRequest& request,
@@ -125,13 +125,7 @@ class CONTENT_EXPORT NavigationLoaderInterceptor {
       mojo::PendingRemote<network::mojom::URLLoader>* loader,
       mojo::PendingReceiver<network::mojom::URLLoaderClient>* client_receiver,
       blink::ThrottlingURLLoader* url_loader,
-      bool* skip_other_interceptors,
-      bool* will_return_unsafe_redirect);
-
-  // Called when MaybeCreateLoader() has called the LoaderCallback with a valid
-  // loader factory. Returns true when this interceptor will return an unsafe
-  // redirect response and will handle the redirected request.
-  virtual bool ShouldBypassRedirectChecks();
+      bool* skip_other_interceptors);
 };
 
 }  // namespace content

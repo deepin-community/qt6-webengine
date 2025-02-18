@@ -54,10 +54,6 @@
 typedef const struct __CTFont* CTFontRef;
 #endif  // BUILDFLAG(IS_MAC)
 
-class SkFont;
-class SkTypeface;
-typedef uint32_t SkFontID;
-
 namespace blink {
 
 class Font;
@@ -103,7 +99,7 @@ class PLATFORM_EXPORT FontPlatformData {
   SkTypeface* Typeface() const;
   HarfBuzzFace* GetHarfBuzzFace() const;
   bool HasSpaceInLigaturesOrKerning(TypesettingFeatures) const;
-  SkFontID UniqueID() const;
+  SkTypefaceID UniqueID() const;
   unsigned GetHash() const;
 
   FontOrientation Orientation() const { return orientation_; }
@@ -130,7 +126,9 @@ class PLATFORM_EXPORT FontPlatformData {
   FontPlatformData& operator=(const FontPlatformData&) = delete;
 
   bool IsHashTableDeletedValue() const { return is_hash_table_deleted_value_; }
+#if !BUILDFLAG(IS_MAC)
   bool FontContainsCharacter(UChar32 character);
+#endif
 
 #if !BUILDFLAG(IS_WIN) && !BUILDFLAG(IS_MAC)
   const WebFontRenderStyle& GetFontRenderStyle() const { return style_; }

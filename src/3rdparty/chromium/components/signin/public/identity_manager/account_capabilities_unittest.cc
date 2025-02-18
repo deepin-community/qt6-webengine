@@ -58,18 +58,18 @@ TEST_F(AccountCapabilitiesTest, CanRunChromePrivacySandboxTrials) {
             signin::Tribool::kFalse);
 }
 
-TEST_F(AccountCapabilitiesTest, CanStopParentalSupervision) {
+TEST_F(AccountCapabilitiesTest, IsOptedInToParentalSupervision) {
   AccountCapabilities capabilities;
-  EXPECT_EQ(capabilities.can_stop_parental_supervision(),
+  EXPECT_EQ(capabilities.is_opted_in_to_parental_supervision(),
             signin::Tribool::kUnknown);
 
   AccountCapabilitiesTestMutator mutator(&capabilities);
-  mutator.set_can_stop_parental_supervision(true);
-  EXPECT_EQ(capabilities.can_stop_parental_supervision(),
+  mutator.set_is_opted_in_to_parental_supervision(true);
+  EXPECT_EQ(capabilities.is_opted_in_to_parental_supervision(),
             signin::Tribool::kTrue);
 
-  mutator.set_can_stop_parental_supervision(false);
-  EXPECT_EQ(capabilities.can_stop_parental_supervision(),
+  mutator.set_is_opted_in_to_parental_supervision(false);
+  EXPECT_EQ(capabilities.is_opted_in_to_parental_supervision(),
             signin::Tribool::kFalse);
 }
 
@@ -83,6 +83,36 @@ TEST_F(AccountCapabilitiesTest, CanToggleAutoUpdates) {
 
   mutator.set_can_toggle_auto_updates(false);
   EXPECT_EQ(capabilities.can_toggle_auto_updates(), signin::Tribool::kFalse);
+}
+
+TEST_F(AccountCapabilitiesTest, CanUseChromeIpProtection) {
+  AccountCapabilities capabilities;
+  EXPECT_EQ(capabilities.can_use_chrome_ip_protection(),
+            signin::Tribool::kUnknown);
+
+  AccountCapabilitiesTestMutator mutator(&capabilities);
+  mutator.set_can_use_chrome_ip_protection(true);
+  EXPECT_EQ(capabilities.can_use_chrome_ip_protection(),
+            signin::Tribool::kTrue);
+
+  mutator.set_can_use_chrome_ip_protection(false);
+  EXPECT_EQ(capabilities.can_use_chrome_ip_protection(),
+            signin::Tribool::kFalse);
+}
+
+TEST_F(AccountCapabilitiesTest, CanUseModelExecutionFeatures) {
+  AccountCapabilities capabilities;
+  EXPECT_EQ(capabilities.can_use_model_execution_features(),
+            signin::Tribool::kUnknown);
+
+  AccountCapabilitiesTestMutator mutator(&capabilities);
+  mutator.set_can_use_model_execution_features(true);
+  EXPECT_EQ(capabilities.can_use_model_execution_features(),
+            signin::Tribool::kTrue);
+
+  mutator.set_can_use_model_execution_features(false);
+  EXPECT_EQ(capabilities.can_use_model_execution_features(),
+            signin::Tribool::kFalse);
 }
 
 TEST_F(AccountCapabilitiesTest, IsAllowedForMachineLearning) {
@@ -128,6 +158,45 @@ TEST_F(AccountCapabilitiesTest, IsSubjectToParentalControls) {
   mutator.set_is_subject_to_parental_controls(false);
   EXPECT_EQ(capabilities.is_subject_to_parental_controls(),
             signin::Tribool::kFalse);
+}
+
+TEST_F(AccountCapabilitiesTest,
+       IsSubjectToPrivacySandboxRestrictedMeasurementApiNotice) {
+  AccountCapabilities capabilities;
+  EXPECT_EQ(
+      capabilities
+          .is_subject_to_chrome_privacy_sandbox_restricted_measurement_notice(),
+      signin::Tribool::kUnknown);
+
+  AccountCapabilitiesTestMutator mutator(&capabilities);
+  mutator
+      .set_is_subject_to_chrome_privacy_sandbox_restricted_measurement_notice(
+          true);
+  EXPECT_EQ(
+      capabilities
+          .is_subject_to_chrome_privacy_sandbox_restricted_measurement_notice(),
+      signin::Tribool::kTrue);
+
+  mutator
+      .set_is_subject_to_chrome_privacy_sandbox_restricted_measurement_notice(
+          false);
+  EXPECT_EQ(
+      capabilities
+          .is_subject_to_chrome_privacy_sandbox_restricted_measurement_notice(),
+      signin::Tribool::kFalse);
+}
+
+TEST_F(AccountCapabilitiesTest, AreAnyCapabilitiesKnown_Empty) {
+  AccountCapabilities capabilities;
+  EXPECT_FALSE(capabilities.AreAnyCapabilitiesKnown());
+}
+
+TEST_F(AccountCapabilitiesTest, AreAnyCapabilitiesKnown_PartiallyFilled) {
+  AccountCapabilities capabilities;
+
+  AccountCapabilitiesTestMutator mutator(&capabilities);
+  mutator.set_can_offer_extended_chrome_sync_promos(true);
+  EXPECT_TRUE(capabilities.AreAnyCapabilitiesKnown());
 }
 
 TEST_F(AccountCapabilitiesTest, AreAllCapabilitiesKnown_Empty) {

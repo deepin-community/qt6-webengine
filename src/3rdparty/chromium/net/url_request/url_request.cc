@@ -182,12 +182,6 @@ void URLRequest::Delegate::OnResponseStarted(URLRequest* request,
 URLRequest::~URLRequest() {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
-  // Log the redirect count during destruction, to ensure that it is only
-  // recorded at the end of following all redirect chains.
-  UMA_HISTOGRAM_EXACT_LINEAR("Net.RedirectChainLength",
-                             kMaxRedirects - redirect_limit_,
-                             kMaxRedirects + 1);
-
   Cancel();
 
   if (network_delegate()) {
@@ -281,7 +275,7 @@ LoadStateWithParam URLRequest::GetLoadState() const {
                             std::u16string());
 }
 
-base::Value URLRequest::GetStateAsValue() const {
+base::Value::Dict URLRequest::GetStateAsValue() const {
   base::Value::Dict dict;
   dict.Set("url", original_url().possibly_invalid_spec());
 
@@ -303,8 +297,8 @@ base::Value URLRequest::GetStateAsValue() const {
     dict.Set("delegate_blocked_by", blocked_by_);
 
   dict.Set("method", method_);
-  // TODO(https://crbug.com/1343856): Update "network_isolation_key" to
-  // "network_anonymization_key" and change NetLog viewer.
+  dict.Set("network_anonymization_key",
+           isolation_info_.network_anonymization_key().ToDebugString());
   dict.Set("network_isolation_key",
            isolation_info_.network_isolation_key().ToDebugString());
   dict.Set("has_upload", has_upload());
@@ -314,7 +308,7 @@ base::Value URLRequest::GetStateAsValue() const {
 
   if (status_ != OK)
     dict.Set("net_error", status_);
-  return base::Value(std::move(dict));
+  return dict;
 }
 
 void URLRequest::LogBlockedBy(base::StringPiece blocked_by) {
@@ -539,8 +533,9 @@ void URLRequest::Start() {
   if (status_ != OK)
     return;
 
-  if (context_->require_network_isolation_key())
+  if (context_->require_network_anonymization_key()) {
     DCHECK(!isolation_info_.IsEmpty());
+  }
 
   // Some values can be NULL, but the job factory must not be.
   DCHECK(context_->job_factory());
@@ -650,6 +645,10 @@ void URLRequest::StartJob(std::unique_ptr<URLRequestJob> job) {
   job_->SetPriority(priority_);
   job_->SetRequestHeadersCallback(request_headers_callback_);
   job_->SetEarlyResponseHeadersCallback(early_response_headers_callback_);
+  if (is_shared_dictionary_read_allowed_callback_) {
+    job_->SetIsSharedDictionaryReadAllowedCallback(
+        is_shared_dictionary_read_allowed_callback_);
+  }
   job_->SetResponseHeadersCallback(response_headers_callback_);
 
   if (upload_data_stream_.get())
@@ -942,7 +941,7 @@ void URLRequest::PrepareToRestart() {
 
   status_ = OK;
   is_pending_ = false;
-  proxy_server_ = ProxyServer();
+  proxy_chain_ = ProxyChain();
 }
 
 void URLRequest::Redirect(
@@ -979,8 +978,15 @@ void URLRequest::Redirect(
   referrer_ = redirect_info.new_referrer;
   referrer_policy_ = redirect_info.new_referrer_policy;
   site_for_cookies_ = redirect_info.new_site_for_cookies;
-  isolation_info_ = isolation_info_.CreateForRedirect(
-      url::Origin::Create(redirect_info.new_url));
+  set_isolation_info(isolation_info_.CreateForRedirect(
+      url::Origin::Create(redirect_info.new_url)));
+
+  if ((load_flags_ & LOAD_CAN_USE_SHARED_DICTIONARY) &&
+      (load_flags_ &
+       LOAD_DISABLE_SHARED_DICTIONARY_AFTER_CROSS_ORIGIN_REDIRECT) &&
+      !url::Origin::Create(url()).IsSameOriginWith(redirect_info.new_url)) {
+    load_flags_ &= ~LOAD_CAN_USE_SHARED_DICTIONARY;
+  }
 
   url_chain_.push_back(redirect_info.new_url);
   --redirect_limit_;
@@ -1061,12 +1067,16 @@ void URLRequest::NotifySSLCertificateError(int net_error,
   delegate_->OnSSLCertificateError(this, net_error, ssl_info, fatal);
 }
 
-bool URLRequest::CanSetCookie(const net::CanonicalCookie& cookie,
-                              CookieOptions* options) const {
+bool URLRequest::CanSetCookie(
+    const net::CanonicalCookie& cookie,
+    CookieOptions* options,
+    const net::FirstPartySetMetadata& first_party_set_metadata,
+    CookieInclusionStatus* inclusion_status) const {
   DCHECK(!(load_flags_ & LOAD_DO_NOT_SAVE_COOKIES));
   bool can_set_cookies = g_default_can_use_cookies;
   if (network_delegate()) {
-    can_set_cookies = network_delegate()->CanSetCookie(*this, cookie, options);
+    can_set_cookies = network_delegate()->CanSetCookie(
+        *this, cookie, options, first_party_set_metadata, inclusion_status);
   }
   if (!can_set_cookies)
     net_log_.AddEvent(NetLogEventType::COOKIE_SET_BLOCKED_BY_NETWORK_DELEGATE);
@@ -1188,8 +1198,7 @@ IsolationInfo URLRequest::CreateIsolationInfoFromNetworkAnonymizationKey(
       network_anonymization_key.GetTopFrameSite()->site_as_origin_;
 
   absl::optional<url::Origin> frame_origin;
-  if (NetworkAnonymizationKey::IsCrossSiteFlagSchemeEnabled() &&
-      network_anonymization_key.GetIsCrossSite().value()) {
+  if (network_anonymization_key.IsCrossSite()) {
     // If we know that the origin is cross site to the top level site, create an
     // empty origin to use as the frame origin for the isolation info. This
     // should be cross site with the top level origin.
@@ -1200,15 +1209,10 @@ IsolationInfo URLRequest::CreateIsolationInfoFromNetworkAnonymizationKey(
     frame_origin = top_frame_origin;
   }
 
-  const base::UnguessableToken* nonce =
-      network_anonymization_key.GetNonce()
-          ? &network_anonymization_key.GetNonce().value()
-          : nullptr;
-
   auto isolation_info = IsolationInfo::Create(
       IsolationInfo::RequestType::kOther, top_frame_origin,
       frame_origin.value(), SiteForCookies(),
-      /*party_context=*/absl::nullopt, nonce);
+      network_anonymization_key.GetNonce());
   // TODO(crbug/1343856): DCHECK isolation info is fully populated.
   return isolation_info;
 }
@@ -1236,6 +1240,13 @@ void URLRequest::SetEarlyResponseHeadersCallback(
   DCHECK(!job_.get());
   DCHECK(early_response_headers_callback_.is_null());
   early_response_headers_callback_ = std::move(callback);
+}
+
+void URLRequest::SetIsSharedDictionaryReadAllowedCallback(
+    base::RepeatingCallback<bool()> callback) {
+  DCHECK(!job_.get());
+  DCHECK(is_shared_dictionary_read_allowed_callback_.is_null());
+  is_shared_dictionary_read_allowed_callback_ = std::move(callback);
 }
 
 void URLRequest::set_socket_tag(const SocketTag& socket_tag) {

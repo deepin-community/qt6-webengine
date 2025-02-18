@@ -67,11 +67,7 @@ constexpr size_t kTimestampCacheSize = 128;
 absl::optional<VideoPixelFormat> GetPixelFormatForBitDepth(uint8_t bit_depth) {
   constexpr auto kSupportedBitDepthAndGfxFormats = base::MakeFixedFlatMap<
       uint8_t, gfx::BufferFormat>({
-#if BUILDFLAG(IS_OZONE)
     {8u, gfx::BufferFormat::YUV_420_BIPLANAR}, {10u, gfx::BufferFormat::P010},
-#else
-    {8u, gfx::BufferFormat::RGBX_8888},
-#endif  // BUILDFLAG(IS_OZONE)
   });
   if (!base::Contains(kSupportedBitDepthAndGfxFormats, bit_depth)) {
     VLOGF(1) << "Unsupported bit depth: " << base::strict_cast<int>(bit_depth);
@@ -209,6 +205,7 @@ void VaapiVideoDecoder::Initialize(const VideoDecoderConfig& config,
     // Notify |decoder_delegate_| of an imminent VAContextID destruction, so it
     // can destroy any internal structures making use of it.
     decoder_delegate_->OnVAContextDestructionSoon();
+    decoder_delegate_ = nullptr;
 
     decoder_ = nullptr;
     DCHECK(vaapi_wrapper_);
@@ -218,7 +215,6 @@ void VaapiVideoDecoder::Initialize(const VideoDecoderConfig& config,
 
     DCHECK(vaapi_wrapper_->HasOneRef());
     vaapi_wrapper_ = nullptr;
-    decoder_delegate_ = nullptr;
 
     // |cdm_context_ref_| is reset after |decoder_| because we passed
     // |cdm_context_ref_->GetCdmContext()| when creating the |decoder_|, so we
@@ -374,6 +370,7 @@ void VaapiVideoDecoder::Decode(scoped_refptr<DecoderBuffer> buffer,
 
 void VaapiVideoDecoder::ScheduleNextDecodeTask() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  TRACE_EVENT0("media", "VaapiVideoDecoder::ScheduleNextDecodeTask");
   DCHECK_EQ(state_, State::kDecoding);
   DCHECK(!current_decode_task_);
   DCHECK(!decode_task_queue_.empty());
@@ -394,6 +391,7 @@ void VaapiVideoDecoder::ScheduleNextDecodeTask() {
 void VaapiVideoDecoder::HandleDecodeTask() {
   DVLOGF(4);
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  TRACE_EVENT0("media", "VaapiVideoDecoder::HandleDecodeTask");
 
   if (state_ != State::kDecoding)
     return;
@@ -437,9 +435,6 @@ void VaapiVideoDecoder::HandleDecodeTask() {
       // video frames to the frame pool.
       SetState(State::kWaitingForOutput);
       break;
-    case AcceleratedVideoDecoder::kNeedContextUpdate:
-      SetErrorState("context updates not supported");
-      break;
     case AcceleratedVideoDecoder::kDecodeError:
       UMA_HISTOGRAM_BOOLEAN("Media.VaapiVideoDecoder.DecodeError", true);
       SetErrorState("error decoding stream");
@@ -450,8 +445,34 @@ void VaapiVideoDecoder::HandleDecodeTask() {
       SetState(State::kWaitingForProtected);
       // If we have lost our protected HW session, it should be recoverable, so
       // indicate that we have lost our decoder state so it can be reloaded.
-      if (decoder_delegate_->HasInitiatedProtectedRecovery())
+      if (decoder_delegate_->HasInitiatedProtectedRecovery()) {
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+        // We only do the VAContext recreation for Chrome playback because there
+        // is no mechanism in ARC to re-seek so we would end up using invalid
+        // reference frames.
+        CHECK(cdm_context_ref_);
+        if (!cdm_context_ref_->GetCdmContext()
+                 ->GetChromeOsCdmContext()
+                 ->UsingArcCdm()) {
+          // The VA-API requires surfaces to outlive the contexts using them.
+          // Fortunately, if we got here, any context should have already been
+          // destroyed.
+          CHECK(!!vaapi_wrapper_);
+          CHECK(!vaapi_wrapper_->HasContext());
+          allocated_va_surfaces_.clear();
+          const gfx::Size decoder_pic_size = decoder_->GetPicSize();
+          if (decoder_pic_size.IsEmpty()) {
+            SetErrorState("|decoder_| returned an empty picture size");
+            return;
+          }
+          if (!vaapi_wrapper_->CreateContext(decoder_pic_size)) {
+            SetErrorState("failed creating VAContext");
+            return;
+          }
+        }
+#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
         waiting_cb_.Run(WaitingReason::kDecoderStateLost);
+      }
       break;
   }
 }
@@ -490,14 +511,8 @@ scoped_refptr<VASurface> VaapiVideoDecoder::CreateSurface() {
     return nullptr;
   }
 
-  // |frame|s coming from ARC++ are not GpuMemoryBuffer-backed, but they have
-  // DmaBufs whose fd numbers are consistent along the lifetime of the VA
-  // surfaces they back.
-  DCHECK(frame->GetGpuMemoryBuffer() || frame->HasDmaBufs());
-  const gfx::GpuMemoryBufferId frame_id =
-      frame->GetGpuMemoryBuffer()
-          ? frame->GetGpuMemoryBuffer()->GetId()
-          : gfx::GpuMemoryBufferId(frame->DmabufFds()[0].get());
+  const gfx::GpuMemoryBufferId frame_id = GetSharedMemoryId(*frame);
+  DCHECK(frame_id.is_valid());
 
   scoped_refptr<VASurface> va_surface;
   if (!base::Contains(allocated_va_surfaces_, frame_id)) {
@@ -607,6 +622,11 @@ void VaapiVideoDecoder::SurfaceReady(scoped_refptr<VASurface> va_surface,
     video_frame->set_color_space(gfx_color_space);
   video_frame->set_hdr_metadata(hdr_metadata_);
   output_cb_.Run(std::move(video_frame));
+}
+
+void VaapiVideoDecoder::
+    set_ignore_resolution_changes_to_smaller_vp9_for_testing(bool value) {
+  ignore_resolution_changes_to_smaller_for_testing_ = value;
 }
 
 void VaapiVideoDecoder::ApplyResolutionChange() {
@@ -851,12 +871,13 @@ VaapiVideoDecoder::AllocateCustomFrameProxy(
     const gfx::Size& natural_size,
     bool use_protected,
     bool use_linear_buffers,
+    bool needs_detiling,
     base::TimeDelta timestamp) {
   if (!decoder)
     return CroStatus::Codes::kFailedToCreateVideoFrame;
-  return decoder->AllocateCustomFrame(format, coded_size, visible_rect,
-                                      natural_size, use_protected,
-                                      use_linear_buffers, timestamp);
+  return decoder->AllocateCustomFrame(
+      format, coded_size, visible_rect, natural_size, use_protected,
+      use_linear_buffers, needs_detiling, timestamp);
 }
 
 CroStatus::Or<scoped_refptr<VideoFrame>> VaapiVideoDecoder::AllocateCustomFrame(
@@ -866,11 +887,13 @@ CroStatus::Or<scoped_refptr<VideoFrame>> VaapiVideoDecoder::AllocateCustomFrame(
     const gfx::Size& natural_size,
     bool use_protected,
     bool use_linear_buffers,
+    bool needs_detiling,
     base::TimeDelta timestamp) {
   DVLOGF(2);
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(state_ == State::kChangingResolution || state_ == State::kDecoding);
   DCHECK(!use_linear_buffers);
+  DCHECK(!needs_detiling);
 
   scoped_refptr<VASurface> surface;
   switch (format) {
@@ -922,24 +945,6 @@ CroStatus::Or<scoped_refptr<VideoFrame>> VaapiVideoDecoder::AllocateCustomFrame(
   if (!frame)
     return CroStatus::Codes::kFailedToCreateVideoFrame;
 
-  if (format == PIXEL_FORMAT_NV12) {
-#if BUILDFLAG(ENABLE_VULKAN)
-    frame->set_ycbcr_info(gpu::VulkanYCbCrInfo(
-        /*image_format=*/VK_FORMAT_G8_B8R8_2PLANE_420_UNORM,
-        /*external_format=*/0,
-        /*suggested_ycbcr_model=*/VK_SAMPLER_YCBCR_MODEL_CONVERSION_YCBCR_709,
-        /*suggested_ycbcr_range=*/VK_SAMPLER_YCBCR_RANGE_ITU_NARROW,
-        /*suggested_xchroma_offset=*/VK_CHROMA_LOCATION_COSITED_EVEN,
-        /*suggested_ychroma_offset=*/VK_CHROMA_LOCATION_COSITED_EVEN,
-        /*format_features=*/VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
-            VK_FORMAT_FEATURE_TRANSFER_SRC_BIT |
-            VK_FORMAT_FEATURE_TRANSFER_DST_BIT |
-            VK_FORMAT_FEATURE_COSITED_CHROMA_SAMPLES_BIT |
-            VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT |
-            VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT));
-#endif
-  }
-
   allocated_va_surfaces_[handle_id] = surface;
 
   return frame;
@@ -953,14 +958,11 @@ bool VaapiVideoDecoder::NeedsBitstreamConversion() const {
 }
 
 bool VaapiVideoDecoder::CanReadWithoutStalling() const {
-  NOTIMPLEMENTED();
-  NOTREACHED();
-  return true;
+  NOTREACHED_NORETURN();
 }
 
 int VaapiVideoDecoder::GetMaxDecodeRequests() const {
-  NOTREACHED();
-  return 4;
+  NOTREACHED_NORETURN();
 }
 
 VideoDecoderType VaapiVideoDecoder::GetDecoderType() const {
@@ -1004,6 +1006,7 @@ void VaapiVideoDecoder::ReleaseVideoFrame(VASurfaceID surface_id) {
 void VaapiVideoDecoder::NotifyFrameAvailable() {
   DVLOGF(4);
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  TRACE_EVENT0("media", "VaapiVideoDecoder::NotifyFrameAvailable");
 
   // If we were waiting for output buffers, retry the current decode task.
   if (state_ == State::kWaitingForOutput) {
@@ -1141,6 +1144,12 @@ VaapiStatus VaapiVideoDecoder::CreateAcceleratedVideoDecoder() {
 
     decoder_ = std::make_unique<VP9Decoder>(std::move(accelerator), profile_,
                                             color_space_);
+
+    if (ignore_resolution_changes_to_smaller_for_testing_) {
+      static_cast<VP9Decoder*>(decoder_.get())
+          ->set_ignore_resolution_changes_to_smaller_for_testing(  // IN-TEST
+              true);
+    }
   }
 #if BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)
   else if (profile_ >= HEVCPROFILE_MIN && profile_ <= HEVCPROFILE_MAX) {

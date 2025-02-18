@@ -17,12 +17,11 @@
 #include "core/fxcrt/cfx_read_only_span_stream.h"
 #include "core/fxcrt/fx_safe_types.h"
 #include "third_party/base/check.h"
-#include "third_party/base/ptr_util.h"
+#include "third_party/base/memory/ptr_util.h"
 
 namespace {
 
-bool IsObjectStream(const CPDF_Object* object) {
-  const CPDF_Stream* stream = ToStream(object);
+bool IsObjectStream(const CPDF_Stream* stream) {
   if (!stream)
     return false;
 

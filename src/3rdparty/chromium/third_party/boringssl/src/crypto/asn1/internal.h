@@ -56,8 +56,8 @@
  *
  */
 
-#ifndef OPENSSL_HEADER_ASN1_ASN1_LOCL_H
-#define OPENSSL_HEADER_ASN1_ASN1_LOCL_H
+#ifndef OPENSSL_HEADER_ASN1_INTERNAL_H
+#define OPENSSL_HEADER_ASN1_INTERNAL_H
 
 #include <time.h>
 
@@ -210,6 +210,14 @@ void asn1_encoding_clear(ASN1_ENCODING *enc);
 // a pointer.
 const void *asn1_type_value_as_pointer(const ASN1_TYPE *a);
 
+// asn1_type_set0_string sets |a|'s value to the object represented by |str| and
+// takes ownership of |str|.
+void asn1_type_set0_string(ASN1_TYPE *a, ASN1_STRING *str);
+
+// asn1_type_cleanup releases memory associated with |a|'s value, without
+// freeing |a| itself.
+void asn1_type_cleanup(ASN1_TYPE *a);
+
 // asn1_is_printable returns one if |value| is a valid Unicode codepoint for an
 // ASN.1 PrintableString, and zero otherwise.
 int asn1_is_printable(uint32_t value);
@@ -252,7 +260,6 @@ typedef void ASN1_ex_free_func(ASN1_VALUE **pval, const ASN1_ITEM *it);
 typedef struct ASN1_EXTERN_FUNCS_st {
   ASN1_ex_new_func *asn1_ex_new;
   ASN1_ex_free_func *asn1_ex_free;
-  ASN1_ex_free_func *asn1_ex_clear;
   ASN1_ex_d2i *asn1_ex_d2i;
   ASN1_ex_i2d *asn1_ex_i2d;
 } ASN1_EXTERN_FUNCS;
@@ -262,4 +269,4 @@ typedef struct ASN1_EXTERN_FUNCS_st {
 }  // extern C
 #endif
 
-#endif  // OPENSSL_HEADER_ASN1_ASN1_LOCL_H
+#endif  // OPENSSL_HEADER_ASN1_INTERNAL_H

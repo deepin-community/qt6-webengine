@@ -43,8 +43,6 @@
 #include "components/viz/common/frame_sinks/begin_frame_args.h"
 #include "components/viz/common/frame_sinks/begin_frame_source.h"
 #include "components/viz/common/gpu/context_provider.h"
-#include "components/viz/common/resources/resource_format.h"
-#include "components/viz/common/resources/resource_settings.h"
 #include "components/viz/common/switches.h"
 #include "components/viz/host/host_frame_sink_manager.h"
 #include "components/viz/host/renderer_settings_creation.h"
@@ -52,6 +50,7 @@
 #include "services/viz/privileged/mojom/compositing/external_begin_frame_controller.mojom.h"
 #include "services/viz/privileged/mojom/compositing/vsync_parameter_observer.mojom.h"
 #include "third_party/skia/include/core/SkBitmap.h"
+#include "ui/base/ozone_buildflags.h"
 #include "ui/base/ui_base_features.h"
 #include "ui/base/ui_base_switches.h"
 #include "ui/compositor/compositor_observer.h"
@@ -193,23 +192,21 @@ Compositor::Compositor(const viz::FrameSinkId& frame_sink_id,
 #if BUILDFLAG(IS_APPLE)
   // Using CoreAnimation to composite requires using GpuMemoryBuffers, which
   // require zero copy.
-  settings.resource_settings.use_gpu_memory_buffer_resources =
-      settings.use_zero_copy;
+  settings.use_gpu_memory_buffer_resources = settings.use_zero_copy;
   settings.enable_elastic_overscroll = true;
 #endif
 
 #if BUILDFLAG(IS_CHROMEOS_LACROS)
   // Rasterized tiles must be overlay candidates to be forwarded.
   // This is very similar to the line above for Apple.
-  settings.resource_settings.use_gpu_memory_buffer_resources =
+  settings.use_gpu_memory_buffer_resources =
       features::IsDelegatedCompositingEnabled();
 #endif
 
   // Set use_gpu_memory_buffer_resources to false to disable delegated
   // compositing, if RawDraw is enabled.
-  if (settings.resource_settings.use_gpu_memory_buffer_resources &&
-      features::IsUsingRawDraw()) {
-    settings.resource_settings.use_gpu_memory_buffer_resources = false;
+  if (settings.use_gpu_memory_buffer_resources && features::IsUsingRawDraw()) {
+    settings.use_gpu_memory_buffer_resources = false;
   }
 
   settings.memory_policy.bytes_limit_when_visible =
@@ -224,11 +221,6 @@ Compositor::Compositor(const viz::FrameSinkId& frame_sink_id,
 
   settings.wait_for_all_pipeline_stages_before_draw =
       command_line->HasSwitch(switches::kRunAllCompositorStagesBeforeDraw);
-
-  if (base::FeatureList::IsEnabled(
-          features::kCompositorThreadedScrollbarScrolling)) {
-    settings.compositor_threaded_scrollbar_scrolling = true;
-  }
 
   if (features::IsPercentBasedScrollingEnabled()) {
     settings.percent_based_scrolling = true;
@@ -316,7 +308,7 @@ Compositor::~Compositor() {
     host_frame_sink_manager->UnregisterFrameSinkHierarchy(frame_sink_id_,
                                                           client);
   }
-  host_frame_sink_manager->InvalidateFrameSinkId(frame_sink_id_);
+  host_frame_sink_manager->InvalidateFrameSinkId(frame_sink_id_, this);
 }
 
 void Compositor::AddChildFrameSink(const viz::FrameSinkId& frame_sink_id) {
@@ -352,9 +344,16 @@ void Compositor::SetLayerTreeFrameSink(
     display_private_->SetDisplayColorMatrix(
         gfx::SkM44ToTransform(display_color_matrix_));
     display_private_->SetOutputIsSecure(output_is_secure_);
-    if (has_vsync_params_)
+#if BUILDFLAG(IS_MAC)
+    display_private_->SetVSyncDisplayID(display_id_);
+#endif
+    if (has_vsync_params_) {
       display_private_->SetDisplayVSyncParameters(vsync_timebase_,
                                                   vsync_interval_);
+    }
+    if (max_vrr_interval_.has_value()) {
+      display_private_->SetMaxVrrInterval(max_vrr_interval_);
+    }
   }
 }
 
@@ -589,6 +588,15 @@ void Compositor::AddVSyncParameterObserver(
     display_private_->AddVSyncParameterObserver(std::move(observer));
 }
 
+void Compositor::SetMaxVrrInterval(
+    const absl::optional<base::TimeDelta>& max_vrr_interval) {
+  max_vrr_interval_ = max_vrr_interval;
+
+  if (display_private_) {
+    display_private_->SetMaxVrrInterval(max_vrr_interval);
+  }
+}
+
 void Compositor::SetAcceleratedWidget(gfx::AcceleratedWidget widget) {
   // This function should only get called once.
   DCHECK(!widget_valid_);
@@ -762,7 +770,9 @@ void Compositor::DidFailToInitializeLayerTreeFrameSink() {
                      context_creation_weak_ptr_factory_.GetWeakPtr()));
 }
 
-void Compositor::DidCommit(base::TimeTicks, base::TimeTicks) {
+void Compositor::DidCommit(int source_frame_number,
+                           base::TimeTicks,
+                           base::TimeTicks) {
   DCHECK(!IsLocked());
   for (auto& observer : observer_list_)
     observer.OnCompositingDidCommit(this);
@@ -884,14 +894,12 @@ void Compositor::OnResume() {
     obs.ResetIfActive();
 }
 
-// TODO(crbug.com/1052397): Revisit the macro expression once build flag switch
-// of lacros-chrome is complete.
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#if BUILDFLAG(IS_LINUX) && BUILDFLAG(IS_OZONE_X11)
 void Compositor::OnCompleteSwapWithNewSize(const gfx::Size& size) {
   for (auto& observer : observer_list_)
     observer.OnCompositingCompleteSwapWithNewSize(this, size);
 }
-#endif
+#endif  // BUILDFLAG(IS_LINUX) && BUILDFLAG(IS_OZONE_X11)
 
 void Compositor::SetOutputIsSecure(bool output_is_secure) {
   output_is_secure_ = output_is_secure;

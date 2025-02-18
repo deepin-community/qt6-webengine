@@ -190,13 +190,14 @@ std::unique_ptr<TrialToken> TrialToken::Parse(const std::string& token_payload,
     return nullptr;
   }
 
-  absl::optional<base::Value> datadict = base::JSONReader::Read(token_payload);
-  if (!datadict || !datadict->is_dict()) {
+  absl::optional<base::Value> data = base::JSONReader::Read(token_payload);
+  if (!data || !data->is_dict()) {
     return nullptr;
   }
+  base::Value::Dict& datadict = data->GetDict();
 
   // Ensure that the origin is a valid (non-opaque) origin URL.
-  std::string* origin_string = datadict->FindStringKey("origin");
+  std::string* origin_string = datadict.FindString("origin");
   if (!origin_string) {
     return nullptr;
   }
@@ -207,7 +208,7 @@ std::unique_ptr<TrialToken> TrialToken::Parse(const std::string& token_payload,
 
   // The |isSubdomain| flag is optional. If found, ensure it is a valid boolean.
   bool is_subdomain = false;
-  base::Value* is_subdomain_value = datadict->GetDict().Find("isSubdomain");
+  base::Value* is_subdomain_value = datadict.Find("isSubdomain");
   if (is_subdomain_value) {
     if (!is_subdomain_value->is_bool()) {
       return nullptr;
@@ -216,13 +217,13 @@ std::unique_ptr<TrialToken> TrialToken::Parse(const std::string& token_payload,
   }
 
   // Ensure that the feature name is a valid string.
-  std::string* feature_name = datadict->FindStringKey("feature");
+  std::string* feature_name = datadict.FindString("feature");
   if (!feature_name || feature_name->empty()) {
     return nullptr;
   }
 
   // Ensure that the expiry timestamp is a valid (positive) integer.
-  int expiry_timestamp = datadict->FindIntKey("expiry").value_or(0);
+  int expiry_timestamp = datadict.FindInt("expiry").value_or(0);
   if (expiry_timestamp <= 0) {
     return nullptr;
   }
@@ -234,8 +235,7 @@ std::unique_ptr<TrialToken> TrialToken::Parse(const std::string& token_payload,
   if (version == kVersion3) {
     // The |isThirdParty| flag is optional. If found, ensure it is a valid
     // boolean.
-    base::Value* is_third_party_value =
-        datadict->GetDict().Find("isThirdParty");
+    base::Value* is_third_party_value = datadict.Find("isThirdParty");
     if (is_third_party_value) {
       if (!is_third_party_value->is_bool()) {
         return nullptr;
@@ -245,7 +245,7 @@ std::unique_ptr<TrialToken> TrialToken::Parse(const std::string& token_payload,
 
     // The |usage| field is optional. If found, ensure its value is either empty
     // or "subset".
-    std::string* usage_value = datadict->FindStringKey("usage");
+    std::string* usage_value = datadict.FindString("usage");
     if (usage_value) {
       if (usage_value->empty()) {
         usage = UsageRestriction::kNone;
@@ -257,9 +257,10 @@ std::unique_ptr<TrialToken> TrialToken::Parse(const std::string& token_payload,
     }
   }
 
-  return base::WrapUnique(new TrialToken(
-      origin, is_subdomain, *feature_name,
-      base::Time::FromDoubleT(expiry_timestamp), is_third_party, usage));
+  return base::WrapUnique(
+      new TrialToken(origin, is_subdomain, *feature_name,
+                     base::Time::FromSecondsSinceUnixEpoch(expiry_timestamp),
+                     is_third_party, usage));
 }
 
 bool TrialToken::ValidateOrigin(const url::Origin& origin) const {
@@ -272,6 +273,10 @@ bool TrialToken::ValidateOrigin(const url::Origin& origin) const {
     return true;
   }
 
+  // TODO(crbug.com/1227440): `OriginTrials::MatchesTokenOrigin()` is meant to
+  // mirror the logic used in this method (below). Find a way to share/reuse
+  // this logic. Otherwise, the logic could change in one place and not the
+  // other.
   if (match_subdomains_) {
     return origin.scheme() == origin_.scheme() &&
            origin.DomainIs(origin_.host()) && origin.port() == origin_.port();

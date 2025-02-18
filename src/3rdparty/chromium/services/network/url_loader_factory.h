@@ -24,11 +24,14 @@ namespace network {
 
 class NetworkContext;
 class ResourceSchedulerClient;
-class URLLoader;
 
 namespace cors {
 class CorsURLLoaderFactory;
 }  // namespace cors
+
+namespace mojom {
+class URLLoader;
+}  // namespace mojom
 
 // This class is an implementation of mojom::URLLoaderFactory that
 // creates a mojom::URLLoader.
@@ -68,7 +71,7 @@ class URLLoaderFactory : public mojom::URLLoaderFactory,
   void Clone(mojo::PendingReceiver<mojom::URLLoaderFactory> receiver) override;
 
   // URLLoaderContext implementation.
-  bool ShouldRequireNetworkIsolationKey() const override;
+  bool ShouldRequireIsolationInfo() const override;
   const cors::OriginAccessList& GetOriginAccessList() const override;
   const mojom::URLLoaderFactoryParams& GetFactoryParams() const override;
   mojom::CookieAccessObserver* GetCookieAccessObserver() const override;
@@ -84,6 +87,7 @@ class URLLoaderFactory : public mojom::URLLoaderFactory,
   scoped_refptr<ResourceSchedulerClient> GetResourceSchedulerClient()
       const override;
   corb::PerFactoryState& GetMutableCorbState() override;
+  bool DataUseUpdatesEnabled() override;
 
   // Allows starting a URLLoader with a synchronous URLLoaderClient as an
   // optimization.
@@ -136,8 +140,6 @@ class URLLoaderFactory : public mojom::URLLoaderFactory,
 
   mojo::Remote<mojom::CookieAccessObserver> cookie_observer_;
   mojo::Remote<mojom::TrustTokenAccessObserver> trust_token_observer_;
-  mojo::Remote<mojom::URLLoaderNetworkServiceObserver>
-      url_loader_network_service_observer_;
   mojo::Remote<mojom::DevToolsObserver> devtools_observer_;
 
   base::OneShotTimer update_load_info_timer_;

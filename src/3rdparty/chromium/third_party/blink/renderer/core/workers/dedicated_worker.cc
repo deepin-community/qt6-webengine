@@ -118,6 +118,7 @@ DedicatedWorker::DedicatedWorker(
     base::FunctionRef<DedicatedWorkerMessagingProxy*(DedicatedWorker*)>
         context_proxy_factory)
     : AbstractWorker(context),
+      ActiveScriptWrappable<DedicatedWorker>({}),
       script_request_url_(script_request_url),
       options_(options),
       context_proxy_(context_proxy_factory(this)),
@@ -523,7 +524,7 @@ DedicatedWorker::CreateGlobalScopeCreationParams(
       execution_context->IsIsolatedContext(),
       /*interface_registry=*/nullptr,
       std::move(agent_group_scheduler_compositor_task_runner),
-      top_level_frame_security_origin);
+      top_level_frame_security_origin, execution_context->HasStorageAccess());
 }
 
 scoped_refptr<WebWorkerFetchContext>

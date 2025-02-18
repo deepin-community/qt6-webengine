@@ -7,6 +7,7 @@
 #include <memory>
 #include <utility>
 
+#include <optional>
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/run_loop.h"
@@ -23,7 +24,6 @@
 #include "cc/test/test_paint_worklet_input.h"
 #include "cc/tiles/image_decode_cache.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace cc {
 namespace {
@@ -407,9 +407,7 @@ TEST_F(ImageControllerTest, QueueImageDecodeMultipleImagesSameTask) {
   EXPECT_TRUE(task->HasCompleted());
 }
 
-// TODO(crbug.com/1336053): Re-enable this test
-TEST_F(ImageControllerTest,
-       DISABLED_QueueImageDecodeChangeControllerWithTaskQueued) {
+TEST_F(ImageControllerTest, QueueImageDecodeChangeControllerWithTaskQueued) {
   scoped_refptr<BlockingTask> task_one(new BlockingTask);
   cache()->SetTaskToUse(task_one);
 

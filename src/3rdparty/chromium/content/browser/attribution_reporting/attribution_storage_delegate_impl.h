@@ -5,17 +5,28 @@
 #ifndef CONTENT_BROWSER_ATTRIBUTION_REPORTING_ATTRIBUTION_STORAGE_DELEGATE_IMPL_H_
 #define CONTENT_BROWSER_ATTRIBUTION_REPORTING_ATTRIBUTION_STORAGE_DELEGATE_IMPL_H_
 
+#include <stdint.h>
+
 #include <memory>
 #include <vector>
 
 #include "base/thread_annotations.h"
+#include "components/attribution_reporting/source_type.mojom-forward.h"
 #include "content/browser/attribution_reporting/attribution_storage_delegate.h"
 #include "content/common/content_export.h"
+
+namespace base {
+class Time;
+class TimeDelta;
+}  // namespace base
+
+namespace network {
+class TriggerVerification;
+}  // namespace network
 
 namespace content {
 
 struct AttributionConfig;
-class CommonSourceInfo;
 
 enum class AttributionNoiseMode {
   // Various aspects of the API are subject to noise:
@@ -61,45 +72,46 @@ class CONTENT_EXPORT AttributionStorageDelegateImpl
   ~AttributionStorageDelegateImpl() override;
 
   // AttributionStorageDelegate:
-  base::Time GetEventLevelReportTime(const CommonSourceInfo& source,
-                                     base::Time trigger_time) const override;
+  base::Time GetEventLevelReportTime(
+      const attribution_reporting::EventReportWindows& event_report_windows,
+      base::Time source_time,
+      base::Time trigger_time) const override;
   base::Time GetAggregatableReportTime(base::Time trigger_time) const override;
   base::TimeDelta GetDeleteExpiredSourcesFrequency() const override;
   base::TimeDelta GetDeleteExpiredRateLimitsFrequency() const override;
-  base::GUID NewReportID() const override;
-  absl::optional<OfflineReportDelayConfig> GetOfflineReportDelayConfig()
+  base::Uuid NewReportID() const override;
+  std::optional<OfflineReportDelayConfig> GetOfflineReportDelayConfig()
       const override;
   void ShuffleReports(std::vector<AttributionReport>& reports) override;
-  RandomizedResponse GetRandomizedResponse(
-      const CommonSourceInfo& source) override;
+  void ShuffleTriggerVerifications(
+      std::vector<network::TriggerVerification>& verifications) override;
+  double GetRandomizedResponseRate(
+      const attribution_reporting::TriggerSpecs&,
+      attribution_reporting::MaxEventLevelReports,
+      attribution_reporting::EventLevelEpsilon) const override;
+  GetRandomizedResponseResult GetRandomizedResponse(
+      attribution_reporting::mojom::SourceType,
+      const attribution_reporting::TriggerSpecs&,
+      attribution_reporting::MaxEventLevelReports,
+      attribution_reporting::EventLevelEpsilon,
+      base::Time source_time) const override;
+  std::vector<NullAggregatableReport> GetNullAggregatableReports(
+      const AttributionTrigger&,
+      base::Time trigger_time,
+      std::optional<base::Time> attributed_source_time) const override;
 
-  // Generates fake reports using a random "stars and bars" sequence index of a
-  // possible output of the API.
-  //
-  // Exposed for testing.
-  std::vector<FakeReport> GetRandomFakeReports(const CommonSourceInfo& source);
-
-  // Generates fake reports from the "stars and bars" sequence index of a
-  // possible output of the API. This output is determined by the following
-  // algorithm:
-  // 1. Find all stars before the first bar. These stars represent suppressed
-  //    reports.
-  // 2. For all other stars, count the number of bars that precede them. Each
-  //    star represents a report where the reporting window and trigger data is
-  //    uniquely determined by that number.
-  //
-  // Exposed for testing.
-  std::vector<FakeReport> GetFakeReportsForSequenceIndex(
-      const CommonSourceInfo& source,
-      int random_stars_and_bars_sequence_index) const;
-
- protected:
+ private:
   AttributionStorageDelegateImpl(AttributionNoiseMode noise_mode,
                                  AttributionDelayMode delay_mode,
                                  const AttributionConfig& config);
 
   const AttributionNoiseMode noise_mode_ GUARDED_BY_CONTEXT(sequence_checker_);
   const AttributionDelayMode delay_mode_ GUARDED_BY_CONTEXT(sequence_checker_);
+
+  std::vector<NullAggregatableReport> GetNullAggregatableReportsImpl(
+      const AttributionTrigger&,
+      base::Time trigger_time,
+      std::optional<base::Time> attributed_source_time) const;
 };
 
 }  // namespace content

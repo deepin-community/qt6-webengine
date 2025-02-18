@@ -11,7 +11,6 @@
 #include "base/android/jni_string.h"
 #include "base/android/scoped_java_ref.h"
 #include "base/check_op.h"
-#include "base/cxx17_backports.h"
 #include "base/functional/bind.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/notreached.h"
@@ -69,11 +68,13 @@ MediaPlayerBridge::MediaPlayerBridge(
     const GURL& url,
     const net::SiteForCookies& site_for_cookies,
     const url::Origin& top_frame_origin,
+    bool has_storage_access,
     const std::string& user_agent,
     bool hide_url_log,
     Client* client,
     bool allow_credentials,
-    bool is_hls)
+    bool is_hls,
+    const base::flat_map<std::string, std::string> headers)
     : prepared_(false),
       playback_completed_(false),
       pending_play_(false),
@@ -81,6 +82,7 @@ MediaPlayerBridge::MediaPlayerBridge(
       url_(url),
       site_for_cookies_(site_for_cookies),
       top_frame_origin_(top_frame_origin),
+      has_storage_access_(has_storage_access),
       pending_retrieve_cookies_(false),
       should_prepare_on_retrieved_cookies_(false),
       user_agent_(user_agent),
@@ -99,6 +101,7 @@ MediaPlayerBridge::MediaPlayerBridge(
                                        base::Unretained(this)),
                    base::BindRepeating(&MediaPlayerBridge::GetCurrentTime,
                                        base::Unretained(this))),
+      headers_(std::move(headers)),
       client_(client) {
   listener_ = std::make_unique<MediaPlayerListener>(
       base::SingleThreadTaskRunner::GetCurrentDefault(),
@@ -122,10 +125,8 @@ MediaPlayerBridge::~MediaPlayerBridge() {
 
 void MediaPlayerBridge::Initialize() {
   cookies_.clear();
-  if (url_.SchemeIsBlob() || url_.SchemeIsFileSystem()) {
-    NOTREACHED();
-    return;
-  }
+  CHECK(!url_.SchemeIsBlob());
+  CHECK(!url_.SchemeIsFileSystem());
 
   if (allow_credentials_ && !url_.SchemeIsFile()) {
     media::MediaResourceGetter* resource_getter =
@@ -133,7 +134,7 @@ void MediaPlayerBridge::Initialize() {
 
     pending_retrieve_cookies_ = true;
     resource_getter->GetCookies(
-        url_, site_for_cookies_, top_frame_origin_,
+        url_, site_for_cookies_, top_frame_origin_, has_storage_access_,
         base::BindOnce(&MediaPlayerBridge::OnCookiesRetrieved,
                        weak_factory_.GetWeakPtr()));
   }
@@ -187,11 +188,8 @@ void MediaPlayerBridge::SetPlaybackRate(double playback_rate) {
 
 void MediaPlayerBridge::Prepare() {
   DCHECK(j_media_player_bridge_.is_null());
-
-  if (url_.SchemeIsBlob() || url_.SchemeIsFileSystem()) {
-    NOTREACHED();
-    return;
-  }
+  CHECK(!url_.SchemeIsBlob());
+  CHECK(!url_.SchemeIsFileSystem());
 
   CreateJavaMediaPlayerBridge();
 
@@ -255,9 +253,24 @@ void MediaPlayerBridge::SetDataSourceInternal() {
   ScopedJavaLocalRef<jstring> j_url_string =
       ConvertUTF8ToJavaString(env, url_.spec());
 
-  if (!Java_MediaPlayerBridge_setDataSource(env, j_media_player_bridge_,
-                                            j_url_string, j_cookies,
-                                            j_user_agent, hide_url_log_)) {
+  jclass hashMapClass = env->FindClass("java/util/HashMap");
+  jmethodID hashMapConstructor =
+      env->GetMethodID(hashMapClass, "<init>", "()V");
+  jobject javaHashMap = env->NewObject(hashMapClass, hashMapConstructor);
+  for (const auto& entry : headers_) {
+    jstring key = env->NewStringUTF(entry.first.c_str());
+    jstring value = env->NewStringUTF(entry.second.c_str());
+    jmethodID putMethod = env->GetMethodID(
+        hashMapClass, "put",
+        "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;");
+    env->CallObjectMethod(javaHashMap, putMethod, key, value);
+    env->DeleteLocalRef(key);
+    env->DeleteLocalRef(value);
+  }
+  base::android::ScopedJavaLocalRef<jobject> scoped_hash_map(env, javaHashMap);
+  if (!Java_MediaPlayerBridge_setDataSource(
+          env, j_media_player_bridge_, j_url_string, j_cookies, j_user_agent,
+          hide_url_log_, scoped_hash_map)) {
     OnMediaError(MEDIA_ERROR_FORMAT);
     return;
   }
@@ -419,7 +432,7 @@ void MediaPlayerBridge::Release() {
 }
 
 void MediaPlayerBridge::SetVolume(double volume) {
-  volume_ = base::clamp(volume, 0.0, 1.0);
+  volume_ = std::clamp(volume, 0.0, 1.0);
   UpdateVolumeInternal();
 }
 

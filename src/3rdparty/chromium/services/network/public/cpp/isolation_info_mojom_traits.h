@@ -44,9 +44,6 @@ struct COMPONENT_EXPORT(NETWORK_CPP_BASE)
 
   static const absl::optional<url::Origin>& frame_origin(
       const net::IsolationInfo& input) {
-    // This is trivially true right now, but crbug.com/1414808 will involve
-    // an experiment where this may be false.
-    CHECK(net::IsolationInfo::IsFrameSiteEnabled());
     return input.frame_origin();
   }
 
@@ -58,11 +55,6 @@ struct COMPONENT_EXPORT(NETWORK_CPP_BASE)
   static const net::SiteForCookies& site_for_cookies(
       const net::IsolationInfo& input) {
     return input.site_for_cookies();
-  }
-
-  static const absl::optional<std::set<net::SchemefulSite>>& party_context(
-      const net::IsolationInfo& input) {
-    return input.party_context_;
   }
 
   static bool Read(network::mojom::IsolationInfoDataView data,

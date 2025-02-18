@@ -19,6 +19,7 @@
 #include <memory>
 
 #include "ftrace_config_muxer.h"
+#include "perfetto/ext/base/utils.h"
 #include "src/traced/probes/ftrace/atrace_wrapper.h"
 #include "src/traced/probes/ftrace/compact_sched.h"
 #include "src/traced/probes/ftrace/ftrace_procfs.h"
@@ -53,6 +54,10 @@ constexpr const char* kFakeSyscalls[] = {
     "sys_read",
 };
 
+std::string PageSizeKb() {
+  return std::to_string(base::GetSysPageSize() / 1024);
+}
+
 class MockFtraceProcfs : public FtraceProcfs {
  public:
   MockFtraceProcfs() : FtraceProcfs("/root/") {
@@ -62,19 +67,29 @@ class MockFtraceProcfs : public FtraceProcfs {
     EXPECT_CALL(*this, NumberOfCpus()).Times(AnyNumber());
   }
 
-  MOCK_METHOD2(WriteToFile,
-               bool(const std::string& path, const std::string& str));
-  MOCK_METHOD2(AppendToFile,
-               bool(const std::string& path, const std::string& str));
-  MOCK_METHOD1(ReadOneCharFromFile, char(const std::string& path));
-  MOCK_METHOD1(ClearFile, bool(const std::string& path));
-  MOCK_CONST_METHOD1(ReadFileIntoString, std::string(const std::string& path));
-  MOCK_CONST_METHOD0(NumberOfCpus, size_t());
-  MOCK_CONST_METHOD1(GetEventNamesForGroup,
-                     const std::set<std::string>(const std::string& path));
-  MOCK_CONST_METHOD2(ReadEventFormat,
-                     std::string(const std::string& group,
-                                 const std::string& name));
+  MOCK_METHOD(bool,
+              WriteToFile,
+              (const std::string& path, const std::string& str),
+              (override));
+  MOCK_METHOD(bool,
+              AppendToFile,
+              (const std::string& path, const std::string& str),
+              (override));
+  MOCK_METHOD(char, ReadOneCharFromFile, (const std::string& path), (override));
+  MOCK_METHOD(bool, ClearFile, (const std::string& path), (override));
+  MOCK_METHOD(std::string,
+              ReadFileIntoString,
+              (const std::string& path),
+              (const, override));
+  MOCK_METHOD(size_t, NumberOfCpus, (), (const, override));
+  MOCK_METHOD(const std::set<std::string>,
+              GetEventNamesForGroup,
+              (const std::string& path),
+              (const, override));
+  MOCK_METHOD(std::string,
+              ReadEventFormat,
+              (const std::string& group, const std::string& name),
+              (const, override));
 };
 
 struct MockRunAtrace {
@@ -89,7 +104,7 @@ struct MockRunAtrace {
 
   ~MockRunAtrace() { SetRunAtraceForTesting(nullptr); }
 
-  MOCK_METHOD2(RunAtrace, bool(const std::vector<std::string>&, std::string*));
+  MOCK_METHOD(bool, RunAtrace, (const std::vector<std::string>&, std::string*));
 };
 
 class MockProtoTranslationTable : public ProtoTranslationTable {
@@ -105,9 +120,14 @@ class MockProtoTranslationTable : public ProtoTranslationTable {
                               ftrace_page_header_spec,
                               compact_sched_format,
                               PrintkMap()) {}
-  MOCK_METHOD1(GetOrCreateEvent, Event*(const GroupAndName& group_and_name));
-  MOCK_CONST_METHOD1(GetEvent,
-                     const Event*(const GroupAndName& group_and_name));
+  MOCK_METHOD(Event*,
+              GetOrCreateEvent,
+              (const GroupAndName& group_and_name),
+              (override));
+  MOCK_METHOD(const Event*,
+              GetEvent,
+              (const GroupAndName& group_and_name),
+              (const, override));
 };
 
 class FtraceConfigMuxerTest : public ::testing::Test {
@@ -214,17 +234,22 @@ class FtraceConfigMuxerTest : public ::testing::Test {
 };
 
 TEST_F(FtraceConfigMuxerTest, ComputeCpuBufferSizeInPages) {
-  static constexpr size_t kMaxBufSizeInPages = 16 * 1024u;
-  // No buffer size given: good default (128 pages = 2mb).
-  EXPECT_EQ(ComputeCpuBufferSizeInPages(0), 512u);
+  auto Pages = [](uint32_t kb) { return kb * 1024 / base::GetSysPageSize(); };
+  const size_t kMaxBufSizeInPages = Pages(64 * 1024);
+
+  // No buffer size given: good default (2mb).
+  EXPECT_EQ(ComputeCpuBufferSizeInPages(0), Pages(2048));
+
   // Buffer size given way too big: good default.
   EXPECT_EQ(ComputeCpuBufferSizeInPages(10 * 1024 * 1024), kMaxBufSizeInPages);
-  // The limit is 64mb per CPU, 512mb is too much.
   EXPECT_EQ(ComputeCpuBufferSizeInPages(512 * 1024), kMaxBufSizeInPages);
+
   // Your size ends up with less than 1 page per cpu -> 1 page.
   EXPECT_EQ(ComputeCpuBufferSizeInPages(3), 1u);
+
   // You picked a good size -> your size rounded to nearest page.
-  EXPECT_EQ(ComputeCpuBufferSizeInPages(42), 10u);
+  EXPECT_EQ(ComputeCpuBufferSizeInPages(42),
+            42 * 1024 / base::GetSysPageSize());
 }
 
 TEST_F(FtraceConfigMuxerTest, GenericSyscallFiltering) {
@@ -598,7 +623,7 @@ TEST_F(FtraceConfigMuxerTest, TurnFtraceOnOff) {
   EXPECT_CALL(ftrace,
               WriteToFile("/root/events/sched/sched_switch/enable", "0"));
   EXPECT_CALL(ftrace, WriteToFile("/root/tracing_on", "0"));
-  EXPECT_CALL(ftrace, WriteToFile("/root/buffer_size_kb", "4"));
+  EXPECT_CALL(ftrace, WriteToFile("/root/buffer_size_kb", PageSizeKb()));
   EXPECT_CALL(ftrace, WriteToFile("/root/events/enable", "0"));
   EXPECT_CALL(ftrace, ClearFile("/root/trace"));
   EXPECT_CALL(ftrace, ClearFile(MatchesRegex("/root/per_cpu/cpu[0-9]/trace")));
@@ -1113,7 +1138,7 @@ TEST_F(FtraceConfigMuxerTest, FallbackOnSetEvent) {
   EXPECT_CALL(ftrace, AppendToFile("/root/set_event", "!cgroup:cgroup_mkdir"))
       .WillOnce(Return(true));
   EXPECT_CALL(ftrace, WriteToFile("/root/tracing_on", "0"));
-  EXPECT_CALL(ftrace, WriteToFile("/root/buffer_size_kb", "4"));
+  EXPECT_CALL(ftrace, WriteToFile("/root/buffer_size_kb", PageSizeKb()));
   EXPECT_CALL(ftrace, WriteToFile("/root/events/enable", "0"));
   EXPECT_CALL(ftrace, ClearFile("/root/trace"));
   EXPECT_CALL(ftrace, ClearFile(MatchesRegex("/root/per_cpu/cpu[0-9]/trace")));
@@ -1124,20 +1149,14 @@ TEST_F(FtraceConfigMuxerTest, FallbackOnSetEvent) {
 TEST_F(FtraceConfigMuxerTest, CompactSchedConfig) {
   // Set scheduling event format as validated. The pre-parsed format itself
   // doesn't need to be sensible, as the tests won't use it.
-  auto valid_compact_format =
-      CompactSchedEventFormat{/*format_valid=*/true, CompactSchedSwitchFormat{},
-                              CompactSchedWakingFormat{}};
+  auto format_with_id = CompactSchedSwitchFormat{};
+  format_with_id.event_id = kFakeSchedSwitchEventId;
+  auto valid_compact_format = CompactSchedEventFormat{
+      /*format_valid=*/true, format_with_id, CompactSchedWakingFormat{}};
 
   NiceMock<MockFtraceProcfs> ftrace;
   table_ = CreateFakeTable(valid_compact_format);
-  FtraceConfigMuxer model(&ftrace, table_.get(), GetSyscallTable(), {});
-
-  // First data source - request compact encoding.
-  FtraceConfig config_enabled = CreateFtraceConfig({"sched/sched_switch"});
-  config_enabled.mutable_compact_sched()->set_enabled(true);
-
-  // Second data source - no compact encoding (default).
-  FtraceConfig config_disabled = CreateFtraceConfig({"sched/sched_switch"});
+  FtraceConfigMuxer muxer(&ftrace, table_.get(), GetSyscallTable(), {});
 
   ON_CALL(ftrace, ReadFileIntoString("/root/current_tracer"))
       .WillByDefault(Return("nop"));
@@ -1145,21 +1164,53 @@ TEST_F(FtraceConfigMuxerTest, CompactSchedConfig) {
       .WillByDefault(Return("0"));
 
   {
-    FtraceConfigId id = 73;
-    ASSERT_TRUE(model.SetupConfig(id, config_enabled));
-    const FtraceDataSourceConfig* ds_config = model.GetDataSourceConfig(id);
+    // Explicitly enabled.
+    FtraceConfig cfg = CreateFtraceConfig({"sched/sched_switch"});
+    cfg.mutable_compact_sched()->set_enabled(true);
+
+    FtraceConfigId id = 42;
+    ASSERT_TRUE(muxer.SetupConfig(id, cfg));
+    const FtraceDataSourceConfig* ds_config = muxer.GetDataSourceConfig(id);
     ASSERT_TRUE(ds_config);
     EXPECT_THAT(ds_config->event_filter.GetEnabledEvents(),
                 Contains(kFakeSchedSwitchEventId));
     EXPECT_TRUE(ds_config->compact_sched.enabled);
   }
   {
-    FtraceConfigId id = 87;
-    ASSERT_TRUE(model.SetupConfig(id, config_disabled));
-    const FtraceDataSourceConfig* ds_config = model.GetDataSourceConfig(id);
+    // Implicitly enabled (default).
+    FtraceConfig cfg = CreateFtraceConfig({"sched/sched_switch"});
+
+    FtraceConfigId id = 43;
+    ASSERT_TRUE(muxer.SetupConfig(id, cfg));
+    const FtraceDataSourceConfig* ds_config = muxer.GetDataSourceConfig(id);
     ASSERT_TRUE(ds_config);
     EXPECT_THAT(ds_config->event_filter.GetEnabledEvents(),
                 Contains(kFakeSchedSwitchEventId));
+    EXPECT_TRUE(ds_config->compact_sched.enabled);
+  }
+  {
+    // Explicitly disabled.
+    FtraceConfig cfg = CreateFtraceConfig({"sched/sched_switch"});
+    cfg.mutable_compact_sched()->set_enabled(false);
+
+    FtraceConfigId id = 44;
+    ASSERT_TRUE(muxer.SetupConfig(id, cfg));
+    const FtraceDataSourceConfig* ds_config = muxer.GetDataSourceConfig(id);
+    ASSERT_TRUE(ds_config);
+    EXPECT_THAT(ds_config->event_filter.GetEnabledEvents(),
+                Contains(kFakeSchedSwitchEventId));
+    EXPECT_FALSE(ds_config->compact_sched.enabled);
+  }
+  {
+    // Disabled if not recording sched_switch.
+    FtraceConfig cfg = CreateFtraceConfig({});
+
+    FtraceConfigId id = 45;
+    ASSERT_TRUE(muxer.SetupConfig(id, cfg));
+    const FtraceDataSourceConfig* ds_config = muxer.GetDataSourceConfig(id);
+    ASSERT_TRUE(ds_config);
+    EXPECT_THAT(ds_config->event_filter.GetEnabledEvents(),
+                Not(Contains(kFakeSchedSwitchEventId)));
     EXPECT_FALSE(ds_config->compact_sched.enabled);
   }
 }

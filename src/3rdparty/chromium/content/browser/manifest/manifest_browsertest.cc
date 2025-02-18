@@ -57,10 +57,7 @@ class ManifestBrowserTest;
 // Mock of a WebContentsDelegate that catches messages sent to the console.
 class MockWebContentsDelegate : public WebContentsDelegate {
  public:
-  MockWebContentsDelegate(WebContents* web_contents, ManifestBrowserTest* test)
-      : web_contents_(web_contents),
-        test_(test) {
-  }
+  explicit MockWebContentsDelegate(ManifestBrowserTest* test) : test_(test) {}
 
   bool DidAddMessageToConsole(WebContents* source,
                               blink::mojom::ConsoleMessageLevel log_level,
@@ -73,8 +70,7 @@ class MockWebContentsDelegate : public WebContentsDelegate {
   }
 
  private:
-  raw_ptr<WebContents, DanglingUntriaged> web_contents_;
-  raw_ptr<ManifestBrowserTest> test_;
+  raw_ptr<ManifestBrowserTest> test_ = nullptr;
 };
 
 class ManifestBrowserTest : public ContentBrowserTest,
@@ -98,8 +94,8 @@ class ManifestBrowserTest : public ContentBrowserTest,
     ContentBrowserTest::SetUpOnMainThread();
     DCHECK(shell()->web_contents());
 
-    mock_web_contents_delegate_ = std::make_unique<MockWebContentsDelegate>(
-        shell()->web_contents(), this);
+    mock_web_contents_delegate_ =
+        std::make_unique<MockWebContentsDelegate>(this);
     shell()->web_contents()->SetDelegate(mock_web_contents_delegate_.get());
     Observe(shell()->web_contents());
     ASSERT_TRUE(embedded_test_server()->Start());
@@ -125,9 +121,7 @@ class ManifestBrowserTest : public ContentBrowserTest,
     return *manifest_;
   }
 
-  const GURL& manifest_url() const {
-    return manifest_url_;
-  }
+  const GURL& manifest_url() const { return manifest_url_; }
 
   int GetConsoleErrorCount() const {
     // The IPCs reporting console errors are not FIFO with the manifest IPCs.
@@ -202,11 +196,12 @@ bool MockWebContentsDelegate::DidAddMessageToConsole(
     const std::u16string& message,
     int32_t line_no,
     const std::u16string& source_id) {
-  DCHECK(source == web_contents_);
+  DCHECK_EQ(source->GetDelegate(), this);
 
   if (log_level == blink::mojom::ConsoleMessageLevel::kError ||
-      log_level == blink::mojom::ConsoleMessageLevel::kWarning)
+      log_level == blink::mojom::ConsoleMessageLevel::kWarning) {
     test_->OnReceivedConsoleError(message);
+  }
   return false;
 }
 
@@ -283,9 +278,9 @@ IN_PROC_BROWSER_TEST_F(ManifestBrowserTest, ParseErrorManifest) {
 // If a page has a manifest that can be fetched and parsed, requesting the
 // manifest should return a properly filled manifest. The manifest URL should be
 // non-empty.
-IN_PROC_BROWSER_TEST_F(ManifestBrowserTest, DummyManifest) {
+IN_PROC_BROWSER_TEST_F(ManifestBrowserTest, SampleManifest) {
   GURL test_url =
-      embedded_test_server()->GetURL("/manifest/dummy-manifest.html");
+      embedded_test_server()->GetURL("/manifest/sample-manifest.html");
 
   ASSERT_TRUE(NavigateToURL(shell(), test_url));
 
@@ -318,7 +313,7 @@ IN_PROC_BROWSER_TEST_F(ManifestBrowserTest, DynamicManifest) {
 
   {
     std::string manifest_link =
-        embedded_test_server()->GetURL("/manifest/dummy-manifest.json").spec();
+        embedded_test_server()->GetURL("/manifest/sample-manifest.json").spec();
     ASSERT_TRUE(ExecJs(shell(), "setManifestTo('" + manifest_link + "')"));
 
     GetManifestAndWait();
@@ -385,8 +380,9 @@ IN_PROC_BROWSER_TEST_F(ManifestBrowserTest, DISABLED_CorsManifest) {
 
   ASSERT_TRUE(NavigateToURL(shell(), test_url));
 
-  std::string manifest_link = cors_embedded_test_server()->GetURL(
-      "/manifest/dummy-manifest.json").spec();
+  std::string manifest_link = cors_embedded_test_server()
+                                  ->GetURL("/manifest/sample-manifest.json")
+                                  .spec();
   ASSERT_TRUE(ExecJs(shell(), "setManifestTo('" + manifest_link + "')"));
 
   GetManifestAndWait();
@@ -404,7 +400,7 @@ IN_PROC_BROWSER_TEST_F(ManifestBrowserTest, DISABLED_CorsManifest) {
   // except by fetching the same file from same origin, making it succeed when
   // it is actually fully loaded.
   manifest_link =
-      embedded_test_server()->GetURL("/manifest/dummy-manifest.json").spec();
+      embedded_test_server()->GetURL("/manifest/sample-manifest.json").spec();
   ASSERT_TRUE(ExecJs(shell(), "setManifestTo('" + manifest_link + "')"));
   GetManifestAndWait();
   expected_manifest_urls.push_back(manifest_url());
@@ -425,8 +421,9 @@ IN_PROC_BROWSER_TEST_F(ManifestBrowserTest, CorsManifestWithAcessControls) {
 
   ASSERT_TRUE(NavigateToURL(shell(), test_url));
 
-  std::string manifest_link = cors_embedded_test_server()->GetURL(
-      "/manifest/manifest-cors.json").spec();
+  std::string manifest_link = cors_embedded_test_server()
+                                  ->GetURL("/manifest/manifest-cors.json")
+                                  .spec();
   ASSERT_TRUE(ExecJs(shell(), "setManifestTo('" + manifest_link + "')"));
 
   GetManifestAndWait();
@@ -495,7 +492,7 @@ IN_PROC_BROWSER_TEST_F(ManifestBrowserTest, Navigation) {
   std::vector<GURL> expected_manifest_urls;
   {
     GURL test_url =
-        embedded_test_server()->GetURL("/manifest/dummy-manifest.html");
+        embedded_test_server()->GetURL("/manifest/sample-manifest.html");
 
     ASSERT_TRUE(NavigateToURL(shell(), test_url));
 
@@ -526,7 +523,7 @@ IN_PROC_BROWSER_TEST_F(ManifestBrowserTest, Navigation) {
 
   {
     GURL test_url =
-        embedded_test_server()->GetURL("/manifest/dummy-manifest.html");
+        embedded_test_server()->GetURL("/manifest/sample-manifest.html");
 
     ASSERT_TRUE(NavigateToURL(shell(), test_url));
 
@@ -545,7 +542,7 @@ IN_PROC_BROWSER_TEST_F(ManifestBrowserTest, Navigation) {
 // page), it should keep its manifest state.
 IN_PROC_BROWSER_TEST_F(ManifestBrowserTest, PushStateNavigation) {
   GURL test_url =
-      embedded_test_server()->GetURL("/manifest/dummy-manifest.html");
+      embedded_test_server()->GetURL("/manifest/sample-manifest.html");
 
   ASSERT_TRUE(NavigateToURL(shell(), test_url));
 
@@ -571,7 +568,7 @@ IN_PROC_BROWSER_TEST_F(ManifestBrowserTest, PushStateNavigation) {
 // should keep its manifest state.
 IN_PROC_BROWSER_TEST_F(ManifestBrowserTest, AnchorNavigation) {
   GURL test_url =
-      embedded_test_server()->GetURL("/manifest/dummy-manifest.html");
+      embedded_test_server()->GetURL("/manifest/sample-manifest.html");
 
   ASSERT_TRUE(NavigateToURL(shell(), test_url));
   {
@@ -610,8 +607,10 @@ std::unique_ptr<net::test_server::HttpResponse> CustomHandleRequestForCookies(
   }
 
   const auto& iter = request.headers.find("Cookie");
-  if (iter == request.headers.end() || request.relative_url != "/manifest.json")
+  if (iter == request.headers.end() ||
+      request.relative_url != "/manifest.json") {
     return nullptr;
+  }
 
   std::unique_ptr<net::test_server::BasicHttpResponse> http_response(
       new net::test_server::BasicHttpResponse());
@@ -636,8 +635,7 @@ IN_PROC_BROWSER_TEST_F(ManifestBrowserTest, UseCredentialsSendCookies) {
   ASSERT_TRUE(custom_embedded_test_server->Start());
 
   ASSERT_TRUE(SetCookie(shell()->web_contents()->GetBrowserContext(),
-                        custom_embedded_test_server->base_url(),
-                        "foobar"));
+                        custom_embedded_test_server->base_url(), "foobar"));
 
   ASSERT_TRUE(NavigateToURL(
       shell(), custom_embedded_test_server->GetURL("/index.html")));
@@ -671,8 +669,10 @@ std::unique_ptr<net::test_server::HttpResponse> CustomHandleRequestForNoCookies(
   }
 
   const auto& iter = request.headers.find("Cookie");
-  if (iter != request.headers.end() || request.relative_url != "/manifest.json")
+  if (iter != request.headers.end() ||
+      request.relative_url != "/manifest.json") {
     return nullptr;
+  }
 
   std::unique_ptr<net::test_server::BasicHttpResponse> http_response(
       new net::test_server::BasicHttpResponse());
@@ -696,8 +696,7 @@ IN_PROC_BROWSER_TEST_F(ManifestBrowserTest, NoUseCredentialsNoCookies) {
   ASSERT_TRUE(custom_embedded_test_server->Start());
 
   ASSERT_TRUE(SetCookie(shell()->web_contents()->GetBrowserContext(),
-                        custom_embedded_test_server->base_url(),
-                        "foobar"));
+                        custom_embedded_test_server->base_url(), "foobar"));
 
   ASSERT_TRUE(NavigateToURL(
       shell(), custom_embedded_test_server->GetURL("/index.html")));
@@ -724,7 +723,7 @@ IN_PROC_BROWSER_TEST_F(ManifestBrowserTest, UniqueOrigin) {
 
   ASSERT_TRUE(NavigateToURL(shell(), test_url));
   std::string manifest_link =
-      embedded_test_server()->GetURL("/manifest/dummy-manifest.json").spec();
+      embedded_test_server()->GetURL("/manifest/sample-manifest.json").spec();
   ASSERT_TRUE(ExecJs(shell(), "setManifestTo('" + manifest_link + "')"));
 
   // Same-origin manifest will not be fetched from a unique origin, regardless
@@ -838,7 +837,7 @@ IN_PROC_BROWSER_TEST_F(ManifestBrowserPrerenderingTest,
   }
 
   GURL prerender_url =
-      embedded_test_server()->GetURL("/manifest/dummy-manifest.html");
+      embedded_test_server()->GetURL("/manifest/sample-manifest.html");
   // Loads a page in the prerender.
   int host_id = prerender_helper().AddPrerender(prerender_url);
   content::RenderFrameHost* prerender_rfh =
@@ -903,7 +902,7 @@ IN_PROC_BROWSER_TEST_F(ManifestFencedFrameBrowserTest,
   ASSERT_TRUE(ExecJs(fenced_frame_rfh,
                      R"( var link = document.createElement('link');
                          link.rel = 'manifest';
-                         link.href = '../manifest/dummy-manifest.json';
+                         link.href = '../manifest/sample-manifest.json';
                          document.head.appendChild(link);)"));
 
   base::RunLoop run_loop;
@@ -919,4 +918,4 @@ IN_PROC_BROWSER_TEST_F(ManifestFencedFrameBrowserTest,
   run_loop.Run();
 }
 
-} // namespace content
+}  // namespace content

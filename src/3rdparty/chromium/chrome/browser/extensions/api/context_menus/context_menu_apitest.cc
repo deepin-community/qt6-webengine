@@ -79,6 +79,10 @@ IN_PROC_BROWSER_TEST_P(ExtensionContextMenuApiLazyTest, ContextMenus) {
   ASSERT_TRUE(RunExtensionTest("context_menus/event_page")) << message_;
 }
 
+IN_PROC_BROWSER_TEST_P(ExtensionContextMenuApiTestWithContextType, Count) {
+  ASSERT_TRUE(RunExtensionTest("context_menus/count")) << message_;
+}
+
 // crbug.com/51436 -- creating context menus from multiple script contexts
 // should work.
 IN_PROC_BROWSER_TEST_P(ExtensionContextMenuApiTestWithContextType,
@@ -131,6 +135,11 @@ class ExtensionContextMenuVisibilityApiTest
   ExtensionContextMenuVisibilityApiTest& operator=(
       const ExtensionContextMenuVisibilityApiTest&) = delete;
 
+  void TearDownOnMainThread() override {
+    menu_.reset();
+    ExtensionContextMenuApiTest::TearDownOnMainThread();
+  }
+
   void SetUpTestExtension() {
     extension_ = LoadExtension(
         test_data_dir_.AppendASCII("context_menus/item_visibility/"));
@@ -164,10 +173,7 @@ class ExtensionContextMenuVisibilityApiTest
 
   void CallAPI(const Extension* extension, const std::string& script) {
     content::WebContents* background_page = GetBackgroundPage(extension->id());
-    bool error = false;
-    ASSERT_TRUE(
-        content::ExecuteScriptAndExtractBool(background_page, script, &error));
-    ASSERT_FALSE(error);
+    ASSERT_EQ(false, content::EvalJs(background_page, script));
   }
 
   // Verifies that the UI menu model has the given number of extension menu

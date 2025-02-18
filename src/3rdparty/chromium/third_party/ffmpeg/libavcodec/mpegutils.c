@@ -21,6 +21,7 @@
 #include <stdint.h>
 
 #include "libavutil/common.h"
+#include "libavutil/emms.h"
 #include "libavutil/frame.h"
 #include "libavutil/pixdesc.h"
 #include "libavutil/motion_vector.h"
@@ -230,7 +231,7 @@ void ff_print_debug_info2(AVCodecContext *avctx, AVFrame *pict,
         if (mbcount) {
             AVFrameSideData *sd;
 
-            av_log(avctx, AV_LOG_DEBUG, "Adding %d MVs info to frame %d\n", mbcount, avctx->frame_number);
+            av_log(avctx, AV_LOG_DEBUG, "Adding %d MVs info to frame %"PRId64"\n", mbcount, avctx->frame_num);
             sd = av_frame_new_side_data(pict, AV_FRAME_DATA_MOTION_VECTORS, mbcount * sizeof(AVMotionVector));
             if (!sd) {
                 av_freep(&mvs);

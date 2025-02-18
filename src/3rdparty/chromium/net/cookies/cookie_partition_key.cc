@@ -13,18 +13,6 @@
 #include "net/base/features.h"
 #include "net/cookies/cookie_constants.h"
 
-namespace {
-
-bool PartitionedCookiesEnabled(
-    const absl::optional<base::UnguessableToken>& nonce) {
-  return base::FeatureList::IsEnabled(net::features::kPartitionedCookies) ||
-         (base::FeatureList::IsEnabled(
-              net::features::kNoncedPartitionedCookies) &&
-          nonce);
-}
-
-}  // namespace
-
 namespace net {
 
 CookiePartitionKey::CookiePartitionKey() = default;
@@ -54,8 +42,7 @@ CookiePartitionKey& CookiePartitionKey::operator=(CookiePartitionKey&& other) =
 CookiePartitionKey::~CookiePartitionKey() = default;
 
 bool CookiePartitionKey::operator==(const CookiePartitionKey& other) const {
-  return site_ == other.site_ && nonce_ == other.nonce_ &&
-         from_script_ == other.from_script_;
+  return site_ == other.site_ && nonce_ == other.nonce_;
 }
 
 bool CookiePartitionKey::operator!=(const CookiePartitionKey& other) const {
@@ -107,18 +94,21 @@ bool CookiePartitionKey::Deserialize(const std::string& in,
 
 absl::optional<CookiePartitionKey> CookiePartitionKey::FromNetworkIsolationKey(
     const NetworkIsolationKey& network_isolation_key) {
-  absl::optional<base::UnguessableToken> nonce =
-      network_isolation_key.GetNonce();
-  // If PartitionedCookies is enabled, all partitioned cookies are allowed.
-  // If NoncedPartitionedCookies is enabled, only partitioned cookies whose
-  // partition key has a nonce are allowed.
-  if (!PartitionedCookiesEnabled(nonce))
+  if (!base::FeatureList::IsEnabled(features::kPartitionedCookies)) {
     return absl::nullopt;
+  }
 
-  // TODO(crbug.com/1225444): Check if the top frame site is in a First-Party
-  // Set or if it is an extension URL.
+  const absl::optional<base::UnguessableToken>& nonce =
+      network_isolation_key.GetNonce();
+
+  // Use frame site for nonced partitions. Since the nonce is unique, this still
+  // creates a unique partition key. The reason we use the frame site is to
+  // align CookiePartitionKey's implementation of nonced partitions with
+  // StorageKey's. See https://crbug.com/1440765.
   const absl::optional<SchemefulSite>& partition_key_site =
-      network_isolation_key.GetTopFrameSite();
+      nonce ? network_isolation_key.GetFrameSiteForCookiePartitionKey(
+                  NetworkIsolationKey::CookiePartitionKeyPassKey())
+            : network_isolation_key.GetTopFrameSite();
   if (!partition_key_site)
     return absl::nullopt;
 
@@ -128,11 +118,12 @@ absl::optional<CookiePartitionKey> CookiePartitionKey::FromNetworkIsolationKey(
 // static
 absl::optional<net::CookiePartitionKey>
 CookiePartitionKey::FromStorageKeyComponents(
-    const SchemefulSite& top_level_site,
+    const SchemefulSite& site,
     const absl::optional<base::UnguessableToken>& nonce) {
-  if (!PartitionedCookiesEnabled(nonce))
+  if (!base::FeatureList::IsEnabled(features::kPartitionedCookies)) {
     return absl::nullopt;
-  return CookiePartitionKey::FromWire(top_level_site, nonce);
+  }
+  return CookiePartitionKey::FromWire(site, nonce);
 }
 
 bool CookiePartitionKey::IsSerializeable() const {

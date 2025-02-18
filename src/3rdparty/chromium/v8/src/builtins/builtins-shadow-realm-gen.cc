@@ -4,7 +4,7 @@
 
 #include "src/builtins/builtins-utils-gen.h"
 #include "src/builtins/builtins.h"
-#include "src/codegen/code-stub-assembler.h"
+#include "src/codegen/code-stub-assembler-inl.h"
 #include "src/objects/descriptor-array.h"
 #include "src/objects/js-shadow-realm.h"
 #include "src/objects/module.h"
@@ -120,7 +120,7 @@ TF_BUILTIN(ShadowRealmGetWrappedValue, ShadowRealmBuiltinsAssembler) {
 
   // 2. Return value.
   GotoIf(TaggedIsSmi(value), &if_primitive);
-  GotoIfNot(IsJSReceiver(CAST(value)), &if_primitive);
+  GotoIfNot(JSAnyIsNotPrimitive(CAST(value)), &if_primitive);
 
   // 1. If Type(value) is Object, then
   // 1a. If IsCallable(value) is false, throw a TypeError exception.
@@ -278,12 +278,11 @@ TF_BUILTIN(CallWrappedFunction, ShadowRealmBuiltinsAssembler) {
     compiler::ScopedExceptionHandler handler(this, &call_exception,
                                              &var_exception);
     TNode<Int32T> args_count = Int32Constant(0);  // args already on the stack
-    Callable callable = CodeFactory::CallVarargs(isolate());
 
     // 9. Let result be the Completion Record of Call(target,
     // wrappedThisArgument, wrappedArgs).
-    result = CallStub(callable, target_context, target, args_count, argc,
-                      wrapped_args);
+    result = CallBuiltin(Builtin::kCallVarargs, target_context, target,
+                         args_count, argc, wrapped_args);
   }
 
   // 10. If result.[[Type]] is normal or result.[[Type]] is return, then

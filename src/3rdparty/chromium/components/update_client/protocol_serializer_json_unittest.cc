@@ -32,8 +32,8 @@ TEST(SerializeRequestJSON, Serialize) {
 
   {
     auto pref = std::make_unique<TestingPrefServiceSimple>();
-    PersistedData::RegisterPrefs(pref->registry());
-    auto metadata = std::make_unique<PersistedData>(pref.get(), nullptr);
+    RegisterPersistedDataPrefs(pref->registry());
+    auto metadata = CreatePersistedData(pref.get(), nullptr);
     std::vector<std::string> items = {"id1"};
     test::SetDateLastData(metadata.get(), items, 1234);
 
@@ -58,7 +58,7 @@ TEST(SerializeRequestJSON, Serialize) {
                             std::move(apps)));
     constexpr char regex[] =
         R"({"request":{"@os":"\w+","@updater":"prod_id",)"
-        R"("acceptformat":"crx3",)"
+        R"("acceptformat":"crx3,puff",)"
         R"("app":\[{"ap":"ap1","appid":"id1","attr1":"1","attr2":"2",)"
         R"("brand":"BRND","cohort":"c1","cohorthint":"ch1","cohortname":"cn1",)"
         R"("data":\[{"index":"foobar_install_data_index","name":"install"}],)"
@@ -142,7 +142,7 @@ TEST(SerializeRequestJSON, UpdaterStateAttributes) {
       {}));
   constexpr char regex[] =
       R"({"request":{"@os":"\w+","@updater":"prod_id",)"
-      R"("acceptformat":"crx3","arch":"\w+","dedup":"cr",)"
+      R"("acceptformat":"crx3,puff","arch":"\w+","dedup":"cr",)"
       R"("dlpref":"cacheable","domainjoined":true,"extra":"params",)"
       R"("hw":{"avx":(true|false),)"
       R"("physmemory":\d+,"sse":(true|false),"sse2":(true|false),)"

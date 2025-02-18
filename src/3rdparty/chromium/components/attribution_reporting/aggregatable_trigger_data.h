@@ -11,8 +11,6 @@
 #include "base/component_export.h"
 #include "base/types/expected.h"
 #include "base/values.h"
-#include "components/attribution_reporting/bounded_list.h"
-#include "components/attribution_reporting/constants.h"
 #include "components/attribution_reporting/filters.h"
 #include "components/attribution_reporting/trigger_registration_error.mojom-forward.h"
 #include "third_party/abseil-cpp/absl/numeric/int128.h"
@@ -50,6 +48,9 @@ class COMPONENT_EXPORT(ATTRIBUTION_REPORTING) AggregatableTriggerData {
 
   base::Value::Dict ToJson() const;
 
+  friend bool operator==(const AggregatableTriggerData&,
+                         const AggregatableTriggerData&) = default;
+
  private:
   AggregatableTriggerData(absl::uint128 key_piece,
                           Keys source_keys,
@@ -59,9 +60,6 @@ class COMPONENT_EXPORT(ATTRIBUTION_REPORTING) AggregatableTriggerData {
   Keys source_keys_;
   FilterPair filters_;
 };
-
-using AggregatableTriggerDataList =
-    BoundedList<AggregatableTriggerData, kMaxAggregatableTriggerDataPerTrigger>;
 
 }  // namespace attribution_reporting
 

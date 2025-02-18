@@ -70,10 +70,9 @@
 #include "third_party/blink/renderer/platform/graphics/graphics_context.h"
 #include "third_party/blink/renderer/platform/graphics/image_observer.h"
 #include "third_party/blink/renderer/platform/graphics/paint/cull_rect.h"
-#include "third_party/blink/renderer/platform/graphics/paint/drawing_recorder.h"
 #include "third_party/blink/renderer/platform/graphics/paint/paint_canvas.h"
 #include "third_party/blink/renderer/platform/graphics/paint/paint_record.h"
-#include "third_party/blink/renderer/platform/graphics/paint/paint_record_builder.h"
+#include "third_party/blink/renderer/platform/graphics/paint/paint_shader.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/instrumentation/histogram.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
@@ -245,16 +244,6 @@ gfx::Size SVGImage::SizeWithConfig(SizeConfig) const {
   return ToRoundedSize(intrinsic_size_);
 }
 
-static float ResolveWidthForRatio(float height,
-                                  const gfx::SizeF& intrinsic_ratio) {
-  return height * intrinsic_ratio.width() / intrinsic_ratio.height();
-}
-
-static float ResolveHeightForRatio(float width,
-                                   const gfx::SizeF& intrinsic_ratio) {
-  return width * intrinsic_ratio.height() / intrinsic_ratio.width();
-}
-
 bool SVGImage::HasIntrinsicSizingInfo() const {
   return LayoutRoot();
 }
@@ -264,7 +253,8 @@ bool SVGImage::GetIntrinsicSizingInfo(
   const LayoutSVGRoot* layout_root = LayoutRoot();
   if (!layout_root)
     return false;
-  layout_root->UnscaledIntrinsicSizingInfo(intrinsic_sizing_info);
+  layout_root->UnscaledIntrinsicSizingInfo(intrinsic_sizing_info,
+                                           /*use_correct_viewbox=*/false);
 
   if (!intrinsic_sizing_info.has_width || !intrinsic_sizing_info.has_height) {
     // We're not using an intrinsic aspect ratio to resolve a missing
@@ -286,50 +276,10 @@ bool SVGImage::GetIntrinsicSizingInfo(
 gfx::SizeF SVGImage::ConcreteObjectSize(
     const gfx::SizeF& default_object_size) const {
   IntrinsicSizingInfo intrinsic_sizing_info;
-  if (!GetIntrinsicSizingInfo(intrinsic_sizing_info))
+  if (!GetIntrinsicSizingInfo(intrinsic_sizing_info)) {
     return gfx::SizeF();
-
-  // https://www.w3.org/TR/css3-images/#default-sizing
-  if (intrinsic_sizing_info.has_width && intrinsic_sizing_info.has_height)
-    return intrinsic_sizing_info.size;
-
-  if (intrinsic_sizing_info.has_width) {
-    if (intrinsic_sizing_info.aspect_ratio.IsEmpty()) {
-      return gfx::SizeF(intrinsic_sizing_info.size.width(),
-                        default_object_size.height());
-    }
-    return gfx::SizeF(
-        intrinsic_sizing_info.size.width(),
-        ResolveHeightForRatio(intrinsic_sizing_info.size.width(),
-                              intrinsic_sizing_info.aspect_ratio));
   }
-
-  if (intrinsic_sizing_info.has_height) {
-    if (intrinsic_sizing_info.aspect_ratio.IsEmpty()) {
-      return gfx::SizeF(default_object_size.width(),
-                        intrinsic_sizing_info.size.height());
-    }
-    return gfx::SizeF(ResolveWidthForRatio(intrinsic_sizing_info.size.height(),
-                                           intrinsic_sizing_info.aspect_ratio),
-                      intrinsic_sizing_info.size.height());
-  }
-
-  if (!intrinsic_sizing_info.aspect_ratio.IsEmpty()) {
-    // "A contain constraint is resolved by setting the concrete object size to
-    //  the largest rectangle that has the object's intrinsic aspect ratio and
-    //  additionally has neither width nor height larger than the constraint
-    //  rectangle's width and height, respectively."
-    float solution_width = ResolveWidthForRatio(
-        default_object_size.height(), intrinsic_sizing_info.aspect_ratio);
-    if (solution_width <= default_object_size.width())
-      return gfx::SizeF(solution_width, default_object_size.height());
-
-    float solution_height = ResolveHeightForRatio(
-        default_object_size.width(), intrinsic_sizing_info.aspect_ratio);
-    return gfx::SizeF(default_object_size.width(), solution_height);
-  }
-
-  return default_object_size;
+  return blink::ConcreteObjectSize(intrinsic_sizing_info, default_object_size);
 }
 
 SVGImage::DrawInfo::DrawInfo(const gfx::SizeF& container_size,
@@ -354,7 +304,7 @@ void SVGImage::DrawForContainer(const DrawInfo& draw_info,
                                 const gfx::RectF& dst_rect,
                                 const gfx::RectF& src_rect) {
   gfx::RectF unzoomed_src = src_rect;
-  unzoomed_src.Scale(1 / draw_info.Zoom());
+  unzoomed_src.InvScale(draw_info.Zoom());
 
   // Compensate for the container size rounding by adjusting the source rect.
   gfx::SizeF residual_scale = draw_info.CalculateResidualScale();
@@ -394,20 +344,17 @@ void SVGImage::DrawPatternForContainer(const DrawInfo& draw_info,
   pattern_transform.setTranslate(tiling_info.phase.x() + spaced_tile.x(),
                                  tiling_info.phase.y() + spaced_tile.y());
 
-  auto* builder = MakeGarbageCollected<PaintRecordBuilder>(context);
-  {
-    DrawingRecorder recorder(builder->Context(), *builder,
-                             DisplayItem::Type::kSVGImage);
-    // When generating an expanded tile, make sure we don't draw into the
-    // spacing area.
-    if (!tiling_info.spacing.IsZero())
-      builder->Context().Clip(tile);
-    DrawForContainer(draw_info, builder->Context().Canvas(), cc::PaintFlags(),
-                     tile, tiling_info.image_rect);
+  PaintRecorder recorder;
+  cc::PaintCanvas* tile_canvas = recorder.beginRecording();
+  // When generating an expanded tile, make sure we don't draw into the
+  // spacing area.
+  if (!tiling_info.spacing.IsZero()) {
+    tile_canvas->clipRect(gfx::RectFToSkRect(tile));
   }
-
+  DrawForContainer(draw_info, tile_canvas, cc::PaintFlags(), tile,
+                   tiling_info.image_rect);
   sk_sp<PaintShader> tile_shader = PaintShader::MakePaintRecord(
-      builder->EndRecording(), gfx::RectFToSkRect(spaced_tile),
+      recorder.finishRecordingAsPicture(), gfx::RectFToSkRect(spaced_tile),
       SkTileMode::kRepeat, SkTileMode::kRepeat, &pattern_transform);
 
   // If the shader could not be instantiated (e.g. non-invertible matrix),
@@ -441,19 +388,19 @@ void SVGImage::PopulatePaintRecordForCurrentFrameForContainer(
 
   builder.set_completion_state(
       load_state_ == LoadState::kLoadCompleted
-          ? PaintImage::CompletionState::DONE
-          : PaintImage::CompletionState::PARTIALLY_DONE);
+          ? PaintImage::CompletionState::kDone
+          : PaintImage::CompletionState::kPartiallyDone);
 }
 
 bool SVGImage::ApplyShaderInternal(const DrawInfo& draw_info,
                                    cc::PaintFlags& flags,
+                                   const gfx::RectF& unzoomed_src_rect,
                                    const SkMatrix& local_matrix) {
   if (draw_info.ContainerSize().IsEmpty())
     return false;
-  // TODO(pdr): Pass a tighter cull rect based on the src rect to optimize out
-  // parts of the paint record that are not visible (see: crbug.com/1401086).
+  const gfx::Rect cull_rect(gfx::ToEnclosingRect(unzoomed_src_rect));
   absl::optional<PaintRecord> record =
-      PaintRecordForCurrentFrame(draw_info, nullptr);
+      PaintRecordForCurrentFrame(draw_info, &cull_rect);
   if (!record)
     return false;
 
@@ -475,19 +422,29 @@ bool SVGImage::ApplyShader(cc::PaintFlags& flags,
                            const ImageDrawOptions& draw_options) {
   const DrawInfo draw_info(gfx::SizeF(intrinsic_size_), 1, NullURL(),
                            draw_options.apply_dark_mode);
-  return ApplyShaderInternal(draw_info, flags, local_matrix);
+  return ApplyShaderInternal(draw_info, flags, src_rect, local_matrix);
 }
 
 bool SVGImage::ApplyShaderForContainer(const DrawInfo& draw_info,
                                        cc::PaintFlags& flags,
+                                       const gfx::RectF& src_rect,
                                        const SkMatrix& local_matrix) {
+  gfx::RectF unzoomed_src = src_rect;
+  unzoomed_src.InvScale(draw_info.Zoom());
+
+  // Compensate for the container size rounding by adjusting the source rect.
+  const gfx::SizeF residual_scale = draw_info.CalculateResidualScale();
+  unzoomed_src.set_size(gfx::ScaleSize(
+      unzoomed_src.size(), residual_scale.width(), residual_scale.height()));
+
   // Compensate for the container size rounding.
-  gfx::SizeF residual_scale =
-      gfx::ScaleSize(draw_info.CalculateResidualScale(), draw_info.Zoom());
+  const gfx::SizeF zoomed_residual_scale =
+      gfx::ScaleSize(residual_scale, draw_info.Zoom());
   auto adjusted_local_matrix = local_matrix;
-  adjusted_local_matrix.preScale(residual_scale.width(),
-                                 residual_scale.height());
-  return ApplyShaderInternal(draw_info, flags, adjusted_local_matrix);
+  adjusted_local_matrix.preScale(zoomed_residual_scale.width(),
+                                 zoomed_residual_scale.height());
+  return ApplyShaderInternal(draw_info, flags, unzoomed_src,
+                             adjusted_local_matrix);
 }
 
 void SVGImage::Draw(cc::PaintCanvas* canvas,
@@ -510,8 +467,10 @@ absl::optional<PaintRecord> SVGImage::PaintRecordForCurrentFrame(
   // re-laying out the image.
   ImageObserverDisabler disable_image_observer(this);
 
-  if (LayoutSVGRoot* layout_root = LayoutRoot())
-    layout_root->SetContainerSize(RoundedLayoutSize(draw_info.ContainerSize()));
+  if (LayoutSVGRoot* layout_root = LayoutRoot()) {
+    layout_root->SetContainerSize(
+        PhysicalSize::FromSizeFFloor(draw_info.ContainerSize()));
+  }
   LocalFrameView* view = GetFrame()->View();
   const gfx::Size rounded_container_size = draw_info.RoundedContainerSize();
   view->Resize(rounded_container_size);
@@ -552,7 +511,7 @@ void SVGImage::DrawInternal(const DrawInfo& draw_info,
                             const cc::PaintFlags& flags,
                             const gfx::RectF& dst_rect,
                             const gfx::RectF& unzoomed_src_rect) {
-  gfx::Rect cull_rect(gfx::ToEnclosingRect(unzoomed_src_rect));
+  const gfx::Rect cull_rect(gfx::ToEnclosingRect(unzoomed_src_rect));
   absl::optional<PaintRecord> record =
       PaintRecordForCurrentFrame(draw_info, &cull_rect);
   if (!record)
@@ -714,6 +673,13 @@ void SVGImage::UpdateUseCounters(const Document& document) const {
   }
 }
 
+Element* SVGImage::GetResourceElement(const AtomicString& id) const {
+  if (!page_) {
+    return nullptr;
+  }
+  return GetFrame()->GetDocument()->getElementById(id);
+}
+
 void SVGImage::LoadCompleted() {
   switch (load_state_) {
     case kInDataChanged:
@@ -828,7 +794,8 @@ Image::SizeAvailability SVGImage::DataChanged(bool all_data_received) {
     frame->SetView(MakeGarbageCollected<LocalFrameView>(*frame));
     frame->Init(/*opener=*/nullptr, DocumentToken(),
                 /*policy_container=*/nullptr, StorageKey(),
-                /*document_ukm_source_id=*/ukm::kInvalidSourceId);
+                /*document_ukm_source_id=*/ukm::kInvalidSourceId,
+                /*creator_base_url=*/KURL());
   }
 
   // SVG Images will always synthesize a viewBox, if it's not available, and
@@ -839,7 +806,7 @@ Image::SizeAvailability SVGImage::DataChanged(bool all_data_received) {
 
   TRACE_EVENT0("blink", "SVGImage::dataChanged::load");
 
-  frame->ForceSynchronousDocumentInstall("image/svg+xml", Data());
+  frame->ForceSynchronousDocumentInstall(AtomicString("image/svg+xml"), Data());
 
   // Set up our Page reference after installing our document. This avoids
   // tripping on a non-existing (null) Document if a GC is triggered during the
@@ -867,7 +834,7 @@ Image::SizeAvailability SVGImage::DataChanged(bool all_data_received) {
     return kSizeUnavailable;
 
   // Set the concrete object size before a container size is available.
-  intrinsic_size_ = RoundedLayoutSize(ConcreteObjectSize(gfx::SizeF(
+  intrinsic_size_ = PhysicalSize::FromSizeFFloor(ConcreteObjectSize(gfx::SizeF(
       LayoutReplaced::kDefaultWidth, LayoutReplaced::kDefaultHeight)));
 
   if (load_state_ == kWaitingForAsyncLoadCompletion)

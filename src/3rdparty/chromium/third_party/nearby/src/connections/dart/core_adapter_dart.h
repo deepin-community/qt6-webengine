@@ -93,8 +93,6 @@ struct DiscoveryOptionsDart {
   StrategyDart strategy;
   int64_t auto_upgrade_bandwidth;
   int64_t enforce_topology_constraints;
-  int64_t keep_alive_interval_millis = 0;
-  int64_t keep_alive_timeout_millis = 0;
 
   // Whether this is intended to be used in conjunction with InjectEndpoint().
   int64_t is_out_of_band_connection = false;
@@ -134,6 +132,7 @@ struct ConnectionListenerDart {
 
 struct ConnectionRequestInfoDart {
   // LINT.IfChange
+  int endpoint_info_size;
   char *endpoint_info;
   ConnectionListenerDart connection_listener;
   // LINT.ThenChange(//depot/google3/location/nearby/apps/helloconnections/plugins/nearby_connections/platform/lib/types/connection_request_info.dart)

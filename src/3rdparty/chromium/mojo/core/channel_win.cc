@@ -67,17 +67,9 @@ class ChannelWin : public Channel,
         is_untrusted_process_(connection_params.is_untrusted_process()),
         self_(this),
         io_task_runner_(io_task_runner) {
-    if (connection_params.server_endpoint().is_valid()) {
-      handle_ = connection_params.TakeServerEndpoint()
-                    .TakePlatformHandle()
-                    .TakeHandle();
-      needs_connection_ = true;
-    } else {
-      handle_ =
-          connection_params.TakeEndpoint().TakePlatformHandle().TakeHandle();
-    }
-
-    CHECK(handle_.IsValid());
+    handle_ =
+        connection_params.TakeEndpoint().TakePlatformHandle().TakeHandle();
+    CHECK(handle_.is_valid());
   }
 
   ChannelWin(const ChannelWin&) = delete;
@@ -184,30 +176,7 @@ class ChannelWin : public Channel,
 
   void StartOnIOThread() {
     base::CurrentThread::Get()->AddDestructionObserver(this);
-    base::CurrentIOThread::Get()->RegisterIOHandler(handle_.Get(), this);
-
-    if (needs_connection_) {
-      BOOL ok = ::ConnectNamedPipe(handle_.Get(), &connect_context_.overlapped);
-      if (ok) {
-        PLOG(ERROR) << "Unexpected success while waiting for pipe connection";
-        OnError(Error::kConnectionFailed);
-        return;
-      }
-
-      const DWORD err = GetLastError();
-      switch (err) {
-        case ERROR_PIPE_CONNECTED:
-          break;
-        case ERROR_IO_PENDING:
-          is_connect_pending_ = true;
-          AddRef();
-          return;
-        case ERROR_NO_DATA:
-        default:
-          OnError(Error::kConnectionFailed);
-          return;
-      }
-    }
+    base::CurrentIOThread::Get()->RegisterIOHandler(handle_.get(), this);
 
     // Now that we have registered our IOHandler, we can start writing.
     {
@@ -227,14 +196,21 @@ class ChannelWin : public Channel,
   void ShutDownOnIOThread() {
     base::CurrentThread::Get()->RemoveDestructionObserver(this);
 
+    {
+      // Prevent attempts to write if we've closed the handle.
+      base::AutoLock lock(write_lock_);
+      reject_writes_ = true;
+    }
+
     // TODO(https://crbug.com/583525): This function is expected to be called
     // once, and |handle_| should be valid at this point.
-    CHECK(handle_.IsValid());
-    CancelIo(handle_.Get());
-    if (leak_handle_)
+    CHECK(handle_.is_valid());
+    CancelIo(handle_.get());
+    if (leak_handle_) {
       std::ignore = handle_.Take();
-    else
+    } else {
       handle_.Close();
+    }
 
     // Allow |this| to be destroyed as soon as no IO is pending.
     self_ = nullptr;
@@ -260,16 +236,6 @@ class ChannelWin : public Channel,
         OnWriteError(Error::kDisconnected);
       } else {
         OnError(Error::kDisconnected);
-      }
-    } else if (context == &connect_context_) {
-      DCHECK(is_connect_pending_);
-      is_connect_pending_ = false;
-      ReadMore(0);
-
-      base::AutoLock lock(write_lock_);
-      if (delay_writes_) {
-        delay_writes_ = false;
-        WriteNextNoLock();
       }
     } else if (context == &read_context_) {
       OnReadDone(static_cast<size_t>(bytes_transfered));
@@ -328,7 +294,7 @@ class ChannelWin : public Channel,
     DCHECK_GT(buffer_capacity, 0u);
 
     BOOL ok =
-        ::ReadFile(handle_.Get(), buffer, static_cast<DWORD>(buffer_capacity),
+        ::ReadFile(handle_.get(), buffer, static_cast<DWORD>(buffer_capacity),
                    NULL, &read_context_.overlapped);
     if (ok || GetLastError() == ERROR_IO_PENDING) {
       is_read_pending_ = true;
@@ -356,7 +322,8 @@ class ChannelWin : public Channel,
     for (auto& handle : handles)
       handle.CompleteTransit();
 
-    BOOL ok = WriteFile(handle_.Get(), message->data(),
+    DCHECK(handle_.is_valid());
+    BOOL ok = WriteFile(handle_.get(), message->data(),
                         static_cast<DWORD>(message->data_num_bytes()), NULL,
                         &write_context_.overlapped);
     if (ok || GetLastError() == ERROR_IO_PENDING) {
@@ -368,8 +335,12 @@ class ChannelWin : public Channel,
   }
 
   bool WriteNextNoLock() {
-    if (outgoing_messages_.IsEmpty())
+    if (outgoing_messages_.IsEmpty()) {
       return true;
+    }
+    if (reject_writes_) {
+      return false;
+    }
     return WriteNoLock(outgoing_messages_.GetFirst());
   }
 
@@ -381,8 +352,9 @@ class ChannelWin : public Channel,
       // If we can't write because the pipe is disconnected then continue
       // reading to fetch any in-flight messages, relying on end-of-stream to
       // signal the actual disconnection.
-      if (is_read_pending_ || is_connect_pending_)
+      if (is_read_pending_) {
         return;
+      }
     }
 
     OnError(error);
@@ -396,14 +368,9 @@ class ChannelWin : public Channel,
   // The pipe handle this Channel uses for communication.
   base::win::ScopedHandle handle_;
 
-  // Indicates whether |handle_| must wait for a connection.
-  bool needs_connection_ = false;
-
   const scoped_refptr<base::SingleThreadTaskRunner> io_task_runner_;
 
-  base::MessagePumpForIO::IOContext connect_context_;
   base::MessagePumpForIO::IOContext read_context_;
-  bool is_connect_pending_ = false;
   bool is_read_pending_ = false;
 
   // Protects all fields potentially accessed on multiple threads via Write().

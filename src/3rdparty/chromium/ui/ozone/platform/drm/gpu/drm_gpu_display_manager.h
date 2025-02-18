@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "base/functional/callback.h"
+#include "base/memory/raw_ptr.h"
 #include "ui/display/types/display_configuration_params.h"
 #include "ui/display/types/display_constants.h"
 #include "ui/ozone/platform/drm/common/display_types.h"
@@ -17,7 +18,10 @@
 using drmModeModeInfo = struct _drmModeModeInfo;
 
 namespace display {
-struct GammaRampRGBEntry;
+class GammaCurve;
+struct ColorCalibration;
+struct ColorTemperatureAdjustment;
+struct GammaAdjustment;
 }  // namespace display
 
 namespace gfx {
@@ -67,18 +71,26 @@ class DrmGpuDisplayManager {
   bool SetHDCPState(int64_t display_id,
                     display::HDCPState state,
                     display::ContentProtectionMethod protection_method);
+  void SetColorTemperatureAdjustment(
+      int64_t display_id,
+      const display::ColorTemperatureAdjustment& cta);
+  void SetColorCalibration(int64_t display_id,
+                           const display::ColorCalibration& calibration);
+  void SetGammaAdjustment(int64_t display_id,
+                          const display::GammaAdjustment& adjustment);
   void SetColorMatrix(int64_t display_id,
                       const std::vector<float>& color_matrix);
   void SetBackgroundColor(int64_t display_id, const uint64_t background_color);
-  void SetGammaCorrection(
-      int64_t display_id,
-      const std::vector<display::GammaRampRGBEntry>& degamma_lut,
-      const std::vector<display::GammaRampRGBEntry>& gamma_lut);
+  void SetGammaCorrection(int64_t display_id,
+                          const display::GammaCurve& degamma,
+                          const display::GammaCurve& gamma);
   bool SetPrivacyScreen(int64_t display_id, bool enabled);
 
   void SetColorSpace(int64_t crtc_id, const gfx::ColorSpace& color_space);
 
  private:
+  friend class DrmGpuDisplayManagerTest;
+
   DrmDisplay* FindDisplay(int64_t display_id);
 
   // Notify ScreenManager of all the displays that were present before the
@@ -87,8 +99,8 @@ class DrmGpuDisplayManager {
       const std::vector<std::unique_ptr<DrmDisplay>>& new_displays,
       const std::vector<std::unique_ptr<DrmDisplay>>& old_displays) const;
 
-  ScreenManager* const screen_manager_;         // Not owned.
-  DrmDeviceManager* const drm_device_manager_;  // Not owned.
+  const raw_ptr<ScreenManager> screen_manager_;         // Not owned.
+  const raw_ptr<DrmDeviceManager> drm_device_manager_;  // Not owned.
 
   std::vector<std::unique_ptr<DrmDisplay>> displays_;
 

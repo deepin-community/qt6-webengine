@@ -12,12 +12,11 @@
 #include "ui/gl/gl_surface_egl.h"
 #include "ui/gl/gl_surface_stub.h"
 
-namespace gl {
-namespace init {
+namespace gl::init {
 
 std::vector<GLImplementationParts> GetAllowedGLImplementations() {
   std::vector<GLImplementationParts> impls;
-  impls.emplace_back(GLImplementationParts(kGLImplementationEGLANGLE));
+  impls.emplace_back(gl::ANGLEImplementation::kMetal);
   return impls;
 }
 
@@ -54,40 +53,39 @@ scoped_refptr<GLSurface> CreateViewGLSurface(GLDisplay* display,
   switch (GetGLImplementation()) {
     case kGLImplementationEGLANGLE:
       if (window != gfx::kNullAcceleratedWidget) {
-        return InitializeGLSurface(new NativeViewGLSurfaceEGL(
-            display->GetAs<gl::GLDisplayEGL>(), window.layer, nullptr));
+        UIView* view = (__bridge id)(void*)window;
+        void* layer = (__bridge void*)view.layer;
+        return InitializeGLSurface(
+            new NativeViewGLSurfaceEGL(display->GetAs<gl::GLDisplayEGL>(),
+                                       layer, /*vsync_provider=*/nullptr));
       } else {
         return InitializeGLSurface(new GLSurfaceStub());
       }
     case kGLImplementationMockGL:
     case kGLImplementationStubGL:
-      return new GLSurfaceStub;
+      return InitializeGLSurface(new GLSurfaceStub());
     default:
       NOTREACHED();
       return nullptr;
   }
 }
 
-scoped_refptr<GLSurface> CreateOffscreenGLSurfaceWithFormat(
-    GLDisplay* display,
-    const gfx::Size& size,
-    GLSurfaceFormat format) {
+scoped_refptr<GLSurface> CreateOffscreenGLSurface(GLDisplay* display,
+                                                  const gfx::Size& size) {
   TRACE_EVENT0("gpu", "gl::init::CreateOffscreenGLSurface");
   switch (GetGLImplementation()) {
     case kGLImplementationEGLANGLE: {
       GLDisplayEGL* display_egl = display->GetAs<gl::GLDisplayEGL>();
       if (display_egl->IsEGLSurfacelessContextSupported() &&
           size.width() == 0 && size.height() == 0) {
-        return InitializeGLSurfaceWithFormat(
-            new SurfacelessEGL(display_egl, size), format);
+        return InitializeGLSurface(new SurfacelessEGL(display_egl, size));
       } else {
-        return InitializeGLSurfaceWithFormat(
-            new PbufferGLSurfaceEGL(display_egl, size), format);
+        return InitializeGLSurface(new PbufferGLSurfaceEGL(display_egl, size));
       }
     }
     case kGLImplementationMockGL:
     case kGLImplementationStubGL:
-      return new GLSurfaceStub;
+      return InitializeGLSurface(new GLSurfaceStub());
     default:
       NOTREACHED();
       return nullptr;
@@ -107,5 +105,4 @@ bool InitializeExtensionSettingsOneOffPlatform(GLDisplay* display) {
   return true;
 }
 
-}  // namespace init
-}  // namespace gl
+}  // namespace gl::init

@@ -43,9 +43,8 @@ class DEPSParser(ABC):
         return self.local_scope["recursedeps"]
 
 
-chromium_version = '112.0.5615.213'
-chromium_branch = '5615'
-ninja_version = 'v1.8.2'
+chromium_version = '122.0.6261.171'
+chromium_branch = '6261'
 
 json_url = 'http://omahaproxy.appspot.com/all.json'
 
@@ -57,7 +56,13 @@ submodule_blacklist = [
   'buildtools/clang_format/script',
   'buildtools/third_party/libc++/trunk',
   'buildtools/third_party/libc++abi/trunk',
-  'buildtools/third_party/libunwind/trunk'
+  'buildtools/third_party/libunwind/trunk',
+  'chrome/browser/resources/chromeos/quickoffice',
+  'remoting/host/installer/linux/internal',
+  'third_party/widevine/cdm/chromeos',
+  'third_party/widevine/cdm/linux',
+  'third_party/widevine/test/license_server',
+  'ui/file_manager/internal'
 ]
 submodule_whitelist = [ 'src/third_party/android_ndk' , 'src/third_party/libunwindstack' ]
 
@@ -65,9 +70,6 @@ sys.path.append(os.path.join(qtwebengine_root, 'tools', 'scripts'))
 
 def currentVersion():
     return chromium_version
-
-def currentNinjaVersion():
-    return ninja_version
 
 def readReleaseChannels():
     response = urllib2.urlopen(json_url)

@@ -5,6 +5,7 @@
 #include "content/utility/utility_thread_impl.h"
 
 #include <memory>
+#include <optional>
 #include <set>
 #include <utility>
 
@@ -30,7 +31,10 @@
 #include "mojo/public/cpp/bindings/binder_map.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/service_factory.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
+
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+#include "content/child/sandboxed_process_thread_type_handler.h"
+#endif
 
 namespace content {
 
@@ -92,8 +96,8 @@ class ServiceBinderImpl {
                        std::move(*receiver), std::move(termination_callback)));
   }
 
-  static absl::optional<ServiceBinderImpl>& GetInstanceStorage() {
-    static base::NoDestructor<absl::optional<ServiceBinderImpl>> storage;
+  static std::optional<ServiceBinderImpl>& GetInstanceStorage() {
+    static base::NoDestructor<std::optional<ServiceBinderImpl>> storage;
     return *storage;
   }
 
@@ -248,6 +252,10 @@ void UtilityThreadImpl::Init() {
 
   GetContentClient()->utility()->UtilityThreadStarted();
 
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+  SandboxedProcessThreadTypeHandler::NotifyMainChildThreadCreated();
+#endif
+
   // NOTE: Do not add new interfaces directly within this method. Instead,
   // modify the definition of |ExposeUtilityInterfacesToBrowser()| to ensure
   // security review coverage.
@@ -278,7 +286,9 @@ constexpr ServiceCurrentProcessType kCurrentProcessTypes[] = {
     {"chrome.mojom.UtilWin", CurrentProcessType::PROCESS_SERVICE_UTIL_WIN},
     {"proxy_resolver.mojom.ProxyResolverFactory",
      CurrentProcessType::PROCESS_SERVICE_PROXY_RESOLVER},
-    {"media.mojom.CdmService", CurrentProcessType::PROCESS_SERVICE_CDM},
+    {"media.mojom.CdmServiceBroker", CurrentProcessType::PROCESS_SERVICE_CDM},
+    {"media.mojom.MediaFoundationServiceBroker",
+     CurrentProcessType::PROCESS_SERVICE_MEDIA_FOUNDATION},
     {"video_capture.mojom.VideoCaptureService",
      CurrentProcessType::PROCESS_SERVICE_VIDEO_CAPTURE},
     {"unzip.mojom.Unzipper", CurrentProcessType::PROCESS_SERVICE_UNZIPPER},

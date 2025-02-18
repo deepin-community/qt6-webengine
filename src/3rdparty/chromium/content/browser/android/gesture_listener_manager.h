@@ -12,7 +12,6 @@
 #include "content/browser/android/render_widget_host_connector.h"
 #include "content/common/content_export.h"
 #include "third_party/blink/public/mojom/input/input_event_result.mojom-shared.h"
-#include "third_party/blink/public/mojom/input/input_handler.mojom-forward.h"
 
 namespace blink {
 class WebGestureEvent;
@@ -29,7 +28,6 @@ struct DidOverscrollParams;
 
 namespace content {
 
-class NavigationHandle;
 class WebContentsImpl;
 
 // Native class for GestureListenerManagerImpl.
@@ -56,12 +54,12 @@ class CONTENT_EXPORT GestureListenerManager : public RenderWidgetHostConnector {
       jboolean enabled);
   cc::mojom::RootScrollOffsetUpdateFrequency
   root_scroll_offset_update_frequency() const {
-    return root_scroll_offset_update_frequency_;
+    return root_scroll_offset_update_frequency_.value_or(
+        cc::mojom::RootScrollOffsetUpdateFrequency::kNone);
   }
   void SetRootScrollOffsetUpdateFrequency(JNIEnv* env, jint frequency);
   void GestureEventAck(const blink::WebGestureEvent& event,
-                       blink::mojom::InputEventResultState ack_result,
-                       blink::mojom::ScrollResultDataPtr scroll_result_data);
+                       blink::mojom::InputEventResultState ack_result);
   void DidStopFlinging();
   bool FilterInputEvent(const blink::WebInputEvent& event);
   void DidOverscroll(const ui::DidOverscrollParams& params);
@@ -85,7 +83,7 @@ class CONTENT_EXPORT GestureListenerManager : public RenderWidgetHostConnector {
       RenderWidgetHostViewAndroid* old_rwhva,
       RenderWidgetHostViewAndroid* new_rhwva) override;
 
-  void OnNavigationFinished(NavigationHandle* navigation_handle);
+  void OnPrimaryPageChanged();
   void OnRenderProcessGone();
 
   bool IsScrollInProgressForTesting();
@@ -103,9 +101,8 @@ class CONTENT_EXPORT GestureListenerManager : public RenderWidgetHostConnector {
   JavaObjectWeakGlobalRef java_ref_;
 
   // Highest update frequency requested by any of the listeners.
-  cc::mojom::RootScrollOffsetUpdateFrequency
-      root_scroll_offset_update_frequency_ =
-          cc::mojom::RootScrollOffsetUpdateFrequency::kNone;
+  std::optional<cc::mojom::RootScrollOffsetUpdateFrequency>
+      root_scroll_offset_update_frequency_;
 };
 
 }  // namespace content

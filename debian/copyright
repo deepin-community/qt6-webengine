@@ -6,22 +6,22 @@ Files-Excluded: examples/webenginewidgets/contentmanipulation/jquery.min.js
                 src/3rdparty/chromium/build/android/stacktrace/java_deobfuscate_java.jar
                 src/3rdparty/chromium/buildtools/third_party/eu-strip/bin/eu-strip
                 src/3rdparty/chromium/net/tools/testserver/dist/*.pyd
-                src/3rdparty/chromium/third_party/android_ndk/prebuilt/linux-x86_64/share/info/make.info
                 src/3rdparty/chromium/third_party/angle/third_party/rapidjson/src/bin/jsonchecker
                 src/3rdparty/chromium/third_party/apple_apsl/*
-                src/3rdparty/chromium/third_party/blanketjs/src/blanket.js
+                src/3rdparty/chromium/third_party/beto-core/src/nearby/connections/ukey2/ukey2_jni/java/gradle/wrapper/gradle-wrapper.jar
+                src/3rdparty/chromium/third_party/beto-core/src/nearby/presence/ldt_np_jni/java/LdtNpJni/gradle/wrapper/gradle-wrapper.jar
                 src/3rdparty/chromium/third_party/blink/manual_tests/accessibility/resources/AppletTest.class
                 src/3rdparty/chromium/third_party/blink/manual_tests/plugins/*.swf
                 src/3rdparty/chromium/third_party/blink/manual_tests/resources/*.class
                 src/3rdparty/chromium/third_party/blink/manual_tests/resources/spinbox.swf
+                src/3rdparty/chromium/third_party/blink/manual_tests/WebKitSite.webarchive
+                src/3rdparty/chromium/third_party/breakpad/breakpad/src/client/mac/gcov/libgcov.a
                 src/3rdparty/chromium/third_party/breakpad/breakpad/src/client/mac/testapp/crashduringload
                 src/3rdparty/chromium/third_party/breakpad/breakpad/src/client/mac/testapp/crashInMain
-                src/3rdparty/chromium/third_party/breakpad/breakpad/src/client/mac/gcov/libgcov.a
                 src/3rdparty/chromium/third_party/breakpad/breakpad/src/tools/windows/binaries
                 src/3rdparty/chromium/third_party/breakpad/symupload.exe
                 src/3rdparty/chromium/third_party/bspatch/LICENSE
                 src/3rdparty/chromium/third_party/catapult/*
-                src/3rdparty/chromium/third_party/chaijs/chai.js
                 src/3rdparty/chromium/third_party/checkstyle/*
                 src/3rdparty/chromium/third_party/closure_compiler/compiler/compiler.jar
                 src/3rdparty/chromium/third_party/crashpad/crashpad/handler/win/z7_test.dll
@@ -34,8 +34,15 @@ Files-Excluded: examples/webenginewidgets/contentmanipulation/jquery.min.js
                 src/3rdparty/chromium/third_party/flatbuffers/src/android/gradle/wrapper/gradle-wrapper.jar
                 src/3rdparty/chromium/third_party/flatbuffers/src/kotlin/gradle/wrapper/gradle-wrapper.jar
                 src/3rdparty/chromium/third_party/google-closure-library/scripts/ci/CloseAdobeDialog.exe
+                src/3rdparty/chromium/third_party/google-java-format/chromium-overrides.jar
                 src/3rdparty/chromium/third_party/gradle_wrapper/gradle/wrapper/gradle-wrapper.jar
+                src/3rdparty/chromium/third_party/jni_zero/samples/java/src/org/jni_zero/samples/JavapClass.class
                 src/3rdparty/chromium/third_party/jstemplate/jstemplate_compiled.js
+                src/3rdparty/chromium/third_party/libavif/src/android_jni/gradle/wrapper/gradle-wrapper.jar
+                src/3rdparty/chromium/third_party/libwebp/src/gradle/wrapper/gradle-wrapper.jar
+                src/3rdparty/chromium/third_party/mediapipe/src/mediapipe/modules/face_geometry/data/canonical_face_model.obj
+                src/3rdparty/chromium/third_party/mediapipe/src/mediapipe/modules/face_geometry/data/face_model_with_iris.obj
+                src/3rdparty/chromium/third_party/node/node_modules/rollup
                 src/3rdparty/chromium/third_party/openh264/src/autotest/performanceTest/ios/fruitstrap
                 src/3rdparty/chromium/third_party/openh264/src/autotest/performanceTest/ios/iFileTransfer
                 src/3rdparty/chromium/third_party/pycoverage/coverage/htmlfiles/*.min.js
@@ -46,13 +53,10 @@ Files-Excluded: examples/webenginewidgets/contentmanipulation/jquery.min.js
                 src/3rdparty/chromium/third_party/skia/resources/icc_profiles/AdobeRGB1998.icc
                 src/3rdparty/chromium/third_party/skia/resources/icc_profiles/srgb_lab_pcs.icc
                 src/3rdparty/chromium/third_party/skia/tools/perf-canvaskit-puppeteer/path_translate_assets/car.svg
-                src/3rdparty/chromium/third_party/vulkan_memory_allocator/build
-                src/3rdparty/chromium/third_party/vulkan_memory_allocator/docs
+                src/3rdparty/chromium/third_party/vulkan-deps/glslang/src/Test/*.spv
                 src/3rdparty/chromium/third_party/vulkan-deps/spirv-cross/src/tests-other/*.spv
-                src/3rdparty/chromium/third_party/vulkan-deps/vulkan-loader/src/loader/loader.aps
-                src/3rdparty/chromium/third_party/vulkan-deps/vulkan-tools/src/external/x86/lib/vulkan-1.lib
-                src/3rdparty/chromium/third_party/vulkan-deps/vulkan-tools/src/external/x64/lib/vulkan-1.lib
-                src/3rdparty/chromium/third_party/web-animations-js/sources/*.min.js
+                src/3rdparty/chromium/third_party/vulkan_memory_allocator/bin
+                src/3rdparty/chromium/third_party/vulkan_memory_allocator/docs
                 src/3rdparty/chromium/third_party/webrtc/data/voice_engine/stereo_rtp_files/rtpplay.exe
                 src/3rdparty/chromium/third_party/webrtc/examples/androidapp/third_party/autobanh
                 src/3rdparty/chromium/third_party/webxr_test_pages/webxr-samples/js/third-party/dat.gui/dat.gui.min.js
@@ -60,6 +64,12 @@ Files-Excluded: examples/webenginewidgets/contentmanipulation/jquery.min.js
                 src/3rdparty/chromium/ui/accessibility/extensions/highcontrast/highcontrast.js
                 src/3rdparty/chromium/v8/third_party/wasm-api/example/*.wasm
                 tests/auto/widgets/qwebengineview/resources/test.swf
+Comment:
+ src/3rdparty/chromium/third_party/blink/manual_tests/WebKitSite.webarchive
+ contains non-free JavaScript (#1091463).
+ .
+ src/3rdparty/chromium/third_party/node/node_modules/rollup is replaced by a
+ system package (#1023333).
 
 Files: *
 Copyright: 2006-2021 The Chromium Authors
@@ -69,7 +79,7 @@ License: LGPL-3 or GPL-2
 Files: debian/*
 Copyright: 2021 Lu YaNing <dluyaning@gmail.com>
            2021-2022 Patrick Franz <deltaone@debian.org>
-           2023 Soren Stoutner <soren@stoutner.com>
+           2023-2025 Soren Stoutner <soren@stoutner.com>
 License: LGPL-3
 
 Files: conanfile.py

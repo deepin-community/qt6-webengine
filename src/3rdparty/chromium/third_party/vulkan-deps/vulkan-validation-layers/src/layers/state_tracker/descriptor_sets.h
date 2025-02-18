@@ -15,22 +15,21 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef CORE_VALIDATION_DESCRIPTOR_SETS_H_
-#define CORE_VALIDATION_DESCRIPTOR_SETS_H_
 
-#include "state_tracker/base_node.h"
+#pragma once
+
+#include "state_tracker/state_object.h"
 #include "state_tracker/buffer_state.h"
 #include "state_tracker/image_state.h"
 #include "state_tracker/pipeline_state.h"
 #include "state_tracker/ray_tracing_state.h"
 #include "state_tracker/sampler_state.h"
-#include "hash_vk_types.h"
-#include "vk_layer_logging.h"
-#include "vk_layer_utils.h"
-#include "vk_safe_struct.h"
+#include "utils/hash_vk_types.h"
+#include "error_message/logging.h"
+#include "utils/vk_layer_utils.h"
+#include "generated/vk_safe_struct.h"
 #include "vulkan/vk_layer.h"
-#include "vk_object_types.h"
-#include "command_validation.h"
+#include "generated/vk_object_types.h"
 #include <map>
 #include <memory>
 #include <set>
@@ -39,28 +38,29 @@
 class CoreChecks;
 class ValidationObject;
 class ValidationStateTracker;
-class CMD_BUFFER_STATE;
 class UPDATE_TEMPLATE_STATE;
 struct DeviceExtensions;
-class SAMPLER_STATE;
 
-namespace cvdescriptorset {
+namespace vvl {
+class Sampler;
 class DescriptorSet;
+class CommandBuffer;
 struct AllocateDescriptorSetsData;
-}  // namespace cvdescriptorset
 
-class DESCRIPTOR_POOL_STATE : public BASE_NODE {
+class DescriptorPool : public StateObject {
   public:
-    DESCRIPTOR_POOL_STATE(ValidationStateTracker *dev, const VkDescriptorPool pool, const VkDescriptorPoolCreateInfo *pCreateInfo);
-    ~DESCRIPTOR_POOL_STATE() { Destroy(); }
+    DescriptorPool(ValidationStateTracker *dev, const VkDescriptorPool pool, const VkDescriptorPoolCreateInfo *pCreateInfo);
+    ~DescriptorPool() { Destroy(); }
+
+    VkDescriptorPool VkHandle() const { return handle_.Cast<VkDescriptorPool>(); };
 
     void Allocate(const VkDescriptorSetAllocateInfo *alloc_info, const VkDescriptorSet *descriptor_sets,
-                  const cvdescriptorset::AllocateDescriptorSetsData *ds_data);
+                  const vvl::AllocateDescriptorSetsData *ds_data);
     void Free(uint32_t count, const VkDescriptorSet *descriptor_sets);
     void Reset();
     void Destroy() override;
 
-    bool InUse() const override;
+    const VulkanTypedHandle *InUse() const override;
     uint32_t GetAvailableCount(uint32_t type) const {
         auto guard = ReadLock();
         auto iter = available_counts_.find(type);
@@ -83,26 +83,26 @@ class DESCRIPTOR_POOL_STATE : public BASE_NODE {
     const safe_VkDescriptorPoolCreateInfo createInfo;
     using TypeCountMap = vvl::unordered_map<uint32_t, uint32_t>;
     const TypeCountMap maxDescriptorTypeCount;  // Max # of descriptors of each type in this pool
-  private:
+
+  protected:
     ReadLockGuard ReadLock() const { return ReadLockGuard(lock_); }
     WriteLockGuard WriteLock() { return WriteLockGuard(lock_); }
     uint32_t available_sets_;        // Available descriptor sets in this pool
     TypeCountMap available_counts_;  // Available # of descriptors of each type in this pool
-    vvl::unordered_map<VkDescriptorSet, cvdescriptorset::DescriptorSet *> sets_;  // Collection of all sets in this pool
+    vvl::unordered_map<VkDescriptorSet, vvl::DescriptorSet *> sets_;  // Collection of all sets in this pool
     ValidationStateTracker *dev_data_;
     mutable std::shared_mutex lock_;
 };
 
-class UPDATE_TEMPLATE_STATE : public BASE_NODE {
+class DescriptorUpdateTemplate : public StateObject {
   public:
     const safe_VkDescriptorUpdateTemplateCreateInfo create_info;
 
-    UPDATE_TEMPLATE_STATE(VkDescriptorUpdateTemplate update_template, const VkDescriptorUpdateTemplateCreateInfo *pCreateInfo)
-        : BASE_NODE(update_template, kVulkanObjectTypeDescriptorUpdateTemplate), create_info(pCreateInfo) {}
-};
+    DescriptorUpdateTemplate(VkDescriptorUpdateTemplate update_template, const VkDescriptorUpdateTemplateCreateInfo *pCreateInfo)
+        : StateObject(update_template, kVulkanObjectTypeDescriptorUpdateTemplate), create_info(pCreateInfo) {}
 
-// Descriptor Data structures
-namespace cvdescriptorset {
+    VkDescriptorUpdateTemplate VkHandle() const { return handle_.Cast<VkDescriptorUpdateTemplate>(); };
+};
 
 // Utility structs/classes/types
 // Index range for global indices below, end is exclusive, i.e. [start,end)
@@ -163,7 +163,6 @@ class DescriptorSetLayoutDef {
     // Return true if given binding is present in this layout
     bool HasBinding(const uint32_t binding) const { return binding_to_index_map_.count(binding) > 0; };
     // Return true if binding 1 beyond given exists and has same type, stageFlags & immutable sampler use
-    bool IsNextBindingConsistent(const uint32_t) const;
     uint32_t GetIndexFromBinding(uint32_t binding) const;
     // Various Get functions that can either be passed a binding#, which will
     //  be automatically translated into the appropriate index, or the index# can be passed in directly
@@ -184,10 +183,7 @@ class DescriptorSetLayoutDef {
     }
     VkDescriptorType GetTypeFromIndex(const uint32_t) const;
     VkDescriptorType GetTypeFromBinding(const uint32_t binding) const { return GetTypeFromIndex(GetIndexFromBinding(binding)); }
-    VkShaderStageFlags GetStageFlagsFromIndex(const uint32_t) const;
-    VkShaderStageFlags GetStageFlagsFromBinding(const uint32_t binding) const {
-        return GetStageFlagsFromIndex(GetIndexFromBinding(binding));
-    }
+
     VkDescriptorBindingFlags GetDescriptorBindingFlagsFromIndex(const uint32_t) const;
     VkDescriptorBindingFlags GetDescriptorBindingFlagsFromBinding(const uint32_t binding) const {
         return GetDescriptorBindingFlagsFromIndex(GetIndexFromBinding(binding));
@@ -199,7 +195,7 @@ class DescriptorSetLayoutDef {
     // For a particular binding, get the global index range
     //  This call should be guarded by a call to "HasBinding(binding)" to verify that the given binding exists
     const IndexRange &GetGlobalIndexRangeFromBinding(const uint32_t) const;
-    const cvdescriptorset::IndexRange &GetGlobalIndexRangeFromIndex(uint32_t index) const;
+    const vvl::IndexRange &GetGlobalIndexRangeFromIndex(uint32_t index) const;
 
     // Helper function to get the next valid binding for a descriptor
     uint32_t GetNextValidBinding(const uint32_t) const;
@@ -242,7 +238,7 @@ static inline bool operator==(const DescriptorSetLayoutDef &lhs, const Descripto
 using DescriptorSetLayoutDict = hash_util::Dictionary<DescriptorSetLayoutDef, hash_util::HasHashMember<DescriptorSetLayoutDef>>;
 using DescriptorSetLayoutId = DescriptorSetLayoutDict::Id;
 
-class DescriptorSetLayout : public BASE_NODE {
+class DescriptorSetLayout : public StateObject {
   public:
     // Constructors and destructor
     DescriptorSetLayout(const VkDescriptorSetLayoutCreateInfo *p_create_info, const VkDescriptorSetLayout layout);
@@ -254,7 +250,7 @@ class DescriptorSetLayout : public BASE_NODE {
     // Return true if this layout is compatible with passed in layout
     bool IsCompatible(DescriptorSetLayout const *rh_ds_layout) const;
     // Straightforward Get functions
-    VkDescriptorSetLayout GetDescriptorSetLayout() const { return handle_.Cast<VkDescriptorSetLayout>(); };
+    VkDescriptorSetLayout VkHandle() const { return handle_.Cast<VkDescriptorSetLayout>(); };
     const DescriptorSetLayoutDef *GetLayoutDef() const { return layout_id_.get(); }
     DescriptorSetLayoutId GetLayoutId() const { return layout_id_; }
     uint32_t GetTotalDescriptorCount() const { return layout_id_->GetTotalDescriptorCount(); };
@@ -278,10 +274,7 @@ class DescriptorSetLayout : public BASE_NODE {
     }
     VkDescriptorType GetTypeFromIndex(const uint32_t index) const { return layout_id_->GetTypeFromIndex(index); }
     VkDescriptorType GetTypeFromBinding(const uint32_t binding) const { return layout_id_->GetTypeFromBinding(binding); }
-    VkShaderStageFlags GetStageFlagsFromIndex(const uint32_t index) const { return layout_id_->GetStageFlagsFromIndex(index); }
-    VkShaderStageFlags GetStageFlagsFromBinding(const uint32_t binding) const {
-        return layout_id_->GetStageFlagsFromBinding(binding);
-    }
+
     VkDescriptorBindingFlags GetDescriptorBindingFlagsFromIndex(const uint32_t index) const {
         return layout_id_->GetDescriptorBindingFlagsFromIndex(index);
     }
@@ -328,7 +321,7 @@ class DescriptorSetLayout : public BASE_NODE {
  */
 
 // Slightly broader than type, each c++ "class" will has a corresponding "DescriptorClass"
-enum DescriptorClass {
+enum class DescriptorClass {
     PlainSampler,
     ImageSampler,
     Image,
@@ -346,17 +339,21 @@ class DescriptorSet;
 
 class Descriptor {
   public:
+    static bool SupportsNotifyInvalidate() { return false; }
+    static bool IsNotifyInvalidateType(VulkanObjectType) { return false; }
+    virtual void InvalidateNode(const std::shared_ptr<StateObject> &, bool) {}  // Most descriptor types will not call
+
     Descriptor() {}
     virtual ~Descriptor() {}
-    virtual void WriteUpdate(DescriptorSet *set_state, const ValidationStateTracker *dev_data, const VkWriteDescriptorSet *,
+    virtual void WriteUpdate(DescriptorSet &set_state, const ValidationStateTracker &dev_data, const VkWriteDescriptorSet &,
                              const uint32_t, bool is_bindless) = 0;
-    virtual void CopyUpdate(DescriptorSet *set_state, const ValidationStateTracker *dev_data, const Descriptor *,
-                            bool is_bindless) = 0;
+    virtual void CopyUpdate(DescriptorSet &set_state, const ValidationStateTracker &dev_data, const Descriptor &, bool is_bindless,
+                            VkDescriptorType type) = 0;
     virtual DescriptorClass GetClass() const = 0;
     // Special fast-path check for SamplerDescriptors that are immutable
     virtual bool IsImmutableSampler() const { return false; };
-    virtual bool AddParent(BASE_NODE *base_node) { return false; }
-    virtual void RemoveParent(BASE_NODE *base_node) {}
+    virtual bool AddParent(StateObject *state_object) { return false; }
+    virtual void RemoveParent(StateObject *state_object) {}
 
     // return true if resources used by this descriptor are destroyed or otherwise missing
     virtual bool Invalid() const { return false; }
@@ -375,177 +372,193 @@ inline bool IsBufferDescriptor(VkDescriptorType type) {
 class SamplerDescriptor : public Descriptor {
   public:
     SamplerDescriptor() = default;
-    DescriptorClass GetClass() const override { return PlainSampler; }
-    void WriteUpdate(DescriptorSet *set_state, const ValidationStateTracker *dev_data, const VkWriteDescriptorSet *, const uint32_t,
+    DescriptorClass GetClass() const override { return DescriptorClass::PlainSampler; }
+    void WriteUpdate(DescriptorSet &set_state, const ValidationStateTracker &dev_data, const VkWriteDescriptorSet &, const uint32_t,
                      bool is_bindless) override;
-    void CopyUpdate(DescriptorSet *set_state, const ValidationStateTracker *dev_data, const Descriptor *,
-                    bool is_bindless) override;
+    void CopyUpdate(DescriptorSet &set_state, const ValidationStateTracker &dev_data, const Descriptor &, bool is_bindless,
+                    VkDescriptorType type) override;
     virtual bool IsImmutableSampler() const override { return immutable_; };
     VkSampler GetSampler() const { return sampler_state_ ? sampler_state_->sampler() : VK_NULL_HANDLE; }
 
-    void SetSamplerState(std::shared_ptr<SAMPLER_STATE> &&state) {
+    void SetSamplerState(std::shared_ptr<vvl::Sampler> &&state) {
         sampler_state_ = std::move(state);
         // currently this method is only used to initialize immutable samplers during DescriptorSet creation
         immutable_ = true;
     }
 
-    const SAMPLER_STATE *GetSamplerState() const { return sampler_state_.get(); }
-    SAMPLER_STATE *GetSamplerState() { return sampler_state_.get(); }
-    std::shared_ptr<SAMPLER_STATE> GetSharedSamplerState() const { return sampler_state_; }
+    const vvl::Sampler *GetSamplerState() const { return sampler_state_.get(); }
+    vvl::Sampler *GetSamplerState() { return sampler_state_.get(); }
+    std::shared_ptr<vvl::Sampler> GetSharedSamplerState() const { return sampler_state_; }
 
-    bool AddParent(BASE_NODE *base_node) override {
+    bool AddParent(StateObject *state_object) override {
         bool result = false;
         if (sampler_state_) {
-            result = sampler_state_->AddParent(base_node);
+            result = sampler_state_->AddParent(state_object);
         }
         return result;
     }
-    void RemoveParent(BASE_NODE *base_node) override {
+    void RemoveParent(StateObject *state_object) override {
         if (sampler_state_) {
-            sampler_state_->RemoveParent(base_node);
+            sampler_state_->RemoveParent(state_object);
         }
     }
     bool Invalid() const override { return !sampler_state_ || sampler_state_->Invalid(); }
 
   private:
     bool immutable_{false};
-    std::shared_ptr<SAMPLER_STATE> sampler_state_;
+    std::shared_ptr<vvl::Sampler> sampler_state_;
 };
 
 class ImageDescriptor : public Descriptor {
   public:
+    static bool SupportsNotifyInvalidate() { return true; }
+    static bool IsNotifyInvalidateType(const VulkanObjectType node_type) {
+        return node_type == VulkanObjectType::kVulkanObjectTypeImageView;
+    }
     ImageDescriptor() = default;
-    DescriptorClass GetClass() const override { return Image; }
-    void WriteUpdate(DescriptorSet *set_state, const ValidationStateTracker *dev_data, const VkWriteDescriptorSet *, const uint32_t,
+    DescriptorClass GetClass() const override { return DescriptorClass::Image; }
+    void WriteUpdate(DescriptorSet &set_state, const ValidationStateTracker &dev_data, const VkWriteDescriptorSet &, const uint32_t,
                      bool is_bindless) override;
-    void CopyUpdate(DescriptorSet *set_state, const ValidationStateTracker *dev_data, const Descriptor *,
-                    bool is_bindless) override;
-    void UpdateDrawState(ValidationStateTracker *, CMD_BUFFER_STATE *cb_state);
+    void CopyUpdate(DescriptorSet &set_state, const ValidationStateTracker &dev_data, const Descriptor &, bool is_bindless,
+                    VkDescriptorType type) override;
+    void UpdateDrawState(ValidationStateTracker *, vvl::CommandBuffer *cb_state);
     VkImageView GetImageView() const { return image_view_state_ ? image_view_state_->image_view() : VK_NULL_HANDLE; }
-    const IMAGE_VIEW_STATE *GetImageViewState() const { return image_view_state_.get(); }
-    IMAGE_VIEW_STATE *GetImageViewState() { return image_view_state_.get(); }
-    std::shared_ptr<IMAGE_VIEW_STATE> GetSharedImageViewState() const { return image_view_state_; }
+    const vvl::ImageView *GetImageViewState() const { return image_view_state_.get(); }
+    vvl::ImageView *GetImageViewState() { return image_view_state_.get(); }
+    std::shared_ptr<vvl::ImageView> GetSharedImageViewState() const { return image_view_state_; }
     VkImageLayout GetImageLayout() const { return image_layout_; }
 
-    bool AddParent(BASE_NODE *base_node) override {
+    bool AddParent(StateObject *state_object) override {
         bool result = false;
         if (image_view_state_) {
-            result = image_view_state_->AddParent(base_node);
+            result = image_view_state_->AddParent(state_object);
         }
         return result;
     }
-    void RemoveParent(BASE_NODE *base_node) override {
+    void RemoveParent(StateObject *state_object) override {
         if (image_view_state_) {
-            image_view_state_->RemoveParent(base_node);
+            image_view_state_->RemoveParent(state_object);
+        }
+    }
+    void InvalidateNode(const std::shared_ptr<StateObject> &invalid_node, bool unlink) override {
+        if (invalid_node == image_view_state_) {
+            known_valid_view_ = false;
+            if (unlink) {
+                image_view_state_.reset();
+            }
         }
     }
 
-    bool Invalid() const override { return !image_view_state_ || image_view_state_->Invalid(); }
+    bool Invalid() const override { return !known_valid_view_ && ComputeInvalid(); }
 
   protected:
-    std::shared_ptr<IMAGE_VIEW_STATE> image_view_state_;
+    bool ComputeInvalid() const { return !image_view_state_ || image_view_state_->Invalid(); }
+    void UpdateKnownValidView(bool is_bindless) { known_valid_view_ = !is_bindless && !ComputeInvalid(); }
+
+    std::shared_ptr<vvl::ImageView> image_view_state_;
     VkImageLayout image_layout_{VK_IMAGE_LAYOUT_UNDEFINED};
+    bool known_valid_view_ = false;
 };
 
 class ImageSamplerDescriptor : public ImageDescriptor {
   public:
     ImageSamplerDescriptor() = default;
-    DescriptorClass GetClass() const override { return ImageSampler; }
-    void WriteUpdate(DescriptorSet *set_state, const ValidationStateTracker *dev_data, const VkWriteDescriptorSet *, const uint32_t,
+    DescriptorClass GetClass() const override { return DescriptorClass::ImageSampler; }
+    void WriteUpdate(DescriptorSet &set_state, const ValidationStateTracker &dev_data, const VkWriteDescriptorSet &, const uint32_t,
                      bool is_bindless) override;
-    void CopyUpdate(DescriptorSet *set_state, const ValidationStateTracker *dev_data, const Descriptor *,
-                    bool is_bindless) override;
+    void CopyUpdate(DescriptorSet &set_state, const ValidationStateTracker &dev_data, const Descriptor &, bool is_bindless,
+                    VkDescriptorType type) override;
     virtual bool IsImmutableSampler() const override { return immutable_; };
     VkSampler GetSampler() const { return sampler_state_ ? sampler_state_->sampler() : VK_NULL_HANDLE; }
 
-    void SetSamplerState(std::shared_ptr<SAMPLER_STATE> &&state) {
+    void SetSamplerState(std::shared_ptr<vvl::Sampler> &&state) {
         sampler_state_ = std::move(state);
         // currently this method is only used to initialize immutable samplers during DescriptorSet creation
         immutable_ = true;
     }
 
-    const SAMPLER_STATE *GetSamplerState() const { return sampler_state_.get(); }
-    SAMPLER_STATE *GetSamplerState() { return sampler_state_.get(); }
-    std::shared_ptr<SAMPLER_STATE> GetSharedSamplerState() const { return sampler_state_; }
+    const vvl::Sampler *GetSamplerState() const { return sampler_state_.get(); }
+    vvl::Sampler *GetSamplerState() { return sampler_state_.get(); }
+    std::shared_ptr<vvl::Sampler> GetSharedSamplerState() const { return sampler_state_; }
 
-    bool AddParent(BASE_NODE *base_node) override {
-        bool result = ImageDescriptor::AddParent(base_node);
+    bool AddParent(StateObject *state_object) override {
+        bool result = ImageDescriptor::AddParent(state_object);
         if (sampler_state_) {
-            result |= sampler_state_->AddParent(base_node);
+            result |= sampler_state_->AddParent(state_object);
         }
         return result;
     }
-    void RemoveParent(BASE_NODE *base_node) override {
-        ImageDescriptor::RemoveParent(base_node);
+    void RemoveParent(StateObject *state_object) override {
+        ImageDescriptor::RemoveParent(state_object);
         if (sampler_state_) {
-            sampler_state_->RemoveParent(base_node);
+            sampler_state_->RemoveParent(state_object);
         }
     }
 
     bool Invalid() const override { return ImageDescriptor::Invalid() || !sampler_state_ || sampler_state_->Invalid(); }
 
   private:
-    std::shared_ptr<SAMPLER_STATE> sampler_state_;
+    std::shared_ptr<vvl::Sampler> sampler_state_;
     bool immutable_{false};
 };
 
 class TexelDescriptor : public Descriptor {
   public:
     TexelDescriptor() = default;
-    DescriptorClass GetClass() const override { return TexelBuffer; }
-    void WriteUpdate(DescriptorSet *set_state, const ValidationStateTracker *dev_data, const VkWriteDescriptorSet *, const uint32_t,
+    DescriptorClass GetClass() const override { return DescriptorClass::TexelBuffer; }
+    void WriteUpdate(DescriptorSet &set_state, const ValidationStateTracker &dev_data, const VkWriteDescriptorSet &, const uint32_t,
                      bool is_bindless) override;
-    void CopyUpdate(DescriptorSet *set_state, const ValidationStateTracker *dev_data, const Descriptor *,
-                    bool is_bindless) override;
+    void CopyUpdate(DescriptorSet &set_state, const ValidationStateTracker &dev_data, const Descriptor &, bool is_bindless,
+                    VkDescriptorType type) override;
     VkBufferView GetBufferView() const { return buffer_view_state_ ? buffer_view_state_->buffer_view() : VK_NULL_HANDLE; }
-    const BUFFER_VIEW_STATE *GetBufferViewState() const { return buffer_view_state_.get(); }
-    BUFFER_VIEW_STATE *GetBufferViewState() { return buffer_view_state_.get(); }
-    std::shared_ptr<BUFFER_VIEW_STATE> GetSharedBufferViewState() const { return buffer_view_state_; }
+    const vvl::BufferView *GetBufferViewState() const { return buffer_view_state_.get(); }
+    vvl::BufferView *GetBufferViewState() { return buffer_view_state_.get(); }
+    std::shared_ptr<vvl::BufferView> GetSharedBufferViewState() const { return buffer_view_state_; }
 
-    bool AddParent(BASE_NODE *base_node) override {
+    bool AddParent(StateObject *state_object) override {
         bool result = false;
         if (buffer_view_state_) {
-            result = buffer_view_state_->AddParent(base_node);
+            result = buffer_view_state_->AddParent(state_object);
         }
         return result;
     }
-    void RemoveParent(BASE_NODE *base_node) override {
+    void RemoveParent(StateObject *state_object) override {
         if (buffer_view_state_) {
-            buffer_view_state_->RemoveParent(base_node);
+            buffer_view_state_->RemoveParent(state_object);
         }
     }
 
     bool Invalid() const override { return !buffer_view_state_ || buffer_view_state_->Invalid(); }
 
   private:
-    std::shared_ptr<BUFFER_VIEW_STATE> buffer_view_state_;
+    std::shared_ptr<vvl::BufferView> buffer_view_state_;
 };
 
 class BufferDescriptor : public Descriptor {
   public:
     BufferDescriptor() = default;
-    DescriptorClass GetClass() const override { return GeneralBuffer; }
-    void WriteUpdate(DescriptorSet *set_state, const ValidationStateTracker *dev_data, const VkWriteDescriptorSet *, const uint32_t,
+    DescriptorClass GetClass() const override { return DescriptorClass::GeneralBuffer; }
+    void WriteUpdate(DescriptorSet &set_state, const ValidationStateTracker &dev_data, const VkWriteDescriptorSet &, const uint32_t,
                      bool is_bindless) override;
-    void CopyUpdate(DescriptorSet *set_state, const ValidationStateTracker *dev_data, const Descriptor *,
-                    bool is_bindless) override;
+    void CopyUpdate(DescriptorSet &set_state, const ValidationStateTracker &dev_data, const Descriptor &, bool is_bindless,
+                    VkDescriptorType type) override;
     VkBuffer GetBuffer() const { return buffer_state_ ? buffer_state_->buffer() : VK_NULL_HANDLE; }
-    const BUFFER_STATE *GetBufferState() const { return buffer_state_.get(); }
-    BUFFER_STATE *GetBufferState() { return buffer_state_.get(); }
-    std::shared_ptr<BUFFER_STATE> GetSharedBufferState() const { return buffer_state_; }
+    const vvl::Buffer *GetBufferState() const { return buffer_state_.get(); }
+    vvl::Buffer *GetBufferState() { return buffer_state_.get(); }
+    std::shared_ptr<vvl::Buffer> GetSharedBufferState() const { return buffer_state_; }
     VkDeviceSize GetOffset() const { return offset_; }
     VkDeviceSize GetRange() const { return range_; }
 
-    bool AddParent(BASE_NODE *base_node) override {
+    bool AddParent(StateObject *state_object) override {
         bool result = false;
         if (buffer_state_) {
-            result = buffer_state_->AddParent(base_node);
+            result = buffer_state_->AddParent(state_object);
         }
         return result;
     }
-    void RemoveParent(BASE_NODE *base_node) override {
+    void RemoveParent(StateObject *state_object) override {
         if (buffer_state_) {
-            buffer_state_->RemoveParent(base_node);
+            buffer_state_->RemoveParent(state_object);
         }
     }
     bool Invalid() const override { return !buffer_state_ || buffer_state_->Invalid(); }
@@ -553,51 +566,51 @@ class BufferDescriptor : public Descriptor {
   private:
     VkDeviceSize offset_{0};
     VkDeviceSize range_{0};
-    std::shared_ptr<BUFFER_STATE> buffer_state_;
+    std::shared_ptr<vvl::Buffer> buffer_state_;
 };
 
 class InlineUniformDescriptor : public Descriptor {
   public:
     InlineUniformDescriptor() = default;
-    DescriptorClass GetClass() const override { return InlineUniform; }
-    void WriteUpdate(DescriptorSet *set_state, const ValidationStateTracker *dev_data, const VkWriteDescriptorSet *, const uint32_t,
+    DescriptorClass GetClass() const override { return DescriptorClass::InlineUniform; }
+    void WriteUpdate(DescriptorSet &set_state, const ValidationStateTracker &dev_data, const VkWriteDescriptorSet &, const uint32_t,
                      bool is_bindless) override {}
-    void CopyUpdate(DescriptorSet *set_state, const ValidationStateTracker *dev_data, const Descriptor *,
-                    bool is_bindless) override {}
+    void CopyUpdate(DescriptorSet &set_state, const ValidationStateTracker &dev_data, const Descriptor &, bool is_bindless,
+                    VkDescriptorType type) override {}
 };
 
 class AccelerationStructureDescriptor : public Descriptor {
   public:
     AccelerationStructureDescriptor() = default;
-    DescriptorClass GetClass() const override { return AccelerationStructure; }
-    void WriteUpdate(DescriptorSet *set_state, const ValidationStateTracker *dev_data, const VkWriteDescriptorSet *, const uint32_t,
+    DescriptorClass GetClass() const override { return DescriptorClass::AccelerationStructure; }
+    void WriteUpdate(DescriptorSet &set_state, const ValidationStateTracker &dev_data, const VkWriteDescriptorSet &, const uint32_t,
                      bool is_bindless) override;
     VkAccelerationStructureKHR GetAccelerationStructure() const { return acc_; }
-    const ACCELERATION_STRUCTURE_STATE_KHR *GetAccelerationStructureStateKHR() const { return acc_state_.get(); }
-    ACCELERATION_STRUCTURE_STATE_KHR *GetAccelerationStructureStateKHR() { return acc_state_.get(); }
+    const vvl::AccelerationStructureKHR *GetAccelerationStructureStateKHR() const { return acc_state_.get(); }
+    vvl::AccelerationStructureKHR *GetAccelerationStructureStateKHR() { return acc_state_.get(); }
     VkAccelerationStructureNV GetAccelerationStructureNV() const { return acc_nv_; }
-    const ACCELERATION_STRUCTURE_STATE *GetAccelerationStructureStateNV() const { return acc_state_nv_.get(); }
-    ACCELERATION_STRUCTURE_STATE *GetAccelerationStructureStateNV() { return acc_state_nv_.get(); }
-    void CopyUpdate(DescriptorSet *set_state, const ValidationStateTracker *dev_data, const Descriptor *,
-                    bool is_bindless) override;
+    const vvl::AccelerationStructureNV *GetAccelerationStructureStateNV() const { return acc_state_nv_.get(); }
+    vvl::AccelerationStructureNV *GetAccelerationStructureStateNV() { return acc_state_nv_.get(); }
+    void CopyUpdate(DescriptorSet &set_state, const ValidationStateTracker &dev_data, const Descriptor &, bool is_bindless,
+                    VkDescriptorType type) override;
     bool is_khr() const { return is_khr_; }
 
-    bool AddParent(BASE_NODE *base_node) override {
+    bool AddParent(StateObject *state_object) override {
         bool result = false;
         if (acc_state_) {
-            result |= acc_state_->AddParent(base_node);
+            result |= acc_state_->AddParent(state_object);
         }
         if (acc_state_nv_) {
-            result |= acc_state_nv_->AddParent(base_node);
+            result |= acc_state_nv_->AddParent(state_object);
         }
         return result;
     }
-    void RemoveParent(BASE_NODE *base_node) override {
+    void RemoveParent(StateObject *state_object) override {
         if (acc_state_) {
-            acc_state_->RemoveParent(base_node);
+            acc_state_->RemoveParent(state_object);
         }
         if (acc_state_nv_) {
-            acc_state_nv_->RemoveParent(base_node);
+            acc_state_nv_->RemoveParent(state_object);
         }
     }
     bool Invalid() const override {
@@ -611,19 +624,19 @@ class AccelerationStructureDescriptor : public Descriptor {
   private:
     bool is_khr_{false};
     VkAccelerationStructureKHR acc_{VK_NULL_HANDLE};
-    std::shared_ptr<ACCELERATION_STRUCTURE_STATE_KHR> acc_state_;
+    std::shared_ptr<vvl::AccelerationStructureKHR> acc_state_;
     VkAccelerationStructureNV acc_nv_{VK_NULL_HANDLE};
-    std::shared_ptr<ACCELERATION_STRUCTURE_STATE> acc_state_nv_;
+    std::shared_ptr<vvl::AccelerationStructureNV> acc_state_nv_;
 };
 
 class MutableDescriptor : public Descriptor {
   public:
     MutableDescriptor();
-    DescriptorClass GetClass() const override { return Mutable; }
-    void WriteUpdate(DescriptorSet *set_state, const ValidationStateTracker *dev_data, const VkWriteDescriptorSet *, const uint32_t,
+    DescriptorClass GetClass() const override { return DescriptorClass::Mutable; }
+    void WriteUpdate(DescriptorSet &set_state, const ValidationStateTracker &dev_data, const VkWriteDescriptorSet &, const uint32_t,
                      bool is_bindless) override;
-    void CopyUpdate(DescriptorSet *set_state, const ValidationStateTracker *dev_data, const Descriptor *,
-                    bool is_bindless) override;
+    void CopyUpdate(DescriptorSet &set_state, const ValidationStateTracker &dev_data, const Descriptor &, bool is_bindless,
+                    VkDescriptorType type) override;
 
     void SetDescriptorType(VkDescriptorType type, VkDeviceSize buffer_size) {
         active_descriptor_type_ = type;
@@ -631,24 +644,24 @@ class MutableDescriptor : public Descriptor {
     }
     void SetDescriptorType(VkDescriptorType src_type, const Descriptor *src) {
         active_descriptor_type_ = src_type;
-        if (src->GetClass() == cvdescriptorset::DescriptorClass::GeneralBuffer) {
-            auto buffer = static_cast<const cvdescriptorset::BufferDescriptor *>(src)->GetBuffer();
+        if (src->GetClass() == vvl::DescriptorClass::GeneralBuffer) {
+            auto buffer = static_cast<const vvl::BufferDescriptor *>(src)->GetBuffer();
             if (buffer == VK_NULL_HANDLE) {
-                buffer_size_ = std::numeric_limits<uint32_t>::max();
+                buffer_size_ = vvl::kU32Max;
             } else {
-                auto buffer_state = static_cast<const cvdescriptorset::BufferDescriptor *>(src)->GetBufferState();
+                auto buffer_state = static_cast<const vvl::BufferDescriptor *>(src)->GetBufferState();
                 buffer_size_ = static_cast<uint32_t>(buffer_state->createInfo.size);
             }
-        } else if (src->GetClass() == cvdescriptorset::DescriptorClass::TexelBuffer) {
-            auto buffer_view = static_cast<const cvdescriptorset::TexelDescriptor *>(src)->GetBufferView();
+        } else if (src->GetClass() == vvl::DescriptorClass::TexelBuffer) {
+            auto buffer_view = static_cast<const vvl::TexelDescriptor *>(src)->GetBufferView();
             if (buffer_view == VK_NULL_HANDLE) {
-                buffer_size_ = std::numeric_limits<uint32_t>::max();
+                buffer_size_ = vvl::kU32Max;
             } else {
-                auto buffer_view_state = static_cast<const cvdescriptorset::TexelDescriptor *>(src)->GetBufferViewState();
+                auto buffer_view_state = static_cast<const vvl::TexelDescriptor *>(src)->GetBufferViewState();
                 buffer_size_ = static_cast<uint32_t>(buffer_view_state->buffer_state->createInfo.size);
             }
-        } else if (src->GetClass() == cvdescriptorset::DescriptorClass::Mutable) {
-            auto descriptor = static_cast<const cvdescriptorset::MutableDescriptor *>(src);
+        } else if (src->GetClass() == vvl::DescriptorClass::Mutable) {
+            auto descriptor = static_cast<const vvl::MutableDescriptor *>(src);
             buffer_size_ = descriptor->GetBufferSize();
         } else {
             buffer_size_ = 0;
@@ -656,25 +669,33 @@ class MutableDescriptor : public Descriptor {
     }
     VkDeviceSize GetBufferSize() const { return buffer_size_; }
 
-    std::shared_ptr<SAMPLER_STATE> GetSharedSamplerState() const { return sampler_state_; }
-    std::shared_ptr<IMAGE_VIEW_STATE> GetSharedImageViewState() const { return image_view_state_; }
+    std::shared_ptr<vvl::Sampler> GetSharedSamplerState() const { return sampler_state_; }
+    std::shared_ptr<vvl::ImageView> GetSharedImageViewState() const { return image_view_state_; }
     VkImageLayout GetImageLayout() const { return image_layout_; }
-    std::shared_ptr<BUFFER_STATE> GetSharedBufferState() const { return buffer_state_; }
+    std::shared_ptr<vvl::Buffer> GetSharedBufferState() const { return buffer_state_; }
     VkDeviceSize GetOffset() const { return offset_; }
     VkDeviceSize GetRange() const { return range_; }
-    std::shared_ptr<BUFFER_VIEW_STATE> GetSharedBufferViewState() const { return buffer_view_state_; }
-    VkAccelerationStructureKHR GetAccelerationStructure() const { return acc_; }
-    const ACCELERATION_STRUCTURE_STATE_KHR *GetAccelerationStructureStateKHR() const { return acc_state_.get(); }
-    ACCELERATION_STRUCTURE_STATE_KHR *GetAccelerationStructureStateKHR() { return acc_state_.get(); }
+    std::shared_ptr<vvl::BufferView> GetSharedBufferViewState() const { return buffer_view_state_; }
+    VkAccelerationStructureKHR GetAccelerationStructureKHR() const { return acc_; }
+    const vvl::AccelerationStructureKHR *GetAccelerationStructureStateKHR() const { return acc_state_.get(); }
+    vvl::AccelerationStructureKHR *GetAccelerationStructureStateKHR() { return acc_state_.get(); }
     VkAccelerationStructureNV GetAccelerationStructureNV() const { return acc_nv_; }
-    const ACCELERATION_STRUCTURE_STATE *GetAccelerationStructureStateNV() const { return acc_state_nv_.get(); }
-    ACCELERATION_STRUCTURE_STATE *GetAccelerationStructureStateNV() { return acc_state_nv_.get(); }
+    const vvl::AccelerationStructureNV *GetAccelerationStructureStateNV() const { return acc_state_nv_.get(); }
+    vvl::AccelerationStructureNV *GetAccelerationStructureStateNV() { return acc_state_nv_.get(); }
+    // Returns true if there is a stored KHR acceleration structure and false if there is a stored NV acceleration structure.
+    // Asserts that there is only one of the two.
+    bool IsAccelerationStructureKHR() const {
+        auto acc_khr = GetAccelerationStructureKHR();
+        assert((acc_khr != VK_NULL_HANDLE) ^ (GetAccelerationStructureNV() != VK_NULL_HANDLE));
+        return acc_khr != VK_NULL_HANDLE;
+    }
 
-    void UpdateDrawState(ValidationStateTracker *, CMD_BUFFER_STATE *cb_state);
+    void UpdateDrawState(ValidationStateTracker *, vvl::CommandBuffer *cb_state);
 
-    bool AddParent(BASE_NODE *base_node) override;
-    void RemoveParent(BASE_NODE *base_node) override;
+    bool AddParent(StateObject *state_object) override;
+    void RemoveParent(StateObject *state_object) override;
 
+    bool is_khr() const { return is_khr_; }
     bool Invalid() const override;
 
     VkDescriptorType ActiveType() const { return active_descriptor_type_; }
@@ -686,22 +707,22 @@ class MutableDescriptor : public Descriptor {
 
     // Sampler and ImageSampler Descriptor
     bool immutable_{false};
-    std::shared_ptr<SAMPLER_STATE> sampler_state_;
+    std::shared_ptr<vvl::Sampler> sampler_state_;
     // Image Descriptor
-    std::shared_ptr<IMAGE_VIEW_STATE> image_view_state_;
+    std::shared_ptr<vvl::ImageView> image_view_state_;
     VkImageLayout image_layout_{VK_IMAGE_LAYOUT_UNDEFINED};
     // Texel Descriptor
-    std::shared_ptr<BUFFER_VIEW_STATE> buffer_view_state_;
+    std::shared_ptr<vvl::BufferView> buffer_view_state_;
     // Buffer Descriptor
     VkDeviceSize offset_{0};
     VkDeviceSize range_{0};
-    std::shared_ptr<BUFFER_STATE> buffer_state_;
+    std::shared_ptr<vvl::Buffer> buffer_state_;
     // Acceleration Structure Descriptor
     bool is_khr_{false};
     VkAccelerationStructureKHR acc_{VK_NULL_HANDLE};
-    std::shared_ptr<ACCELERATION_STRUCTURE_STATE_KHR> acc_state_;
+    std::shared_ptr<vvl::AccelerationStructureKHR> acc_state_;
     VkAccelerationStructureNV acc_nv_{VK_NULL_HANDLE};
-    std::shared_ptr<ACCELERATION_STRUCTURE_STATE> acc_state_nv_;
+    std::shared_ptr<vvl::AccelerationStructureNV> acc_state_nv_;
 };
 
 // Structs to contain common elements that need to be shared between Validate* and Perform* calls below
@@ -717,6 +738,7 @@ void PerformUpdateDescriptorSets(ValidationStateTracker *, uint32_t, const VkWri
 
 class DescriptorBinding {
   public:
+    using NodeList = StateObject::NodeList;
     DescriptorBinding(const VkDescriptorSetLayoutBinding &create_info, uint32_t count_, VkDescriptorBindingFlags binding_flags_)
         : binding(create_info.binding),
           type(create_info.descriptorType),
@@ -730,6 +752,7 @@ class DescriptorBinding {
 
     virtual void AddParent(DescriptorSet *ds) = 0;
     virtual void RemoveParent(DescriptorSet *ds) = 0;
+    virtual void NotifyInvalidate(const NodeList &invalid_nodes, bool unlink) = 0;
 
     virtual const Descriptor *GetDescriptor(const uint32_t index) const = 0;
     virtual Descriptor *GetDescriptor(const uint32_t index) = 0;
@@ -770,22 +793,37 @@ class DescriptorBindingImpl : public DescriptorBinding {
 
     Descriptor *GetDescriptor(const uint32_t index) override { return index < count ? &descriptors[index] : nullptr; }
 
+    template <typename Fn>
+    void ForAllUpdated(Fn &&op) {
+        auto size = updated.size();
+        for (uint32_t i = 0; i < size; i++) {
+            if (updated[i] != 0) {
+                op(descriptors[i]);
+            }
+        }
+    }
+
     void AddParent(DescriptorSet *ds) override {
-        auto size = updated.size();
-        for (uint32_t i = 0; i < size; i++) {
-            if (updated[i] != 0) {
-                descriptors[i].AddParent(ds);
-            }
-        }
+        auto add_parent = [ds](T &descriptor) { descriptor.AddParent(ds); };
+        ForAllUpdated(add_parent);
     }
+
     void RemoveParent(DescriptorSet *ds) override {
-        auto size = updated.size();
-        for (uint32_t i = 0; i < size; i++) {
-            if (updated[i] != 0) {
-                descriptors[i].RemoveParent(ds);
+        auto remove_parent = [ds](T &descriptor) { descriptor.RemoveParent(ds); };
+        ForAllUpdated(remove_parent);
+    }
+
+    void NotifyInvalidate(const NodeList &invalid_nodes, bool unlink) override {
+        if (!T::SupportsNotifyInvalidate()) return;
+
+        for (const auto &node : invalid_nodes) {
+            if (T::IsNotifyInvalidateType(node->Type())) {
+                auto notify_invalidate = [&node, unlink](T &descriptor) { descriptor.InvalidateNode(node, unlink); };
+                ForAllUpdated(notify_invalidate);
             }
         }
     }
+
     small_vector<T, 1, uint32_t> descriptors;
 };
 
@@ -805,7 +843,7 @@ struct DecodedTemplateUpdate {
     std::vector<VkWriteDescriptorSetAccelerationStructureKHR> inline_infos_khr;
     std::vector<VkWriteDescriptorSetAccelerationStructureNV> inline_infos_nv;
     DecodedTemplateUpdate(const ValidationStateTracker *device_data, VkDescriptorSet descriptorSet,
-                          const UPDATE_TEMPLATE_STATE *template_state, const void *pData,
+                          const DescriptorUpdateTemplate *template_state, const void *pData,
                           VkDescriptorSetLayout push_layout = VK_NULL_HANDLE);
 };
 
@@ -827,8 +865,9 @@ struct DecodedTemplateUpdate {
  *   those maps is performed externally. The set class relies on their contents to
  *   be correct at the time of update.
  */
-class DescriptorSet : public BASE_NODE {
+class DescriptorSet : public StateObject {
   public:
+    using BaseClass = StateObject;
     // Given that we are providing placement new allocation for bindings, the deleter needs to *only* call the destructor
     struct BindingDeleter {
         void operator()(DescriptorBinding *binding) { binding->~DescriptorBinding(); }
@@ -839,9 +878,10 @@ class DescriptorSet : public BASE_NODE {
     using ConstBindingIterator = BindingVector::const_iterator;
     using StateTracker = ValidationStateTracker;
 
-    DescriptorSet(const VkDescriptorSet, DESCRIPTOR_POOL_STATE *, const std::shared_ptr<DescriptorSetLayout const> &,
-                  uint32_t variable_count, const StateTracker *state_data_const);
+    DescriptorSet(const VkDescriptorSet, vvl::DescriptorPool *, const std::shared_ptr<DescriptorSetLayout const> &,
+                  uint32_t variable_count, StateTracker *state_data);
     void LinkChildNodes() override;
+    void NotifyInvalidate(const NodeList &invalid_nodes, bool unlink) override;
     ~DescriptorSet() { Destroy(); }
 
     // A number of common Get* functions that return data based on layout from which this set was created
@@ -857,28 +897,19 @@ class DescriptorSet : public BASE_NODE {
     std::string StringifySetAndLayout() const;
 
     // Perform a push update whose contents were just validated using ValidatePushDescriptorsUpdate
-    void PerformPushDescriptorsUpdate(ValidationStateTracker *dev_data, uint32_t write_count, const VkWriteDescriptorSet *p_wds);
+    virtual void PerformPushDescriptorsUpdate(uint32_t write_count, const VkWriteDescriptorSet *write_descs);
     // Perform a WriteUpdate whose contents were just validated using ValidateWriteUpdate
-    void PerformWriteUpdate(ValidationStateTracker *dev_data, const VkWriteDescriptorSet *);
+    virtual void PerformWriteUpdate(const VkWriteDescriptorSet &);
     // Perform a CopyUpdate whose contents were just validated using ValidateCopyUpdate
-    void PerformCopyUpdate(ValidationStateTracker *dev_data, const VkCopyDescriptorSet *, const DescriptorSet *);
+    virtual void PerformCopyUpdate(const VkCopyDescriptorSet &, const DescriptorSet &src_set);
 
     const std::shared_ptr<DescriptorSetLayout const> &GetLayout() const { return layout_; };
-    VkDescriptorSetLayout GetDescriptorSetLayout() const { return layout_->GetDescriptorSetLayout(); }
-    VkDescriptorSet GetSet() const { return handle_.Cast<VkDescriptorSet>(); };
+    VkDescriptorSetLayout GetDescriptorSetLayout() const { return layout_->VkHandle(); }
+    VkDescriptorSet VkHandle() const { return handle_.Cast<VkDescriptorSet>(); };
     // Bind given cmd_buffer to this descriptor set and
     // update CB image layout map with image/imagesampler descriptor image layouts
-    void UpdateDrawState(ValidationStateTracker *, CMD_BUFFER_STATE *cb_state, CMD_TYPE cmd_type, const PIPELINE_STATE *,
-                         const BindingReqMap &);
-
-    // Track work that has been bound or validated to avoid duplicate work, important when large descriptor arrays
-    // are present
-    typedef vvl::unordered_set<uint32_t> TrackedBindings;
-    static void FilterOneBindingReq(const BindingReqMap::value_type &binding_req_pair, BindingReqMap *out_req,
-                                    const TrackedBindings &set, uint32_t limit);
-    void FilterBindingReqs(const CMD_BUFFER_STATE &cb_state, const PIPELINE_STATE &, const BindingReqMap &in_req,
-                           BindingReqMap *out_req) const;
-    void UpdateValidationCache(CMD_BUFFER_STATE &cb_state, const PIPELINE_STATE &pipeline, const BindingReqMap &updated_bindings);
+    void UpdateDrawState(ValidationStateTracker *, vvl::CommandBuffer *cb_state, vvl::Func command, const vvl::Pipeline *,
+                         const BindingVariableMap &);
 
     // For a particular binding, get the global index
     const IndexRange GetGlobalIndexRangeFromBinding(const uint32_t binding, bool actual_length = false) const {
@@ -890,11 +921,12 @@ class DescriptorSet : public BASE_NODE {
         }
         return layout_->GetGlobalIndexRangeFromBinding(binding);
     };
-    // Return true if any part of set has ever been updated
-    bool IsUpdated() const { return some_update_; };
-    bool IsPushDescriptor() const { return layout_->IsPushDescriptor(); };
+    bool IsPushDescriptor() const { return layout_->IsPushDescriptor(); }
+    bool IsUpdateAfterBind() const {
+        return (layout_->GetCreateFlags() & VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT) != 0;
+    }
     uint32_t GetVariableDescriptorCount() const { return variable_count_; }
-    DESCRIPTOR_POOL_STATE *GetPoolState() const { return pool_state_; }
+    vvl::DescriptorPool *GetPoolState() const { return pool_state_; }
 
     ConstBindingIterator begin() const { return bindings_.begin(); }
     ConstBindingIterator end() const { return bindings_.end(); }
@@ -941,20 +973,6 @@ class DescriptorSet : public BASE_NODE {
 
     void Destroy() override;
 
-    // Cached binding and validation support:
-    //
-    // For the lifespan of a given command buffer recording, do lazy evaluation, caching, and dirtying of
-    // expensive validation operation (typically per-draw)
-    // Track the validation caching of bindings vs. the command buffer and draw state
-    typedef vvl::unordered_map<uint32_t, uint64_t> VersionedBindings;
-    // this structure is stored in a map in CMD_BUFFER_STATE, with an entry for every descriptor set.
-    struct CachedValidation {
-        TrackedBindings command_binding_and_usage;  // Persistent for the life of the recording
-        TrackedBindings non_dynamic_buffers;        // Persistent for the life of the recording
-        TrackedBindings dynamic_buffers;            // Dirtied (flushed) each BindDescriptorSet
-        vvl::unordered_map<const PIPELINE_STATE *, VersionedBindings>
-            image_samplers;  // Tested vs. changes to CB's ImageLayout
-    };
     const DescriptorSetLayout &Layout() const { return *layout_; }
 
     template <typename Iter>
@@ -1003,6 +1021,9 @@ class DescriptorSet : public BASE_NODE {
             assert(iter_ != end_);
             return **iter_;
         }
+        uint32_t CurrentIndex() const {
+            return index_;
+        }
 
         const Descriptor *operator->() const {
             assert(iter_ != end_);
@@ -1035,7 +1056,13 @@ class DescriptorSet : public BASE_NODE {
         return DescriptorIterator<ConstBindingIterator>(*this, binding, index);
     }
 
-  private:
+    virtual bool SkipBinding(const DescriptorBinding &binding) const {
+        // core validation case: do not handle descriptor arrays since we don't have a way to determine
+        // which array elements are statically or dynamically used.
+        return binding.IsBindless() || binding.count > 1;
+    }
+
+  protected:
     union AnyBinding {
         SamplerBinding sampler;
         ImageSamplerBinding image_sampler;
@@ -1058,16 +1085,14 @@ class DescriptorSet : public BASE_NODE {
         return std::unique_ptr<T, BindingDeleter>(new (location->data) T(create_info, descriptor_count, flags));
     }
 
-    // Private helper to set all bound cmd buffers to INVALID state
-    void InvalidateBoundCmdBuffers(ValidationStateTracker *state_data);
     std::atomic<bool> some_update_;  // has any part of the set ever been updated?
-    DESCRIPTOR_POOL_STATE *pool_state_;
+    vvl::DescriptorPool *pool_state_;
     const std::shared_ptr<DescriptorSetLayout const> layout_;
     // NOTE: the the backing store for the bindings must be declared *before* it so it will be destructed *after* it
     // "Destructors for nonstatic member objects are called in the reverse order in which they appear in the class declaration."
     std::vector<BindingBackingStore> bindings_store_;
     std::vector<BindingPtr> bindings_;
-    const StateTracker *state_data_;
+    StateTracker *state_data_;
     uint32_t variable_count_;
     std::atomic<uint64_t> change_count_;
 
@@ -1079,18 +1104,4 @@ class DescriptorSet : public BASE_NODE {
     std::vector<safe_VkWriteDescriptorSet> push_descriptor_set_writes;
 };
 
-// For the "bindless" style resource usage with many descriptors, need to optimize binding and validation
-class PrefilterBindRequestMap {
-  public:
-    static const uint32_t kManyDescriptors_ = 64;  // TODO base this number on measured data
-    std::unique_ptr<BindingReqMap> filtered_map_;
-    const BindingReqMap &orig_map_;
-    const DescriptorSet &descriptor_set_;
-
-    PrefilterBindRequestMap(const DescriptorSet &ds, const BindingReqMap &in_map)
-        : filtered_map_(), orig_map_(in_map), descriptor_set_(ds) {}
-    const BindingReqMap &FilteredMap(const CMD_BUFFER_STATE &cb_state, const PIPELINE_STATE &);
-    bool IsManyDescriptors() const { return descriptor_set_.GetTotalDescriptorCount() > kManyDescriptors_; }
-};
-}  // namespace cvdescriptorset
-#endif  // CORE_VALIDATION_DESCRIPTOR_SETS_H_
+}  // namespace vvl

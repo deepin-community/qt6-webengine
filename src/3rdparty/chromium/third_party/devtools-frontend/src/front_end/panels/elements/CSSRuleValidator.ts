@@ -4,11 +4,13 @@
 
 import * as Host from '../../core/host/host.js';
 import * as i18n from '../../core/i18n/i18n.js';
+import * as SDK from '../../core/sdk/sdk.js';
 
 import {
   buildPropertyDefinitionText,
   buildPropertyName,
   buildPropertyValue,
+  isBlockContainer,
   isFlexContainer,
   isGridContainer,
   isInlineElement,
@@ -31,6 +33,13 @@ const UIStrings = {
    */
   ruleViolatedBySameElementRuleFix: 'Try setting {PROPERTY_NAME} to something other than {PROPERTY_VALUE}.',
   /**
+   *@description The message shown in the Style pane when the user hovers over a property declaration that has no effect due to not being a flex or grid container.
+   *@example {display: grid} DISPLAY_GRID_RULE
+   *@example {display: flex} DISPLAY_FLEX_RULE
+   */
+  ruleViolatedBySameElementRuleChangeFlexOrGrid:
+      'Try adding {DISPLAY_GRID_RULE} or {DISPLAY_FLEX_RULE} to make this element into a container.',
+  /**
    *@description The message shown in the Style pane when the user hovers over a property declaration that has no effect due to the current property value.
    *@example {display: block} EXISTING_PROPERTY_DECLARATION
    *@example {display: flex} TARGET_PROPERTY_DECLARATION
@@ -51,6 +60,31 @@ const UIStrings = {
    */
   ruleViolatedByParentElementRuleFix:
       'Try setting the {EXISTING_PARENT_ELEMENT_RULE} property on the parent to {TARGET_PARENT_ELEMENT_RULE}.',
+
+  /**
+   *@description The warning text shown in Elements panel when font-variation-settings don't match allowed values
+   *@example {wdth} PH1
+   *@example {100} PH2
+   *@example {10} PH3
+   *@example {20} PH4
+   *@example {Arial} PH5
+   */
+  fontVariationSettingsWarning:
+      'Value for setting “{PH1}” {PH2} is outside the supported range [{PH3}, {PH4}] for font-family “{PH5}”.',
+  /**
+   *@description The message shown in the Style pane when the user hovers over a property declaration that has no effect on flex or grid child items.
+   *@example {flex} CONTAINER_DISPLAY_NAME
+   *@example {align-contents} PROPERTY_NAME
+   */
+  flexGridContainerPropertyRuleReason:
+      'This element is a {CONTAINER_DISPLAY_NAME} item, i.e. a child of a {CONTAINER_DISPLAY_NAME} container, but {PROPERTY_NAME} only applies to containers.',
+  /**
+   *@description The message shown in the Style pane when the user hovers over a property declaration that has no effect on flex or grid child items.
+   *@example {align-contents} PROPERTY_NAME
+   *@example {align-self} ALTERNATIVE_PROPERTY_NAME
+   */
+  flexGridContainerPropertyRuleFix:
+      'Try setting the {PROPERTY_NAME} on the container element or use {ALTERNATIVE_PROPERTY_NAME} instead.',
 };
 const str_ = i18n.i18n.registerUIStrings('panels/elements/CSSRuleValidator.ts', UIStrings);
 const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
@@ -101,7 +135,7 @@ export abstract class CSSRuleValidator {
 
   abstract getHint(
       propertyName: string, computedStyles?: Map<string, string>, parentComputedStyles?: Map<string, string>,
-      nodeName?: string): Hint|undefined;
+      nodeName?: string, fontFaces?: Array<SDK.CSSFontFace.CSSFontFace>): Hint|undefined;
 }
 
 export class AlignContentValidator extends CSSRuleValidator {
@@ -109,7 +143,7 @@ export class AlignContentValidator extends CSSRuleValidator {
     super(['align-content']);
   }
 
-  getMetricType(): Host.UserMetrics.CSSHintType {
+  override getMetricType(): Host.UserMetrics.CSSHintType {
     return Host.UserMetrics.CSSHintType.AlignContent;
   }
 
@@ -117,7 +151,24 @@ export class AlignContentValidator extends CSSRuleValidator {
     if (!computedStyles) {
       return;
     }
-    if (!isFlexContainer(computedStyles)) {
+    const isFlex = isFlexContainer(computedStyles);
+    if (!isFlex && !isBlockContainer(computedStyles) && !isGridContainer(computedStyles)) {
+      const reasonPropertyDeclaration = buildPropertyDefinitionText('display', computedStyles?.get('display'));
+      const affectedPropertyDeclarationCode = buildPropertyName('align-content');
+
+      return new Hint(
+          i18nString(UIStrings.ruleViolatedBySameElementRuleReason, {
+            'REASON_PROPERTY_DECLARATION_CODE': reasonPropertyDeclaration,
+            'AFFECTED_PROPERTY_DECLARATION_CODE': affectedPropertyDeclarationCode,
+          }),
+          i18nString(UIStrings.ruleViolatedBySameElementRuleFix, {
+            PROPERTY_NAME: buildPropertyName('display'),
+            PROPERTY_VALUE: buildPropertyValue(computedStyles?.get('display') as string),
+          }),
+      );
+    }
+
+    if (!isFlex) {
       return;
     }
     if (computedStyles.get('flex-wrap') !== 'nowrap') {
@@ -145,7 +196,7 @@ export class FlexItemValidator extends CSSRuleValidator {
     super(['flex', 'flex-basis', 'flex-grow', 'flex-shrink']);
   }
 
-  getMetricType(): Host.UserMetrics.CSSHintType {
+  override getMetricType(): Host.UserMetrics.CSSHintType {
     return Host.UserMetrics.CSSHintType.FlexItem;
   }
 
@@ -178,7 +229,7 @@ export class FlexContainerValidator extends CSSRuleValidator {
     super(['flex-direction', 'flex-flow', 'flex-wrap']);
   }
 
-  getMetricType(): Host.UserMetrics.CSSHintType {
+  override getMetricType(): Host.UserMetrics.CSSHintType {
     return Host.UserMetrics.CSSHintType.FlexContainer;
   }
 
@@ -220,7 +271,7 @@ export class GridContainerValidator extends CSSRuleValidator {
     ]);
   }
 
-  getMetricType(): Host.UserMetrics.CSSHintType {
+  override getMetricType(): Host.UserMetrics.CSSHintType {
     return Host.UserMetrics.CSSHintType.GridContainer;
   }
 
@@ -261,7 +312,7 @@ export class GridItemValidator extends CSSRuleValidator {
     ]);
   }
 
-  getMetricType(): Host.UserMetrics.CSSHintType {
+  override getMetricType(): Host.UserMetrics.CSSHintType {
     return Host.UserMetrics.CSSHintType.GridItem;
   }
 
@@ -299,7 +350,7 @@ export class FlexOrGridItemValidator extends CSSRuleValidator {
     ]);
   }
 
-  getMetricType(): Host.UserMetrics.CSSHintType {
+  override getMetricType(): Host.UserMetrics.CSSHintType {
     return Host.UserMetrics.CSSHintType.FlexOrGridItem;
   }
 
@@ -333,17 +384,17 @@ export class FlexGridValidator extends CSSRuleValidator {
   constructor() {
     super([
       'justify-content',
-      'align-content',
       'place-content',  // Shorthand	<'align-content'> <'justify-content'>?
       'align-items',
     ]);
   }
 
-  getMetricType(): Host.UserMetrics.CSSHintType {
+  override getMetricType(): Host.UserMetrics.CSSHintType {
     return Host.UserMetrics.CSSHintType.FlexGrid;
   }
 
-  getHint(propertyName: string, computedStyles?: Map<string, string>): Hint|undefined {
+  getHint(propertyName: string, computedStyles?: Map<string, string>, parentComputedStyles?: Map<string, string>): Hint
+      |undefined {
     if (!computedStyles) {
       return;
     }
@@ -352,7 +403,24 @@ export class FlexGridValidator extends CSSRuleValidator {
       return;
     }
 
-    const reasonPropertyDeclaration = buildPropertyDefinitionText('display', computedStyles?.get('display'));
+    if (parentComputedStyles && (isFlexContainer(parentComputedStyles) || isGridContainer(parentComputedStyles))) {
+      const reasonContainerDisplayName = buildPropertyValue(parentComputedStyles.get('display') as string);
+      const reasonPropertyName = buildPropertyName(propertyName);
+      const reasonAlternativePropertyName =
+          buildPropertyName(propertyName === 'justify-content' ? 'justify-self' : 'align-self');
+      return new Hint(
+          i18nString(UIStrings.flexGridContainerPropertyRuleReason, {
+            'CONTAINER_DISPLAY_NAME': reasonContainerDisplayName,
+            'PROPERTY_NAME': reasonPropertyName,
+          }),
+          i18nString(UIStrings.flexGridContainerPropertyRuleFix, {
+            'PROPERTY_NAME': reasonPropertyName,
+            'ALTERNATIVE_PROPERTY_NAME': reasonAlternativePropertyName,
+          }),
+      );
+    }
+
+    const reasonPropertyDeclaration = buildPropertyDefinitionText('display', computedStyles.get('display'));
     const affectedPropertyDeclarationCode = buildPropertyName(propertyName);
 
     return new Hint(
@@ -360,9 +428,9 @@ export class FlexGridValidator extends CSSRuleValidator {
           'REASON_PROPERTY_DECLARATION_CODE': reasonPropertyDeclaration,
           'AFFECTED_PROPERTY_DECLARATION_CODE': affectedPropertyDeclarationCode,
         }),
-        i18nString(UIStrings.ruleViolatedBySameElementRuleFix, {
-          PROPERTY_NAME: buildPropertyName('display'),
-          PROPERTY_VALUE: buildPropertyValue(computedStyles?.get('display') as string),
+        i18nString(UIStrings.ruleViolatedBySameElementRuleChangeFlexOrGrid, {
+          'DISPLAY_GRID_RULE': buildPropertyDefinitionText('display', 'grid'),
+          'DISPLAY_FLEX_RULE': buildPropertyDefinitionText('display', 'flex'),
         }),
     );
   }
@@ -381,7 +449,7 @@ export class MulticolFlexGridValidator extends CSSRuleValidator {
     ]);
   }
 
-  getMetricType(): Host.UserMetrics.CSSHintType {
+  override getMetricType(): Host.UserMetrics.CSSHintType {
     return Host.UserMetrics.CSSHintType.MulticolFlexGrid;
   }
 
@@ -421,7 +489,7 @@ export class PaddingValidator extends CSSRuleValidator {
     ]);
   }
 
-  getMetricType(): Host.UserMetrics.CSSHintType {
+  override getMetricType(): Host.UserMetrics.CSSHintType {
     return Host.UserMetrics.CSSHintType.Padding;
   }
 
@@ -468,7 +536,7 @@ export class PositionValidator extends CSSRuleValidator {
     ]);
   }
 
-  getMetricType(): Host.UserMetrics.CSSHintType {
+  override getMetricType(): Host.UserMetrics.CSSHintType {
     return Host.UserMetrics.CSSHintType.Position;
   }
 
@@ -504,7 +572,7 @@ export class ZIndexValidator extends CSSRuleValidator {
     ]);
   }
 
-  getMetricType(): Host.UserMetrics.CSSHintType {
+  override getMetricType(): Host.UserMetrics.CSSHintType {
     return Host.UserMetrics.CSSHintType.ZIndex;
   }
 
@@ -548,7 +616,7 @@ export class SizingValidator extends CSSRuleValidator {
     ]);
   }
 
-  getMetricType(): Host.UserMetrics.CSSHintType {
+  override getMetricType(): Host.UserMetrics.CSSHintType {
     return Host.UserMetrics.CSSHintType.Sizing;
   }
 
@@ -582,18 +650,80 @@ export class SizingValidator extends CSSRuleValidator {
   }
 }
 
+/**
+ * Checks that font variation settings are applicable to the actual font.
+ */
+export class FontVariationSettingsValidator extends CSSRuleValidator {
+  constructor() {
+    super([
+      'font-variation-settings',
+    ]);
+  }
+
+  override getMetricType(): Host.UserMetrics.CSSHintType {
+    return Host.UserMetrics.CSSHintType.FontVariationSettings;
+  }
+
+  getHint(
+      propertyName: string, computedStyles?: Map<string, string>, parentComputedStyles?: Map<string, string>,
+      nodeName?: string, fontFaces?: Array<SDK.CSSFontFace.CSSFontFace>): Hint|undefined {
+    if (!computedStyles) {
+      return;
+    }
+    const value = computedStyles.get('font-variation-settings');
+    if (!value) {
+      return;
+    }
+    const fontFamily = computedStyles.get('font-family');
+    if (!fontFamily) {
+      return;
+    }
+    const fontFamilies = new Set<string>(SDK.CSSPropertyParser.parseFontFamily(fontFamily));
+    const matchingFontFaces = (fontFaces || []).filter(f => fontFamilies.has(f.getFontFamily()));
+    const variationSettings = SDK.CSSPropertyParser.parseFontVariationSettings(value);
+    const warnings = [];
+    for (const elementSetting of variationSettings) {
+      for (const font of matchingFontFaces) {
+        const fontSetting = font.getVariationAxisByTag(elementSetting.tag);
+        if (!fontSetting) {
+          continue;
+        }
+        if (elementSetting.value < fontSetting.minValue || elementSetting.value > fontSetting.maxValue) {
+          warnings.push(i18nString(UIStrings.fontVariationSettingsWarning, {
+            PH1: elementSetting.tag,
+            PH2: elementSetting.value,
+            PH3: fontSetting.minValue,
+            PH4: fontSetting.maxValue,
+            PH5: font.getFontFamily(),
+          }));
+        }
+      }
+    }
+
+    if (!warnings.length) {
+      return;
+    }
+
+    return new Hint(
+        warnings.join(' '),
+        '',
+    );
+  }
+}
+
 const CSS_RULE_VALIDATORS = [
   AlignContentValidator,
   FlexContainerValidator,
   FlexGridValidator,
   FlexItemValidator,
+  FlexOrGridItemValidator,
+  FontVariationSettingsValidator,
   GridContainerValidator,
   GridItemValidator,
-  FlexOrGridItemValidator,
-  SizingValidator,
   MulticolFlexGridValidator,
   PaddingValidator,
   PositionValidator,
+  SizingValidator,
   ZIndexValidator,
 ];
 

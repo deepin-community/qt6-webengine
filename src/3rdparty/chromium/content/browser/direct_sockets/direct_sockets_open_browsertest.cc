@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include <algorithm>
+#include <optional>
 #include <vector>
 
 #include "base/command_line.h"
@@ -17,6 +18,7 @@
 #include "content/browser/direct_sockets/direct_sockets_service_impl.h"
 #include "content/browser/direct_sockets/direct_sockets_test_utils.h"
 #include "content/public/browser/browser_context.h"
+#include "content/public/browser/direct_sockets_delegate.h"
 #include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test.h"
@@ -38,7 +40,6 @@
 #include "services/network/test/test_network_context.h"
 #include "services/network/test/test_udp_socket.h"
 #include "testing/gmock/include/gmock/gmock-matchers.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/mojom/direct_sockets/direct_sockets.mojom.h"
 #include "url/gurl.h"
 
@@ -51,7 +52,7 @@ namespace content {
 
 namespace {
 
-using ProtocolType = blink::mojom::DirectSocketProtocolType;
+using ProtocolType = DirectSocketsDelegate::ProtocolType;
 
 struct RecordedCall {
   ProtocolType protocol_type;
@@ -92,7 +93,7 @@ class MockOpenNetworkContext : public content::test::MockNetworkContext {
 
   // network::TestNetworkContext:
   void CreateTCPConnectedSocket(
-      const absl::optional<net::IPEndPoint>& local_addr,
+      const std::optional<net::IPEndPoint>& local_addr,
       const net::AddressList& remote_addr_list,
       network::mojom::TCPConnectedSocketOptionsPtr tcp_connected_socket_options,
       const net::MutableNetworkTrafficAnnotationTag& traffic_annotation,
@@ -140,7 +141,7 @@ class MockOpenUDPSocket : public content::test::MockUDPSocket {
     const net::Error result = (remote_addr.port() == 0)
                                   ? net::ERR_INVALID_ARGUMENT
                                   : network_context_->result();
-    network_context_->Record(RecordedCall{ProtocolType::kUdp,
+    network_context_->Record(RecordedCall{ProtocolType::kConnectedUdp,
                                           remote_addr.address().ToString(),
                                           remote_addr.port(),
                                           socket_options->send_buffer_size,
@@ -181,13 +182,6 @@ class DirectSocketsOpenBrowserTest : public ContentBrowserTest {
         url::Origin::Create(GetTestOpenPageURL()));
 
     ASSERT_TRUE(NavigateToURL(shell(), GetTestOpenPageURL()));
-  }
-
-  void SetUpCommandLine(base::CommandLine* command_line) override {
-    // For TCPServerSocket support.
-    // TODO(crbug.com/1408140): remove after TCPServerSocket is fully supported.
-    command_line->AppendSwitchASCII(switches::kEnableBlinkFeatures,
-                                    "DirectSocketsExperimental");
   }
 
   void SetUp() override {
@@ -387,7 +381,7 @@ IN_PROC_BROWSER_TEST_F(DirectSocketsOpenBrowserTest, OpenUdp_OptionsOne) {
 
   ASSERT_EQ(1U, mock_network_context.history().size());
   const RecordedCall& call = mock_network_context.history()[0];
-  EXPECT_EQ(ProtocolType::kUdp, call.protocol_type);
+  EXPECT_EQ(ProtocolType::kConnectedUdp, call.protocol_type);
   EXPECT_EQ("12.34.56.78", call.remote_address);
   EXPECT_EQ(9012, call.remote_port);
   EXPECT_EQ(3456, call.send_buffer_size);
@@ -417,7 +411,7 @@ IN_PROC_BROWSER_TEST_F(DirectSocketsOpenBrowserTest, OpenUdp_OptionsTwo) {
 
   DCHECK_EQ(1U, mock_network_context.history().size());
   const RecordedCall& call = mock_network_context.history()[0];
-  EXPECT_EQ(ProtocolType::kUdp, call.protocol_type);
+  EXPECT_EQ(ProtocolType::kConnectedUdp, call.protocol_type);
   EXPECT_EQ("fedc:ba98:7654:3210:fedc:ba98:7654:3210", call.remote_address);
   EXPECT_EQ(789, call.remote_port);
   EXPECT_EQ(1243, call.send_buffer_size);
@@ -528,12 +522,12 @@ class MockOpenNetworkContextWithDnsQueryType : public MockOpenNetworkContext {
   }
 
   void set_expected_dns_query_type(
-      absl::optional<net::DnsQueryType> dns_query_type) {
+      std::optional<net::DnsQueryType> dns_query_type) {
     expected_dns_query_type_ = std::move(dns_query_type);
   }
 
  private:
-  absl::optional<net::DnsQueryType> expected_dns_query_type_;
+  std::optional<net::DnsQueryType> expected_dns_query_type_;
 };
 
 IN_PROC_BROWSER_TEST_F(DirectSocketsOpenBrowserTest, Open_DnsQueryType) {

@@ -9,6 +9,7 @@
 
 #include <memory>
 
+#include "base/auto_reset.h"
 #include "base/component_export.h"
 #include "base/memory/ref_counted.h"
 #include "base/task/single_thread_task_runner.h"
@@ -22,6 +23,8 @@
 #include "mojo/public/cpp/system/message_pipe.h"
 
 namespace IPC {
+
+class UrgentMessageObserver;
 
 // Incoming legacy IPCs have always been dispatched to one of two threads: the
 // IO thread (when an installed MessageFilter handles the message), or the
@@ -74,13 +77,15 @@ namespace IPC {
 // the extent of a ScopedAllowOffSequenceChannelAssociatedBindings. This will
 // flag the endpoint such that it honors your binding configuration, and its
 // incoming messages will actually dispatch to the task runner you provide.
-class COMPONENT_EXPORT(IPC) ScopedAllowOffSequenceChannelAssociatedBindings {
+class COMPONENT_EXPORT(IPC)
+    [[maybe_unused,
+      nodiscard]] ScopedAllowOffSequenceChannelAssociatedBindings {
  public:
   ScopedAllowOffSequenceChannelAssociatedBindings();
   ~ScopedAllowOffSequenceChannelAssociatedBindings();
 
  private:
-  const bool outer_flag_;
+  const base::AutoReset<bool> resetter_;
 };
 
 // MojoBootstrap establishes a pair of associated interfaces between two
@@ -124,6 +129,8 @@ class COMPONENT_EXPORT(IPC) MojoBootstrap {
   virtual void Flush() = 0;
 
   virtual mojo::AssociatedGroup* GetAssociatedGroup() = 0;
+
+  virtual void SetUrgentMessageObserver(UrgentMessageObserver* observer) = 0;
 };
 
 }  // namespace IPC

@@ -61,11 +61,12 @@ TCPClientSocket::TCPClientSocket(std::unique_ptr<TCPSocket> connected_socket,
 TCPClientSocket::TCPClientSocket(
     std::unique_ptr<TCPSocket> unconnected_socket,
     const AddressList& addresses,
+    std::unique_ptr<IPEndPoint> bound_address,
     NetworkQualityEstimator* network_quality_estimator)
     : TCPClientSocket(std::move(unconnected_socket),
                       addresses,
                       -1 /* current_address_index */,
-                      nullptr /* bind_address */,
+                      std::move(bound_address),
                       network_quality_estimator,
                       handles::kInvalidNetworkHandle) {}
 
@@ -346,7 +347,6 @@ void TCPClientSocket::DoDisconnect() {
   }
 
   total_received_bytes_ = 0;
-  EmitTCPMetricsHistogramsOnDisconnect();
 
   // If connecting or already connected, record that the socket has been
   // disconnected.
@@ -390,10 +390,6 @@ const NetLogWithSource& TCPClientSocket::NetLog() const {
 
 bool TCPClientSocket::WasEverUsed() const {
   return was_ever_used_;
-}
-
-bool TCPClientSocket::WasAlpnNegotiated() const {
-  return false;
 }
 
 NextProto TCPClientSocket::GetNegotiatedProtocol() const {
@@ -561,14 +557,6 @@ int TCPClientSocket::OpenSocket(AddressFamily family) {
   socket_->SetDefaultOptionsForClient();
 
   return OK;
-}
-
-void TCPClientSocket::EmitTCPMetricsHistogramsOnDisconnect() {
-  base::TimeDelta rtt;
-  if (socket_->GetEstimatedRoundTripTime(&rtt)) {
-    UMA_HISTOGRAM_CUSTOM_TIMES("Net.TcpRtt.AtDisconnect", rtt,
-                               base::Milliseconds(1), base::Minutes(10), 100);
-  }
 }
 
 void TCPClientSocket::EmitConnectAttemptHistograms(int result) {

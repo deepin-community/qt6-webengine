@@ -32,7 +32,7 @@ QT_BEGIN_NAMESPACE
     This enum type holds the type of the error that occurred:
 
     \value  NoError
-            The request was successful.
+            The request was successful. (Deprecated since Qt 6.8)
     \value  UrlNotFound
             The requested URL was not found.
     \value  UrlInvalid
@@ -109,6 +109,20 @@ QUrl QWebEngineUrlRequestJob::initiator() const
 QMap<QByteArray, QByteArray> QWebEngineUrlRequestJob::requestHeaders() const
 {
     return d_ptr->requestHeaders();
+}
+
+/*!
+    Returns a pointer to a QIODevice that gives access to the request body.
+    The request body can contain data for example when the request is
+    a POST request. If the request body is empty the QIODevice reflects this
+    and does not return any data when performing read operations on it.
+
+    \since 6.7
+    \sa QIODevice
+*/
+QIODevice *QWebEngineUrlRequestJob::requestBody() const
+{
+    return d_ptr->requestBody();
 }
 
 /*!

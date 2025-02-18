@@ -1,27 +1,39 @@
-// Copyright 2017 The Dawn Authors
+// Copyright 2017 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "dawn/native/ShaderModule.h"
 
 #include <algorithm>
 #include <sstream>
 
-#include "absl/strings/str_format.h"
 #include "dawn/common/BitSetIterator.h"
 #include "dawn/common/Constants.h"
-#include "dawn/native/BindGroupLayout.h"
-#include "dawn/native/ChainUtils_autogen.h"
+#include "dawn/native/BindGroupLayoutInternal.h"
+#include "dawn/native/ChainUtils.h"
 #include "dawn/native/CompilationMessages.h"
 #include "dawn/native/Device.h"
 #include "dawn/native/ObjectContentHasher.h"
@@ -29,6 +41,10 @@
 #include "dawn/native/PipelineLayout.h"
 #include "dawn/native/RenderPipeline.h"
 #include "dawn/native/TintUtils.h"
+
+#ifdef DAWN_ENABLE_SPIRV_VALIDATION
+#include "dawn/native/SpirvValidation.h"
+#endif
 
 #include "tint/tint.h"
 
@@ -46,7 +62,7 @@ ResultOrError<SingleShaderStage> TintPipelineStageToShaderStage(
         case tint::inspector::PipelineStage::kCompute:
             return SingleShaderStage::Compute;
     }
-    UNREACHABLE();
+    DAWN_UNREACHABLE();
 }
 
 BindingInfoType TintResourceTypeToBindingInfoType(
@@ -65,12 +81,14 @@ BindingInfoType TintResourceTypeToBindingInfoType(
         case tint::inspector::ResourceBinding::ResourceType::kDepthMultisampledTexture:
             return BindingInfoType::Texture;
         case tint::inspector::ResourceBinding::ResourceType::kWriteOnlyStorageTexture:
+        case tint::inspector::ResourceBinding::ResourceType::kReadOnlyStorageTexture:
+        case tint::inspector::ResourceBinding::ResourceType::kReadWriteStorageTexture:
             return BindingInfoType::StorageTexture;
         case tint::inspector::ResourceBinding::ResourceType::kExternalTexture:
             return BindingInfoType::ExternalTexture;
 
         default:
-            UNREACHABLE();
+            DAWN_UNREACHABLE();
             return BindingInfoType::Buffer;
     }
 }
@@ -116,7 +134,7 @@ wgpu::TextureFormat TintImageFormatToTextureFormat(
             return wgpu::TextureFormat::Undefined;
 
         default:
-            UNREACHABLE();
+            DAWN_UNREACHABLE();
             return wgpu::TextureFormat::Undefined;
     }
 }
@@ -139,7 +157,7 @@ wgpu::TextureViewDimension TintTextureDimensionToTextureViewDimension(
         case tint::inspector::ResourceBinding::TextureDimension::kNone:
             return wgpu::TextureViewDimension::Undefined;
     }
-    UNREACHABLE();
+    DAWN_UNREACHABLE();
 }
 
 SampleTypeBit TintSampledKindToSampleTypeBit(tint::inspector::ResourceBinding::SampledKind s) {
@@ -153,23 +171,23 @@ SampleTypeBit TintSampledKindToSampleTypeBit(tint::inspector::ResourceBinding::S
         case tint::inspector::ResourceBinding::SampledKind::kUnknown:
             return SampleTypeBit::None;
     }
-    UNREACHABLE();
+    DAWN_UNREACHABLE();
 }
 
-ResultOrError<wgpu::TextureComponentType> TintComponentTypeToTextureComponentType(
+ResultOrError<TextureComponentType> TintComponentTypeToTextureComponentType(
     tint::inspector::ComponentType type) {
     switch (type) {
         case tint::inspector::ComponentType::kF32:
         case tint::inspector::ComponentType::kF16:
-            return wgpu::TextureComponentType::Float;
+            return TextureComponentType::Float;
         case tint::inspector::ComponentType::kI32:
-            return wgpu::TextureComponentType::Sint;
+            return TextureComponentType::Sint;
         case tint::inspector::ComponentType::kU32:
-            return wgpu::TextureComponentType::Uint;
+            return TextureComponentType::Uint;
         case tint::inspector::ComponentType::kUnknown:
             return DAWN_VALIDATION_ERROR("Attempted to convert 'Unknown' component type from Tint");
     }
-    UNREACHABLE();
+    DAWN_UNREACHABLE();
 }
 
 ResultOrError<VertexFormatBaseType> TintComponentTypeToVertexFormatBaseType(
@@ -185,7 +203,7 @@ ResultOrError<VertexFormatBaseType> TintComponentTypeToVertexFormatBaseType(
         case tint::inspector::ComponentType::kUnknown:
             return DAWN_VALIDATION_ERROR("Attempted to convert 'Unknown' component type from Tint");
     }
-    UNREACHABLE();
+    DAWN_UNREACHABLE();
 }
 
 ResultOrError<wgpu::BufferBindingType> TintResourceTypeToBufferBindingType(
@@ -200,7 +218,7 @@ ResultOrError<wgpu::BufferBindingType> TintResourceTypeToBufferBindingType(
         default:
             return DAWN_VALIDATION_ERROR("Attempted to convert non-buffer resource type");
     }
-    UNREACHABLE();
+    DAWN_UNREACHABLE();
 }
 
 ResultOrError<wgpu::StorageTextureAccess> TintResourceTypeToStorageTextureAccess(
@@ -208,10 +226,14 @@ ResultOrError<wgpu::StorageTextureAccess> TintResourceTypeToStorageTextureAccess
     switch (resource_type) {
         case tint::inspector::ResourceBinding::ResourceType::kWriteOnlyStorageTexture:
             return wgpu::StorageTextureAccess::WriteOnly;
+        case tint::inspector::ResourceBinding::ResourceType::kReadOnlyStorageTexture:
+            return wgpu::StorageTextureAccess::ReadOnly;
+        case tint::inspector::ResourceBinding::ResourceType::kReadWriteStorageTexture:
+            return wgpu::StorageTextureAccess::ReadWrite;
         default:
             return DAWN_VALIDATION_ERROR("Attempted to convert non-storage texture resource type");
     }
-    UNREACHABLE();
+    DAWN_UNREACHABLE();
 }
 
 ResultOrError<InterStageComponentType> TintComponentTypeToInterStageComponentType(
@@ -228,7 +250,7 @@ ResultOrError<InterStageComponentType> TintComponentTypeToInterStageComponentTyp
         case tint::inspector::ComponentType::kUnknown:
             return DAWN_VALIDATION_ERROR("Attempted to convert 'Unknown' component type from Tint");
     }
-    UNREACHABLE();
+    DAWN_UNREACHABLE();
 }
 
 ResultOrError<uint32_t> TintCompositionTypeToInterStageComponentCount(
@@ -245,7 +267,7 @@ ResultOrError<uint32_t> TintCompositionTypeToInterStageComponentCount(
         case tint::inspector::CompositionType::kUnknown:
             return DAWN_VALIDATION_ERROR("Attempt to convert 'Unknown' composition type from Tint");
     }
-    UNREACHABLE();
+    DAWN_UNREACHABLE();
 }
 
 ResultOrError<InterpolationType> TintInterpolationTypeToInterpolationType(
@@ -261,7 +283,7 @@ ResultOrError<InterpolationType> TintInterpolationTypeToInterpolationType(
             return DAWN_VALIDATION_ERROR(
                 "Attempted to convert 'Unknown' interpolation type from Tint");
     }
-    UNREACHABLE();
+    DAWN_UNREACHABLE();
 }
 
 ResultOrError<InterpolationSampling> TintInterpolationSamplingToInterpolationSamplingType(
@@ -279,7 +301,7 @@ ResultOrError<InterpolationSampling> TintInterpolationSamplingToInterpolationSam
             return DAWN_VALIDATION_ERROR(
                 "Attempted to convert 'Unknown' interpolation sampling type from Tint");
     }
-    UNREACHABLE();
+    DAWN_UNREACHABLE();
 }
 
 EntryPointMetadata::Override::Type FromTintOverrideType(tint::inspector::Override::Type type) {
@@ -288,18 +310,39 @@ EntryPointMetadata::Override::Type FromTintOverrideType(tint::inspector::Overrid
             return EntryPointMetadata::Override::Type::Boolean;
         case tint::inspector::Override::Type::kFloat32:
             return EntryPointMetadata::Override::Type::Float32;
+        case tint::inspector::Override::Type::kFloat16:
+            return EntryPointMetadata::Override::Type::Float16;
         case tint::inspector::Override::Type::kInt32:
             return EntryPointMetadata::Override::Type::Int32;
         case tint::inspector::Override::Type::kUint32:
             return EntryPointMetadata::Override::Type::Uint32;
     }
-    UNREACHABLE();
+    DAWN_UNREACHABLE();
+}
+
+ResultOrError<PixelLocalMemberType> FromTintPixelLocalMemberType(
+    tint::inspector::PixelLocalMemberType type) {
+    switch (type) {
+        case tint::inspector::PixelLocalMemberType::kU32:
+            return PixelLocalMemberType::U32;
+        case tint::inspector::PixelLocalMemberType::kI32:
+            return PixelLocalMemberType::I32;
+        case tint::inspector::PixelLocalMemberType::kF32:
+            return PixelLocalMemberType::F32;
+        case tint::inspector::PixelLocalMemberType::kUnknown:
+            return DAWN_VALIDATION_ERROR(
+                "Attempted to convert 'Unknown' pixel local member type from Tint");
+    }
+    DAWN_UNREACHABLE();
 }
 
 ResultOrError<tint::Program> ParseWGSL(const tint::Source::File* file,
+                                       const tint::wgsl::AllowedFeatures& allowedFeatures,
                                        OwnedCompilationMessages* outMessages) {
 #if TINT_BUILD_WGSL_READER
-    tint::Program program = tint::reader::wgsl::Parse(file);
+    tint::wgsl::reader::Options options;
+    options.allowed_features = allowedFeatures;
+    tint::Program program = tint::wgsl::reader::Parse(file, options);
     if (outMessages != nullptr) {
         DAWN_TRY(outMessages->AddMessages(program.Diagnostics()));
     }
@@ -315,13 +358,15 @@ ResultOrError<tint::Program> ParseWGSL(const tint::Source::File* file,
 
 #if TINT_BUILD_SPV_READER
 ResultOrError<tint::Program> ParseSPIRV(const std::vector<uint32_t>& spirv,
+                                        const tint::wgsl::AllowedFeatures& allowedFeatures,
                                         OwnedCompilationMessages* outMessages,
                                         const DawnShaderModuleSPIRVOptionsDescriptor* optionsDesc) {
-    tint::reader::spirv::Options options;
+    tint::spirv::reader::Options options;
     if (optionsDesc) {
         options.allow_non_uniform_derivatives = optionsDesc->allowNonUniformDerivatives;
     }
-    tint::Program program = tint::reader::spirv::Parse(spirv, options);
+    options.allowed_features = allowedFeatures;
+    tint::Program program = tint::spirv::reader::Read(spirv, options);
     if (outMessages != nullptr) {
         DAWN_TRY(outMessages->AddMessages(program.Diagnostics()));
     }
@@ -335,7 +380,7 @@ ResultOrError<tint::Program> ParseSPIRV(const std::vector<uint32_t>& spirv,
 #endif  // TINT_BUILD_SPV_READER
 
 std::vector<uint64_t> GetBindGroupMinBufferSizes(const BindingGroupInfoMap& shaderBindings,
-                                                 const BindGroupLayoutBase* layout) {
+                                                 const BindGroupLayoutInternalBase* layout) {
     std::vector<uint64_t> requiredBufferSizes(layout->GetUnverifiedBufferCount());
     uint32_t packedIdx = 0;
 
@@ -346,7 +391,7 @@ std::vector<uint64_t> GetBindGroupMinBufferSizes(const BindingGroupInfoMap& shad
             continue;
         }
 
-        ASSERT(packedIdx < requiredBufferSizes.size());
+        DAWN_ASSERT(packedIdx < requiredBufferSizes.size());
         const auto& shaderInfo = shaderBindings.find(bindingInfo.binding);
         if (shaderInfo != shaderBindings.end()) {
             requiredBufferSizes[packedIdx] = shaderInfo->second.buffer.minBindingSize;
@@ -362,12 +407,20 @@ std::vector<uint64_t> GetBindGroupMinBufferSizes(const BindingGroupInfoMap& shad
     return requiredBufferSizes;
 }
 
+bool IsShaderCompatibleWithPipelineLayoutOnStorageTextureAccess(
+    const BindingInfo& bindingInfo,
+    const ShaderBindingInfo& shaderBindingInfo) {
+    return bindingInfo.storageTexture.access == shaderBindingInfo.storageTexture.access ||
+           (bindingInfo.storageTexture.access == wgpu::StorageTextureAccess::ReadWrite &&
+            shaderBindingInfo.storageTexture.access == wgpu::StorageTextureAccess::WriteOnly);
+}
+
 MaybeError ValidateCompatibilityOfSingleBindingWithLayout(const DeviceBase* device,
-                                                          const BindGroupLayoutBase* layout,
+                                                          const BindGroupLayoutInternalBase* layout,
                                                           SingleShaderStage entryPointStage,
                                                           BindingNumber bindingNumber,
                                                           const ShaderBindingInfo& shaderInfo) {
-    const BindGroupLayoutBase::BindingMap& layoutBindings = layout->GetBindingMap();
+    const BindGroupLayoutInternalBase::BindingMap& layoutBindings = layout->GetBindingMap();
 
     // An external texture binding found in the shader will later be expanded into multiple
     // bindings at compile time. This expansion will have already happened in the bgl - so
@@ -379,7 +432,7 @@ MaybeError ValidateCompatibilityOfSingleBindingWithLayout(const DeviceBase* devi
         // key in the ExternalTextureBindingExpansions map.
         ExternalTextureBindingExpansionMap expansions =
             layout->GetExternalTextureBindingExpansionMap();
-        std::map<BindingNumber, dawn_native::ExternalTextureBindingExpansion>::iterator it =
+        std::map<BindingNumber, dawn::native::ExternalTextureBindingExpansion>::iterator it =
             expansions.find(bindingNumber);
         // TODO(dawn:563): Provide info about the binding types.
         DAWN_INVALID_IF(it == expansions.end(),
@@ -395,21 +448,18 @@ MaybeError ValidateCompatibilityOfSingleBindingWithLayout(const DeviceBase* devi
     BindingIndex bindingIndex(bindingIt->second);
     const BindingInfo& layoutInfo = layout->GetBindingInfo(bindingIndex);
 
-    // TODO(dawn:563): Provide info about the binding types.
-    DAWN_INVALID_IF(
-        layoutInfo.bindingType != shaderInfo.bindingType,
-        "Binding type (buffer vs. texture vs. sampler vs. external) doesn't match the type "
-        "in the layout.");
+    DAWN_INVALID_IF(layoutInfo.bindingType != shaderInfo.bindingType,
+                    "Binding type in the shader (%s) doesn't match the type in the layout (%s).",
+                    shaderInfo.bindingType, layoutInfo.bindingType);
 
     ExternalTextureBindingExpansionMap expansions = layout->GetExternalTextureBindingExpansionMap();
     DAWN_INVALID_IF(expansions.find(bindingNumber) != expansions.end(),
                     "Binding type (buffer vs. texture vs. sampler vs. external) doesn't "
                     "match the type in the layout.");
 
-    // TODO(dawn:563): Provide info about the visibility.
     DAWN_INVALID_IF((layoutInfo.visibility & StageBit(entryPointStage)) == 0,
-                    "Entry point's stage is not in the binding visibility in the layout (%s)",
-                    layoutInfo.visibility);
+                    "Entry point's stage (%s) is not in the binding visibility in the layout (%s).",
+                    StageBit(entryPointStage), layoutInfo.visibility);
 
     switch (layoutInfo.bindingType) {
         case BindingInfoType::Texture: {
@@ -420,8 +470,16 @@ MaybeError ValidateCompatibilityOfSingleBindingWithLayout(const DeviceBase* devi
                 layoutInfo.texture.multisampled, shaderInfo.texture.multisampled);
 
             // TODO(dawn:563): Provide info about the sample types.
-            DAWN_INVALID_IF(!(SampleTypeToSampleTypeBit(layoutInfo.texture.sampleType) &
-                              shaderInfo.texture.compatibleSampleTypes),
+            SampleTypeBit requiredType;
+            if (layoutInfo.texture.sampleType == kInternalResolveAttachmentSampleType) {
+                // If the layout's texture's sample type is kInternalResolveAttachmentSampleType,
+                // then the shader's compatible sample types must contain float.
+                requiredType = SampleTypeBit::UnfilterableFloat;
+            } else {
+                requiredType = SampleTypeToSampleTypeBit(layoutInfo.texture.sampleType);
+            }
+
+            DAWN_INVALID_IF(!(shaderInfo.texture.compatibleSampleTypes & requiredType),
                             "The sample type in the shader is not compatible with the "
                             "sample type of the layout.");
 
@@ -434,13 +492,14 @@ MaybeError ValidateCompatibilityOfSingleBindingWithLayout(const DeviceBase* devi
         }
 
         case BindingInfoType::StorageTexture: {
-            ASSERT(layoutInfo.storageTexture.format != wgpu::TextureFormat::Undefined);
-            ASSERT(shaderInfo.storageTexture.format != wgpu::TextureFormat::Undefined);
+            DAWN_ASSERT(layoutInfo.storageTexture.format != wgpu::TextureFormat::Undefined);
+            DAWN_ASSERT(shaderInfo.storageTexture.format != wgpu::TextureFormat::Undefined);
 
-            DAWN_INVALID_IF(layoutInfo.storageTexture.access != shaderInfo.storageTexture.access,
-                            "The layout's binding access (%s) isn't compatible with the shader's "
-                            "binding access (%s).",
-                            layoutInfo.storageTexture.access, shaderInfo.storageTexture.access);
+            DAWN_INVALID_IF(
+                !IsShaderCompatibleWithPipelineLayoutOnStorageTextureAccess(layoutInfo, shaderInfo),
+                "The layout's binding access (%s) isn't compatible with the shader's "
+                "binding access (%s).",
+                layoutInfo.storageTexture.access, shaderInfo.storageTexture.access);
 
             DAWN_INVALID_IF(layoutInfo.storageTexture.format != shaderInfo.storageTexture.format,
                             "The layout's binding format (%s) doesn't match the shader's binding "
@@ -490,7 +549,7 @@ MaybeError ValidateCompatibilityOfSingleBindingWithLayout(const DeviceBase* devi
             break;
 
         case BindingInfoType::ExternalTexture: {
-            UNREACHABLE();
+            DAWN_UNREACHABLE();
             break;
         }
     }
@@ -500,7 +559,7 @@ MaybeError ValidateCompatibilityOfSingleBindingWithLayout(const DeviceBase* devi
 MaybeError ValidateCompatibilityWithBindGroupLayout(DeviceBase* device,
                                                     BindGroupIndex group,
                                                     const EntryPointMetadata& entryPoint,
-                                                    const BindGroupLayoutBase* layout) {
+                                                    const BindGroupLayoutInternalBase* layout) {
     // Iterate over all bindings used by this group in the shader, and find the
     // corresponding binding in the BindGroupLayout, if it exists.
     for (const auto& [bindingId, bindingInfo] : entryPoint.bindings[group]) {
@@ -508,7 +567,7 @@ MaybeError ValidateCompatibilityWithBindGroupLayout(DeviceBase* device,
                              device, layout, entryPoint.stage, bindingId, bindingInfo),
                          "validating that the entry-point's declaration for @group(%u) "
                          "@binding(%u) matches %s",
-                         static_cast<uint32_t>(group), static_cast<uint32_t>(bindingId), layout);
+                         group, bindingId, layout);
     }
 
     return {};
@@ -524,7 +583,7 @@ ResultOrError<std::unique_ptr<EntryPointMetadata>> ReflectEntryPointUsingTint(
     // error in metadata.infringedLimits. This is to delay the emission of these validation
     // errors until the entry point is used.
 #define DelayedInvalidIf(invalid, ...)                                              \
-    ([&]() {                                                                        \
+    ([&] {                                                                          \
         if (invalid) {                                                              \
             metadata->infringedLimitErrors.push_back(absl::StrFormat(__VA_ARGS__)); \
         }                                                                           \
@@ -546,11 +605,11 @@ ResultOrError<std::unique_ptr<EntryPointMetadata>> ReflectEntryPointUsingTint(
                 auto [_, inserted] =
                     metadata->uninitializedOverrides.emplace(std::move(identifier));
                 // The insertion should have taken place
-                ASSERT(inserted);
+                DAWN_ASSERT(inserted);
             } else {
                 auto [_, inserted] = metadata->initializedOverrides.emplace(std::move(identifier));
                 // The insertion should have taken place
-                ASSERT(inserted);
+                DAWN_ASSERT(inserted);
             }
         }
     }
@@ -565,9 +624,15 @@ ResultOrError<std::unique_ptr<EntryPointMetadata>> ReflectEntryPointUsingTint(
     const uint32_t maxVertexAttributes = limits.v1.maxVertexAttributes;
     const uint32_t maxInterStageShaderVariables = limits.v1.maxInterStageShaderVariables;
     const uint32_t maxInterStageShaderComponents = limits.v1.maxInterStageShaderComponents;
+
+    metadata->usedInterStageVariables.resize(maxInterStageShaderVariables);
+    metadata->interStageVariables.resize(maxInterStageShaderVariables);
+
+    // Vertex shader specific reflection.
     if (metadata->stage == SingleShaderStage::Vertex) {
+        // Vertex input reflection.
         for (const auto& inputVar : entryPoint.input_variables) {
-            uint32_t unsanitizedLocation = inputVar.location_attribute;
+            uint32_t unsanitizedLocation = inputVar.attributes.location.value();
             if (DelayedInvalidIf(unsanitizedLocation >= maxVertexAttributes,
                                  "Vertex input variable \"%s\" has a location (%u) that "
                                  "exceeds the maximum (%u)",
@@ -581,9 +646,11 @@ ResultOrError<std::unique_ptr<EntryPointMetadata>> ReflectEntryPointUsingTint(
             metadata->usedVertexInputs.set(location);
         }
 
+        // Vertex ouput (inter-stage variables) reflection.
         uint32_t totalInterStageShaderComponents = 0;
         for (const auto& outputVar : entryPoint.output_variables) {
             EntryPointMetadata::InterStageVariableInfo variable;
+            variable.name = outputVar.variable_name;
             DAWN_TRY_ASSIGN(variable.baseType,
                             TintComponentTypeToInterStageComponentType(outputVar.component_type));
             DAWN_TRY_ASSIGN(variable.componentCount, TintCompositionTypeToInterStageComponentCount(
@@ -595,7 +662,7 @@ ResultOrError<std::unique_ptr<EntryPointMetadata>> ReflectEntryPointUsingTint(
                                 outputVar.interpolation_sampling));
             totalInterStageShaderComponents += variable.componentCount;
 
-            uint32_t location = outputVar.location_attribute;
+            uint32_t location = outputVar.attributes.location.value();
             if (DelayedInvalidIf(location >= maxInterStageShaderVariables,
                                  "Vertex output variable \"%s\" has a location (%u) that "
                                  "is greater than or equal to (%u).",
@@ -603,20 +670,35 @@ ResultOrError<std::unique_ptr<EntryPointMetadata>> ReflectEntryPointUsingTint(
                 continue;
             }
 
-            metadata->usedInterStageVariables.set(location);
+            metadata->usedInterStageVariables[location] = true;
             metadata->interStageVariables[location] = variable;
         }
 
+        // Other vertex metadata.
         metadata->totalInterStageShaderComponents = totalInterStageShaderComponents;
         DelayedInvalidIf(totalInterStageShaderComponents > maxInterStageShaderComponents,
                          "Total vertex output components count (%u) exceeds the maximum (%u).",
                          totalInterStageShaderComponents, maxInterStageShaderComponents);
+
+        metadata->usesVertexIndex = entryPoint.vertex_index_used;
+        metadata->usesInstanceIndex = entryPoint.instance_index_used;
     }
 
+    // Fragment shader specific reflection.
     if (metadata->stage == SingleShaderStage::Fragment) {
         uint32_t totalInterStageShaderComponents = 0;
+
+        // Fragment input (inter-stage variables) reflection.
         for (const auto& inputVar : entryPoint.input_variables) {
+            // Skip over @color framebuffer fetch, it is handled below.
+            if (!inputVar.attributes.location.has_value()) {
+                DAWN_ASSERT(inputVar.attributes.color.has_value());
+                continue;
+            }
+
+            uint32_t location = inputVar.attributes.location.value();
             EntryPointMetadata::InterStageVariableInfo variable;
+            variable.name = inputVar.variable_name;
             DAWN_TRY_ASSIGN(variable.baseType,
                             TintComponentTypeToInterStageComponentType(inputVar.component_type));
             DAWN_TRY_ASSIGN(variable.componentCount, TintCompositionTypeToInterStageComponentCount(
@@ -628,7 +710,6 @@ ResultOrError<std::unique_ptr<EntryPointMetadata>> ReflectEntryPointUsingTint(
                                 inputVar.interpolation_sampling));
             totalInterStageShaderComponents += variable.componentCount;
 
-            uint32_t location = inputVar.location_attribute;
             if (DelayedInvalidIf(location >= maxInterStageShaderVariables,
                                  "Fragment input variable \"%s\" has a location (%u) that "
                                  "is greater than or equal to (%u).",
@@ -636,10 +717,11 @@ ResultOrError<std::unique_ptr<EntryPointMetadata>> ReflectEntryPointUsingTint(
                 continue;
             }
 
-            metadata->usedInterStageVariables.set(location);
+            metadata->usedInterStageVariables[location] = true;
             metadata->interStageVariables[location] = variable;
         }
 
+        // Other fragment metadata
         if (entryPoint.front_facing_used) {
             totalInterStageShaderComponents += 1;
         }
@@ -647,6 +729,7 @@ ResultOrError<std::unique_ptr<EntryPointMetadata>> ReflectEntryPointUsingTint(
             totalInterStageShaderComponents += 1;
         }
         metadata->usesSampleMaskOutput = entryPoint.output_sample_mask_used;
+        metadata->usesSampleIndex = entryPoint.sample_index_used;
         if (entryPoint.sample_index_used) {
             totalInterStageShaderComponents += 1;
         }
@@ -657,16 +740,17 @@ ResultOrError<std::unique_ptr<EntryPointMetadata>> ReflectEntryPointUsingTint(
                          "Total fragment input components count (%u) exceeds the maximum (%u).",
                          totalInterStageShaderComponents, maxInterStageShaderComponents);
 
+        // Fragment output reflection.
         uint32_t maxColorAttachments = limits.v1.maxColorAttachments;
         for (const auto& outputVar : entryPoint.output_variables) {
-            EntryPointMetadata::FragmentOutputVariableInfo variable;
+            EntryPointMetadata::FragmentRenderAttachmentInfo variable;
             DAWN_TRY_ASSIGN(variable.baseType,
                             TintComponentTypeToTextureComponentType(outputVar.component_type));
             DAWN_TRY_ASSIGN(variable.componentCount, TintCompositionTypeToInterStageComponentCount(
                                                          outputVar.composition_type));
-            ASSERT(variable.componentCount <= 4);
+            DAWN_ASSERT(variable.componentCount <= 4);
 
-            uint32_t unsanitizedAttachment = outputVar.location_attribute;
+            uint32_t unsanitizedAttachment = outputVar.attributes.location.value();
             if (DelayedInvalidIf(unsanitizedAttachment >= maxColorAttachments,
                                  "Fragment output variable \"%s\" has a location (%u) that "
                                  "exceeds the maximum (%u).",
@@ -676,15 +760,61 @@ ResultOrError<std::unique_ptr<EntryPointMetadata>> ReflectEntryPointUsingTint(
 
             ColorAttachmentIndex attachment(static_cast<uint8_t>(unsanitizedAttachment));
             metadata->fragmentOutputVariables[attachment] = variable;
-            metadata->fragmentOutputsWritten.set(attachment);
+            metadata->fragmentOutputMask.set(attachment);
+        }
+
+        // Fragment input reflection.
+        for (const auto& inputVar : entryPoint.input_variables) {
+            if (!inputVar.attributes.color.has_value()) {
+                continue;
+            }
+
+            // Tint should disallow using @color(N) without the respective enable, which is gated
+            // on the extension.
+            DAWN_ASSERT(device->HasFeature(Feature::FramebufferFetch));
+
+            EntryPointMetadata::FragmentRenderAttachmentInfo variable;
+            DAWN_TRY_ASSIGN(variable.baseType,
+                            TintComponentTypeToTextureComponentType(inputVar.component_type));
+            DAWN_TRY_ASSIGN(variable.componentCount, TintCompositionTypeToInterStageComponentCount(
+                                                         inputVar.composition_type));
+            DAWN_ASSERT(variable.componentCount <= 4);
+
+            uint32_t unsanitizedAttachment = inputVar.attributes.color.value();
+            if (DelayedInvalidIf(unsanitizedAttachment >= maxColorAttachments,
+                                 "Fragment input variable \"%s\" has a location (%u) that "
+                                 "exceeds the maximum (%u).",
+                                 inputVar.name, unsanitizedAttachment, maxColorAttachments)) {
+                continue;
+            }
+
+            ColorAttachmentIndex attachment(static_cast<uint8_t>(unsanitizedAttachment));
+            metadata->fragmentInputVariables[attachment] = variable;
+            metadata->fragmentInputMask.set(attachment);
+        }
+
+        // Fragment PLS reflection.
+        if (!entryPoint.pixel_local_members.empty()) {
+            metadata->usesPixelLocal = true;
+            metadata->pixelLocalBlockSize =
+                kPLSSlotByteSize * entryPoint.pixel_local_members.size();
+            metadata->pixelLocalMembers.reserve(entryPoint.pixel_local_members.size());
+
+            for (auto type : entryPoint.pixel_local_members) {
+                PixelLocalMemberType metadataType;
+                DAWN_TRY_ASSIGN(metadataType, FromTintPixelLocalMemberType(type));
+                metadata->pixelLocalMembers.push_back(metadataType);
+            }
         }
     }
 
+    // Generic resource binding reflection.
     for (const tint::inspector::ResourceBinding& resource :
          inspector->GetResourceBindings(entryPoint.name)) {
         ShaderBindingInfo info;
 
         info.bindingType = TintResourceTypeToBindingInfoType(resource.resource_type);
+        info.name = resource.variable_name;
 
         switch (info.bindingType) {
             case BindingInfoType::Buffer:
@@ -701,7 +831,7 @@ ResultOrError<std::unique_ptr<EntryPointMetadata>> ReflectEntryPointUsingTint(
                         info.sampler.isComparison = true;
                         break;
                     default:
-                        UNREACHABLE();
+                        DAWN_UNREACHABLE();
                 }
                 break;
             case BindingInfoType::Texture:
@@ -734,7 +864,6 @@ ResultOrError<std::unique_ptr<EntryPointMetadata>> ReflectEntryPointUsingTint(
                                     !device->HasFeature(Feature::BGRA8UnormStorage),
                                 "BGRA8Unorm storage textures are not supported if optional feature "
                                 "bgra8unorm-storage is not supported.");
-
                 break;
             case BindingInfoType::ExternalTexture:
                 break;
@@ -762,6 +891,7 @@ ResultOrError<std::unique_ptr<EntryPointMetadata>> ReflectEntryPointUsingTint(
                         resource.binding, resource.bind_group);
     }
 
+    // Reflection of combined sampler and texture uses.
     auto samplerTextureUses = inspector->GetSamplerTextureUses(entryPoint.name);
     metadata->samplerTexturePairs.reserve(samplerTextureUses.Length());
     std::transform(samplerTextureUses.begin(), samplerTextureUses.end(),
@@ -779,49 +909,13 @@ ResultOrError<std::unique_ptr<EntryPointMetadata>> ReflectEntryPointUsingTint(
     return std::move(metadata);
 }
 
-MaybeError ValidateWGSLProgramExtension(const DeviceBase* device,
-                                        const WGSLExtensionSet* enabledExtensions,
-                                        OwnedCompilationMessages* outMessages) {
-    const WGSLExtensionSet& extensionAllowList = device->GetWGSLExtensionAllowList();
-
-    bool hasDisallowedExtension = false;
-    tint::diag::List messages;
-
-    for (const std::string& extension : *enabledExtensions) {
-        if (extensionAllowList.count(extension)) {
-            continue;
-        }
-        hasDisallowedExtension = true;
-        messages.add_error(tint::diag::System::Program,
-                           "Extension " + extension + " is not allowed on the Device.");
-    }
-
-    if (hasDisallowedExtension) {
-        if (outMessages != nullptr) {
-            DAWN_TRY(outMessages->AddMessages(messages));
-        }
-        return DAWN_MAKE_ERROR(InternalErrorType::Validation,
-                               "Shader module uses extension(s) not enabled for its device.");
-    }
-
-    return {};
-}
-
 MaybeError ReflectShaderUsingTint(const DeviceBase* device,
                                   const tint::Program* program,
                                   OwnedCompilationMessages* compilationMessages,
-                                  EntryPointMetadataTable* entryPointMetadataTable,
-                                  WGSLExtensionSet* enabledWGSLExtensions) {
-    ASSERT(program->IsValid());
+                                  EntryPointMetadataTable* entryPointMetadataTable) {
+    DAWN_ASSERT(program->IsValid());
 
-    tint::inspector::Inspector inspector(program);
-
-    ASSERT(enabledWGSLExtensions->empty());
-    auto usedExtensionNames = inspector.GetUsedExtensionNames();
-    for (std::string name : usedExtensionNames) {
-        enabledWGSLExtensions->insert(name);
-    }
-    DAWN_TRY(ValidateWGSLProgramExtension(device, enabledWGSLExtensions, compilationMessages));
+    tint::inspector::Inspector inspector(*program);
 
     std::vector<tint::inspector::EntryPoint> entryPoints = inspector.GetEntryPoints();
     DAWN_INVALID_IF(inspector.has_error(), "Tint Reflection failure: Inspector: %s\n",
@@ -833,8 +927,8 @@ MaybeError ReflectShaderUsingTint(const DeviceBase* device,
                                 ReflectEntryPointUsingTint(device, &inspector, entryPoint),
                                 "processing entry point \"%s\".", entryPoint.name);
 
-        ASSERT(entryPointMetadataTable->count(entryPoint.name) == 0);
-        (*entryPointMetadataTable)[entryPoint.name] = std::move(metadata);
+        DAWN_ASSERT(!entryPointMetadataTable->contains(entryPoint.name));
+        entryPointMetadataTable->emplace(entryPoint.name, std::move(metadata));
     }
     return {};
 }
@@ -843,11 +937,12 @@ MaybeError ReflectShaderUsingTint(const DeviceBase* device,
 ResultOrError<Extent3D> ValidateComputeStageWorkgroupSize(
     const tint::Program& program,
     const char* entryPointName,
-    const LimitsForCompilationRequest& limits) {
-    tint::inspector::Inspector inspector(&program);
+    const LimitsForCompilationRequest& limits,
+    std::optional<uint32_t> maxSubgroupSizeForFullSubgroups) {
+    tint::inspector::Inspector inspector(program);
     // At this point the entry point must exist and must have workgroup size values.
     tint::inspector::EntryPoint entryPoint = inspector.GetEntryPoint(entryPointName);
-    ASSERT(entryPoint.workgroup_size.has_value());
+    DAWN_ASSERT(entryPoint.workgroup_size.has_value());
     const tint::inspector::WorkgroupSize& workgroup_size = entryPoint.workgroup_size.value();
 
     DAWN_INVALID_IF(workgroup_size.x < 1 || workgroup_size.y < 1 || workgroup_size.z < 1,
@@ -871,11 +966,19 @@ ResultOrError<Extent3D> ValidateComputeStageWorkgroupSize(
                     "maximum allowed (%u).",
                     numInvocations, limits.maxComputeInvocationsPerWorkgroup);
 
-    const size_t workgroupStorageSize = inspector.GetWorkgroupStorageSize(entryPointName);
+    const size_t workgroupStorageSize = entryPoint.workgroup_storage_size;
     DAWN_INVALID_IF(workgroupStorageSize > limits.maxComputeWorkgroupStorageSize,
                     "The total use of workgroup storage (%u bytes) is larger than "
                     "the maximum allowed (%u bytes).",
                     workgroupStorageSize, limits.maxComputeWorkgroupStorageSize);
+
+    // Validate workgroup_size.x is a multiple of maxSubgroupSizeForFullSubgroups if
+    // it holds a value.
+    DAWN_INVALID_IF(maxSubgroupSizeForFullSubgroups &&
+                        (workgroup_size.x % *maxSubgroupSizeForFullSubgroups != 0),
+                    "the X dimension of the workgroup size (%d) must be a multiple of "
+                    "maxSubgroupSize (%d) if full subgroups required in compute pipeline",
+                    workgroup_size.x, *maxSubgroupSizeForFullSubgroups);
 
     return Extent3D{workgroup_size.x, workgroup_size.y, workgroup_size.z};
 }
@@ -903,94 +1006,78 @@ class TintSource {
 };
 
 MaybeError ValidateAndParseShaderModule(DeviceBase* device,
-                                        const ShaderModuleDescriptor* descriptor,
+                                        const UnpackedPtr<ShaderModuleDescriptor>& descriptor,
                                         ShaderModuleParseResult* parseResult,
                                         OwnedCompilationMessages* outMessages) {
-    ASSERT(parseResult != nullptr);
+    DAWN_ASSERT(parseResult != nullptr);
 
-    const ChainedStruct* chainedDescriptor = descriptor->nextInChain;
-    DAWN_INVALID_IF(chainedDescriptor == nullptr,
-                    "Shader module descriptor missing chained descriptor");
-
-// A WGSL (or SPIR-V, if enabled) subdescriptor is required, and a Dawn-specific SPIR-V options
+    wgpu::SType moduleType;
+    // A WGSL (or SPIR-V, if enabled) subdescriptor is required, and a Dawn-specific SPIR-V options
 // descriptor is allowed when using SPIR-V.
 #if TINT_BUILD_SPV_READER
-    DAWN_TRY(ValidateSTypes(
-        chainedDescriptor,
-        {{wgpu::SType::ShaderModuleSPIRVDescriptor, wgpu::SType::ShaderModuleWGSLDescriptor},
-         {wgpu::SType::DawnShaderModuleSPIRVOptionsDescriptor}}));
+    DAWN_TRY_ASSIGN(
+        moduleType,
+        (descriptor.ValidateBranches<
+            Branch<ShaderModuleWGSLDescriptor>,
+            Branch<ShaderModuleSPIRVDescriptor, DawnShaderModuleSPIRVOptionsDescriptor>>()));
 #else
-    DAWN_TRY(ValidateSingleSType(chainedDescriptor, wgpu::SType::ShaderModuleWGSLDescriptor));
+    DAWN_TRY_ASSIGN(moduleType,
+                    (descriptor.ValidateBranches<Branch<ShaderModuleWGSLDescriptor>>()));
 #endif
+    DAWN_ASSERT(moduleType != wgpu::SType::Invalid);
 
     ScopedTintICEHandler scopedICEHandler(device);
 
+    // Multiple paths may use a WGSL descriptor so declare it here now.
     const ShaderModuleWGSLDescriptor* wgslDesc = nullptr;
-    FindInChain(chainedDescriptor, &wgslDesc);
-
-    const DawnShaderModuleSPIRVOptionsDescriptor* spirvOptions = nullptr;
-    FindInChain(chainedDescriptor, &spirvOptions);
-
-    DAWN_INVALID_IF(wgslDesc != nullptr && spirvOptions != nullptr,
-                    "SPIR-V options descriptor not valid with WGSL descriptor");
-
-#if TINT_BUILD_SPV_READER
-    const ShaderModuleSPIRVDescriptor* spirvDesc = nullptr;
-    FindInChain(chainedDescriptor, &spirvDesc);
-
-    DAWN_INVALID_IF(spirvOptions != nullptr && spirvDesc == nullptr,
-                    "SPIR-V options descriptor can only be used with SPIR-V input");
-
-    // We have a temporary toggle to force the SPIRV ingestion to go through a WGSL
-    // intermediate step. It is done by switching the spirvDesc for a wgslDesc below.
-    ShaderModuleWGSLDescriptor newWgslDesc;
-    std::string newWgslCode;
-    if (spirvDesc && device->IsToggleEnabled(Toggle::ForceWGSLStep)) {
 #if TINT_BUILD_WGSL_WRITER
-        std::vector<uint32_t> spirv(spirvDesc->code, spirvDesc->code + spirvDesc->codeSize);
-        tint::Program program;
-        DAWN_TRY_ASSIGN(program, ParseSPIRV(spirv, outMessages, spirvOptions));
-
-        tint::writer::wgsl::Options options;
-        auto result = tint::writer::wgsl::Generate(&program, options);
-        DAWN_INVALID_IF(!result.success, "Tint WGSL failure: Generator: %s", result.error);
-
-        newWgslCode = std::move(result.wgsl);
-        newWgslDesc.source = newWgslCode.c_str();
-
-        spirvDesc = nullptr;
-        wgslDesc = &newWgslDesc;
-#else
-        device->EmitLog(
-            WGPULoggingType_Info,
-            "Toggle::ForceWGSLStep skipped because TINT_BUILD_WGSL_WRITER is not defined\n");
+    ShaderModuleWGSLDescriptor newWgslDesc = {};
+    std::string newWgslCode;
 #endif  // TINT_BUILD_WGSL_WRITER
-    }
 
-    if (spirvDesc) {
-        DAWN_INVALID_IF(device->IsToggleEnabled(Toggle::DisallowSpirv), "SPIR-V is disallowed.");
+    switch (moduleType) {
+#if TINT_BUILD_SPV_READER
+        case wgpu::SType::ShaderModuleSPIRVDescriptor: {
+            DAWN_INVALID_IF(device->IsToggleEnabled(Toggle::DisallowSpirv),
+                            "SPIR-V is disallowed.");
+            const auto* spirvDesc = descriptor.Get<ShaderModuleSPIRVDescriptor>();
+            const auto* spirvOptions = descriptor.Get<DawnShaderModuleSPIRVOptionsDescriptor>();
 
-        std::vector<uint32_t> spirv(spirvDesc->code, spirvDesc->code + spirvDesc->codeSize);
-        tint::Program program;
-        DAWN_TRY_ASSIGN(program, ParseSPIRV(spirv, outMessages, spirvOptions));
-        parseResult->tintProgram = std::make_unique<tint::Program>(std::move(program));
+            // TODO(dawn:2033): Avoid unnecessary copies of the SPIR-V code.
+            std::vector<uint32_t> spirv(spirvDesc->code, spirvDesc->code + spirvDesc->codeSize);
 
-        return {};
-    }
+#ifdef DAWN_ENABLE_SPIRV_VALIDATION
+            const bool dumpSpirv = device->IsToggleEnabled(Toggle::DumpShaders);
+            DAWN_TRY(ValidateSpirv(device, spirv.data(), spirv.size(), dumpSpirv));
+#endif  // DAWN_ENABLE_SPIRV_VALIDATION
+            tint::Program program;
+            DAWN_TRY_ASSIGN(program, ParseSPIRV(spirv, device->GetWGSLAllowedFeatures(),
+                                                outMessages, spirvOptions));
+            parseResult->tintProgram = std::make_unique<tint::Program>(std::move(program));
+
+            return {};
+        }
 #endif  // TINT_BUILD_SPV_READER
+        case wgpu::SType::ShaderModuleWGSLDescriptor: {
+            wgslDesc = descriptor.Get<ShaderModuleWGSLDescriptor>();
+            break;
+        }
+        default:
+            DAWN_UNREACHABLE();
+    }
+    DAWN_ASSERT(wgslDesc != nullptr);
 
-    ASSERT(wgslDesc != nullptr);
-
-    auto tintSource = std::make_unique<TintSource>("", wgslDesc->source);
+    auto tintSource = std::make_unique<TintSource>("", wgslDesc->code);
 
     if (device->IsToggleEnabled(Toggle::DumpShaders)) {
         std::ostringstream dumpedMsg;
-        dumpedMsg << "// Dumped WGSL:" << std::endl << wgslDesc->source;
+        dumpedMsg << "// Dumped WGSL:" << std::endl << wgslDesc->code << std::endl;
         device->EmitLog(WGPULoggingType_Info, dumpedMsg.str().c_str());
     }
 
     tint::Program program;
-    DAWN_TRY_ASSIGN(program, ParseWGSL(&tintSource->file, outMessages));
+    DAWN_TRY_ASSIGN(program,
+                    ParseWGSL(&tintSource->file, device->GetWGSLAllowedFeatures(), outMessages));
     parseResult->tintProgram = std::make_unique<tint::Program>(std::move(program));
     parseResult->tintSource = std::move(tintSource);
 
@@ -1008,21 +1095,22 @@ RequiredBufferSizes ComputeRequiredBufferSizesForLayout(const EntryPointMetadata
     return bufferSizes;
 }
 
-ResultOrError<tint::Program> RunTransforms(tint::transform::Transform* transform,
+ResultOrError<tint::Program> RunTransforms(tint::ast::transform::Manager* transformManager,
                                            const tint::Program* program,
-                                           const tint::transform::DataMap& inputs,
-                                           tint::transform::DataMap* outputs,
+                                           const tint::ast::transform::DataMap& inputs,
+                                           tint::ast::transform::DataMap* outputs,
                                            OwnedCompilationMessages* outMessages) {
-    tint::transform::Output output = transform->Run(program, inputs);
+    DAWN_ASSERT(program != nullptr);
+    tint::ast::transform::DataMap transform_outputs;
+    tint::Program result = transformManager->Run(*program, inputs, transform_outputs);
     if (outMessages != nullptr) {
-        DAWN_TRY(outMessages->AddMessages(output.program.Diagnostics()));
+        DAWN_TRY(outMessages->AddMessages(result.Diagnostics()));
     }
-    DAWN_INVALID_IF(!output.program.IsValid(), "Tint program failure: %s\n",
-                    output.program.Diagnostics().str());
+    DAWN_INVALID_IF(!result.IsValid(), "Tint program failure: %s\n", result.Diagnostics().str());
     if (outputs != nullptr) {
-        *outputs = std::move(output.data);
+        *outputs = std::move(transform_outputs);
     }
-    return std::move(output.program);
+    return std::move(result);
 }
 
 MaybeError ValidateCompatibilityWithPipelineLayout(DeviceBase* device,
@@ -1031,32 +1119,34 @@ MaybeError ValidateCompatibilityWithPipelineLayout(DeviceBase* device,
     for (BindGroupIndex group : IterateBitSet(layout->GetBindGroupLayoutsMask())) {
         DAWN_TRY_CONTEXT(ValidateCompatibilityWithBindGroupLayout(
                              device, group, entryPoint, layout->GetBindGroupLayout(group)),
-                         "validating the entry-point's compatibility for group %u with %s",
-                         static_cast<uint32_t>(group), layout->GetBindGroupLayout(group));
+                         "validating the entry-point's compatibility for group %u with %s", group,
+                         layout->GetBindGroupLayout(group));
     }
 
     for (BindGroupIndex group : IterateBitSet(~layout->GetBindGroupLayoutsMask())) {
         DAWN_INVALID_IF(entryPoint.bindings[group].size() > 0,
                         "The entry-point uses bindings in group %u but %s doesn't have a "
                         "BindGroupLayout for this index",
-                        static_cast<uint32_t>(group), layout);
+                        group, layout);
     }
 
     // Validate that filtering samplers are not used with unfilterable textures.
     for (const auto& pair : entryPoint.samplerTexturePairs) {
-        const BindGroupLayoutBase* samplerBGL = layout->GetBindGroupLayout(pair.sampler.group);
+        const BindGroupLayoutInternalBase* samplerBGL =
+            layout->GetBindGroupLayout(pair.sampler.group);
         const BindingInfo& samplerInfo =
             samplerBGL->GetBindingInfo(samplerBGL->GetBindingIndex(pair.sampler.binding));
         if (samplerInfo.sampler.type != wgpu::SamplerBindingType::Filtering) {
             continue;
         }
-        const BindGroupLayoutBase* textureBGL = layout->GetBindGroupLayout(pair.texture.group);
+        const BindGroupLayoutInternalBase* textureBGL =
+            layout->GetBindGroupLayout(pair.texture.group);
         const BindingInfo& textureInfo =
             textureBGL->GetBindingInfo(textureBGL->GetBindingIndex(pair.texture.binding));
 
-        ASSERT(textureInfo.bindingType != BindingInfoType::Buffer &&
-               textureInfo.bindingType != BindingInfoType::Sampler &&
-               textureInfo.bindingType != BindingInfoType::StorageTexture);
+        DAWN_ASSERT(textureInfo.bindingType != BindingInfoType::Buffer &&
+                    textureInfo.bindingType != BindingInfoType::Sampler &&
+                    textureInfo.bindingType != BindingInfoType::StorageTexture);
 
         if (textureInfo.bindingType != BindingInfoType::Texture) {
             continue;
@@ -1068,17 +1158,68 @@ MaybeError ValidateCompatibilityWithPipelineLayout(DeviceBase* device,
         // specifies a uint/sint texture binding,
         // |ValidateCompatibilityWithBindGroupLayout| will fail since the
         // sampleType does not match.
-        ASSERT(textureInfo.texture.sampleType != wgpu::TextureSampleType::Undefined &&
-               textureInfo.texture.sampleType != wgpu::TextureSampleType::Uint &&
-               textureInfo.texture.sampleType != wgpu::TextureSampleType::Sint);
+        DAWN_ASSERT(textureInfo.texture.sampleType != wgpu::TextureSampleType::Undefined &&
+                    textureInfo.texture.sampleType != wgpu::TextureSampleType::Uint &&
+                    textureInfo.texture.sampleType != wgpu::TextureSampleType::Sint);
 
         DAWN_INVALID_IF(
             textureInfo.texture.sampleType == wgpu::TextureSampleType::UnfilterableFloat,
             "Texture binding (group:%u, binding:%u) is %s but used statically with a sampler "
             "(group:%u, binding:%u) that's %s",
-            static_cast<uint32_t>(pair.texture.group), static_cast<uint32_t>(pair.texture.binding),
-            wgpu::TextureSampleType::UnfilterableFloat, static_cast<uint32_t>(pair.sampler.group),
-            static_cast<uint32_t>(pair.sampler.binding), wgpu::SamplerBindingType::Filtering);
+            pair.texture.group, pair.texture.binding, wgpu::TextureSampleType::UnfilterableFloat,
+            pair.sampler.group, pair.sampler.binding, wgpu::SamplerBindingType::Filtering);
+    }
+
+    // Validate compatibility of the pixel local storage.
+    if (entryPoint.usesPixelLocal) {
+        DAWN_INVALID_IF(!layout->HasPixelLocalStorage(),
+                        "The entry-point uses `pixel_local` block but the pipeline layout doesn't "
+                        "contain a pixel local storage.");
+
+        // TODO(dawn:1704): Allow entryPoint.pixelLocalBlockSize < layoutPixelLocalSize.
+        auto layoutStorageAttachments = layout->GetStorageAttachmentSlots();
+        size_t layoutPixelLocalSize = layoutStorageAttachments.size() * kPLSSlotByteSize;
+        DAWN_INVALID_IF(entryPoint.pixelLocalBlockSize != layoutPixelLocalSize,
+                        "The entry-point's pixel local block size (%u) is different from the "
+                        "layout's total pixel local size (%u).",
+                        entryPoint.pixelLocalBlockSize, layoutPixelLocalSize);
+
+        for (size_t i = 0; i < entryPoint.pixelLocalMembers.size(); i++) {
+            wgpu::TextureFormat layoutFormat = layoutStorageAttachments[i];
+
+            // TODO(dawn:1704): Allow format conversions by injecting them in the shader
+            // automatically.
+            PixelLocalMemberType expectedType;
+            switch (layoutFormat) {
+                case wgpu::TextureFormat::R32Sint:
+                    expectedType = PixelLocalMemberType::I32;
+                    break;
+                case wgpu::TextureFormat::R32Float:
+                    expectedType = PixelLocalMemberType::F32;
+                    break;
+                case wgpu::TextureFormat::R32Uint:
+                case wgpu::TextureFormat::Undefined:
+                    expectedType = PixelLocalMemberType::U32;
+                    break;
+
+                default:
+                    DAWN_UNREACHABLE();
+            }
+
+            PixelLocalMemberType entryPointType = entryPoint.pixelLocalMembers[i];
+            DAWN_INVALID_IF(
+                expectedType != entryPointType,
+                "The `pixel_local` block's member at index %u has a type (%s) that's not "
+                "compatible with the layout's storage format (%s), the expected type is %s.",
+                i, entryPointType, layoutFormat, expectedType);
+        }
+    } else {
+        // TODO(dawn:1704): Allow a fragment entry-point without PLS to be used with a layout that
+        // has PLS.
+        DAWN_INVALID_IF(entryPoint.stage == SingleShaderStage::Fragment &&
+                            !layout->GetStorageAttachmentSlots().empty(),
+                        "The layout contains a (non-empty) pixel local storage but the entry-point "
+                        "doesn't use a `pixel local` block.");
     }
 
     return {};
@@ -1087,45 +1228,38 @@ MaybeError ValidateCompatibilityWithPipelineLayout(DeviceBase* device,
 // ShaderModuleBase
 
 ShaderModuleBase::ShaderModuleBase(DeviceBase* device,
-                                   const ShaderModuleDescriptor* descriptor,
+                                   const UnpackedPtr<ShaderModuleDescriptor>& descriptor,
                                    ApiObjectBase::UntrackedByDeviceTag tag)
     : ApiObjectBase(device, descriptor->label), mType(Type::Undefined) {
-    ASSERT(descriptor->nextInChain != nullptr);
-    const ShaderModuleSPIRVDescriptor* spirvDesc = nullptr;
-    FindInChain(descriptor->nextInChain, &spirvDesc);
-    const ShaderModuleWGSLDescriptor* wgslDesc = nullptr;
-    FindInChain(descriptor->nextInChain, &wgslDesc);
-    ASSERT(spirvDesc || wgslDesc);
-
-    if (spirvDesc) {
+    if (auto* spirvDesc = descriptor.Get<ShaderModuleSPIRVDescriptor>()) {
         mType = Type::Spirv;
         mOriginalSpirv.assign(spirvDesc->code, spirvDesc->code + spirvDesc->codeSize);
-    } else if (wgslDesc) {
+    } else if (auto* wgslDesc = descriptor.Get<ShaderModuleWGSLDescriptor>()) {
         mType = Type::Wgsl;
-        mWgsl = std::string(wgslDesc->source);
+        mWgsl = std::string(wgslDesc->code);
+    } else {
+        DAWN_ASSERT(false);
     }
 }
 
-ShaderModuleBase::ShaderModuleBase(DeviceBase* device, const ShaderModuleDescriptor* descriptor)
+ShaderModuleBase::ShaderModuleBase(DeviceBase* device,
+                                   const UnpackedPtr<ShaderModuleDescriptor>& descriptor)
     : ShaderModuleBase(device, descriptor, kUntrackedByDevice) {
     GetObjectTrackingList()->Track(this);
 }
 
-ShaderModuleBase::ShaderModuleBase(DeviceBase* device, ObjectBase::ErrorTag tag)
-    : ApiObjectBase(device, tag), mType(Type::Undefined) {}
+ShaderModuleBase::ShaderModuleBase(DeviceBase* device, ObjectBase::ErrorTag tag, const char* label)
+    : ApiObjectBase(device, tag, label), mType(Type::Undefined) {}
 
 ShaderModuleBase::~ShaderModuleBase() = default;
 
 void ShaderModuleBase::DestroyImpl() {
-    if (IsCachedReference()) {
-        // Do not uncache the actual cached object if we are a blueprint.
-        GetDevice()->UncacheShaderModule(this);
-    }
+    Uncache();
 }
 
 // static
-Ref<ShaderModuleBase> ShaderModuleBase::MakeError(DeviceBase* device) {
-    return AcquireRef(new ShaderModuleBase(device, ObjectBase::kError));
+Ref<ShaderModuleBase> ShaderModuleBase::MakeError(DeviceBase* device, const char* label) {
+    return AcquireRef(new ShaderModuleBase(device, ObjectBase::kError, label));
 }
 
 ObjectType ShaderModuleBase::GetType() const {
@@ -1133,11 +1267,24 @@ ObjectType ShaderModuleBase::GetType() const {
 }
 
 bool ShaderModuleBase::HasEntryPoint(const std::string& entryPoint) const {
-    return mEntryPoints.count(entryPoint) > 0;
+    return mEntryPoints.contains(entryPoint);
+}
+
+ShaderModuleEntryPoint ShaderModuleBase::ReifyEntryPointName(const char* entryPointName,
+                                                             SingleShaderStage stage) const {
+    ShaderModuleEntryPoint entryPoint;
+    if (entryPointName) {
+        entryPoint.defaulted = false;
+        entryPoint.name = entryPointName;
+    } else {
+        entryPoint.defaulted = true;
+        entryPoint.name = mDefaultEntryPointNames[stage];
+    }
+    return entryPoint;
 }
 
 const EntryPointMetadata& ShaderModuleBase::GetEntryPoint(const std::string& entryPoint) const {
-    ASSERT(HasEntryPoint(entryPoint));
+    DAWN_ASSERT(HasEntryPoint(entryPoint));
     return *mEntryPoints.at(entryPoint);
 }
 
@@ -1155,7 +1302,7 @@ bool ShaderModuleBase::EqualityFunc::operator()(const ShaderModuleBase* a,
 }
 
 const tint::Program* ShaderModuleBase::GetTintProgram() const {
-    ASSERT(mTintProgram);
+    DAWN_ASSERT(mTintProgram);
     return mTintProgram.get();
 }
 
@@ -1211,7 +1358,19 @@ MaybeError ShaderModuleBase::InitializeBase(ShaderModuleParseResult* parseResult
     mTintSource = std::move(parseResult->tintSource);
 
     DAWN_TRY(ReflectShaderUsingTint(GetDevice(), mTintProgram.get(), compilationMessages,
-                                    &mEntryPoints, &mEnabledWGSLExtensions));
+                                    &mEntryPoints));
+
+    for (auto stage : IterateStages(kAllStages)) {
+        mEntryPointCounts[stage] = 0;
+    }
+    for (auto& [name, metadata] : mEntryPoints) {
+        SingleShaderStage stage = metadata->stage;
+        if (mEntryPointCounts[stage] == 0) {
+            mDefaultEntryPointNames[stage] = name;
+        }
+        mEntryPointCounts[stage]++;
+    }
+
     return {};
 }
 

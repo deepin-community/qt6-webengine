@@ -87,7 +87,7 @@ export class DockController extends Common.ObjectWrapper.ObjectWrapper<EventType
     super();
     this.canDockInternal = canDock;
 
-    this.closeButton = new ToolbarButton(i18nString(UIStrings.close), 'largeicon-delete');
+    this.closeButton = new ToolbarButton(i18nString(UIStrings.close), 'cross');
     this.closeButton.element.classList.add('close-devtools');
     this.closeButton.addEventListener(
         ToolbarButton.Events.Click,
@@ -241,20 +241,7 @@ export type EventTypes = {
   [Events.AfterDockSideChanged]: ChangeEvent,
 };
 
-let toggleDockActionDelegateInstance: ToggleDockActionDelegate;
-
 export class ToggleDockActionDelegate implements ActionDelegate {
-  static instance(opts: {
-    forceNew: boolean|null,
-  } = {forceNew: null}): ToggleDockActionDelegate {
-    const {forceNew} = opts;
-    if (!toggleDockActionDelegateInstance || forceNew) {
-      toggleDockActionDelegateInstance = new ToggleDockActionDelegate();
-    }
-
-    return toggleDockActionDelegateInstance;
-  }
-
   handleAction(_context: Context, _actionId: string): boolean {
     DockController.instance().toggleDockSide();
     return true;

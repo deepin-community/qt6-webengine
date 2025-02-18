@@ -33,7 +33,6 @@ class MEDIA_GPU_EXPORT LibYUVImageProcessorBackend
       const PortConfig& input_config,
       const PortConfig& output_config,
       OutputMode output_mode,
-      VideoRotation relative_rotation,
       ErrorCB error_cb);
   // This is the same as Create() but the caller can specify
   // |backend_task_runner_|.
@@ -43,7 +42,6 @@ class MEDIA_GPU_EXPORT LibYUVImageProcessorBackend
       const PortConfig& input_config,
       const PortConfig& output_config,
       OutputMode output_mode,
-      VideoRotation relative_rotation,
       ErrorCB error_cb,
       scoped_refptr<base::SequencedTaskRunner> backend_task_runner);
 
@@ -69,10 +67,10 @@ class MEDIA_GPU_EXPORT LibYUVImageProcessorBackend
       std::unique_ptr<VideoFrameMapper> input_frame_mapper,
       std::unique_ptr<VideoFrameMapper> output_frame_mapper,
       scoped_refptr<VideoFrame> intermediate_frame,
+      scoped_refptr<VideoFrame> crop_intermediate_frame,
       const PortConfig& input_config,
       const PortConfig& output_config,
       OutputMode output_mode,
-      VideoRotation relative_rotation,
       ErrorCB error_cb,
       scoped_refptr<base::SequencedTaskRunner> backend_task_runner);
   ~LibYUVImageProcessorBackend() override;
@@ -91,6 +89,8 @@ class MEDIA_GPU_EXPORT LibYUVImageProcessorBackend
   // A VideoFrame for intermediate format conversion when there is no direct
   // conversion method in libyuv, e.g., RGBA -> I420 (pivot) -> NV12.
   scoped_refptr<VideoFrame> intermediate_frame_;
+  // A VideoFrame to be used as a pivot if we need to crop.
+  scoped_refptr<VideoFrame> crop_intermediate_frame_;
 };
 
 }  // namespace media

@@ -989,10 +989,10 @@ TEST(KURL, SetProtocolToFileFromInvalidURL) {
   // reflects the validity after the transformation. All the URLs are
   // invalid before it.
   constexpr URLAndExpectedValidity kInvalidURLs[] = {
-      {"http://@/", kValid},          {"http://@@/", kValid},
+      {"http://@/", kValid},          {"http://@@/", kInvalid},
       {"http://::/", kInvalid},       {"http://:/", kValid},
       {"http://:@/", kValid},         {"http://@:/", kValid},
-      {"http://:@:/", kValid},        {"http://foo@/", kValid},
+      {"http://:@:/", kValid},        {"http://foo@/", kInvalid},
       {"http://localhost:/", kValid},
   };
 
@@ -1056,9 +1056,10 @@ TEST(KURLTest, SetFileProtocolFromNonSpecial) {
 
 TEST(KURLTest, SetFileProtocolToNonSpecial) {
   KURL url("file:///path");
+  EXPECT_EQ(url.GetPath(), "/path");
   EXPECT_TRUE(url.SetProtocol("non-special-scheme"));
-  EXPECT_EQ(url.Protocol(), "non-special-scheme");
-  EXPECT_EQ(url.GetPath(), "///path");
+  EXPECT_EQ(url.Protocol(), "file");
+  EXPECT_EQ(url.GetPath(), "/path");
 }
 
 TEST(KURLTest, InvalidKURLToGURL) {
@@ -1108,42 +1109,15 @@ TEST(KURLTest, HasIDNA2008DeviationCharacters) {
   EXPECT_FALSE(url2.HasIDNA2008DeviationCharacter());
 }
 
-class KURLIPv4EmbeddedIPv6Test : public ::testing::Test,
-                                 public ::testing::WithParamInterface<bool> {
- public:
-  KURLIPv4EmbeddedIPv6Test() {
-    if (GetParam()) {
-      scoped_feature_list_.InitAndEnableFeature(
-          url::kStrictIPv4EmbeddedIPv6AddressParsing);
-    } else {
-      scoped_feature_list_.InitAndDisableFeature(
-          url::kStrictIPv4EmbeddedIPv6AddressParsing);
-    }
-  }
-
- private:
-  base::test::ScopedFeatureList scoped_feature_list_;
-};
-
-INSTANTIATE_TEST_SUITE_P(All,
-                         KURLIPv4EmbeddedIPv6Test,
-                         ::testing::Bool());
-
-TEST_P(KURLIPv4EmbeddedIPv6Test, IPv4EmbeddedIPv6Address) {
-  EXPECT_TRUE(KURL(u"http://[::1.2.3.4.]/").IsValid());
+TEST(KURLTest, IPv4EmbeddedIPv6Address) {
   EXPECT_TRUE(KURL(u"http://[::1.2.3.4]/").IsValid());
   EXPECT_FALSE(KURL(u"http://[::1.2.3.4.5]/").IsValid());
   EXPECT_FALSE(KURL(u"http://[::.1.2]/").IsValid());
   EXPECT_FALSE(KURL(u"http://[::.]/").IsValid());
 
-  if (base::FeatureList::IsEnabled(
-          url::kStrictIPv4EmbeddedIPv6AddressParsing)) {
-    EXPECT_FALSE(KURL(u"http://[::1.2]/").IsValid());
-    EXPECT_FALSE(KURL(u"http://[::1.2.]/").IsValid());
-  } else {
-    EXPECT_TRUE(KURL(u"http://[::1.2]/").IsValid());
-    EXPECT_TRUE(KURL(u"http://[::1.2.]/").IsValid());
-  }
+  EXPECT_FALSE(KURL(u"http://[::1.2.3.4.]/").IsValid());
+  EXPECT_FALSE(KURL(u"http://[::1.2]/").IsValid());
+  EXPECT_FALSE(KURL(u"http://[::1.2.]/").IsValid());
 }
 
 enum class PortIsValid {
@@ -1196,19 +1170,20 @@ const PortTestCase port_test_cases[] = {
     {"65534", 65534, 65534, PortIsValid::kAlways},
     {"65535", 65535, 65535, PortIsValid::kAlways},
     {"65535junk", 0, 65535, PortIsValid::kInSetHostAndPort},
-    {"65536", 0, 0, PortIsValid::kInSetPort},
-    {"65537", 0, 1, PortIsValid::kInSetPort},
-    {"65537junk", 0, 1, PortIsValid::kInSetPort},
-    {"2147483647", 0, 65535, PortIsValid::kInSetPort},
-    {"2147483648", 0, 0, PortIsValid::kInSetPort},
-    {"2147483649", 0, 1, PortIsValid::kInSetPort},
-    {"4294967295", 0, 65535, PortIsValid::kInSetPort},
-    {"4294967296", 0, 0, PortIsValid::kInSetPort},
-    {"4294967297", 0, 0, PortIsValid::kInSetPort},
-    {"18446744073709551615", 0, 0, PortIsValid::kInSetPort},
-    {"18446744073709551616", 0, 0, PortIsValid::kInSetPort},
-    {"18446744073709551617", 0, 0, PortIsValid::kInSetPort},
-    {"9999999999999999999999999999990999999999", 0, 0, PortIsValid::kInSetPort},
+    {"65536", 0, kNoopPort, PortIsValid::kInSetPort},
+    {"65537", 0, kNoopPort, PortIsValid::kInSetPort},
+    {"65537junk", 0, kNoopPort, PortIsValid::kInSetPort},
+    {"2147483647", 0, kNoopPort, PortIsValid::kInSetPort},
+    {"2147483648", 0, kNoopPort, PortIsValid::kInSetPort},
+    {"2147483649", 0, kNoopPort, PortIsValid::kInSetPort},
+    {"4294967295", 0, kNoopPort, PortIsValid::kInSetPort},
+    {"4294967296", 0, kNoopPort, PortIsValid::kInSetPort},
+    {"4294967297", 0, kNoopPort, PortIsValid::kInSetPort},
+    {"18446744073709551615", 0, kNoopPort, PortIsValid::kInSetPort},
+    {"18446744073709551616", 0, kNoopPort, PortIsValid::kInSetPort},
+    {"18446744073709551617", 0, kNoopPort, PortIsValid::kInSetPort},
+    {"9999999999999999999999999999990999999999", 0, kNoopPort,
+     PortIsValid::kInSetPort},
 };
 
 void PrintTo(const PortTestCase& port_test_case, ::std::ostream* os) {

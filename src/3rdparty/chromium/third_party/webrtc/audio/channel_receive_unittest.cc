@@ -29,6 +29,7 @@
 #include "test/gmock.h"
 #include "test/gtest.h"
 #include "test/mock_audio_decoder_factory.h"
+#include "test/mock_frame_transformer.h"
 #include "test/mock_transport.h"
 #include "test/time_controller/simulated_time_controller.h"
 
@@ -172,8 +173,9 @@ TEST_F(ChannelReceiveTest, ReceiveReportGeneratedOnTime) {
 
   bool receiver_report_sent = false;
   EXPECT_CALL(transport_, SendRtcp)
-      .WillRepeatedly([&](const uint8_t* packet, size_t length) {
-        if (length >= 2 && packet[1] == rtcp::ReceiverReport::kPacketType) {
+      .WillRepeatedly([&](rtc::ArrayView<const uint8_t> packet) {
+        if (packet.size() >= 2 &&
+            packet[1] == rtcp::ReceiverReport::kPacketType) {
           receiver_report_sent = true;
         }
         return true;
@@ -189,8 +191,8 @@ TEST_F(ChannelReceiveTest, CaptureStartTimeBecomesValid) {
   auto channel = CreateTestChannelReceive();
 
   EXPECT_CALL(transport_, SendRtcp)
-      .WillRepeatedly([&](const uint8_t* packet, size_t length) {
-        HandleGeneratedRtcp(*channel, rtc::MakeArrayView(packet, length));
+      .WillRepeatedly([&](rtc::ArrayView<const uint8_t> packet) {
+        HandleGeneratedRtcp(*channel, packet);
         return true;
       });
   // Before any packets are sent, CaptureStartTime is invalid.
@@ -223,6 +225,41 @@ TEST_F(ChannelReceiveTest, CaptureStartTimeBecomesValid) {
   channel->ReceivedRTCPPacket(rtcp_packet_2.data(), rtcp_packet_2.size());
 
   EXPECT_NE(ProbeCaptureStartNtpTime(*channel), -1);
+}
+
+TEST_F(ChannelReceiveTest, SettingFrameTransformer) {
+  auto channel = CreateTestChannelReceive();
+
+  rtc::scoped_refptr<MockFrameTransformer> mock_frame_transformer =
+      rtc::make_ref_counted<MockFrameTransformer>();
+
+  EXPECT_CALL(*mock_frame_transformer, RegisterTransformedFrameCallback);
+  channel->SetDepacketizerToDecoderFrameTransformer(mock_frame_transformer);
+
+  // Must start playout, otherwise packet is discarded.
+  channel->StartPlayout();
+
+  RtpPacketReceived packet = CreateRtpPacket();
+
+  // Receive one RTP packet, this should be transformed.
+  EXPECT_CALL(*mock_frame_transformer, Transform);
+  channel->OnRtpPacket(packet);
+}
+
+TEST_F(ChannelReceiveTest, SettingFrameTransformerMultipleTimes) {
+  auto channel = CreateTestChannelReceive();
+
+  rtc::scoped_refptr<MockFrameTransformer> mock_frame_transformer =
+      rtc::make_ref_counted<MockFrameTransformer>();
+
+  EXPECT_CALL(*mock_frame_transformer, RegisterTransformedFrameCallback);
+  channel->SetDepacketizerToDecoderFrameTransformer(mock_frame_transformer);
+
+  // Set the same transformer again, shouldn't cause any additional callback
+  // registration calls.
+  EXPECT_CALL(*mock_frame_transformer, RegisterTransformedFrameCallback)
+      .Times(0);
+  channel->SetDepacketizerToDecoderFrameTransformer(mock_frame_transformer);
 }
 
 }  // namespace

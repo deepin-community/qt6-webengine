@@ -4,6 +4,7 @@
 
 #include "content/browser/accessibility/web_contents_accessibility_android.h"
 
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -12,7 +13,6 @@
 #include "base/android/jni_android.h"
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
-#include "base/cxx17_backports.h"
 #include "base/debug/crash_logging.h"
 #include "base/feature_list.h"
 #include "base/hash/hash.h"
@@ -20,7 +20,6 @@
 #include "content/browser/accessibility/browser_accessibility_manager_android.h"
 #include "content/browser/accessibility/browser_accessibility_state_impl_android.h"
 #include "content/browser/accessibility/one_shot_accessibility_tree_search.h"
-#include "content/browser/accessibility/touch_passthrough_manager.h"
 #include "content/browser/android/render_widget_host_connector.h"
 #include "content/browser/renderer_host/render_widget_host_view_android.h"
 #include "content/browser/web_contents/web_contents_impl.h"
@@ -29,6 +28,7 @@
 #include "content/public/common/content_features.h"
 #include "net/base/data_url.h"
 #include "ui/accessibility/accessibility_features.h"
+#include "ui/accessibility/accessibility_prefs.h"
 #include "ui/accessibility/ax_assistant_structure.h"
 #include "ui/accessibility/ax_node_id_forward.h"
 #include "ui/accessibility/platform/ax_android_constants.h"
@@ -202,11 +202,6 @@ WebContentsAccessibilityAndroid::WebContentsAccessibilityAndroid(
   // calling UpdateBrowserAccessibilityManager() which accesses
   // weak_ptr_factory_.
   connector_ = new Connector(web_contents, this);
-
-  BrowserAccessibilityStateImplAndroid* accessibility_state =
-      static_cast<BrowserAccessibilityStateImplAndroid*>(
-          BrowserAccessibilityStateImpl::GetInstance());
-  accessibility_state->CollectAccessibilityServiceStats();
 }
 
 WebContentsAccessibilityAndroid::WebContentsAccessibilityAndroid(
@@ -220,14 +215,10 @@ WebContentsAccessibilityAndroid::WebContentsAccessibilityAndroid(
       frame_info_initialized_(false) {
   std::unique_ptr<ui::AXTreeUpdate> ax_tree_snapshot(
       reinterpret_cast<ui::AXTreeUpdate*>(ax_tree_update_ptr));
-  manager_ = std::make_unique<BrowserAccessibilityManagerAndroid>(
+  snapshot_root_manager_ = std::make_unique<BrowserAccessibilityManagerAndroid>(
       *ax_tree_snapshot, GetWeakPtr(), nullptr);
-  manager_->BuildAXTreeHitTestCache();
+  snapshot_root_manager_->BuildAXTreeHitTestCache();
   connector_ = nullptr;
-  BrowserAccessibilityStateImplAndroid* accessibility_state =
-      static_cast<BrowserAccessibilityStateImplAndroid*>(
-          BrowserAccessibilityStateImpl::GetInstance());
-  accessibility_state->CollectAccessibilityServiceStats();
 }
 
 WebContentsAccessibilityAndroid::~WebContentsAccessibilityAndroid() {
@@ -240,6 +231,16 @@ WebContentsAccessibilityAndroid::~WebContentsAccessibilityAndroid() {
   DeleteAutofillPopupProxy();
 
   Java_WebContentsAccessibilityImpl_onNativeObjectDestroyed(env, obj);
+}
+
+void WebContentsAccessibilityAndroid::ConnectInstanceToRootManager(
+    JNIEnv* env) {
+  BrowserAccessibilityManagerAndroid* manager =
+      GetRootBrowserAccessibilityManager();
+
+  if (manager) {
+    manager->set_web_contents_accessibility(GetWeakPtr());
+  }
 }
 
 void WebContentsAccessibilityAndroid::UpdateBrowserAccessibilityManager() {
@@ -257,91 +258,78 @@ void WebContentsAccessibilityAndroid::DeleteEarly(JNIEnv* env) {
   }
 }
 
-void WebContentsAccessibilityAndroid::UnInitialize(JNIEnv* env) {
-  // TODO(jacklynch): Implement teardown of native accessibility
-}
+void WebContentsAccessibilityAndroid::DisableRendererAccessibility(
+    JNIEnv* env) {
+  // This method should only be called if the Auto-Disable feature is enabled.
+  DCHECK(base::FeatureList::IsEnabled(::features::kAutoDisableAccessibilityV2));
 
-jboolean WebContentsAccessibilityAndroid::IsEnabled(JNIEnv* env) {
-  return !!GetRootBrowserAccessibilityManager();
-}
+  // This method should only be called when |snapshot_root_manager_| is null,
+  // which means this instance was constructed via a web contents and not an
+  // AXTreeUpdate (e.g. for snapshots, frozen tabs, paint preview, etc).
+  DCHECK(!snapshot_root_manager_);
 
-void WebContentsAccessibilityAndroid::Enable(JNIEnv* env,
-                                             jboolean screen_reader_mode) {
+  // To disable the renderer, the root manager /should/ already be connected to
+  // this instance, and we need to reset the weak pointer it has to |this|. In
+  // some rare cases, such as if a user rapidly toggles accessibility on/off,
+  // a manager may not be connected, in which case a reset is not needed.
+  BrowserAccessibilityManagerAndroid* root_manager =
+      GetRootBrowserAccessibilityManager();
+  if (root_manager) {
+    root_manager->ResetWebContentsAccessibility();
+  }
+
+  // The local cache of Java strings can be cleared, and we should reset any
+  // local state variables. The Connector should continue to live, since we want
+  // the RFHI to still have access to this object for possible re-enables,
+  // or frame notifications.
+  common_string_cache_.clear();
+  ResetContentChangedEventsCounter();
+
+  // Turn off accessibility on the renderer side by resetting the AXMode.
   BrowserAccessibilityStateImpl* accessibility_state =
       BrowserAccessibilityStateImpl::GetInstance();
-  BrowserAccessibilityManagerAndroid* manager =
+  accessibility_state->ResetAccessibilityMode();
+}
+
+void WebContentsAccessibilityAndroid::ReEnableRendererAccessibility(
+    JNIEnv* env,
+    const JavaParamRef<jobject>& jweb_contents) {
+  // This method should only be called if the Auto-Disable feature is enabled.
+  DCHECK(base::FeatureList::IsEnabled(::features::kAutoDisableAccessibilityV2));
+
+  // This method should only be called when |snapshot_root_manager_| is null,
+  // which means this instance was constructed via a web contents and not an
+  // AXTreeUpdate (e.g. for snapshots, frozen tabs, paint preview, etc).
+  DCHECK(!snapshot_root_manager_);
+
+  WebContents* web_contents = WebContents::FromJavaWebContents(jweb_contents);
+  DCHECK(web_contents);
+
+  // A request to re-enable renderer accessibility implies AT use on the
+  // Java-side, so we need to set the root manager's reference to |this| to
+  // rebuild the C++ -> Java bridge. The web contents may have changed, so
+  // update the reference just in case.
+  web_contents_ = static_cast<WebContentsImpl*>(web_contents);
+
+  // If we are re-enabling, the root manager may already be connected, in which
+  // case we can set its weak pointer to |this|. However, if a user has rapidly
+  // turned accessibility on/off, the manager may not be ready. If the manager
+  // is not ready, the framework will continue polling until it is connected.
+  BrowserAccessibilityManagerAndroid* root_manager =
       GetRootBrowserAccessibilityManager();
-  // First check if we already have a BrowserAccessibilityManager that
-  // that needs to be connected to this instance. This can happen if
-  // BAM creation precedes render view updates for the associated
-  // web contents.
-  if (manager) {
-    manager->set_web_contents_accessibility(GetWeakPtr());
-    return;
+  if (root_manager) {
+    root_manager->set_web_contents_accessibility(GetWeakPtr());
   }
+}
 
-  if (features::IsComputeAXModeEnabled()) {
-    ui::AXMode mode =
-        screen_reader_mode ? ui::kAXModeComplete : ui::kAXModeBasic;
-    accessibility_state->AddAccessibilityModeFlags(mode);
-    return;
-  }
-
-  // Otherwise, enable accessibility globally unless it was
-  // explicitly disallowed by a command-line flag, then enable it for
-  // this WebContents if that succeeded.
-  accessibility_state->OnScreenReaderDetected();
-  if (accessibility_state->IsAccessibleBrowser() && web_contents_)
-    web_contents_->AddAccessibilityMode(ui::kAXModeComplete);
+jboolean WebContentsAccessibilityAndroid::IsRootManagerConnected(JNIEnv* env) {
+  return !!GetRootBrowserAccessibilityManager();
 }
 
 void WebContentsAccessibilityAndroid::SetAllowImageDescriptions(
     JNIEnv* env,
     jboolean allow_image_descriptions) {
   allow_image_descriptions_ = allow_image_descriptions;
-}
-
-void WebContentsAccessibilityAndroid::SetAXMode(
-    JNIEnv* env,
-    jboolean screen_reader_mode,
-    jboolean is_accessibility_enabled) {
-  BrowserAccessibilityStateImpl* accessibility_state =
-      BrowserAccessibilityStateImpl::GetInstance();
-
-  if (!features::IsComputeAXModeEnabled() &&
-      !features::IsAutoDisableAccessibilityEnabled()) {
-    return;
-  }
-
-  if (features::IsAutoDisableAccessibilityEnabled()) {
-    if (!is_accessibility_enabled) {
-      accessibility_state->DisableAccessibility();
-    } else {
-      accessibility_state->AddAccessibilityModeFlags(ui::kAXModeComplete);
-    }
-  }
-
-  if (features::IsComputeAXModeEnabled()) {
-    if (screen_reader_mode) {
-      accessibility_state->AddAccessibilityModeFlags(ui::kAXModeComplete);
-    } else {
-      // Remove the mode flags present in kAXModeComplete but not in
-      // kAXModeBasic, thereby reverting the mode to kAXModeBasic while
-      // not touching any other flags.
-      ui::AXMode remove_mode_flags(ui::kAXModeComplete.flags() &
-                                   ~ui::kAXModeBasic.flags());
-      accessibility_state->RemoveAccessibilityModeFlags(remove_mode_flags);
-    }
-  }
-}
-
-void WebContentsAccessibilityAndroid::SetPasswordRules(
-    JNIEnv* env,
-    jboolean should_respect_displayed_password_text,
-    jboolean should_expose_password_text) {
-  should_respect_displayed_password_text_ =
-      should_respect_displayed_password_text;
-  should_expose_password_text_ = should_expose_password_text;
 }
 
 void WebContentsAccessibilityAndroid::HandleContentChanged(int32_t unique_id) {
@@ -536,46 +524,16 @@ bool WebContentsAccessibilityAndroid::OnHoverEvent(
           ui::MotionEventAndroid::GetAndroidAction(event.GetAction())))
     return false;
 
-  if (!GetRootBrowserAccessibilityManager())
-    return true;
-
-  // Apply the page scale factor to go from device coordinates to
-  // render coordinates.
-  gfx::PointF pointf = event.GetPointPix();
-  pointf.Scale(1 / page_scale_);
-  gfx::Point point = gfx::ToFlooredPoint(pointf);
-
   // |HitTest| sends an IPC to the render process to do the hit testing.
   // The response is handled by HandleHover when it returns.
   // Hover event was consumed by accessibility by now. Return true to
   // stop the event from proceeding.
-  if (event.GetAction() != ui::MotionEvent::Action::HOVER_EXIT)
-    GetRootBrowserAccessibilityManager()->HitTest(point, /*request_id=*/0);
-
-  if (!GetRootBrowserAccessibilityManager()->touch_passthrough_enabled())
-    return true;
-
-  if (!web_contents_ || !web_contents_->GetPrimaryMainFrame())
-    return true;
-
-  if (!touch_passthrough_manager_) {
-    touch_passthrough_manager_ = std::make_unique<TouchPassthroughManager>(
-        web_contents_->GetPrimaryMainFrame());
-  }
-
-  switch (event.GetAction()) {
-    case ui::MotionEvent::Action::HOVER_ENTER:
-      touch_passthrough_manager_->OnTouchStart(point);
-      break;
-    case ui::MotionEvent::Action::HOVER_MOVE:
-      touch_passthrough_manager_->OnTouchMove(point);
-      break;
-    case ui::MotionEvent::Action::HOVER_EXIT:
-      touch_passthrough_manager_->OnTouchEnd();
-      break;
-    default:
-      NOTREACHED();
-      break;
+  if (event.GetAction() != ui::MotionEvent::Action::HOVER_EXIT &&
+      GetRootBrowserAccessibilityManager()) {
+    gfx::PointF point = event.GetPointPix();
+    point.Scale(1 / page_scale_);
+    GetRootBrowserAccessibilityManager()->HitTest(gfx::ToFlooredPoint(point),
+                                                  /*request_id=*/0);
   }
 
   return true;
@@ -658,7 +616,7 @@ jint WebContentsAccessibilityAndroid::GetRootId(JNIEnv* env) {
 
 jboolean WebContentsAccessibilityAndroid::IsNodeValid(JNIEnv* env,
                                                       jint unique_id) {
-  return GetAXFromUniqueID(unique_id) != NULL;
+  return GetAXFromUniqueID(unique_id) != nullptr;
 }
 
 void WebContentsAccessibilityAndroid::HitTest(JNIEnv* env, jint x, jint y) {
@@ -831,7 +789,8 @@ jboolean WebContentsAccessibilityAndroid::PopulateAccessibilityNodeInfo(
       node->IsChecked(), node->IsClickable(), node->IsContentInvalid(),
       node->IsEnabled(), node->IsFocusable(), node->IsFocused(),
       node->HasImage(), node->IsPasswordField(), node->IsScrollable(),
-      node->IsSelected(), node->IsVisibleToUser());
+      node->IsSelected(), node->IsVisibleToUser(),
+      node->HasCharacterLocations());
 
   Java_AccessibilityNodeInfoBuilder_addAccessibilityNodeInfoActions(
       env, obj, info, unique_id, node->CanScrollForward(),
@@ -842,7 +801,7 @@ jboolean WebContentsAccessibilityAndroid::PopulateAccessibilityNodeInfo(
       node->HasNonEmptyValue(), !node->GetTextContentUTF16().empty(),
       node->IsSeekControl(), node->IsFormDescendant());
 
-  Java_AccessibilityNodeInfoBuilder_setAccessibilityNodeInfoBaseAttributes(
+    Java_AccessibilityNodeInfoBuilder_setAccessibilityNodeInfoBaseAttributes(
       env, obj, info, unique_id, parent_id,
       GetCanonicalJNIString(env, node->GetClassName()),
       GetCanonicalJNIString(env, node->GetRoleString()),
@@ -852,7 +811,8 @@ jboolean WebContentsAccessibilityAndroid::PopulateAccessibilityNodeInfo(
       node->CanOpenPopup(), node->IsMultiLine(), node->AndroidInputType(),
       node->AndroidLiveRegionType(),
       GetCanonicalJNIString(env, node->GetContentInvalidErrorMessage()),
-      node->ClickableScore(), GetCanonicalJNIString(env, node->GetCSSDisplay()),
+      node->ClickableScore(),
+      GetCanonicalJNIString(env, node->GetCSSDisplay()),
       base::android::ConvertUTF16ToJavaString(env, node->GetBrailleLabel()),
       GetCanonicalJNIString(env, node->GetBrailleRoleDescription()));
 
@@ -875,10 +835,14 @@ jboolean WebContentsAccessibilityAndroid::PopulateAccessibilityNodeInfo(
         base::android::ToJavaArrayOfStrings(env, suggestion_text);
   }
 
+  bool is_link = ui::IsLink(node->GetRole());
   Java_AccessibilityNodeInfoBuilder_setAccessibilityNodeInfoText(
       env, obj, info,
       base::android::ConvertUTF16ToJavaString(env, node->GetTextContentUTF16()),
-      ui::IsLink(node->GetRole()), node->IsTextField(),
+      is_link
+          ? base::android::ConvertUTF16ToJavaString(env, node->GetTargetUrl())
+          : base::android::ConvertUTF16ToJavaString(env, std::u16string()),
+      is_link, node->IsTextField(),
       GetCanonicalJNIString(env, node->GetInheritedString16Attribute(
                                      ax::mojom::StringAttribute::kLanguage)),
       suggestion_starts_java, suggestion_ends_java, suggestion_text_java,
@@ -893,10 +857,6 @@ jboolean WebContentsAccessibilityAndroid::PopulateAccessibilityNodeInfo(
   }
 
   UpdateAccessibilityNodeInfoBoundsRect(env, obj, info, unique_id, node);
-
-  Java_AccessibilityNodeInfoBuilder_setAccessibilityNodeInfoOAttributes(
-      env, obj, info, node->HasCharacterLocations(), node->HasImage(),
-      base::android::ConvertUTF16ToJavaString(env, node->GetHint()));
 
   if (node->IsCollection()) {
     Java_AccessibilityNodeInfoBuilder_setAccessibilityNodeInfoCollectionInfo(
@@ -1081,7 +1041,7 @@ jboolean WebContentsAccessibilityAndroid::AdjustSlider(JNIEnv* env,
   // Add/Subtract based on |increment| boolean, then clamp to range.
   float original_value = value;
   value += (increment ? delta : -delta);
-  value = base::clamp(value, min, max);
+  value = std::clamp(value, min, max);
   if (value != original_value) {
     node->manager()->SetValue(*node, base::NumberToString(value));
     return true;
@@ -1380,7 +1340,7 @@ bool WebContentsAccessibilityAndroid::SetRangeValue(JNIEnv* env,
   if (max <= min)
     return false;
 
-  value = base::clamp(value, min, max);
+  value = std::clamp(value, min, max);
   node->manager()->SetValue(*node, base::NumberToString(value));
   return true;
 }
@@ -1493,8 +1453,8 @@ jboolean WebContentsAccessibilityAndroid::GetImageData(
 
 BrowserAccessibilityManagerAndroid*
 WebContentsAccessibilityAndroid::GetRootBrowserAccessibilityManager() {
-  if (manager_) {
-    return manager_.get();
+  if (snapshot_root_manager_) {
+    return snapshot_root_manager_.get();
   }
 
   return static_cast<BrowserAccessibilityManagerAndroid*>(
@@ -1544,6 +1504,65 @@ jlong JNI_WebContentsAccessibilityImpl_Init(
 
   return reinterpret_cast<intptr_t>(new WebContentsAccessibilityAndroid(
       env, obj, web_contents, jaccessibility_node_info_builder));
+}
+
+void JNI_WebContentsAccessibilityImpl_SetBrowserAXMode(
+    JNIEnv* env,
+    const JavaParamRef<jobject>& obj,
+    jboolean is_screen_reader_enabled,
+    jboolean form_controls_mode,
+    jboolean is_any_accessibility_tool_present) {
+  BrowserAccessibilityStateImpl* accessibility_state =
+      BrowserAccessibilityStateImpl::GetInstance();
+
+  // The AXMode flags will be set according to enabled feature flag and what is
+  // needed by the current system as indicated by the parameters.
+  if (!accessibility_state->IsPerformanceFilteringAllowed() ||
+      !features::IsAccessibilityPerformanceFilteringEnabled()) {
+    // When the browser is not yet accessible, then set the AXMode to
+    // |ui::kAXModeComplete| for all web contents.
+    if (!accessibility_state->IsAccessibleBrowser()) {
+      accessibility_state->OnScreenReaderDetected();
+    }
+    return;
+  }
+
+  // If the AccessibilityPerformanceFiltering feature flag has been enabled,
+  // then set |ui::kAXModeComplete| if a screen reader is present,
+  // |ui::kAXModeFormControls| if form controls mode is enabled, and
+  // |ui::kAXModeBasic| otherwise.
+  if (is_screen_reader_enabled) {
+    // Remove form controls experimental mode to preserve screen reader mode.
+    ui::AXMode flags_to_remove(ui::AXMode::kNone,
+                               ui::AXMode::kExperimentalFormControls);
+    accessibility_state->RemoveAccessibilityModeFlags(flags_to_remove);
+
+    accessibility_state->AddAccessibilityModeFlags(ui::kAXModeComplete);
+  } else if (form_controls_mode) {
+    // TODO (aldietz): Add a SetAccessibilityModeFlags method to
+    // BrowserAccessibilityState to add and remove flags atomically in one
+    // operation.
+    // Remove the mode flags present in kAXModeComplete but not in
+    // kAXModeFormControls, thereby reverting the mode to kAXModeFormControls
+    // while not touching any other flags.
+    ui::AXMode flags_to_remove(ui::kAXModeComplete.flags() &
+                               ~ui::kAXModeFormControls.flags());
+    accessibility_state->RemoveAccessibilityModeFlags(flags_to_remove);
+
+    // Add form controls experimental mode.
+    accessibility_state->AddAccessibilityModeFlags(ui::kAXModeFormControls);
+  } else {
+    // Remove the mode flags present in kAXModeComplete and
+    // kExperimentalFormControls but not in kAXModeBasic, thereby reverting
+    // the mode to kAXModeBasic while not touching any other flags.
+    ui::AXMode flags_to_remove(
+        ui::kAXModeComplete.flags() & ~ui::kAXModeBasic.flags(),
+        ui::AXMode::kExperimentalFormControls);
+    accessibility_state->RemoveAccessibilityModeFlags(flags_to_remove);
+
+    // Add basic mode
+    accessibility_state->AddAccessibilityModeFlags(ui::kAXModeBasic);
+  }
 }
 
 }  // namespace content

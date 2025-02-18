@@ -3,11 +3,11 @@
 // found in the LICENSE file.
 
 import * as Common from '../../core/common/common.js';
+import * as i18n from '../../core/i18n/i18n.js';
 import * as UI from '../../ui/legacy/legacy.js';
 
 import type * as Console from './console.js';
 
-import * as i18n from '../../core/i18n/i18n.js';
 const UIStrings = {
   /**
    *@description Title of the Console tool
@@ -17,6 +17,10 @@ const UIStrings = {
    *@description Title of an action that shows the console.
    */
   showConsole: 'Show Console',
+  /**
+   *@description Title of an action that toggles the console.
+   */
+  toggleConsole: 'Toggle Console',
   /**
    *@description Text to clear the console
    */
@@ -70,6 +74,14 @@ const UIStrings = {
    */
   doNotAutocompleteFromHistory: 'Do not autocomplete from history',
   /**
+   * @description Title of a setting under the Console category that controls whether to accept autocompletion with Enter.
+   */
+  autocompleteOnEnter: 'Accept autocomplete suggestion on Enter',
+  /**
+   * @description Title of a setting under the Console category that controls whether to accept autocompletion with Enter.
+   */
+  doNotAutocompleteOnEnter: 'Do not accept autocomplete suggestion on Enter',
+  /**
    *@description Title of a setting under the Console category that can be invoked through the Command Menu
    */
   groupSimilarMessagesInConsole: 'Group similar messages in console',
@@ -98,9 +110,9 @@ const UIStrings = {
    */
   doNotEagerlyEvaluateConsole: 'Do not eagerly evaluate console prompt text',
   /**
-   *@description Title of a setting under the Console category in Settings
+   *@description Allows code that is executed in the console to do things that usually are only allowed if triggered by a user action
    */
-  evaluateTriggersUserActivation: 'Evaluation triggers user activation',
+  evaluateTriggersUserActivation: 'Treat code evaluation as user action',
   /**
    *@description Title of a setting under the Console category that can be invoked through the Command Menu
    */
@@ -162,12 +174,12 @@ UI.ViewManager.registerViewExtension({
 });
 
 UI.ActionRegistration.registerActionExtension({
-  actionId: 'console.show',
+  actionId: 'console.toggle',
   category: UI.ActionRegistration.ActionCategory.CONSOLE,
-  title: i18nLazyString(UIStrings.showConsole),
+  title: i18nLazyString(UIStrings.toggleConsole),
   async loadActionDelegate() {
     const Console = await loadConsoleModule();
-    return Console.ConsoleView.ActionDelegate.instance();
+    return new Console.ConsoleView.ActionDelegate();
   },
   bindings: [
     {
@@ -184,10 +196,10 @@ UI.ActionRegistration.registerActionExtension({
   actionId: 'console.clear',
   category: UI.ActionRegistration.ActionCategory.CONSOLE,
   title: i18nLazyString(UIStrings.clearConsole),
-  iconClass: UI.ActionRegistration.IconClass.LARGEICON_CLEAR,
+  iconClass: UI.ActionRegistration.IconClass.CLEAR,
   async loadActionDelegate() {
     const Console = await loadConsoleModule();
-    return Console.ConsoleView.ActionDelegate.instance();
+    return new Console.ConsoleView.ActionDelegate();
   },
   contextTypes() {
     return maybeRetrieveContextTypes(Console => [Console.ConsoleView.ConsoleView]);
@@ -209,7 +221,7 @@ UI.ActionRegistration.registerActionExtension({
   title: i18nLazyString(UIStrings.clearConsoleHistory),
   async loadActionDelegate() {
     const Console = await loadConsoleModule();
-    return Console.ConsoleView.ActionDelegate.instance();
+    return new Console.ConsoleView.ActionDelegate();
   },
 });
 
@@ -217,10 +229,10 @@ UI.ActionRegistration.registerActionExtension({
   actionId: 'console.create-pin',
   category: UI.ActionRegistration.ActionCategory.CONSOLE,
   title: i18nLazyString(UIStrings.createLiveExpression),
-  iconClass: UI.ActionRegistration.IconClass.LARGEICON_VISIBILITY,
+  iconClass: UI.ActionRegistration.IconClass.EYE,
   async loadActionDelegate() {
     const Console = await loadConsoleModule();
-    return Console.ConsoleView.ActionDelegate.instance();
+    return new Console.ConsoleView.ActionDelegate();
   },
 });
 
@@ -304,6 +316,25 @@ Common.Settings.registerSettingExtension({
     {
       value: false,
       title: i18nLazyString(UIStrings.doNotAutocompleteFromHistory),
+    },
+  ],
+});
+
+Common.Settings.registerSettingExtension({
+  category: Common.Settings.SettingCategory.CONSOLE,
+  storageType: Common.Settings.SettingStorageType.Synced,
+  title: i18nLazyString(UIStrings.autocompleteOnEnter),
+  settingName: 'consoleAutocompleteOnEnter',
+  settingType: Common.Settings.SettingType.BOOLEAN,
+  defaultValue: false,
+  options: [
+    {
+      value: true,
+      title: i18nLazyString(UIStrings.autocompleteOnEnter),
+    },
+    {
+      value: false,
+      title: i18nLazyString(UIStrings.doNotAutocompleteOnEnter),
     },
   ],
 });
@@ -408,9 +439,9 @@ Common.Revealer.registerRevealer({
       Common.Console.Console,
     ];
   },
+  destination: undefined,
   async loadRevealer() {
     const Console = await loadConsoleModule();
-    return Console.ConsolePanel.ConsoleRevealer.instance();
+    return new Console.ConsolePanel.ConsoleRevealer();
   },
-  destination: undefined,
 });

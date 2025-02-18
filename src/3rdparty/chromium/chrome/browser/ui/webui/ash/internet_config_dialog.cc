@@ -4,10 +4,10 @@
 
 #include "chrome/browser/ui/webui/ash/internet_config_dialog.h"
 
-#include "ash/constants/ash_features.h"
 #include "ash/public/cpp/network_config_service.h"
+#include "ash/webui/common/trusted_types_util.h"
 #include "base/json/json_writer.h"
-#include "base/values.h"
+#include "base/strings/string_number_conversions.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/webui/webui_util.h"
 #include "chrome/common/url_constants.h"
@@ -15,17 +15,19 @@
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/internet_config_dialog_resources.h"
 #include "chrome/grit/internet_config_dialog_resources_map.h"
-#include "chromeos/ash/components/login/login_state/login_state.h"
 #include "chromeos/ash/components/network/network_handler.h"
 #include "chromeos/ash/components/network/network_state.h"
 #include "chromeos/ash/components/network/network_state_handler.h"
 #include "chromeos/ash/components/network/network_util.h"
+#include "chromeos/constants/chromeos_features.h"
+#include "chromeos/services/network_config/public/cpp/cros_network_config_util.h"
 #include "chromeos/services/network_config/public/mojom/cros_network_config.mojom.h"  // nogncheck
 #include "components/strings/grit/components_strings.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_data_source.h"
 #include "ui/chromeos/strings/grit/ui_chromeos_strings.h"
 #include "ui/chromeos/strings/network/network_element_localized_strings_provider.h"
+#include "ui/webui/color_change_listener/color_change_handler.h"
 #include "ui/wm/core/shadow_types.h"
 
 namespace ash {
@@ -53,8 +55,9 @@ void AddInternetStrings(content::WebUIDataSource* html_source) {
       {"close", IDS_CANCEL},
       {"save", IDS_SAVE},
   };
-  for (const auto& entry : localized_strings)
+  for (const auto& entry : localized_strings) {
     html_source->AddLocalizedString(entry.name, entry.id);
+  }
 }
 
 std::string GetId(const std::string& network_type,
@@ -88,8 +91,8 @@ void InternetConfigDialog::ShowDialogForNetworkId(const std::string& network_id,
     return;
   }
 
-  InternetConfigDialog* dialog =
-      new InternetConfigDialog(id, network_type, network_id);
+  InternetConfigDialog* dialog = new InternetConfigDialog(
+      id, network_type, network_id, /*prefilled_wifi_config=*/std::nullopt);
   dialog->ShowSystemDialog(parent);
 }
 
@@ -97,29 +100,56 @@ void InternetConfigDialog::ShowDialogForNetworkId(const std::string& network_id,
 void InternetConfigDialog::ShowDialogForNetworkType(
     const std::string& network_type,
     gfx::NativeWindow parent) {
-  std::string id = GetId(network_type, "");
+  std::string id = GetId(network_type, std::string());
   auto* instance = SystemWebDialogDelegate::FindInstance(id);
   if (instance) {
     instance->Focus();
     return;
   }
 
-  InternetConfigDialog* dialog = new InternetConfigDialog(id, network_type, "");
+  InternetConfigDialog* dialog =
+      new InternetConfigDialog(id, network_type, /*network_id=*/std::string(),
+                               /*prefilled_wifi_config=*/std::nullopt);
   dialog->ShowSystemDialog(parent);
 }
 
-InternetConfigDialog::InternetConfigDialog(const std::string& dialog_id,
-                                           const std::string& network_type,
-                                           const std::string& network_id)
+// static
+void InternetConfigDialog::ShowDialogForNetworkWithWifiConfig(
+    mojo::StructPtr<chromeos::network_config::mojom::WiFiConfigProperties>
+        wifi_config,
+    gfx::NativeWindow parent) {
+  const std::string network_type = onc::network_type::kWiFi;
+  const std::string id = GetId(network_type, std::string());
+  auto* instance = SystemWebDialogDelegate::FindInstance(id);
+  if (instance) {
+    LOG(ERROR)
+        << "Dialog is already on. The provided Wi-Fi config will be dropped";
+    instance->Focus();
+    return;
+  }
+  InternetConfigDialog* dialog = new InternetConfigDialog(
+      id, network_type, /*network_id=*/std::string(),
+      /*prefilled_wifi_config=*/std::move(wifi_config));
+  dialog->ShowSystemDialog(parent);
+}
+
+InternetConfigDialog::InternetConfigDialog(
+    const std::string& dialog_id,
+    const std::string& network_type,
+    const std::string& network_id,
+    std::optional<
+        mojo::StructPtr<chromeos::network_config::mojom::WiFiConfigProperties>>
+        prefilled_wifi_config)
     : SystemWebDialogDelegate(GURL(chrome::kChromeUIInternetConfigDialogURL),
                               std::u16string() /* title */),
       dialog_id_(dialog_id),
       network_type_(network_type),
-      network_id_(network_id) {}
+      network_id_(network_id),
+      prefilled_wifi_config_(std::move(prefilled_wifi_config)) {}
 
 InternetConfigDialog::~InternetConfigDialog() = default;
 
-const std::string& InternetConfigDialog::Id() {
+std::string InternetConfigDialog::Id() {
   return dialog_id_;
 }
 
@@ -147,12 +177,11 @@ std::string InternetConfigDialog::GetDialogArgs() const {
   args.Set("type", network_type_);
   args.Set("guid", network_id_);
 
-  // Provide the UI with information on whether a user is currently logged in.
-  // This information is used to avoid an edge case when configuring a network.
-  // For more information see b/253247084.
-  if (base::FeatureList::IsEnabled(ash::features::kHiddenNetworkMigration)) {
-    args.Set("loggedIn", base::Value(LoginState::IsInitialized() &&
-                                     LoginState::Get()->IsUserLoggedIn()));
+  if (prefilled_wifi_config_.has_value()) {
+    base::Value::Dict prefilled_properties =
+        chromeos::network_config::WiFiConfigPropertiesToMojoJsValue(
+            *prefilled_wifi_config_);
+    args.Set("prefilledProperties", std::move(prefilled_properties));
   }
   std::string json;
   base::JSONWriter::Write(args, &json);
@@ -166,8 +195,7 @@ InternetConfigDialogUI::InternetConfigDialogUI(content::WebUI* web_ui)
   content::WebUIDataSource* source = content::WebUIDataSource::CreateAndAdd(
       Profile::FromWebUI(web_ui), chrome::kChromeUIInternetConfigDialogHost);
 
-  source->DisableTrustedTypesCSP();
-
+  source->AddBoolean("isJellyEnabled", ::chromeos::features::IsJellyEnabled());
   AddInternetStrings(source);
   source->AddLocalizedString("title", IDS_SETTINGS_INTERNET_CONFIG);
 
@@ -176,6 +204,10 @@ InternetConfigDialogUI::InternetConfigDialogUI(content::WebUI* web_ui)
       base::make_span(kInternetConfigDialogResources,
                       kInternetConfigDialogResourcesSize),
       IDR_INTERNET_CONFIG_DIALOG_INTERNET_CONFIG_DIALOG_CONTAINER_HTML);
+  // Enabling trusted types via trusted_types_util must be done after
+  // webui::SetupWebUIDataSource to override the trusted type CSP with correct
+  // policies for JS WebUIs.
+  ash::EnableTrustedTypesCSP(source);
 }
 
 InternetConfigDialogUI::~InternetConfigDialogUI() {}
@@ -184,6 +216,12 @@ void InternetConfigDialogUI::BindInterface(
     mojo::PendingReceiver<chromeos::network_config::mojom::CrosNetworkConfig>
         receiver) {
   GetNetworkConfigService(std::move(receiver));
+}
+
+void InternetConfigDialogUI::BindInterface(
+    mojo::PendingReceiver<color_change_listener::mojom::PageHandler> receiver) {
+  color_change_handler_ = std::make_unique<ui::ColorChangeHandler>(
+      web_ui()->GetWebContents(), std::move(receiver));
 }
 
 WEB_UI_CONTROLLER_TYPE_IMPL(InternetConfigDialogUI)

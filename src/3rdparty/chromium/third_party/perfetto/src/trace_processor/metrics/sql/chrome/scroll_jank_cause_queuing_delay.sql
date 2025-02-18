@@ -18,7 +18,7 @@ SELECT RUN_METRIC('chrome/scroll_flow_event_queuing_delay.sql');
 
 -- See b/184134310 why we remove ThreadController active.
 DROP VIEW IF EXISTS blocking_tasks_no_threadcontroller_active;
-CREATE VIEW blocking_tasks_no_threadcontroller_active AS
+CREATE PERFETTO VIEW blocking_tasks_no_threadcontroller_active AS
 SELECT
   slice.*,
   ancestor.id AS task_ancestor_id,
@@ -36,7 +36,7 @@ WHERE
 -- TODO(243897379): switch this back to a view once we understand why rolling SQLite to
 -- 3.39.2 causes slowdowns.
 DROP TABLE IF EXISTS chrome_annotated_threads_and_processes;
-CREATE TABLE chrome_annotated_threads_and_processes AS
+CREATE PERFETTO TABLE chrome_annotated_threads_and_processes AS
 SELECT
   thread_track.id AS track_id,
   chrome_thread.canonical_name AS thread_name,
@@ -56,7 +56,7 @@ ORDER BY
 -- TODO(243897379): switch this back to a view once we understand why rolling SQLite to
 -- 3.39.2 causes slowdowns.
 DROP TABLE IF EXISTS blocking_chrome_tasks_without_threadpool;
-CREATE TABLE blocking_chrome_tasks_without_threadpool AS
+CREATE PERFETTO TABLE blocking_chrome_tasks_without_threadpool AS
 SELECT
   slice.*,
   annotations.thread_name AS thread_name,
@@ -77,7 +77,7 @@ WHERE
 -- implies its a "ThreadController active" slice because we removed it
 -- previously).
 DROP TABLE IF EXISTS blocking_tasks_queuing_delay;
-CREATE TABLE blocking_tasks_queuing_delay AS
+CREATE PERFETTO TABLE blocking_tasks_queuing_delay AS
 SELECT
   EXTRACT_ARG(slice.arg_set_id, "task.posted_from.file_name") AS file,
   EXTRACT_ARG(slice.arg_set_id, "task.posted_from.function_name") AS function,
@@ -124,7 +124,7 @@ WHERE
 -- Additionally for mojo events we replace the descendant_name with just the
 -- "interface_name" since that is more descriptive for our jank purposes.
 DROP VIEW IF EXISTS all_descendant_blocking_tasks_queuing_delay;
-CREATE VIEW all_descendant_blocking_tasks_queuing_delay AS
+CREATE PERFETTO VIEW all_descendant_blocking_tasks_queuing_delay AS
 SELECT
   descendant.id AS descendant_id,
   descendant.ts AS descendant_ts,
@@ -150,7 +150,7 @@ FROM
   descendant_slice(base.id) AS descendant;
 
 DROP TABLE IF EXISTS all_descendant_blocking_tasks_queuing_delay_with_cpu_time;
-CREATE TABLE all_descendant_blocking_tasks_queuing_delay_with_cpu_time AS
+CREATE PERFETTO TABLE all_descendant_blocking_tasks_queuing_delay_with_cpu_time AS
 SELECT
   cpu.thread_dur AS descendant_thread_dur,
   CAST(cpu.thread_dur AS REAL) / descendant.thread_dur
@@ -179,7 +179,7 @@ FROM
 -- compute the siblings as the count of all slices with the same parent minus
 -- the current slice.
 DROP VIEW IF EXISTS counted_descendant_blocking_tasks_queuing_delay;
-CREATE VIEW counted_descendant_blocking_tasks_queuing_delay AS
+CREATE PERFETTO VIEW counted_descendant_blocking_tasks_queuing_delay AS
 SELECT
   base.*,
   COALESCE(single_descendant.number_of_siblings, 0) AS number_of_siblings
@@ -199,7 +199,7 @@ FROM
 -- to include single descendant slices in our metric name to keep it easy to
 -- reason about what that code is doing.
 DROP VIEW IF EXISTS blocking_tasks_queuing_delay_with_invalid_depth;
-CREATE VIEW blocking_tasks_queuing_delay_with_invalid_depth AS
+CREATE PERFETTO VIEW blocking_tasks_queuing_delay_with_invalid_depth AS
 SELECT
   base.*,
   (
@@ -229,7 +229,7 @@ ORDER BY
 -- descendant if their depth is less than the first depth with siblings (the
 -- |invalid_depth|).
 DROP VIEW IF EXISTS descendant_blocking_tasks_queuing_delay;
-CREATE VIEW descendant_blocking_tasks_queuing_delay AS
+CREATE PERFETTO VIEW descendant_blocking_tasks_queuing_delay AS
 SELECT
   id,
   ts,
@@ -322,141 +322,138 @@ FROM
 GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20
 ORDER BY descendant_cpu_percentage DESC;
 
-SELECT CREATE_FUNCTION(
-  -- Function prototype: takes a '-' separated list of slice names (formed by
-  -- the GROUP_CONCAT above) and returns the first slice if any or NULL
-  -- otherwise.
-  'GetFirstSliceNameOrNull(name STRING)',
-  -- Returns the first slice name or NULL
-  'STRING',
-  -- Preforms the actual string modification, takes the either the whole string
-  -- if there is no '-' or up to the first '-'. SUBSTR returns NULL if $name is
-  -- NULL.
-  'SELECT SUBSTR($name, 0,
-    CASE WHEN INSTR($name, "-") = 0 THEN
-      LENGTH($name)+1 ELSE
-      INSTR($name, "-")
-    END)'
-);
+-- Function prototype: takes a - separated list of slice names (formed by
+-- the GROUP_CONCAT above) and returns the first slice if any or NULL
+-- otherwise.
+CREATE OR REPLACE PERFETTO FUNCTION get_first_slice_name_or_null(name STRING)
+-- Returns the first slice name or NULL
+RETURNS STRING AS
+-- Performs the actual string modification, takes the either the whole string
+-- if there is no - or up to the first '-'. SUBSTR returns NULL if $name is
+-- NULL.
+SELECT SUBSTR($name, 0,
+  CASE WHEN INSTR($name, "-") = 0 THEN
+    LENGTH($name)+1 ELSE
+    INSTR($name, "-")
+  END);
 
-SELECT CREATE_FUNCTION(
-  -- Function prototype: takes a '-' separated list of slice names (formed by
-  -- the GROUP_CONCAT above) and checks for certain important view names and
-  -- falls back on GetFirstSliceNameOrNull if it can't find one.
-  'GetJavaSliceSummaryOrNull(name STRING)',
-  -- Returns the summary of the provided list of java slice names.
-  'STRING',
-  -- Performs a bunch of GLOB matches in an order, now there could be multiple
-  -- matches (both Toolbar & TabList could be true) so the order matters in
-  -- tagging since we don't support multiple tagging of values. Ideally we would
-  -- determine which one was the longest duration, but this should be sufficient
-  -- for now.
-  'SELECT
-    CASE WHEN $name GLOB "*ToolbarControlContainer*" THEN
-      "ToolbarControlContainer"
-    WHEN $name GLOB "*ToolbarProgressBar*" THEN
-      "ToolbarProgressBar"
-    WHEN $name GLOB "*TabGroupUiToolbarView*" THEN
-      "TabGroupUiToolbarView"
-    WHEN $name GLOB "*TabGridThumbnailView*" THEN
-      "TabGridThumbnailView"
-    WHEN $name GLOB "*TabGridDialogView*" THEN
-      "TabGridDialogView"
-    WHEN $name GLOB "*BottomContainer*" THEN
-      "BottomContainer"
-    WHEN $name GLOB "*FeedSwipeRefreshLayout*" THEN
-      "FeedSwipeRefreshLayout"
-    WHEN $name GLOB "*AutocompleteEditText*" THEN
-      "AutocompleteEditText"
-    WHEN $name GLOB "*HomeButton*" THEN
-      "HomeButton"
-    WHEN $name GLOB "*ToggleTabStackButton*" THEN
-      "ToggleTabStackButton"
-    WHEN $name GLOB "*ListMenuButton*" THEN
-      "ListMenuButton"
-    WHEN $name GLOB "*ScrimView*" THEN
-      "ScrimView"
-    WHEN $name GLOB "*ChromeImageView*" THEN
-      "ChromeImageView"
-    WHEN $name GLOB "*AppCompatImageView*" THEN
-      "AppCompatImageView"
-    WHEN $name GLOB "*ChromeImageButton*" THEN
-      "ChromeImageButton"
-    WHEN $name GLOB "*AppCompatImageButton*" THEN
-      "AppCompatImageButton"
-    WHEN $name GLOB "*TabListRecyclerView*" THEN
-      "TabListRecyclerView"
-    ELSE
-      GetFirstSliceNameOrNull($name)
-    END'
-);
+-- Function prototype: takes a - separated list of slice names (formed by
+-- the GROUP_CONCAT above) and checks for certain important view names and
+-- falls back on get_first_slice_name_or_null if it can't find one.
+CREATE OR REPLACE PERFETTO FUNCTION get_java_slice_summary_or_null(name STRING)
+-- Returns the summary of the provided list of java slice names.
+RETURNS STRING AS
+-- Performs a bunch of GLOB matches in an order, now there could be multiple
+-- matches (both Toolbar & TabList could be true) so the order matters in
+-- tagging since we dont support multiple tagging of values. Ideally we would
+-- determine which one was the longest duration, but this should be sufficient
+-- for now.
+SELECT
+  CASE WHEN $name GLOB "*ToolbarControlContainer*" THEN
+    "ToolbarControlContainer"
+  WHEN $name GLOB "*ToolbarProgressBar*" THEN
+    "ToolbarProgressBar"
+  WHEN $name GLOB "*TabGroupUiToolbarView*" THEN
+    "TabGroupUiToolbarView"
+  WHEN $name GLOB "*TabGridThumbnailView*" THEN
+    "TabGridThumbnailView"
+  WHEN $name GLOB "*TabThumbnailView" THEN
+    "TabThumbnailView"
+  WHEN $name GLOB "*TabGridDialogView*" THEN
+    "TabGridDialogView"
+  WHEN $name GLOB "*BottomContainer*" THEN
+    "BottomContainer"
+  WHEN $name GLOB "*FeedSwipeRefreshLayout*" THEN
+    "FeedSwipeRefreshLayout"
+  WHEN $name GLOB "*AutocompleteEditText*" THEN
+    "AutocompleteEditText"
+  WHEN $name GLOB "*HomeButton*" THEN
+    "HomeButton"
+  WHEN $name GLOB "*ToggleTabStackButton*" THEN
+    "ToggleTabStackButton"
+  WHEN $name GLOB "*ListMenuButton*" THEN
+    "ListMenuButton"
+  WHEN $name GLOB "*ScrimView*" THEN
+    "ScrimView"
+  WHEN $name GLOB "*ChromeImageView*" THEN
+    "ChromeImageView"
+  WHEN $name GLOB "*AppCompatImageView*" THEN
+    "AppCompatImageView"
+  WHEN $name GLOB "*ChromeImageButton*" THEN
+    "ChromeImageButton"
+  WHEN $name GLOB "*AppCompatImageButton*" THEN
+    "AppCompatImageButton"
+  WHEN $name GLOB "*TabListRecyclerView*" THEN
+    "TabListRecyclerView"
+  ELSE
+    get_first_slice_name_or_null($name)
+  END;
 
-SELECT CREATE_FUNCTION(
-  -- Function prototype: takes slice name, category and descendant_name and
-  -- determines if this event should be classified as unknown or not.
-  'UnknownEventOrEmptyString(name STRING, cat STRING, has_descendant STRING)',
-  -- Returns either "-UnknownEvent" or "".
-  'STRING',
-  -- If our current event has a posted from we consider it already categorized
-  -- even if we don't have events underneath it. If its java often we won't have
-  -- sub events, and finally if its a single event we just use its name there
-  -- isn't anything under to use so just leave it at that.
-  'SELECT
-    CASE WHEN
-      $name = "ThreadControllerImpl::RunTask" OR
-      $cat = "Java" OR
-      $has_descendant IS NULL THEN
-        "" ELSE
-        "-UnknownEvent"
-      END'
-);
+-- Function prototype: takes slice name, category and descendant_name and
+-- determines if this event should be classified as unknown or not.
+--
+-- Returns either "-UnknownEvent" or "".
+CREATE OR REPLACE PERFETTO FUNCTION unknown_event_or_empty_string(name STRING,
+                                                   cat STRING,
+                                                   has_descendant STRING)
+RETURNS STRING AS
+-- If our current event has a posted from we consider it already categorized
+-- even if we dont have events underneath it. If its java often we wont have
+-- sub events, and finally if its a single event we just use its name there
+-- isn't anything under to use so just leave it at that.
+SELECT
+  CASE WHEN
+    $name = "ThreadControllerImpl::RunTask" OR
+    $cat = "Java" OR
+    $has_descendant IS NULL THEN
+      "" ELSE
+      "-UnknownEvent"
+    END;
 
-SELECT CREATE_FUNCTION(
-  -- Function prototype: Takes a slice name, function, and file, and determines
-  -- if we should use the slice name, or if its a RunTask event uses the
-  -- function & file name, however if the RunTask posted from is one of the
-  -- simple_watcher paths we collapse them for attributation.
-  'TopLevelName(name STRING, function STRING, file STRING)',
-  'STRING',
-  -- The difference for the mojom functions are:
-  --  1) PostDispatchNextMessageFromPipe:
-  --         We knew that there is a message in the pipe, didn't try to set up a
-  --         SimpleWatcher to monitor when a new one arrives.
-  --  2) ArmOrNotify:
-  --         We tried to set up SimpleWatcher, but the setup failed as the
-  --         message arrived as we were setting this up, so we posted a task
-  --         instead.
-  --  3) Notify:
-  --         SimpleWatcher was set up and after a period of monitoring detected
-  --         a new message.
-  -- For our jank use case this distinction isn't very useful so we group them
-  -- together.
-  'SELECT
-     CASE WHEN $name = "ThreadControllerImpl::RunTask" THEN
-       CASE WHEN $function IN
-           ("PostDispatchNextMessageFromPipe", "ArmOrNotify", "Notify") THEN
-         "posted-from-mojo-pipe"
-        ELSE
-         "posted-from-" || $function || "()-in-" || $file
-        END
-    ELSE
-      $name
-    END'
-);
+-- Function prototype: Takes a slice name, function, and file, and determines
+-- if we should use the slice name, or if its a RunTask event uses the
+-- function & file name, however if the RunTask posted from is one of the
+-- simple_watcher paths we collapse them for attributation.
+CREATE OR REPLACE PERFETTO FUNCTION top_level_name(name STRING, function STRING, file STRING)
+RETURNS STRING AS
+-- The difference for the mojom functions are:
+--  1) PostDispatchNextMessageFromPipe:
+--         We knew that there is a message in the pipe, didnt try to set up a
+--         SimpleWatcher to monitor when a new one arrives.
+--  2) ArmOrNotify:
+--         We tried to set up SimpleWatcher, but the setup failed as the
+--         message arrived as we were setting this up, so we posted a task
+--         instead.
+--  3) Notify:
+--         SimpleWatcher was set up and after a period of monitoring detected
+--         a new message.
+-- For our jank use case this distinction isnt very useful so we group them
+-- together.
+SELECT
+    CASE WHEN $name = "ThreadControllerImpl::RunTask" THEN
+      CASE WHEN $function IN
+          ("PostDispatchNextMessageFromPipe", "ArmOrNotify", "Notify") THEN
+        "posted-from-mojo-pipe"
+      ELSE
+        "posted-from-" || $function || "()-in-" || $file
+      END
+  ELSE
+    $name
+  END;
 
 -- Create a common name for each "cause" based on the slice stack we found.
 DROP VIEW IF EXISTS scroll_jank_cause_queuing_delay_temp;
-CREATE VIEW scroll_jank_cause_queuing_delay_temp AS
+CREATE PERFETTO VIEW scroll_jank_cause_queuing_delay_temp AS
 SELECT
-  TopLevelName(name, function, file) || COALESCE(
+  top_level_name(name, function, file) || COALESCE(
     "-" || descendant_name, "") AS location,
-  TopLevelName(name, function, file) || COALESCE(
-    "-" || GetFirstSliceNameOrNull(mojom_name)
+  top_level_name(name, function, file) || COALESCE(
+    "-" || get_first_slice_name_or_null(mojom_name)
     || COALESCE("(ipc=" || mojom_ipc_hash || ")", ""),
-    "-" || GetFirstSliceNameOrNull(toplevel_name)
+    "-" || get_first_slice_name_or_null(toplevel_name)
     || COALESCE("(ipc=" || mojom_ipc_hash || ")", ""),
-    "-" || GetJavaSliceSummaryOrNull(java_name),
-    UnknownEventOrEmptyString(name, category, descendant_name)
+    "-" || get_java_slice_summary_or_null(java_name),
+    unknown_event_or_empty_string(name, category, descendant_name)
   ) AS restricted_location,
   base.*
 FROM descendant_blocking_tasks_queuing_delay base;
@@ -464,7 +461,7 @@ FROM descendant_blocking_tasks_queuing_delay base;
 -- Figure out the average time taken during non-janky scrolls updates for each
 -- TraceEvent (metric_name) stack.
 DROP VIEW IF EXISTS scroll_jank_cause_queuing_delay_average_no_jank_time;
-CREATE VIEW scroll_jank_cause_queuing_delay_average_no_jank_time AS
+CREATE PERFETTO VIEW scroll_jank_cause_queuing_delay_average_no_jank_time AS
 SELECT
   location,
   AVG(dur_overlapping_ns) AS avg_dur_overlapping_ns
@@ -475,7 +472,7 @@ GROUP BY 1;
 -- Again figure out the average time, but based on a more restricted set of
 -- trace events.
 DROP VIEW IF EXISTS scroll_jank_cause_queuing_delay_average_no_jank_time_restricted;
-CREATE VIEW scroll_jank_cause_queuing_delay_average_no_jank_time_restricted AS
+CREATE PERFETTO VIEW scroll_jank_cause_queuing_delay_average_no_jank_time_restricted AS
 SELECT
   restricted_location,
   AVG(dur_overlapping_ns) AS avg_dur_overlapping_ns_restricted
@@ -487,7 +484,7 @@ GROUP BY 1;
 -- Join every row (jank and non-jank with the average non-jank time for the
 -- given metric_name).
 DROP VIEW IF EXISTS scroll_jank_cause_queuing_delay_unannotated;
-CREATE VIEW scroll_jank_cause_queuing_delay_unannotated AS
+CREATE PERFETTO VIEW scroll_jank_cause_queuing_delay_unannotated AS
 SELECT
   base.*,
   'InputLatency.LatencyInfo.Flow.QueuingDelay.'
@@ -502,7 +499,7 @@ FROM
 
 -- Join in the restricted set of trace events average as well to form the final output.
 DROP VIEW IF EXISTS scroll_jank_cause_queuing_delay;
-CREATE VIEW scroll_jank_cause_queuing_delay AS
+CREATE PERFETTO VIEW scroll_jank_cause_queuing_delay AS
 SELECT
   base.*,
   'QueuingDelay.'

@@ -39,7 +39,8 @@
 
 namespace feed {
 namespace {
-StreamKind kStreamKinds[] = {StreamKind::kForYou, StreamKind::kFollowing,
+StreamKind kStreamKinds[] = {StreamKind::kForYou, StreamKind::kSupervisedUser,
+                             StreamKind::kFollowing,
                              StreamKind::kSingleWebFeed};
 // TODO(crbug.com/1369777) Add kSingleWebFeed streams to metrics reporting below
 using feed::FeedEngagementType;
@@ -78,6 +79,8 @@ constexpr base::TimeDelta kMaxStableContentSliceVisibilityTime =
 
 base::StringPiece HistogramReplacement(const StreamType& stream_type) {
   switch (stream_type.GetKind()) {
+    case StreamKind::kSupervisedUser:
+      return "Feed.SupervisedFeed.";
     case StreamKind::kForYou:
       return "Feed.";
     case StreamKind::kFollowing:
@@ -117,6 +120,11 @@ void ReportContentSuggestionsOpened(const StreamType& stream_type,
     case StreamKind::kSingleWebFeed:
       base::UmaHistogramExactLinear(
           "ContentSuggestions.Feed.SingleWebFeed.Opened", index_in_stream,
+          kMaxSuggestionsTotal);
+      break;
+    case StreamKind::kSupervisedUser:
+      base::UmaHistogramExactLinear(
+          "ContentSuggestions.Feed.SupervisedFeed.Opened", index_in_stream,
           kMaxSuggestionsTotal);
       break;
     case StreamKind::kUnknown:
@@ -235,6 +243,8 @@ base::StringPiece NetworkRequestTypeUmaName(NetworkRequestType type) {
       return "QueryNextPage";
     case NetworkRequestType::kQueryWebFeed:
       return "QueryWebFeed";
+    case NetworkRequestType::kSupervisedFeed:
+      return "SupervisedFeed";
   }
 }
 
@@ -309,7 +319,6 @@ void ReportCombinedSubscriptionCountAtEngagementTime(int subscription_count) {
 bool IsGoodExplicitInteraction(FeedUserActionType action) {
   switch (action) {
     case FeedUserActionType::kAddedToReadLater:
-    case FeedUserActionType::kTappedCrowButton:
     case FeedUserActionType::kTappedFollowButton:
     case FeedUserActionType::kShare:
     case FeedUserActionType::kTappedAddToReadingList:
@@ -324,21 +333,7 @@ bool IsGoodExplicitInteraction(FeedUserActionType action) {
 }  // namespace
 MetricsReporter::LoadStreamResultSummary::LoadStreamResultSummary() = default;
 MetricsReporter::LoadStreamResultSummary::LoadStreamResultSummary(
-    LoadStreamStatus load_from_store_status,
-    LoadStreamStatus final_status,
-    bool is_initial_load,
-    bool loaded_new_content_from_network,
-    base::TimeDelta stored_content_age,
-    ContentOrder content_order,
-    absl::optional<feedstore::Metadata::StreamMetadata> stream_metadata) {
-  this->load_from_store_status = load_from_store_status;
-  this->final_status = final_status;
-  this->is_initial_load = is_initial_load;
-  this->loaded_new_content_from_network = loaded_new_content_from_network;
-  this->stored_content_age = stored_content_age;
-  this->content_order = content_order;
-  this->stream_metadata = stream_metadata;
-}
+    const LoadStreamResultSummary& src) = default;
 MetricsReporter::LoadStreamResultSummary::~LoadStreamResultSummary() = default;
 
 MetricsReporter::SurfaceWaiting::SurfaceWaiting() = default;
@@ -555,6 +550,11 @@ void MetricsReporter::ContentSliceViewed(const StreamType& stream_type,
           "ContentSuggestions.Feed.SingleWebFeed.Shown", index_in_stream,
           kMaxSuggestionsTotal);
       break;
+    case StreamKind::kSupervisedUser:
+      base::UmaHistogramExactLinear(
+          "ContentSuggestions.Feed.SupervisedFeed.Shown", index_in_stream,
+          kMaxSuggestionsTotal);
+      break;
     case StreamKind::kUnknown:
       DCHECK(false) << "unknown feed kind";
       break;
@@ -726,7 +726,6 @@ void MetricsReporter::OtherUserAction(const StreamType& stream_type,
       RecordInteraction(stream_type);
       break;
     case FeedUserActionType::kAddedToReadLater:
-    case FeedUserActionType::kTappedCrowButton:
     case FeedUserActionType::kTappedFollowButton:
     case FeedUserActionType::kEphemeralChange:
     case FeedUserActionType::kEphemeralChangeRejected:
@@ -772,6 +771,7 @@ void MetricsReporter::OtherUserAction(const StreamType& stream_type,
     case FeedUserActionType::kTappedRefreshFollowingFeedOnSnackbar:
     case FeedUserActionType::kTappedFeedSignInPromoUIContinue:
     case FeedUserActionType::kTappedFeedSignInPromoUICancel:
+    case FeedUserActionType::kNonSwipeManualRefresh:
       // Nothing additional for these actions. Note that some of these are iOS
       // only.
 
@@ -784,13 +784,19 @@ void MetricsReporter::ReportStableContentSliceVisibilityTimeForGoodVisits(
   good_visit_state_.AddTimeInFeed(delta);
 }
 
-void MetricsReporter::SurfaceOpened(const StreamType& stream_type,
-                                    SurfaceId surface_id) {
+void MetricsReporter::SurfaceOpened(
+    const StreamType& stream_type,
+    SurfaceId surface_id,
+    SingleWebFeedEntryPoint single_web_feed_entry_point) {
   VVLOG << "Feed SurfaceOpened " << stream_type << " id=" << surface_id;
   ReportPersistentDataIfDayIsDone();
   surfaces_waiting_for_content_.emplace(
       surface_id, SurfaceWaiting{stream_type, base::TimeTicks::Now()});
   ReportUserActionHistogram(FeedUserActionType::kOpenedFeedSurface);
+  if (stream_type.IsSingleWebFeed()) {
+    base::UmaHistogramEnumeration("ContentSuggestions.SingleWebFeed.EntryPoint",
+                                  single_web_feed_entry_point);
+  }
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
       FROM_HERE,
       base::BindOnce(&MetricsReporter::ReportOpenFeedIfNeeded, GetWeakPtr(),
@@ -1071,6 +1077,11 @@ void MetricsReporter::OnImageFetched(const GURL& url,
                            net_error_or_http_status);
 }
 
+void MetricsReporter::OnResourceFetched(int net_error_or_http_status) {
+  base::UmaHistogramSparse("ContentSuggestions.Feed.ResourceFetchStatus",
+                           net_error_or_http_status);
+}
+
 void MetricsReporter::OnUploadActionsBatch(UploadActionsBatchStatus status) {
   VVLOG << "UploadActionsBatchStatus: " << status;
   base::UmaHistogramEnumeration(
@@ -1139,6 +1150,8 @@ MetricsReporter::StreamStats& MetricsReporter::ForStream(
   switch (stream_type.GetKind()) {
     case StreamKind::kForYou:
       return for_you_stats_;
+    case StreamKind::kSupervisedUser:
+      return supervised_feed_stats_;
     case StreamKind::kFollowing:
     case StreamKind::kSingleWebFeed:
       return web_feed_stats_;

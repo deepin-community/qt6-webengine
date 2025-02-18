@@ -75,17 +75,14 @@ scoped_refptr<gl::GLSurface> GLOzoneEGLQt::CreateOffscreenGLSurface(gl::GLDispla
 gl::EGLDisplayPlatform GLOzoneEGLQt::GetNativeDisplay()
 {
     static void *display = GLContextHelper::getNativeDisplay();
-    static gl::EGLDisplayPlatform platform(display ? reinterpret_cast<intptr_t>(display) : EGL_DEFAULT_DISPLAY);
+    static gl::EGLDisplayPlatform platform(display ? reinterpret_cast<EGLNativeDisplayType>(display)
+                                                   : EGL_DEFAULT_DISPLAY);
     return platform;
 }
 
 bool GLOzoneEGLQt::CanImportNativePixmap()
 {
-#if BUILDFLAG(USE_VAAPI)
     return gl::GLSurfaceEGL::GetGLDisplayEGL()->ext->b_EGL_EXT_image_dma_buf_import;
-#else
-    return false;
-#endif
 }
 
 std::unique_ptr<NativePixmapGLBinding> GLOzoneEGLQt::ImportNativePixmap(
@@ -97,13 +94,8 @@ std::unique_ptr<NativePixmapGLBinding> GLOzoneEGLQt::ImportNativePixmap(
         GLenum target,
         GLuint texture_id)
 {
-#if BUILDFLAG(USE_VAAPI)
-    return NativePixmapEGLBinding::Create(pixmap, plane_format, plane,
-                                          plane_size, color_space, target,
-                                          texture_id);
-#else
-    return nullptr;
-#endif
+    return NativePixmapEGLBinding::Create(pixmap, plane_format, plane, plane_size, color_space,
+                                          target, texture_id);
 }
 
 } // namespace ui

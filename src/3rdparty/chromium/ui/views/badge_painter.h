@@ -47,6 +47,10 @@ class VIEWS_EXPORT BadgePainter {
   static gfx::Size GetBadgeSize(const std::u16string& text,
                                 const gfx::FontList& primary_font);
 
+  // Returns the appropriate font to use for the badge based on the font
+  // currently being used to render the surrounding text.
+  static gfx::FontList GetBadgeFont(const gfx::FontList& context_font);
+
   // Layout Constants
   //
   // Note that there are a few differences between Views and Mac constants here
@@ -62,10 +66,9 @@ class VIEWS_EXPORT BadgePainter {
 
   // Highlight padding around text.
   static constexpr int kBadgeInternalPadding = 4;
-  static constexpr int kBadgeInternalPaddingTopMac = 1;
 
-  // The baseline offset of the badge image to the menu text baseline.
-  static constexpr int kBadgeBaselineOffsetMac = -4;
+  // The minimal badge height on a cocoa menu.
+  static constexpr int kBadgeMinHeightCocoa = 16;
 };
 
 }  // namespace views

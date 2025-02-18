@@ -12,6 +12,7 @@
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/bind.h"
+#include "base/test/gmock_expected_support.h"
 #include "base/test/task_environment.h"
 #include "base/test/test_future.h"
 #include "build/build_config.h"
@@ -102,8 +103,7 @@ class FileSystemContextTest : public testing::Test {
     EXPECT_EQ(expect_filesystem_id, url.filesystem_id());
   }
 
-  inline static absl::optional<FileSystemURL> last_resolved_url_ =
-      absl::nullopt;
+  inline static std::optional<FileSystemURL> last_resolved_url_ = std::nullopt;
 
  private:
   base::ScopedTempDir data_dir_;
@@ -220,16 +220,15 @@ TEST_F(FileSystemContextTest, ResolveURLOnOpenFileSystem_CustomBucket) {
       storage_key, "custom_bucket", blink::mojom::StorageType::kTemporary,
       base::SequencedTaskRunner::GetCurrentDefault(),
       bucket_future.GetCallback());
-  auto bucket = bucket_future.Take();
-  EXPECT_TRUE(bucket.ok());
+  ASSERT_OK_AND_ASSIGN(auto bucket, bucket_future.Take());
   ASSERT_FALSE(last_resolved_url_.has_value());
 
   file_system_context->ResolveURLOnOpenFileSystemForTesting(
-      storage_key, bucket->ToBucketLocator(), kFileSystemTypeTest,
+      storage_key, bucket.ToBucketLocator(), kFileSystemTypeTest,
       OpenFileSystemMode::OPEN_FILE_SYSTEM_CREATE_IF_NONEXISTENT,
       std::move(open_callback));
   ASSERT_TRUE(last_resolved_url_.has_value());
-  ASSERT_EQ(last_resolved_url_.value().bucket(), bucket->ToBucketLocator());
+  ASSERT_EQ(last_resolved_url_.value().bucket(), bucket.ToBucketLocator());
 }
 
 TEST_F(FileSystemContextTest, CrackFileSystemURL) {
@@ -256,8 +255,7 @@ TEST_F(FileSystemContextTest, CrackFileSystemURL) {
   // Register a system external mount point with the same name/id as the
   // registered isolated mount point.
   ASSERT_TRUE(ExternalMountPoints::GetSystemInstance()->RegisterFileSystem(
-      kIsolatedFileSystemID, kFileSystemTypeRestrictedLocal,
-      FileSystemMountOption(),
+      kIsolatedFileSystemID, kFileSystemTypeLocal, FileSystemMountOption(),
       base::FilePath(DRIVE FPL("/test/system/isolated"))));
   // Add a mount points with the same name as a system mount point to
   // FileSystemContext's external mount points.
@@ -300,7 +298,7 @@ TEST_F(FileSystemContextTest, CrackFileSystemURL) {
       {"system", "external", true /* is_valid */, kFileSystemTypeExternal,
        kFileSystemTypeLocal, DRIVE FPL("/test/sys/root/file"), "system"},
       {kIsolatedFileSystemID, "external", true /* is_valid */,
-       kFileSystemTypeExternal, kFileSystemTypeRestrictedLocal,
+       kFileSystemTypeExternal, kFileSystemTypeLocal,
        DRIVE FPL("/test/system/isolated/root/file"), kIsolatedFileSystemID},
       // Should be cracked by FileSystemContext's ExternalMountPoints.
       {"ext", "external", true /* is_valid */, kFileSystemTypeExternal,

@@ -23,6 +23,9 @@ Note: if you are looking for a guide for the Web Platform Test, you should read
 ["Web platform tests"](./web_platform_tests.md) (WPT). This document does not
 cover WPT specific features/behaviors.
 
+Note: if you are looking for a guide for running the Web Platform Tests with
+Chrome, Chrome Android or WebView, you should read ["Running Web Platform Tests with run_wpt_tests.py"](./run_web_platform_tests.md).
+
 [TOC]
 
 ## Running Web Tests
@@ -60,7 +63,7 @@ The test runner script is in `third_party/blink/tools/run_web_tests.py`.
 
 To specify which build directory to use (e.g. out/Default, etc.)
 you should pass the `-t` or `--target` parameter. If no directory is specified,
-`out/Release` will be used. To use the build in `out/Default`, use:
+`out/Release` will be used. To use the built-in `out/Default`, use:
 
 ```bash
 third_party/blink/tools/run_web_tests.py -t Default
@@ -83,7 +86,7 @@ learn more about TestExpectations and related files.
 
 *** promo
 Currently only the tests listed in
-[Default.txt](../../third_party/blink/web_tests/SmokeTests/Default.txt) are run
+[Default.txt](../../third_party/blink/web_tests/TestLists/Default.txt) are run
 on the Fuchsia bots, since running all web tests takes too long on Fuchshia.
 Most developers focus their Blink testing on Linux. We rely on the fact that the
 Linux and Fuchsia behavior is nearly identical for scenarios outside those
@@ -92,7 +95,7 @@ covered by the smoke tests.
 
 *** promo
 Similar to Fuchsia's case, the tests listed in [Mac.txt]
-(../../third_party/blink/web_tests/SmokeTests/Mac.txt)
+(../../third_party/blink/web_tests/TestLists/Mac.txt)
 are run on older mac version bots. By doing this we reduced the resources needed to run
 the tests. This relies on the fact that the majority of web tests will behavior similarly on
 different mac versions.
@@ -295,7 +298,7 @@ These virtual tests exist in addition to the original `compositing/...` and
 `web_tests/TestExpectations`, and their own baselines. The test harness will
 use the non-virtual expectations and baselines as a fallback. If a virtual
 test has its own expectations, they will override all non-virtual
-expectations. otherwise the non-virtual expectations will be used. However,
+expectations. Otherwise the non-virtual expectations will be used. However,
 `[ Slow ]` in either virtual or non-virtual expectations is always merged
 into the used expectations. If a virtual test is expected to pass while the
 non-virtual test is expected to fail, you need to add an explicit `[ Pass ]`
@@ -347,12 +350,36 @@ following tests:
 | virtual/v2 |   run   |   run   | n/a  |
 | virtual/v3 |   run   | skipped | run  |
 
+In a similar manner, a virtual test suite can also have an optional
+`skip_base_tests` field to specify all (with `"ALL"`) or a subset of `bases`
+tests that will be run under this virtual while the base tests will be skipped.
+This will not affect other virtual suites.
+
+```json
+{
+  "prefix": "v1",
+  "bases": ["a/a1"],
+}
+{
+  "prefix": "v2",
+  "bases": ["a/a1"],
+  "skip_base_tests": "ALL",
+}
+```
+Suppose there are directories `a/a1` and `a/a2` we will run the following tests:
+
+|      Suite |   a/a1  |   a/a2  |
+| ---------: | :-----: | :-----: |
+|       base | skipped |   run   |
+| virtual/v1 |   run   |   n/a   |
+| virtual/v2 |   run   |   n/a   |
+
 
 ### Choosing between flag-specific and virtual test suite
 
 For flags whose implementation is still in progress, flag-specific expectations
 and virtual test suites represent two alternative strategies for testing both
-the enabled code path and not-enabled code path. They are preferred to only
+the enabled code path and non-enabled code path. They are preferred to only
 setting a [runtime enabled feature](../../third_party/blink/renderer/platform/RuntimeEnabledFeatures.md)
 to `status: "test"` if the feature has substantially different code path from
 production because the latter would cause loss of test coverage of the production

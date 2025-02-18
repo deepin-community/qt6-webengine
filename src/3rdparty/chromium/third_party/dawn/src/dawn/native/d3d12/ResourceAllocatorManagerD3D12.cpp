@@ -1,16 +1,29 @@
-// Copyright 2019 The Dawn Authors
+// Copyright 2019 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "dawn/native/d3d12/ResourceAllocatorManagerD3D12.h"
 
@@ -18,7 +31,8 @@
 #include <limits>
 #include <utility>
 
-#include "dawn/native/d3d12/D3D12Error.h"
+#include "dawn/native/Queue.h"
+#include "dawn/native/d3d/D3DError.h"
 #include "dawn/native/d3d12/DeviceD3D12.h"
 #include "dawn/native/d3d12/HeapAllocatorD3D12.h"
 #include "dawn/native/d3d12/HeapD3D12.h"
@@ -56,7 +70,7 @@ D3D12_HEAP_TYPE GetD3D12HeapType(ResourceHeapKind resourceHeapKind) {
         case Upload_AllBuffersAndTextures:
             return D3D12_HEAP_TYPE_UPLOAD;
         case EnumCount:
-            UNREACHABLE();
+            DAWN_UNREACHABLE();
     }
 }
 
@@ -75,7 +89,7 @@ D3D12_HEAP_FLAGS GetD3D12HeapFlags(ResourceHeapKind resourceHeapKind) {
         case Default_OnlyRenderableOrDepthTextures:
             return D3D12_HEAP_FLAG_ALLOW_ONLY_RT_DS_TEXTURES;
         case EnumCount:
-            UNREACHABLE();
+            DAWN_UNREACHABLE();
     }
 }
 
@@ -92,7 +106,7 @@ ResourceHeapKind GetResourceHeapKind(D3D12_RESOURCE_DIMENSION dimension,
             case D3D12_HEAP_TYPE_READBACK:
                 return Readback_AllBuffersAndTextures;
             default:
-                UNREACHABLE();
+                DAWN_UNREACHABLE();
         }
     }
 
@@ -106,7 +120,7 @@ ResourceHeapKind GetResourceHeapKind(D3D12_RESOURCE_DIMENSION dimension,
                 case D3D12_HEAP_TYPE_READBACK:
                     return Readback_OnlyBuffers;
                 default:
-                    UNREACHABLE();
+                    DAWN_UNREACHABLE();
             }
             break;
         }
@@ -123,33 +137,44 @@ ResourceHeapKind GetResourceHeapKind(D3D12_RESOURCE_DIMENSION dimension,
                 }
 
                 default:
-                    UNREACHABLE();
+                    DAWN_UNREACHABLE();
             }
             break;
         }
         default:
-            UNREACHABLE();
+            DAWN_UNREACHABLE();
     }
 }
 
-uint64_t GetResourcePlacementAlignment(ResourceHeapKind resourceHeapKind,
-                                       uint32_t sampleCount,
-                                       uint64_t requestedAlignment) {
-    switch (resourceHeapKind) {
-        // Small resources can take advantage of smaller alignments. For example,
-        // if the most detailed mip can fit under 64KB, 4KB alignments can be used.
-        // Must be non-depth or without render-target to use small resource alignment.
-        // This also applies to MSAA textures (4MB => 64KB).
-        //
-        // Note: Only known to be used for small textures; however, MSDN suggests
-        // it could be extended for more cases. If so, this could default to always
-        // attempt small resource placement.
-        // https://docs.microsoft.com/en-us/windows/win32/api/d3d12/ns-d3d12-d3d12_resource_desc
-        case Default_OnlyNonRenderableOrDepthTextures:
-            return (sampleCount > 1) ? D3D12_SMALL_MSAA_RESOURCE_PLACEMENT_ALIGNMENT
-                                     : D3D12_SMALL_RESOURCE_PLACEMENT_ALIGNMENT;
+uint64_t GetInitialResourcePlacementAlignment(
+    const D3D12_RESOURCE_DESC& requestedResourceDescriptor,
+    Device* device) {
+    switch (requestedResourceDescriptor.Dimension) {
+        case D3D12_RESOURCE_DIMENSION_BUFFER:
+            return requestedResourceDescriptor.Alignment;
+
+        // Always try using small resource placement aligment first when Alignment == 0 because if
+        // Alignment is set to 0, the runtime will use 4MB for MSAA textures and 64KB for everything
+        // else.
+        // https://learn.microsoft.com/en-us/windows/win32/api/d3d12/ns-d3d12-d3d12_resource_desc
+        case D3D12_RESOURCE_DIMENSION_TEXTURE1D:
+        case D3D12_RESOURCE_DIMENSION_TEXTURE2D:
+        case D3D12_RESOURCE_DIMENSION_TEXTURE3D: {
+            if (requestedResourceDescriptor.Alignment > 0) {
+                return requestedResourceDescriptor.Alignment;
+            }
+
+            if (requestedResourceDescriptor.SampleDesc.Count > 1) {
+                return device->IsToggleEnabled(Toggle::D3D12Use64KBAlignedMSAATexture)
+                           ? D3D12_SMALL_MSAA_RESOURCE_PLACEMENT_ALIGNMENT
+                           : D3D12_DEFAULT_MSAA_RESOURCE_PLACEMENT_ALIGNMENT;
+            } else {
+                return D3D12_SMALL_RESOURCE_PLACEMENT_ALIGNMENT;
+            }
+        }
+        case D3D12_RESOURCE_DIMENSION_UNKNOWN:
         default:
-            return requestedAlignment;
+            DAWN_UNREACHABLE();
     }
 }
 
@@ -170,7 +195,7 @@ bool IsClearValueOptimizable(DeviceBase* device, const D3D12_RESOURCE_DESC& reso
     // textures, or typeless resources
     // https://docs.microsoft.com/en-us/windows/win32/api/d3d12/nf-d3d12-id3d12device-createcommittedresource
     // https://docs.microsoft.com/en-us/windows/win32/api/d3d12/nf-d3d12-id3d12device-createplacedresource
-    return !IsTypeless(resourceDescriptor.Format) &&
+    return !d3d::IsTypeless(resourceDescriptor.Format) &&
            resourceDescriptor.Dimension != D3D12_RESOURCE_DIMENSION_BUFFER &&
            (resourceDescriptor.Flags & (D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET |
                                         D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL)) != 0;
@@ -256,7 +281,7 @@ uint32_t ComputeExtraArraySizeForIntelGen12(uint32_t width,
             tileHeight = 64;
             break;
         default:
-            UNREACHABLE();
+            DAWN_UNREACHABLE();
     }
     uint32_t tileWidth = kTileSize / tileHeight;
 
@@ -309,6 +334,21 @@ bool ShouldAllocateAsCommittedResource(Device* device, bool forceAllocateAsCommi
            device->IsToggleEnabled(Toggle::DisableResourceSuballocation);
 }
 
+D3D12_HEAP_FLAGS GetHeapFlagsForCommittedResource(Device* device,
+                                                  const D3D12_RESOURCE_DESC& resourceDescriptor) {
+    if (!device->IsToggleEnabled(Toggle::D3D12CreateNotZeroedHeap)) {
+        return D3D12_HEAP_FLAG_NONE;
+    }
+
+    if (device->IsToggleEnabled(
+            Toggle::D3D12DontUseNotZeroedHeapFlagOnTexturesAsCommitedResources) &&
+        resourceDescriptor.Dimension != D3D12_RESOURCE_DIMENSION_BUFFER) {
+        return D3D12_HEAP_FLAG_NONE;
+    }
+
+    return D3D12_HEAP_FLAG_CREATE_NOT_ZEROED;
+}
+
 }  // namespace
 
 ResourceAllocatorManager::ResourceAllocatorManager(Device* device) : mDevice(device) {
@@ -316,10 +356,16 @@ ResourceAllocatorManager::ResourceAllocatorManager(Device* device) : mDevice(dev
                             ? mDevice->GetDeviceInfo().resourceHeapTier
                             : 1;
 
+    D3D12_HEAP_FLAGS createNotZeroedHeapFlag =
+        mDevice->IsToggleEnabled(Toggle::D3D12CreateNotZeroedHeap)
+            ? D3D12_HEAP_FLAG_CREATE_NOT_ZEROED
+            : D3D12_HEAP_FLAG_NONE;
+
     for (uint32_t i = 0; i < ResourceHeapKind::EnumCount; i++) {
         const ResourceHeapKind resourceHeapKind = static_cast<ResourceHeapKind>(i);
+        D3D12_HEAP_FLAGS heapFlags = GetD3D12HeapFlags(resourceHeapKind) | createNotZeroedHeapFlag;
         mHeapAllocators[i] = std::make_unique<HeapAllocator>(
-            mDevice, GetD3D12HeapType(resourceHeapKind), GetD3D12HeapFlags(resourceHeapKind),
+            mDevice, GetD3D12HeapType(resourceHeapKind), heapFlags,
             GetMemorySegment(device, GetD3D12HeapType(resourceHeapKind)));
         mPooledHeapAllocators[i] =
             std::make_unique<PooledResourceMemoryAllocator>(mHeapAllocators[i].get());
@@ -334,8 +380,8 @@ ResourceAllocatorManager::~ResourceAllocatorManager() {
     Tick(std::numeric_limits<ExecutionSerial>::max());
     DestroyPool();
 
-    ASSERT(mAllocationsToDelete.Empty());
-    ASSERT(mHeapsToDelete.Empty());
+    DAWN_ASSERT(mAllocationsToDelete.Empty());
+    DAWN_ASSERT(mHeapsToDelete.Empty());
 }
 
 ResultOrError<ResourceHeapAllocation> ResourceAllocatorManager::AllocateMemory(
@@ -364,7 +410,7 @@ ResultOrError<ResourceHeapAllocation> ResourceAllocatorManager::AllocateMemory(
         resourceDescriptor.DepthOrArraySize > 1 && colorFormatBytesPerBlock > 0) {
         // Multisample textures have one layer at most. Only non-multisample textures need the
         // workaround.
-        ASSERT(revisedDescriptor.SampleDesc.Count <= 1);
+        DAWN_ASSERT(revisedDescriptor.SampleDesc.Count <= 1);
         revisedDescriptor.DepthOrArraySize += ComputeExtraArraySizeForIntelGen12(
             resourceDescriptor.Width, resourceDescriptor.Height,
             resourceDescriptor.DepthOrArraySize, resourceDescriptor.MipLevels,
@@ -412,7 +458,7 @@ void ResourceAllocatorManager::DeallocateMemory(ResourceHeapAllocation& allocati
         return;
     }
 
-    mAllocationsToDelete.Enqueue(allocation, mDevice->GetPendingCommandSerial());
+    mAllocationsToDelete.Enqueue(allocation, mDevice->GetQueue()->GetPendingCommandSerial());
 
     // Directly allocated ResourceHeapAllocations are created with a heap object that must be
     // manually deleted upon deallocation. See ResourceAllocatorManager::CreateCommittedResource
@@ -421,18 +467,18 @@ void ResourceAllocatorManager::DeallocateMemory(ResourceHeapAllocation& allocati
     // pending commands.
     if (allocation.GetInfo().mMethod == AllocationMethod::kDirect) {
         mHeapsToDelete.Enqueue(std::unique_ptr<ResourceHeapBase>(allocation.GetResourceHeap()),
-                               mDevice->GetPendingCommandSerial());
+                               mDevice->GetQueue()->GetPendingCommandSerial());
     }
 
     // Invalidate the allocation immediately in case one accidentally
     // calls DeallocateMemory again using the same allocation.
     allocation.Invalidate();
 
-    ASSERT(allocation.GetD3D12Resource() == nullptr);
+    DAWN_ASSERT(allocation.GetD3D12Resource() == nullptr);
 }
 
 void ResourceAllocatorManager::FreeMemory(ResourceHeapAllocation& allocation) {
-    ASSERT(allocation.GetInfo().mMethod == AllocationMethod::kSubAllocated);
+    DAWN_ASSERT(allocation.GetInfo().mMethod == AllocationMethod::kSubAllocated);
 
     D3D12_HEAP_PROPERTIES heapProp;
     allocation.GetD3D12Resource()->GetHeapProperties(&heapProp, nullptr);
@@ -455,19 +501,20 @@ ResultOrError<ResourceHeapAllocation> ResourceAllocatorManager::CreatePlacedReso
                             requestedResourceDescriptor.Flags, mResourceHeapTier);
 
     D3D12_RESOURCE_DESC resourceDescriptor = requestedResourceDescriptor;
-    resourceDescriptor.Alignment = GetResourcePlacementAlignment(
-        resourceHeapKind, requestedResourceDescriptor.SampleDesc.Count,
-        requestedResourceDescriptor.Alignment);
+    resourceDescriptor.Alignment =
+        GetInitialResourcePlacementAlignment(requestedResourceDescriptor, mDevice);
 
-    // TODO(bryan.bernhart): Figure out how to compute the alignment without calling this
-    // twice.
+    // When you're using CreatePlacedResource, your application must use GetResourceAllocationInfo
+    // in order to understand the size and alignment characteristics of texture resources.
     D3D12_RESOURCE_ALLOCATION_INFO resourceInfo =
         mDevice->GetD3D12Device()->GetResourceAllocationInfo(0, 1, &resourceDescriptor);
 
-    // If the requested resource alignment was rejected, let D3D tell us what the
-    // required alignment is for this resource.
-    if (resourceDescriptor.Alignment != 0 &&
-        resourceDescriptor.Alignment != resourceInfo.Alignment) {
+    // If the requested resource alignment was rejected, set alignment to 0 to do allocation with
+    // default alignment in D3D12 (4MB for MSAA textures and 64KB for everything else).
+    // If an error occurs, then D3D12_RESOURCE_ALLOCATION_INFO::SizeInBytes equals UINT64_MAX.
+    if (resourceInfo.SizeInBytes == std::numeric_limits<uint64_t>::max() ||
+        (resourceDescriptor.Alignment != 0 &&
+         resourceDescriptor.Alignment != resourceInfo.Alignment)) {
         resourceDescriptor.Alignment = 0;
         resourceInfo =
             mDevice->GetD3D12Device()->GetResourceAllocationInfo(0, 1, &resourceDescriptor);
@@ -558,9 +605,17 @@ ResultOrError<ResourceHeapAllocation> ResourceAllocatorManager::CreateCommittedR
     // Note: Heap flags are inferred by the resource descriptor and do not need to be explicitly
     // provided to CreateCommittedResource.
     ComPtr<ID3D12Resource> committedResource;
+    D3D12_RESOURCE_DESC appliedResourceDescriptor = resourceDescriptor;
+    if (resourceDescriptor.SampleDesc.Count > 1 &&
+        mDevice->IsToggleEnabled(Toggle::D3D12Use64KBAlignedMSAATexture)) {
+        appliedResourceDescriptor.Alignment = D3D12_SMALL_MSAA_RESOURCE_PLACEMENT_ALIGNMENT;
+    }
+
+    D3D12_HEAP_FLAGS heapFlags =
+        GetHeapFlagsForCommittedResource(mDevice, appliedResourceDescriptor);
     DAWN_TRY(CheckOutOfMemoryHRESULT(
         mDevice->GetD3D12Device()->CreateCommittedResource(
-            &heapProperties, D3D12_HEAP_FLAG_NONE, &resourceDescriptor, initialUsage,
+            &heapProperties, heapFlags, &appliedResourceDescriptor, initialUsage,
             optimizedClearValue, IID_PPV_ARGS(&committedResource)),
         "ID3D12Device::CreateCommittedResource"));
 

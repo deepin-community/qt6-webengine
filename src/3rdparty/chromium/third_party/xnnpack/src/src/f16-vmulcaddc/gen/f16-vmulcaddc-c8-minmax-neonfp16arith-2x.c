@@ -18,10 +18,10 @@
 void xnn_f16_vmulcaddc_minmax_ukernel_c8__neonfp16arith_2x(
     size_t rows,
     size_t channels,
-    const void*restrict input,
+    const void* restrict input,
     size_t input_stride,
-    const void*restrict weights,
-    void*restrict output,
+    const void* restrict weights,
+    void* restrict output,
     size_t output_stride,
     const union xnn_f16_minmax_params params[restrict XNN_MIN_ELEMENTS(1)]) XNN_OOB_READS
 {
@@ -102,8 +102,8 @@ void xnn_f16_vmulcaddc_minmax_ukernel_c8__neonfp16arith_2x(
         vacc1x0123 = vext_f16(vacc1x0123, vacc1x0123, 2);
       }
       if (c & (1 * sizeof(uint16_t))) {
-        vst1_lane_f16(o0, vacc0x0123, 0); o0 += 1;
-        vst1_lane_f16(o1, vacc1x0123, 0); o1 += 1;
+        vst1_lane_u16(o0, vreinterpret_u16_f16(vacc0x0123), 0); o0 += 1;
+        vst1_lane_u16(o1, vreinterpret_u16_f16(vacc1x0123), 0); o1 += 1;
       }
     }
     i0 = (const uint16_t*) ((uintptr_t) i0 + input_increment);

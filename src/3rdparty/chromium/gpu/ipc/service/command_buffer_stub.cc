@@ -43,7 +43,6 @@
 #include "ui/gl/gl_context.h"
 #include "ui/gl/gl_implementation.h"
 #include "ui/gl/gl_switches.h"
-#include "ui/gl/gl_workarounds.h"
 #include "ui/gl/init/gl_factory.h"
 
 #if BUILDFLAG(IS_WIN)
@@ -116,7 +115,9 @@ CommandBufferStub::CommandBufferStub(
       context_type_(init_params.attribs.context_type),
       active_url_(init_params.active_url),
       initialized_(false),
-      surface_handle_(init_params.surface_handle),
+#if BUILDFLAG(IS_ANDROID)
+      offscreen_(init_params.surface_handle == kNullSurfaceHandle),
+#endif
       use_virtualized_gl_context_(false),
       command_buffer_id_(command_buffer_id),
       sequence_id_(sequence_id),
@@ -159,16 +160,6 @@ void CommandBufferStub::ExecuteDeferredRequest(
       OnDestroyTransferBuffer(params.get_destroy_transfer_buffer());
       break;
 
-    case mojom::DeferredCommandBufferRequestParams::Tag::kTakeFrontBuffer:
-      OnTakeFrontBuffer(params.get_take_front_buffer());
-      break;
-
-    case mojom::DeferredCommandBufferRequestParams::Tag::kReturnFrontBuffer: {
-      OnReturnFrontBuffer(params.get_return_front_buffer()->mailbox,
-                          params.get_return_front_buffer()->is_lost);
-      break;
-    }
-
     case mojom::DeferredCommandBufferRequestParams::Tag::
         kSetDefaultFramebufferSharedImage: {
       OnSetDefaultFramebufferSharedImage(
@@ -198,7 +189,8 @@ void CommandBufferStub::PerformWork() {
                                                                         : "0");
   if (decoder_context_.get() && !MakeCurrent())
     return;
-  auto cache_use = CreateCacheUse();
+  std::optional<gles2::ProgramCache::ScopedCacheUse> cache_use;
+  CreateCacheUse(cache_use);
 
   if (decoder_context_) {
     uint32_t current_unprocessed_num =
@@ -290,8 +282,9 @@ bool CommandBufferStub::MakeCurrent() {
   return false;
 }
 
-gles2::ProgramCache::ScopedCacheUse CommandBufferStub::CreateCacheUse() {
-  return gles2::ProgramCache::ScopedCacheUse(
+void CommandBufferStub::CreateCacheUse(
+    std::optional<gles2::ProgramCache::ScopedCacheUse>& cache_use) {
+  cache_use.emplace(
       channel_->gpu_channel_manager()->program_cache(),
       base::BindRepeating(&DecoderClient::CacheBlob, base::Unretained(this),
                           gpu::GpuDiskCacheType::kGlShaders));
@@ -317,8 +310,7 @@ void CommandBufferStub::Destroy() {
     // (exit_on_context_lost workaround), then don't tell the browser about
     // offscreen context destruction here since it's not client-invoked, and
     // might bypass the 3D API blocking logic.
-    if ((surface_handle_ == gpu::kNullSurfaceHandle) &&
-        !active_url_.is_empty() &&
+    if (offscreen() && !active_url_.is_empty() &&
         !gpu_channel_manager->delegate()->IsExiting()) {
       gpu_channel_manager->delegate()->DidDestroyOffscreenContext(
           active_url_.url());
@@ -338,9 +330,9 @@ void CommandBufferStub::Destroy() {
         decoder_context_->GetGLContext()->MakeCurrent(surface_.get());
   }
 
-  absl::optional<gles2::ProgramCache::ScopedCacheUse> cache_use;
+  std::optional<gles2::ProgramCache::ScopedCacheUse> cache_use;
   if (have_context)
-    cache_use.emplace(CreateCacheUse());
+    CreateCacheUse(cache_use);
 
   for (auto& observer : destruction_observers_)
     observer.OnWillDestroyStub(have_context);
@@ -354,7 +346,7 @@ void CommandBufferStub::Destroy() {
 
   if (decoder_context_) {
     auto* gr_shader_cache = channel_->gpu_channel_manager()->gr_shader_cache();
-    absl::optional<raster::GrShaderCache::ScopedCacheUse> gr_cache_use;
+    std::optional<raster::GrShaderCache::ScopedCacheUse> gr_cache_use;
     if (gr_shader_cache)
       gr_cache_use.emplace(gr_shader_cache, channel_->client_id());
 
@@ -405,9 +397,8 @@ void CommandBufferStub::OnParseError() {
   // determine whether client APIs like WebGL need to be immediately
   // blocked from automatically running.
   GpuChannelManager* gpu_channel_manager = channel_->gpu_channel_manager();
-  gpu_channel_manager->delegate()->DidLoseContext(
-      (surface_handle_ == kNullSurfaceHandle), state.context_lost_reason,
-      active_url_.url());
+  gpu_channel_manager->delegate()->DidLoseContext(state.context_lost_reason,
+                                                  active_url_.url());
 
   CheckContextLost();
 }
@@ -510,7 +501,7 @@ void CommandBufferStub::OnAsyncFlush(
 
   {
     auto* gr_shader_cache = channel_->gpu_channel_manager()->gr_shader_cache();
-    absl::optional<raster::GrShaderCache::ScopedCacheUse> cache_use;
+    std::optional<raster::GrShaderCache::ScopedCacheUse> cache_use;
     if (gr_shader_cache)
       cache_use.emplace(gr_shader_cache, channel_->client_id());
     command_buffer_->Flush(put_offset, decoder_context_.get());
@@ -601,15 +592,6 @@ void CommandBufferStub::SignalQuery(uint32_t query_id, uint32_t id) {
                "callback on. Running the callback immediately.";
     OnSignalAck(id);
   }
-}
-
-void CommandBufferStub::BindMediaReceiver(
-    mojo::GenericPendingAssociatedReceiver receiver,
-    BindMediaReceiverCallback callback) {
-  const auto& binder = channel_->command_buffer_media_binder();
-  if (binder)
-    binder.Run(this, std::move(receiver));
-  std::move(callback).Run();
 }
 
 void CommandBufferStub::OnFenceSyncRelease(uint64_t release) {
@@ -718,7 +700,8 @@ void CommandBufferStub::CheckContextLost() {
         decoder_context_ &&
         decoder_context_->WasContextLostByRobustnessExtension();
     channel_->gpu_channel_manager()->OnContextLost(/*context_lost_count=*/-1,
-                                                   !was_lost_by_robustness);
+                                                   !was_lost_by_robustness,
+                                                   state.context_lost_reason);
   }
 
   CheckCompleteWaits();
@@ -767,7 +750,7 @@ CommandBufferStub::ScopedContextOperation::ScopedContextOperation(
   stub_->UpdateActiveUrl();
   if (stub_->decoder_context_ && stub_->MakeCurrent()) {
     have_context_ = true;
-    cache_use_.emplace(stub_->CreateCacheUse());
+    stub_->CreateCacheUse(cache_use_);
   }
 }
 

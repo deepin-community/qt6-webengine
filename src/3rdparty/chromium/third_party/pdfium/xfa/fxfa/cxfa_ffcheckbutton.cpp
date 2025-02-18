@@ -310,31 +310,25 @@ void CXFA_FFCheckButton::OnProcessEvent(CFWL_Event* pEvent) {
   CXFA_FFField::OnProcessEvent(pEvent);
   switch (pEvent->GetType()) {
     case CFWL_Event::Type::CheckStateChanged: {
-      CXFA_EventParam eParam;
-      eParam.m_eType = XFA_EVENT_Change;
+      CXFA_EventParam eParam(XFA_EVENT_Change);
       eParam.m_wsPrevText = m_pNode->GetValue(XFA_ValuePicture::kRaw);
-
       CXFA_Node* exclNode = m_pNode->GetExclGroupIfExists();
       if (ProcessCommittedData()) {
-        eParam.m_pTarget = exclNode;
         if (exclNode) {
           m_pDocView->AddValidateNode(exclNode);
           m_pDocView->AddCalculateNode(exclNode);
           exclNode->ProcessEvent(GetDocView(), XFA_AttributeValue::Change,
                                  &eParam);
         }
-        eParam.m_pTarget = m_pNode.Get();
         m_pNode->ProcessEvent(GetDocView(), XFA_AttributeValue::Change,
                               &eParam);
       } else {
         SetFWLCheckState(m_pNode->GetCheckState());
       }
       if (exclNode) {
-        eParam.m_pTarget = exclNode;
         exclNode->ProcessEvent(GetDocView(), XFA_AttributeValue::Click,
                                &eParam);
       }
-      eParam.m_pTarget = m_pNode.Get();
       m_pNode->ProcessEvent(GetDocView(), XFA_AttributeValue::Click, &eParam);
       break;
     }

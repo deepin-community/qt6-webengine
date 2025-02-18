@@ -147,9 +147,7 @@ void MockBackgroundFetchDelegate::DownloadUrl(
     CHECK(base::CreateTemporaryFileInDir(temp_directory_.GetPath(),
                                          &response_path));
 
-    CHECK_NE(/* error= */ -1,
-             base::WriteFile(response_path, test_response->data.c_str(),
-                             test_response->data.size()));
+    CHECK(base::WriteFile(response_path, test_response->data));
 
     PostAbortCheckingTask(
         job_unique_id,
@@ -160,7 +158,7 @@ void MockBackgroundFetchDelegate::DownloadUrl(
                 std::make_unique<BackgroundFetchResponse>(
                     std::vector<GURL>({url}), test_response->headers),
                 base::Time::Now(), response_path,
-                /* blob_handle= */ absl::nullopt, test_response->data.size())));
+                /* blob_handle= */ std::nullopt, test_response->data.size())));
   } else {
     auto response = std::make_unique<BackgroundFetchResponse>(
         std::vector<GURL>({url}), test_response->headers);
@@ -188,8 +186,8 @@ void MockBackgroundFetchDelegate::MarkJobComplete(
 
 void MockBackgroundFetchDelegate::UpdateUI(
     const std::string& job_unique_id,
-    const absl::optional<std::string>& title,
-    const absl::optional<SkBitmap>& icon) {
+    const std::optional<std::string>& title,
+    const std::optional<SkBitmap>& icon) {
   job_id_to_client_map_[job_unique_id]->OnUIUpdated(job_unique_id);
 }
 

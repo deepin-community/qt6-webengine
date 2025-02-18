@@ -4,11 +4,15 @@
 
 #include "content/browser/renderer_host/isolated_web_app_throttle.h"
 
+#include <optional>
+
 #include "base/command_line.h"
 #include "base/memory/raw_ptr.h"
 #include "content/browser/renderer_host/frame_tree_node.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/content_browser_client.h"
+#include "content/public/browser/page_navigator.h"
+#include "content/public/browser/site_instance.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/content_features.h"
@@ -20,6 +24,8 @@
 #include "content/test/test_render_frame_host.h"
 #include "net/base/net_errors.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/common/permissions_policy/permissions_policy_declaration.h"
+#include "third_party/blink/public/mojom/permissions_policy/permissions_policy_feature.mojom.h"
 #include "ui/base/page_transition_types.h"
 #include "url/origin.h"
 
@@ -31,11 +37,10 @@ const char kAppUrl[] = "https://isolated.app";
 const char kAppUrl2[] = "https://isolated.app/page";
 const char kNonAppUrl[] = "https://example.com";
 const char kNonAppUrl2[] = "https://example.com/page";
-static constexpr RenderFrameHost::WebExposedIsolationLevel kNotIsolated =
-    RenderFrameHost::WebExposedIsolationLevel::kNotIsolated;
-static constexpr RenderFrameHost::WebExposedIsolationLevel
-    kMaybeIsolatedApplication =
-        RenderFrameHost::WebExposedIsolationLevel::kMaybeIsolatedApplication;
+static constexpr WebExposedIsolationLevel kNotIsolated =
+    WebExposedIsolationLevel::kNotIsolated;
+static constexpr WebExposedIsolationLevel kIsolatedApplication =
+    WebExposedIsolationLevel::kIsolatedApplication;
 
 class IsolatedWebAppContentBrowserClient : public ContentBrowserClient {
  public:
@@ -54,7 +59,7 @@ class IsolatedWebAppContentBrowserClient : public ContentBrowserClient {
       network::mojom::WebSandboxFlags sandbox_flags,
       ui::PageTransition page_transition,
       bool has_user_gesture,
-      const absl::optional<url::Origin>& initiating_origin,
+      const std::optional<url::Origin>& initiating_origin,
       RenderFrameHost* initiator_document,
       mojo::PendingRemote<network::mojom::URLLoaderFactory>* out_factory)
       override {
@@ -67,6 +72,16 @@ class IsolatedWebAppContentBrowserClient : public ContentBrowserClient {
     return external_protocol_call_count_;
   }
 
+  void OpenURL(
+      content::SiteInstance* site_instance,
+      const content::OpenURLParams& params,
+      base::OnceCallback<void(content::WebContents*)> callback) override {
+    open_url_call_count_++;
+    last_page_transition_ = params.transition;
+  }
+
+  unsigned int GetOpenUrlCallCount() const { return open_url_call_count_; }
+
   ui::PageTransition GetLastPageTransition() { return last_page_transition_; }
 
   void ResetExternalProtocolCallCount() {
@@ -74,10 +89,27 @@ class IsolatedWebAppContentBrowserClient : public ContentBrowserClient {
     last_page_transition_ = ui::PageTransition::PAGE_TRANSITION_QUALIFIER_MASK;
   }
 
+  void ResetOpenUrlCallCount() {
+    open_url_call_count_ = 0;
+    last_page_transition_ = ui::PageTransition::PAGE_TRANSITION_QUALIFIER_MASK;
+  }
+
   bool AreIsolatedWebAppsEnabled(BrowserContext*) override { return true; }
+
+  std::optional<blink::ParsedPermissionsPolicy>
+  GetPermissionsPolicyForIsolatedWebApp(
+      content::BrowserContext* browser_context,
+      const url::Origin& app_origin) override {
+    return {{blink::ParsedPermissionsPolicyDeclaration(
+        blink::mojom::PermissionsPolicyFeature::kCrossOriginIsolated,
+        /*allowed_origins=*/{},
+        /*self_if_matches=*/std::nullopt,
+        /*matches_all_origins=*/true, /*matches_opaque_src=*/false)}};
+  }
 
  private:
   unsigned int external_protocol_call_count_ = 0;
+  unsigned int open_url_call_count_ = 0;
   ui::PageTransition last_page_transition_ =
       ui::PageTransition::PAGE_TRANSITION_QUALIFIER_MASK;
 };
@@ -155,8 +187,7 @@ class IsolatedWebAppThrottleTest : public RenderViewHostTestHarness {
     return child_rfh->GetFrameTreeNodeId();
   }
 
-  RenderFrameHost::WebExposedIsolationLevel GetWebExposedIsolationLevel(
-      int frame_tree_node_id) {
+  WebExposedIsolationLevel GetWebExposedIsolationLevel(int frame_tree_node_id) {
     return FrameTreeNode::GloballyFindByID(frame_tree_node_id)
         ->current_frame_host()
         ->GetWebExposedIsolationLevel();
@@ -231,32 +262,32 @@ TEST_F(IsolatedWebAppThrottleTest, BlockNavigationIntoIsolatedWebApp) {
 
 TEST_F(IsolatedWebAppThrottleTest, AllowNavigationIfNoPreviousPage) {
   CommitBrowserInitiatedNavigation(kAppUrl, coop_coep_headers());
-  EXPECT_EQ(kMaybeIsolatedApplication,
-            GetWebExposedIsolationLevel(main_frame_id()));
+  EXPECT_EQ(kIsolatedApplication, GetWebExposedIsolationLevel(main_frame_id()));
 }
 
 TEST_F(IsolatedWebAppThrottleTest, AllowNavigationWithinIsolatedWebApp) {
   CommitBrowserInitiatedNavigation(kAppUrl, coop_coep_headers());
-  EXPECT_EQ(kMaybeIsolatedApplication,
-            GetWebExposedIsolationLevel(main_frame_id()));
+  EXPECT_EQ(kIsolatedApplication, GetWebExposedIsolationLevel(main_frame_id()));
 
   CommitRendererInitiatedNavigation(main_frame_id(), kAppUrl2,
                                     coop_coep_headers());
-  EXPECT_EQ(kMaybeIsolatedApplication,
-            GetWebExposedIsolationLevel(main_frame_id()));
+  EXPECT_EQ(kIsolatedApplication, GetWebExposedIsolationLevel(main_frame_id()));
 }
 
 TEST_F(IsolatedWebAppThrottleTest, CancelCrossOriginNavigation) {
   CommitBrowserInitiatedNavigation(kAppUrl, coop_coep_headers());
-  EXPECT_EQ(kMaybeIsolatedApplication,
-            GetWebExposedIsolationLevel(main_frame_id()));
+  EXPECT_EQ(kIsolatedApplication, GetWebExposedIsolationLevel(main_frame_id()));
 
   auto simulator =
       StartRendererInitiatedNavigation(main_frame_id(), kNonAppUrl);
 
   auto start_result = simulator->GetLastThrottleCheckResult();
   EXPECT_EQ(NavigationThrottle::CANCEL, start_result.action());
+#if BUILDFLAG(IS_CHROMEOS)
+  EXPECT_EQ(1u, GetBrowserClient().GetOpenUrlCallCount());
+#else
   EXPECT_EQ(1u, GetBrowserClient().GetExternalProtocolCallCount());
+#endif
   EXPECT_TRUE(ui::PageTransitionTypeIncludingQualifiersIs(
       GetBrowserClient().GetLastPageTransition(),
       ui::PageTransition::PAGE_TRANSITION_LINK));
@@ -264,7 +295,11 @@ TEST_F(IsolatedWebAppThrottleTest, CancelCrossOriginNavigation) {
   simulator = StartRendererInitiatedNavigation(main_frame_id(), kNonAppUrl2);
   start_result = simulator->GetLastThrottleCheckResult();
   EXPECT_EQ(NavigationThrottle::CANCEL, start_result.action());
+#if BUILDFLAG(IS_CHROMEOS)
+  EXPECT_EQ(2u, GetBrowserClient().GetOpenUrlCallCount());
+#else
   EXPECT_EQ(2u, GetBrowserClient().GetExternalProtocolCallCount());
+#endif
   EXPECT_TRUE(ui::PageTransitionTypeIncludingQualifiersIs(
       GetBrowserClient().GetLastPageTransition(),
       ui::PageTransition::PAGE_TRANSITION_LINK));
@@ -272,8 +307,7 @@ TEST_F(IsolatedWebAppThrottleTest, CancelCrossOriginNavigation) {
 
 TEST_F(IsolatedWebAppThrottleTest, BlockRedirectOutOfIsolatedWebApp) {
   CommitBrowserInitiatedNavigation(kAppUrl, coop_coep_headers());
-  EXPECT_EQ(kMaybeIsolatedApplication,
-            GetWebExposedIsolationLevel(main_frame_id()));
+  EXPECT_EQ(kIsolatedApplication, GetWebExposedIsolationLevel(main_frame_id()));
 
   auto simulator = StartRendererInitiatedNavigation(main_frame_id(), kAppUrl2);
 
@@ -285,7 +319,11 @@ TEST_F(IsolatedWebAppThrottleTest, BlockRedirectOutOfIsolatedWebApp) {
 
   auto redirect_result = simulator->GetLastThrottleCheckResult();
   EXPECT_EQ(NavigationThrottle::CANCEL, redirect_result.action());
+#if BUILDFLAG(IS_CHROMEOS)
+  EXPECT_EQ(1u, GetBrowserClient().GetOpenUrlCallCount());
+#else
   EXPECT_EQ(1u, GetBrowserClient().GetExternalProtocolCallCount());
+#endif
   EXPECT_TRUE(ui::PageTransitionTypeIncludingQualifiersIs(
       GetBrowserClient().GetLastPageTransition(),
       ui::PageTransition::PAGE_TRANSITION_SERVER_REDIRECT));
@@ -293,8 +331,7 @@ TEST_F(IsolatedWebAppThrottleTest, BlockRedirectOutOfIsolatedWebApp) {
 
 TEST_F(IsolatedWebAppThrottleTest, AllowIframeNavigationOutOfApp) {
   CommitBrowserInitiatedNavigation(kAppUrl);
-  EXPECT_EQ(kMaybeIsolatedApplication,
-            GetWebExposedIsolationLevel(main_frame_id()));
+  EXPECT_EQ(kIsolatedApplication, GetWebExposedIsolationLevel(main_frame_id()));
   int iframe_id = CreateIframe(main_frame_id(), "test_frame");
 
   // Navigate the iframe to an app page.
@@ -307,8 +344,7 @@ TEST_F(IsolatedWebAppThrottleTest, AllowIframeNavigationOutOfApp) {
 TEST_F(IsolatedWebAppThrottleTest,
        BlockIframeRendererInitiatedNavigationIntoIsolatedWebApp) {
   CommitBrowserInitiatedNavigation(kAppUrl, coop_coep_headers());
-  EXPECT_EQ(kMaybeIsolatedApplication,
-            GetWebExposedIsolationLevel(main_frame_id()));
+  EXPECT_EQ(kIsolatedApplication, GetWebExposedIsolationLevel(main_frame_id()));
   int iframe_id = CreateIframe(main_frame_id(), "test_frame");
 
   // Navigate the iframe to a non-app page.
@@ -324,8 +360,7 @@ TEST_F(IsolatedWebAppThrottleTest,
 TEST_F(IsolatedWebAppThrottleTest,
        AllowIframeBrowserInitiatedNavigationIntoIsolatedWebApp) {
   CommitBrowserInitiatedNavigation(kAppUrl);
-  EXPECT_EQ(kMaybeIsolatedApplication,
-            GetWebExposedIsolationLevel(main_frame_id()));
+  EXPECT_EQ(kIsolatedApplication, GetWebExposedIsolationLevel(main_frame_id()));
   int iframe_id = CreateIframe(main_frame_id(), "test_frame");
 
   // Navigate the iframe to an app page.
@@ -354,8 +389,7 @@ TEST_F(IsolatedWebAppThrottleTest,
 TEST_F(IsolatedWebAppThrottleTest,
        BlockIframeRedirectOutThenIntoIsolatedWebApp) {
   CommitBrowserInitiatedNavigation(kAppUrl, coop_coep_headers());
-  EXPECT_EQ(kMaybeIsolatedApplication,
-            GetWebExposedIsolationLevel(main_frame_id()));
+  EXPECT_EQ(kIsolatedApplication, GetWebExposedIsolationLevel(main_frame_id()));
   int iframe_id = CreateIframe(main_frame_id(), "test_frame");
 
   auto simulator = StartRendererInitiatedNavigation(iframe_id, kAppUrl);
@@ -380,8 +414,7 @@ TEST_F(IsolatedWebAppThrottleTest,
 
 TEST_F(IsolatedWebAppThrottleTest, BlockIsolatedIframeInNonIsolatedIframe) {
   CommitBrowserInitiatedNavigation(kAppUrl, coop_coep_headers());
-  EXPECT_EQ(kMaybeIsolatedApplication,
-            GetWebExposedIsolationLevel(main_frame_id()));
+  EXPECT_EQ(kIsolatedApplication, GetWebExposedIsolationLevel(main_frame_id()));
 
   // Create a non-app iframe.
   int child_iframe_id = CreateIframe(main_frame_id(), "test_frame1");
@@ -399,8 +432,7 @@ TEST_F(IsolatedWebAppThrottleTest, BlockIsolatedIframeInNonIsolatedIframe) {
 
 TEST_F(IsolatedWebAppThrottleTest, AllowHistoryNavigationFromErrorPage) {
   CommitBrowserInitiatedNavigation(kAppUrl, coop_coep_headers());
-  EXPECT_EQ(kMaybeIsolatedApplication,
-            GetWebExposedIsolationLevel(main_frame_id()));
+  EXPECT_EQ(kIsolatedApplication, GetWebExposedIsolationLevel(main_frame_id()));
 
   auto* error_rfh = NavigationSimulator::NavigateAndFailFromDocument(
       GURL(kAppUrl2), net::ERR_TIMED_OUT,

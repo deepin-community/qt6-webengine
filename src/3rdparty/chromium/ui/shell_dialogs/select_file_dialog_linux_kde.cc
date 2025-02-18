@@ -25,6 +25,7 @@
 #include "ui/aura/window_tree_host.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/shell_dialogs/select_file_dialog_linux.h"
+#include "ui/shell_dialogs/selected_file_info.h"
 #include "ui/strings/grit/ui_strings.h"
 #include "url/gurl.h"
 
@@ -169,7 +170,7 @@ class SelectFileDialogLinuxKde : public SelectFileDialogLinux {
       void* params,
       std::unique_ptr<KDialogOutputParams> results);
 
-  // Should be either DESKTOP_ENVIRONMENT_KDE3, KDE4, or KDE5.
+  // Should be either DESKTOP_ENVIRONMENT_KDE3, KDE4, KDE5, or KDE6.
   base::nix::DesktopEnvironment desktop_;
 
   // The set of all parent windows for which we are currently running
@@ -222,7 +223,8 @@ SelectFileDialogLinuxKde::SelectFileDialogLinuxKde(
            base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN})) {
   DCHECK(desktop_ == base::nix::DESKTOP_ENVIRONMENT_KDE3 ||
          desktop_ == base::nix::DESKTOP_ENVIRONMENT_KDE4 ||
-         desktop_ == base::nix::DESKTOP_ENVIRONMENT_KDE5);
+         desktop_ == base::nix::DESKTOP_ENVIRONMENT_KDE5 ||
+         desktop_ == base::nix::DESKTOP_ENVIRONMENT_KDE6);
   // |kdialog_version| should be of the form "kdialog 1.2.3", so split on
   // whitespace and then try to parse a version from the second piece. If
   // parsing fails for whatever reason, we fall back to the behavior that works
@@ -450,7 +452,7 @@ void SelectFileDialogLinuxKde::FileSelected(const base::FilePath& path,
     NOTREACHED();
   if (listener_) {  // What does the filter index actually do?
     // TODO(dfilimon): Get a reasonable index value from somewhere.
-    listener_->FileSelected(path, 1, params);
+    listener_->FileSelected(SelectedFileInfo(path), 1, params);
   }
 }
 
@@ -459,7 +461,8 @@ void SelectFileDialogLinuxKde::MultiFilesSelected(
     void* params) {
   set_last_opened_path(files[0].DirName());
   if (listener_)
-    listener_->MultiFilesSelected(files, params);
+    listener_->MultiFilesSelected(FilePathListToSelectedFileInfoList(files),
+                                  params);
 }
 
 void SelectFileDialogLinuxKde::FileNotSelected(void* params) {

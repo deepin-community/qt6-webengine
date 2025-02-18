@@ -11,36 +11,13 @@ For scalar T, the result is t * t * (3.0 - 2.0 * t), where t = clamp((x - low) /
 
 import { makeTestGroup } from '../../../../../../common/framework/test_group.js';
 import { GPUTest } from '../../../../../gpu_test.js';
-import { TypeF32 } from '../../../../../util/conversion.js';
-import { smoothStepInterval } from '../../../../../util/f32_interval.js';
-import { sparseF32Range } from '../../../../../util/math.js';
-import { makeCaseCache } from '../../case_cache.js';
-import { allInputSources, generateTernaryToF32IntervalCases, run } from '../../expression.js';
+import { TypeF16, TypeF32 } from '../../../../../util/conversion.js';
+import { allInputSources, run } from '../../expression.js';
 
 import { builtin } from './builtin.js';
+import { d } from './smoothstep.cache.js';
 
 export const g = makeTestGroup(GPUTest);
-
-export const d = makeCaseCache('smoothstep', {
-  f32_const: () => {
-    return generateTernaryToF32IntervalCases(
-      sparseF32Range(),
-      sparseF32Range(),
-      sparseF32Range(),
-      'f32-only',
-      smoothStepInterval
-    );
-  },
-  f32_non_const: () => {
-    return generateTernaryToF32IntervalCases(
-      sparseF32Range(),
-      sparseF32Range(),
-      sparseF32Range(),
-      'unfiltered',
-      smoothStepInterval
-    );
-  },
-});
 
 g.test('abstract_float')
   .specURL('https://www.w3.org/TR/WGSL/#float-builtin-functions')
@@ -67,4 +44,10 @@ g.test('f16')
   .params(u =>
     u.combine('inputSource', allInputSources).combine('vectorize', [undefined, 2, 3, 4] as const)
   )
-  .unimplemented();
+  .beforeAllSubcases(t => {
+    t.selectDeviceOrSkipTestCase('shader-f16');
+  })
+  .fn(async t => {
+    const cases = await d.get(t.params.inputSource === 'const' ? 'f16_const' : 'f16_non_const');
+    await run(t, builtin('smoothstep'), [TypeF16, TypeF16, TypeF16], TypeF16, t.params, cases);
+  });

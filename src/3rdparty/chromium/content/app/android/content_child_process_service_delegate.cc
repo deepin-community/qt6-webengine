@@ -15,7 +15,7 @@
 #include "content/child/child_thread_impl.h"
 #include "content/common/android/surface_wrapper.h"
 #include "content/common/shared_file_util.h"
-#include "content/public/android/content_jni_headers/ContentChildProcessServiceDelegate_jni.h"
+#include "content/public/android/content_main_dex_jni/ContentChildProcessServiceDelegate_jni.h"
 #include "content/public/common/content_descriptors.h"
 #include "content/public/common/content_switches.h"
 #include "gpu/command_buffer/service/texture_owner.h"
@@ -147,7 +147,7 @@ void JNI_ContentChildProcessServiceDelegate_RetrieveFileDescriptorsIdsToKeys(
   std::vector<int> ids;
   std::vector<std::string> keys;
   if (!file_switch_value.empty()) {
-    absl::optional<std::map<int, std::string>> ids_to_keys_from_command_line =
+    std::optional<std::map<int, std::string>> ids_to_keys_from_command_line =
         ParseSharedFileSwitchValue(file_switch_value);
     if (ids_to_keys_from_command_line) {
       for (auto iter : *ids_to_keys_from_command_line) {

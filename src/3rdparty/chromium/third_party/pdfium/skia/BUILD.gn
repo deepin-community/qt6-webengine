@@ -3,6 +3,7 @@
 # found in the LICENSE file.
 
 import("//build/config/features.gni")
+import("//build/config/freetype/freetype.gni")
 import("//build/config/ui.gni")
 import("//testing/test.gni")
 import("//third_party/skia/gn/codec.gni")
@@ -17,7 +18,7 @@ if (current_cpu == "mipsel" || current_cpu == "mips64el") {
   import("//build/config/mips.gni")
 }
 
-skia_support_gpu = !is_ios
+skia_use_ganesh_backend = !is_ios
 skia_support_pdf = false
 
 # External-facing config for dependent code.
@@ -27,6 +28,24 @@ config("skia_config") {
   defines = [
     "SK_ENCODE_PNG",
     "SK_USER_CONFIG_HEADER=\"../../skia/config/SkPdfiumUserConfig.h\"",
+    "SK_DISABLE_LEGACY_SKSURFACE_METHODS",
+    "SK_DISABLE_LEGACY_GRAPHITE_IMAGE_FACTORIES",
+    "SK_DISABLE_LEGACY_GRAPHITE_IMAGE_METHODS",
+    "SK_DISABLE_LEGACY_SKSURFACE_FACTORIES",
+    "SK_DISABLE_LEGACY_SKSURFACE_FLUSH",
+    "SK_DISABLE_LEGACY_SKSURFACE_AS_IMAGE",
+    "SK_DISABLE_LEGACY_SKSURFACE_DISPLAYLIST",
+    "SK_DISABLE_LEGACY_IMAGE_SUBSET_METHODS",
+    "SK_DISABLE_LEGACY_IMAGE_COLORSPACE_METHODS",
+    "SK_DISABLE_LEGACY_IMAGE_RELEASE_PROCS",
+    "SK_DISABLE_LEGACY_GL_BACKEND_SURFACE",
+    "SK_DISABLE_LEGACY_INIT_DECODERS",
+    "SK_DISABLE_LEGACY_GRDIRECTCONTEXT_FLUSH",
+    "SK_DISABLE_LEGACY_GRDIRECTCONTEXT_BOOLS",
+    "SK_DISABLE_LEGACY_GL_GRDIRECTCONTEXT_FACTORIES",
+    "SK_DISABLE_LEGACY_PNG_WRITEBUFFER",
+    "SK_SLUG_DISABLE_LEGACY_DESERIALIZE",
+    "SK_DISABLE_LEGACY_VK_GRDIRECTCONTEXT_FACTORIES",
   ]
 
   if (is_win) {
@@ -40,10 +59,8 @@ config("skia_config") {
     ]
   }
 
-  if (skia_support_gpu) {
-    defines += [ "SK_SUPPORT_GPU=1" ]
-  } else {
-    defines += [ "SK_SUPPORT_GPU=0" ]
+  if (skia_use_ganesh_backend) {
+    defines += [ "SK_GANESH" ]
   }
 
   if (skia_use_gl) {
@@ -73,6 +90,19 @@ config("skia_library_config") {
     "IS_SKIA_IMPL=1",
     "SKIA_IMPLEMENTATION=1",
   ]
+
+  if (use_blink && !use_system_freetype) {
+    defines += [ "SK_FREETYPE_MINIMUM_RUNTIME_VERSION=(((FREETYPE_MAJOR) * 0x01000000) | ((FREETYPE_MINOR) * 0x00010000) | ((FREETYPE_PATCH) * 0x00000100))" ]
+  }
+  if (use_blink) {
+    defines += [ "SK_TYPEFACE_FACTORY_FREETYPE" ]
+  }
+  if (is_win) {
+    defines += [ "SK_TYPEFACE_FACTORY_DIRECTWRITE" ]
+  }
+  if (is_apple) {
+    defines += [ "SK_TYPEFACE_FACTORY_CORETEXT" ]
+  }
 
   if (current_cpu == "arm") {
     if (arm_use_neon) {
@@ -141,28 +171,9 @@ config("skia_library_config") {
   }
 }
 
-source_set("skcms") {
-  cflags = []
-  if (!is_win || is_clang) {
-    cflags += [
-      "-w",
-      "-std=c11",
-    ]
-  }
-
-  # LLVM automatically sets the equivalent of GCC's -mfp16-format=ieee on ARM
-  # builds by default, while GCC itself does not. We need it to enable support
-  # for half-precision floating point data types used by SKCMS on ARM.
-  if ((is_linux || is_chromeos) && !is_clang && current_cpu == "arm") {
-    cflags += [ "-mfp16-format=ieee" ]
-  }
-
-  public =
-      rebase_path(skcms_public_headers, ".", "//third_party/skia/modules/skcms")
-  sources = rebase_path(skcms_sources, ".", "//third_party/skia/modules/skcms")
-}
-
 component("skia") {
+  deps = []
+
   sources = [
     # PDFium sources.
     "config/SkPdfiumUserConfig.h",
@@ -173,14 +184,15 @@ component("skia") {
   sources += skia_core_public
   sources += skia_sksl_gpu_sources
   sources += skia_sksl_sources
-  sources += skia_utils_sources
+  sources += skia_utils_private
+  sources += skia_xps_sources
   sources += skia_codec_core
   sources += skia_codec_decode_bmp
+  sources += skia_encode_srcs
+  sources += skia_encode_png_srcs
   sources += [
     "//third_party/skia/src/fonts/SkFontMgr_indirect.cpp",
     "//third_party/skia/src/fonts/SkRemotableFontMgr.cpp",
-    "//third_party/skia/src/images/SkImageEncoder.cpp",
-    "//third_party/skia/src/images/SkPngEncoder.cpp",
     "//third_party/skia/src/ports/SkGlobalInitialization_default.cpp",
     "//third_party/skia/src/ports/SkImageGenerator_none.cpp",
     "//third_party/skia/src/ports/SkOSFile_stdio.cpp",
@@ -196,9 +208,9 @@ component("skia") {
   allow_circular_includes_from = [ ":skia_opts" ]
 
   # GPU
-  if (skia_support_gpu) {
+  if (skia_use_ganesh_backend) {
     sources += skia_gpu_public
-    sources += skia_gpu_private
+    sources += skia_ganesh_private
     sources += skia_null_gpu_sources
     sources += skia_shared_gpu_sources
     if (skia_use_gl) {
@@ -213,13 +225,15 @@ component("skia") {
     "//third_party/skia/src/utils/SkParsePath.cpp",
   ]
 
+  if (is_win) {
+    libs = [ "fontsub.lib" ]
+  }
+
   # need separate win section to handle chromes auto gn filter
   # (build/config/BUILDCONFIG.gn)
   if (is_win) {
     sources -= [
       #windows
-      "//third_party/skia/src/utils/win/SkAutoCoInitialize.cpp",
-      "//third_party/skia/src/utils/win/SkIStream.cpp",
       "//third_party/skia/src/utils/win/SkWGL_win.cpp",
     ]
   }
@@ -236,16 +250,10 @@ component("skia") {
   }
 
   if (is_win) {
+    # See SK_TYPEFACE_FACTORY_DIRECTWRITE
     sources += [
-      "//third_party/skia/src/ports/SkFontHost_win.cpp",
-
-      # TODO(crbug.com/pdfium/1830)  Consider using SkFontMgr_win_dw_factory
-      # instead of SkFontMgr_custom_empty (which is what the embedder test
-      # hashes are based upon).
-      "//third_party/skia/src/ports/SkFontMgr_custom.cpp",
-      "//third_party/skia/src/ports/SkFontMgr_custom_empty.cpp",
-      "//third_party/skia/src/ports/SkFontMgr_custom_empty_factory.cpp",
       "//third_party/skia/src/ports/SkFontMgr_win_dw.cpp",
+      "//third_party/skia/src/ports/SkFontMgr_win_dw_factory.cpp",
       "//third_party/skia/src/ports/SkOSFile_win.cpp",
       "//third_party/skia/src/ports/SkRemotableFontMgr_win_dw.cpp",
       "//third_party/skia/src/ports/SkScalerContext_win_dw.cpp",
@@ -257,13 +265,11 @@ component("skia") {
 
   frameworks = []
   if (is_apple) {
+    # See SK_TYPEFACE_FACTORY_CORETEXT
     sources += [
-      # TODO(crbug.com/pdfium/1830)  Consider using SkFontMgr_mac_ct instead of
-      # SkFontMgr_custom_empty (which is what the embedder test hashes are
-      # based upon).
-      "//third_party/skia/src/ports/SkFontMgr_custom.cpp",
-      "//third_party/skia/src/ports/SkFontMgr_custom_empty.cpp",
-      "//third_party/skia/src/ports/SkFontMgr_custom_empty_factory.cpp",
+      "//third_party/skia/include/ports/SkFontMgr_mac_ct.h",
+      "//third_party/skia/src/ports/SkFontMgr_mac_ct.cpp",
+      "//third_party/skia/src/ports/SkFontMgr_mac_ct_factory.cpp",
       "//third_party/skia/src/ports/SkScalerContext_mac_ct.cpp",
       "//third_party/skia/src/ports/SkScalerContext_mac_ct.h",
       "//third_party/skia/src/ports/SkTypeface_mac_ct.cpp",
@@ -299,6 +305,32 @@ component("skia") {
     ]
   }
 
+  if (is_fuchsia) {
+    sources += [
+      # TODO(crbug.com/pdfium/2019): Consider using SkFontMgr_fuchsia.cpp
+      # instead of SkFontMgr_custom_empty.cpp.
+      "//third_party/skia/src/ports/SkFontMgr_custom.cpp",
+      "//third_party/skia/src/ports/SkFontMgr_custom_empty.cpp",
+      "//third_party/skia/src/ports/SkFontMgr_custom_empty_factory.cpp",
+    ]
+    deps += [
+      "//third_party/fuchsia-sdk/sdk/fidl/fuchsia.fonts:fuchsia.fonts_hlcpp",
+      "//third_party/fuchsia-sdk/sdk/fidl/fuchsia.io:fuchsia.io_hlcpp",
+      "//third_party/fuchsia-sdk/sdk/fidl/fuchsia.sys:fuchsia.sys_hlcpp",
+      "//third_party/fuchsia-sdk/sdk/pkg/sys_cpp",
+      "//third_party/fuchsia-sdk/sdk/pkg/zx",
+      "//third_party/icu:icuuc",
+    ]
+  }
+
+  if (is_win || (is_apple && use_blink)) {
+    sources += [
+      # Add the FreeType custom font manager as a fallback backend for variable fonts.
+      "//third_party/skia/src/ports/SkFontMgr_custom.cpp",
+      "//third_party/skia/src/ports/SkFontMgr_custom_empty.cpp",
+    ]
+  }
+
   if (is_clang && !is_nacl) {
     # Skia won't compile with some of the more strict clang warnings.
     # e.g. it does:
@@ -314,7 +346,7 @@ component("skia") {
   ]
   public_configs = [ ":skia_config" ]
 
-  deps = [
+  deps += [
     ":skcms",
     ":skia_opts",
     "../third_party:png",
@@ -332,7 +364,7 @@ component("skia") {
 
   if (is_android) {
     deps += [
-      "//third_party/android_ndk:cpu_features",
+      "//third_party/cpu_features:ndk_compat",
       "//third_party/expat",
     ]
   }
@@ -391,50 +423,14 @@ skia_source_set("skia_core_and_effects") {
   defines = []
   sources = skia_core_sources
   sources += skia_effects_sources
+  sources += skia_colorfilters_sources
   sources += skia_effects_imagefilter_sources
 
   visibility = [ ":skia" ]
 }
 
 # Bits that involve special vector-y hardware.
-if (current_cpu == "arm64") {
-  skia_source_set("skia_opts_crc32") {
-    sources = skia_opts.crc32_sources
-    cflags = [ "-march=armv8-a+crc" ]
-    visibility = [ ":skia_opts" ]
-  }
-}
 if (current_cpu == "x86" || current_cpu == "x64") {
-  skia_source_set("skia_opts_sse3") {
-    sources = skia_opts.ssse3_sources
-    if (!is_win || is_clang) {
-      cflags = [ "-mssse3" ]
-    }
-    if (is_win) {
-      defines = [ "SK_CPU_SSE_LEVEL=31" ]
-    }
-    visibility = [ ":skia_opts" ]
-  }
-  skia_source_set("skia_opts_sse42") {
-    sources = skia_opts.sse42_sources
-    if (!is_win || is_clang) {
-      cflags = [ "-msse4.2" ]
-    }
-    if (is_win) {
-      defines = [ "SK_CPU_SSE_LEVEL=42" ]
-    }
-    visibility = [ ":skia_opts" ]
-  }
-  skia_source_set("skia_opts_avx") {
-    sources = skia_opts.avx_sources
-    if (!is_win) {
-      cflags = [ "-mavx" ]
-    }
-    if (is_win) {
-      cflags = [ "/arch:AVX" ]
-    }
-    visibility = [ ":skia_opts" ]
-  }
   skia_source_set("skia_opts_hsw") {
     sources = skia_opts.hsw_sources
     if (!is_win) {
@@ -451,16 +447,6 @@ if (current_cpu == "x86" || current_cpu == "x64") {
     }
     visibility = [ ":skia_opts" ]
   }
-  skia_source_set("skia_opts_skx") {
-    sources = skia_opts.skx_sources
-    if (!is_win) {
-      cflags = [ "-march=skylake-avx512" ]
-    }
-    if (is_win) {
-      cflags = [ "/arch:AVX512" ]
-    }
-    visibility = [ ":skia_opts" ]
-  }
 }
 
 skia_source_set("skia_opts") {
@@ -468,13 +454,7 @@ skia_source_set("skia_opts") {
   defines = []
 
   if (current_cpu == "x86" || current_cpu == "x64") {
-    deps = [
-      ":skia_opts_avx",
-      ":skia_opts_hsw",
-      ":skia_opts_skx",
-      ":skia_opts_sse3",
-      ":skia_opts_sse42",
-    ]
+    deps = [ ":skia_opts_hsw" ]
   } else if (current_cpu == "arm") {
     # The assembly uses the frame pointer register (r7 in Thumb/r11 in
     # ARM), the compiler doesn't like that.
@@ -491,7 +471,7 @@ skia_source_set("skia_opts") {
       }
     }
   } else if (current_cpu == "arm64") {
-    deps = [ ":skia_opts_crc32" ]
+    # Conditional and empty body needed to avoid assert below
   } else if (current_cpu == "mipsel" || current_cpu == "mips64el") {
     cflags += [ "-fomit-frame-pointer" ]
   } else {
@@ -504,4 +484,75 @@ skia_source_set("skia_opts") {
   }
 
   visibility = [ ":skia" ]
+}
+
+if (current_cpu == "x64") {
+  skia_source_set("skcms_TransformHsw") {
+    sources = skcms_TransformHsw
+    if (!is_win) {
+      cflags = [
+        "-w",
+        "-march=haswell",
+        "-std=c11",
+      ]
+    } else {
+      cflags = [ "/arch:AVX2" ]
+    }
+    visibility = [ ":skcms" ]
+  }
+  skia_source_set("skcms_TransformSkx") {
+    sources = skcms_TransformSkx
+    if (!is_win) {
+      cflags = [
+        "-w",
+        "-march=skylake-avx512",
+        "-std=c11",
+      ]
+    } else {
+      cflags = [ "/arch:AVX512" ]
+    }
+    visibility = [ ":skcms" ]
+  }
+} else {
+  skia_source_set("skcms_TransformHsw") {
+    sources = []
+    visibility = [ ":skcms" ]
+  }
+  skia_source_set("skcms_TransformSkx") {
+    sources = []
+    visibility = [ ":skcms" ]
+  }
+}
+
+source_set("skcms_TransformBaseline_and_public") {
+  if (!is_win || is_clang) {
+    cflags = [
+      "-w",
+      "-std=c11",
+    ]
+  } else {
+    cflags = []
+  }
+
+  # LLVM automatically sets the equivalent of GCC's -mfp16-format=ieee on ARM
+  # builds by default, while GCC itself does not. We need it to enable support
+  # for half-precision floating point data types used by SKCMS on ARM.
+  if ((is_linux || is_chromeos) && !is_clang && current_cpu == "arm") {
+    cflags += [ "-mfp16-format=ieee" ]
+  }
+
+  sources = rebase_path(skcms_TransformBaseline + skcms_public,
+                        ".",
+                        "//third_party/skia/modules/skcms")
+}
+
+source_set("skcms") {
+  deps = [
+    ":skcms_TransformBaseline_and_public",
+    ":skcms_TransformHsw",
+    ":skcms_TransformSkx",
+  ]
+  public =
+      rebase_path(skcms_public_headers, ".", "//third_party/skia/modules/skcms")
+  include_dirs = [ "//third_party/skia/modules/skcms" ]
 }

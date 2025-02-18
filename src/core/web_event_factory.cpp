@@ -35,6 +35,7 @@
 #include "ui/events/keycodes/dom/keycode_converter.h"
 #include "ui/events/keycodes/keyboard_code_conversion.h"
 
+#include "native_web_keyboard_event_qt.h"
 #include "render_widget_host_view_qt_delegate.h"
 
 #include <QtGui/private/qtgui-config_p.h>
@@ -1444,6 +1445,7 @@ WebMouseEvent WebEventFactory::toWebMouseEvent(QHoverEvent *ev)
     webKitEvent.SetType(webEventTypeForEvent(ev));
 
     webKitEvent.SetPositionInWidget(ev->position().x(), ev->position().y());
+    webKitEvent.SetPositionInScreen(ev->globalPosition().x(), ev->globalPosition().y());
     webKitEvent.movement_x = ev->position().x() - ev->oldPos().x();
     webKitEvent.movement_y = ev->position().y() - ev->oldPos().y();
     webKitEvent.is_raw_movement_event = true;
@@ -1503,6 +1505,7 @@ WebGestureEvent WebEventFactory::toWebGestureEvent(QNativeGestureEvent *ev)
     case Qt::ZoomNativeGesture:
         webKitEvent.SetType(WebInputEvent::Type::kGesturePinchUpdate);
         webKitEvent.data.pinch_update.scale = static_cast<float>(ev->value() + 1.0);
+        webKitEvent.SetNeedsWheelEvent(true);
         break;
     case Qt::SmartZoomNativeGesture:
         webKitEvent.SetType(WebInputEvent::Type::kGestureDoubleTap);
@@ -1630,8 +1633,8 @@ bool WebEventFactory::coalesceWebWheelEvent(blink::WebMouseWheelEvent &webEvent,
     webEvent.SetPositionInScreen(static_cast<float>(ev->globalPosition().x()),
                                  static_cast<float>(ev->globalPosition().y()));
 
-    webEvent.wheel_ticks_x = ev->angleDelta().x() / static_cast<float>(QWheelEvent::DefaultDeltasPerStep);
-    webEvent.wheel_ticks_y = ev->angleDelta().y() / static_cast<float>(QWheelEvent::DefaultDeltasPerStep);
+    webEvent.wheel_ticks_x += ev->angleDelta().x() / static_cast<float>(QWheelEvent::DefaultDeltasPerStep);
+    webEvent.wheel_ticks_y += ev->angleDelta().y() / static_cast<float>(QWheelEvent::DefaultDeltasPerStep);
     setBlinkWheelEventDelta(webEvent);
 
     return true;
@@ -1659,13 +1662,17 @@ void WebEventFactory::sendUnhandledWheelEvent(const blink::WebGestureEvent &even
 
 content::NativeWebKeyboardEvent WebEventFactory::toWebKeyboardEvent(QKeyEvent *ev)
 {
-    content::NativeWebKeyboardEvent webKitEvent(reinterpret_cast<gfx::NativeEvent>(ev));
+    content::NativeWebKeyboardEvent webKitEvent(ToNativeEvent(ev));
     webKitEvent.SetTimeStamp(base::TimeTicks::Now());
-    webKitEvent.SetModifiers(modifiersForEvent(ev));
+    bool isBackTabWithoutModifier =
+            ev->key() == Qt::Key_Backtab && ev->modifiers() == Qt::NoModifier;
+    webKitEvent.SetModifiers(isBackTabWithoutModifier ? WebInputEvent::kShiftKey
+                                                      : modifiersForEvent(ev));
     webKitEvent.SetType(webEventTypeForEvent(ev));
 
     int qtKey = qtKeyForKeyEvent(ev);
-    Qt::KeyboardModifiers qtModifiers = qtModifiersForEvent(ev);
+    Qt::KeyboardModifiers qtModifiers =
+            isBackTabWithoutModifier ? Qt::ShiftModifier : qtModifiersForEvent(ev);
     QString qtText = qtTextForKeyEvent(ev, qtKey, qtModifiers);
 
     webKitEvent.native_key_code = nativeKeyCodeForKeyEvent(ev);

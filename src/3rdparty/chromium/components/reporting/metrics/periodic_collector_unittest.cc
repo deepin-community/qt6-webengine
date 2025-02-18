@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "base/run_loop.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/test/task_environment.h"
 #include "base/time/time.h"
 #include "components/reporting/metrics/fakes/fake_metric_report_queue.h"
@@ -44,10 +45,11 @@ class PeriodicCollectorTest : public ::testing::Test {
   std::unique_ptr<test::FakeReportingSettings> settings_;
   std::unique_ptr<test::FakeSampler> sampler_;
   std::unique_ptr<test::FakeMetricReportQueue> metric_report_queue_;
+  base::HistogramTester histogram_tester_;
 };
 
 TEST_F(PeriodicCollectorTest, InitiallyEnabled) {
-  settings_->SetBoolean(kEnableSettingPath, true);
+  settings_->SetReportingEnabled(kEnableSettingPath, true);
   settings_->SetInteger(kRateSettingPath, interval.InMilliseconds());
 
   MetricData metric_data_list[5];
@@ -84,12 +86,12 @@ TEST_F(PeriodicCollectorTest, InitiallyEnabled) {
   }
 
   sampler_->SetMetricData(metric_data_list[3]);
-  settings_->SetBoolean(kEnableSettingPath, false);
+  settings_->SetReportingEnabled(kEnableSettingPath, false);
   // Setting disabled, no data should be collected.
   task_environment_.FastForwardBy(interval);
   EXPECT_THAT(sampler_->GetNumCollectCalls(), Eq(expected_collect_calls));
 
-  settings_->SetBoolean(kEnableSettingPath, true);
+  settings_->SetReportingEnabled(kEnableSettingPath, true);
   // Initial collection at policy enablement.
   ++expected_collect_calls;
   EXPECT_THAT(sampler_->GetNumCollectCalls(), Eq(expected_collect_calls));
@@ -115,12 +117,14 @@ TEST_F(PeriodicCollectorTest, InitiallyEnabled) {
   }
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(metric_report_queue_->IsEmpty());
+  histogram_tester_.ExpectTotalCount(
+      PeriodicCollector::kNoMetricDataMetricsName, /*expected_count=*/0);
 }
 
 TEST_F(PeriodicCollectorTest, InitiallyEnabled_Delayed) {
   constexpr base::TimeDelta init_delay = base::Minutes(1);
 
-  settings_->SetBoolean(kEnableSettingPath, true);
+  settings_->SetReportingEnabled(kEnableSettingPath, true);
   settings_->SetInteger(kRateSettingPath, interval.InMilliseconds());
 
   MetricData metric_data;
@@ -166,14 +170,15 @@ TEST_F(PeriodicCollectorTest, InitiallyEnabled_Delayed) {
   EXPECT_TRUE(metric_report_queue_->IsEmpty());
 
   sampler_->SetMetricData(absl::nullopt);
+  histogram_tester_.ExpectTotalCount(
+      PeriodicCollector::kNoMetricDataMetricsName, /*expected_count=*/0);
 }
 
 TEST_F(PeriodicCollectorTest, NoMetricData) {
-  settings_->SetBoolean(kEnableSettingPath, true);
+  settings_->SetReportingEnabled(kEnableSettingPath, true);
   settings_->SetInteger(kRateSettingPath, interval.InMilliseconds());
 
   sampler_->SetMetricData(absl::nullopt);
-
   PeriodicCollector collector(sampler_.get(), metric_report_queue_.get(),
                               settings_.get(), kEnableSettingPath,
                               /*setting_enabled_default_value=*/false,
@@ -184,10 +189,15 @@ TEST_F(PeriodicCollectorTest, NoMetricData) {
 
   base::RunLoop().RunUntilIdle();
   ASSERT_TRUE(metric_report_queue_->IsEmpty());
+  histogram_tester_.ExpectBucketCount(
+      PeriodicCollector::kNoMetricDataMetricsName,
+      metric_report_queue_->GetDestination(), /*expected_count=*/1);
+  histogram_tester_.ExpectTotalCount(
+      PeriodicCollector::kNoMetricDataMetricsName, /*expected_count=*/1);
 }
 
 TEST_F(PeriodicCollectorTest, InitiallyDisabled) {
-  settings_->SetBoolean(kEnableSettingPath, false);
+  settings_->SetReportingEnabled(kEnableSettingPath, false);
   settings_->SetInteger(kRateSettingPath, interval.InMilliseconds());
 
   MetricData metric_data;
@@ -209,7 +219,7 @@ TEST_F(PeriodicCollectorTest, InitiallyDisabled) {
   // Manual collection is triggered but reporting is disabled.
   EXPECT_EQ(sampler_->GetNumCollectCalls(), 0);
 
-  settings_->SetBoolean(kEnableSettingPath, true);
+  settings_->SetReportingEnabled(kEnableSettingPath, true);
   // One initial collection at policy enablement.
   EXPECT_THAT(sampler_->GetNumCollectCalls(), Eq(1));
 
@@ -242,6 +252,8 @@ TEST_F(PeriodicCollectorTest, InitiallyDisabled) {
 
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(metric_report_queue_->IsEmpty());
+  histogram_tester_.ExpectTotalCount(
+      PeriodicCollector::kNoMetricDataMetricsName, /*expected_count=*/0);
 }
 
 TEST_F(PeriodicCollectorTest, DefaultEnabled) {
@@ -278,6 +290,8 @@ TEST_F(PeriodicCollectorTest, DefaultEnabled) {
 
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(metric_report_queue_->IsEmpty());
+  histogram_tester_.ExpectTotalCount(
+      PeriodicCollector::kNoMetricDataMetricsName, /*expected_count=*/0);
 }
 
 TEST_F(PeriodicCollectorTest, DefaultDisabled) {
@@ -298,6 +312,8 @@ TEST_F(PeriodicCollectorTest, DefaultDisabled) {
   // Setting is disabled by default, no data collected.
   EXPECT_THAT(sampler_->GetNumCollectCalls(), Eq(0));
   EXPECT_TRUE(metric_report_queue_->IsEmpty());
+  histogram_tester_.ExpectTotalCount(
+      PeriodicCollector::kNoMetricDataMetricsName, /*expected_count=*/0);
 }
 }  // namespace
 }  // namespace reporting

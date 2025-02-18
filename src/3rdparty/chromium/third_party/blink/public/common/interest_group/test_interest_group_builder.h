@@ -51,18 +51,33 @@ class TestInterestGroupBuilder {
   TestInterestGroupBuilder& SetBiddingUrl(absl::optional<GURL> bidding_url);
   TestInterestGroupBuilder& SetBiddingWasmHelperUrl(
       absl::optional<GURL> bidding_wasm_helper_url);
-  TestInterestGroupBuilder& SetDailyUpdateUrl(
-      absl::optional<GURL> daily_update_url);
+  TestInterestGroupBuilder& SetUpdateUrl(absl::optional<GURL> update_url);
   TestInterestGroupBuilder& SetTrustedBiddingSignalsUrl(
       absl::optional<GURL> trusted_bidding_signals_url);
   TestInterestGroupBuilder& SetTrustedBiddingSignalsKeys(
       absl::optional<std::vector<std::string>> trusted_bidding_signals_keys);
+  TestInterestGroupBuilder& SetTrustedBiddingSignalsSlotSizeMode(
+      InterestGroup::TrustedBiddingSignalsSlotSizeMode
+          trusted_bidding_signals_slot_size_mode);
+  TestInterestGroupBuilder& SetMaxTrustedBiddingSignalsURLLength(
+      int32_t max_trusted_bidding_signals_url_length);
   TestInterestGroupBuilder& SetUserBiddingSignals(
       absl::optional<std::string> user_bidding_signals);
   TestInterestGroupBuilder& SetAds(
       absl::optional<std::vector<InterestGroup::Ad>> ads);
   TestInterestGroupBuilder& SetAdComponents(
       absl::optional<std::vector<InterestGroup::Ad>> ad_components);
+  TestInterestGroupBuilder& SetAdSizes(
+      absl::optional<base::flat_map<std::string, blink::AdSize>> ad_sizes);
+  TestInterestGroupBuilder& SetSizeGroups(
+      absl::optional<base::flat_map<std::string, std::vector<std::string>>>
+          size_groups);
+  TestInterestGroupBuilder& SetAuctionServerRequestFlags(
+      AuctionServerRequestFlags flags);
+  TestInterestGroupBuilder& SetAdditionalBidKey(
+      absl::optional<blink::InterestGroup::AdditionalBidKey> key);
+  TestInterestGroupBuilder& SetAggregationCoordinatorOrigin(
+      absl::optional<url::Origin> agg_coordinator_origin);
 
  private:
   InterestGroup interest_group_;

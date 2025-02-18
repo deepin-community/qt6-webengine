@@ -100,7 +100,7 @@ void PeerConnectionTrackerHost::AddPeerConnection(
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   const std::string& url =
-      (info->url == absl::nullopt) ? std::string() : *info->url;
+      (info->url == std::nullopt) ? std::string() : *info->url;
 
   for (auto& observer : GetObserverList()) {
     observer.OnPeerConnectionAdded(frame_id_, info->lid, peer_pid_, url,
@@ -276,9 +276,9 @@ void PeerConnectionTrackerHost::GetStandardStats() {
   tracker_->GetStandardStats();
 }
 
-void PeerConnectionTrackerHost::GetLegacyStats() {
+void PeerConnectionTrackerHost::GetCurrentState() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  tracker_->GetLegacyStats();
+  tracker_->GetCurrentState();
 }
 
 void PeerConnectionTrackerHost::BindReceiver(

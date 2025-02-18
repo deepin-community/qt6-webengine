@@ -17,6 +17,7 @@
 
 #include "base/containers/queue.h"
 #include "base/functional/callback.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
@@ -270,6 +271,12 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothAdapter
         BluetoothAdapter* adapter,
         BluetoothRemoteGattService* service) {}
 
+#if BUILDFLAG(IS_CHROMEOS)
+    // Called when the GATT service on the peer side indicates that something is
+    // changed on their side, so we need to start re-discovery everything.
+    virtual void GattNeedsDiscovery(BluetoothDevice* device) {}
+#endif
+
     // See "Deprecated GATT Added/Removed Events NOTE" above.
     //
     // Called when properties of the remote GATT service |service| have changed.
@@ -371,7 +378,8 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothAdapter
   using DiscoverySessionCallback =
       base::OnceCallback<void(std::unique_ptr<BluetoothDiscoverySession>)>;
   using DeviceList = std::vector<BluetoothDevice*>;
-  using ConstDeviceList = std::vector<const BluetoothDevice*>;
+  using ConstDeviceList =
+      std::vector<raw_ptr<const BluetoothDevice, VectorExperimental>>;
   using UUIDList = std::vector<BluetoothUUID>;
   using CreateServiceCallback =
       base::OnceCallback<void(scoped_refptr<BluetoothSocket>)>;
@@ -689,6 +697,7 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothAdapter
                                  bool new_bonded_status);
   void NotifyDeviceIsBlockedByPolicyChanged(BluetoothDevice* device,
                                             bool new_blocked_status);
+  void NotifyGattNeedsDiscovery(BluetoothDevice* device);
 #endif
 
   void NotifyGattServiceAdded(BluetoothRemoteGattService* service);

@@ -22,23 +22,28 @@ PasswordsPrivateEventRouterFactory::GetForProfile(
 // static
 PasswordsPrivateEventRouterFactory*
 PasswordsPrivateEventRouterFactory::GetInstance() {
-  return base::Singleton<PasswordsPrivateEventRouterFactory>::get();
+  static base::NoDestructor<PasswordsPrivateEventRouterFactory> instance;
+  return instance.get();
 }
 
 PasswordsPrivateEventRouterFactory::PasswordsPrivateEventRouterFactory()
     : ProfileKeyedServiceFactory(
           "PasswordsPrivateEventRouter",
-          ProfileSelections::BuildRedirectedInIncognito()) {
+          ProfileSelections::Builder()
+              .WithRegular(ProfileSelection::kRedirectedToOriginal)
+              // TODO(crbug.com/1418376): Check if this service is needed in
+              // Guest mode.
+              .WithGuest(ProfileSelection::kRedirectedToOriginal)
+              .Build()) {
   DependsOn(ExtensionsBrowserClient::Get()->GetExtensionSystemFactory());
 }
 
-PasswordsPrivateEventRouterFactory::
-    ~PasswordsPrivateEventRouterFactory() {
-}
+PasswordsPrivateEventRouterFactory::~PasswordsPrivateEventRouterFactory() =
+    default;
 
 KeyedService* PasswordsPrivateEventRouterFactory::BuildServiceInstanceFor(
     content::BrowserContext* context) const {
-  return PasswordsPrivateEventRouter::Create(context);
+  return new PasswordsPrivateEventRouter(context);
 }
 
 bool PasswordsPrivateEventRouterFactory::

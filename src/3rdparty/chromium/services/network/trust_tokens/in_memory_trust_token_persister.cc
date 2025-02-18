@@ -3,10 +3,9 @@
 // found in the LICENSE file.
 
 #include "services/network/trust_tokens/in_memory_trust_token_persister.h"
+
 #include "base/containers/cxx20_erase.h"
 #include "services/network/trust_tokens/types.h"
-
-#include "base/containers/cxx20_erase_map.h"
 #include "url/gurl.h"
 
 namespace network {
@@ -59,6 +58,10 @@ void InMemoryTrustTokenPersister::SetIssuerToplevelPairConfig(
     const SuitableTrustTokenOrigin& issuer,
     const SuitableTrustTokenOrigin& toplevel,
     std::unique_ptr<TrustTokenIssuerToplevelPairConfig> config) {
+  // Both last_redemption and penultimate_redemption should be set. Serializing
+  // config will fail otherwise for SQLiteTrustTokenPersister.
+  CHECK(config->has_last_redemption());
+  CHECK(config->has_penultimate_redemption());
   issuer_toplevel_pair_configs_[std::make_pair(issuer, toplevel)] =
       std::move(config);
 }

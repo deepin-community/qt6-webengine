@@ -34,6 +34,7 @@
 
 #include <limits>
 #include <memory>
+#include <string_view>
 #include <utility>
 
 #include "base/base_switches.h"
@@ -238,15 +239,11 @@ bool IsWindows10OrGreaterTabletMode(HWND hwnd) {
            IsDeviceUsedAsATablet(/*reason=*/nullptr);
   }
 
-  if (!ResolveCoreWinRTDelayload()) {
-    return false;
-  }
-
   ScopedHString view_settings_guid = ScopedHString::Create(
       RuntimeClass_Windows_UI_ViewManagement_UIViewSettings);
   Microsoft::WRL::ComPtr<IUIViewSettingsInterop> view_settings_interop;
-  HRESULT hr = win::RoGetActivationFactory(
-      view_settings_guid.get(), IID_PPV_ARGS(&view_settings_interop));
+  HRESULT hr = ::RoGetActivationFactory(view_settings_guid.get(),
+                                        IID_PPV_ARGS(&view_settings_interop));
   if (FAILED(hr))
     return false;
 
@@ -610,20 +607,10 @@ bool IsJoinedToAzureAD() {
 bool IsUser32AndGdi32Available() {
   static auto is_user32_and_gdi32_available = []() {
     // If win32k syscalls aren't disabled, then user32 and gdi32 are available.
-
-    using GetProcessMitigationPolicyType =
-        decltype(GetProcessMitigationPolicy)*;
-    GetProcessMitigationPolicyType get_process_mitigation_policy_func =
-        reinterpret_cast<GetProcessMitigationPolicyType>(GetProcAddress(
-            GetModuleHandle(L"kernel32.dll"), "GetProcessMitigationPolicy"));
-
-    if (!get_process_mitigation_policy_func)
-      return true;
-
     PROCESS_MITIGATION_SYSTEM_CALL_DISABLE_POLICY policy = {};
-    if (get_process_mitigation_policy_func(GetCurrentProcess(),
-                                           ProcessSystemCallDisablePolicy,
-                                           &policy, sizeof(policy))) {
+    if (::GetProcessMitigationPolicy(GetCurrentProcess(),
+                                     ProcessSystemCallDisablePolicy, &policy,
+                                     sizeof(policy))) {
       return policy.DisallowWin32kSystemCalls == 0;
     }
 
@@ -704,7 +691,7 @@ void EnableHighDPISupport() {
   }
 }
 
-std::wstring WStringFromGUID(REFGUID rguid) {
+std::wstring WStringFromGUID(const ::GUID& rguid) {
   // This constant counts the number of characters in the formatted string,
   // including the null termination character.
   constexpr int kGuidStringCharacters =
@@ -754,7 +741,7 @@ std::wstring GetWindowObjectName(HANDLE handle) {
   return object_name;
 }
 
-bool IsRunningUnderDesktopName(WStringPiece desktop_name) {
+bool IsRunningUnderDesktopName(std::wstring_view desktop_name) {
   HDESK thread_desktop = ::GetThreadDesktop(::GetCurrentThreadId());
   if (!thread_desktop)
     return false;
@@ -790,28 +777,6 @@ bool IsCurrentSessionRemote() {
 
   return current_session_id != glass_session_id;
 }
-
-#if !defined(OFFICIAL_BUILD)
-bool IsAppVerifierEnabled(const std::wstring& process_name) {
-  RegKey key;
-
-  // Look for GlobalFlag in the IFEO\chrome.exe key. If it is present then
-  // Application Verifier or gflags.exe are configured. Most GlobalFlag
-  // settings are experimentally determined to be incompatible with renderer
-  // code integrity and a safe set is not known so any GlobalFlag entry is
-  // assumed to mean that Application Verifier (or pageheap) are enabled.
-  // The settings are propagated to both 64-bit WOW6432Node versions of the
-  // registry on 64-bit Windows, so only one check is needed.
-  return key.Open(
-             HKEY_LOCAL_MACHINE,
-             (L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File "
-              L"Execution Options\\" +
-              process_name)
-                 .c_str(),
-             KEY_READ | KEY_WOW64_64KEY) == ERROR_SUCCESS &&
-         key.HasValue(L"GlobalFlag");
-}
-#endif  // !defined(OFFICIAL_BUILD)
 
 bool IsAppVerifierLoaded() {
   return GetModuleHandleA(kApplicationVerifierDllName);

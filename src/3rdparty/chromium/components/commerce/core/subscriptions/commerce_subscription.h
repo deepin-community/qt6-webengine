@@ -5,6 +5,8 @@
 #ifndef COMPONENTS_COMMERCE_CORE_SUBSCRIPTIONS_COMMERCE_SUBSCRIPTION_H_
 #define COMPONENTS_COMMERCE_CORE_SUBSCRIPTIONS_COMMERCE_SUBSCRIPTION_H_
 
+#include <stdint.h>
+
 #include <string>
 
 #include "third_party/abseil-cpp/absl/types/optional.h"
@@ -74,6 +76,7 @@ struct UserSeenOffer {
 };
 
 extern const int64_t kUnknownSubscriptionTimestamp;
+extern const uint64_t kInvalidSubscriptionId;
 
 struct CommerceSubscription {
   // The CommerceSubscription instantiation outside of this subscriptions/

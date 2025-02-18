@@ -16,6 +16,7 @@
 #include "base/values.h"
 #include "build/build_config.h"
 #include "components/keyed_service/core/keyed_service.h"
+#include "components/media_router/browser/mirroring_media_controller_host.h"
 #include "components/media_router/browser/presentation_connection_message_observer.h"
 #include "components/media_router/common/media_route.h"
 #include "components/media_router/common/media_route_provider_helper.h"
@@ -88,14 +89,12 @@ class MediaRouter : public KeyedService {
   // success or failure, in the order they are listed.
   // If |timeout| is positive, then any un-invoked |callbacks| will be invoked
   // with a timeout error after the timeout expires.
-  // If |incognito| is true, the request was made by an incognito profile.
   virtual void CreateRoute(const MediaSource::Id& source_id,
                            const MediaSink::Id& sink_id,
                            const url::Origin& origin,
                            content::WebContents* web_contents,
                            MediaRouteResponseCallback callback,
-                           base::TimeDelta timeout,
-                           bool incognito) = 0;
+                           base::TimeDelta timeout) = 0;
 
   // Joins an existing route identified by |presentation_id|.
   // |source|: The source to route to the existing route.
@@ -107,14 +106,12 @@ class MediaRouter : public KeyedService {
   // success or failure, in the order they are listed.
   // If |timeout| is positive, then any un-invoked |callbacks| will be invoked
   // with a timeout error after the timeout expires.
-  // If |incognito| is true, the request was made by an incognito profile.
   virtual void JoinRoute(const MediaSource::Id& source,
                          const std::string& presentation_id,
                          const url::Origin& origin,
                          content::WebContents* web_contents,
                          MediaRouteResponseCallback callback,
-                         base::TimeDelta timeout,
-                         bool incognito) = 0;
+                         base::TimeDelta timeout) = 0;
 
   // Terminates the media route specified by |route_id|.
   virtual void TerminateRoute(const MediaRoute::Id& route_id) = 0;
@@ -158,6 +155,11 @@ class MediaRouter : public KeyedService {
       const MediaRoute::Id& route_id) = 0;
 
 #if !BUILDFLAG(IS_ANDROID)
+  // Returns a pointer to a controller host that sends media commands related to
+  // mirroring within a route.
+  virtual MirroringMediaControllerHost* GetMirroringMediaControllerHost(
+      const MediaRoute::Id& route_id) = 0;
+
   // Returns the IssueManager owned by the MediaRouter. Guaranteed to be
   // non-null.
   virtual IssueManager* GetIssueManager() = 0;

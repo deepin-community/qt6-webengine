@@ -28,13 +28,13 @@ class Generator : public MacroAssembler {
 //     size_t mr,                x0
 //     size_t nc,                x1
 //     size_t kc,                x2 / x0
-//     const uint8_t*restrict a, x3
+//     const float* a,           x3
 //     size_t a_stride,          x4
-//     const void*restrict w,    x5
-//     uint8_t*restrict c,       x6
+//     const float* w,           x5
+//     float* c,                 x6
 //     size_t cm_stride,         x7
 //     size_t cn_stride,         [sp] -> (x0)
-//     const union xnn_f32_minmax_params params[restrict XNN_MIN_ELEMENTS(1)])  [sp + 8] -> (x8)
+//     const xnn_f32_minmax_params* params)  [sp + 8] -> (x8)
 
 // d8-d15, x19-x30 need to be preserved if used. x18 is reserved by the OS.
 
@@ -61,7 +61,7 @@ class Generator : public MacroAssembler {
 void Generator::generate(size_t max_mr, size_t nc_mod_nr, size_t kc, const jit_gemm_params* jit_gemm_params)
 {
   assert(max_mr <= 6);
-  assert(nc_mod_nr < 8);
+  assert(nc_mod_nr < 8 || nc_mod_nr == SIZE_MAX);
   assert(kc != 0);
   assert(kc % sizeof(float) == 0);
 
@@ -131,26 +131,54 @@ void Generator::generate(size_t max_mr, size_t nc_mod_nr, size_t kc, const jit_g
   // Load initial bias from w into accumulators
   ldp(q20, q21, mem[x5], 32);
   subs(x0, x2, 16); // k = kc - 16
+  prfm(kPLDL1KEEP, mem[x3, 0]); // Prefetch A
+  prfm(kPLDL1KEEP, mem[x3, 64]);
   if (max_mr > 1) {
     mov(v22.v16b(), v20.v16b());
+  }
+  prfm(kPLDL1KEEP, mem[x9, 0]);
+  prfm(kPLDL1KEEP, mem[x9, 64]);
+  if (max_mr > 1) {
     mov(v23.v16b(), v21.v16b());
   }
+  prfm(kPLDL1KEEP, mem[x10, 0]);
+  prfm(kPLDL1KEEP, mem[x10, 64]);
   if (max_mr > 2) {
     mov(v24.v16b(), v20.v16b());
+  }
+  prfm(kPLDL1KEEP, mem[x11, 0]);
+  prfm(kPLDL1KEEP, mem[x11, 64]);
+  if (max_mr > 2) {
     mov(v25.v16b(), v21.v16b());
   }
+  prfm(kPLDL1KEEP, mem[x12, 0]);
+  prfm(kPLDL1KEEP, mem[x12, 64]);
   if (max_mr > 3) {
     mov(v26.v16b(), v20.v16b());
+  }
+  prfm(kPLDL1KEEP, mem[x4, 0]);
+  prfm(kPLDL1KEEP, mem[x4, 64]);
+  prfm(kPLDL1KEEP, mem[x5, 0]); // Prefetch B
+  if (max_mr > 3) {
     mov(v27.v16b(), v21.v16b());
   }
+  prfm(kPLDL1KEEP, mem[x5, 64]);
   if (max_mr > 4) {
     mov(v28.v16b(), v20.v16b());
+  }
+  prfm(kPLDL1KEEP, mem[x5, 128]);
+  if (max_mr > 4) {
     mov(v29.v16b(), v21.v16b());
   }
+  prfm(kPLDL1KEEP, mem[x5, 192]);
   if (max_mr > 5) {
     mov(v30.v16b(), v20.v16b());
+  }
+  prfm(kPLDL1KEEP, mem[x5, 256]);
+  if (max_mr > 5) {
     mov(v31.v16b(), v21.v16b());
   }
+  prfm(kPLDL1KEEP, mem[x5, 320]);
 
   // Is there at least 4 floats (16 bytes) for prologue + epilogue?
   b_lo(l4);
@@ -536,23 +564,29 @@ void Generator::generate(size_t max_mr, size_t nc_mod_nr, size_t kc, const jit_g
   // Second group of 24 FMA, First group of loads
   // BLOCK 0
   fmla(v20.v4s(), v12.v4s(), v3.s()[0]);
+  prfm(kPSTL1KEEP, mem[x6]); // Prefetch C0
   if (max_mr > 1) {
     fmla(v22.v4s(), v12.v4s(), v3.s()[2]);
   }
+  prfm(kPSTL1KEEP, mem[x16]); // Prefetch C1
   if (max_mr > 2) {
     fmla(v24.v4s(), v12.v4s(), v4.s()[0]);
   }
+  prfm(kPSTL1KEEP, mem[x17]); // Prefetch C2
 
   // BLOCK 1
   if (max_mr > 3) {
     fmla(v26.v4s(), v12.v4s(), v4.s()[2]);
   }
+  prfm(kPSTL1KEEP, mem[x14]); // Prefetch C3
   if (max_mr > 4) {
     fmla(v28.v4s(), v12.v4s(), v5.s()[0]);
   }
+  prfm(kPSTL1KEEP, mem[x13]); // Prefetch C4
   if (max_mr > 5) {
     fmla(v30.v4s(), v12.v4s(), v5.s()[2]);
   }
+  prfm(kPSTL1KEEP, mem[x7]); // Prefetch C5
 
   // BLOCK 2
   fmla(v21.v4s(), v13.v4s(), v3.s()[0]);

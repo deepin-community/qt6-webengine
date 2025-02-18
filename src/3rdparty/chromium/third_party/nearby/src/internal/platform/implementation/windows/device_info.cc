@@ -1,4 +1,4 @@
-// Copyright 2021 Google LLC
+// Copyright 2021-2023 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,16 +18,15 @@
 #include <windows.h>
 #include <wtsapi32.h>
 
-#include <array>
 #include <filesystem>
 #include <functional>
 #include <optional>
 #include <string>
 
-#include "absl/container/flat_hash_map.h"
 #include "absl/strings/string_view.h"
-#include "internal/base/bluetooth_address.h"
+#include "absl/synchronization/mutex.h"
 #include "internal/platform/implementation/device_info.h"
+#include "internal/platform/implementation/windows/generated/winrt/base.h"
 #include "internal/platform/logging.h"
 #include "winrt/Windows.Foundation.Collections.h"
 #include "winrt/Windows.Foundation.h"
@@ -49,90 +48,11 @@ using IVectorView = winrt::Windows::Foundation::Collections::IVectorView<T>;
 template <typename T>
 using IAsyncOperation = winrt::Windows::Foundation::IAsyncOperation<T>;
 
-constexpr char window_class_name[] = "NearbySharingDLL_MessageWindowClass";
-constexpr char window_name[] = "NearbySharingDLL_MessageWindow";
-constexpr char kLogsRelativePath[] = "Google\\Nearby\\Sharing\\Logs";
-constexpr char kCrashDumpsRelativePath[] =
+constexpr char logs_relative_path[] = "Google\\Nearby\\Sharing\\Logs";
+constexpr char crash_dumps_relative_path[] =
     "Google\\Nearby\\Sharing\\CrashDumps";
 
-namespace {
-// This WindowProc method must be static for the successful initialization of
-// WNDCLASS
-//    window_class.lpfnWndProc = (WNDPROC) &DeviceInfo::WindowProc;
-// where a WNDPROC typed function pointer is expected
-//    typedef LRESULT (CALLBACK* WNDPROC)(HWND,UINT,WPARAM,LPARAM)
-// the calling convention used here CALLBACK is a macro defined as
-//    #define CALLBACK __stdcall
-//
-// If WindProc is not static and defined as a member function, it uses the
-// __thiscall calling convention instead
-// https://docs.microsoft.com/en-us/cpp/cpp/thiscall?view=msvc-170
-// https://isocpp.org/wiki/faq/pointers-to-members
-// https://en.cppreference.com/w/cpp/language/pointer
-//
-// This is problematic because the function pointer now looks like this
-//    typedef LRESULT (CALLBACK* DeviceInfo_WNDPROC)(DeviceInfo*
-//    this,HWND,UINT,WPARAM,LPARAM)
-// which causes casting errors
-LRESULT CALLBACK WindowProc(HWND window_handle, UINT message, WPARAM wparam,
-                            LPARAM lparam) {
-  DeviceInfo* self = reinterpret_cast<DeviceInfo*>(
-      GetWindowLongPtr(window_handle, GWLP_USERDATA));
-  CREATESTRUCT* create_struct = reinterpret_cast<CREATESTRUCT*>(lparam);
-  LONG_PTR result = 0L;
-  switch (message) {
-    case WM_CREATE:
-      self = reinterpret_cast<DeviceInfo*>(create_struct->lpCreateParams);
-      self->message_window_handle_ = window_handle;
-
-      // Store pointer to the self to the window's user data.
-      SetLastError(0);
-      result = SetWindowLongPtr(window_handle, GWLP_USERDATA,
-                                reinterpret_cast<LONG_PTR>(self));
-      if (result == 0 && GetLastError() != 0) {
-        NEARBY_LOGS(ERROR)
-            << __func__
-            << ": Error connecting message window to Nearby Sharing DLL.";
-      }
-      break;
-    case WM_WTSSESSION_CHANGE:
-      if (self) {
-        switch (wparam) {
-          case WTS_SESSION_LOCK:
-            for (auto& listener : self->screen_locked_listeners_) {
-              listener.second(api::DeviceInfo::ScreenStatus::
-                                  kLocked);  // Trigger registered callbacks
-            }
-            break;
-          case WTS_SESSION_UNLOCK:
-            for (auto& listener : self->screen_locked_listeners_) {
-              listener.second(api::DeviceInfo::ScreenStatus::
-                                  kUnlocked);  // Trigger registered callbacks
-            }
-            break;
-        }
-      }
-      break;
-    case WM_DESTROY:
-      SetLastError(0);
-      result = SetWindowLongPtr(window_handle, GWLP_USERDATA, NULL);
-      if (result == 0 && GetLastError() != 0) {
-        NEARBY_LOGS(ERROR)
-            << __func__
-            << ": Error disconnecting message window to Nearby Sharing DLL.";
-      }
-      break;
-  }
-
-  return DefWindowProc(window_handle, message, wparam, lparam);
-}
-}  // namespace
-
-DeviceInfo::~DeviceInfo() {
-  UnregisterClass(MAKEINTATOM(registered_class_), instance_);
-}
-
-std::optional<std::u16string> DeviceInfo::GetOsDeviceName() const {
+std::optional<std::string> DeviceInfo::GetOsDeviceName() const {
   DWORD size = 0;
 
   // Get length of the computer name.
@@ -146,8 +66,8 @@ std::optional<std::u16string> DeviceInfo::GetOsDeviceName() const {
 
   WCHAR device_name[size];
   if (GetComputerNameExW(ComputerNameDnsHostname, device_name, &size)) {
-    std::wstring wide_name(device_name);
-    return std::u16string(wide_name.begin(), wide_name.end());
+    winrt::hstring device_name_str(device_name);
+    return winrt::to_string(device_name_str);
   }
 
   NEARBY_LOGS(ERROR) << ": Failed to get device name, error:" << GetLastError();
@@ -163,7 +83,7 @@ api::DeviceInfo::OsType DeviceInfo::GetOsType() const {
   return api::DeviceInfo::OsType::kWindows;
 }
 
-std::optional<std::u16string> DeviceInfo::GetFullName() const {
+std::optional<std::string> DeviceInfo::GetFullName() const {
   // FindAllAsync finds all users that are using this app. When we "Switch User"
   // on Desktop,FindAllAsync() will still return the current user instead of all
   // of them because the users who are switched out are not using the apps of
@@ -195,19 +115,18 @@ std::optional<std::u16string> DeviceInfo::GetFullName() const {
     return std::nullopt;
   }
   winrt::hstring full_name = full_name_obj.as<winrt::hstring>();
-  std::wstring wstr(full_name);
-  std::u16string u16str(wstr.begin(), wstr.end());
+  std::string full_name_str = winrt::to_string(full_name);
 
-  if (u16str.empty()) {
+  if (full_name_str.empty()) {
     NEARBY_LOGS(ERROR)
         << __func__ << ": Error unboxing string value for full name of user.";
     return std::nullopt;
   }
 
-  return u16str;
+  return full_name_str;
 }
 
-std::optional<std::u16string> DeviceInfo::GetGivenName() const {
+std::optional<std::string> DeviceInfo::GetGivenName() const {
   // FindAllAsync finds all users that are using this app. When we "Switch User"
   // on Desktop,FindAllAsync() will still return the current user instead of all
   // of them because the users who are switched out are not using the apps of
@@ -239,19 +158,18 @@ std::optional<std::u16string> DeviceInfo::GetGivenName() const {
     return std::nullopt;
   }
   winrt::hstring given_name = given_name_obj.as<winrt::hstring>();
-  std::wstring wstr(given_name);
-  std::u16string u16str(wstr.begin(), wstr.end());
+  std::string given_name_str = winrt::to_string(given_name);
 
-  if (u16str.empty()) {
+  if (given_name_str.empty()) {
     NEARBY_LOGS(ERROR)
         << __func__ << ": Error unboxing string value for first name of user.";
     return std::nullopt;
   }
 
-  return u16str;
+  return given_name_str;
 }
 
-std::optional<std::u16string> DeviceInfo::GetLastName() const {
+std::optional<std::string> DeviceInfo::GetLastName() const {
   // FindAllAsync finds all users that are using this app. When we "Switch User"
   // on Desktop,FindAllAsync() will still return the current user instead of all
   // of them because the users who are switched out are not using the apps of
@@ -283,16 +201,15 @@ std::optional<std::u16string> DeviceInfo::GetLastName() const {
     return std::nullopt;
   }
   winrt::hstring last_name = last_name_obj.as<winrt::hstring>();
-  std::wstring wstr(last_name);
-  std::u16string u16str(wstr.begin(), wstr.end());
+  std::string last_name_str = winrt::to_string(last_name);
 
-  if (u16str.empty()) {
+  if (last_name_str.empty()) {
     NEARBY_LOGS(ERROR)
         << __func__ << ": Error unboxing string value for last name of user.";
     return std::nullopt;
   }
 
-  return u16str;
+  return last_name_str;
 }
 
 std::optional<std::string> DeviceInfo::GetProfileUserName() const {
@@ -355,15 +272,16 @@ std::optional<std::filesystem::path> DeviceInfo::GetDownloadPath() const {
 }
 
 std::optional<std::filesystem::path> DeviceInfo::GetLocalAppDataPath() const {
-  std::string path;
-  path.resize(MAX_PATH);
-  HRESULT result = SHGetFolderPathA(nullptr, CSIDL_LOCAL_APPDATA, nullptr,
-                                    SHGFP_TYPE_CURRENT, path.data());
+  PWSTR path;
+  HRESULT result = SHGetKnownFolderPath(FOLDERID_LocalAppData, KF_FLAG_DEFAULT,
+                                        /*hToken=*/nullptr, &path);
   if (result == S_OK) {
-    path.resize(strlen(path.data()));
-    return std::filesystem::path(path);
+    std::wstring local_appdata_path{path};
+    CoTaskMemFree(path);
+    return std::filesystem::path(local_appdata_path);
   }
 
+  CoTaskMemFree(path);
   return std::nullopt;
 }
 
@@ -372,9 +290,9 @@ std::optional<std::filesystem::path> DeviceInfo::GetCommonAppDataPath() const {
   HRESULT result = SHGetKnownFolderPath(FOLDERID_ProgramData, KF_FLAG_DEFAULT,
                                         /*hToken=*/nullptr, &path);
   if (result == S_OK) {
-    std::wstring download_path{path};
+    std::wstring common_app_data_path{path};
     CoTaskMemFree(path);
-    return std::filesystem::path(download_path);
+    return std::filesystem::path(common_app_data_path);
   }
 
   CoTaskMemFree(path);
@@ -386,104 +304,56 @@ std::optional<std::filesystem::path> DeviceInfo::GetTemporaryPath() const {
 }
 
 std::optional<std::filesystem::path> DeviceInfo::GetLogPath() const {
-  PWSTR path;
-  HRESULT result = SHGetKnownFolderPath(FOLDERID_ProgramData, KF_FLAG_DEFAULT,
-                                        /*hToken=*/nullptr, &path);
-  if (result == S_OK) {
-    std::filesystem::path prefixPath = path;
-    CoTaskMemFree(path);
-    return std::filesystem::path(prefixPath / kLogsRelativePath);
+  auto prefix_path = GetLocalAppDataPath();
+  if (prefix_path.has_value()) {
+    return std::filesystem::path(prefix_path.value() / logs_relative_path);
   }
-  CoTaskMemFree(path);
   return std::nullopt;
 }
 
 std::optional<std::filesystem::path> DeviceInfo::GetCrashDumpPath() const {
-  PWSTR path;
-  HRESULT result = SHGetKnownFolderPath(FOLDERID_ProgramData, KF_FLAG_DEFAULT,
-                                        /*hToken=*/nullptr, &path);
-  if (result == S_OK) {
-    std::filesystem::path prefixPath = path;
-    CoTaskMemFree(path);
-    return std::filesystem::path(prefixPath / kCrashDumpsRelativePath);
+  auto prefix_path = GetLocalAppDataPath();
+  if (prefix_path.has_value()) {
+    return std::filesystem::path(prefix_path.value() /
+                                 crash_dumps_relative_path);
   }
-  CoTaskMemFree(path);
   return std::nullopt;
 }
 
 bool DeviceInfo::IsScreenLocked() const {
-  DWORD session_id = WTSGetActiveConsoleSessionId();
-  WTS_INFO_CLASS wts_info_class = WTSSessionInfoEx;
-  LPTSTR session_info_buffer = nullptr;
-  DWORD session_info_buffer_size_bytes = 0;
-
-  WTSINFOEXW* wts_info = nullptr;
-  LONG session_state = WTS_SESSIONSTATE_UNKNOWN;
-
-  if (WTSQuerySessionInformation(WTS_CURRENT_SERVER_HANDLE, session_id,
-                                 wts_info_class, &session_info_buffer,
-                                 &session_info_buffer_size_bytes)) {
-    if (session_info_buffer_size_bytes > 0) {
-      wts_info = (WTSINFOEXW*)session_info_buffer;
-      if (wts_info->Level == 1) {
-        session_state = wts_info->Data.WTSInfoExLevel1.SessionFlags;
-      }
-    }
-    WTSFreeMemory(session_info_buffer);
-    session_info_buffer = nullptr;
-  }
-
-  return (session_state == WTS_SESSIONSTATE_LOCK);
+  absl::MutexLock lock(&mutex_);
+  return session_manager_.IsScreenLocked();
 }
 
 void DeviceInfo::RegisterScreenLockedListener(
     absl::string_view listener_name,
     std::function<void(api::DeviceInfo::ScreenStatus)> callback) {
-  if (message_window_handle_ == nullptr) {
-    instance_ = (HINSTANCE)GetModuleHandle(NULL);
-
-    WNDCLASS window_class;
-    window_class.style = 0;
-    window_class.lpfnWndProc = (WNDPROC)&WindowProc;
-    window_class.cbClsExtra = 0;
-    window_class.cbWndExtra = 0;
-    window_class.hInstance = instance_;
-    window_class.hIcon = nullptr;
-    window_class.hCursor = nullptr;
-    window_class.hbrBackground = nullptr;
-    window_class.lpszMenuName = nullptr;
-    window_class.lpszClassName = window_class_name;
-
-    registered_class_ = RegisterClass(&window_class);
-
-    message_window_handle_ = CreateWindow(
-        MAKEINTATOM(registered_class_),  // class atom from RegisterClass
-        window_name,                     // window name
-        0,                               // window style
-        0,                               // initial x position of window
-        0,                               // initial y position of window
-        0,                               // width
-        0,                               // height
-        HWND_MESSAGE,                    // handle to the parent of window
-                                         // (message-only window in this case)
-        nullptr,                         // handle to a menu
-        instance_,                       // handle to the instance of the module
-                                         // associated to the window
-        this);  // pointer to be passed to the window for additional data
-
-    if (!message_window_handle_) {
-      NEARBY_LOGS(ERROR)
-          << __func__
-          << ": Failed to create message window for Nearby Sharing DLL.";
-    }
-  }
-
-  screen_locked_listeners_.emplace(listener_name, callback);
+  absl::MutexLock lock(&mutex_);
+  session_manager_.RegisterSessionListener(
+      listener_name,
+      [callback = std::move(callback)](SessionManager::SessionState state) {
+        if (state == SessionManager::SessionState::kLock) {
+          callback(api::DeviceInfo::ScreenStatus::kLocked);
+        } else if (state == SessionManager::SessionState::kUnlock) {
+          callback(api::DeviceInfo::ScreenStatus::kUnlocked);
+        }
+      });
 }
 
 void DeviceInfo::UnregisterScreenLockedListener(
     absl::string_view listener_name) {
-  screen_locked_listeners_.erase(listener_name);
+  absl::MutexLock lock(&mutex_);
+  session_manager_.UnregisterSessionListener(listener_name);
+}
+
+bool DeviceInfo::PreventSleep() {
+  absl::MutexLock lock(&mutex_);
+  return session_manager_.PreventSleep();
+}
+
+bool DeviceInfo::AllowSleep() {
+  absl::MutexLock lock(&mutex_);
+  return session_manager_.AllowSleep();
 }
 
 }  // namespace windows

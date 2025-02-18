@@ -66,10 +66,6 @@ GRD_BEGIN_TEMPLATE = '<?xml version="1.0" encoding="UTF-8"?>\n'\
 GRD_INCLUDE_TEMPLATE = '      <include name="{name}" ' \
                        'file="{file}" resource_path="{path}" ' \
                        'use_base_dir="false" type="{type}" />\n'
-GRD_INCLUDE_TEMPLATE_PP = '      <include name="{name}" ' \
-                          'file="{file}" resource_path="{path}" ' \
-                          'use_base_dir="false" preprocess="true" '\
-                          'type="{type}" />\n'
 
 GRD_END_TEMPLATE = '    </includes>\n'\
                    '  </release>\n'\
@@ -98,16 +94,6 @@ def _generate_include_row(grd_prefix, filename, pathname, \
     resource_path = resource_path_prefix + '/' + resource_path
   assert '\\' not in resource_path
 
-  # This is a temporary workaround, since Polymer 2 shared resource files are
-  # not preprocessed.
-  # TODO(rbpotter): Remove this once OS Settings has been migrated to Polymer 3.
-  if ('vulcanized' in pathname or 'crisper' in pathname):
-    return GRD_INCLUDE_TEMPLATE_PP.format(
-        file=pathname,
-        path=resource_path,
-        name=name,
-        type=type)
-
   return GRD_INCLUDE_TEMPLATE.format(
       file=pathname,
       path=resource_path,
@@ -134,15 +120,16 @@ def main(argv):
   args = parser.parse_args(argv)
 
   grd_path = os.path.normpath(os.path.join(_CWD, args.out_grd))
-  with open(grd_path, 'w', newline='') as grd_file:
-    begin_template = GRDP_BEGIN_TEMPLATE if args.out_grd.endswith('.grdp') else \
-        GRD_BEGIN_TEMPLATE
+  with open(grd_path, 'w', newline='', encoding='utf-8') as grd_file:
+    begin_template = GRDP_BEGIN_TEMPLATE if args.out_grd.endswith('.grdp') \
+        else GRD_BEGIN_TEMPLATE
     grd_file.write(begin_template.format(prefix=args.grd_prefix,
         out_dir=args.output_files_base_dir))
 
     if args.grdp_files != None:
+      out_grd_dir = os.path.dirname(args.out_grd)
       for grdp_file in args.grdp_files:
-        grdp_path = os.path.relpath(grdp_file, os.path.dirname(args.out_grd)).replace('\\', '/')
+        grdp_path = os.path.relpath(grdp_file, out_grd_dir).replace('\\', '/')
         grd_file.write(_generate_part_row(grdp_path))
 
     resource_path_rewrites = {}
@@ -179,12 +166,13 @@ def main(argv):
     if args.manifest_files != None:
       for manifest_file in args.manifest_files:
         manifest_path = os.path.normpath(os.path.join(_CWD, manifest_file))
-        with open(manifest_path, 'r') as f:
+        with open(manifest_path, 'r', encoding='utf-8') as f:
           data = json.load(f)
           base_dir= os.path.normpath(os.path.join(_CWD, data['base_dir']))
           for filename in data['files']:
             filepath = os.path.join(base_dir, filename)
-            rebased_path = os.path.relpath(filepath, args.root_gen_dir).replace('\\', '/')
+            rebased_path = os.path.relpath(filepath, args.root_gen_dir)
+            rebased_path = rebased_path.replace('\\', '/')
             grd_file.write(_generate_include_row(
                 args.grd_prefix, filename, '${root_gen_dir}/' + rebased_path,
                 resource_path_rewrites, args.resource_path_prefix))

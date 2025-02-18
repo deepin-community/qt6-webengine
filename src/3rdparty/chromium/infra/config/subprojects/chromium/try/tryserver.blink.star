@@ -8,6 +8,7 @@ load("//lib/builder_config.star", "builder_config")
 load("//lib/branches.star", "branches")
 load("//lib/try.star", "try_")
 load("//lib/consoles.star", "consoles")
+load("//lib/gn_args.star", "gn_args")
 
 try_.defaults.set(
     executable = try_.DEFAULT_EXECUTABLE,
@@ -29,7 +30,7 @@ def blink_mac_builder(*, name, **kwargs):
     kwargs.setdefault("branch_selector", branches.selector.MAC_BRANCHES)
     kwargs.setdefault("builderless", True)
     kwargs.setdefault("cores", None)
-    kwargs.setdefault("os", os.MAC_ANY)
+    kwargs.setdefault("os", os.MAC_DEFAULT)
     kwargs.setdefault("ssd", True)
     return try_.builder(
         name = name,
@@ -50,21 +51,43 @@ try_.builder(
             ],
             build_config = builder_config.build_config.RELEASE,
             target_bits = 64,
+            target_platform = builder_config.target_platform.LINUX,
         ),
     ),
     try_settings = builder_config.try_settings(
         retry_failed_shards = False,
     ),
-    os = os.LINUX_DEFAULT,
-    main_list_view = "try",
-    tryjob = try_.job(
-        location_filters = [
-            "cc/.+",
-            "third_party/blink/renderer/core/paint/.+",
-            "third_party/blink/renderer/core/svg/.+",
-            "third_party/blink/renderer/platform/graphics/.+",
+    gn_args = gn_args.config(
+        configs = [
+            "release_builder",
+            "reclient",
+            "chrome_with_codecs",
+            "minimal_symbols",
         ],
     ),
+    os = os.LINUX_DEFAULT,
+    main_list_view = "try",
+)
+
+# TODO(crbug.com/1474702): Once `chrome_wpt_tests` is on CQ/CI (`linux-rel` and
+# `Linux Tests`), remove `ci/linux-wpt-fyi-rel` and move its definition here.
+#
+# `linux-wpt-chromium-rel` (tests chrome) is distinct from `linux-blink-rel`
+# (tests content shell) to avoid coupling their build configurations.
+try_.builder(
+    name = "linux-wpt-chromium-rel",
+    description_html = """\
+Runs <a href="https://web-platform-tests.org">web platform tests</a> against
+Chrome.\
+""",
+    mirrors = ["ci/linux-wpt-chromium-rel"],
+    try_settings = builder_config.try_settings(
+        retry_failed_shards = True,
+    ),
+    gn_args = "ci/linux-wpt-chromium-rel",
+    os = os.LINUX_DEFAULT,
+    contact_team_email = "chrome-blink-engprod@google.com",
+    main_list_view = "try",
 )
 
 try_.builder(
@@ -81,11 +104,54 @@ try_.builder(
             ],
             build_config = builder_config.build_config.RELEASE,
             target_bits = 32,
+            target_platform = builder_config.target_platform.WIN,
         ),
         build_gs_bucket = "chromium-fyi-archive",
     ),
     try_settings = builder_config.try_settings(
         retry_failed_shards = False,
+    ),
+    gn_args = gn_args.config(
+        configs = [
+            "release_builder",
+            "reclient",
+            "chrome_with_codecs",
+            "x86",
+            "minimal_symbols",
+        ],
+    ),
+    builderless = True,
+    os = os.WINDOWS_ANY,
+)
+
+try_.builder(
+    name = "win11-arm64-blink-rel",
+    branch_selector = branches.selector.WINDOWS_BRANCHES,
+    builder_spec = builder_config.builder_spec(
+        gclient_config = builder_config.gclient_config(
+            config = "chromium",
+        ),
+        chromium_config = builder_config.chromium_config(
+            config = "chromium",
+            apply_configs = [
+                "mb",
+            ],
+            build_config = builder_config.build_config.RELEASE,
+            target_bits = 64,
+            target_platform = builder_config.target_platform.WIN,
+        ),
+    ),
+    try_settings = builder_config.try_settings(
+        retry_failed_shards = True,
+    ),
+    gn_args = gn_args.config(
+        configs = [
+            "release_builder",
+            "reclient",
+            "chrome_with_codecs",
+            "arm64",
+            "minimal_symbols",
+        ],
     ),
     builderless = True,
     os = os.WINDOWS_ANY,
@@ -105,53 +171,23 @@ try_.builder(
             ],
             build_config = builder_config.build_config.RELEASE,
             target_bits = 64,
+            target_platform = builder_config.target_platform.WIN,
         ),
     ),
     try_settings = builder_config.try_settings(
         retry_failed_shards = True,
+    ),
+    gn_args = gn_args.config(
+        configs = [
+            "release_builder",
+            "reclient",
+            "chrome_with_codecs",
+            "x64",
+            "minimal_symbols",
+        ],
     ),
     builderless = True,
     os = os.WINDOWS_ANY,
-)
-
-blink_mac_builder(
-    name = "mac10.13-blink-rel",
-    builder_spec = builder_config.builder_spec(
-        gclient_config = builder_config.gclient_config(
-            config = "chromium",
-        ),
-        chromium_config = builder_config.chromium_config(
-            config = "chromium",
-            apply_configs = [
-                "mb",
-            ],
-            build_config = builder_config.build_config.RELEASE,
-            target_bits = 64,
-        ),
-    ),
-    try_settings = builder_config.try_settings(
-        retry_failed_shards = True,
-    ),
-)
-
-blink_mac_builder(
-    name = "mac10.14-blink-rel",
-    builder_spec = builder_config.builder_spec(
-        gclient_config = builder_config.gclient_config(
-            config = "chromium",
-        ),
-        chromium_config = builder_config.chromium_config(
-            config = "chromium",
-            apply_configs = [
-                "mb",
-            ],
-            build_config = builder_config.build_config.RELEASE,
-            target_bits = 64,
-        ),
-    ),
-    try_settings = builder_config.try_settings(
-        retry_failed_shards = True,
-    ),
 )
 
 blink_mac_builder(
@@ -167,10 +203,20 @@ blink_mac_builder(
             ],
             build_config = builder_config.build_config.RELEASE,
             target_bits = 64,
+            target_platform = builder_config.target_platform.MAC,
         ),
     ),
     try_settings = builder_config.try_settings(
         retry_failed_shards = True,
+    ),
+    gn_args = gn_args.config(
+        configs = [
+            "release_builder",
+            "reclient",
+            "chrome_with_codecs",
+            "minimal_symbols",
+            "disable_nacl",
+        ],
     ),
 )
 
@@ -187,10 +233,20 @@ blink_mac_builder(
             ],
             build_config = builder_config.build_config.RELEASE,
             target_bits = 64,
+            target_platform = builder_config.target_platform.MAC,
         ),
     ),
     try_settings = builder_config.try_settings(
         retry_failed_shards = True,
+    ),
+    gn_args = gn_args.config(
+        configs = [
+            "release_builder",
+            "reclient",
+            "chrome_with_codecs",
+            "minimal_symbols",
+            "disable_nacl",
+        ],
     ),
     builderless = False,
 )
@@ -208,11 +264,21 @@ blink_mac_builder(
             ],
             build_config = builder_config.build_config.RELEASE,
             target_bits = 32,
+            target_platform = builder_config.target_platform.MAC,
         ),
         build_gs_bucket = "chromium-fyi-archive",
     ),
     try_settings = builder_config.try_settings(
         retry_failed_shards = True,
+    ),
+    gn_args = gn_args.config(
+        configs = [
+            "release_builder",
+            "reclient",
+            "chrome_with_codecs",
+            "arm64",
+            "minimal_symbols",
+        ],
     ),
 )
 
@@ -229,10 +295,20 @@ blink_mac_builder(
             ],
             build_config = builder_config.build_config.RELEASE,
             target_bits = 64,
+            target_platform = builder_config.target_platform.MAC,
         ),
     ),
     try_settings = builder_config.try_settings(
         retry_failed_shards = False,
+    ),
+    gn_args = gn_args.config(
+        configs = [
+            "release_builder",
+            "reclient",
+            "chrome_with_codecs",
+            "minimal_symbols",
+            "disable_nacl",
+        ],
     ),
 )
 
@@ -249,10 +325,20 @@ blink_mac_builder(
             ],
             build_config = builder_config.build_config.RELEASE,
             target_bits = 64,
+            target_platform = builder_config.target_platform.MAC,
         ),
     ),
     try_settings = builder_config.try_settings(
         retry_failed_shards = True,
+    ),
+    gn_args = gn_args.config(
+        configs = [
+            "release_builder",
+            "reclient",
+            "chrome_with_codecs",
+            "arm64",
+            "minimal_symbols",
+        ],
     ),
 )
 
@@ -269,10 +355,20 @@ blink_mac_builder(
             ],
             build_config = builder_config.build_config.RELEASE,
             target_bits = 64,
+            target_platform = builder_config.target_platform.MAC,
         ),
     ),
     try_settings = builder_config.try_settings(
         retry_failed_shards = False,
+    ),
+    gn_args = gn_args.config(
+        configs = [
+            "release_builder",
+            "reclient",
+            "chrome_with_codecs",
+            "minimal_symbols",
+            "disable_nacl",
+        ],
     ),
 )
 
@@ -289,9 +385,49 @@ blink_mac_builder(
             ],
             build_config = builder_config.build_config.RELEASE,
             target_bits = 64,
+            target_platform = builder_config.target_platform.MAC,
         ),
     ),
     try_settings = builder_config.try_settings(
         retry_failed_shards = True,
+    ),
+    gn_args = gn_args.config(
+        configs = [
+            "release_builder",
+            "reclient",
+            "chrome_with_codecs",
+            "arm64",
+            "minimal_symbols",
+        ],
+    ),
+)
+
+blink_mac_builder(
+    name = "mac13.arm64-skia-alt-blink-rel",
+    builder_spec = builder_config.builder_spec(
+        gclient_config = builder_config.gclient_config(
+            config = "chromium",
+        ),
+        chromium_config = builder_config.chromium_config(
+            config = "chromium",
+            apply_configs = [
+                "mb",
+            ],
+            build_config = builder_config.build_config.RELEASE,
+            target_bits = 64,
+            target_platform = builder_config.target_platform.MAC,
+        ),
+    ),
+    try_settings = builder_config.try_settings(
+        retry_failed_shards = True,
+    ),
+    gn_args = gn_args.config(
+        configs = [
+            "release_builder",
+            "reclient",
+            "chrome_with_codecs",
+            "arm64",
+            "minimal_symbols",
+        ],
     ),
 )

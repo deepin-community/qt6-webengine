@@ -5,20 +5,18 @@
 #ifndef COMPONENTS_ATTRIBUTION_REPORTING_SUITABLE_ORIGIN_H_
 #define COMPONENTS_ATTRIBUTION_REPORTING_SUITABLE_ORIGIN_H_
 
+#include <compare>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include "base/check.h"
 #include "base/component_export.h"
-#include "base/strings/string_piece_forward.h"
+#include "mojo/public/cpp/bindings/default_construct_tag.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/origin.h"
 
 class GURL;
-
-namespace mojo {
-struct DefaultConstructTraits;
-}  // namespace mojo
 
 namespace net {
 class SchemefulSite;
@@ -56,7 +54,11 @@ class COMPONENT_EXPORT(ATTRIBUTION_REPORTING) SuitableOrigin {
   // invariants.
   //
   // All parts of the URL other than the origin are ignored.
-  static absl::optional<SuitableOrigin> Deserialize(base::StringPiece);
+  static absl::optional<SuitableOrigin> Deserialize(std::string_view);
+
+  // Creates an invalid instance for use with Mojo deserialization, which
+  // requires types to be default-constructible.
+  explicit SuitableOrigin(mojo::DefaultConstruct::Tag);
 
   ~SuitableOrigin();
 
@@ -90,21 +92,14 @@ class COMPONENT_EXPORT(ATTRIBUTION_REPORTING) SuitableOrigin {
   }
 
   // Allows this type to be used as a key in a set or map.
-  bool operator<(const SuitableOrigin&) const;
+  friend std::weak_ordering operator<=>(const SuitableOrigin&,
+                                        const SuitableOrigin&) = default;
 
   std::string Serialize() const;
 
   bool IsValid() const;
 
  private:
-  friend struct SourceRegistration;
-  friend struct TriggerRegistration;
-  friend mojo::DefaultConstructTraits;
-
-  // Creates an invalid instance for use with Mojo deserialization, which
-  // requires types to be default-constructible.
-  SuitableOrigin();
-
   explicit SuitableOrigin(url::Origin);
 
   url::Origin origin_;

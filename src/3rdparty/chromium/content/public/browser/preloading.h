@@ -52,6 +52,12 @@ enum class PreloadingType {
   // NoState prefetch only supports the GET HTTP method and doesn't cache
   // resources with the no-store cache-control header.
   kNoStatePrefetch = 5,
+
+  // Link-Preview loads a page with prerendering infrastructures in a dedicated
+  // mini tab so that users can take a look at the content before visiting it.
+  // TODO(b:291867362): This is not used by the current implementation,
+  // but might be reused in the future.
+  kLinkPreview = 6,
 };
 
 // Defines various triggering mechanisms which triggers different preloading
@@ -64,6 +70,12 @@ class CONTENT_EXPORT PreloadingPredictor {
       : ukm_value_(ukm_value), name_(name) {}
   int64_t ukm_value() const { return ukm_value_; }
   base::StringPiece name() const { return name_; }
+
+  bool operator==(const PreloadingPredictor& other) const {
+    // There's no need to compare name_ since every PreloadingPredictor has a
+    // distinct ukm_value_.
+    return other.ukm_value_ == ukm_value_;
+  }
 
  private:
   int64_t ukm_value_;
@@ -109,6 +121,11 @@ static constexpr PreloadingPredictor kUrlPointerHoverOnAnchor(
 // the <link> HTML element to hint to browsers that the user might need it for
 // next navigation.
 static constexpr PreloadingPredictor kLinkRel(3, "LinkRel");
+
+// When overscroll that could trigger a back navigation starts.
+static constexpr PreloadingPredictor kBackGestureNavigation(
+    4,
+    "BackGestureNavigation");
 
 // TODO(crbug.com/1309934): Add more predictors as we integrate Preloading
 // logging.
@@ -185,16 +202,45 @@ enum class PreloadingEligibility {
   // Preloading was ineligible because it is not supported for WebContents.
   kPreloadingUnsupportedByWebContents = 15,
 
-  // Values between `kPreloadingEligibilityCommonEnd` (inclusive) and
-  // `kPreloadingEligibilityContentEnd` (exclusive) are reserved for enums
-  // defined under `//content`.
-  kPreloadingEligibilityCommonEnd = 50,
+  // Preloading was ineligible because it was triggered under memory pressure.
+  kMemoryPressure = 16,
+
+  // Preloading was ineligible because some DevTools client temporarily
+  // disabled.
+  kPreloadingDisabledByDevTools = 17,
+
+  // Preloading was ineligible because some triggers only allows https.
+  kHttpsOnly = 18,
+
+  // Preloading was ineligible for non-http(s).
+  kHttpOrHttpsOnly = 19,
+
+  // See corresponding values in PrefetchStatus for documentation.
+  kUserHasCookies = 55,
+  kUserHasServiceWorker = 56,
+  // This is similar to `kHttpsOnly`, but separately defined here to keep
+  // existing metrics values, for cases corresponding to
+  // `PrefetchStatus::kPrefetchIneligibleSchemeIsNotHttps`.
+  kSchemeIsNotHttps = 57,
+  kNonDefaultStoragePartition = 59,
+  kRetryAfter = 77,
+  kPrefetchProxyNotAvailable = 78,
+  kHostIsNonUnique = 86,
+  kExistingProxy = 88,
+  kBrowserContextOffTheRecord = 89,
+  kSameSiteCrossOriginPrefetchRequiredProxy = 96,
 
   // TODO(crbug.com/1309934): Add more specific ineligibility reasons subject to
   // each preloading operation
-  // This constant is used to define the value from which embedders can add more
-  // enums beyond this value.
+  // This constant is used to define the value beyond which embedders can add
+  // more enums.
   kPreloadingEligibilityContentEnd = 100,
+
+  // This is another range reserved for content internal values, namely
+  // `PrerenderBackNavigationEligibility`. Embedders may add more values
+  // beyond this range.
+  kPreloadingEligibilityContentStart2 = 200,
+  kPreloadingEligibilityContentEnd2 = 250,
 };
 
 // The outcome of the holdback check. This is not part of eligibility status to
@@ -264,12 +310,16 @@ enum class PreloadingTriggeringOutcome {
   kTriggeredButUpgradedToPrerender = 8,
 
   // Preloading was triggered but was pending for starting its initial
-  // navigation. This outcome should not be recorded when
-  // `kPrerender2SequentialPrerendering` is disabled.
+  // navigation.
   kTriggeredButPending = 9,
 
+  // Used for triggers that do not perform a preloading operation. This may be
+  // used for a trigger which we're evaluating the accuracy of before actually
+  // having it preload.
+  kNoOp = 10,
+
   // Required by UMA histogram macro.
-  kMaxValue = kTriggeredButPending,
+  kMaxValue = kNoOp,
 };
 
 // These values are persisted to logs. Entries should not be renumbered and

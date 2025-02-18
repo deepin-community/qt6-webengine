@@ -65,10 +65,13 @@ FlossLEScanClient::~FlossLEScanClient() {
 
 void FlossLEScanClient::Init(dbus::Bus* bus,
                              const std::string& service_name,
-                             const int adapter_index) {
+                             const int adapter_index,
+                             base::Version version,
+                             base::OnceClosure on_ready) {
   bus_ = bus;
   object_path_ = FlossDBusClient::GenerateGattPath(adapter_index);
   service_name_ = service_name;
+  version_ = version;
 
   exported_scanner_callback_manager_.Init(bus);
 
@@ -77,7 +80,10 @@ void FlossLEScanClient::Init(dbus::Bus* bus,
   exported_scanner_callback_manager_.AddMethod(
       adapter::kOnScanResult, &ScannerClientObserver::ScanResultReceived);
   exported_scanner_callback_manager_.AddMethod(
-      adapter::kOnScanResultLost, &ScannerClientObserver::ScanResultLost);
+      adapter::kOnAdvertisementFound,
+      &ScannerClientObserver::AdvertisementFound);
+  exported_scanner_callback_manager_.AddMethod(
+      adapter::kOnAdvertisementLost, &ScannerClientObserver::AdvertisementLost);
 
   dbus::ObjectPath callback_path(kScannerCallbackPath);
 
@@ -88,6 +94,8 @@ void FlossLEScanClient::Init(dbus::Bus* bus,
     LOG(ERROR) << "Failed exporting callback " + callback_path.value();
     return;
   }
+
+  on_ready_ = std::move(on_ready);
 }
 
 void FlossLEScanClient::AddObserver(ScannerClientObserver* observer) {
@@ -115,6 +123,11 @@ void FlossLEScanClient::OnRegisterScannerCallback(DBusResult<uint32_t> ret) {
   }
 
   le_scan_callback_id_ = ret.value();
+
+  // Mark client as ready to use.
+  if (on_ready_) {
+    std::move(on_ready_).Run();
+  }
 
   while (!pending_register_scanners_.empty()) {
     CallLEScanMethod<>(std::move(pending_register_scanners_.front()),
@@ -150,12 +163,18 @@ void FlossLEScanClient::UnregisterScanner(ResponseCallback<bool> callback,
                      scanner_id);
 }
 
-void FlossLEScanClient::StartScan(ResponseCallback<BtifStatus> callback,
-                                  uint8_t scanner_id,
-                                  const ScanSettings& scan_settings,
-                                  const absl::optional<ScanFilter>& filter) {
-  CallLEScanMethod<>(std::move(callback), adapter::kStartScan, scanner_id,
-                     scan_settings, filter);
+void FlossLEScanClient::StartScan(
+    ResponseCallback<BtifStatus> callback,
+    uint8_t scanner_id,
+    const absl::optional<ScanSettings>& scan_settings,
+    const absl::optional<ScanFilter>& filter) {
+  if (version_ >= base::Version("0.3")) {
+    CallLEScanMethod<>(std::move(callback), adapter::kStartScan, scanner_id,
+                       scan_settings, filter);
+  } else {
+    CallLEScanMethod<>(std::move(callback), adapter::kStartScan, scanner_id,
+                       ScanSettings{}, filter);
+  }
 }
 
 void FlossLEScanClient::StopScan(ResponseCallback<BtifStatus> callback,
@@ -177,24 +196,38 @@ void FlossLEScanClient::ScanResultReceived(ScanResult scan_result) {
   }
 }
 
-void FlossLEScanClient::ScanResultLost(ScanResult scan_result) {
+void FlossLEScanClient::AdvertisementFound(uint8_t scanner_id,
+                                           ScanResult scan_result) {
   for (auto& observer : observers_) {
-    observer.ScanResultLost(scan_result);
+    observer.AdvertisementFound(scanner_id, scan_result);
   }
 }
 
-// TODO(b/217274013): Update these templates when structs in place
+void FlossLEScanClient::AdvertisementLost(uint8_t scanner_id,
+                                          ScanResult scan_result) {
+  for (auto& observer : observers_) {
+    observer.AdvertisementLost(scanner_id, scan_result);
+  }
+}
+
 template <>
 void FlossDBusClient::WriteDBusParam(dbus::MessageWriter* writer,
                                      const ScanSettings& data) {
   dbus::MessageWriter array_writer(nullptr);
   writer->OpenArray("{sv}", &array_writer);
 
-  WriteDictEntry(&array_writer, "interval", static_cast<int32_t>(3));
-  WriteDictEntry(&array_writer, "window", static_cast<int32_t>(3));
-  WriteDictEntry(&array_writer, "scan_type", static_cast<uint32_t>(1));
+  WriteDictEntry(&array_writer, "interval", data.interval);
+  WriteDictEntry(&array_writer, "window", data.window);
+  WriteDictEntry(&array_writer, "scan_type", data.scan_type);
 
   writer->CloseContainer(&array_writer);
+}
+
+template <>
+void FlossDBusClient::WriteDBusParam(dbus::MessageWriter* writer,
+                                     const ScanType& type) {
+  int32_t value = static_cast<uint32_t>(type);
+  WriteDBusParam(writer, value);
 }
 
 template <>
@@ -267,6 +300,12 @@ bool FlossDBusClient::ReadDBusParam(dbus::MessageReader* reader,
 template <>
 const DBusTypeInfo& GetDBusTypeInfo(const ScanSettings*) {
   static DBusTypeInfo info{"a{sv}", "ScanSettings"};
+  return info;
+}
+
+template <>
+const DBusTypeInfo& GetDBusTypeInfo(const ScanType*) {
+  static DBusTypeInfo info{"u", "ScanType"};
   return info;
 }
 

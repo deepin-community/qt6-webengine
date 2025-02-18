@@ -26,6 +26,13 @@ GENERATED_LOCATION = path.join(ROOT_DIRECTORY, 'front_end', 'generated',
 READ_LOCATION = path.join(ROOT_DIRECTORY, 'third_party', 'blink', 'renderer',
                           'core', 'frame', 'deprecation', 'deprecation.json5')
 
+# Deprecations in this list are exempt from code generation as they are not
+# dispatched to the DevTools.
+EXEMPTED_FROM_DEVTOOLS_GENERATION = {
+    "ThirdPartyCookieAccessWarning",
+    "ThirdPartyCookieAccessError",
+}
+
 
 def deprecations_from_file(file_name):
     with open(file_name) as json5_file:
@@ -37,7 +44,13 @@ def deprecations_from_file(file_name):
     meta = {}
     ui_strings = {}
     for entry in doc["data"]:
+        if "obsolete_to_be_removed_after_milestone" in entry:
+            continue
+
         name = entry["name"]
+
+        if name in EXEMPTED_FROM_DEVTOOLS_GENERATION:
+            continue
 
         meta_for_entry = {}
         if "milestone" in entry:
@@ -47,14 +60,9 @@ def deprecations_from_file(file_name):
                 "chrome_status_feature"]
         if len(meta_for_entry): meta[name] = meta_for_entry
 
-        # The PRESUBMIT script in chromium prevents unicode characters,
-        # but there are still a few special cases we need to handle.
         ui_strings[name] = {
-            "message":
-            entry["message"].replace("\\", "\\\\").replace("'", "\\'"),
-            "note":
-            entry["translation_note"].replace("\n",
-                                              "\\n").replace("\r", "\\r")
+            "message": entry["message"],
+            "note": entry["translation_note"],
         }
 
     return meta, ui_strings
@@ -80,7 +88,7 @@ with open(GENERATED_LOCATION, mode="w+") as f:
         f.write("  /**\n")
         f.write("   * @description %s\n" % note)
         f.write("   */\n")
-        f.write("  %s: '%s',\n" % (name, message))
+        f.write("  %s: %s,\n" % (name, json.dumps(message)))
     f.write("};\n")
     f.write("\n")
     f.write("export interface DeprecationDescriptor {\n")

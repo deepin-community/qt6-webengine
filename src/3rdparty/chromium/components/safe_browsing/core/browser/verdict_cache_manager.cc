@@ -19,6 +19,7 @@
 #include "components/content_settings/core/common/content_settings_utils.h"
 #include "components/history/core/browser/history_service_observer.h"
 #include "components/safe_browsing/core/browser/db/v4_protocol_manager_util.h"
+#include "components/safe_browsing/core/browser/hashprefix_realtime/hash_realtime_utils.h"
 #include "components/safe_browsing/core/common/proto/csd.pb.h"
 #include "components/safe_browsing/core/common/safebrowsing_constants.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
@@ -35,7 +36,8 @@ const char kPasswordOnFocusCacheKey[] = "password_on_focus_cache_key";
 const char kRealTimeUrlCacheKey[] = "real_time_url_cache_key";
 const char kCsdTypeCacheKey[] = "client_side_detection_type_cache_key";
 
-// Command-line flag for caching an artificial unsafe verdict.
+// Command-line flag for caching an artificial unsafe verdict for URL real-time
+// lookups.
 const char kUnsafeUrlFlag[] = "mark_as_real_time_phishing";
 
 // The maximum number of entries to be removed in a single cleanup. Removing too
@@ -105,7 +107,8 @@ base::Value::Dict CreateDictionaryFromVerdict(const T& verdict,
                                               const char* proto_name) {
   DCHECK(proto_name == kVerdictProto || proto_name == kRealTimeThreatInfoProto);
   base::Value::Dict result;
-  result.Set(kCacheCreationTime, static_cast<int>(receive_time.ToDoubleT()));
+  result.Set(kCacheCreationTime,
+             static_cast<int>(receive_time.InSecondsFSinceUnixEpoch()));
   std::string serialized_proto(verdict.SerializeAsString());
   // Performs a base64 encoding on the serialized proto.
   base::Base64Encode(serialized_proto, &serialized_proto);
@@ -201,22 +204,22 @@ bool PathVariantsMatchCacheExpression(
 
 bool IsCacheExpired(int cache_creation_time, int cache_duration) {
   // Note that we assume client's clock is accurate or almost accurate.
-  return base::Time::Now().ToDoubleT() >
+  return base::Time::Now().InSecondsFSinceUnixEpoch() >
          static_cast<double>(cache_creation_time + cache_duration);
 }
 
 bool IsCacheOlderThanUpperBound(int cache_creation_time) {
-  return base::Time::Now().ToDoubleT() >
+  return base::Time::Now().InSecondsFSinceUnixEpoch() >
          static_cast<double>(cache_creation_time +
                              kCacheDurationUpperBoundSecond);
 }
 
 template <class T>
-size_t RemoveExpiredEntries(base::Value* verdict_dictionary,
+size_t RemoveExpiredEntries(base::Value::Dict& verdict_dictionary,
                             const char* proto_name) {
   DCHECK(proto_name == kVerdictProto || proto_name == kRealTimeThreatInfoProto);
   std::vector<std::string> expired_keys;
-  for (auto item : verdict_dictionary->DictItems()) {
+  for (auto item : verdict_dictionary) {
     int verdict_received_time;
     T verdict;
     if (!ParseVerdictEntry<T>(&item.second, &verdict_received_time, &verdict,
@@ -228,7 +231,7 @@ size_t RemoveExpiredEntries(base::Value* verdict_dictionary,
   }
 
   for (const std::string& key : expired_keys) {
-    verdict_dictionary->RemoveKey(key);
+    verdict_dictionary.Remove(key);
   }
 
   return expired_keys.size();
@@ -412,7 +415,8 @@ typename T::VerdictType GetVerdictTypeFromMostMatchedCachedVerdict(
 }
 
 bool HasPageLoadTokenExpired(int64_t token_time_msec) {
-  return base::Time::Now() - base::Time::FromJavaTime(token_time_msec) >
+  return base::Time::Now() -
+             base::Time::FromMillisecondsSinceUnixEpoch(token_time_msec) >
          base::Minutes(kPageLoadTokenExpireMinute);
 }
 
@@ -450,12 +454,13 @@ VerdictCacheManager::VerdictCacheManager(
   }
   // sync_observer_ can be null in some embedders that don't support sync.
   if (sync_observer_) {
-    sync_observer_->ObserveSyncStateChanged(base::BindRepeating(
+    sync_observer_->ObserveHistorySyncStateChanged(base::BindRepeating(
         &VerdictCacheManager::CleanUpAllPageLoadTokens,
         weak_factory_.GetWeakPtr(), ClearReason::kSyncStateChanged));
   }
-  CacheArtificialRealTimeUrlVerdict();
-  CacheArtificialPhishGuardVerdict();
+  CacheArtificialUnsafeRealTimeUrlVerdictFromSwitch();
+  CacheArtificialUnsafePhishGuardVerdictFromSwitch();
+  CacheArtificialUnsafeHashRealTimeLookupVerdictFromSwitch();
 }
 
 void VerdictCacheManager::Shutdown() {
@@ -568,18 +573,18 @@ size_t VerdictCacheManager::GetStoredPhishGuardVerdictCount(
     return stored_verdict_count->value();
   }
 
-  ContentSettingsForOneType settings;
-  content_settings_->GetSettingsForOneType(
-      ContentSettingsType::PASSWORD_PROTECTION, &settings);
   stored_verdict_count_password_on_focus_ = 0;
   stored_verdict_count_password_entry_ = 0;
-  for (const ContentSettingPatternSource& source : settings) {
-    for (auto item : source.setting_value.DictItems()) {
+  for (const ContentSettingPatternSource& source :
+       content_settings_->GetSettingsForOneType(
+           ContentSettingsType::PASSWORD_PROTECTION)) {
+    for (auto item : source.setting_value.GetDict()) {
       if (item.first == base::StringPiece(kPasswordOnFocusCacheKey)) {
         stored_verdict_count_password_on_focus_.value() +=
-            item.second.DictSize();
+            item.second.GetDict().size();
       } else {
-        stored_verdict_count_password_entry_.value() += item.second.DictSize();
+        stored_verdict_count_password_entry_.value() +=
+            item.second.GetDict().size();
       }
     }
   }
@@ -595,15 +600,14 @@ size_t VerdictCacheManager::GetStoredRealTimeUrlCheckVerdictCount() {
     return stored_verdict_count_real_time_url_check_.value();
   }
 
-  ContentSettingsForOneType settings;
-  content_settings_->GetSettingsForOneType(
-      ContentSettingsType::SAFE_BROWSING_URL_CHECK_DATA, &settings);
   stored_verdict_count_real_time_url_check_ = 0;
-  for (const ContentSettingPatternSource& source : settings) {
-    for (auto item : source.setting_value.DictItems()) {
+  for (const ContentSettingPatternSource& source :
+       content_settings_->GetSettingsForOneType(
+           ContentSettingsType::SAFE_BROWSING_URL_CHECK_DATA)) {
+    for (auto item : source.setting_value.GetDict()) {
       if (item.first == base::StringPiece(kRealTimeUrlCacheKey)) {
         stored_verdict_count_real_time_url_check_.value() +=
-            item.second.DictSize();
+            item.second.GetDict().size();
       }
     }
   }
@@ -611,7 +615,6 @@ size_t VerdictCacheManager::GetStoredRealTimeUrlCheckVerdictCount() {
 }
 
 void VerdictCacheManager::CacheRealTimeUrlVerdict(
-    const GURL& url,
     const RTLookupResponse& verdict,
     const base::Time& receive_time) {
   if (is_shut_down_) {
@@ -732,7 +735,7 @@ ChromeUserPopulation::PageLoadToken VerdictCacheManager::CreatePageLoadToken(
   ChromeUserPopulation::PageLoadToken token;
   token.set_token_source(
       ChromeUserPopulation::PageLoadToken::CLIENT_GENERATION);
-  token.set_token_time_msec(base::Time::Now().ToJavaTime());
+  token.set_token_time_msec(base::Time::Now().InMillisecondsSinceUnixEpoch());
   token.set_token_value(base::RandBytesAsString(kPageLoadTokenBytes));
 
   page_load_token_map_[hostname] = token;
@@ -751,7 +754,8 @@ ChromeUserPopulation::PageLoadToken VerdictCacheManager::GetPageLoadToken(
   bool has_expired = HasPageLoadTokenExpired(token.token_time_msec());
   base::UmaHistogramLongTimes(
       "SafeBrowsing.PageLoadToken.Duration",
-      base::Time::Now() - base::Time::FromJavaTime(token.token_time_msec()));
+      base::Time::Now() -
+          base::Time::FromMillisecondsSinceUnixEpoch(token.token_time_msec()));
   base::UmaHistogramBoolean("SafeBrowsing.PageLoadToken.HasExpired",
                             has_expired);
   return has_expired ? ChromeUserPopulation::PageLoadToken() : token;
@@ -799,12 +803,10 @@ void VerdictCacheManager::CleanUpExpiredPhishGuardVerdicts() {
     return;
   }
 
-  ContentSettingsForOneType password_protection_settings;
-  content_settings_->GetSettingsForOneType(
-      ContentSettingsType::PASSWORD_PROTECTION, &password_protection_settings);
-
   int removed_count = 0;
-  for (ContentSettingPatternSource& source : password_protection_settings) {
+  for (ContentSettingPatternSource& source :
+       content_settings_->GetSettingsForOneType(
+           ContentSettingsType::PASSWORD_PROTECTION)) {
     // Find all verdicts associated with this origin.
     base::Value::Dict cache_dictionary =
         std::move(source.setting_value.GetDict());
@@ -837,14 +839,11 @@ void VerdictCacheManager::CleanUpExpiredRealTimeUrlCheckVerdicts() {
   if (GetStoredRealTimeUrlCheckVerdictCount() == 0) {
     return;
   }
-  ContentSettingsForOneType safe_browsing_url_check_data_settings;
-  content_settings_->GetSettingsForOneType(
-      ContentSettingsType::SAFE_BROWSING_URL_CHECK_DATA,
-      &safe_browsing_url_check_data_settings);
 
   int removed_count = 0;
   for (ContentSettingPatternSource& source :
-       safe_browsing_url_check_data_settings) {
+       content_settings_->GetSettingsForOneType(
+           ContentSettingsType::SAFE_BROWSING_URL_CHECK_DATA)) {
     // Find all verdicts associated with this origin.
     base::Value::Dict cache_dictionary =
         std::move(source.setting_value.GetDict());
@@ -925,14 +924,14 @@ bool VerdictCacheManager::RemoveExpiredPhishGuardVerdicts(
     if (trigger_type == LoginReputationClientRequest::UNFAMILIAR_LOGIN_PAGE &&
         key == std::string(kPasswordOnFocusCacheKey)) {
       size_t removed_cnt = RemoveExpiredEntries<LoginReputationClientResponse>(
-          &value, kVerdictProto);
+          value.GetDict(), kVerdictProto);
       verdicts_removed += removed_cnt;
       if (stored_verdict_count_password_on_focus_.has_value()) {
         stored_verdict_count_password_on_focus_.value() -= removed_cnt;
       }
     } else {
       size_t removed_cnt = RemoveExpiredEntries<LoginReputationClientResponse>(
-          &value, kVerdictProto);
+          value.GetDict(), kVerdictProto);
       verdicts_removed += removed_cnt;
       if (stored_verdict_count_password_entry_.has_value()) {
         stored_verdict_count_password_entry_.value() -= removed_cnt;
@@ -956,7 +955,7 @@ bool VerdictCacheManager::RemoveExpiredRealTimeUrlCheckVerdicts(
   std::vector<std::string> empty_keys;
   for (auto [key, value] : cache_dictionary) {
     size_t removed_cnt = RemoveExpiredEntries<RTLookupResponse::ThreatInfo>(
-        &value, kRealTimeThreatInfoProto);
+        value.GetDict(), kRealTimeThreatInfoProto);
     verdicts_removed += removed_cnt;
     if (stored_verdict_count_real_time_url_check_.has_value()) {
       stored_verdict_count_real_time_url_check_.value() -= removed_cnt;
@@ -1037,10 +1036,9 @@ size_t VerdictCacheManager::GetPhishGuardVerdictCountForURL(
 
   int verdict_cnt = 0;
   if (trigger_type == LoginReputationClientRequest::UNFAMILIAR_LOGIN_PAGE) {
-    base::Value* password_on_focus_dict =
-        cache_dictionary_value.GetDict().Find(kPasswordOnFocusCacheKey);
-    verdict_cnt +=
-        password_on_focus_dict ? password_on_focus_dict->DictSize() : 0;
+    base::Value::Dict* password_on_focus_dict =
+        cache_dictionary_value.GetDict().FindDict(kPasswordOnFocusCacheKey);
+    verdict_cnt += password_on_focus_dict ? password_on_focus_dict->size() : 0;
   } else {
     for (auto [key, value] : cache_dictionary_value.GetDict()) {
       if (key == kPasswordOnFocusCacheKey) {
@@ -1066,37 +1064,47 @@ size_t VerdictCacheManager::GetRealTimeUrlCheckVerdictCountForURL(
              : 0;
 }
 
-void VerdictCacheManager::CacheArtificialRealTimeUrlVerdict() {
+void VerdictCacheManager::CacheArtificialUnsafeRealTimeUrlVerdictFromSwitch() {
   std::string phishing_url_string =
       base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
           kUnsafeUrlFlag);
-  if (phishing_url_string.empty()) {
+  CacheArtificialRealTimeUrlVerdict(phishing_url_string, /*is_unsafe=*/true);
+}
+
+void VerdictCacheManager::CacheArtificialRealTimeUrlVerdict(
+    const std::string& url_string,
+    bool is_unsafe) {
+  if (url_string.empty()) {
     return;
   }
 
-  GURL artificial_unsafe_url(phishing_url_string);
-  if (!artificial_unsafe_url.is_valid()) {
+  GURL artificial_url(url_string);
+  if (!artificial_url.is_valid()) {
     return;
   }
 
-  has_artificial_unsafe_url_ = true;
+  has_artificial_cached_url_ = true;
 
   RTLookupResponse response;
   RTLookupResponse::ThreatInfo* threat_info = response.add_threat_info();
-  threat_info->set_verdict_type(RTLookupResponse::ThreatInfo::DANGEROUS);
-  threat_info->set_threat_type(
-      RTLookupResponse::ThreatInfo::SOCIAL_ENGINEERING);
+  if (is_unsafe) {
+    threat_info->set_verdict_type(RTLookupResponse::ThreatInfo::DANGEROUS);
+    threat_info->set_threat_type(
+        RTLookupResponse::ThreatInfo::SOCIAL_ENGINEERING);
+  } else {
+    threat_info->set_verdict_type(RTLookupResponse::ThreatInfo::SAFE);
+  }
   threat_info->set_cache_duration_sec(3000);
   threat_info->set_cache_expression_using_match_type(
-      artificial_unsafe_url.GetContent());
+      artificial_url.GetContent());
   threat_info->set_cache_expression_match_type(
       RTLookupResponse::ThreatInfo::EXACT_MATCH);
   RemoveContentSettingsOnURLsDeleted(/*all_history=*/false,
-                                     {history::URLRow(artificial_unsafe_url)});
-  CacheRealTimeUrlVerdict(artificial_unsafe_url, response, base::Time::Now());
+                                     {history::URLRow(artificial_url)});
+  CacheRealTimeUrlVerdict(response, base::Time::Now());
 }
 
-void VerdictCacheManager::CacheArtificialPhishGuardVerdict() {
+void VerdictCacheManager::CacheArtificialUnsafePhishGuardVerdictFromSwitch() {
   std::string phishing_url_string =
       base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
           kArtificialCachedPhishGuardVerdictFlag);
@@ -1109,7 +1117,7 @@ void VerdictCacheManager::CacheArtificialPhishGuardVerdict() {
     return;
   }
 
-  has_artificial_unsafe_url_ = true;
+  has_artificial_cached_url_ = true;
 
   ReusedPasswordAccountType reused_password_account_type;
   reused_password_account_type.set_account_type(
@@ -1122,6 +1130,49 @@ void VerdictCacheManager::CacheArtificialPhishGuardVerdict() {
   CachePhishGuardVerdict(LoginReputationClientRequest::PASSWORD_REUSE_EVENT,
                          reused_password_account_type, verdict,
                          base::Time::Now());
+}
+
+void VerdictCacheManager::CacheArtificialHashRealTimeLookupVerdict(
+    const std::string& url_spec,
+    bool is_unsafe) {
+  if (url_spec.empty()) {
+    return;
+  }
+
+  GURL artificial_unsafe_url(url_spec);
+  if (!artificial_unsafe_url.is_valid()) {
+    return;
+  }
+
+  has_artificial_cached_url_ = true;
+
+  std::vector<FullHashStr> full_hashes;
+  V4ProtocolManagerUtil::UrlToFullHashes(artificial_unsafe_url, &full_hashes);
+  std::vector<std::string> hash_prefixes;
+  for (const auto& full_hash : full_hashes) {
+    auto hash_prefix = hash_realtime_utils::GetHashPrefix(full_hash);
+    hash_prefixes.emplace_back(hash_prefix);
+  }
+  FullHashStr sample_full_hash = full_hashes[0];
+  V5::FullHash full_hash_object;
+  full_hash_object.set_full_hash(sample_full_hash);
+  if (is_unsafe) {
+    auto* details = full_hash_object.add_full_hash_details();
+    details->set_threat_type(V5::ThreatType::SOCIAL_ENGINEERING);
+  }
+  V5::Duration cache_duration;
+  cache_duration.set_seconds(3000);
+  CacheHashPrefixRealTimeLookupResults(hash_prefixes, {full_hash_object},
+                                       cache_duration);
+}
+
+void VerdictCacheManager::
+    CacheArtificialUnsafeHashRealTimeLookupVerdictFromSwitch() {
+  std::string phishing_url_string =
+      base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
+          kArtificialCachedHashPrefixRealTimeVerdictFlag);
+  CacheArtificialHashRealTimeLookupVerdict(phishing_url_string,
+                                           /*is_unsafe=*/true);
 }
 
 void VerdictCacheManager::StopCleanUpTimerForTesting() {
@@ -1138,11 +1189,12 @@ void VerdictCacheManager::SetPageLoadTokenForTesting(
 }
 
 // static
-bool VerdictCacheManager::has_artificial_unsafe_url_ = false;
-
-// static
-bool VerdictCacheManager::has_artificial_unsafe_url() {
-  return has_artificial_unsafe_url_;
+bool VerdictCacheManager::has_artificial_cached_url_ = false;
+bool VerdictCacheManager::has_artificial_cached_url() {
+  return has_artificial_cached_url_;
+}
+void VerdictCacheManager::ResetHasArtificialCachedUrlForTesting() {
+  has_artificial_cached_url_ = false;
 }
 
 }  // namespace safe_browsing

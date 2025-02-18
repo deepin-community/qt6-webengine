@@ -8,6 +8,7 @@
 #include <memory>
 #include <string>
 
+#include "base/memory/raw_ptr.h"
 #include "base/notreached.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
@@ -139,18 +140,18 @@ class FakeRtpTransceiver : public webrtc::RtpTransceiverInterface {
     RTC_DCHECK_NOTREACHED() << "Not implemented";
     return {};
   }
-  std::vector<webrtc::RtpHeaderExtensionCapability> HeaderExtensionsToOffer()
-      const override {
+  std::vector<webrtc::RtpHeaderExtensionCapability>
+  GetHeaderExtensionsToNegotiate() const override {
     return {};
   }
-  webrtc::RTCError SetOfferedRtpHeaderExtensions(
+  webrtc::RTCError SetHeaderExtensionsToNegotiate(
       rtc::ArrayView<const webrtc::RtpHeaderExtensionCapability>
-          header_extensions_to_offer) override {
+          header_extensions) override {
     return webrtc::RTCError(webrtc::RTCErrorType::UNSUPPORTED_OPERATION);
   }
 
-  std::vector<webrtc::RtpHeaderExtensionCapability> HeaderExtensionsNegotiated()
-      const override {
+  std::vector<webrtc::RtpHeaderExtensionCapability>
+  GetNegotiatedHeaderExtensions() const override {
     return {};
   }
 
@@ -343,7 +344,7 @@ class MockPeerConnectionImpl : public webrtc::MockPeerConnectionInterface {
   std::string sdp_mid_;
   int sdp_mline_index_;
   std::string ice_sdp_;
-  webrtc::PeerConnectionObserver* observer_;
+  raw_ptr<webrtc::PeerConnectionObserver, ExperimentalRenderer> observer_;
   webrtc::RTCErrorType setconfiguration_error_type_ =
       webrtc::RTCErrorType::NONE;
   rtc::scoped_refptr<webrtc::RTCStatsReport> stats_report_;

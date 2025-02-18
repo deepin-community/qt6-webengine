@@ -16,7 +16,7 @@ bool IsInstalled(apps::Readiness readiness) {
     case apps::Readiness::kTerminated:
       return true;
     case apps::Readiness::kUninstalledByUser:
-    case apps::Readiness::kUninstalledByMigration:
+    case apps::Readiness::kUninstalledByNonUser:
     case apps::Readiness::kRemoved:
     case apps::Readiness::kUnknown:
       return false;
@@ -47,6 +47,10 @@ bool IsHumanLaunch(apps::LaunchSource launch_source) {
     case apps::LaunchSource::kFromCommandLine:
     case apps::LaunchSource::kFromLockScreen:
     case apps::LaunchSource::kFromAppHomePage:
+    case apps::LaunchSource::kFromReparenting:
+    case apps::LaunchSource::kFromProfileMenu:
+    case apps::LaunchSource::kFromSysTrayCalendar:
+    case apps::LaunchSource::kFromInstaller:
       return true;
     case apps::LaunchSource::kUnknown:
     case apps::LaunchSource::kFromChromeInternal:
@@ -76,7 +80,6 @@ bool AppTypeUsesWebContents(apps::AppType app_type) {
     case apps::AppType::kArc:
     case apps::AppType::kBuiltIn:
     case apps::AppType::kCrostini:
-    case apps::AppType::kMacOs:
     case apps::AppType::kPluginVm:
     case apps::AppType::kStandaloneBrowser:
     case apps::AppType::kRemote:

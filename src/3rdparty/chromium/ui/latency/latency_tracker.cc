@@ -11,10 +11,12 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/notreached.h"
 #include "base/strings/strcat.h"
-#include "base/strings/string_piece_forward.h"
+#include "base/strings/string_piece.h"
 #include "base/time/time.h"
 #include "services/metrics/public/cpp/ukm_entry_builder.h"
 #include "services/metrics/public/cpp/ukm_recorder.h"
+#include "ui/latency/jank_tracker_for_experiments_buildflags.h"
+#include "ui/latency/janky_duration_tracker.h"
 
 // Impose some restrictions for tests etc, but also be lenient since some of the
 // data come from untrusted sources.
@@ -125,6 +127,9 @@ void EmitScrollUpdateTime(base::TimeDelta dur, bool janky) {
       "Event.Jank.ScrollUpdate.TotalJankyAndNonJankyDuration2",
       base::HistogramBase::kUmaTargetedHistogramFlag);
   histogram->AddCount(janky ? kJanky : kNonJanky, count);
+#if BUILDFLAG(JANK_TRACKER_FOR_EXPERIMENTS)
+  AdvanceJankyDurationForBenchmarking(janky, count);
+#endif
 }
 
 }  // namespace
@@ -403,30 +408,11 @@ void LatencyTracker::ComputeEndToEndLatencyHistograms(
     ScrollType scroll_type =
         IsInertialScroll(latency) ? ScrollType::kInertial : ScrollType::kBegin;
 
-    // This UMA metric tracks the performance of overall scrolling as a high
-    // level metric.
-    UMA_HISTOGRAM_INPUT_LATENCY_5_SECONDS_MAX_MICROSECONDS(
-        "Event.Latency.ScrollBegin.TimeToScrollUpdateSwapBegin2",
-        ComputeLatency(original_timestamp, gpu_swap_begin_timestamp));
-
-    // This UMA metric tracks the time between the final frame swap for the
-    // first scroll event in a sequence and the original timestamp of that
-    // scroll event's underlying touch/wheel event.
-    UMA_HISTOGRAM_INPUT_LATENCY_5_SECONDS_MAX_MICROSECONDS_GROUP(
-        "TimeToScrollUpdateSwapBegin4", scroll_type, input_modality,
-        ComputeLatency(original_timestamp, gpu_swap_begin_timestamp));
-
-    // Report the latency metric separately for the scrolls that caused the
-    // top-controls to scroll and the ones that didn't.
-    if (top_controls_visible_height_changed) {
+    if (scroll_type == ScrollType::kBegin &&
+        input_modality == ScrollInputModality::kWheel) {
+      // scroll event's underlying touch/wheel event.
       UMA_HISTOGRAM_INPUT_LATENCY_5_SECONDS_MAX_MICROSECONDS_GROUP(
-          "TimeToScrollUpdateSwapBegin4.TopControlsMoved", scroll_type,
-          input_modality,
-          ComputeLatency(original_timestamp, gpu_swap_begin_timestamp));
-    } else {
-      UMA_HISTOGRAM_INPUT_LATENCY_5_SECONDS_MAX_MICROSECONDS_GROUP(
-          "TimeToScrollUpdateSwapBegin4.NoTopControlsMoved", scroll_type,
-          input_modality,
+          "TimeToScrollUpdateSwapBegin4", scroll_type, input_modality,
           ComputeLatency(original_timestamp, gpu_swap_begin_timestamp));
     }
 
@@ -453,12 +439,15 @@ void LatencyTracker::ComputeEndToEndLatencyHistograms(
         "Event.Latency.ScrollUpdate.TimeToScrollUpdateSwapBegin2",
         ComputeLatency(original_timestamp, gpu_swap_begin_timestamp));
 
-    // This UMA metric tracks the time from when the original touch/wheel event
-    // is created to when the scroll gesture results in final frame swap.
-    // First scroll events are excluded from this metric.
-    UMA_HISTOGRAM_INPUT_LATENCY_5_SECONDS_MAX_MICROSECONDS_GROUP(
-        "TimeToScrollUpdateSwapBegin4", scroll_type, input_modality,
-        ComputeLatency(original_timestamp, gpu_swap_begin_timestamp));
+    if (scroll_type == ScrollType::kBegin &&
+        input_modality == ScrollInputModality::kWheel) {
+      // This UMA metric tracks the time from when the original touch/wheel
+      // event is created to when the scroll gesture results in final frame
+      // swap. First scroll events are excluded from this metric.
+      UMA_HISTOGRAM_INPUT_LATENCY_5_SECONDS_MAX_MICROSECONDS_GROUP(
+          "TimeToScrollUpdateSwapBegin4", scroll_type, input_modality,
+          ComputeLatency(original_timestamp, gpu_swap_begin_timestamp));
+    }
 
     // Also report the latency metric separately for the scrolls that caused the
     // top-controls to scroll and the ones that didn't.
@@ -483,10 +472,6 @@ void LatencyTracker::ComputeEndToEndLatencyHistograms(
     if (latency.source_event_type() == SourceEventType::KEY_PRESS) {
       UMA_HISTOGRAM_INPUT_LATENCY_HIGH_RESOLUTION_MICROSECONDS(
           "Event.Latency.EndToEnd.KeyPress",
-          ComputeLatency(original_timestamp, gpu_swap_begin_timestamp));
-    } else if (latency.source_event_type() == SourceEventType::MOUSE) {
-      UMA_HISTOGRAM_INPUT_LATENCY_HIGH_RESOLUTION_MICROSECONDS(
-          "Event.Latency.EndToEnd.Mouse",
           ComputeLatency(original_timestamp, gpu_swap_begin_timestamp));
     } else if (latency.source_event_type() == SourceEventType::TOUCHPAD) {
       UMA_HISTOGRAM_INPUT_LATENCY_CUSTOM_1_SECOND_MAX_MICROSECONDS(

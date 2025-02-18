@@ -8,18 +8,8 @@ if (is_android) {
   import("//third_party/protobuf/proto_library.gni")
 }
 
-source_set("features") {
-  deps = [ "//base" ]
-
-  sources = [
-    "features.cc",
-    "features.h",
-  ]
-}
-
 source_set("cc") {
   deps = [
-    ":features",
     "//base",
     "//cc",
     "//chrome/browser/image_decoder",
@@ -35,11 +25,17 @@ source_set("cc") {
   ]
 
   sources = [
+    "etc1_thumbnail_helper.cc",
+    "etc1_thumbnail_helper.h",
+    "jpeg_thumbnail_helper.cc",
+    "jpeg_thumbnail_helper.h",
     "scoped_ptr_expiring_cache.h",
     "thumbnail.cc",
     "thumbnail.h",
     "thumbnail_cache.cc",
     "thumbnail_cache.h",
+    "thumbnail_capture_tracker.cc",
+    "thumbnail_capture_tracker.h",
   ]
 
   if (is_android) {
@@ -55,7 +51,6 @@ source_set("unit_tests") {
 
   deps = [
     ":cc",
-    ":features",
     "//base",
     "//base/test:test_support",
     "//content/test:test_support",
@@ -63,14 +58,23 @@ source_set("unit_tests") {
     "//skia",
     "//testing/gmock",
     "//testing/gtest",
+    "//third_party/abseil-cpp:absl",
     "//ui/gfx",
   ]
 
   sources = [ "scoped_ptr_expiring_cache_unittest.cc" ]
 
   if (is_android) {
-    sources += [ "thumbnail_cache_unittest.cc" ]
+    sources += [
+      "etc1_thumbnail_helper_unittest.cc",
+      "jpeg_thumbnail_helper_unittest.cc",
+      "thumbnail_cache_unittest.cc",
+      "thumbnail_capture_tracker_unittest.cc",
+    ]
 
-    deps += [ "//ui/android" ]
+    deps += [
+      "//third_party/android_opengl/etc1",
+      "//ui/android",
+    ]
   }
 }

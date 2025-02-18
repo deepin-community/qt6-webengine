@@ -60,15 +60,15 @@ class WebViewPermissionHelper {
                         bool allowed_by_default);
 
   static WebViewPermissionHelper* FromRenderFrameHost(
-      content::RenderFrameHost* rfh);
+      content::RenderFrameHost* render_frame_host);
   static WebViewPermissionHelper* FromRenderFrameHostId(
-      const content::GlobalRenderFrameHostId& rfh_id);
+      const content::GlobalRenderFrameHostId& render_frame_host_id);
 
   void RequestMediaAccessPermission(content::WebContents* source,
                                     const content::MediaStreamRequest& request,
                                     content::MediaResponseCallback callback);
   bool CheckMediaAccessPermission(content::RenderFrameHost* render_frame_host,
-                                  const GURL& security_origin,
+                                  const url::Origin& security_origin,
                                   blink::mojom::MediaStreamType type);
   void CanDownload(const GURL& url,
                    const std::string& request_method,
@@ -81,6 +81,10 @@ class WebViewPermissionHelper {
   void RequestGeolocationPermission(const GURL& requesting_frame,
                                     bool user_gesture,
                                     base::OnceCallback<void(bool)> callback);
+  // Requests permission from the embedder to request access to Human
+  // Interface Devices.
+  void RequestHidPermission(const GURL& requesting_frame,
+                            base::OnceCallback<void(bool)> callback);
 
   void RequestFileSystemPermission(const GURL& url,
                                    bool allowed_by_default,

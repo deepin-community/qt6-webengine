@@ -66,6 +66,12 @@ usr/lib/${DEB_HOST_MULTIARCH}/cmake/Qt6PdfWidgets/Qt6PdfWidgetsDependencies.cmak
 usr/lib/${DEB_HOST_MULTIARCH}/cmake/Qt6PdfWidgets/Qt6PdfWidgetsTargets-none.cmake
 usr/lib/${DEB_HOST_MULTIARCH}/cmake/Qt6PdfWidgets/Qt6PdfWidgetsTargets.cmake
 usr/lib/${DEB_HOST_MULTIARCH}/cmake/Qt6PdfWidgets/Qt6PdfWidgetsVersionlessTargets.cmake
+usr/lib/${DEB_HOST_MULTIARCH}/cmake/Qt6Qml/QmlPlugins/Qt6PdfQuickpluginAdditionalTargetInfo.cmake
+usr/lib/${DEB_HOST_MULTIARCH}/cmake/Qt6Qml/QmlPlugins/Qt6PdfQuickpluginConfig.cmake
+usr/lib/${DEB_HOST_MULTIARCH}/cmake/Qt6Qml/QmlPlugins/Qt6PdfQuickpluginConfigVersion.cmake
+usr/lib/${DEB_HOST_MULTIARCH}/cmake/Qt6Qml/QmlPlugins/Qt6PdfQuickpluginConfigVersionImpl.cmake
+usr/lib/${DEB_HOST_MULTIARCH}/cmake/Qt6Qml/QmlPlugins/Qt6PdfQuickpluginTargets-none.cmake
+usr/lib/${DEB_HOST_MULTIARCH}/cmake/Qt6Qml/QmlPlugins/Qt6PdfQuickpluginTargets.cmake
 usr/lib/${DEB_HOST_MULTIARCH}/libQt6Pdf.prl
 usr/lib/${DEB_HOST_MULTIARCH}/libQt6Pdf.so
 usr/lib/${DEB_HOST_MULTIARCH}/libQt6PdfQuick.prl
@@ -81,7 +87,3 @@ usr/lib/${DEB_HOST_MULTIARCH}/qt6/mkspecs/modules/qt_lib_pdfwidgets.pri
 usr/lib/${DEB_HOST_MULTIARCH}/qt6/modules/Pdf.json
 usr/lib/${DEB_HOST_MULTIARCH}/qt6/modules/PdfQuick.json
 usr/lib/${DEB_HOST_MULTIARCH}/qt6/modules/PdfWidgets.json
-usr/lib/${DEB_HOST_MULTIARCH}/cmake/Qt6Pdf/Qt6PdfVersionlessAliasTargets.cmake
-usr/include/${DEB_HOST_MULTIARCH}/qt6/QtPdfQuick/qtpdfquickexports.h
-usr/include/${DEB_HOST_MULTIARCH}/qt6/QtPdfWidgets/qtpdfwidgetsexports.h
-usr/lib/${DEB_HOST_MULTIARCH}/cmake/Qt6PdfQuick/Qt6PdfQuickVersionlessAliasTargets.cmake

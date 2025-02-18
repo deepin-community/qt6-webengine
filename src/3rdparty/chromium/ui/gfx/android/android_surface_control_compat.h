@@ -42,6 +42,14 @@ class GFX_EXPORT SurfaceControl {
   // Returns true if overlays with |color_space| are supported by the platform.
   static bool SupportsColorSpace(const gfx::ColorSpace& color_space);
 
+  // Translate `color_space` and `desired_brightness_ratio` to an ADataSpace and
+  // extended range brightness ratio.
+  static bool ColorSpaceToADataSpace(
+      const gfx::ColorSpace& color_space,
+      float desired_brightness_ratio,
+      uint64_t& out_dataspace,
+      float& out_extended_range_brightness_ratio);
+
   // Returns the usage flags required for using an AHardwareBuffer with the
   // SurfaceControl API, if it is supported.
   static uint64_t RequiredUsage();
@@ -154,9 +162,8 @@ class GFX_EXPORT SurfaceControl {
     void SetOpaque(const Surface& surface, bool opaque);
     void SetDamageRect(const Surface& surface, const gfx::Rect& rect);
     void SetColorSpace(const Surface& surface,
-                       const gfx::ColorSpace& color_space);
-    void SetHDRMetadata(const Surface& surface,
-                        const absl::optional<HDRMetadata>& hdr_metadata);
+                       const gfx::ColorSpace& color_space,
+                       const absl::optional<HDRMetadata>& metadata);
     void SetFrameRate(const Surface& surface, float frame_rate);
     void SetParent(const Surface& surface, Surface* new_parent);
     void SetPosition(const Surface& surface, const gfx::Point& position);
@@ -188,7 +195,7 @@ class GFX_EXPORT SurfaceControl {
     void DestroyIfNeeded();
 
     int id_;
-    ASurfaceTransaction* transaction_;
+    raw_ptr<ASurfaceTransaction> transaction_;
     OnCommitCb on_commit_cb_;
     OnCompleteCb on_complete_cb_;
     bool need_to_apply_ = false;

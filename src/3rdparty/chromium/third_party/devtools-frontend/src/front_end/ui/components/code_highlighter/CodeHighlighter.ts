@@ -103,6 +103,7 @@ export async function languageFromMIME(mimeType: string): Promise<CodeMirror.Lan
       return CodeMirror.html.html({selfClosingTags: true});
 
     case 'application/xml':
+    case 'image/svg+xml':
       return (await CodeMirror.xml()).xml();
 
     case 'application/wasm':
@@ -121,8 +122,10 @@ export async function languageFromMIME(mimeType: string): Promise<CodeMirror.Lan
       return new CodeMirror.LanguageSupport(await CodeMirror.kotlin());
 
     case 'application/json':
-    case 'application/manifest+json':
-      return (await CodeMirror.json()).json();
+    case 'application/manifest+json': {
+      const jsonLanguage = CodeMirror.javascript.javascriptLanguage.configure({top: 'SingleExpression'});
+      return new CodeMirror.LanguageSupport(jsonLanguage);
+    }
 
     case 'application/x-httpd-php':
       return (await CodeMirror.php()).php();
@@ -149,16 +152,16 @@ export async function languageFromMIME(mimeType: string): Promise<CodeMirror.Lan
       return new CodeMirror.LanguageSupport(await CodeMirror.gss());
 
     case 'text/x-less':
-      return new CodeMirror.LanguageSupport(await CodeMirror.less());
+      return (await CodeMirror.less()).less();
 
     case 'text/x-sass':
-      return new CodeMirror.LanguageSupport(await CodeMirror.sass());
+      return (await CodeMirror.sass()).sass({indented: true});
 
     case 'text/x-scala':
       return new CodeMirror.LanguageSupport(await CodeMirror.scala());
 
     case 'text/x-scss':
-      return new CodeMirror.LanguageSupport(await CodeMirror.scss());
+      return (await CodeMirror.sass()).sass({indented: false});
 
     case 'text/x.angular':
       return (await CodeMirror.angular()).angular();

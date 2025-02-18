@@ -56,7 +56,6 @@
 #include "media/mojo/services/video_decode_perf_history.h"
 #include "media/mojo/services/webrtc_video_perf_history.h"
 #include "storage/browser/blob/blob_storage_context.h"
-#include "storage/browser/database/database_tracker.h"
 #include "storage/browser/file_system/external_mount_points.h"
 #include "third_party/blink/public/mojom/push_messaging/push_messaging.mojom.h"
 #include "third_party/perfetto/include/perfetto/tracing/traced_proto.h"
@@ -142,19 +141,19 @@ StoragePartition* BrowserContext::GetStoragePartition(
 StoragePartition* BrowserContext::GetStoragePartitionForUrl(
     const GURL& url,
     bool can_create) {
-  auto storage_partition_config = SiteInfo::GetStoragePartitionConfigForUrl(
-      this, url, /*is_site_url=*/false);
+  auto storage_partition_config =
+      SiteInfo::GetStoragePartitionConfigForUrl(this, url);
 
   return GetStoragePartition(storage_partition_config, can_create);
 }
 
 void BrowserContext::ForEachLoadedStoragePartition(
-    StoragePartitionCallback callback) {
+    base::FunctionRef<void(StoragePartition*)> fn) {
   StoragePartitionImplMap* partition_map = impl()->storage_partition_map();
   if (!partition_map)
     return;
 
-  partition_map->ForEach(std::move(callback));
+  partition_map->ForEach(fn);
 }
 
 size_t BrowserContext::GetLoadedStoragePartitionCount() {
@@ -213,7 +212,7 @@ void BrowserContext::DeliverPushMessage(
     const GURL& origin,
     int64_t service_worker_registration_id,
     const std::string& message_id,
-    absl::optional<std::string> payload,
+    std::optional<std::string> payload,
     base::OnceCallback<void(blink::mojom::PushEventStatus)> callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   PushMessagingRouter::DeliverMessage(
@@ -251,13 +250,6 @@ void BrowserContext::EnsureResourceContextInitialized() {
 
 void BrowserContext::SaveSessionState() {
   StoragePartition* storage_partition = GetDefaultStoragePartition();
-
-  storage::DatabaseTracker* database_tracker =
-      storage_partition->GetDatabaseTracker();
-  database_tracker->task_runner()->PostTask(
-      FROM_HERE,
-      base::BindOnce(&storage::DatabaseTracker::SetForceKeepSessionState,
-                     base::WrapRefCounted(database_tracker)));
 
   storage_partition->GetCookieManagerForBrowserProcess()
       ->SetForceKeepSessionState();
@@ -317,14 +309,17 @@ BrowserContext::RetrieveInProgressDownloadManager() {
   return nullptr;
 }
 
-// static
-std::string BrowserContext::CreateRandomMediaDeviceIDSalt() {
-  return base::UnguessableToken::Create().ToString();
-}
-
 void BrowserContext::WriteIntoTrace(
     perfetto::TracedProto<ChromeBrowserContext> proto) const {
   perfetto::WriteIntoTracedProto(std::move(proto), impl());
+}
+
+ResourceContext* BrowserContext::GetResourceContext() const {
+  return impl()->GetResourceContext();
+}
+
+base::WeakPtr<BrowserContext> BrowserContext::GetWeakPtr() {
+  return weak_factory_.GetWeakPtr();
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -336,9 +331,10 @@ void BrowserContext::WriteIntoTrace(
 // section into a separate BrowserContextDelegate class and a separate
 // browser_context_delegate.cc source file.
 
-std::string BrowserContext::GetMediaDeviceIDSalt() {
-  return UniqueId();
+#if BUILDFLAG(IS_QTWEBENGINE)
+void BrowserContext::FailedToLoadDictionary(const std::string&) {
 }
+#endif
 
 FileSystemAccessPermissionContext*
 BrowserContext::GetFileSystemAccessPermissionContext() {

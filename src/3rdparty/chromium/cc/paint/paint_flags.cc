@@ -12,13 +12,10 @@
 #include "cc/paint/paint_op.h"
 #include "cc/paint/paint_op_buffer.h"
 #include "cc/paint/paint_shader.h"
+#include "third_party/skia/include/core/SkColorFilter.h"
 #include "third_party/skia/include/core/SkPathUtils.h"
 
 namespace {
-
-bool affects_alpha(const SkColorFilter* cf) {
-  return cf && !cf->isAlphaUnchanged();
-}
 
 template <typename T>
 bool AreValuesEqualForTesting(const sk_sp<T>& a, const sk_sp<T>& b) {
@@ -45,8 +42,11 @@ PaintFlags::PaintFlags() {
   bitfields_.cap_type_ = SkPaint::kDefault_Cap;
   bitfields_.join_type_ = SkPaint::kDefault_Join;
   bitfields_.style_ = SkPaint::kFill_Style;
+  bitfields_.blend_mode_ = static_cast<int>(SkBlendMode::kSrcOver);
   bitfields_.filter_quality_ =
       static_cast<int>(PaintFlags::FilterQuality::kNone);
+  bitfields_.dynamic_range_limit_standard_mix_ = 0;
+  bitfields_.dynamic_range_limit_constrained_high_mix_ = 0;
 
   static_assert(sizeof(bitfields_) <= sizeof(bitfields_uint_),
                 "Too many bitfields");
@@ -60,7 +60,7 @@ PaintFlags::~PaintFlags() {
   // TODO(enne): non-default dtor to investigate http://crbug.com/790915
 
   // Sanity check accessing this object doesn't crash.
-  blend_mode_ = static_cast<uint32_t>(SkBlendMode::kLastMode);
+  bitfields_.blend_mode_ = static_cast<uint32_t>(SkBlendMode::kLastMode);
 
   // Free refcounted objects one by one.
   path_effect_.reset();
@@ -99,8 +99,8 @@ bool PaintFlags::nothingToDraw() const {
     case SkBlendMode::kDstOut:
     case SkBlendMode::kDstOver:
     case SkBlendMode::kPlus:
-      if (getAlpha() == 0) {
-        return !affects_alpha(color_filter_.get()) && !image_filter_;
+      if (isFullyTransparent()) {
+        return !color_filter_ && !image_filter_;
       }
       break;
     case SkBlendMode::kDst:
@@ -120,14 +120,18 @@ bool PaintFlags::getFillPath(const SkPath& src,
 }
 
 bool PaintFlags::SupportsFoldingAlpha() const {
-  if (getBlendMode() != SkBlendMode::kSrcOver)
+  if (getBlendMode() != SkBlendMode::kSrcOver) {
     return false;
-  if (getColorFilter())
+  }
+  if (getColorFilter()) {
     return false;
-  if (getImageFilter())
+  }
+  if (getImageFilter()) {
     return false;
-  if (getLooper())
+  }
+  if (getLooper()) {
     return false;
+  }
   return true;
 }
 
@@ -137,7 +141,9 @@ SkPaint PaintFlags::ToSkPaint() const {
   if (shader_)
     paint.setShader(shader_->GetSkShader(getFilterQuality()));
   paint.setMaskFilter(mask_filter_);
-  paint.setColorFilter(color_filter_);
+  if (color_filter_) {
+    paint.setColorFilter(color_filter_->sk_color_filter_);
+  }
   if (image_filter_)
     paint.setImageFilter(image_filter_->cached_sk_filter_);
   paint.setColor(color_);
@@ -177,19 +183,20 @@ bool PaintFlags::EqualsForTesting(const PaintFlags& other) const {
   // comparisons on all the ref'd skia objects on the SkPaint, which
   // is not true after serialization.
   return getColor() == other.getColor() &&
-         getStrokeWidth() == getStrokeWidth() &&
+         getStrokeWidth() == other.getStrokeWidth() &&
          getStrokeMiter() == other.getStrokeMiter() &&
          getBlendMode() == other.getBlendMode() &&
          getStrokeCap() == other.getStrokeCap() &&
          getStrokeJoin() == other.getStrokeJoin() &&
          getStyle() == other.getStyle() &&
          getFilterQuality() == other.getFilterQuality() &&
+         getDynamicRangeLimit() == other.getDynamicRangeLimit() &&
          AreSkFlattenablesEqualForTesting(path_effect_,  // IN-TEST
                                           other.path_effect_) &&
          AreSkFlattenablesEqualForTesting(mask_filter_,  // IN-TEST
                                           other.mask_filter_) &&
-         AreSkFlattenablesEqualForTesting(color_filter_,  // IN-TEST
-                                          other.color_filter_) &&
+         AreValuesEqualForTesting(color_filter_,  // IN-TEST
+                                  other.color_filter_) &&
          AreSkFlattenablesEqualForTesting(draw_looper_,  // IN-TEST
                                           other.draw_looper_) &&
          AreValuesEqualForTesting(image_filter_,  // IN-TEST

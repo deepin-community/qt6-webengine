@@ -7,12 +7,13 @@ import 'chrome://resources/cr_elements/cr_lazy_render/cr_lazy_render.js';
 import 'chrome://resources/cr_elements/cr_auto_img/cr_auto_img.js';
 import 'chrome://resources/cr_elements/cr_hidden_style.css.js';
 
-import {CrLazyRenderElement} from 'chrome://resources/cr_elements/cr_lazy_render/cr_lazy_render.js';
-import {DomRepeat, DomRepeatEvent, PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+import type {CrLazyRenderElement} from 'chrome://resources/cr_elements/cr_lazy_render/cr_lazy_render.js';
+import type {DomRepeat, DomRepeatEvent} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {I18nMixin, loadTimeData} from '../../i18n_setup.js';
-import {Recipe, RelatedSearch, Task} from '../../recipes.mojom-webui.js';
-import {InfoDialogElement} from '../info_dialog.js';
+import type {Recipe, RelatedSearch, Task} from '../../recipes.mojom-webui.js';
+import type {InfoDialogElement} from '../info_dialog.js';
 import {ModuleDescriptor} from '../module_descriptor.js';
 
 import {getTemplate} from './module.html.js';
@@ -69,6 +70,18 @@ export class RecipesModuleElement extends I18nMixin
         type: String,
         computed: 'computeInfo_()',
       },
+
+      overflowScroll_: {
+        type: Boolean,
+        value: () => loadTimeData.getBoolean('modulesOverflowScrollbarEnabled'),
+        reflectToAttribute: true,
+      },
+
+      wideModulesEnabled_: {
+        type: Boolean,
+        value: () => loadTimeData.getBoolean('wideModulesEnabled'),
+        reflectToAttribute: true,
+      },
     };
   }
 
@@ -78,7 +91,8 @@ export class RecipesModuleElement extends I18nMixin
   private dismissName_: string;
   private disableName_: string;
   private info_: string;
-
+  private overflowScroll_: boolean;
+  private wideModulesEnabled_: boolean;
   private intersectionObserver_: IntersectionObserver|null = null;
 
   private computeTitle_(): string {
@@ -103,6 +117,10 @@ export class RecipesModuleElement extends I18nMixin
     return loadTimeData.getBoolean('moduleRecipeExtendedExperimentEnabled') ?
         this.i18nAdvanced('modulesRecipeExtendedInfo') :
         this.i18nAdvanced('modulesRecipeInfo');
+  }
+
+  private getRecipes_(): Recipe[] {
+    return this.task.recipes.slice(0, this.wideModulesEnabled_ ? 4 : 3);
   }
 
   private computeShowRelatedSearches_(): boolean {
@@ -157,15 +175,31 @@ export class RecipesModuleElement extends I18nMixin
     if (!this.intersectionObserver_) {
       this.intersectionObserver_ = new IntersectionObserver(entries => {
         entries.forEach(({intersectionRatio, target}) => {
-          (target as HTMLElement).style.visibility =
-              intersectionRatio < 1 ? 'hidden' : 'visible';
+          if (this.overflowScroll_) {
+            (target as HTMLElement).style.display =
+                (intersectionRatio < 1) ? 'none' : 'flex';
+          } else {
+            (target as HTMLElement).style.visibility =
+                intersectionRatio < 1 ? 'hidden' : 'visible';
+          }
         });
+
+        if (this.overflowScroll_) {
+          // Disconnect the intersection observer for a11y reasons so that
+          // subsequent viewport changes do not remove items from display.
+          this.intersectionObserver_!.disconnect();
+        }
         this.dispatchEvent(new Event('visibility-update'));
       }, {root: this, threshold: 1});
     } else {
       this.intersectionObserver_.disconnect();
     }
-    this.shadowRoot!.querySelectorAll('.recipe, .pill')
+
+    const observeClasses = ['.pill'];
+    if (!this.overflowScroll_) {
+      observeClasses.push('.recipe');
+    }
+    this.shadowRoot!.querySelectorAll(observeClasses.join(','))
         .forEach(el => this.intersectionObserver_!.observe(el));
   }
 }
@@ -177,6 +211,7 @@ async function createModule(): Promise<HTMLElement|null> {
   if (!task) {
     return null;
   }
+
   const element = new RecipesModuleElement();
   element.task = task;
   return element;

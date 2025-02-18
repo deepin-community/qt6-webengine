@@ -6,13 +6,17 @@
 #define CC_METRICS_COMPOSITOR_FRAME_REPORTER_H_
 
 #include <bitset>
+#include <deque>
 #include <memory>
 #include <queue>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include <optional>
 #include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ptr_exclusion.h"
+#include "base/rand_util.h"
 #include "base/time/default_tick_clock.h"
 #include "base/time/time.h"
 #include "cc/base/devtools_instrumentation.h"
@@ -21,10 +25,11 @@
 #include "cc/metrics/event_metrics.h"
 #include "cc/metrics/frame_info.h"
 #include "cc/metrics/frame_sequence_metrics.h"
+#include "cc/metrics/predictor_jank_tracker.h"
+#include "cc/metrics/scroll_jank_dropped_frame_tracker.h"
 #include "cc/scheduler/scheduler.h"
 #include "components/viz/common/frame_sinks/begin_frame_args.h"
 #include "components/viz/common/frame_timing_details.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace viz {
 struct FrameTimingDetails;
@@ -37,11 +42,19 @@ class FrameSequenceTrackerCollection;
 class LatencyUkmReporter;
 
 struct GlobalMetricsTrackers {
-  raw_ptr<DroppedFrameCounter> dropped_frame_counter = nullptr;
-  raw_ptr<LatencyUkmReporter> latency_ukm_reporter = nullptr;
-  raw_ptr<FrameSequenceTrackerCollection> frame_sequence_trackers = nullptr;
-  raw_ptr<EventLatencyTracker, DanglingUntriaged> event_latency_tracker =
+  // RAW_PTR_EXCLUSION: Renderer performance: visible in sampling profiler
+  // stacks.
+  RAW_PTR_EXCLUSION DroppedFrameCounter* dropped_frame_counter = nullptr;
+  RAW_PTR_EXCLUSION LatencyUkmReporter* latency_ukm_reporter = nullptr;
+  RAW_PTR_EXCLUSION FrameSequenceTrackerCollection* frame_sequence_trackers =
       nullptr;
+  // TODO(crbug.com/1489080): This member was marked `DanglingUntriaged`
+  // before being unrewritten.
+  RAW_PTR_EXCLUSION EventLatencyTracker* event_latency_tracker = nullptr;
+  RAW_PTR_EXCLUSION PredictorJankTracker* predictor_jank_tracker = nullptr;
+  RAW_PTR_EXCLUSION ScrollJankDroppedFrameTracker*
+      scroll_jank_dropped_frame_tracker = nullptr;
+  RAW_PTR_EXCLUSION ScrollJankUkmReporter* scroll_jank_ukm_reporter = nullptr;
 };
 
 // This is used for tracing and reporting the duration of pipeline stages within
@@ -184,7 +197,9 @@ class CC_EXPORT CompositorFrameReporter {
       base::TimeDelta GetLatency() const;
 
      private:
-      raw_ptr<const ProcessedBlinkBreakdown> owner_;
+      // RAW_PTR_EXCLUSION: Renderer performance: visible in sampling profiler
+      // stacks.
+      RAW_PTR_EXCLUSION const ProcessedBlinkBreakdown* owner_;
 
       size_t index_ = 0;
     };
@@ -225,7 +240,9 @@ class CC_EXPORT CompositorFrameReporter {
       bool HasValue() const;
       void SkipBreakdownsIfNecessary();
 
-      raw_ptr<const ProcessedVizBreakdown> owner_;
+      // RAW_PTR_EXCLUSION: Renderer performance: visible in sampling profiler
+      // stacks.
+      RAW_PTR_EXCLUSION const ProcessedVizBreakdown* owner_;
       const bool skip_swap_start_to_swap_end_;
 
       size_t index_ = 0;
@@ -247,7 +264,7 @@ class CC_EXPORT CompositorFrameReporter {
     base::TimeTicks swap_start() const { return swap_start_; }
 
    private:
-    absl::optional<std::pair<base::TimeTicks, base::TimeTicks>>
+    std::optional<std::pair<base::TimeTicks, base::TimeTicks>>
         list_[static_cast<int>(VizBreakdown::kBreakdownCount)];
 
     bool buffer_ready_available_ = false;
@@ -286,8 +303,8 @@ class CC_EXPORT CompositorFrameReporter {
   // name of the appropriate breakdown.
   static const char* GetStageName(
       StageType stage_type,
-      absl::optional<VizBreakdown> viz_breakdown = absl::nullopt,
-      absl::optional<BlinkBreakdown> blink_breakdown = absl::nullopt,
+      std::optional<VizBreakdown> viz_breakdown = std::nullopt,
+      std::optional<BlinkBreakdown> blink_breakdown = std::nullopt,
       bool impl_only = false);
 
   // Name for the viz breakdowns which are shown in traces as substages under
@@ -380,6 +397,11 @@ class CC_EXPORT CompositorFrameReporter {
   // created from this reporter using |CopyReporterAtBeginImplStage()|.
   void AdoptReporter(std::unique_ptr<CompositorFrameReporter> cloned_reporter);
 
+  // Called after the frame corresponding to this reporter was successfully
+  // presented. It doesn't get called when the frame is dropped or not submitted
+  // at all.
+  void DidSuccessfullyPresentFrame();
+
   // If this is a cloned reporter, then this returns a weak-ptr to the original
   // reporter this was cloned from (using |CopyReporterAtBeginImplStage()|).
 
@@ -419,6 +441,10 @@ class CC_EXPORT CompositorFrameReporter {
     return events_metrics_;
   }
 
+  // Erase and return only the EventMetrics objects which depend on main thread
+  // updates (see comments on EventMetrics::requires_main_thread_update_).
+  EventMetrics::List TakeMainBlockedEventsMetrics();
+
  protected:
   void set_has_partial_update(bool has_partial_update) {
     has_partial_update_ = has_partial_update;
@@ -440,8 +466,8 @@ class CC_EXPORT CompositorFrameReporter {
   void ReportCompositorLatencyHistogram(
       FrameSequenceTrackerType intraction_type,
       StageType stage_type,
-      absl::optional<VizBreakdown> viz_breakdown,
-      absl::optional<BlinkBreakdown> blink_breakdown,
+      std::optional<VizBreakdown> viz_breakdown,
+      std::optional<BlinkBreakdown> blink_breakdown,
       base::TimeDelta time_delta) const;
 
   void ReportEventLatencyMetrics() const;
@@ -467,10 +493,6 @@ class CC_EXPORT CompositorFrameReporter {
   FrameInfo GenerateFrameInfo() const;
 
   base::WeakPtr<CompositorFrameReporter> GetWeakPtr();
-
-  // Erase and return only the EventMetrics objects which depend on main thread
-  // updates (see comments on EventMetrics::requires_main_thread_update_).
-  EventMetrics::List TakeMainBlockedEventsMetrics();
 
   void FindHighLatencyAttribution(
       CompositorLatencyInfo& previous_predictions,
@@ -522,9 +544,9 @@ class CC_EXPORT CompositorFrameReporter {
 
   // The timestamp of when the frame was marked as not having produced a frame
   // (through a call to DidNotProduceFrame()).
-  absl::optional<base::TimeTicks> did_not_produce_frame_time_;
-  absl::optional<FrameSkippedReason> frame_skip_reason_;
-  absl::optional<base::TimeTicks> main_frame_abort_time_;
+  std::optional<base::TimeTicks> did_not_produce_frame_time_;
+  std::optional<FrameSkippedReason> frame_skip_reason_;
+  std::optional<base::TimeTicks> main_frame_abort_time_;
 
   raw_ptr<const base::TickClock> tick_clock_ =
       base::DefaultTickClock::GetInstance();
@@ -557,7 +579,7 @@ class CC_EXPORT CompositorFrameReporter {
   // In such cases, |partial_update_dependents_| for A contains all the frames
   // that depend on A for deciding whether they had partial updates or not, and
   // |partial_update_decider_| is set to A for all these reporters.
-  std::queue<base::WeakPtr<CompositorFrameReporter>> partial_update_dependents_;
+  std::deque<base::WeakPtr<CompositorFrameReporter>> partial_update_dependents_;
   base::WeakPtr<CompositorFrameReporter> partial_update_decider_;
 
   // From the above example, it may be necessary for A to keep all the
@@ -572,6 +594,8 @@ class CC_EXPORT CompositorFrameReporter {
   std::vector<std::string> high_latency_substages_;
 
   ReporterType reporter_type_;
+
+  mutable base::MetricsSubSampler metrics_subsampler_;
 
   base::WeakPtrFactory<CompositorFrameReporter> weak_factory_{this};
 };

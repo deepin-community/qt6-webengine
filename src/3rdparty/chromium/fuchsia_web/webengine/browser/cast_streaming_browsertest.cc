@@ -13,11 +13,11 @@
 #include "components/cast_streaming/test/cast_streaming_test_sender.h"
 #include "content/public/test/browser_test.h"
 #include "fuchsia_web/common/test/fit_adapter.h"
+#include "fuchsia_web/common/test/frame_for_test.h"
 #include "fuchsia_web/common/test/frame_test_util.h"
 #include "fuchsia_web/common/test/test_navigation_listener.h"
 #include "fuchsia_web/webengine/browser/context_impl.h"
 #include "fuchsia_web/webengine/browser/frame_impl.h"
-#include "fuchsia_web/webengine/test/frame_for_test.h"
 #include "fuchsia_web/webengine/test/test_data.h"
 #include "fuchsia_web/webengine/test/web_engine_browser_test.h"
 #include "media/base/media_util.h"
@@ -149,8 +149,8 @@ IN_PROC_BROWSER_TEST_F(CastStreamingTest, LoadSuccess) {
   frame.navigation_listener().RunUntilTitleEquals("loadedmetadata");
 
   EXPECT_TRUE(post_result.Wait());
-  EXPECT_NE(sender.audio_decoder_config(), absl::nullopt);
-  EXPECT_NE(sender.video_decoder_config(), absl::nullopt);
+  EXPECT_NE(sender.audio_decoder_config(), std::nullopt);
+  EXPECT_NE(sender.video_decoder_config(), std::nullopt);
 }
 
 // Check that attempting to start a video-only receiver properly disables audio.
@@ -194,6 +194,6 @@ IN_PROC_BROWSER_TEST_F(CastStreamingTest, VideoOnlyReceiver) {
   frame.navigation_listener().RunUntilTitleEquals("loadedmetadata");
 
   EXPECT_TRUE(post_result.Wait());
-  EXPECT_EQ(sender.audio_decoder_config(), absl::nullopt);
-  EXPECT_NE(sender.video_decoder_config(), absl::nullopt);
+  EXPECT_EQ(sender.audio_decoder_config(), std::nullopt);
+  EXPECT_NE(sender.video_decoder_config(), std::nullopt);
 }

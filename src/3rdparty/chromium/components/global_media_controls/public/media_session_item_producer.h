@@ -78,7 +78,8 @@ class COMPONENT_EXPORT(GLOBAL_MEDIA_CONTROLS) MediaSessionItemProducer
   void OnRequestIdReleased(const base::UnguessableToken& request_id) override;
 
   // MediaItemUIObserver implementation.
-  void OnMediaItemUIClicked(const std::string& id) override;
+  void OnMediaItemUIClicked(const std::string& id,
+                            bool activate_original_media) override;
   void OnMediaItemUIDismissed(const std::string& id) override;
 
   void AddObserver(MediaSessionItemProducerObserver* observer);
@@ -206,7 +207,6 @@ class COMPONENT_EXPORT(GLOBAL_MEDIA_CONTROLS) MediaSessionItemProducer
   void OnSessionBecameActive(const std::string& id);
   // Called by a Session when it becomes inactive.
   void OnSessionBecameInactive(const std::string& id);
-  void HideMediaDialog();
   void OnReceivedAudioFocusRequests(
       std::vector<media_session::mojom::AudioFocusRequestStatePtr> sessions);
   void OnItemUnfrozen(const std::string& id);

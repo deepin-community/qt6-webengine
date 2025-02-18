@@ -157,7 +157,7 @@ static void setup_address_for_obmc(MACROBLOCKD *xd, int mi_row_offset,
       get_ref_scale_factors_const(ctxt->cm, frame);
 
   xd->block_ref_scale_factors[0] = sf;
-  if ((!av1_is_valid_scale(sf)))
+  if (!av1_is_valid_scale(sf))
     aom_internal_error(xd->error_info, AOM_CODEC_UNSUP_BITSTREAM,
                        "Reference frame has invalid dimensions");
 
@@ -515,23 +515,23 @@ void aom_comp_avg_upsampled_pred_c(MACROBLOCKD *xd, const AV1_COMMON *const cm,
   }
 }
 
-void aom_comp_mask_upsampled_pred_c(MACROBLOCKD *xd, const AV1_COMMON *const cm,
-                                    int mi_row, int mi_col, const MV *const mv,
-                                    uint8_t *comp_pred, const uint8_t *pred,
-                                    int width, int height, int subpel_x_q3,
-                                    int subpel_y_q3, const uint8_t *ref,
-                                    int ref_stride, const uint8_t *mask,
-                                    int mask_stride, int invert_mask,
-                                    int subpel_search) {
+void aom_comp_mask_upsampled_pred(MACROBLOCKD *xd, const AV1_COMMON *const cm,
+                                  int mi_row, int mi_col, const MV *const mv,
+                                  uint8_t *comp_pred, const uint8_t *pred,
+                                  int width, int height, int subpel_x_q3,
+                                  int subpel_y_q3, const uint8_t *ref,
+                                  int ref_stride, const uint8_t *mask,
+                                  int mask_stride, int invert_mask,
+                                  int subpel_search) {
   if (subpel_x_q3 | subpel_y_q3) {
-    aom_upsampled_pred_c(xd, cm, mi_row, mi_col, mv, comp_pred, width, height,
-                         subpel_x_q3, subpel_y_q3, ref, ref_stride,
-                         subpel_search);
+    aom_upsampled_pred(xd, cm, mi_row, mi_col, mv, comp_pred, width, height,
+                       subpel_x_q3, subpel_y_q3, ref, ref_stride,
+                       subpel_search);
     ref = comp_pred;
     ref_stride = width;
   }
-  aom_comp_mask_pred_c(comp_pred, pred, width, height, ref, ref_stride, mask,
-                       mask_stride, invert_mask);
+  aom_comp_mask_pred(comp_pred, pred, width, height, ref, ref_stride, mask,
+                     mask_stride, invert_mask);
 }
 
 void aom_dist_wtd_comp_avg_upsampled_pred_c(

@@ -247,6 +247,21 @@ Reduction CommonOperatorReducer::ReducePhi(Node* node) {
   DCHECK(IrOpcode::IsMergeOpcode(merge->opcode()));
   DCHECK_EQ(value_input_count, merge->InputCount());
   if (value_input_count == 2) {
+    // The following optimization tries to match `0 < v ? v : 0 - v`, which
+    // corresponds in Turbofan to something like:
+    //
+    //       Branch(0 < v)
+    //         /      \
+    //        /        \
+    //       v        0 - v
+    //        \        /
+    //         \      /
+    //        phi(v, 0-v)
+    //
+    // And replace it by `fabs(v)`.
+    // TODO(dmercadier): it seems that these optimizations never kick in. While
+    // keeping them doesn't cost too much, we could consider removing them to
+    // simplify the code and not maintain unused pieces of code.
     Node* vtrue = inputs[0];
     Node* vfalse = inputs[1];
     Node::Inputs merge_inputs = merge->inputs();
@@ -283,6 +298,35 @@ Reduction CommonOperatorReducer::ReducePhi(Node* node) {
             // We might now be able to further reduce the {merge} node.
             Revisit(merge);
             return Change(node, machine()->Float64Abs(), vtrue);
+          }
+        }
+      } else if (cond->opcode() == IrOpcode::kInt32LessThan) {
+        Int32BinopMatcher mcond(cond);
+        if (mcond.left().Is(0) && mcond.right().Equals(vtrue) &&
+            (vfalse->opcode() == IrOpcode::kInt32Sub)) {
+          Int32BinopMatcher mvfalse(vfalse);
+          if (mvfalse.left().Is(0) && mvfalse.right().Equals(vtrue)) {
+            // We might now be able to further reduce the {merge} node.
+            Revisit(merge);
+
+            if (machine()->Word32Select().IsSupported()) {
+              // Select positive value with conditional move if is supported.
+              Node* abs = graph()->NewNode(machine()->Word32Select().op(), cond,
+                                           vtrue, vfalse);
+              return Replace(abs);
+            } else {
+              // Generate absolute integer value.
+              //
+              //    let sign = input >> 31 in
+              //    (input ^ sign) - sign
+              Node* sign = graph()->NewNode(
+                  machine()->Word32Sar(), vtrue,
+                  graph()->NewNode(common()->Int32Constant(31)));
+              Node* abs = graph()->NewNode(
+                  machine()->Int32Sub(),
+                  graph()->NewNode(machine()->Word32Xor(), vtrue, sign), sign);
+              return Replace(abs);
+            }
           }
         }
       }
@@ -403,6 +447,11 @@ Reduction CommonOperatorReducer::ReduceSelect(Node* node) {
     case Decision::kUnknown:
       break;
   }
+  // The following optimization tries to replace `select(0 < v ? v : 0 - v)` by
+  // `fabs(v)`.
+  // TODO(dmercadier): it seems that these optimizations never kick in. While
+  // keeping them doesn't cost too much, we could consider removing them to
+  // simplify the code and not maintain unused pieces of code.
   switch (cond->opcode()) {
     case IrOpcode::kFloat32LessThan: {
       Float32BinopMatcher mcond(cond);
@@ -446,7 +495,7 @@ Reduction CommonOperatorReducer::ReduceSwitch(Node* node) {
     bool matched = false;
 
     size_t const projection_count = node->op()->ControlOutputCount();
-    Node** projections = zone_->NewArray<Node*>(projection_count);
+    Node** projections = zone_->AllocateArray<Node*>(projection_count);
     NodeProperties::CollectControlProjections(node, projections,
                                               projection_count);
     for (size_t i = 0; i < projection_count - 1; i++) {

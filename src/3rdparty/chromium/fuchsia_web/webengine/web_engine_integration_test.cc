@@ -10,6 +10,8 @@
 
 #include <string>
 
+#include <optional>
+#include "base/containers/contains.h"
 #include "base/fuchsia/fuchsia_logging.h"
 #include "base/fuchsia/mem_buffer_util.h"
 #include "base/fuchsia/process_context.h"
@@ -28,7 +30,6 @@
 #include "media/fuchsia/camera/fake_fuchsia_camera.h"
 #include "net/http/http_request_headers.h"
 #include "testing/gmock/include/gmock/gmock.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace {
 
@@ -60,7 +61,8 @@ class WebEngineIntegrationTest : public WebEngineIntegrationTestBase {
   }
 
   void StartWebEngine(base::CommandLine command_line) override {
-    context_provider_.emplace(command_line);
+    context_provider_.emplace(
+        ContextProviderForTest::Create(std::move(command_line)));
     context_provider_->ptr().set_error_handler(
         [](zx_status_t status) { FAIL() << zx_status_get_string(status); });
   }
@@ -72,7 +74,7 @@ class WebEngineIntegrationTest : public WebEngineIntegrationTestBase {
   void RunPermissionTest(bool grant);
 
  private:
-  absl::optional<ContextProviderForTest> context_provider_;
+  std::optional<ContextProviderForTest> context_provider_;
 };
 
 class WebEngineIntegrationUserAgentTest : public WebEngineIntegrationTest {
@@ -97,8 +99,8 @@ class WebEngineIntegrationUserAgentTest : public WebEngineIntegrationTest {
                            version_info::GetMajorVersionNumberAsInt());
 
     // Ensure the field was actually populated.
-    EXPECT_NE(expected_ua.find(version_info::GetMajorVersionNumber()),
-              std::string::npos);
+    EXPECT_TRUE(
+        base::Contains(expected_ua, version_info::GetMajorVersionNumber()));
 
     return expected_ua;
   }
@@ -145,12 +147,12 @@ TEST_F(WebEngineIntegrationUserAgentTest, ValidProductOnly) {
   // the product tag.
   std::string result =
       ExecuteJavaScriptWithStringResult("document.body.innerText;");
-  EXPECT_TRUE(result.find(kValidUserAgentProduct) != std::string::npos);
+  EXPECT_TRUE(base::Contains(result, kValidUserAgentProduct));
   EXPECT_EQ(result, expected);
 
   // Query & verify that the navigator.userAgent contains the product tag.
   result = ExecuteJavaScriptWithStringResult("navigator.userAgent;");
-  EXPECT_TRUE(result.find(kValidUserAgentProduct) != std::string::npos);
+  EXPECT_TRUE(base::Contains(result, kValidUserAgentProduct));
   EXPECT_EQ(result, expected);
 }
 
@@ -170,14 +172,12 @@ TEST_F(WebEngineIntegrationUserAgentTest, ValidProductAndVersion) {
   // both product & version.
   std::string result =
       ExecuteJavaScriptWithStringResult("document.body.innerText;");
-  EXPECT_TRUE(result.find(kValidUserAgentProductAndVersion) !=
-              std::string::npos);
+  EXPECT_TRUE(base::Contains(result, kValidUserAgentProductAndVersion));
   EXPECT_EQ(result, expected);
 
   // Query & verify that the navigator.userAgent contains product & version.
   result = ExecuteJavaScriptWithStringResult("navigator.userAgent;");
-  EXPECT_TRUE(result.find(kValidUserAgentProductAndVersion) !=
-              std::string::npos);
+  EXPECT_TRUE(base::Contains(result, kValidUserAgentProductAndVersion));
   EXPECT_EQ(result, expected);
 
   // Verify navigator.platform is empty, see crbug.com/1348646.
@@ -277,9 +277,11 @@ TEST_F(WebEngineIntegrationTest, RemoteDebuggingPort) {
       GetDevToolsListFromPort(remote_debugging_port);
   EXPECT_EQ(devtools_list.size(), 1u);
 
-  base::Value* devtools_url = devtools_list[0].FindPath("url");
-  ASSERT_TRUE(devtools_url->is_string());
-  EXPECT_EQ(devtools_url->GetString(), url);
+  {
+    const auto* devtools_url = devtools_list[0].GetDict().FindString("url");
+    ASSERT_TRUE(devtools_url);
+    EXPECT_EQ(*devtools_url, url);
+  }
 
   // Create a second frame, without remote debugging enabled. The remote
   // debugging service should still report a single Frame is present.
@@ -291,9 +293,11 @@ TEST_F(WebEngineIntegrationTest, RemoteDebuggingPort) {
   devtools_list = GetDevToolsListFromPort(remote_debugging_port);
   EXPECT_EQ(devtools_list.size(), 1u);
 
-  devtools_url = devtools_list[0].FindPath("url");
-  ASSERT_TRUE(devtools_url->is_string());
-  EXPECT_EQ(devtools_url->GetString(), url);
+  {
+    const auto* devtools_url = devtools_list[0].GetDict().FindString("url");
+    ASSERT_TRUE(devtools_url);
+    EXPECT_EQ(*devtools_url, url);
+  }
 
   // Tear down the debuggable Frame. The remote debugging service should have
   // shut down.
@@ -357,7 +361,7 @@ class FakeAudioRenderer
     binding_.AddBinding(this, std::move(request));
   }
 
-  const absl::optional<fuchsia::media::AudioRenderUsage>& usage() const {
+  const std::optional<fuchsia::media::AudioRenderUsage>& usage() const {
     return usage_;
   }
 
@@ -372,7 +376,7 @@ class FakeAudioRenderer
  private:
   fidl::BindingSet<fuchsia::media::AudioRenderer> binding_;
   base::OnceClosure on_set_usage_callback_;
-  absl::optional<fuchsia::media::AudioRenderUsage> usage_;
+  std::optional<fuchsia::media::AudioRenderUsage> usage_;
 };
 
 class FakeAudio : public fuchsia::media::testing::Audio_TestBase {
@@ -444,9 +448,8 @@ class WebEngineIntegrationMediaTest : public WebEngineIntegrationTest {
   }
 
   media::FakeAudioConsumerService fake_audio_consumer_service_;
-  absl::optional<media::FakeAudioDeviceEnumerator>
-      fake_audio_device_enumerator_;
-  absl::optional<FakeAudio> fake_audio_;
+  std::optional<media::FakeAudioDeviceEnumerator> fake_audio_device_enumerator_;
+  std::optional<FakeAudio> fake_audio_;
 
   size_t num_audio_connections_ = 0;
 };

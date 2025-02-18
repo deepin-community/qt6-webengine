@@ -4,6 +4,7 @@
 
 #include "components/webapps/browser/android/installable/installable_ambient_badge_message_controller.h"
 
+#include "base/command_line.h"
 #include "base/containers/lru_cache.h"
 #include "base/functional/bind.h"
 #include "base/no_destructor.h"
@@ -11,14 +12,18 @@
 #include "components/messages/android/throttler/domain_session_throttler.h"
 #include "components/strings/grit/components_strings.h"
 #include "components/url_formatter/elide_url.h"
-#include "components/webapps/browser/android/ambient_badge_metrics.h"
 #include "components/webapps/browser/android/installable/installable_ambient_badge_client.h"
 #include "components/webapps/browser/android/webapps_icon_utils.h"
 #include "components/webapps/browser/features.h"
+#include "components/webapps/common/switches.h"
 #include "content/public/browser/web_contents.h"
 #include "ui/base/l10n/l10n_util.h"
 
 namespace webapps {
+
+namespace {
+constexpr int kThrottleDomainsCapacity = 100;
+}
 
 InstallableAmbientBadgeMessageController::
     InstallableAmbientBadgeMessageController(
@@ -41,7 +46,9 @@ void InstallableAmbientBadgeMessageController::EnqueueMessage(
     const bool is_primary_icon_maskable,
     const GURL& start_url) {
   DCHECK(!message_);
-  if (!GetThrottler()->ShouldShow(
+  if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kBypassInstallThrottleForTesting) &&
+      !GetThrottler()->ShouldShow(
           web_contents->GetPrimaryMainFrame()->GetLastCommittedOrigin())) {
     return;
   }
@@ -51,10 +58,10 @@ void InstallableAmbientBadgeMessageController::EnqueueMessage(
       messages::MessageIdentifier::INSTALLABLE_AMBIENT_BADGE,
       base::BindOnce(
           &InstallableAmbientBadgeMessageController::HandleInstallButtonClicked,
-          base::Unretained(this)),
+          weak_factory_.GetWeakPtr()),
       base::BindOnce(
           &InstallableAmbientBadgeMessageController::HandleMessageDismissed,
-          base::Unretained(this)));
+          weak_factory_.GetWeakPtr()));
 
   message_->SetTitle(l10n_util::GetStringFUTF16(
       IDS_AMBIENT_BADGE_INSTALL_ALTERNATIVE, app_name));
@@ -92,10 +99,12 @@ void InstallableAmbientBadgeMessageController::HandleMessageDismissed(
     messages::DismissReason dismiss_reason) {
   DCHECK(message_);
   message_.reset();
-  RecordAmbientBadgeMessageDismissReason(dismiss_reason);
   if (dismiss_reason == messages::DismissReason::GESTURE) {
     client_->BadgeDismissed();
+  } else if (dismiss_reason == messages::DismissReason::TIMER) {
+    client_->BadgeIgnored();
   }
+
   if (dismiss_reason != messages::DismissReason::PRIMARY_ACTION) {
     GetThrottler()->AddStrike(save_origin_);
   }
@@ -104,8 +113,7 @@ void InstallableAmbientBadgeMessageController::HandleMessageDismissed(
 // static
 messages::DomainSessionThrottler*
 InstallableAmbientBadgeMessageController::GetThrottler() {
-  static messages::DomainSessionThrottler instance(
-      features::kInstallableAmbientBadgeMessage_ThrottleDomainsCapacity.Get());
+  static messages::DomainSessionThrottler instance(kThrottleDomainsCapacity);
   return &instance;
 }
 

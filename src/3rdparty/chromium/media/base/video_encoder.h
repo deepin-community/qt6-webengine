@@ -25,16 +25,21 @@ class VideoFrame;
 MEDIA_EXPORT uint32_t GetDefaultVideoEncodeBitrate(gfx::Size frame_size,
                                                    uint32_t framerate);
 
+MEDIA_EXPORT int GetNumberOfThreadsForSoftwareEncoding(gfx::Size frame_size);
+
 // Encoded video frame, its data and metadata.
 struct MEDIA_EXPORT VideoEncoderOutput {
   VideoEncoderOutput();
   VideoEncoderOutput(VideoEncoderOutput&&);
   ~VideoEncoderOutput();
 
-  // Feel free take this buffer out and use underlying memory as is without
+  // Feel free take these buffers out and use underlying memory as is without
   // copying.
   std::unique_ptr<uint8_t[]> data;
   size_t size = 0;
+
+  std::unique_ptr<uint8_t[]> alpha_data;
+  size_t alpha_size = 0;
 
   base::TimeDelta timestamp;
   bool key_frame = false;
@@ -58,6 +63,7 @@ class MEDIA_EXPORT VideoEncoder {
   };
 
   enum class LatencyMode { Realtime, Quality };
+  enum class ContentHint { Camera, Screen };
 
   struct MEDIA_EXPORT Options {
     Options();
@@ -74,11 +80,24 @@ class MEDIA_EXPORT VideoEncoder {
 
     absl::optional<SVCScalabilityMode> scalability_mode;
 
+    absl::optional<ContentHint> content_hint;
+
     // Only used for H264 encoding.
     AvcOptions avc;
 
     // Only used for HEVC encoding.
     HevcOptions hevc;
+  };
+
+  struct MEDIA_EXPORT EncodeOptions {
+    explicit EncodeOptions(bool key_frame);
+    EncodeOptions();
+    EncodeOptions(const EncodeOptions&);
+    ~EncodeOptions();
+    bool key_frame = false;
+    // Per-frame codec-specific quantizer value.
+    // Should only be used when encoder configured with kExternal bitrate mode.
+    absl::optional<int> quantizer;
   };
 
   // A sequence of codec specific bytes, commonly known as extradata.
@@ -100,13 +119,13 @@ class MEDIA_EXPORT VideoEncoder {
   // Callback to report success and errors in encoder calls.
   using EncoderStatusCB = base::OnceCallback<void(EncoderStatus error)>;
 
-  struct PendingEncode {
+  struct MEDIA_EXPORT PendingEncode {
     PendingEncode();
     PendingEncode(PendingEncode&&);
     ~PendingEncode();
     EncoderStatusCB done_callback;
     scoped_refptr<VideoFrame> frame;
-    bool key_frame;
+    EncodeOptions options;
   };
 
   VideoEncoder();
@@ -140,7 +159,7 @@ class MEDIA_EXPORT VideoEncoder {
   // Encode() does not expect EOS frames, use Flush() to finalize the stream
   // and harvest the outputs.
   virtual void Encode(scoped_refptr<VideoFrame> frame,
-                      bool key_frame,
+                      const EncodeOptions& options,
                       EncoderStatusCB done_cb) = 0;
 
   // Adjust encoder options and the output callback for future frames, executing

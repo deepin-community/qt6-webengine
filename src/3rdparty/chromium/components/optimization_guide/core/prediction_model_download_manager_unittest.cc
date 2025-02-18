@@ -7,7 +7,6 @@
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/guid.h"
 #include "base/path_service.h"
 #include "base/sequence_checker.h"
 #include "base/strings/utf_string_conversions.h"
@@ -15,6 +14,7 @@
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
+#include "base/uuid.h"
 #include "build/build_config.h"
 #include "components/download/public/background_service/test/mock_download_service.h"
 #include "components/optimization_guide/core/model_util.h"
@@ -87,7 +87,7 @@ class PredictionModelDownloadManagerTest : public testing::Test {
             [](const base::FilePath& models_dir_path,
                proto::OptimizationTarget optimization_target) {
               return models_dir_path.AppendASCII(
-                  base::GUID::GenerateRandomV4().AsLowercaseString());
+                  base::Uuid::GenerateRandomV4().AsLowercaseString());
             },
             temp_models_dir_.GetPath()),
         task_environment_.GetMainThreadTaskRunner());
@@ -149,7 +149,7 @@ class PredictionModelDownloadManagerTest : public testing::Test {
   base::FilePath GetFilePathForDownloadFileStatus(
       PredictionModelDownloadFileStatus file_status) {
     base::FilePath path;
-    base::PathService::Get(base::DIR_SOURCE_ROOT, &path);
+    base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &path);
     switch (file_status) {
       case PredictionModelDownloadFileStatus::kUnverifiedFile:
         return temp_download_dir_.GetPath().AppendASCII("unverified.crx3");
@@ -196,7 +196,7 @@ class PredictionModelDownloadManagerTest : public testing::Test {
  private:
   void WriteFileForStatus(PredictionModelDownloadFileStatus status) {
     base::FilePath source_root_dir;
-    base::PathService::Get(base::DIR_SOURCE_ROOT, &source_root_dir);
+    base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &source_root_dir);
     if (status == PredictionModelDownloadFileStatus::
                       kVerifiedCrxWithInvalidPublisher ||
         status == PredictionModelDownloadFileStatus::kUnverifiedFile) {
@@ -231,7 +231,7 @@ class PredictionModelDownloadManagerTest : public testing::Test {
     ASSERT_TRUE(base::CreateDirectory(zip_dir));
     if (status ==
         PredictionModelDownloadFileStatus::kVerifiedCrxWithBadModelInfoFile) {
-      base::WriteFile(zip_dir.AppendASCII("model-info.pb"), "boo", 3);
+      base::WriteFile(zip_dir.AppendASCII("model-info.pb"), "boo");
     } else {
       proto::ModelInfo model_info;
       model_info.set_optimization_target(
@@ -244,13 +244,11 @@ class PredictionModelDownloadManagerTest : public testing::Test {
 
       std::string serialized_model_info;
       ASSERT_TRUE(model_info.SerializeToString(&serialized_model_info));
-      ASSERT_EQ(static_cast<int32_t>(serialized_model_info.length()),
-                base::WriteFile(zip_dir.AppendASCII("model-info.pb"),
-                                serialized_model_info.data(),
-                                serialized_model_info.length()));
+      ASSERT_TRUE(base::WriteFile(zip_dir.AppendASCII("model-info.pb"),
+                                  serialized_model_info));
       if (status ==
           PredictionModelDownloadFileStatus::kVerifiedCrxWithGoodModelFiles) {
-        base::WriteFile(zip_dir.AppendASCII("model.tflite"), "model", 5);
+        base::WriteFile(zip_dir.AppendASCII("model.tflite"), "model");
       }
     }
     ASSERT_TRUE(

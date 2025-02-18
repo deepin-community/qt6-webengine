@@ -42,7 +42,7 @@ class TracedValue;
 
 namespace viz {
 class ClientResourceProvider;
-class ContextProvider;
+class RasterContextProvider;
 }
 
 namespace cc {
@@ -127,7 +127,7 @@ class CC_EXPORT LayerTreeImpl {
   int max_texture_size() const;
   const LayerTreeSettings& settings() const;
   const LayerTreeDebugState& debug_state() const;
-  viz::ContextProvider* context_provider() const;
+  viz::RasterContextProvider* context_provider() const;
   viz::ClientResourceProvider* resource_provider() const;
   TileManager* tile_manager() const;
   ImageDecodeCache* image_decode_cache() const;
@@ -153,7 +153,6 @@ class CC_EXPORT LayerTreeImpl {
                                      float initial_opacity);
   void DidAnimateScrollOffset();
   bool use_gpu_rasterization() const;
-  GpuRasterizationStatus GetGpuRasterizationStatus() const;
   bool create_low_res_tiling() const;
   bool RequiresHighResToDraw() const;
   bool SmoothnessTakesPriority() const;
@@ -598,7 +597,8 @@ class CC_EXPORT LayerTreeImpl {
 
   void RegisterPictureLayerImpl(PictureLayerImpl* layer);
   void UnregisterPictureLayerImpl(PictureLayerImpl* layer);
-  const std::vector<PictureLayerImpl*>& picture_layers() const {
+  const std::vector<raw_ptr<PictureLayerImpl, VectorExperimental>>&
+  picture_layers() const {
     return picture_layers_;
   }
 
@@ -613,9 +613,6 @@ class CC_EXPORT LayerTreeImpl {
   void UnregisterScrollbar(ScrollbarLayerImplBase* scrollbar_layer);
   ScrollbarSet ScrollbarsFor(ElementId scroll_element_id) const;
 
-  LayerImpl* FindFirstScrollingLayerOrScrollbarThatIsHitByPoint(
-      const gfx::PointF& screen_space_point);
-
   LayerImpl* FindLayerThatIsHitByPoint(const gfx::PointF& screen_space_point);
 
   LayerImpl* FindLayerThatIsHitByPointInTouchHandlerRegion(
@@ -624,13 +621,11 @@ class CC_EXPORT LayerTreeImpl {
   LayerImpl* FindLayerThatIsHitByPointInWheelEventHandlerRegion(
       const gfx::PointF& screen_space_point);
 
-  // Return all layers with a hit non-fast scrollable region.
-  std::vector<const LayerImpl*> FindLayersHitByPointInNonFastScrollableRegion(
-      const gfx::PointF& screen_space_point);
-  // Returns all layers up to the first scroller or scrollbar layer, inclusive.
-  // The returned vector is sorted in order of top most come first. The back of
-  // the vector will be the scrollable layer if one was hit.
-  std::vector<const LayerImpl*> FindAllLayersUpToAndIncludingFirstScrollable(
+  // Returns all layers up to the first scroller, scrollbar layer or a layer
+  // opaque to hit test, inclusive. The returned vector is sorted in order of
+  // top most come first. The back of the vector will be the scrollable layer
+  // or the first layer opaque to hit test, if one was hit.
+  std::vector<const LayerImpl*> FindLayersUpToFirstScrollableOrOpaqueToHitTest(
       const gfx::PointF& screen_space_point);
   bool PointHitsNonFastScrollableRegion(const gfx::PointF& scree_space_point,
                                         const LayerImpl& layer) const;
@@ -801,18 +796,12 @@ class CC_EXPORT LayerTreeImpl {
   std::vector<std::unique_ptr<ViewTransitionRequest>>
   TakeViewTransitionRequests();
 
+  // Returns true if there are pending ViewTransition requests that need a draw.
   bool HasViewTransitionRequests() const;
 
-  void ClearVisualUpdateDurations();
-  void SetVisualUpdateDurations(
-      base::TimeDelta previous_surfaces_visual_update_duration,
-      base::TimeDelta visual_update_duration);
-  base::TimeDelta previous_surfaces_visual_update_duration() const {
-    return previous_surfaces_visual_update_duration_;
-  }
-  base::TimeDelta visual_update_duration() const {
-    return visual_update_duration_;
-  }
+  // Returns true if there is a pending ViewTransition save request to cache
+  // output of the current frame.
+  bool HasViewTransitionSaveRequest() const;
 
  protected:
   float ClampPageScaleFactorToLimits(float page_scale_factor) const;
@@ -843,7 +832,7 @@ class CC_EXPORT LayerTreeImpl {
   int source_frame_number_;
   uint64_t trace_id_ = 0;
   int is_first_frame_after_commit_tracker_;
-  raw_ptr<HeadsUpDisplayLayerImpl> hud_layer_;
+  raw_ptr<HeadsUpDisplayLayerImpl, DanglingUntriaged> hud_layer_;
   PropertyTrees property_trees_;
   SkColor4f background_color_;
 
@@ -899,7 +888,7 @@ class CC_EXPORT LayerTreeImpl {
   base::flat_map<ElementId, ScrollbarLayerIds>
       element_id_to_scrollbar_layer_ids_;
 
-  std::vector<PictureLayerImpl*> picture_layers_;
+  std::vector<raw_ptr<PictureLayerImpl, VectorExperimental>> picture_layers_;
 
   // After commit (or impl-side invalidation), the LayerTreeHostImpl must walk
   // all PictureLayerImpls that have PaintWorklets to ensure they are painted.

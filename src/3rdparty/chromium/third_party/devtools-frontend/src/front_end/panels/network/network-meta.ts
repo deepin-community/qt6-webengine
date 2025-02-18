@@ -6,9 +6,9 @@ import * as Common from '../../core/common/common.js';
 import * as i18n from '../../core/i18n/i18n.js';
 import * as SDK from '../../core/sdk/sdk.js';
 import * as Workspace from '../../models/workspace/workspace.js';
-import * as NetworkForward from '../../panels/network/forward/forward.js';
 import * as UI from '../../ui/legacy/legacy.js';
 
+import * as NetworkForward from './forward/forward.js';
 import type * as Network from './network.js';
 
 const UIStrings = {
@@ -108,6 +108,18 @@ const UIStrings = {
    *@description Title of a setting under the Network category that can be invoked through the Command Menu
    */
   dontGroupNetworkLogItemsByFrame: 'Don\'t group network log items by frame',
+  /**
+   *@description Title of a button for clearing the network log
+   */
+  clear: 'Clear network log',
+  /**
+   *@description Title of an action in the Network request blocking panel to add a new URL pattern to the blocklist.
+   */
+  addNetworkRequestBlockingPattern: 'Add network request blocking pattern',
+  /**
+   *@description Title of an action in the Network request blocking panel to clear all URL patterns.
+   */
+  removeAllNetworkRequestBlockingPatterns: 'Remove all network request blocking patterns',
 };
 const str_ = i18n.i18n.registerUIStrings('panels/network/network-meta.ts', UIStrings);
 const i18nLazyString = i18n.i18n.getLazilyComputedLocalizedString.bind(undefined, str_);
@@ -148,7 +160,7 @@ UI.ViewManager.registerViewExtension({
   order: 60,
   async loadView() {
     const Network = await loadNetworkModule();
-    return Network.BlockedURLsPane.BlockedURLsPane.instance();
+    return new Network.BlockedURLsPane.BlockedURLsPane();
   },
 });
 
@@ -187,16 +199,16 @@ UI.ViewManager.registerViewExtension({
 UI.ActionRegistration.registerActionExtension({
   actionId: 'network.toggle-recording',
   category: UI.ActionRegistration.ActionCategory.NETWORK,
-  iconClass: UI.ActionRegistration.IconClass.LARGEICON_START_RECORDING,
+  iconClass: UI.ActionRegistration.IconClass.START_RECORDING,
   toggleable: true,
-  toggledIconClass: UI.ActionRegistration.IconClass.LARGEICON_STOP_RECORDING,
+  toggledIconClass: UI.ActionRegistration.IconClass.STOP_RECORDING,
   toggleWithRedColor: true,
   contextTypes() {
     return maybeRetrieveContextTypes(Network => [Network.NetworkPanel.NetworkPanel]);
   },
   async loadActionDelegate() {
     const Network = await loadNetworkModule();
-    return Network.NetworkPanel.ActionDelegate.instance();
+    return new Network.NetworkPanel.ActionDelegate();
   },
   options: [
     {
@@ -221,6 +233,29 @@ UI.ActionRegistration.registerActionExtension({
 });
 
 UI.ActionRegistration.registerActionExtension({
+  actionId: 'network.clear',
+  category: UI.ActionRegistration.ActionCategory.NETWORK,
+  title: i18nLazyString(UIStrings.clear),
+  iconClass: UI.ActionRegistration.IconClass.CLEAR,
+  async loadActionDelegate() {
+    const Network = await loadNetworkModule();
+    return new Network.NetworkPanel.ActionDelegate();
+  },
+  contextTypes() {
+    return maybeRetrieveContextTypes(Network => [Network.NetworkPanel.NetworkPanel]);
+  },
+  bindings: [
+    {
+      shortcut: 'Ctrl+L',
+    },
+    {
+      shortcut: 'Meta+K',
+      platform: UI.ActionRegistration.Platforms.Mac,
+    },
+  ],
+});
+
+UI.ActionRegistration.registerActionExtension({
   actionId: 'network.hide-request-details',
   category: UI.ActionRegistration.ActionCategory.NETWORK,
   title: i18nLazyString(UIStrings.hideRequestDetails),
@@ -229,7 +264,7 @@ UI.ActionRegistration.registerActionExtension({
   },
   async loadActionDelegate() {
     const Network = await loadNetworkModule();
-    return Network.NetworkPanel.ActionDelegate.instance();
+    return new Network.NetworkPanel.ActionDelegate();
   },
   bindings: [
     {
@@ -247,7 +282,7 @@ UI.ActionRegistration.registerActionExtension({
   },
   async loadActionDelegate() {
     const Network = await loadNetworkModule();
-    return Network.NetworkPanel.ActionDelegate.instance();
+    return new Network.NetworkPanel.ActionDelegate();
   },
   bindings: [
     {
@@ -267,6 +302,34 @@ UI.ActionRegistration.registerActionExtension({
       ],
     },
   ],
+});
+
+UI.ActionRegistration.registerActionExtension({
+  actionId: 'network.add-network-request-blocking-pattern',
+  category: UI.ActionRegistration.ActionCategory.NETWORK,
+  title: i18nLazyString(UIStrings.addNetworkRequestBlockingPattern),
+  iconClass: UI.ActionRegistration.IconClass.PLUS,
+  contextTypes() {
+    return maybeRetrieveContextTypes(Network => [Network.BlockedURLsPane.BlockedURLsPane]);
+  },
+  async loadActionDelegate() {
+    const Network = await loadNetworkModule();
+    return new Network.BlockedURLsPane.ActionDelegate();
+  },
+});
+
+UI.ActionRegistration.registerActionExtension({
+  actionId: 'network.remove-all-network-request-blocking-patterns',
+  category: UI.ActionRegistration.ActionCategory.NETWORK,
+  title: i18nLazyString(UIStrings.removeAllNetworkRequestBlockingPatterns),
+  iconClass: UI.ActionRegistration.IconClass.CLEAR,
+  contextTypes() {
+    return maybeRetrieveContextTypes(Network => [Network.BlockedURLsPane.BlockedURLsPane]);
+  },
+  async loadActionDelegate() {
+    const Network = await loadNetworkModule();
+    return new Network.BlockedURLsPane.ActionDelegate();
+  },
 });
 
 Common.Settings.registerSettingExtension({
@@ -318,7 +381,7 @@ Common.Settings.registerSettingExtension({
 
 UI.ViewManager.registerLocationResolver({
   name: UI.ViewManager.ViewLocationValues.NETWORK_SIDEBAR,
-  category: UI.ViewManager.ViewLocationCategoryValues.NETWORK,
+  category: UI.ViewManager.ViewLocationCategory.NETWORK,
   async loadResolver() {
     const Network = await loadNetworkModule();
     return Network.NetworkPanel.NetworkPanel.instance();
@@ -335,7 +398,7 @@ UI.ContextMenu.registerProvider({
   },
   async loadProvider() {
     const Network = await loadNetworkModule();
-    return Network.NetworkPanel.ContextMenuProvider.instance();
+    return Network.NetworkPanel.NetworkPanel.instance();
   },
   experiment: undefined,
 });
@@ -349,7 +412,7 @@ Common.Revealer.registerRevealer({
   destination: Common.Revealer.RevealerDestination.NETWORK_PANEL,
   async loadRevealer() {
     const Network = await loadNetworkModule();
-    return Network.NetworkPanel.RequestRevealer.instance();
+    return new Network.NetworkPanel.RequestRevealer();
   },
 });
 
@@ -357,11 +420,11 @@ Common.Revealer.registerRevealer({
   contextTypes() {
     return [NetworkForward.UIRequestLocation.UIRequestLocation];
   },
+  destination: undefined,
   async loadRevealer() {
     const Network = await loadNetworkModule();
-    return Network.NetworkPanel.RequestLocationRevealer.instance();
+    return new Network.NetworkPanel.RequestLocationRevealer();
   },
-  destination: undefined,
 });
 
 Common.Revealer.registerRevealer({
@@ -371,19 +434,17 @@ Common.Revealer.registerRevealer({
   destination: Common.Revealer.RevealerDestination.NETWORK_PANEL,
   async loadRevealer() {
     const Network = await loadNetworkModule();
-    return Network.NetworkPanel.RequestIdRevealer.instance();
+    return new Network.NetworkPanel.RequestIdRevealer();
   },
 });
 
 Common.Revealer.registerRevealer({
   contextTypes() {
-    return [
-      NetworkForward.UIFilter.UIRequestFilter,
-    ];
+    return [NetworkForward.UIFilter.UIRequestFilter];
   },
   destination: Common.Revealer.RevealerDestination.NETWORK_PANEL,
   async loadRevealer() {
     const Network = await loadNetworkModule();
-    return Network.NetworkPanel.NetworkLogWithFilterRevealer.instance();
+    return new Network.NetworkPanel.NetworkLogWithFilterRevealer();
   },
 });

@@ -9,6 +9,7 @@
 
 #include <map>
 #include <memory>
+#include <optional>
 #include <ostream>
 #include <set>
 #include <string>
@@ -19,7 +20,6 @@
 #include "base/strings/string_split.h"
 #include "build/build_config.h"
 #include "content/common/content_export.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/web/web_ax_enums.h"
 #include "ui/accessibility/ax_enums.mojom-forward.h"
 #include "ui/accessibility/ax_node.h"
@@ -130,7 +130,7 @@ class CONTENT_EXPORT BrowserAccessibility : public ui::AXPlatformNodeDelegate {
     PlatformChildIterator operator--(int);
     gfx::NativeViewAccessible GetNativeViewAccessible() const override;
     BrowserAccessibility* get() const override;
-    absl::optional<size_t> GetIndexInParent() const override;
+    std::optional<size_t> GetIndexInParent() const override;
     BrowserAccessibility& operator*() const override;
     BrowserAccessibility* operator->() const override;
 
@@ -239,8 +239,8 @@ class CONTENT_EXPORT BrowserAccessibility : public ui::AXPlatformNodeDelegate {
       const BrowserAccessibility* operator*();
 
      private:
-      const BrowserAccessibility* const parent_;
-      const BrowserAccessibility* const child_tree_root_;
+      const raw_ptr<const BrowserAccessibility> parent_;
+      const raw_ptr<const BrowserAccessibility> child_tree_root_;
       unsigned int index_;
     };
 
@@ -262,17 +262,7 @@ class CONTENT_EXPORT BrowserAccessibility : public ui::AXPlatformNodeDelegate {
   // for (const auto& child : AllChildren()) {}.
   AllChildrenRange AllChildren() const { return AllChildrenRange(this); }
 
-  // Derivative utils for AXPlatformNodeDelegate::GetHypertextRangeBoundsRect
-  gfx::Rect GetUnclippedRootFrameHypertextRangeBoundsRect(
-      const int start_offset,
-      const int end_offset,
-      ui::AXOffscreenResult* offscreen_result = nullptr) const;
-
   // Derivative utils for AXPlatformNodeDelegate::GetInnerTextRangeBoundsRect
-  gfx::Rect GetUnclippedScreenInnerTextRangeBoundsRect(
-      const int start_offset,
-      const int end_offset,
-      ui::AXOffscreenResult* offscreen_result = nullptr) const;
   gfx::Rect GetUnclippedRootFrameInnerTextRangeBoundsRect(
       const int start_offset,
       const int end_offset,
@@ -373,11 +363,11 @@ class CONTENT_EXPORT BrowserAccessibility : public ui::AXPlatformNodeDelegate {
   // `AXPlatformNodeDelegate` implementation.
   gfx::NativeViewAccessible GetParent() const override;
   size_t GetChildCount() const override;
-  gfx::NativeViewAccessible ChildAtIndex(size_t index) override;
-  gfx::NativeViewAccessible GetFirstChild() override;
-  gfx::NativeViewAccessible GetLastChild() override;
-  gfx::NativeViewAccessible GetNextSibling() override;
-  gfx::NativeViewAccessible GetPreviousSibling() override;
+  gfx::NativeViewAccessible ChildAtIndex(size_t index) const override;
+  gfx::NativeViewAccessible GetFirstChild() const override;
+  gfx::NativeViewAccessible GetLastChild() const override;
+  gfx::NativeViewAccessible GetNextSibling() const override;
+  gfx::NativeViewAccessible GetPreviousSibling() const override;
   bool IsPlatformDocument() const override;
   bool IsLeaf() const override;
   bool IsFocused() const override;
@@ -386,8 +376,8 @@ class CONTENT_EXPORT BrowserAccessibility : public ui::AXPlatformNodeDelegate {
   gfx::NativeViewAccessible GetSelectionContainer() const override;
   gfx::NativeViewAccessible GetTableAncestor() const override;
 
-  std::unique_ptr<ui::ChildIterator> ChildrenBegin() override;
-  std::unique_ptr<ui::ChildIterator> ChildrenEnd() override;
+  std::unique_ptr<ui::ChildIterator> ChildrenBegin() const override;
+  std::unique_ptr<ui::ChildIterator> ChildrenEnd() const override;
 
   bool SetHypertextSelection(int start_offset, int end_offset) override;
   gfx::Rect GetBoundsRect(
@@ -412,7 +402,7 @@ class CONTENT_EXPORT BrowserAccessibility : public ui::AXPlatformNodeDelegate {
   ui::AXPlatformNode* GetFromNodeID(int32_t id) override;
   ui::AXPlatformNode* GetFromTreeIDAndNodeID(const ui::AXTreeID& ax_tree_id,
                                              int32_t id) override;
-  absl::optional<size_t> GetIndexInParent() override;
+  std::optional<size_t> GetIndexInParent() const override;
   gfx::AcceleratedWidget GetTargetForNativeAccessibilityEvent() override;
 
   const std::vector<gfx::NativeViewAccessible> GetUIADirectChildrenInRange(
@@ -434,16 +424,12 @@ class CONTENT_EXPORT BrowserAccessibility : public ui::AXPlatformNodeDelegate {
   bool IsOffscreen() const override;
   bool IsWebContent() const override;
   bool HasVisibleCaretOrSelection() const override;
-  ui::AXPlatformNode* GetTargetNodeForRelation(
+  std::vector<ui::AXPlatformNode*> GetSourceNodesForReverseRelations(
       ax::mojom::IntAttribute attr) override;
-  std::vector<ui::AXPlatformNode*> GetTargetNodesForRelation(
+  std::vector<ui::AXPlatformNode*> GetSourceNodesForReverseRelations(
       ax::mojom::IntListAttribute attr) override;
-  std::set<ui::AXPlatformNode*> GetSourceNodesForReverseRelations(
-      ax::mojom::IntAttribute attr) override;
-  std::set<ui::AXPlatformNode*> GetSourceNodesForReverseRelations(
-      ax::mojom::IntListAttribute attr) override;
-  absl::optional<int> GetPosInSet() const override;
-  absl::optional<int> GetSetSize() const override;
+  std::optional<int> GetPosInSet() const override;
+  std::optional<int> GetSetSize() const override;
 
   // Returns true if this node is a list marker or if it's a descendant
   // of a list marker node. Returns false otherwise.
@@ -523,11 +509,6 @@ class CONTENT_EXPORT BrowserAccessibility : public ui::AXPlatformNodeDelegate {
       const ui::AXCoordinateSystem coordinate_system,
       const ui::AXClippingBehavior clipping_behavior,
       ui::AXOffscreenResult* offscreen_result) const;
-
-  // Given a set of node ids, return the nodes in this delegate's tree to
-  // which they correspond.
-  std::set<ui::AXPlatformNode*> GetNodesForNodeIdSet(
-      const std::set<int32_t>& ids);
 
   // If the node has a child tree, get the root node.
   BrowserAccessibility* PlatformGetRootOfChildTree() const;

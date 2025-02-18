@@ -10,7 +10,6 @@
 #include "base/functional/callback_forward.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "components/password_manager/core/browser/affiliation/affiliation_utils.h"
-#include "components/password_manager/core/browser/password_store_backend_error.h"
 #include "third_party/abseil-cpp/absl/types/variant.h"
 
 class GURL;
@@ -103,9 +102,11 @@ class AffiliationService : public KeyedService {
   // |facet_uris|.
   virtual void TrimUnusedCache(std::vector<FacetURI> facet_uris) = 0;
 
-  // Retrieves all stored facet groups from the cache. This information can be
-  // used to group passwords together.
-  virtual void GetAllGroups(GroupsCallback callback) const = 0;
+  // Retrieves stored grouping info for |facet_uris|. If there is no cache for
+  // requested facet, the facet will be added to it's own group. This
+  // information can be used to group passwords together.
+  virtual void GetGroupingInfo(std::vector<FacetURI> facet_uris,
+                               GroupsCallback callback) = 0;
 
   // Retrieves psl extension list. This list includes domain which shouldn't be
   // considered as PSL match.

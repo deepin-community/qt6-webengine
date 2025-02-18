@@ -29,8 +29,7 @@ void xnn_qu8_dwconv_minmax_rndnu_ukernel_25p32c__neon_mul8(
   assert(channels != 0);
   assert(output_width != 0);
 
-  const uint8x8_t vkernel_zero_point = vld1_dup_u8(params->rndnu_neon.kernel_zero_point);
-  const uint16x8_t vkernel_zero_point16 = vmovl_u8(vkernel_zero_point);
+  const uint16x8_t vkernel_zero_point = vmovl_u8(vld1_dup_u8(params->rndnu_neon.kernel_zero_point));
   const int32x4_t vright_pre_shift = vld1q_dup_s32(&params->rndnu_neon.right_pre_shift);
   const int32x4_t vmultiplier = vld1q_dup_s32(&params->rndnu_neon.multiplier);
   const int32x4_t vright_post_shift = vld1q_dup_s32(&params->rndnu_neon.right_post_shift);
@@ -169,24 +168,24 @@ void xnn_qu8_dwconv_minmax_rndnu_ukernel_25p32c__neon_mul8(
     size_t c = channels;
     const void* w = weights;
     for (; c >= 32; c -= 32) {
-      int32x4_t vacc0123 = vld1q_s32(w); w = (const void*) ((const int32_t*) w + 4);
-      int32x4_t vacc4567 = vld1q_s32(w); w = (const void*) ((const int32_t*) w + 4);
-      int32x4_t vacc89AB = vld1q_s32(w); w = (const void*) ((const int32_t*) w + 4);
-      int32x4_t vaccCDEF = vld1q_s32(w); w = (const void*) ((const int32_t*) w + 4);
-      int32x4_t vaccGHIJ = vld1q_s32(w); w = (const void*) ((const int32_t*) w + 4);
-      int32x4_t vaccKLMN = vld1q_s32(w); w = (const void*) ((const int32_t*) w + 4);
-      int32x4_t vaccOPQR = vld1q_s32(w); w = (const void*) ((const int32_t*) w + 4);
-      int32x4_t vaccSTUV = vld1q_s32(w); w = (const void*) ((const int32_t*) w + 4);
+      int32x4_t vacc0123 = vld1q_s32(w); w = (const int32_t*) w + 4;
+      int32x4_t vacc4567 = vld1q_s32(w); w = (const int32_t*) w + 4;
+      int32x4_t vacc89AB = vld1q_s32(w); w = (const int32_t*) w + 4;
+      int32x4_t vaccCDEF = vld1q_s32(w); w = (const int32_t*) w + 4;
+      int32x4_t vaccGHIJ = vld1q_s32(w); w = (const int32_t*) w + 4;
+      int32x4_t vaccKLMN = vld1q_s32(w); w = (const int32_t*) w + 4;
+      int32x4_t vaccOPQR = vld1q_s32(w); w = (const int32_t*) w + 4;
+      int32x4_t vaccSTUV = vld1q_s32(w); w = (const int32_t*) w + 4;
 
 
       const uint8x8_t vi0x01234567 = vld1_u8(i0); i0 += 8;
-      const uint8x8_t vk0x01234567 = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk0x01234567 = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi0x89ABCDEF = vld1_u8(i0); i0 += 8;
-      const uint8x8_t vk0x89ABCDEF = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk0x89ABCDEF = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi0xGHIJKLMN = vld1_u8(i0); i0 += 8;
-      const uint8x8_t vk0xGHIJKLMN = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk0xGHIJKLMN = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi0xOPQRSTUV = vld1_u8(i0); i0 += 8;
-      const uint8x8_t vk0xOPQRSTUV = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk0xOPQRSTUV = vld1_u8(w); w = (const int8_t*) w + 8;
 
       uint16x8_t vprod01234567 = vmull_u8(vi0x01234567, vk0x01234567);
       uint16x8_t vprod89ABCDEF = vmull_u8(vi0x89ABCDEF, vk0x89ABCDEF);
@@ -202,13 +201,13 @@ void xnn_qu8_dwconv_minmax_rndnu_ukernel_25p32c__neon_mul8(
       vaccOPQR = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vaccOPQR), vget_low_u16(vprodOPQRSTUV)));
       vaccSTUV = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vaccSTUV), vget_high_u16(vprodOPQRSTUV)));
       const uint8x8_t vi1x01234567 = vld1_u8(i1); i1 += 8;
-      const uint8x8_t vk1x01234567 = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk1x01234567 = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi1x89ABCDEF = vld1_u8(i1); i1 += 8;
-      const uint8x8_t vk1x89ABCDEF = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk1x89ABCDEF = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi1xGHIJKLMN = vld1_u8(i1); i1 += 8;
-      const uint8x8_t vk1xGHIJKLMN = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk1xGHIJKLMN = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi1xOPQRSTUV = vld1_u8(i1); i1 += 8;
-      const uint8x8_t vk1xOPQRSTUV = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk1xOPQRSTUV = vld1_u8(w); w = (const int8_t*) w + 8;
 
       vprod01234567 = vmull_u8(vi1x01234567, vk1x01234567);
       uint16x8_t vsum01234567 = vaddl_u8(vi0x01234567, vi1x01234567);
@@ -228,13 +227,13 @@ void xnn_qu8_dwconv_minmax_rndnu_ukernel_25p32c__neon_mul8(
       vaccOPQR = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vaccOPQR), vget_low_u16(vprodOPQRSTUV)));
       vaccSTUV = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vaccSTUV), vget_high_u16(vprodOPQRSTUV)));
       const uint8x8_t vi2x01234567 = vld1_u8(i2); i2 += 8;
-      const uint8x8_t vk2x01234567 = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk2x01234567 = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi2x89ABCDEF = vld1_u8(i2); i2 += 8;
-      const uint8x8_t vk2x89ABCDEF = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk2x89ABCDEF = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi2xGHIJKLMN = vld1_u8(i2); i2 += 8;
-      const uint8x8_t vk2xGHIJKLMN = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk2xGHIJKLMN = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi2xOPQRSTUV = vld1_u8(i2); i2 += 8;
-      const uint8x8_t vk2xOPQRSTUV = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk2xOPQRSTUV = vld1_u8(w); w = (const int8_t*) w + 8;
 
       vprod01234567 = vmull_u8(vi2x01234567, vk2x01234567);
       vsum01234567 = vaddw_u8(vsum01234567, vi2x01234567);
@@ -254,13 +253,13 @@ void xnn_qu8_dwconv_minmax_rndnu_ukernel_25p32c__neon_mul8(
       vaccOPQR = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vaccOPQR), vget_low_u16(vprodOPQRSTUV)));
       vaccSTUV = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vaccSTUV), vget_high_u16(vprodOPQRSTUV)));
       const uint8x8_t vi3x01234567 = vld1_u8(i3); i3 += 8;
-      const uint8x8_t vk3x01234567 = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk3x01234567 = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi3x89ABCDEF = vld1_u8(i3); i3 += 8;
-      const uint8x8_t vk3x89ABCDEF = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk3x89ABCDEF = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi3xGHIJKLMN = vld1_u8(i3); i3 += 8;
-      const uint8x8_t vk3xGHIJKLMN = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk3xGHIJKLMN = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi3xOPQRSTUV = vld1_u8(i3); i3 += 8;
-      const uint8x8_t vk3xOPQRSTUV = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk3xOPQRSTUV = vld1_u8(w); w = (const int8_t*) w + 8;
 
       vprod01234567 = vmull_u8(vi3x01234567, vk3x01234567);
       vsum01234567 = vaddw_u8(vsum01234567, vi3x01234567);
@@ -280,13 +279,13 @@ void xnn_qu8_dwconv_minmax_rndnu_ukernel_25p32c__neon_mul8(
       vaccOPQR = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vaccOPQR), vget_low_u16(vprodOPQRSTUV)));
       vaccSTUV = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vaccSTUV), vget_high_u16(vprodOPQRSTUV)));
       const uint8x8_t vi4x01234567 = vld1_u8(i4); i4 += 8;
-      const uint8x8_t vk4x01234567 = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk4x01234567 = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi4x89ABCDEF = vld1_u8(i4); i4 += 8;
-      const uint8x8_t vk4x89ABCDEF = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk4x89ABCDEF = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi4xGHIJKLMN = vld1_u8(i4); i4 += 8;
-      const uint8x8_t vk4xGHIJKLMN = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk4xGHIJKLMN = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi4xOPQRSTUV = vld1_u8(i4); i4 += 8;
-      const uint8x8_t vk4xOPQRSTUV = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk4xOPQRSTUV = vld1_u8(w); w = (const int8_t*) w + 8;
 
       vprod01234567 = vmull_u8(vi4x01234567, vk4x01234567);
       vsum01234567 = vaddw_u8(vsum01234567, vi4x01234567);
@@ -306,13 +305,13 @@ void xnn_qu8_dwconv_minmax_rndnu_ukernel_25p32c__neon_mul8(
       vaccOPQR = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vaccOPQR), vget_low_u16(vprodOPQRSTUV)));
       vaccSTUV = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vaccSTUV), vget_high_u16(vprodOPQRSTUV)));
       const uint8x8_t vi5x01234567 = vld1_u8(i5); i5 += 8;
-      const uint8x8_t vk5x01234567 = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk5x01234567 = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi5x89ABCDEF = vld1_u8(i5); i5 += 8;
-      const uint8x8_t vk5x89ABCDEF = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk5x89ABCDEF = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi5xGHIJKLMN = vld1_u8(i5); i5 += 8;
-      const uint8x8_t vk5xGHIJKLMN = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk5xGHIJKLMN = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi5xOPQRSTUV = vld1_u8(i5); i5 += 8;
-      const uint8x8_t vk5xOPQRSTUV = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk5xOPQRSTUV = vld1_u8(w); w = (const int8_t*) w + 8;
 
       vprod01234567 = vmull_u8(vi5x01234567, vk5x01234567);
       vsum01234567 = vaddw_u8(vsum01234567, vi5x01234567);
@@ -332,13 +331,13 @@ void xnn_qu8_dwconv_minmax_rndnu_ukernel_25p32c__neon_mul8(
       vaccOPQR = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vaccOPQR), vget_low_u16(vprodOPQRSTUV)));
       vaccSTUV = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vaccSTUV), vget_high_u16(vprodOPQRSTUV)));
       const uint8x8_t vi6x01234567 = vld1_u8(i6); i6 += 8;
-      const uint8x8_t vk6x01234567 = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk6x01234567 = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi6x89ABCDEF = vld1_u8(i6); i6 += 8;
-      const uint8x8_t vk6x89ABCDEF = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk6x89ABCDEF = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi6xGHIJKLMN = vld1_u8(i6); i6 += 8;
-      const uint8x8_t vk6xGHIJKLMN = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk6xGHIJKLMN = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi6xOPQRSTUV = vld1_u8(i6); i6 += 8;
-      const uint8x8_t vk6xOPQRSTUV = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk6xOPQRSTUV = vld1_u8(w); w = (const int8_t*) w + 8;
 
       vprod01234567 = vmull_u8(vi6x01234567, vk6x01234567);
       vsum01234567 = vaddw_u8(vsum01234567, vi6x01234567);
@@ -358,13 +357,13 @@ void xnn_qu8_dwconv_minmax_rndnu_ukernel_25p32c__neon_mul8(
       vaccOPQR = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vaccOPQR), vget_low_u16(vprodOPQRSTUV)));
       vaccSTUV = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vaccSTUV), vget_high_u16(vprodOPQRSTUV)));
       const uint8x8_t vi7x01234567 = vld1_u8(i7); i7 += 8;
-      const uint8x8_t vk7x01234567 = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk7x01234567 = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi7x89ABCDEF = vld1_u8(i7); i7 += 8;
-      const uint8x8_t vk7x89ABCDEF = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk7x89ABCDEF = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi7xGHIJKLMN = vld1_u8(i7); i7 += 8;
-      const uint8x8_t vk7xGHIJKLMN = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk7xGHIJKLMN = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi7xOPQRSTUV = vld1_u8(i7); i7 += 8;
-      const uint8x8_t vk7xOPQRSTUV = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk7xOPQRSTUV = vld1_u8(w); w = (const int8_t*) w + 8;
 
       vprod01234567 = vmull_u8(vi7x01234567, vk7x01234567);
       vsum01234567 = vaddw_u8(vsum01234567, vi7x01234567);
@@ -384,13 +383,13 @@ void xnn_qu8_dwconv_minmax_rndnu_ukernel_25p32c__neon_mul8(
       vaccOPQR = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vaccOPQR), vget_low_u16(vprodOPQRSTUV)));
       vaccSTUV = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vaccSTUV), vget_high_u16(vprodOPQRSTUV)));
       const uint8x8_t vi8x01234567 = vld1_u8(i8); i8 += 8;
-      const uint8x8_t vk8x01234567 = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk8x01234567 = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi8x89ABCDEF = vld1_u8(i8); i8 += 8;
-      const uint8x8_t vk8x89ABCDEF = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk8x89ABCDEF = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi8xGHIJKLMN = vld1_u8(i8); i8 += 8;
-      const uint8x8_t vk8xGHIJKLMN = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk8xGHIJKLMN = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi8xOPQRSTUV = vld1_u8(i8); i8 += 8;
-      const uint8x8_t vk8xOPQRSTUV = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk8xOPQRSTUV = vld1_u8(w); w = (const int8_t*) w + 8;
 
       vprod01234567 = vmull_u8(vi8x01234567, vk8x01234567);
       vsum01234567 = vaddw_u8(vsum01234567, vi8x01234567);
@@ -410,13 +409,13 @@ void xnn_qu8_dwconv_minmax_rndnu_ukernel_25p32c__neon_mul8(
       vaccOPQR = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vaccOPQR), vget_low_u16(vprodOPQRSTUV)));
       vaccSTUV = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vaccSTUV), vget_high_u16(vprodOPQRSTUV)));
       const uint8x8_t vi9x01234567 = vld1_u8(i9); i9 += 8;
-      const uint8x8_t vk9x01234567 = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk9x01234567 = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi9x89ABCDEF = vld1_u8(i9); i9 += 8;
-      const uint8x8_t vk9x89ABCDEF = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk9x89ABCDEF = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi9xGHIJKLMN = vld1_u8(i9); i9 += 8;
-      const uint8x8_t vk9xGHIJKLMN = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk9xGHIJKLMN = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi9xOPQRSTUV = vld1_u8(i9); i9 += 8;
-      const uint8x8_t vk9xOPQRSTUV = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk9xOPQRSTUV = vld1_u8(w); w = (const int8_t*) w + 8;
 
       vprod01234567 = vmull_u8(vi9x01234567, vk9x01234567);
       vsum01234567 = vaddw_u8(vsum01234567, vi9x01234567);
@@ -436,13 +435,13 @@ void xnn_qu8_dwconv_minmax_rndnu_ukernel_25p32c__neon_mul8(
       vaccOPQR = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vaccOPQR), vget_low_u16(vprodOPQRSTUV)));
       vaccSTUV = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vaccSTUV), vget_high_u16(vprodOPQRSTUV)));
       const uint8x8_t vi10x01234567 = vld1_u8(i10); i10 += 8;
-      const uint8x8_t vk10x01234567 = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk10x01234567 = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi10x89ABCDEF = vld1_u8(i10); i10 += 8;
-      const uint8x8_t vk10x89ABCDEF = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk10x89ABCDEF = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi10xGHIJKLMN = vld1_u8(i10); i10 += 8;
-      const uint8x8_t vk10xGHIJKLMN = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk10xGHIJKLMN = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi10xOPQRSTUV = vld1_u8(i10); i10 += 8;
-      const uint8x8_t vk10xOPQRSTUV = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk10xOPQRSTUV = vld1_u8(w); w = (const int8_t*) w + 8;
 
       vprod01234567 = vmull_u8(vi10x01234567, vk10x01234567);
       vsum01234567 = vaddw_u8(vsum01234567, vi10x01234567);
@@ -462,13 +461,13 @@ void xnn_qu8_dwconv_minmax_rndnu_ukernel_25p32c__neon_mul8(
       vaccOPQR = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vaccOPQR), vget_low_u16(vprodOPQRSTUV)));
       vaccSTUV = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vaccSTUV), vget_high_u16(vprodOPQRSTUV)));
       const uint8x8_t vi11x01234567 = vld1_u8(i11); i11 += 8;
-      const uint8x8_t vk11x01234567 = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk11x01234567 = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi11x89ABCDEF = vld1_u8(i11); i11 += 8;
-      const uint8x8_t vk11x89ABCDEF = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk11x89ABCDEF = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi11xGHIJKLMN = vld1_u8(i11); i11 += 8;
-      const uint8x8_t vk11xGHIJKLMN = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk11xGHIJKLMN = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi11xOPQRSTUV = vld1_u8(i11); i11 += 8;
-      const uint8x8_t vk11xOPQRSTUV = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk11xOPQRSTUV = vld1_u8(w); w = (const int8_t*) w + 8;
 
       vprod01234567 = vmull_u8(vi11x01234567, vk11x01234567);
       vsum01234567 = vaddw_u8(vsum01234567, vi11x01234567);
@@ -488,13 +487,13 @@ void xnn_qu8_dwconv_minmax_rndnu_ukernel_25p32c__neon_mul8(
       vaccOPQR = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vaccOPQR), vget_low_u16(vprodOPQRSTUV)));
       vaccSTUV = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vaccSTUV), vget_high_u16(vprodOPQRSTUV)));
       const uint8x8_t vi12x01234567 = vld1_u8(i12); i12 += 8;
-      const uint8x8_t vk12x01234567 = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk12x01234567 = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi12x89ABCDEF = vld1_u8(i12); i12 += 8;
-      const uint8x8_t vk12x89ABCDEF = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk12x89ABCDEF = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi12xGHIJKLMN = vld1_u8(i12); i12 += 8;
-      const uint8x8_t vk12xGHIJKLMN = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk12xGHIJKLMN = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi12xOPQRSTUV = vld1_u8(i12); i12 += 8;
-      const uint8x8_t vk12xOPQRSTUV = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk12xOPQRSTUV = vld1_u8(w); w = (const int8_t*) w + 8;
 
       vprod01234567 = vmull_u8(vi12x01234567, vk12x01234567);
       vsum01234567 = vaddw_u8(vsum01234567, vi12x01234567);
@@ -514,13 +513,13 @@ void xnn_qu8_dwconv_minmax_rndnu_ukernel_25p32c__neon_mul8(
       vaccOPQR = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vaccOPQR), vget_low_u16(vprodOPQRSTUV)));
       vaccSTUV = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vaccSTUV), vget_high_u16(vprodOPQRSTUV)));
       const uint8x8_t vi13x01234567 = vld1_u8(i13); i13 += 8;
-      const uint8x8_t vk13x01234567 = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk13x01234567 = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi13x89ABCDEF = vld1_u8(i13); i13 += 8;
-      const uint8x8_t vk13x89ABCDEF = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk13x89ABCDEF = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi13xGHIJKLMN = vld1_u8(i13); i13 += 8;
-      const uint8x8_t vk13xGHIJKLMN = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk13xGHIJKLMN = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi13xOPQRSTUV = vld1_u8(i13); i13 += 8;
-      const uint8x8_t vk13xOPQRSTUV = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk13xOPQRSTUV = vld1_u8(w); w = (const int8_t*) w + 8;
 
       vprod01234567 = vmull_u8(vi13x01234567, vk13x01234567);
       vsum01234567 = vaddw_u8(vsum01234567, vi13x01234567);
@@ -540,13 +539,13 @@ void xnn_qu8_dwconv_minmax_rndnu_ukernel_25p32c__neon_mul8(
       vaccOPQR = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vaccOPQR), vget_low_u16(vprodOPQRSTUV)));
       vaccSTUV = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vaccSTUV), vget_high_u16(vprodOPQRSTUV)));
       const uint8x8_t vi14x01234567 = vld1_u8(i14); i14 += 8;
-      const uint8x8_t vk14x01234567 = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk14x01234567 = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi14x89ABCDEF = vld1_u8(i14); i14 += 8;
-      const uint8x8_t vk14x89ABCDEF = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk14x89ABCDEF = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi14xGHIJKLMN = vld1_u8(i14); i14 += 8;
-      const uint8x8_t vk14xGHIJKLMN = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk14xGHIJKLMN = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi14xOPQRSTUV = vld1_u8(i14); i14 += 8;
-      const uint8x8_t vk14xOPQRSTUV = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk14xOPQRSTUV = vld1_u8(w); w = (const int8_t*) w + 8;
 
       vprod01234567 = vmull_u8(vi14x01234567, vk14x01234567);
       vsum01234567 = vaddw_u8(vsum01234567, vi14x01234567);
@@ -566,13 +565,13 @@ void xnn_qu8_dwconv_minmax_rndnu_ukernel_25p32c__neon_mul8(
       vaccOPQR = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vaccOPQR), vget_low_u16(vprodOPQRSTUV)));
       vaccSTUV = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vaccSTUV), vget_high_u16(vprodOPQRSTUV)));
       const uint8x8_t vi15x01234567 = vld1_u8(i15); i15 += 8;
-      const uint8x8_t vk15x01234567 = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk15x01234567 = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi15x89ABCDEF = vld1_u8(i15); i15 += 8;
-      const uint8x8_t vk15x89ABCDEF = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk15x89ABCDEF = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi15xGHIJKLMN = vld1_u8(i15); i15 += 8;
-      const uint8x8_t vk15xGHIJKLMN = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk15xGHIJKLMN = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi15xOPQRSTUV = vld1_u8(i15); i15 += 8;
-      const uint8x8_t vk15xOPQRSTUV = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk15xOPQRSTUV = vld1_u8(w); w = (const int8_t*) w + 8;
 
       vprod01234567 = vmull_u8(vi15x01234567, vk15x01234567);
       vsum01234567 = vaddw_u8(vsum01234567, vi15x01234567);
@@ -592,13 +591,13 @@ void xnn_qu8_dwconv_minmax_rndnu_ukernel_25p32c__neon_mul8(
       vaccOPQR = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vaccOPQR), vget_low_u16(vprodOPQRSTUV)));
       vaccSTUV = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vaccSTUV), vget_high_u16(vprodOPQRSTUV)));
       const uint8x8_t vi16x01234567 = vld1_u8(i16); i16 += 8;
-      const uint8x8_t vk16x01234567 = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk16x01234567 = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi16x89ABCDEF = vld1_u8(i16); i16 += 8;
-      const uint8x8_t vk16x89ABCDEF = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk16x89ABCDEF = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi16xGHIJKLMN = vld1_u8(i16); i16 += 8;
-      const uint8x8_t vk16xGHIJKLMN = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk16xGHIJKLMN = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi16xOPQRSTUV = vld1_u8(i16); i16 += 8;
-      const uint8x8_t vk16xOPQRSTUV = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk16xOPQRSTUV = vld1_u8(w); w = (const int8_t*) w + 8;
 
       vprod01234567 = vmull_u8(vi16x01234567, vk16x01234567);
       vsum01234567 = vaddw_u8(vsum01234567, vi16x01234567);
@@ -618,13 +617,13 @@ void xnn_qu8_dwconv_minmax_rndnu_ukernel_25p32c__neon_mul8(
       vaccOPQR = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vaccOPQR), vget_low_u16(vprodOPQRSTUV)));
       vaccSTUV = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vaccSTUV), vget_high_u16(vprodOPQRSTUV)));
       const uint8x8_t vi17x01234567 = vld1_u8(i17); i17 += 8;
-      const uint8x8_t vk17x01234567 = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk17x01234567 = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi17x89ABCDEF = vld1_u8(i17); i17 += 8;
-      const uint8x8_t vk17x89ABCDEF = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk17x89ABCDEF = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi17xGHIJKLMN = vld1_u8(i17); i17 += 8;
-      const uint8x8_t vk17xGHIJKLMN = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk17xGHIJKLMN = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi17xOPQRSTUV = vld1_u8(i17); i17 += 8;
-      const uint8x8_t vk17xOPQRSTUV = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk17xOPQRSTUV = vld1_u8(w); w = (const int8_t*) w + 8;
 
       vprod01234567 = vmull_u8(vi17x01234567, vk17x01234567);
       vsum01234567 = vaddw_u8(vsum01234567, vi17x01234567);
@@ -644,13 +643,13 @@ void xnn_qu8_dwconv_minmax_rndnu_ukernel_25p32c__neon_mul8(
       vaccOPQR = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vaccOPQR), vget_low_u16(vprodOPQRSTUV)));
       vaccSTUV = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vaccSTUV), vget_high_u16(vprodOPQRSTUV)));
       const uint8x8_t vi18x01234567 = vld1_u8(i18); i18 += 8;
-      const uint8x8_t vk18x01234567 = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk18x01234567 = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi18x89ABCDEF = vld1_u8(i18); i18 += 8;
-      const uint8x8_t vk18x89ABCDEF = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk18x89ABCDEF = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi18xGHIJKLMN = vld1_u8(i18); i18 += 8;
-      const uint8x8_t vk18xGHIJKLMN = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk18xGHIJKLMN = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi18xOPQRSTUV = vld1_u8(i18); i18 += 8;
-      const uint8x8_t vk18xOPQRSTUV = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk18xOPQRSTUV = vld1_u8(w); w = (const int8_t*) w + 8;
 
       vprod01234567 = vmull_u8(vi18x01234567, vk18x01234567);
       vsum01234567 = vaddw_u8(vsum01234567, vi18x01234567);
@@ -670,13 +669,13 @@ void xnn_qu8_dwconv_minmax_rndnu_ukernel_25p32c__neon_mul8(
       vaccOPQR = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vaccOPQR), vget_low_u16(vprodOPQRSTUV)));
       vaccSTUV = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vaccSTUV), vget_high_u16(vprodOPQRSTUV)));
       const uint8x8_t vi19x01234567 = vld1_u8(i19); i19 += 8;
-      const uint8x8_t vk19x01234567 = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk19x01234567 = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi19x89ABCDEF = vld1_u8(i19); i19 += 8;
-      const uint8x8_t vk19x89ABCDEF = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk19x89ABCDEF = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi19xGHIJKLMN = vld1_u8(i19); i19 += 8;
-      const uint8x8_t vk19xGHIJKLMN = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk19xGHIJKLMN = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi19xOPQRSTUV = vld1_u8(i19); i19 += 8;
-      const uint8x8_t vk19xOPQRSTUV = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk19xOPQRSTUV = vld1_u8(w); w = (const int8_t*) w + 8;
 
       vprod01234567 = vmull_u8(vi19x01234567, vk19x01234567);
       vsum01234567 = vaddw_u8(vsum01234567, vi19x01234567);
@@ -696,13 +695,13 @@ void xnn_qu8_dwconv_minmax_rndnu_ukernel_25p32c__neon_mul8(
       vaccOPQR = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vaccOPQR), vget_low_u16(vprodOPQRSTUV)));
       vaccSTUV = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vaccSTUV), vget_high_u16(vprodOPQRSTUV)));
       const uint8x8_t vi20x01234567 = vld1_u8(i20); i20 += 8;
-      const uint8x8_t vk20x01234567 = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk20x01234567 = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi20x89ABCDEF = vld1_u8(i20); i20 += 8;
-      const uint8x8_t vk20x89ABCDEF = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk20x89ABCDEF = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi20xGHIJKLMN = vld1_u8(i20); i20 += 8;
-      const uint8x8_t vk20xGHIJKLMN = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk20xGHIJKLMN = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi20xOPQRSTUV = vld1_u8(i20); i20 += 8;
-      const uint8x8_t vk20xOPQRSTUV = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk20xOPQRSTUV = vld1_u8(w); w = (const int8_t*) w + 8;
 
       vprod01234567 = vmull_u8(vi20x01234567, vk20x01234567);
       vsum01234567 = vaddw_u8(vsum01234567, vi20x01234567);
@@ -722,13 +721,13 @@ void xnn_qu8_dwconv_minmax_rndnu_ukernel_25p32c__neon_mul8(
       vaccOPQR = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vaccOPQR), vget_low_u16(vprodOPQRSTUV)));
       vaccSTUV = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vaccSTUV), vget_high_u16(vprodOPQRSTUV)));
       const uint8x8_t vi21x01234567 = vld1_u8(i21); i21 += 8;
-      const uint8x8_t vk21x01234567 = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk21x01234567 = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi21x89ABCDEF = vld1_u8(i21); i21 += 8;
-      const uint8x8_t vk21x89ABCDEF = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk21x89ABCDEF = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi21xGHIJKLMN = vld1_u8(i21); i21 += 8;
-      const uint8x8_t vk21xGHIJKLMN = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk21xGHIJKLMN = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi21xOPQRSTUV = vld1_u8(i21); i21 += 8;
-      const uint8x8_t vk21xOPQRSTUV = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk21xOPQRSTUV = vld1_u8(w); w = (const int8_t*) w + 8;
 
       vprod01234567 = vmull_u8(vi21x01234567, vk21x01234567);
       vsum01234567 = vaddw_u8(vsum01234567, vi21x01234567);
@@ -748,13 +747,13 @@ void xnn_qu8_dwconv_minmax_rndnu_ukernel_25p32c__neon_mul8(
       vaccOPQR = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vaccOPQR), vget_low_u16(vprodOPQRSTUV)));
       vaccSTUV = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vaccSTUV), vget_high_u16(vprodOPQRSTUV)));
       const uint8x8_t vi22x01234567 = vld1_u8(i22); i22 += 8;
-      const uint8x8_t vk22x01234567 = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk22x01234567 = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi22x89ABCDEF = vld1_u8(i22); i22 += 8;
-      const uint8x8_t vk22x89ABCDEF = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk22x89ABCDEF = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi22xGHIJKLMN = vld1_u8(i22); i22 += 8;
-      const uint8x8_t vk22xGHIJKLMN = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk22xGHIJKLMN = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi22xOPQRSTUV = vld1_u8(i22); i22 += 8;
-      const uint8x8_t vk22xOPQRSTUV = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk22xOPQRSTUV = vld1_u8(w); w = (const int8_t*) w + 8;
 
       vprod01234567 = vmull_u8(vi22x01234567, vk22x01234567);
       vsum01234567 = vaddw_u8(vsum01234567, vi22x01234567);
@@ -774,13 +773,13 @@ void xnn_qu8_dwconv_minmax_rndnu_ukernel_25p32c__neon_mul8(
       vaccOPQR = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vaccOPQR), vget_low_u16(vprodOPQRSTUV)));
       vaccSTUV = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vaccSTUV), vget_high_u16(vprodOPQRSTUV)));
       const uint8x8_t vi23x01234567 = vld1_u8(i23); i23 += 8;
-      const uint8x8_t vk23x01234567 = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk23x01234567 = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi23x89ABCDEF = vld1_u8(i23); i23 += 8;
-      const uint8x8_t vk23x89ABCDEF = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk23x89ABCDEF = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi23xGHIJKLMN = vld1_u8(i23); i23 += 8;
-      const uint8x8_t vk23xGHIJKLMN = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk23xGHIJKLMN = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi23xOPQRSTUV = vld1_u8(i23); i23 += 8;
-      const uint8x8_t vk23xOPQRSTUV = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk23xOPQRSTUV = vld1_u8(w); w = (const int8_t*) w + 8;
 
       vprod01234567 = vmull_u8(vi23x01234567, vk23x01234567);
       vsum01234567 = vaddw_u8(vsum01234567, vi23x01234567);
@@ -800,13 +799,13 @@ void xnn_qu8_dwconv_minmax_rndnu_ukernel_25p32c__neon_mul8(
       vaccOPQR = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vaccOPQR), vget_low_u16(vprodOPQRSTUV)));
       vaccSTUV = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vaccSTUV), vget_high_u16(vprodOPQRSTUV)));
       const uint8x8_t vi24x01234567 = vld1_u8(i24); i24 += 8;
-      const uint8x8_t vk24x01234567 = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk24x01234567 = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi24x89ABCDEF = vld1_u8(i24); i24 += 8;
-      const uint8x8_t vk24x89ABCDEF = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk24x89ABCDEF = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi24xGHIJKLMN = vld1_u8(i24); i24 += 8;
-      const uint8x8_t vk24xGHIJKLMN = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk24xGHIJKLMN = vld1_u8(w); w = (const int8_t*) w + 8;
       const uint8x8_t vi24xOPQRSTUV = vld1_u8(i24); i24 += 8;
-      const uint8x8_t vk24xOPQRSTUV = vld1_u8(w); w = (const void*) ((const int8_t*) w + 8);
+      const uint8x8_t vk24xOPQRSTUV = vld1_u8(w); w = (const int8_t*) w + 8;
 
       vprod01234567 = vmull_u8(vi24x01234567, vk24x01234567);
       vsum01234567 = vaddw_u8(vsum01234567, vi24x01234567);
@@ -826,14 +825,14 @@ void xnn_qu8_dwconv_minmax_rndnu_ukernel_25p32c__neon_mul8(
       vaccOPQR = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vaccOPQR), vget_low_u16(vprodOPQRSTUV)));
       vaccSTUV = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vaccSTUV), vget_high_u16(vprodOPQRSTUV)));
 
-      vacc0123 = vreinterpretq_s32_u32(vmlsl_u16(vreinterpretq_u32_s32(vacc0123), vget_low_u16(vsum01234567), vget_low_u16(vkernel_zero_point16)));
-      vacc4567 = vreinterpretq_s32_u32(vmlsl_u16(vreinterpretq_u32_s32(vacc4567), vget_high_u16(vsum01234567), vget_high_u16(vkernel_zero_point16)));
-      vacc89AB = vreinterpretq_s32_u32(vmlsl_u16(vreinterpretq_u32_s32(vacc89AB), vget_low_u16(vsum89ABCDEF), vget_low_u16(vkernel_zero_point16)));
-      vaccCDEF = vreinterpretq_s32_u32(vmlsl_u16(vreinterpretq_u32_s32(vaccCDEF), vget_high_u16(vsum89ABCDEF), vget_high_u16(vkernel_zero_point16)));
-      vaccGHIJ = vreinterpretq_s32_u32(vmlsl_u16(vreinterpretq_u32_s32(vaccGHIJ), vget_low_u16(vsumGHIJKLMN), vget_low_u16(vkernel_zero_point16)));
-      vaccKLMN = vreinterpretq_s32_u32(vmlsl_u16(vreinterpretq_u32_s32(vaccKLMN), vget_high_u16(vsumGHIJKLMN), vget_high_u16(vkernel_zero_point16)));
-      vaccOPQR = vreinterpretq_s32_u32(vmlsl_u16(vreinterpretq_u32_s32(vaccOPQR), vget_low_u16(vsumOPQRSTUV), vget_low_u16(vkernel_zero_point16)));
-      vaccSTUV = vreinterpretq_s32_u32(vmlsl_u16(vreinterpretq_u32_s32(vaccSTUV), vget_high_u16(vsumOPQRSTUV), vget_high_u16(vkernel_zero_point16)));
+      vacc0123 = vreinterpretq_s32_u32(vmlsl_u16(vreinterpretq_u32_s32(vacc0123), vget_low_u16(vsum01234567), vget_low_u16(vkernel_zero_point)));
+      vacc4567 = vreinterpretq_s32_u32(vmlsl_u16(vreinterpretq_u32_s32(vacc4567), vget_high_u16(vsum01234567), vget_high_u16(vkernel_zero_point)));
+      vacc89AB = vreinterpretq_s32_u32(vmlsl_u16(vreinterpretq_u32_s32(vacc89AB), vget_low_u16(vsum89ABCDEF), vget_low_u16(vkernel_zero_point)));
+      vaccCDEF = vreinterpretq_s32_u32(vmlsl_u16(vreinterpretq_u32_s32(vaccCDEF), vget_high_u16(vsum89ABCDEF), vget_high_u16(vkernel_zero_point)));
+      vaccGHIJ = vreinterpretq_s32_u32(vmlsl_u16(vreinterpretq_u32_s32(vaccGHIJ), vget_low_u16(vsumGHIJKLMN), vget_low_u16(vkernel_zero_point)));
+      vaccKLMN = vreinterpretq_s32_u32(vmlsl_u16(vreinterpretq_u32_s32(vaccKLMN), vget_high_u16(vsumGHIJKLMN), vget_high_u16(vkernel_zero_point)));
+      vaccOPQR = vreinterpretq_s32_u32(vmlsl_u16(vreinterpretq_u32_s32(vaccOPQR), vget_low_u16(vsumOPQRSTUV), vget_low_u16(vkernel_zero_point)));
+      vaccSTUV = vreinterpretq_s32_u32(vmlsl_u16(vreinterpretq_u32_s32(vaccSTUV), vget_high_u16(vsumOPQRSTUV), vget_high_u16(vkernel_zero_point)));
 
       vacc0123 = vshlq_s32(vacc0123, vright_pre_shift);
       vacc4567 = vshlq_s32(vacc4567, vright_pre_shift);
@@ -892,134 +891,211 @@ void xnn_qu8_dwconv_minmax_rndnu_ukernel_25p32c__neon_mul8(
     if XNN_UNLIKELY(c != 0) {
       const uint8_t* k = (const uint8_t*) ((const int32_t*) w + 32);
       do {
-        int32x4_t vacc0123 = vld1q_s32(w); w = (const void*) ((const int32_t*) w + 4);
-        int32x4_t vacc4567 = vld1q_s32(w); w = (const void*) ((const int32_t*) w + 4);
+        int32x4_t vacc0123 = vld1q_s32(w); w = (const int32_t*) w + 4;
+        int32x4_t vacc4567 = vld1q_s32(w); w = (const int32_t*) w + 4;
 
-        const int16x8_t vi0x01234567 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(i0))); i0 += 8;
-        const int16x8_t vk0x01234567 = vreinterpretq_s16_u16(vsubl_u8(vld1_u8(k), vkernel_zero_point)); k += 8;
+        const uint8x8_t vi0x01234567 = vld1_u8(i0); i0 += 8;
+        const uint8x8_t vk0x01234567 = vld1_u8(k); k += 8;
 
-        vacc0123 = vmlal_s16(vacc0123, vget_low_s16(vi0x01234567), vget_low_s16(vk0x01234567));
-        vacc4567 = vmlal_s16(vacc4567, vget_high_s16(vi0x01234567), vget_high_s16(vk0x01234567));
-        const int16x8_t vi1x01234567 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(i1))); i1 += 8;
-        const int16x8_t vk1x01234567 = vreinterpretq_s16_u16(vsubl_u8(vld1_u8((const void*) (k + 24)), vkernel_zero_point));
+        uint16x8_t vprod01234567 = vmull_u8(vi0x01234567, vk0x01234567);
 
-        vacc0123 = vmlal_s16(vacc0123, vget_low_s16(vi1x01234567), vget_low_s16(vk1x01234567));
-        vacc4567 = vmlal_s16(vacc4567, vget_high_s16(vi1x01234567), vget_high_s16(vk1x01234567));
-        const int16x8_t vi2x01234567 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(i2))); i2 += 8;
-        const int16x8_t vk2x01234567 = vreinterpretq_s16_u16(vsubl_u8(vld1_u8((const void*) (k + 56)), vkernel_zero_point));
+        vacc0123 = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vacc0123), vget_low_u16(vprod01234567)));
+        vacc4567 = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vacc4567), vget_high_u16(vprod01234567)));
+        const uint8x8_t vi1x01234567 = vld1_u8(i1); i1 += 8;
+        const uint8x8_t vk1x01234567 = vld1_u8((const void*) (k + 24));
 
-        vacc0123 = vmlal_s16(vacc0123, vget_low_s16(vi2x01234567), vget_low_s16(vk2x01234567));
-        vacc4567 = vmlal_s16(vacc4567, vget_high_s16(vi2x01234567), vget_high_s16(vk2x01234567));
-        const int16x8_t vi3x01234567 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(i3))); i3 += 8;
-        const int16x8_t vk3x01234567 = vreinterpretq_s16_u16(vsubl_u8(vld1_u8((const void*) (k + 88)), vkernel_zero_point));
+        vprod01234567 = vmull_u8(vi1x01234567, vk1x01234567);
+        uint16x8_t vsum01234567 = vaddl_u8(vi0x01234567, vi1x01234567);
 
-        vacc0123 = vmlal_s16(vacc0123, vget_low_s16(vi3x01234567), vget_low_s16(vk3x01234567));
-        vacc4567 = vmlal_s16(vacc4567, vget_high_s16(vi3x01234567), vget_high_s16(vk3x01234567));
-        const int16x8_t vi4x01234567 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(i4))); i4 += 8;
-        const int16x8_t vk4x01234567 = vreinterpretq_s16_u16(vsubl_u8(vld1_u8((const void*) (k + 120)), vkernel_zero_point));
+        vacc0123 = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vacc0123), vget_low_u16(vprod01234567)));
+        vacc4567 = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vacc4567), vget_high_u16(vprod01234567)));
+        const uint8x8_t vi2x01234567 = vld1_u8(i2); i2 += 8;
+        const uint8x8_t vk2x01234567 = vld1_u8((const void*) (k + 56));
 
-        vacc0123 = vmlal_s16(vacc0123, vget_low_s16(vi4x01234567), vget_low_s16(vk4x01234567));
-        vacc4567 = vmlal_s16(vacc4567, vget_high_s16(vi4x01234567), vget_high_s16(vk4x01234567));
-        const int16x8_t vi5x01234567 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(i5))); i5 += 8;
-        const int16x8_t vk5x01234567 = vreinterpretq_s16_u16(vsubl_u8(vld1_u8((const void*) (k + 152)), vkernel_zero_point));
+        vprod01234567 = vmull_u8(vi2x01234567, vk2x01234567);
+        vsum01234567 = vaddw_u8(vsum01234567, vi2x01234567);
 
-        vacc0123 = vmlal_s16(vacc0123, vget_low_s16(vi5x01234567), vget_low_s16(vk5x01234567));
-        vacc4567 = vmlal_s16(vacc4567, vget_high_s16(vi5x01234567), vget_high_s16(vk5x01234567));
-        const int16x8_t vi6x01234567 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(i6))); i6 += 8;
-        const int16x8_t vk6x01234567 = vreinterpretq_s16_u16(vsubl_u8(vld1_u8((const void*) (k + 184)), vkernel_zero_point));
+        vacc0123 = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vacc0123), vget_low_u16(vprod01234567)));
+        vacc4567 = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vacc4567), vget_high_u16(vprod01234567)));
+        const uint8x8_t vi3x01234567 = vld1_u8(i3); i3 += 8;
+        const uint8x8_t vk3x01234567 = vld1_u8((const void*) (k + 88));
 
-        vacc0123 = vmlal_s16(vacc0123, vget_low_s16(vi6x01234567), vget_low_s16(vk6x01234567));
-        vacc4567 = vmlal_s16(vacc4567, vget_high_s16(vi6x01234567), vget_high_s16(vk6x01234567));
-        const int16x8_t vi7x01234567 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(i7))); i7 += 8;
-        const int16x8_t vk7x01234567 = vreinterpretq_s16_u16(vsubl_u8(vld1_u8((const void*) (k + 216)), vkernel_zero_point));
+        vprod01234567 = vmull_u8(vi3x01234567, vk3x01234567);
+        vsum01234567 = vaddw_u8(vsum01234567, vi3x01234567);
 
-        vacc0123 = vmlal_s16(vacc0123, vget_low_s16(vi7x01234567), vget_low_s16(vk7x01234567));
-        vacc4567 = vmlal_s16(vacc4567, vget_high_s16(vi7x01234567), vget_high_s16(vk7x01234567));
-        const int16x8_t vi8x01234567 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(i8))); i8 += 8;
-        const int16x8_t vk8x01234567 = vreinterpretq_s16_u16(vsubl_u8(vld1_u8((const void*) (k + 248)), vkernel_zero_point));
+        vacc0123 = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vacc0123), vget_low_u16(vprod01234567)));
+        vacc4567 = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vacc4567), vget_high_u16(vprod01234567)));
+        const uint8x8_t vi4x01234567 = vld1_u8(i4); i4 += 8;
+        const uint8x8_t vk4x01234567 = vld1_u8((const void*) (k + 120));
 
-        vacc0123 = vmlal_s16(vacc0123, vget_low_s16(vi8x01234567), vget_low_s16(vk8x01234567));
-        vacc4567 = vmlal_s16(vacc4567, vget_high_s16(vi8x01234567), vget_high_s16(vk8x01234567));
-        const int16x8_t vi9x01234567 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(i9))); i9 += 8;
-        const int16x8_t vk9x01234567 = vreinterpretq_s16_u16(vsubl_u8(vld1_u8((const void*) (k + 280)), vkernel_zero_point));
+        vprod01234567 = vmull_u8(vi4x01234567, vk4x01234567);
+        vsum01234567 = vaddw_u8(vsum01234567, vi4x01234567);
 
-        vacc0123 = vmlal_s16(vacc0123, vget_low_s16(vi9x01234567), vget_low_s16(vk9x01234567));
-        vacc4567 = vmlal_s16(vacc4567, vget_high_s16(vi9x01234567), vget_high_s16(vk9x01234567));
-        const int16x8_t vi10x01234567 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(i10))); i10 += 8;
-        const int16x8_t vk10x01234567 = vreinterpretq_s16_u16(vsubl_u8(vld1_u8((const void*) (k + 312)), vkernel_zero_point));
+        vacc0123 = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vacc0123), vget_low_u16(vprod01234567)));
+        vacc4567 = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vacc4567), vget_high_u16(vprod01234567)));
+        const uint8x8_t vi5x01234567 = vld1_u8(i5); i5 += 8;
+        const uint8x8_t vk5x01234567 = vld1_u8((const void*) (k + 152));
 
-        vacc0123 = vmlal_s16(vacc0123, vget_low_s16(vi10x01234567), vget_low_s16(vk10x01234567));
-        vacc4567 = vmlal_s16(vacc4567, vget_high_s16(vi10x01234567), vget_high_s16(vk10x01234567));
-        const int16x8_t vi11x01234567 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(i11))); i11 += 8;
-        const int16x8_t vk11x01234567 = vreinterpretq_s16_u16(vsubl_u8(vld1_u8((const void*) (k + 344)), vkernel_zero_point));
+        vprod01234567 = vmull_u8(vi5x01234567, vk5x01234567);
+        vsum01234567 = vaddw_u8(vsum01234567, vi5x01234567);
 
-        vacc0123 = vmlal_s16(vacc0123, vget_low_s16(vi11x01234567), vget_low_s16(vk11x01234567));
-        vacc4567 = vmlal_s16(vacc4567, vget_high_s16(vi11x01234567), vget_high_s16(vk11x01234567));
-        const int16x8_t vi12x01234567 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(i12))); i12 += 8;
-        const int16x8_t vk12x01234567 = vreinterpretq_s16_u16(vsubl_u8(vld1_u8((const void*) (k + 376)), vkernel_zero_point));
+        vacc0123 = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vacc0123), vget_low_u16(vprod01234567)));
+        vacc4567 = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vacc4567), vget_high_u16(vprod01234567)));
+        const uint8x8_t vi6x01234567 = vld1_u8(i6); i6 += 8;
+        const uint8x8_t vk6x01234567 = vld1_u8((const void*) (k + 184));
 
-        vacc0123 = vmlal_s16(vacc0123, vget_low_s16(vi12x01234567), vget_low_s16(vk12x01234567));
-        vacc4567 = vmlal_s16(vacc4567, vget_high_s16(vi12x01234567), vget_high_s16(vk12x01234567));
-        const int16x8_t vi13x01234567 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(i13))); i13 += 8;
-        const int16x8_t vk13x01234567 = vreinterpretq_s16_u16(vsubl_u8(vld1_u8((const void*) (k + 408)), vkernel_zero_point));
+        vprod01234567 = vmull_u8(vi6x01234567, vk6x01234567);
+        vsum01234567 = vaddw_u8(vsum01234567, vi6x01234567);
 
-        vacc0123 = vmlal_s16(vacc0123, vget_low_s16(vi13x01234567), vget_low_s16(vk13x01234567));
-        vacc4567 = vmlal_s16(vacc4567, vget_high_s16(vi13x01234567), vget_high_s16(vk13x01234567));
-        const int16x8_t vi14x01234567 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(i14))); i14 += 8;
-        const int16x8_t vk14x01234567 = vreinterpretq_s16_u16(vsubl_u8(vld1_u8((const void*) (k + 440)), vkernel_zero_point));
+        vacc0123 = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vacc0123), vget_low_u16(vprod01234567)));
+        vacc4567 = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vacc4567), vget_high_u16(vprod01234567)));
+        const uint8x8_t vi7x01234567 = vld1_u8(i7); i7 += 8;
+        const uint8x8_t vk7x01234567 = vld1_u8((const void*) (k + 216));
 
-        vacc0123 = vmlal_s16(vacc0123, vget_low_s16(vi14x01234567), vget_low_s16(vk14x01234567));
-        vacc4567 = vmlal_s16(vacc4567, vget_high_s16(vi14x01234567), vget_high_s16(vk14x01234567));
-        const int16x8_t vi15x01234567 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(i15))); i15 += 8;
-        const int16x8_t vk15x01234567 = vreinterpretq_s16_u16(vsubl_u8(vld1_u8((const void*) (k + 472)), vkernel_zero_point));
+        vprod01234567 = vmull_u8(vi7x01234567, vk7x01234567);
+        vsum01234567 = vaddw_u8(vsum01234567, vi7x01234567);
 
-        vacc0123 = vmlal_s16(vacc0123, vget_low_s16(vi15x01234567), vget_low_s16(vk15x01234567));
-        vacc4567 = vmlal_s16(vacc4567, vget_high_s16(vi15x01234567), vget_high_s16(vk15x01234567));
-        const int16x8_t vi16x01234567 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(i16))); i16 += 8;
-        const int16x8_t vk16x01234567 = vreinterpretq_s16_u16(vsubl_u8(vld1_u8((const void*) (k + 504)), vkernel_zero_point));
+        vacc0123 = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vacc0123), vget_low_u16(vprod01234567)));
+        vacc4567 = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vacc4567), vget_high_u16(vprod01234567)));
+        const uint8x8_t vi8x01234567 = vld1_u8(i8); i8 += 8;
+        const uint8x8_t vk8x01234567 = vld1_u8((const void*) (k + 248));
 
-        vacc0123 = vmlal_s16(vacc0123, vget_low_s16(vi16x01234567), vget_low_s16(vk16x01234567));
-        vacc4567 = vmlal_s16(vacc4567, vget_high_s16(vi16x01234567), vget_high_s16(vk16x01234567));
-        const int16x8_t vi17x01234567 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(i17))); i17 += 8;
-        const int16x8_t vk17x01234567 = vreinterpretq_s16_u16(vsubl_u8(vld1_u8((const void*) (k + 536)), vkernel_zero_point));
+        vprod01234567 = vmull_u8(vi8x01234567, vk8x01234567);
+        vsum01234567 = vaddw_u8(vsum01234567, vi8x01234567);
 
-        vacc0123 = vmlal_s16(vacc0123, vget_low_s16(vi17x01234567), vget_low_s16(vk17x01234567));
-        vacc4567 = vmlal_s16(vacc4567, vget_high_s16(vi17x01234567), vget_high_s16(vk17x01234567));
-        const int16x8_t vi18x01234567 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(i18))); i18 += 8;
-        const int16x8_t vk18x01234567 = vreinterpretq_s16_u16(vsubl_u8(vld1_u8((const void*) (k + 568)), vkernel_zero_point));
+        vacc0123 = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vacc0123), vget_low_u16(vprod01234567)));
+        vacc4567 = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vacc4567), vget_high_u16(vprod01234567)));
+        const uint8x8_t vi9x01234567 = vld1_u8(i9); i9 += 8;
+        const uint8x8_t vk9x01234567 = vld1_u8((const void*) (k + 280));
 
-        vacc0123 = vmlal_s16(vacc0123, vget_low_s16(vi18x01234567), vget_low_s16(vk18x01234567));
-        vacc4567 = vmlal_s16(vacc4567, vget_high_s16(vi18x01234567), vget_high_s16(vk18x01234567));
-        const int16x8_t vi19x01234567 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(i19))); i19 += 8;
-        const int16x8_t vk19x01234567 = vreinterpretq_s16_u16(vsubl_u8(vld1_u8((const void*) (k + 600)), vkernel_zero_point));
+        vprod01234567 = vmull_u8(vi9x01234567, vk9x01234567);
+        vsum01234567 = vaddw_u8(vsum01234567, vi9x01234567);
 
-        vacc0123 = vmlal_s16(vacc0123, vget_low_s16(vi19x01234567), vget_low_s16(vk19x01234567));
-        vacc4567 = vmlal_s16(vacc4567, vget_high_s16(vi19x01234567), vget_high_s16(vk19x01234567));
-        const int16x8_t vi20x01234567 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(i20))); i20 += 8;
-        const int16x8_t vk20x01234567 = vreinterpretq_s16_u16(vsubl_u8(vld1_u8((const void*) (k + 632)), vkernel_zero_point));
+        vacc0123 = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vacc0123), vget_low_u16(vprod01234567)));
+        vacc4567 = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vacc4567), vget_high_u16(vprod01234567)));
+        const uint8x8_t vi10x01234567 = vld1_u8(i10); i10 += 8;
+        const uint8x8_t vk10x01234567 = vld1_u8((const void*) (k + 312));
 
-        vacc0123 = vmlal_s16(vacc0123, vget_low_s16(vi20x01234567), vget_low_s16(vk20x01234567));
-        vacc4567 = vmlal_s16(vacc4567, vget_high_s16(vi20x01234567), vget_high_s16(vk20x01234567));
-        const int16x8_t vi21x01234567 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(i21))); i21 += 8;
-        const int16x8_t vk21x01234567 = vreinterpretq_s16_u16(vsubl_u8(vld1_u8((const void*) (k + 664)), vkernel_zero_point));
+        vprod01234567 = vmull_u8(vi10x01234567, vk10x01234567);
+        vsum01234567 = vaddw_u8(vsum01234567, vi10x01234567);
 
-        vacc0123 = vmlal_s16(vacc0123, vget_low_s16(vi21x01234567), vget_low_s16(vk21x01234567));
-        vacc4567 = vmlal_s16(vacc4567, vget_high_s16(vi21x01234567), vget_high_s16(vk21x01234567));
-        const int16x8_t vi22x01234567 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(i22))); i22 += 8;
-        const int16x8_t vk22x01234567 = vreinterpretq_s16_u16(vsubl_u8(vld1_u8((const void*) (k + 696)), vkernel_zero_point));
+        vacc0123 = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vacc0123), vget_low_u16(vprod01234567)));
+        vacc4567 = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vacc4567), vget_high_u16(vprod01234567)));
+        const uint8x8_t vi11x01234567 = vld1_u8(i11); i11 += 8;
+        const uint8x8_t vk11x01234567 = vld1_u8((const void*) (k + 344));
 
-        vacc0123 = vmlal_s16(vacc0123, vget_low_s16(vi22x01234567), vget_low_s16(vk22x01234567));
-        vacc4567 = vmlal_s16(vacc4567, vget_high_s16(vi22x01234567), vget_high_s16(vk22x01234567));
-        const int16x8_t vi23x01234567 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(i23))); i23 += 8;
-        const int16x8_t vk23x01234567 = vreinterpretq_s16_u16(vsubl_u8(vld1_u8((const void*) (k + 728)), vkernel_zero_point));
+        vprod01234567 = vmull_u8(vi11x01234567, vk11x01234567);
+        vsum01234567 = vaddw_u8(vsum01234567, vi11x01234567);
 
-        vacc0123 = vmlal_s16(vacc0123, vget_low_s16(vi23x01234567), vget_low_s16(vk23x01234567));
-        vacc4567 = vmlal_s16(vacc4567, vget_high_s16(vi23x01234567), vget_high_s16(vk23x01234567));
-        const int16x8_t vi24x01234567 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(i24))); i24 += 8;
-        const int16x8_t vk24x01234567 = vreinterpretq_s16_u16(vsubl_u8(vld1_u8((const void*) (k + 760)), vkernel_zero_point));
+        vacc0123 = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vacc0123), vget_low_u16(vprod01234567)));
+        vacc4567 = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vacc4567), vget_high_u16(vprod01234567)));
+        const uint8x8_t vi12x01234567 = vld1_u8(i12); i12 += 8;
+        const uint8x8_t vk12x01234567 = vld1_u8((const void*) (k + 376));
 
-        vacc0123 = vmlal_s16(vacc0123, vget_low_s16(vi24x01234567), vget_low_s16(vk24x01234567));
-        vacc4567 = vmlal_s16(vacc4567, vget_high_s16(vi24x01234567), vget_high_s16(vk24x01234567));
+        vprod01234567 = vmull_u8(vi12x01234567, vk12x01234567);
+        vsum01234567 = vaddw_u8(vsum01234567, vi12x01234567);
+
+        vacc0123 = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vacc0123), vget_low_u16(vprod01234567)));
+        vacc4567 = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vacc4567), vget_high_u16(vprod01234567)));
+        const uint8x8_t vi13x01234567 = vld1_u8(i13); i13 += 8;
+        const uint8x8_t vk13x01234567 = vld1_u8((const void*) (k + 408));
+
+        vprod01234567 = vmull_u8(vi13x01234567, vk13x01234567);
+        vsum01234567 = vaddw_u8(vsum01234567, vi13x01234567);
+
+        vacc0123 = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vacc0123), vget_low_u16(vprod01234567)));
+        vacc4567 = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vacc4567), vget_high_u16(vprod01234567)));
+        const uint8x8_t vi14x01234567 = vld1_u8(i14); i14 += 8;
+        const uint8x8_t vk14x01234567 = vld1_u8((const void*) (k + 440));
+
+        vprod01234567 = vmull_u8(vi14x01234567, vk14x01234567);
+        vsum01234567 = vaddw_u8(vsum01234567, vi14x01234567);
+
+        vacc0123 = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vacc0123), vget_low_u16(vprod01234567)));
+        vacc4567 = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vacc4567), vget_high_u16(vprod01234567)));
+        const uint8x8_t vi15x01234567 = vld1_u8(i15); i15 += 8;
+        const uint8x8_t vk15x01234567 = vld1_u8((const void*) (k + 472));
+
+        vprod01234567 = vmull_u8(vi15x01234567, vk15x01234567);
+        vsum01234567 = vaddw_u8(vsum01234567, vi15x01234567);
+
+        vacc0123 = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vacc0123), vget_low_u16(vprod01234567)));
+        vacc4567 = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vacc4567), vget_high_u16(vprod01234567)));
+        const uint8x8_t vi16x01234567 = vld1_u8(i16); i16 += 8;
+        const uint8x8_t vk16x01234567 = vld1_u8((const void*) (k + 504));
+
+        vprod01234567 = vmull_u8(vi16x01234567, vk16x01234567);
+        vsum01234567 = vaddw_u8(vsum01234567, vi16x01234567);
+
+        vacc0123 = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vacc0123), vget_low_u16(vprod01234567)));
+        vacc4567 = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vacc4567), vget_high_u16(vprod01234567)));
+        const uint8x8_t vi17x01234567 = vld1_u8(i17); i17 += 8;
+        const uint8x8_t vk17x01234567 = vld1_u8((const void*) (k + 536));
+
+        vprod01234567 = vmull_u8(vi17x01234567, vk17x01234567);
+        vsum01234567 = vaddw_u8(vsum01234567, vi17x01234567);
+
+        vacc0123 = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vacc0123), vget_low_u16(vprod01234567)));
+        vacc4567 = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vacc4567), vget_high_u16(vprod01234567)));
+        const uint8x8_t vi18x01234567 = vld1_u8(i18); i18 += 8;
+        const uint8x8_t vk18x01234567 = vld1_u8((const void*) (k + 568));
+
+        vprod01234567 = vmull_u8(vi18x01234567, vk18x01234567);
+        vsum01234567 = vaddw_u8(vsum01234567, vi18x01234567);
+
+        vacc0123 = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vacc0123), vget_low_u16(vprod01234567)));
+        vacc4567 = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vacc4567), vget_high_u16(vprod01234567)));
+        const uint8x8_t vi19x01234567 = vld1_u8(i19); i19 += 8;
+        const uint8x8_t vk19x01234567 = vld1_u8((const void*) (k + 600));
+
+        vprod01234567 = vmull_u8(vi19x01234567, vk19x01234567);
+        vsum01234567 = vaddw_u8(vsum01234567, vi19x01234567);
+
+        vacc0123 = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vacc0123), vget_low_u16(vprod01234567)));
+        vacc4567 = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vacc4567), vget_high_u16(vprod01234567)));
+        const uint8x8_t vi20x01234567 = vld1_u8(i20); i20 += 8;
+        const uint8x8_t vk20x01234567 = vld1_u8((const void*) (k + 632));
+
+        vprod01234567 = vmull_u8(vi20x01234567, vk20x01234567);
+        vsum01234567 = vaddw_u8(vsum01234567, vi20x01234567);
+
+        vacc0123 = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vacc0123), vget_low_u16(vprod01234567)));
+        vacc4567 = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vacc4567), vget_high_u16(vprod01234567)));
+        const uint8x8_t vi21x01234567 = vld1_u8(i21); i21 += 8;
+        const uint8x8_t vk21x01234567 = vld1_u8((const void*) (k + 664));
+
+        vprod01234567 = vmull_u8(vi21x01234567, vk21x01234567);
+        vsum01234567 = vaddw_u8(vsum01234567, vi21x01234567);
+
+        vacc0123 = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vacc0123), vget_low_u16(vprod01234567)));
+        vacc4567 = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vacc4567), vget_high_u16(vprod01234567)));
+        const uint8x8_t vi22x01234567 = vld1_u8(i22); i22 += 8;
+        const uint8x8_t vk22x01234567 = vld1_u8((const void*) (k + 696));
+
+        vprod01234567 = vmull_u8(vi22x01234567, vk22x01234567);
+        vsum01234567 = vaddw_u8(vsum01234567, vi22x01234567);
+
+        vacc0123 = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vacc0123), vget_low_u16(vprod01234567)));
+        vacc4567 = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vacc4567), vget_high_u16(vprod01234567)));
+        const uint8x8_t vi23x01234567 = vld1_u8(i23); i23 += 8;
+        const uint8x8_t vk23x01234567 = vld1_u8((const void*) (k + 728));
+
+        vprod01234567 = vmull_u8(vi23x01234567, vk23x01234567);
+        vsum01234567 = vaddw_u8(vsum01234567, vi23x01234567);
+
+        vacc0123 = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vacc0123), vget_low_u16(vprod01234567)));
+        vacc4567 = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vacc4567), vget_high_u16(vprod01234567)));
+        const uint8x8_t vi24x01234567 = vld1_u8(i24); i24 += 8;
+        const uint8x8_t vk24x01234567 = vld1_u8((const void*) (k + 760));
+
+        vprod01234567 = vmull_u8(vi24x01234567, vk24x01234567);
+        vsum01234567 = vaddw_u8(vsum01234567, vi24x01234567);
+
+        vacc0123 = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vacc0123), vget_low_u16(vprod01234567)));
+        vacc4567 = vreinterpretq_s32_u32(vaddw_u16(vreinterpretq_u32_s32(vacc4567), vget_high_u16(vprod01234567)));
+
+        vacc0123 = vreinterpretq_s32_u32(vmlsl_u16(vreinterpretq_u32_s32(vacc0123), vget_low_u16(vsum01234567), vget_low_u16(vkernel_zero_point)));
+        vacc4567 = vreinterpretq_s32_u32(vmlsl_u16(vreinterpretq_u32_s32(vacc4567), vget_high_u16(vsum01234567), vget_high_u16(vkernel_zero_point)));
 
         vacc0123 = vrshlq_s32(vacc0123, vright_pre_shift);
         vacc4567 = vrshlq_s32(vacc4567, vright_pre_shift);

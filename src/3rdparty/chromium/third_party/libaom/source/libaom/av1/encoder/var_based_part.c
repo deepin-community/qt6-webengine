@@ -29,8 +29,7 @@
 #include "av1/encoder/encodeframe.h"
 #include "av1/encoder/var_based_part.h"
 #include "av1/encoder/reconinter_enc.h"
-
-extern const uint8_t AV1_VAR_OFFS[];
+#include "av1/encoder/rdopt_utils.h"
 
 // Possible values for the force_split variable while evaluating variance based
 // partitioning.
@@ -274,12 +273,10 @@ static AOM_INLINE void fill_variance_8x8avg_highbd(
     unsigned int sse = 0;
     int sum = 0;
     if (x8_idx < pixels_wide && y8_idx < pixels_high) {
-      int src_avg;
-      int dst_avg = 128;
-      src_avg = aom_highbd_avg_8x8(src_buf + y8_idx * src_stride + x8_idx,
-                                   src_stride);
-      dst_avg = aom_highbd_avg_8x8(dst_buf + y8_idx * dst_stride + x8_idx,
-                                   dst_stride);
+      int src_avg = aom_highbd_avg_8x8(src_buf + y8_idx * src_stride + x8_idx,
+                                       src_stride);
+      int dst_avg = aom_highbd_avg_8x8(dst_buf + y8_idx * dst_stride + x8_idx,
+                                       dst_stride);
 
       sum = src_avg - dst_avg;
       sse = sum * sum;
@@ -295,10 +292,10 @@ static AOM_INLINE void fill_variance_8x8avg_lowbd(
     int pixels_high) {
   unsigned int sse[4] = { 0 };
   int sum[4] = { 0 };
-  int dst_avg[4] = { 128, 128, 128, 128 };
-  int src_avg[4];
 
   if (all_blks_inside(x16_idx, y16_idx, pixels_wide, pixels_high)) {
+    int src_avg[4];
+    int dst_avg[4];
     aom_avg_8x8_quad(src_buf, src_stride, x16_idx, y16_idx, src_avg);
     aom_avg_8x8_quad(dst_buf, dst_stride, x16_idx, y16_idx, dst_avg);
     for (int idx = 0; idx < 4; idx++) {
@@ -310,11 +307,11 @@ static AOM_INLINE void fill_variance_8x8avg_lowbd(
       const int x8_idx = x16_idx + GET_BLK_IDX_X(idx, 3);
       const int y8_idx = y16_idx + GET_BLK_IDX_Y(idx, 3);
       if (x8_idx < pixels_wide && y8_idx < pixels_high) {
-        src_avg[idx] =
+        int src_avg =
             aom_avg_8x8(src_buf + y8_idx * src_stride + x8_idx, src_stride);
-        dst_avg[idx] =
+        int dst_avg =
             aom_avg_8x8(dst_buf + y8_idx * dst_stride + x8_idx, dst_stride);
-        sum[idx] = src_avg[idx] - dst_avg[idx];
+        sum[idx] = src_avg - dst_avg;
         sse[idx] = sum[idx] * sum[idx];
       }
     }
@@ -358,8 +355,8 @@ static int compute_minmax_8x8(const uint8_t *src_buf, int src_stride,
   int minmax_min = 255;
   // Loop over the 4 8x8 subblocks.
   for (int idx = 0; idx < 4; idx++) {
-    int x8_idx = x16_idx + GET_BLK_IDX_X(idx, 3);
-    int y8_idx = y16_idx + GET_BLK_IDX_Y(idx, 3);
+    const int x8_idx = x16_idx + GET_BLK_IDX_X(idx, 3);
+    const int y8_idx = y16_idx + GET_BLK_IDX_Y(idx, 3);
     int min = 0;
     int max = 0;
     if (x8_idx < pixels_wide && y8_idx < pixels_high) {
@@ -397,8 +394,8 @@ static AOM_INLINE void fill_variance_4x4avg(const uint8_t *src_buf,
                                             int pixels_wide, int pixels_high,
                                             int border_offset_4x4) {
   for (int idx = 0; idx < 4; idx++) {
-    int x4_idx = x8_idx + GET_BLK_IDX_X(idx, 2);
-    int y4_idx = y8_idx + GET_BLK_IDX_Y(idx, 2);
+    const int x4_idx = x8_idx + GET_BLK_IDX_X(idx, 2);
+    const int y4_idx = y8_idx + GET_BLK_IDX_Y(idx, 2);
     unsigned int sse = 0;
     int sum = 0;
     if (x4_idx < pixels_wide - border_offset_4x4 &&
@@ -440,7 +437,7 @@ static int64_t scale_part_thresh_content(int64_t threshold_base, int speed,
 
 // Tune thresholds less or more aggressively to prefer larger partitions
 static AOM_INLINE void tune_thresh_based_on_qindex(
-    AV1_COMP *cpi, int64_t thresholds[], uint64_t blk_sad, int current_qindex,
+    AV1_COMP *cpi, int64_t thresholds[], uint64_t block_sad, int current_qindex,
     int num_pixels, bool is_segment_id_boosted, int source_sad_nonrd,
     int lighting_change) {
   double weight;
@@ -471,8 +468,20 @@ static AOM_INLINE void tune_thresh_based_on_qindex(
       // moving boundary. So allow for sb with source_sad above threshold,
       // and avoid very large source_sad or high source content, to avoid
       // too many 8x8 within superblock.
-      if (is_segment_id_boosted == false && cpi->rc.avg_source_sad < 25000 &&
-          blk_sad > 25000 && blk_sad < 50000 && !lighting_change) {
+      uint64_t avg_source_sad_thresh = 25000;
+      uint64_t block_sad_low = 25000;
+      uint64_t block_sad_high = 50000;
+      if (cpi->svc.temporal_layer_id == 0 &&
+          cpi->svc.number_temporal_layers > 1) {
+        // Increase the sad thresholds for base TL0, as reference/LAST is
+        // 2/4 frames behind (for 2/3 #TL).
+        avg_source_sad_thresh = 40000;
+        block_sad_high = 70000;
+      }
+      if (is_segment_id_boosted == false &&
+          cpi->rc.avg_source_sad < avg_source_sad_thresh &&
+          block_sad > block_sad_low && block_sad < block_sad_high &&
+          !lighting_change) {
         thresholds[2] = (3 * thresholds[2]) >> 2;
         thresholds[3] = thresholds[2] << 3;
       }
@@ -989,24 +998,46 @@ void av1_set_variance_partition_thresholds(AV1_COMP *cpi, int qindex,
 
 static AOM_INLINE void chroma_check(AV1_COMP *cpi, MACROBLOCK *x,
                                     BLOCK_SIZE bsize, unsigned int y_sad,
-                                    unsigned int y_sad_g, bool is_key_frame,
+                                    unsigned int y_sad_g,
+                                    unsigned int y_sad_alt, bool is_key_frame,
                                     bool zero_motion, unsigned int *uv_sad) {
   MACROBLOCKD *xd = &x->e_mbd;
-  int shift = 3;
+  const int source_sad_nonrd = x->content_state_sb.source_sad_nonrd;
+  int shift_upper_limit = 1;
+  int shift_lower_limit = 3;
+  int fac_uv = 6;
   if (is_key_frame || cpi->oxcf.tool_cfg.enable_monochrome) return;
 
+  // Use lower threshold (more conservative in setting color flag) for
+  // higher resolutions non-screen, which tend to have more camera noise.
+  // Since this may be used to skip compound mode in nonrd pickmode, which
+  // is generally more effective for higher resolutions, better to be more
+  // conservative.
+  if (cpi->oxcf.tune_cfg.content != AOM_CONTENT_SCREEN) {
+    if (cpi->common.width * cpi->common.height >= RESOLUTION_1080P)
+      fac_uv = 3;
+    else
+      fac_uv = 5;
+  }
   if (cpi->oxcf.tune_cfg.content == AOM_CONTENT_SCREEN &&
-      cpi->rc.high_source_sad)
-    shift = 7;
+      cpi->rc.high_source_sad) {
+    shift_lower_limit = 7;
+  } else if (source_sad_nonrd >= kMedSad && x->source_variance > 500 &&
+             cpi->common.width * cpi->common.height >= 640 * 360) {
+    shift_upper_limit = 2;
+    shift_lower_limit = source_sad_nonrd > kMedSad ? 5 : 4;
+  }
 
   MB_MODE_INFO *mi = xd->mi[0];
   const AV1_COMMON *const cm = &cpi->common;
   const YV12_BUFFER_CONFIG *yv12 = get_ref_frame_yv12_buf(cm, LAST_FRAME);
   const YV12_BUFFER_CONFIG *yv12_g = get_ref_frame_yv12_buf(cm, GOLDEN_FRAME);
+  const YV12_BUFFER_CONFIG *yv12_alt = get_ref_frame_yv12_buf(cm, ALTREF_FRAME);
   const struct scale_factors *const sf =
       get_ref_scale_factors_const(cm, LAST_FRAME);
   struct buf_2d dst;
   unsigned int uv_sad_g = 0;
+  unsigned int uv_sad_alt = 0;
 
   for (int plane = AOM_PLANE_U; plane < MAX_MB_PLANE; ++plane) {
     struct macroblock_plane *p = &x->plane[plane];
@@ -1045,26 +1076,41 @@ static AOM_INLINE void chroma_check(AV1_COMP *cpi, MACROBLOCK *x,
         uv_sad_g = cpi->ppi->fn_ptr[bs].sdf(p->src.buf, p->src.stride, dst.buf,
                                             dst.stride);
       }
+
+      // For altref:
+      if (y_sad_alt != UINT_MAX) {
+        uint8_t *src = (plane == 1) ? yv12_alt->u_buffer : yv12_alt->v_buffer;
+        setup_pred_plane(&dst, xd->mi[0]->bsize, src, yv12_alt->uv_crop_width,
+                         yv12_alt->uv_crop_height, yv12_alt->uv_stride,
+                         xd->mi_row, xd->mi_col, sf,
+                         xd->plane[plane].subsampling_x,
+                         xd->plane[plane].subsampling_y);
+        uv_sad_alt = cpi->ppi->fn_ptr[bs].sdf(p->src.buf, p->src.stride,
+                                              dst.buf, dst.stride);
+      }
     }
 
-    if (uv_sad[plane - 1] > (y_sad >> 1))
+    if (uv_sad[plane - 1] > (y_sad >> shift_upper_limit))
       x->color_sensitivity_sb[COLOR_SENS_IDX(plane)] = 1;
-    else if (uv_sad[plane - 1] < (y_sad >> shift))
+    else if (uv_sad[plane - 1] < (y_sad >> shift_lower_limit))
       x->color_sensitivity_sb[COLOR_SENS_IDX(plane)] = 0;
     // Borderline case: to be refined at coding block level in nonrd_pickmode,
     // for coding block size < sb_size.
     else
       x->color_sensitivity_sb[COLOR_SENS_IDX(plane)] = 2;
 
-    x->color_sensitivity_sb_g[COLOR_SENS_IDX(plane)] = uv_sad_g > y_sad_g / 6;
+    x->color_sensitivity_sb_g[COLOR_SENS_IDX(plane)] =
+        uv_sad_g > y_sad_g / fac_uv;
+    x->color_sensitivity_sb_alt[COLOR_SENS_IDX(plane)] =
+        uv_sad_alt > y_sad_alt / fac_uv;
   }
 }
 
 static void fill_variance_tree_leaves(
     AV1_COMP *cpi, MACROBLOCK *x, VP128x128 *vt, PART_EVAL_STATUS *force_split,
     int avg_16x16[][4], int maxvar_16x16[][4], int minvar_16x16[][4],
-    int *variance4x4downsample, int64_t *thresholds, const uint8_t *src_buf,
-    int src_stride, const uint8_t *dst_buf, int dst_stride, bool is_key_frame,
+    int64_t *thresholds, const uint8_t *src_buf, int src_stride,
+    const uint8_t *dst_buf, int dst_stride, bool is_key_frame,
     const bool is_small_sb) {
   MACROBLOCKD *xd = &x->e_mbd;
   const int num_64x64_blocks = is_small_sb ? 1 : 4;
@@ -1074,6 +1120,8 @@ static void fill_variance_tree_leaves(
   int pixels_wide = 128, pixels_high = 128;
   int border_offset_4x4 = 0;
   int temporal_denoising = cpi->sf.rt_sf.use_rtc_tf;
+  // dst_buf pointer is not used for is_key_frame, so it should be NULL.
+  assert(IMPLIES(is_key_frame, dst_buf == NULL));
   if (is_small_sb) {
     pixels_wide = 64;
     pixels_high = 64;
@@ -1109,8 +1157,19 @@ static void fill_variance_tree_leaves(
         const int split_index = 21 + lvl1_scale_idx + lvl2_idx;
         VP16x16 *vst = &vt->split[blk64_idx].split[lvl1_idx].split[lvl2_idx];
         force_split[split_index] = PART_EVAL_ALL;
-        variance4x4downsample[lvl1_scale_idx + lvl2_idx] = 0;
-        if (!is_key_frame) {
+        if (is_key_frame) {
+          // Go down to 4x4 down-sampling for variance.
+          for (int lvl3_idx = 0; lvl3_idx < 4; lvl3_idx++) {
+            const int x8_idx = x16_idx + GET_BLK_IDX_X(lvl3_idx, 3);
+            const int y8_idx = y16_idx + GET_BLK_IDX_Y(lvl3_idx, 3);
+            VP8x8 *vst2 = &vst->split[lvl3_idx];
+            fill_variance_4x4avg(src_buf, src_stride, x8_idx, y8_idx, vst2,
+#if CONFIG_AV1_HIGHBITDEPTH
+                                 xd->cur_buf->flags,
+#endif
+                                 pixels_wide, pixels_high, border_offset_4x4);
+          }
+        } else {
           fill_variance_8x8avg(src_buf, src_stride, dst_buf, dst_stride,
                                x16_idx, y16_idx, vst, is_cur_buf_hbd(xd),
                                pixels_wide, pixels_high);
@@ -1155,20 +1214,6 @@ static void fill_variance_tree_leaves(
               force_split[0] = PART_EVAL_ONLY_SPLIT;
             }
           }
-        } else {
-          force_split[split_index] = PART_EVAL_ALL;
-          // Go down to 4x4 down-sampling for variance.
-          variance4x4downsample[lvl1_scale_idx + lvl2_idx] = 1;
-          for (int lvl3_idx = 0; lvl3_idx < 4; lvl3_idx++) {
-            int x8_idx = x16_idx + GET_BLK_IDX_X(lvl3_idx, 3);
-            int y8_idx = y16_idx + GET_BLK_IDX_Y(lvl3_idx, 3);
-            VP8x8 *vst2 = &vst->split[lvl3_idx];
-            fill_variance_4x4avg(src_buf, src_stride, x8_idx, y8_idx, vst2,
-#if CONFIG_AV1_HIGHBITDEPTH
-                                 xd->cur_buf->flags,
-#endif
-                                 pixels_wide, pixels_high, border_offset_4x4);
-          }
         }
       }
     }
@@ -1195,6 +1240,7 @@ static AOM_INLINE void set_ref_frame_for_partition(
     *y_sad = *y_sad_g;
     *ref_frame_partition = GOLDEN_FRAME;
     x->nonrd_prune_ref_frame_search = 0;
+    x->sb_me_partition = 0;
   } else if (is_set_altref_ref_frame) {
     av1_setup_pre_planes(xd, 0, yv12_alt, mi_row, mi_col,
                          get_ref_scale_factors(cm, ALTREF_FRAME), num_planes);
@@ -1203,6 +1249,7 @@ static AOM_INLINE void set_ref_frame_for_partition(
     *y_sad = *y_sad_alt;
     *ref_frame_partition = ALTREF_FRAME;
     x->nonrd_prune_ref_frame_search = 0;
+    x->sb_me_partition = 0;
   } else {
     *ref_frame_partition = LAST_FRAME;
     x->nonrd_prune_ref_frame_search =
@@ -1291,11 +1338,14 @@ static AOM_INLINE void evaluate_neighbour_mvs(AV1_COMP *cpi, MACROBLOCK *x,
 static void setup_planes(AV1_COMP *cpi, MACROBLOCK *x, unsigned int *y_sad,
                          unsigned int *y_sad_g, unsigned int *y_sad_alt,
                          unsigned int *y_sad_last,
-                         MV_REFERENCE_FRAME *ref_frame_partition, int mi_row,
+                         MV_REFERENCE_FRAME *ref_frame_partition,
+                         struct scale_factors *sf_no_scale, int mi_row,
                          int mi_col, bool is_small_sb, bool scaled_ref_last) {
   AV1_COMMON *const cm = &cpi->common;
   MACROBLOCKD *xd = &x->e_mbd;
   const int num_planes = av1_num_planes(cm);
+  bool scaled_ref_golden = false;
+  bool scaled_ref_alt = false;
   BLOCK_SIZE bsize = is_small_sb ? BLOCK_64X64 : BLOCK_128X128;
   MB_MODE_INFO *mi = xd->mi[0];
   const YV12_BUFFER_CONFIG *yv12 =
@@ -1310,22 +1360,25 @@ static void setup_planes(AV1_COMP *cpi, MACROBLOCK *x, unsigned int *y_sad,
                      cpi->svc.number_spatial_layers > 1;
   int use_golden_ref = cpi->ref_frame_flags & AOM_GOLD_FLAG;
   int use_alt_ref = cpi->ppi->rtc_ref.set_ref_frame_config ||
-                    cpi->sf.rt_sf.use_nonrd_altref_frame;
-  // On a resized frame (reference has different scale) only use
-  // LAST as reference for partitioning for now.
-  if (scaled_ref_last) {
-    use_golden_ref = 0;
-    use_alt_ref = 0;
-  }
+                    cpi->sf.rt_sf.use_nonrd_altref_frame ||
+                    (cpi->sf.rt_sf.use_comp_ref_nonrd &&
+                     cpi->sf.rt_sf.ref_frame_comp_nonrd[2] == 1);
 
   // For 1 spatial layer: GOLDEN is another temporal reference.
   // Check if it should be used as reference for partitioning.
   if (cpi->svc.number_spatial_layers == 1 && use_golden_ref &&
       (x->content_state_sb.source_sad_nonrd != kZeroSad || !use_last_ref)) {
     yv12_g = get_ref_frame_yv12_buf(cm, GOLDEN_FRAME);
+    if (yv12_g && (yv12_g->y_crop_height != cm->height ||
+                   yv12_g->y_crop_width != cm->width)) {
+      yv12_g = av1_get_scaled_ref_frame(cpi, GOLDEN_FRAME);
+      scaled_ref_golden = true;
+    }
     if (yv12_g && yv12_g != yv12) {
-      av1_setup_pre_planes(xd, 0, yv12_g, mi_row, mi_col,
-                           get_ref_scale_factors(cm, GOLDEN_FRAME), num_planes);
+      av1_setup_pre_planes(
+          xd, 0, yv12_g, mi_row, mi_col,
+          scaled_ref_golden ? NULL : get_ref_scale_factors(cm, GOLDEN_FRAME),
+          num_planes);
       *y_sad_g = cpi->ppi->fn_ptr[bsize].sdf(
           x->plane[AOM_PLANE_Y].src.buf, x->plane[AOM_PLANE_Y].src.stride,
           xd->plane[AOM_PLANE_Y].pre[0].buf,
@@ -1339,9 +1392,16 @@ static void setup_planes(AV1_COMP *cpi, MACROBLOCK *x, unsigned int *y_sad,
       (cpi->ref_frame_flags & AOM_ALT_FLAG) &&
       (x->content_state_sb.source_sad_nonrd != kZeroSad || !use_last_ref)) {
     yv12_alt = get_ref_frame_yv12_buf(cm, ALTREF_FRAME);
+    if (yv12_alt && (yv12_alt->y_crop_height != cm->height ||
+                     yv12_alt->y_crop_width != cm->width)) {
+      yv12_alt = av1_get_scaled_ref_frame(cpi, ALTREF_FRAME);
+      scaled_ref_alt = true;
+    }
     if (yv12_alt && yv12_alt != yv12) {
-      av1_setup_pre_planes(xd, 0, yv12_alt, mi_row, mi_col,
-                           get_ref_scale_factors(cm, ALTREF_FRAME), num_planes);
+      av1_setup_pre_planes(
+          xd, 0, yv12_alt, mi_row, mi_col,
+          scaled_ref_alt ? NULL : get_ref_scale_factors(cm, ALTREF_FRAME),
+          num_planes);
       *y_sad_alt = cpi->ppi->fn_ptr[bsize].sdf(
           x->plane[AOM_PLANE_Y].src.buf, x->plane[AOM_PLANE_Y].src.stride,
           xd->plane[AOM_PLANE_Y].pre[0].buf,
@@ -1350,6 +1410,7 @@ static void setup_planes(AV1_COMP *cpi, MACROBLOCK *x, unsigned int *y_sad,
   }
 
   if (use_last_ref) {
+    const int source_sad_nonrd = x->content_state_sb.source_sad_nonrd;
     av1_setup_pre_planes(
         xd, 0, yv12, mi_row, mi_col,
         scaled_ref_last ? NULL : get_ref_scale_factors(cm, LAST_FRAME),
@@ -1360,13 +1421,46 @@ static void setup_planes(AV1_COMP *cpi, MACROBLOCK *x, unsigned int *y_sad,
     mi->mv[0].as_int = 0;
     mi->interp_filters = av1_broadcast_interp_filter(BILINEAR);
 
-    const int est_motion =
-        cpi->sf.rt_sf.estimate_motion_for_var_based_partition;
+    int est_motion = cpi->sf.rt_sf.estimate_motion_for_var_based_partition;
+    // TODO(b/290596301): Look into adjusting this condition.
+    // There is regression on color content when
+    // estimate_motion_for_var_based_partition = 3 and high motion,
+    // so for now force it to 2 based on superblock sad.
+    if (est_motion > 2 && source_sad_nonrd > kMedSad) est_motion = 2;
+
     if (est_motion == 1 || est_motion == 2) {
       if (xd->mb_to_right_edge >= 0 && xd->mb_to_bottom_edge >= 0) {
-        const MV dummy_mv = { 0, 0 };
-        *y_sad = av1_int_pro_motion_estimation(cpi, x, cm->seq_params->sb_size,
-                                               mi_row, mi_col, &dummy_mv);
+        // For screen only do int_pro_motion for spatial variance above
+        // threshold and motion level above LowSad.
+        if (x->source_variance > 100 && source_sad_nonrd > kLowSad) {
+          int is_screen = cpi->oxcf.tune_cfg.content == AOM_CONTENT_SCREEN;
+          int me_search_size_col =
+              is_screen ? 96 : block_size_wide[cm->seq_params->sb_size] >> 1;
+          // For screen use larger search size row motion to capture
+          // vertical scroll, which can be larger motion.
+          int me_search_size_row =
+              is_screen ? 192 : block_size_high[cm->seq_params->sb_size] >> 1;
+          unsigned int y_sad_zero;
+          *y_sad = av1_int_pro_motion_estimation(
+              cpi, x, cm->seq_params->sb_size, mi_row, mi_col, &kZeroMv,
+              &y_sad_zero, me_search_size_col, me_search_size_row);
+          // The logic below selects whether the motion estimated in the
+          // int_pro_motion() will be used in nonrd_pickmode. Only do this
+          // for screen for now.
+          if (is_screen) {
+            unsigned int thresh_sad =
+                (cm->seq_params->sb_size == BLOCK_128X128) ? 50000 : 20000;
+            if (*y_sad < (y_sad_zero >> 1) && *y_sad < thresh_sad) {
+              x->sb_me_partition = 1;
+              x->sb_me_mv.as_int = mi->mv[0].as_int;
+            } else {
+              x->sb_me_partition = 0;
+              // Fall back to using zero motion.
+              *y_sad = y_sad_zero;
+              mi->mv[0].as_int = 0;
+            }
+          }
+        }
       }
     }
 
@@ -1394,7 +1488,12 @@ static void setup_planes(AV1_COMP *cpi, MACROBLOCK *x, unsigned int *y_sad,
 
   // Only calculate the predictor for non-zero MV.
   if (mi->mv[0].as_int != 0) {
-    set_ref_ptrs(cm, xd, mi->ref_frame[0], mi->ref_frame[1]);
+    if (!scaled_ref_last) {
+      set_ref_ptrs(cm, xd, mi->ref_frame[0], mi->ref_frame[1]);
+    } else {
+      xd->block_ref_scale_factors[0] = sf_no_scale;
+      xd->block_ref_scale_factors[1] = sf_no_scale;
+    }
     av1_enc_build_inter_predictor(cm, xd, mi_row, mi_col, NULL,
                                   cm->seq_params->sb_size, AOM_PLANE_Y,
                                   num_planes - 1);
@@ -1426,7 +1525,9 @@ static AOM_INLINE bool is_set_force_zeromv_skip_based_on_src_sad(
     int set_zeromv_skip_based_on_source_sad, SOURCE_SAD source_sad_nonrd) {
   if (set_zeromv_skip_based_on_source_sad == 0) return false;
 
-  if (set_zeromv_skip_based_on_source_sad >= 2)
+  if (set_zeromv_skip_based_on_source_sad >= 3)
+    return source_sad_nonrd <= kLowSad;
+  else if (set_zeromv_skip_based_on_source_sad >= 2)
     return source_sad_nonrd <= kVeryLowSad;
   else if (set_zeromv_skip_based_on_source_sad >= 1)
     return source_sad_nonrd == kZeroSad;
@@ -1435,27 +1536,34 @@ static AOM_INLINE bool is_set_force_zeromv_skip_based_on_src_sad(
 }
 
 static AOM_INLINE bool set_force_zeromv_skip_for_sb(
-    AV1_COMP *cpi, MACROBLOCK *x, const TileInfo *const tile, VP16x16 *vt2,
-    VP128x128 *vt, unsigned int *uv_sad, int mi_row, int mi_col,
-    unsigned int y_sad, BLOCK_SIZE bsize) {
+    AV1_COMP *cpi, MACROBLOCK *x, const TileInfo *const tile, VP128x128 *vt,
+    unsigned int *uv_sad, int mi_row, int mi_col, unsigned int y_sad,
+    BLOCK_SIZE bsize) {
   AV1_COMMON *const cm = &cpi->common;
   if (!is_set_force_zeromv_skip_based_on_src_sad(
           cpi->sf.rt_sf.set_zeromv_skip_based_on_source_sad,
           x->content_state_sb.source_sad_nonrd))
     return false;
+  int shift = cpi->sf.rt_sf.increase_source_sad_thresh ? 1 : 0;
   const int block_width = mi_size_wide[cm->seq_params->sb_size];
   const int block_height = mi_size_high[cm->seq_params->sb_size];
   const unsigned int thresh_exit_part_y =
-      cpi->zeromv_skip_thresh_exit_part[bsize];
-  const unsigned int thresh_exit_part_uv =
-      CALC_CHROMA_THRESH_FOR_ZEROMV_SKIP(thresh_exit_part_y);
+      cpi->zeromv_skip_thresh_exit_part[bsize] << shift;
+  unsigned int thresh_exit_part_uv =
+      CALC_CHROMA_THRESH_FOR_ZEROMV_SKIP(thresh_exit_part_y) << shift;
+  // Be more aggressive in UV threshold if source_sad >= VeryLowSad
+  // to suppreess visual artifact caused by the speed feature:
+  // set_zeromv_skip_based_on_source_sad = 2. For now only for
+  // part_early_exit_zeromv = 1.
+  if (x->content_state_sb.source_sad_nonrd >= kVeryLowSad &&
+      cpi->sf.rt_sf.part_early_exit_zeromv == 1)
+    thresh_exit_part_uv = thresh_exit_part_uv >> 3;
   if (mi_col + block_width <= tile->mi_col_end &&
       mi_row + block_height <= tile->mi_row_end && y_sad < thresh_exit_part_y &&
       uv_sad[0] < thresh_exit_part_uv && uv_sad[1] < thresh_exit_part_uv) {
     set_block_size(cpi, mi_row, mi_col, bsize);
     x->force_zeromv_skip_for_sb = 1;
-    if (vt2) aom_free(vt2);
-    if (vt) aom_free(vt);
+    aom_free(vt);
     // Partition shape is set here at SB level.
     // Exit needs to happen from av1_choose_var_based_partitioning().
     return true;
@@ -1474,8 +1582,6 @@ int av1_choose_var_based_partitioning(AV1_COMP *cpi, const TileInfo *const tile,
   AV1_COMMON *const cm = &cpi->common;
   MACROBLOCKD *xd = &x->e_mbd;
   const int64_t *const vbp_thresholds = cpi->vbp_info.thresholds;
-  VP128x128 *vt;
-  VP16x16 *vt2 = NULL;
   PART_EVAL_STATUS force_split[85];
   int avg_64x64;
   int max_var_32x32[4];
@@ -1487,7 +1593,6 @@ int av1_choose_var_based_partitioning(AV1_COMP *cpi, const TileInfo *const tile,
   int avg_16x16[4][4];
   int maxvar_16x16[4][4];
   int minvar_16x16[4][4];
-  int64_t threshold_4x4avg;
   const uint8_t *src_buf;
   const uint8_t *dst_buf;
   int dst_stride;
@@ -1495,6 +1600,9 @@ int av1_choose_var_based_partitioning(AV1_COMP *cpi, const TileInfo *const tile,
   NOISE_LEVEL noise_level = kLow;
   bool is_zero_motion = true;
   bool scaled_ref_last = false;
+  struct scale_factors sf_no_scale;
+  av1_setup_scale_factors_for_frame(&sf_no_scale, cm->width, cm->height,
+                                    cm->width, cm->height);
 
   bool is_key_frame =
       (frame_is_intra_only(cm) ||
@@ -1515,19 +1623,14 @@ int av1_choose_var_based_partitioning(AV1_COMP *cpi, const TileInfo *const tile,
   // Ref frame used in partitioning.
   MV_REFERENCE_FRAME ref_frame_partition = LAST_FRAME;
 
-  CHECK_MEM_ERROR(cm, vt, aom_malloc(sizeof(*vt)));
-
-  vt->split = td->vt64x64;
-
   int64_t thresholds[5] = { vbp_thresholds[0], vbp_thresholds[1],
                             vbp_thresholds[2], vbp_thresholds[3],
                             vbp_thresholds[4] };
 
-  const int low_res = (cm->width <= 352 && cm->height <= 288);
-  int variance4x4downsample[64];
   const int segment_id = xd->mi[0]->segment_id;
   uint64_t blk_sad = 0;
-  if (cpi->src_sad_blk_64x64 != NULL && !cpi->ppi->use_svc) {
+  if (cpi->src_sad_blk_64x64 != NULL &&
+      cpi->svc.spatial_layer_id == cpi->svc.number_spatial_layers - 1) {
     const int sb_size_by_mb = (cm->seq_params->sb_size == BLOCK_128X128)
                                   ? (cm->seq_params->mib_size >> 1)
                                   : cm->seq_params->mib_size;
@@ -1549,9 +1652,6 @@ int av1_choose_var_based_partitioning(AV1_COMP *cpi, const TileInfo *const tile,
       cpi, thresholds, blk_sad, qindex, x->content_state_sb.low_sumdiff,
       x->content_state_sb.source_sad_nonrd, x->content_state_sb.source_sad_rd,
       is_segment_id_boosted, x->content_state_sb.lighting_change);
-
-  // For non keyframes, disable 4x4 average for low resolution when speed = 8
-  threshold_4x4avg = INT64_MAX;
 
   src_buf = x->plane[AOM_PLANE_Y].src.buf;
   int src_stride = x->plane[AOM_PLANE_Y].src.stride;
@@ -1581,10 +1681,19 @@ int av1_choose_var_based_partitioning(AV1_COMP *cpi, const TileInfo *const tile,
     }
   }
 
+  x->source_variance = UINT_MAX;
+  // For nord_pickmode: compute source_variance, only for superblocks with
+  // some motion for now. This input can then be used to bias the partitioning
+  // or the chroma_check.
+  if (cpi->sf.rt_sf.use_nonrd_pick_mode &&
+      x->content_state_sb.source_sad_nonrd > kLowSad)
+    x->source_variance = av1_get_perpixel_variance_facade(
+        cpi, xd, &x->plane[0].src, cm->seq_params->sb_size, AOM_PLANE_Y);
+
   if (!is_key_frame) {
     setup_planes(cpi, x, &y_sad, &y_sad_g, &y_sad_alt, &y_sad_last,
-                 &ref_frame_partition, mi_row, mi_col, is_small_sb,
-                 scaled_ref_last);
+                 &ref_frame_partition, &sf_no_scale, mi_row, mi_col,
+                 is_small_sb, scaled_ref_last);
 
     MB_MODE_INFO *mi = xd->mi[0];
     // Use reference SB directly for zero mv.
@@ -1597,16 +1706,20 @@ int av1_choose_var_based_partitioning(AV1_COMP *cpi, const TileInfo *const tile,
       dst_stride = xd->plane[AOM_PLANE_Y].pre[0].stride;
     }
   } else {
-    dst_buf = AV1_VAR_OFFS;
+    dst_buf = NULL;
     dst_stride = 0;
   }
 
   // check and set the color sensitivity of sb.
   av1_zero(uv_sad);
-  chroma_check(cpi, x, bsize, y_sad_last, y_sad_g, is_key_frame, is_zero_motion,
-               uv_sad);
+  chroma_check(cpi, x, bsize, y_sad_last, y_sad_g, y_sad_alt, is_key_frame,
+               is_zero_motion, uv_sad);
 
   x->force_zeromv_skip_for_sb = 0;
+
+  VP128x128 *vt;
+  AOM_CHECK_MEM_ERROR(xd->error_info, vt, aom_malloc(sizeof(*vt)));
+  vt->split = td->vt64x64;
 
   // If the superblock is completely static (zero source sad) and
   // the y_sad (relative to LAST ref) is very small, take the sb_size partition
@@ -1618,22 +1731,19 @@ int av1_choose_var_based_partitioning(AV1_COMP *cpi, const TileInfo *const tile,
       cpi->rc.frames_since_key > 30 && segment_id == CR_SEGMENT_ID_BASE &&
       ref_frame_partition == LAST_FRAME && xd->mi[0]->mv[0].as_int == 0) {
     // Exit here, if zero mv skip flag is set at SB level.
-    if (set_force_zeromv_skip_for_sb(cpi, x, tile, vt2, vt, uv_sad, mi_row,
-                                     mi_col, y_sad, bsize))
+    if (set_force_zeromv_skip_for_sb(cpi, x, tile, vt, uv_sad, mi_row, mi_col,
+                                     y_sad, bsize))
       return 0;
   }
 
   if (cpi->noise_estimate.enabled)
     noise_level = av1_noise_estimate_extract_level(&cpi->noise_estimate);
 
-  if (low_res && threshold_4x4avg < INT64_MAX)
-    CHECK_MEM_ERROR(cm, vt2, aom_malloc(sizeof(*vt2)));
-  // Fill in the entire tree of 8x8 (or 4x4 under some conditions) variances
-  // for splits.
+  // Fill in the entire tree of 8x8 (for inter frames) or 4x4 (for key frames)
+  // variances for splits.
   fill_variance_tree_leaves(cpi, x, vt, force_split, avg_16x16, maxvar_16x16,
-                            minvar_16x16, variance4x4downsample, thresholds,
-                            src_buf, src_stride, dst_buf, dst_stride,
-                            is_key_frame, is_small_sb);
+                            minvar_16x16, thresholds, src_buf, src_stride,
+                            dst_buf, dst_stride, is_key_frame, is_small_sb);
 
   avg_64x64 = 0;
   for (int blk64_idx = 0; blk64_idx < num_64x64_blocks; ++blk64_idx) {
@@ -1643,12 +1753,8 @@ int av1_choose_var_based_partitioning(AV1_COMP *cpi, const TileInfo *const tile,
     for (int lvl1_idx = 0; lvl1_idx < 4; lvl1_idx++) {
       const int lvl1_scale_idx = (blk64_scale_idx + lvl1_idx) << 2;
       for (int lvl2_idx = 0; lvl2_idx < 4; lvl2_idx++) {
-        const int split_index = 21 + lvl1_scale_idx + lvl2_idx;
-        if (variance4x4downsample[lvl1_scale_idx + lvl2_idx] != 1) continue;
-        VP16x16 *vtemp =
-            (!is_key_frame)
-                ? &vt2[lvl1_scale_idx + lvl2_idx]
-                : &vt->split[blk64_idx].split[lvl1_idx].split[lvl2_idx];
+        if (!is_key_frame) continue;
+        VP16x16 *vtemp = &vt->split[blk64_idx].split[lvl1_idx].split[lvl2_idx];
         for (int lvl3_idx = 0; lvl3_idx < 4; lvl3_idx++)
           fill_variance_tree(&vtemp->split[lvl3_idx], BLOCK_8X8);
         fill_variance_tree(vtemp, BLOCK_16X16);
@@ -1656,6 +1762,7 @@ int av1_choose_var_based_partitioning(AV1_COMP *cpi, const TileInfo *const tile,
         // to split. This also forces a split on the upper levels.
         get_variance(&vtemp->part_variances.none);
         if (vtemp->part_variances.none.variance > thresholds[3]) {
+          const int split_index = 21 + lvl1_scale_idx + lvl2_idx;
           force_split[split_index] =
               cpi->sf.rt_sf.vbp_prune_16x16_split_using_min_max_sub_blk_var
                   ? get_part_eval_based_on_sub_blk_var(vtemp, thresholds[3])
@@ -1774,14 +1881,8 @@ int av1_choose_var_based_partitioning(AV1_COMP *cpi, const TileInfo *const tile,
           const int x16_idx = GET_BLK_IDX_X(lvl2_idx, 2);
           const int y16_idx = GET_BLK_IDX_Y(lvl2_idx, 2);
           const int split_index = 21 + lvl1_scale_idx + lvl2_idx;
-          // For inter frames: if variance4x4downsample[] == 1 for this
-          // 16x16 block, then the variance is based on 4x4 down-sampling,
-          // so use vt2 in set_vt_partioning(), otherwise use vt.
           VP16x16 *vtemp =
-              (!is_key_frame &&
-               variance4x4downsample[lvl1_scale_idx + lvl2_idx] == 1)
-                  ? &vt2[lvl1_scale_idx + lvl2_idx]
-                  : &vt->split[blk64_idx].split[lvl1_idx].split[lvl2_idx];
+              &vt->split[blk64_idx].split[lvl1_idx].split[lvl2_idx];
           if (set_vt_partitioning(cpi, xd, tile, vtemp, BLOCK_16X16,
                                   mi_row + y64_idx + y32_idx + y16_idx,
                                   mi_col + x64_idx + x32_idx + x16_idx,
@@ -1805,8 +1906,7 @@ int av1_choose_var_based_partitioning(AV1_COMP *cpi, const TileInfo *const tile,
                           ref_frame_partition, mi_col, mi_row, is_small_sb);
   }
 
-  if (vt2) aom_free(vt2);
-  if (vt) aom_free(vt);
+  aom_free(vt);
 #if CONFIG_COLLECT_COMPONENT_TIMING
   end_timing(cpi, choose_var_based_partitioning_time);
 #endif

@@ -7,13 +7,14 @@
 
 #include "include/core/SkTypes.h"
 
-#if SK_SUPPORT_GPU
+#if defined(SK_GANESH)
 
 #include "include/core/SkCanvas.h"
 #include "include/core/SkFont.h"
 #include "include/core/SkPaint.h"
 #include "include/core/SkPath.h"
 #include "src/core/SkGeometry.h"
+#include "tools/fonts/FontToolUtils.h"
 #include "tools/viewer/ClickHandlerSlide.h"
 
 enum class VerbType {
@@ -106,7 +107,7 @@ void StrokeVerbSlide::draw(SkCanvas* canvas) {
         canvas->drawPoints(SkCanvas::kPoints_PointMode, 1, fPoints + 3, pointsPaint);
     }
 
-    SkFont font(nullptr, 20);
+    SkFont font(ToolUtils::DefaultTypeface(), 20);
     SkPaint captionPaint;
     captionPaint.setColor(SK_ColorWHITE);
     canvas->drawString(caption, 10, 30, font, captionPaint);
@@ -229,4 +230,4 @@ bool StrokeVerbSlide::onChar(SkUnichar unichar) {
 
 DEF_SLIDE(return new StrokeVerbSlide;)
 
-#endif  // SK_SUPPORT_GPU
+#endif  // defined(SK_GANESH)

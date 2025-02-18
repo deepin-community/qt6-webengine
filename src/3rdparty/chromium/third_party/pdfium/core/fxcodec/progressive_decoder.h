@@ -18,9 +18,10 @@
 #include "core/fxcodec/progressive_decoder_iface.h"
 #include "core/fxcrt/data_vector.h"
 #include "core/fxcrt/retain_ptr.h"
+#include "core/fxcrt/unowned_ptr_exclusion.h"
 #include "core/fxge/dib/cstretchengine.h"
 #include "core/fxge/dib/fx_dib.h"
-#include "third_party/base/span.h"
+#include "third_party/base/containers/span.h"
 
 #ifdef PDF_ENABLE_XFA_BMP
 #include "core/fxcodec/bmp/bmp_decoder.h"
@@ -78,8 +79,7 @@ class ProgressiveDecoder final :
   FXCODEC_IMAGE_TYPE GetType() const { return m_imageType; }
   int32_t GetWidth() const { return m_SrcWidth; }
   int32_t GetHeight() const { return m_SrcHeight; }
-  int32_t GetNumComponents() const { return m_SrcComponents; }
-  int32_t GetBPC() const { return m_SrcBPC; }
+  int32_t GetBitsPerPixel() const { return m_SrcComponents * m_SrcBPC; }
   void SetClipBox(FX_RECT* clip);
 
   std::pair<FXCODEC_STATUS, size_t> GetFrames();
@@ -263,7 +263,7 @@ class ProgressiveDecoder final :
   size_t m_FrameCur = 0;
 #ifdef PDF_ENABLE_XFA_GIF
   int m_GifBgIndex = 0;
-  CFX_GifPalette* m_pGifPalette = nullptr;
+  UNOWNED_PTR_EXCLUSION CFX_GifPalette* m_pGifPalette = nullptr;
   int32_t m_GifPltNumber = 0;
   int m_GifTransIndex = -1;
   FX_RECT m_GifFrameRect;

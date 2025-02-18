@@ -26,8 +26,11 @@ public:
     ~QWebEngineUrlRequestJob();
 
     enum Error {
-        NoError = 0,
-        UrlNotFound,
+#if QT_DEPRECATED_SINCE(6, 8)
+        NoError Q_DECL_ENUMERATOR_DEPRECATED_X(
+            "This attribute has no effect.") = 0,
+#endif
+        UrlNotFound = 1,
         UrlInvalid,
         RequestAborted,
         RequestDenied,
@@ -39,6 +42,7 @@ public:
     QByteArray requestMethod() const;
     QUrl initiator() const;
     QMap<QByteArray, QByteArray> requestHeaders() const;
+    QIODevice *requestBody() const;
 
     void reply(const QByteArray &contentType, QIODevice *device);
     void fail(Error error);

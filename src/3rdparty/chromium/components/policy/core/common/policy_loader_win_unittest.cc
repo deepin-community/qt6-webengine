@@ -36,6 +36,7 @@
 #include "components/policy/core/common/policy_map.h"
 #include "components/policy/core/common/policy_types.h"
 #include "components/policy/core/common/schema_map.h"
+#include "components/policy/policy_constants.h"
 #include "components/strings/grit/components_strings.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -98,7 +99,7 @@ bool InstallValue(const base::Value& value,
     case base::Value::Type::DICT: {
       if (!value.is_dict())
         return false;
-      for (auto key_value : value.DictItems()) {
+      for (auto key_value : value.GetDict()) {
         if (!InstallValue(key_value.second, hive, path + kPathSep + name,
                           base::UTF8ToWide(key_value.first))) {
           return false;
@@ -223,12 +224,12 @@ void ScopedGroupPolicyRegistrySandbox::ActivateOverrides() {
 
   // Create the subkeys to hold the overridden HKLM and HKCU
   // policy settings.
-  temp_hklm_hive_key_.Create(HKEY_CURRENT_USER,
-                             hklm_key_name.c_str(),
-                             KEY_ALL_ACCESS);
-  temp_hkcu_hive_key_.Create(HKEY_CURRENT_USER,
-                             hkcu_key_name.c_str(),
-                             KEY_ALL_ACCESS);
+  ASSERT_EQ(temp_hklm_hive_key_.Create(HKEY_CURRENT_USER, hklm_key_name.c_str(),
+                                       KEY_ALL_ACCESS),
+            ERROR_SUCCESS);
+  ASSERT_EQ(temp_hkcu_hive_key_.Create(HKEY_CURRENT_USER, hkcu_key_name.c_str(),
+                                       KEY_ALL_ACCESS),
+            ERROR_SUCCESS);
 
   auto result_override_hklm =
       RegOverridePredefKey(HKEY_LOCAL_MACHINE, temp_hklm_hive_key_.Handle());
@@ -356,7 +357,7 @@ void RegistryTestHarness::Install3rdPartyPolicy(
       ADD_FAILURE();
       continue;
     }
-    for (auto component : components.DictItems()) {
+    for (auto component : components.GetDict()) {
       const std::wstring path = kPathPrefix + base::UTF8ToWide(domain.first) +
                                 kPathSep + base::UTF8ToWide(component.first);
       InstallValue(component.second, hive_, path, kMandatory);
@@ -736,6 +737,35 @@ TEST_F(PolicyLoaderWinTest, AlternativePropertySchemaType) {
       std::wstring(L"\\3rdparty\\extensions\\bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
   EXPECT_TRUE(InstallValue(base::Value(expected_b.Clone()), HKEY_LOCAL_MACHINE,
                            kPathSuffix2, kMandatory));
+
+  EXPECT_TRUE(Matches(expected));
+}
+
+TEST_F(PolicyLoaderWinTest, LoadPrecedencePolicies) {
+  const PolicyNamespace chrome_ns(POLICY_DOMAIN_CHROME, std::string());
+  RegisterChromeSchema(chrome_ns);
+
+  // Merging of precedence policies is handled separately from all remaining
+  // policies. This ensures that all precedence policies are correctly loaded
+  // from the registry.
+  RegKey hklm_key(HKEY_LOCAL_MACHINE, kTestPolicyKey, KEY_ALL_ACCESS);
+  ASSERT_TRUE(hklm_key.Valid());
+  PolicyBundle expected;
+
+  hklm_key.WriteValue(
+      base::UTF8ToWide(key::kCloudPolicyOverridesPlatformPolicy).c_str(),
+      /*in_value=*/1);
+  hklm_key.WriteValue(
+      base::UTF8ToWide(key::kCloudUserPolicyOverridesCloudMachinePolicy)
+          .c_str(),
+      /*in_value=*/1);
+
+  expected.Get(chrome_ns).Set(
+      key::kCloudPolicyOverridesPlatformPolicy, POLICY_LEVEL_MANDATORY,
+      POLICY_SCOPE_MACHINE, POLICY_SOURCE_PLATFORM, base::Value(true), nullptr);
+  expected.Get(chrome_ns).Set(
+      key::kCloudUserPolicyOverridesCloudMachinePolicy, POLICY_LEVEL_MANDATORY,
+      POLICY_SCOPE_MACHINE, POLICY_SOURCE_PLATFORM, base::Value(true), nullptr);
 
   EXPECT_TRUE(Matches(expected));
 }

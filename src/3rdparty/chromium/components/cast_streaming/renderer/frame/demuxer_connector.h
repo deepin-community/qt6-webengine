@@ -6,8 +6,9 @@
 #define COMPONENTS_CAST_STREAMING_RENDERER_FRAME_DEMUXER_CONNECTOR_H_
 
 #include "base/functional/callback.h"
+#include "base/memory/raw_ptr.h"
 #include "base/sequence_checker.h"
-#include "components/cast_streaming/public/mojom/demuxer_connector.mojom.h"
+#include "components/cast_streaming/common/public/mojom/demuxer_connector.mojom.h"
 #include "mojo/public/cpp/bindings/associated_receiver.h"
 #include "mojo/public/cpp/bindings/pending_associated_receiver.h"
 
@@ -53,7 +54,7 @@ class DemuxerConnector final : public mojom::DemuxerConnector {
       this};
 
   EnableReceiverCallback enable_receiver_callback_;
-  FrameInjectingDemuxer* demuxer_ = nullptr;
+  raw_ptr<FrameInjectingDemuxer, ExperimentalRenderer> demuxer_ = nullptr;
   bool is_demuxer_initialized_ = false;
 
   SEQUENCE_CHECKER(sequence_checker_);

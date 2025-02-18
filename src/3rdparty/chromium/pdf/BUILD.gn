@@ -12,6 +12,10 @@ import("//third_party/pdfium/pdfium.gni")
 import("//tools/grit/repack.gni")
 import("//v8/gni/v8.gni")
 
+if (is_ios) {
+  import("//build/config/ios/bundle_data_from_filelist.gni")
+}
+
 # Generate a buildflag header for compile-time checking of PDF support.
 buildflag_header("buildflags") {
   header = "buildflags.h"
@@ -40,6 +44,7 @@ if (enable_pdf) {
     public = [ "pdf.h" ]
 
     deps = [
+      ":features",
       ":internal",
       "//base",
       "//build:chromeos_buildflags",
@@ -169,9 +174,13 @@ if (enable_pdf) {
         "pdfium/pdfium_font_linux.h",
       ]
 
-      deps += [
-        ":font_table_linux",
-        "//components/services/font/public/cpp",
+      deps += [ "//components/services/font/public/cpp" ]
+    }
+
+    if (is_chromeos) {
+      sources += [
+        "flatten_pdf_result.cc",
+        "flatten_pdf_result.h",
       ]
     }
   }
@@ -214,6 +223,7 @@ if (enable_pdf) {
       "accessibility_structs.h",
       "pdf_accessibility_action_handler.h",
       "pdf_accessibility_data_handler.h",
+      "pdf_accessibility_image_fetcher.h",
     ]
 
     configs += [ ":strict" ]
@@ -250,6 +260,7 @@ if (enable_pdf) {
       ":accessibility",
       ":buildflags",
       ":content_restriction",
+      ":features",
       ":internal",
       "//base",
       "//base:i18n",
@@ -299,20 +310,6 @@ if (enable_pdf) {
       "//ui/gfx/range",
       "//ui/latency:latency",
     ]
-  }
-
-  if (is_linux || is_chromeos) {
-    # TODO(crbug.com/702990): After PPAPI deprecation, there will only be one
-    # caller left. Move inside the file with the caller.
-    static_library("font_table_linux") {
-      sources = [ "font_table_linux.cc" ]
-
-      configs += [ ":strict" ]
-
-      public = [ "font_table_linux.h" ]
-
-      deps = [ "//base" ]
-    }
   }
 
   test("pdf_unittests") {
@@ -425,5 +422,12 @@ if (enable_pdf) {
   group("features") {
   }
   group("pdf") {
+  }
+}
+
+if (is_ios) {
+  bundle_data_from_filelist("pdf_test_bundle_data") {
+    testonly = true
+    filelist_name = "test/pdf_test_bundle_data.filelist"
   }
 }

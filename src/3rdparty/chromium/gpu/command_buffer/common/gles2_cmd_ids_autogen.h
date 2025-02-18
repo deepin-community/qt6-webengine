@@ -329,16 +329,35 @@
   OP(EndSharedImageAccessDirectCHROMIUM)                       /* 570 */ \
   OP(ConvertRGBAToYUVAMailboxesINTERNALImmediate)              /* 571 */ \
   OP(ConvertYUVAMailboxesToRGBINTERNALImmediate)               /* 572 */ \
-  OP(CopySharedImageINTERNALImmediate)                         /* 573 */ \
-  OP(EnableiOES)                                               /* 574 */ \
-  OP(DisableiOES)                                              /* 575 */ \
-  OP(BlendEquationiOES)                                        /* 576 */ \
-  OP(BlendEquationSeparateiOES)                                /* 577 */ \
-  OP(BlendFunciOES)                                            /* 578 */ \
-  OP(BlendFuncSeparateiOES)                                    /* 579 */ \
-  OP(ColorMaskiOES)                                            /* 580 */ \
-  OP(IsEnablediOES)                                            /* 581 */ \
-  OP(ProvokingVertexANGLE)                                     /* 582 */
+  OP(ConvertYUVAMailboxesToTextureINTERNALImmediate)           /* 573 */ \
+  OP(CopySharedImageINTERNALImmediate)                         /* 574 */ \
+  OP(CopySharedImageToTextureINTERNALImmediate)                /* 575 */ \
+  OP(ReadbackARGBImagePixelsINTERNAL)                          /* 576 */ \
+  OP(WritePixelsYUVINTERNAL)                                   /* 577 */ \
+  OP(EnableiOES)                                               /* 578 */ \
+  OP(DisableiOES)                                              /* 579 */ \
+  OP(BlendEquationiOES)                                        /* 580 */ \
+  OP(BlendEquationSeparateiOES)                                /* 581 */ \
+  OP(BlendFunciOES)                                            /* 582 */ \
+  OP(BlendFuncSeparateiOES)                                    /* 583 */ \
+  OP(ColorMaskiOES)                                            /* 584 */ \
+  OP(IsEnablediOES)                                            /* 585 */ \
+  OP(ProvokingVertexANGLE)                                     /* 586 */ \
+  OP(FramebufferMemorylessPixelLocalStorageANGLE)              /* 587 */ \
+  OP(FramebufferTexturePixelLocalStorageANGLE)                 /* 588 */ \
+  OP(FramebufferPixelLocalClearValuefvANGLEImmediate)          /* 589 */ \
+  OP(FramebufferPixelLocalClearValueivANGLEImmediate)          /* 590 */ \
+  OP(FramebufferPixelLocalClearValueuivANGLEImmediate)         /* 591 */ \
+  OP(BeginPixelLocalStorageANGLEImmediate)                     /* 592 */ \
+  OP(EndPixelLocalStorageANGLEImmediate)                       /* 593 */ \
+  OP(PixelLocalStorageBarrierANGLE)                            /* 594 */ \
+  OP(FramebufferPixelLocalStorageInterruptANGLE)               /* 595 */ \
+  OP(FramebufferPixelLocalStorageRestoreANGLE)                 /* 596 */ \
+  OP(GetFramebufferPixelLocalStorageParameterfvANGLE)          /* 597 */ \
+  OP(GetFramebufferPixelLocalStorageParameterivANGLE)          /* 598 */ \
+  OP(ClipControlEXT)                                           /* 599 */ \
+  OP(PolygonModeANGLE)                                         /* 600 */ \
+  OP(PolygonOffsetClampEXT)                                    /* 601 */
 
 enum CommandId {
   kOneBeforeStartPoint =

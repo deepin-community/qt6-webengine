@@ -11,8 +11,8 @@
 #include <set>
 #include <string>
 
-#include "base/guid.h"
 #include "base/hash/md5.h"
+#include "base/uuid.h"
 #include "base/values.h"
 #include "components/bookmarks/browser/bookmark_node.h"
 
@@ -47,7 +47,6 @@ class BookmarkCodec {
       const BookmarkNode* other_folder_node,
       const BookmarkNode* mobile_folder_node,
       const BookmarkNode::MetaInfoMap* model_meta_info_map,
-      const BookmarkNode::MetaInfoMap* model_unsynced_meta_info_map,
       std::string sync_metadata_str);
 
   // Decodes the previously encoded value to the specified nodes as well as
@@ -77,18 +76,13 @@ class BookmarkCodec {
     return model_meta_info_map_;
   }
 
-  // Return the unsynced meta info of bookmark model root.
-  const BookmarkNode::MetaInfoMap& model_unsynced_meta_info_map() const {
-    return model_unsynced_meta_info_map_;
-  }
-
   // Returns whether the IDs were reassigned during decoding. Always returns
   // false after encoding.
   bool ids_reassigned() const { return ids_reassigned_; }
 
-  // Returns whether the GUIDs were reassigned during decoding. Always returns
+  // Returns whether the UUIDs were reassigned during decoding. Always returns
   // false after encoding.
-  bool guids_reassigned() const { return guids_reassigned_; }
+  bool uuids_reassigned() const { return uuids_reassigned_; }
 
   // Names of the various keys written to the Value.
   static const char kRootsKey[];
@@ -106,7 +100,6 @@ class BookmarkCodec {
   static const char kDateModifiedKey[];
   static const char kChildrenKey[];
   static const char kMetaInfo[];
-  static const char kUnsyncedMetaInfo[];
   // Allows the BookmarkClient to read and a write a string blob from the JSON
   // file. That string captures the bookmarks sync metadata.
   static const char kSyncMetadata[];
@@ -157,11 +150,6 @@ class BookmarkCodec {
   bool DecodeMetaInfo(const base::Value::Dict& value,
                       BookmarkNode::MetaInfoMap* meta_info_map);
 
-  // Decodes the unsynced meta info from the supplied value. meta_info_map must
-  // not be nullptr.
-  bool DecodeUnsyncedMetaInfo(const base::Value::Dict& value,
-                              BookmarkNode::MetaInfoMap* meta_info_map);
-
   // Decodes the meta info from the supplied sub-node dictionary. The values
   // found will be inserted in meta_info_map with the given prefix added to the
   // start of their keys.
@@ -190,22 +178,22 @@ class BookmarkCodec {
   void FinalizeChecksum();
 
   // Whether or not IDs were reassigned by the codec.
-  bool ids_reassigned_;
+  bool ids_reassigned_{false};
 
-  // Whether or not GUIDs were reassigned by the codec.
-  bool guids_reassigned_;
+  // Whether or not UUIDs were reassigned by the codec.
+  bool uuids_reassigned_{false};
 
   // Whether or not IDs are valid. This is initially true, but set to false
   // if an id is missing or not unique.
-  bool ids_valid_;
+  bool ids_valid_{true};
 
   // Contains the id of each of the nodes found in the file. Used to determine
   // if we have duplicates.
   std::set<int64_t> ids_;
 
-  // Contains the GUID of each of the nodes found in the file. Used to determine
+  // Contains the UUID of each of the nodes found in the file. Used to determine
   // if we have duplicates.
-  std::set<base::GUID> guids_;
+  std::set<base::Uuid> uuids_;
 
   // MD5 context used to compute MD5 hash of all bookmark data.
   base::MD5Context md5_context_;
@@ -215,13 +203,10 @@ class BookmarkCodec {
   std::string stored_checksum_;
 
   // Maximum ID assigned when decoding data.
-  int64_t maximum_id_;
+  int64_t maximum_id_{0};
 
   // Meta info set on bookmark model root.
   BookmarkNode::MetaInfoMap model_meta_info_map_;
-
-  // Unsynced meta info set on bookmark model root.
-  BookmarkNode::MetaInfoMap model_unsynced_meta_info_map_;
 };
 
 }  // namespace bookmarks

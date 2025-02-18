@@ -4,6 +4,8 @@
 
 #include "services/network/trust_tokens/sqlite_trust_token_persister.h"
 
+#include <string_view>
+
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/memory/scoped_refptr.h"
@@ -42,7 +44,7 @@ std::string ToKey(const SuitableTrustTokenOrigin& issuer,
 //
 // The parameters |issuer| and |toplevel| are pointers-to-optionals because
 // SuitableTrustTokenOrigin does not have a default constructor.
-bool FromKey(base::StringPiece key_from_database,
+bool FromKey(std::string_view key_from_database,
              absl::optional<SuitableTrustTokenOrigin>* issuer,
              absl::optional<SuitableTrustTokenOrigin>* toplevel) {
   DCHECK(issuer);
@@ -154,6 +156,10 @@ void SQLiteTrustTokenPersister::SetIssuerToplevelPairConfig(
     const SuitableTrustTokenOrigin& issuer,
     const SuitableTrustTokenOrigin& toplevel,
     std::unique_ptr<TrustTokenIssuerToplevelPairConfig> config) {
+  // Both last_redemption and penultimate_redemption should be set. Serializing
+  // config will fail otherwise.
+  CHECK(config->has_last_redemption());
+  CHECK(config->has_penultimate_redemption());
   sqlite_proto::KeyValueData<TrustTokenIssuerToplevelPairConfig>* data =
       database_owner_->IssuerToplevelPairData();
   CHECK(data);

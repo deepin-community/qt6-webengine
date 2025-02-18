@@ -16,8 +16,6 @@
 #include "net/cookies/cookie_inclusion_status.h"
 #include "net/cookies/cookie_options.h"
 #include "net/cookies/cookie_partition_key_collection.h"
-#include "net/first_party_sets/first_party_set_entry.h"
-#include "net/first_party_sets/same_party_context.h"
 #include "services/network/public/cpp/cookie_manager_shared_mojom_traits.h"
 #include "services/network/public/mojom/cookie_manager.mojom-forward.h"
 #include "services/network/public/mojom/cookie_manager.mojom.h"
@@ -196,18 +194,6 @@ struct StructTraits<network::mojom::CookieOptionsDataView, net::CookieOptions> {
     return o.return_excluded_cookies();
   }
 
-  static net::SamePartyContext same_party_context(const net::CookieOptions& o) {
-    return o.same_party_context();
-  }
-
-  static uint32_t full_party_context_size(const net::CookieOptions& o) {
-    return o.full_party_context_size();
-  }
-
-  static bool is_in_nontrivial_first_party_set(const net::CookieOptions& o) {
-    return o.is_in_nontrivial_first_party_set();
-  }
-
   static bool Read(network::mojom::CookieOptionsDataView mojo_options,
                    net::CookieOptions* cookie_options);
 };
@@ -283,9 +269,6 @@ struct StructTraits<network::mojom::CanonicalCookieDataView,
   }
   static net::CookieSourceScheme source_scheme(const net::CanonicalCookie& c) {
     return c.SourceScheme();
-  }
-  static bool same_party(const net::CanonicalCookie& c) {
-    return c.IsSameParty();
   }
   static const absl::optional<net::CookiePartitionKey>& partition_key(
       const net::CanonicalCookie& c) {

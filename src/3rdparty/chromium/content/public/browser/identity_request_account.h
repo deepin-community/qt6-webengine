@@ -5,12 +5,13 @@
 #ifndef CONTENT_PUBLIC_BROWSER_IDENTITY_REQUEST_ACCOUNT_H_
 #define CONTENT_PUBLIC_BROWSER_IDENTITY_REQUEST_ACCOUNT_H_
 
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "content/common/content_export.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/skia/include/core/SkColor.h"
+#include "ui/gfx/image/image.h"
 #include "url/gurl.h"
 
 namespace content {
@@ -40,13 +41,14 @@ struct CONTENT_EXPORT IdentityRequestAccount {
     kAuto,
   };
 
-  IdentityRequestAccount(
-      const std::string& id,
-      const std::string& email,
-      const std::string& name,
-      const std::string& given_name,
-      const GURL& picture,
-      absl::optional<LoginState> login_state = absl::nullopt);
+  IdentityRequestAccount(const std::string& id,
+                         const std::string& email,
+                         const std::string& name,
+                         const std::string& given_name,
+                         const GURL& picture,
+                         std::vector<std::string> login_hints,
+                         std::vector<std::string> domain_hints,
+                         std::optional<LoginState> login_state = std::nullopt);
   IdentityRequestAccount(const IdentityRequestAccount&);
   ~IdentityRequestAccount();
 
@@ -55,10 +57,15 @@ struct CONTENT_EXPORT IdentityRequestAccount {
   std::string name;
   std::string given_name;
   GURL picture;
+  // This will be an empty image if fetching failed.
+  gfx::Image decoded_picture;
+
+  std::vector<std::string> login_hints;
+  std::vector<std::string> domain_hints;
 
   // The account login state. Unlike the other fields this one can be populated
   // either by the IDP or by the browser based on its stored permission grants.
-  absl::optional<LoginState> login_state;
+  std::optional<LoginState> login_state;
 };
 
 }  // namespace content

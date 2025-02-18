@@ -249,10 +249,10 @@ TEST_F(StorageKeyTest, SerializePartitioned) {
   net::SchemefulSite SiteExample(GURL("https://example.com"));
   net::SchemefulSite SiteTest(GURL("https://test.example"));
 
-  struct {
+  const struct {
     const char* origin;
-    const net::SchemefulSite& top_level_site;
-    const mojom::AncestorChainBit ancestor_chain_bit;
+    net::SchemefulSite top_level_site;
+    mojom::AncestorChainBit ancestor_chain_bit;
     const char* expected_serialization;
   } kTestCases[] = {
       // 3p context cases
@@ -268,8 +268,8 @@ TEST_F(StorageKeyTest, SerializePartitioned) {
   for (const auto& test : kTestCases) {
     SCOPED_TRACE(test.origin);
     const url::Origin origin = url::Origin::Create(GURL(test.origin));
-    const net::SchemefulSite& site = test.top_level_site;
-    StorageKey key = StorageKey::Create(origin, site, test.ancestor_chain_bit);
+    StorageKey key = StorageKey::Create(origin, test.top_level_site,
+                                        test.ancestor_chain_bit);
     EXPECT_EQ(test.expected_serialization, key.Serialize());
     EXPECT_EQ(test.expected_serialization, key.SerializeForLocalStorage());
   }
@@ -306,6 +306,9 @@ TEST_F(StorageKeyTest, SerializeNonce) {
 
 // Test that deserialized StorageKeys are valid/opaque as expected.
 TEST_F(StorageKeyTest, Deserialize) {
+  base::test::ScopedFeatureList scope_feature_list;
+  scope_feature_list.InitAndEnableFeature(
+      net::features::kThirdPartyStoragePartitioning);
   const struct {
     std::string serialized_string;
     bool expected_has_value;
@@ -425,9 +428,9 @@ TEST_F(StorageKeyTest, SerializeDeserializePartitioned) {
   net::SchemefulSite SitePort(GURL("https://example.com:90"));
   net::SchemefulSite SiteFile(GURL("file:///"));
 
-  struct {
+  const struct {
     const char* origin;
-    const net::SchemefulSite& site;
+    net::SchemefulSite site;
   } kTestCases[] = {
       // 1p context case.
       {"https://example.com/", SiteExample},
@@ -520,9 +523,9 @@ TEST_F(StorageKeyTest, SerializeDeserializeOpaqueTopLevelSite) {
     base::test::ScopedFeatureList scope_feature_list;
     scope_feature_list.InitWithFeatureState(
         net::features::kThirdPartyStoragePartitioning, toggle);
-    struct {
-      const url::Origin origin;
-      const net::SchemefulSite& top_level_site;
+    const struct {
+      url::Origin origin;
+      net::SchemefulSite top_level_site;
       const char* expected_serialization_without_partitioning;
       const char* expected_serialization_with_partitioning;
     } kTestCases[] = {
@@ -587,10 +590,12 @@ TEST_F(StorageKeyTest, DeserializeNonces) {
     struct {
       const char* serialization;
       absl::optional<blink::StorageKey> expected_key;
+      const bool has_value_if_partitioning_is_disabled;
     } kTestCases[] = {
         {
             "https://example.com/^40^50^6",
             absl::nullopt,
+            false,
         },
         {
             "https://example.com/^41^50^6",
@@ -598,6 +603,12 @@ TEST_F(StorageKeyTest, DeserializeNonces) {
                 url::Origin::Create(GURL("https://example.com/")),
                 GetOpaqueSite(1ULL, 0ULL, ""),
                 mojom::AncestorChainBit::kCrossSite),
+            false,
+        },
+        {
+            "https://example.com/^401^50^6",
+            absl::nullopt,
+            false,
         },
         {
             "https://example.com/^40^51^6",
@@ -605,6 +616,12 @@ TEST_F(StorageKeyTest, DeserializeNonces) {
                 url::Origin::Create(GURL("https://example.com/")),
                 GetOpaqueSite(0ULL, 1ULL, ""),
                 mojom::AncestorChainBit::kCrossSite),
+            false,
+        },
+        {
+            "https://example.com/^400^51^6",
+            absl::nullopt,
+            false,
         },
         {
             "https://example.com/^41^51^6",
@@ -612,34 +629,67 @@ TEST_F(StorageKeyTest, DeserializeNonces) {
                 url::Origin::Create(GURL("https://example.com/")),
                 GetOpaqueSite(1ULL, 1ULL, ""),
                 mojom::AncestorChainBit::kCrossSite),
+            false,
+        },
+        {
+            "https://example.com/^41^501^6",
+            absl::nullopt,
+            false,
         },
         {
             "https://example.com/^10^20",
             absl::nullopt,
+            false,
         },
         {
             "https://example.com/^11^20",
             blink::StorageKey::CreateWithNonce(
                 url::Origin::Create(GURL("https://example.com/")),
                 base::UnguessableToken::CreateForTesting(1ULL, 0ULL)),
+            true,
+        },
+        {
+            "https://example.com/^101^20",
+            absl::nullopt,
+            true,
         },
         {
             "https://example.com/^10^21",
             blink::StorageKey::CreateWithNonce(
                 url::Origin::Create(GURL("https://example.com/")),
                 base::UnguessableToken::CreateForTesting(0ULL, 1ULL)),
+            true,
+        },
+        {
+            "https://example.com/^100^21",
+            absl::nullopt,
+            true,
         },
         {
             "https://example.com/^11^21",
             blink::StorageKey::CreateWithNonce(
                 url::Origin::Create(GURL("https://example.com/")),
                 base::UnguessableToken::CreateForTesting(1ULL, 1ULL)),
+            true,
+        },
+        {
+            "https://example.com/^11^201",
+            absl::nullopt,
+            true,
         },
     };
 
     for (const auto& test : kTestCases) {
       SCOPED_TRACE(test.serialization);
-      EXPECT_EQ(test.expected_key, StorageKey::Deserialize(test.serialization));
+      absl::optional<blink::StorageKey> maybe_storage_key =
+          StorageKey::Deserialize(test.serialization);
+      EXPECT_EQ((test.has_value_if_partitioning_is_disabled || toggle) &&
+                    test.expected_key,
+                (bool)maybe_storage_key);
+      if (maybe_storage_key) {
+        EXPECT_EQ(test.expected_key,
+                  StorageKey::Deserialize(test.serialization));
+      }
     }
   }
 }
@@ -656,6 +706,11 @@ TEST_F(StorageKeyTest, DeserializeAncestorChainBits) {
         // An origin cannot be serialized with a SameSite bit.
         {
             "https://example.com/^30",
+            absl::nullopt,
+        },
+        // An origin cannot be serialized with a malformed CrossSite bit.
+        {
+            "https://example.com/^301",
             absl::nullopt,
         },
         // An origin can be serialized with a CrossSite bit.
@@ -687,7 +742,12 @@ TEST_F(StorageKeyTest, DeserializeAncestorChainBits) {
 
     for (const auto& test : kTestCases) {
       SCOPED_TRACE(test.serialization);
-      EXPECT_EQ(test.expected_key, StorageKey::Deserialize(test.serialization));
+      if (toggle) {
+        EXPECT_EQ(test.expected_key,
+                  StorageKey::Deserialize(test.serialization));
+      } else {
+        EXPECT_FALSE(StorageKey::Deserialize(test.serialization));
+      }
     }
   }
 }
@@ -745,8 +805,8 @@ TEST_F(StorageKeyTest, TopLevelSiteGetterWithPartitioningEnabled) {
   EXPECT_EQ(net::SchemefulSite(origin2), key_origin1_site2.top_level_site());
 }
 
-// Test that the AncestorChainBit enum class is not reordered and returns
-// kSameSite when partitioning is not enabled.
+// Test that cross-origin keys cannot be deserialized when partitioning is
+// disabled.
 TEST_F(StorageKeyTest, AncestorChainBitGetterWithPartitioningDisabled) {
   base::test::ScopedFeatureList scoped_feature_list;
   scoped_feature_list.InitAndDisableFeature(
@@ -754,9 +814,7 @@ TEST_F(StorageKeyTest, AncestorChainBitGetterWithPartitioningDisabled) {
   std::string cross_site_string = "https://example.com/^0https://test.example";
   absl::optional<StorageKey> key_cross_site =
       StorageKey::Deserialize(cross_site_string);
-  EXPECT_TRUE(key_cross_site.has_value());
-  EXPECT_EQ(mojom::AncestorChainBit::kSameSite,
-            key_cross_site->ancestor_chain_bit());
+  EXPECT_FALSE(key_cross_site.has_value());
 }
 
 // Test that the AncestorChainBit enum class is not reordered and returns the
@@ -886,6 +944,46 @@ TEST_F(StorageKeyTest, ToNetSiteForCookies) {
   }
 }
 
+TEST_F(StorageKeyTest, ToPartialNetIsolationInfo) {
+  const auto kOrigin = url::Origin::Create(GURL("https://subdomain.foo.com"));
+  const auto kOtherOrigin =
+      url::Origin::Create(GURL("https://subdomain.bar.com"));
+  const auto nonce = base::UnguessableToken::Create();
+
+  {  // Same-site storage key
+    const auto storage_key =
+        StorageKey::Create(kOrigin, net::SchemefulSite(kOrigin),
+                           mojom::AncestorChainBit::kSameSite);
+
+    storage_key.ToPartialNetIsolationInfo().IsEqualForTesting(
+        net::IsolationInfo::Create(net::IsolationInfo::RequestType::kOther,
+                                   kOrigin, kOrigin,
+                                   net::SiteForCookies::FromOrigin(kOrigin)));
+  }
+
+  {  // Cross-site storage key
+    const auto storage_key =
+        StorageKey::Create(kOrigin, net::SchemefulSite(kOtherOrigin),
+                           mojom::AncestorChainBit::kCrossSite);
+
+    storage_key.ToPartialNetIsolationInfo().IsEqualForTesting(
+        net::IsolationInfo::Create(
+            net::IsolationInfo::RequestType::kOther,
+            net::SchemefulSite(kOrigin).GetInternalOriginForTesting(),
+            kOtherOrigin, net::SiteForCookies()));
+  }
+
+  {  // Nonced key
+    const auto storage_key = StorageKey::CreateWithNonce(kOrigin, nonce);
+
+    storage_key.ToPartialNetIsolationInfo().IsEqualForTesting(
+        net::IsolationInfo::Create(
+            net::IsolationInfo::RequestType::kOther,
+            net::SchemefulSite(kOrigin).GetInternalOriginForTesting(), kOrigin,
+            net::SiteForCookies(), nonce));
+  }
+}
+
 TEST_F(StorageKeyTest, CopyWithForceEnabledThirdPartyStoragePartitioning) {
   const url::Origin kOrigin = url::Origin::Create(GURL("https://foo.com"));
   const url::Origin kOtherOrigin = url::Origin::Create(GURL("https://bar.com"));
@@ -927,8 +1025,7 @@ TEST_F(StorageKeyTest, ToCookiePartitionKey) {
     base::test::ScopedFeatureList scope_feature_list;
     scope_feature_list.InitWithFeatures(
         {net::features::kThirdPartyStoragePartitioning},
-        {net::features::kPartitionedCookies,
-         net::features::kNoncedPartitionedCookies});
+        {net::features::kPartitionedCookies});
 
     TestCase test_cases[] = {
         {StorageKey::CreateFromStringForTesting("https://www.example.com"),
@@ -940,28 +1037,6 @@ TEST_F(StorageKeyTest, ToCookiePartitionKey) {
         {StorageKey::CreateWithNonce(
              url::Origin::Create(GURL("https://www.example.com")), nonce),
          absl::nullopt},
-    };
-    for (const auto& test_case : test_cases) {
-      EXPECT_EQ(test_case.expected,
-                test_case.storage_key.ToCookiePartitionKey());
-    }
-  }
-
-  {
-    // Nonced partitioned cookies enabled only.
-    base::test::ScopedFeatureList scope_feature_list;
-    scope_feature_list.InitWithFeatures(
-        {net::features::kThirdPartyStoragePartitioning,
-         net::features::kNoncedPartitionedCookies},
-        {net::features::kPartitionedCookies});
-
-    TestCase test_cases[] = {
-        {StorageKey::CreateFromStringForTesting("https://www.example.com"),
-         absl::nullopt},
-        {StorageKey::CreateWithNonce(
-             url::Origin::Create(GURL("https://www.example.com")), nonce),
-         net::CookiePartitionKey::FromURLForTesting(GURL("https://example.com"),
-                                                    nonce)},
     };
     for (const auto& test_case : test_cases) {
       EXPECT_EQ(test_case.expected,
@@ -1269,7 +1344,7 @@ TEST_F(StorageKeyTest, FromWireReturnValue) {
       const raw_ref<const net::SchemefulSite> top_level_site;
       const raw_ref<const net::SchemefulSite>
           top_level_site_if_third_party_enabled;
-      // Excluded: can't wrap `absl::nullopt` in `raw_ref`.
+      // RAW_PTR_EXCLUSION: Can't wrap `absl::nullopt` in `raw_ref`.
       RAW_PTR_EXCLUSION const absl::optional<base::UnguessableToken>& nonce;
       AncestorChainBit ancestor_chain_bit;
       AncestorChainBit ancestor_chain_bit_if_third_party_enabled;
@@ -1379,8 +1454,8 @@ TEST_F(StorageKeyTest, CreateFromOriginAndIsolationInfo) {
             origin,
             net::IsolationInfo::Create(
                 net::IsolationInfo::RequestType::kMainFrame, origin, origin,
-                net::SiteForCookies::FromOrigin(origin), absl::nullopt,
-                nullptr),
+                net::SiteForCookies::FromOrigin(origin),
+                /*nonce=*/absl::nullopt),
             blink::StorageKey::Create(origin, site,
                                       mojom::AncestorChainBit::kSameSite),
         },
@@ -1389,7 +1464,8 @@ TEST_F(StorageKeyTest, CreateFromOriginAndIsolationInfo) {
             other_origin,
             net::IsolationInfo::Create(
                 net::IsolationInfo::RequestType::kMainFrame, other_origin,
-                origin, net::SiteForCookies(), absl::nullopt, nullptr),
+                origin, net::SiteForCookies(),
+                /*nonce=*/absl::nullopt),
             blink::StorageKey::Create(other_origin, other_site,
                                       mojom::AncestorChainBit::kCrossSite),
         },
@@ -1398,8 +1474,8 @@ TEST_F(StorageKeyTest, CreateFromOriginAndIsolationInfo) {
             other_origin,
             net::IsolationInfo::Create(
                 net::IsolationInfo::RequestType::kMainFrame, origin, origin,
-                net::SiteForCookies::FromOrigin(origin), absl::nullopt,
-                nullptr),
+                net::SiteForCookies::FromOrigin(origin),
+                /*nonce=*/absl::nullopt),
             blink::StorageKey::Create(other_origin, site,
                                       mojom::AncestorChainBit::kCrossSite),
         },
@@ -1409,7 +1485,7 @@ TEST_F(StorageKeyTest, CreateFromOriginAndIsolationInfo) {
             net::IsolationInfo::Create(
                 net::IsolationInfo::RequestType::kMainFrame, opaque_origin,
                 opaque_origin, net::SiteForCookies::FromOrigin(opaque_origin),
-                absl::nullopt, nullptr),
+                /*nonce=*/absl::nullopt),
             blink::StorageKey::Create(origin, opaque_site,
                                       mojom::AncestorChainBit::kCrossSite),
         },
@@ -1419,7 +1495,7 @@ TEST_F(StorageKeyTest, CreateFromOriginAndIsolationInfo) {
             net::IsolationInfo::Create(
                 net::IsolationInfo::RequestType::kMainFrame, other_origin,
                 other_origin, net::SiteForCookies::FromOrigin(other_origin),
-                absl::nullopt, &nonce),
+                nonce),
             blink::StorageKey::CreateWithNonce(origin, nonce),
         },
         // Opaque context.
@@ -1427,8 +1503,8 @@ TEST_F(StorageKeyTest, CreateFromOriginAndIsolationInfo) {
             opaque_origin,
             net::IsolationInfo::Create(
                 net::IsolationInfo::RequestType::kMainFrame, origin, origin,
-                net::SiteForCookies::FromOrigin(origin), absl::nullopt,
-                nullptr),
+                net::SiteForCookies::FromOrigin(origin),
+                /*nonce=*/absl::nullopt),
             blink::StorageKey::Create(opaque_origin, site,
                                       mojom::AncestorChainBit::kCrossSite),
         },
@@ -1515,6 +1591,65 @@ TEST_F(StorageKeyTest, DeserializeForLocalStorageFirstParty) {
     // This should deserialize as it lacks a trailing slash.
     EXPECT_FALSE(StorageKey::DeserializeForLocalStorage("https://example.com/")
                      .has_value());
+  }
+}
+
+TEST_F(StorageKeyTest,
+       SerializeDeserializeWithAndWithoutThirdPartyStoragePartitioning) {
+  struct {
+    const std::string serialized_key;
+    const bool has_value_if_partitioning_is_disabled;
+  } kTestCases[] = {
+      // This is a valid first-party file key.
+      {
+          "file:///",
+          true,
+      },
+      // This is a valid third-party file key.
+      {
+          "file:///^31",
+          false,
+      },
+      // This is a valid first-party origin key.
+      {
+          "https://example.com/",
+          true,
+      },
+      // This is a valid third-party origin key.
+      {
+          "https://example.com/^31",
+          false,
+      },
+      // This is a valid third-party cross-origin key.
+      {
+          "https://example.com/^0https://notexample.com",
+          false,
+      },
+      // This is a valid nonce key.
+      {
+          "https://example.com/^11^21",
+          true,
+      },
+      // This is a valid opaque top_level_site key.
+      {
+          "https://example.com/^41^51^6",
+          false,
+      },
+  };
+
+  for (const bool toggle : {false, true}) {
+    base::test::ScopedFeatureList scope_feature_list;
+    scope_feature_list.InitWithFeatureState(
+        net::features::kThirdPartyStoragePartitioning, toggle);
+    for (const auto& test_case : kTestCases) {
+      const absl::optional<blink::StorageKey> maybe_storage_key =
+          StorageKey::Deserialize(test_case.serialized_key);
+      EXPECT_EQ(test_case.has_value_if_partitioning_is_disabled || toggle,
+                (bool)maybe_storage_key);
+      if (maybe_storage_key) {
+        EXPECT_EQ(test_case.serialized_key, maybe_storage_key->Serialize());
+      }
+    }
   }
 }
 }  // namespace blink

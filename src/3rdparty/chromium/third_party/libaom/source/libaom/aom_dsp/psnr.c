@@ -44,9 +44,9 @@ static int64_t encoder_sse(const uint8_t *a, int a_stride, const uint8_t *b,
 }
 
 #if CONFIG_AV1_HIGHBITDEPTH
-static int64_t encoder_highbd_8_sse(const uint8_t *a8, int a_stride,
-                                    const uint8_t *b8, int b_stride, int w,
-                                    int h) {
+static int64_t encoder_highbd_sse(const uint8_t *a8, int a_stride,
+                                  const uint8_t *b8, int b_stride, int w,
+                                  int h) {
   const uint16_t *a = CONVERT_TO_SHORTPTR(a8);
   const uint16_t *b = CONVERT_TO_SHORTPTR(b8);
   int64_t sse = 0;
@@ -84,10 +84,8 @@ static int64_t get_sse(const uint8_t *a, int a_stride, const uint8_t *b,
   for (y = 0; y < height / 16; ++y) {
     const uint8_t *pa = a;
     const uint8_t *pb = b;
-    unsigned int sse;
     for (x = 0; x < width / 16; ++x) {
-      aom_mse16x16(pa, a_stride, pb, b_stride, &sse);
-      total_sse += sse;
+      total_sse += aom_sse(pa, a_stride, pb, b_stride, 16, 16);
 
       pa += 16;
       pb += 16;
@@ -128,22 +126,20 @@ static int64_t highbd_get_sse(const uint8_t *a, int a_stride, const uint8_t *b,
   const int dh = height % 16;
 
   if (dw > 0) {
-    total_sse += encoder_highbd_8_sse(&a[width - dw], a_stride, &b[width - dw],
-                                      b_stride, dw, height);
+    total_sse += encoder_highbd_sse(&a[width - dw], a_stride, &b[width - dw],
+                                    b_stride, dw, height);
   }
   if (dh > 0) {
-    total_sse += encoder_highbd_8_sse(&a[(height - dh) * a_stride], a_stride,
-                                      &b[(height - dh) * b_stride], b_stride,
-                                      width - dw, dh);
+    total_sse += encoder_highbd_sse(&a[(height - dh) * a_stride], a_stride,
+                                    &b[(height - dh) * b_stride], b_stride,
+                                    width - dw, dh);
   }
 
   for (y = 0; y < height / 16; ++y) {
     const uint8_t *pa = a;
     const uint8_t *pb = b;
-    unsigned int sse;
     for (x = 0; x < width / 16; ++x) {
-      aom_highbd_8_mse16x16(pa, a_stride, pb, b_stride, &sse);
-      total_sse += sse;
+      total_sse += aom_highbd_sse(pa, a_stride, pb, b_stride, 16, 16);
       pa += 16;
       pb += 16;
     }
@@ -353,7 +349,11 @@ void aom_calc_highbd_psnr(const YV12_BUFFER_CONFIG *a,
   int i;
   uint64_t total_sse = 0;
   uint32_t total_samples = 0;
+#if CONFIG_LIBVMAF_PSNR_PEAK
+  double peak = (double)(255 << (in_bit_depth - 8));
+#else
   double peak = (double)((1 << in_bit_depth) - 1);
+#endif  // CONFIG_LIBVMAF_PSNR_PEAK
   const unsigned int input_shift = bit_depth - in_bit_depth;
 
   for (i = 0; i < 3; ++i) {
@@ -388,7 +388,11 @@ void aom_calc_highbd_psnr(const YV12_BUFFER_CONFIG *a,
 
   // Compute PSNR based on stream bit depth
   if ((a->flags & YV12_FLAG_HIGHBITDEPTH) && (in_bit_depth < bit_depth)) {
+#if CONFIG_LIBVMAF_PSNR_PEAK
+    peak = (double)(255 << (bit_depth - 8));
+#else
     peak = (double)((1 << bit_depth) - 1);
+#endif  // CONFIG_LIBVMAF_PSNR_PEAK
     total_sse = 0;
     total_samples = 0;
     for (i = 0; i < 3; ++i) {

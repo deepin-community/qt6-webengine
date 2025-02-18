@@ -31,8 +31,10 @@
 #include "third_party/blink/public/common/page/page_zoom.h"
 
 #if BUILDFLAG(IS_ANDROID)
+#include "base/android/jni_array.h"
 #include "content/public/android/content_jni_headers/HostZoomMapImpl_jni.h"
 #include "content/public/browser/android/browser_context_handle.h"
+using base::android::ScopedJavaLocalRef;
 #endif
 
 namespace content {
@@ -72,30 +74,30 @@ GURL HostZoomMap::GetURLFromEntry(NavigationEntry* entry) {
   }
 }
 
+// static
 HostZoomMap* HostZoomMap::GetDefaultForBrowserContext(BrowserContext* context) {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  StoragePartition* partition = context->GetDefaultStoragePartition();
-  DCHECK(partition);
-  return partition->GetHostZoomMap();
+  return GetForStoragePartition(context->GetDefaultStoragePartition());
 }
 
+// static
 HostZoomMap* HostZoomMap::Get(SiteInstance* instance) {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  StoragePartition* partition =
-      instance->GetBrowserContext()->GetStoragePartition(instance);
-  DCHECK(partition);
-  return partition->GetHostZoomMap();
+  return GetForStoragePartition(
+      instance->GetBrowserContext()->GetStoragePartition(instance));
 }
 
+// static
 HostZoomMap* HostZoomMap::GetForWebContents(WebContents* contents) {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
   // TODO(wjmaclean): Update this behaviour to work with OOPIF.
   // See crbug.com/528407.
-  StoragePartition* partition =
-      contents->GetBrowserContext()->GetStoragePartition(
-          contents->GetSiteInstance());
-  DCHECK(partition);
-  return partition->GetHostZoomMap();
+  return Get(contents->GetSiteInstance());
+}
+
+// static
+HostZoomMap* HostZoomMap::GetForStoragePartition(
+    StoragePartition* storage_partition) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  CHECK(storage_partition);
+  return storage_partition->GetHostZoomMap();
 }
 
 // Helper function for setting/getting zoom levels for WebContents without
@@ -141,6 +143,10 @@ void HostZoomMapImpl::CopyFrom(HostZoomMap* copy_interface) {
     scheme_host_zoom_levels_[host].insert(it.second.begin(), it.second.end());
   }
   default_zoom_level_ = copy->default_zoom_level_;
+
+  host_zoom_levels_for_preview_.insert(
+      copy->host_zoom_levels_for_preview_.begin(),
+      copy->host_zoom_levels_for_preview_.end());
 }
 
 double HostZoomMapImpl::GetZoomLevelForHost(const std::string& host) const {
@@ -575,6 +581,25 @@ void JNI_HostZoomMapImpl_SetZoomLevel(
   host_zoom_map->SetNoLongerUsesTemporaryZoomLevel(rfh_id);
 }
 
+void JNI_HostZoomMapImpl_SetZoomLevelForHost(
+    JNIEnv* env,
+    const base::android::JavaParamRef<jobject>& j_context,
+    const base::android::JavaParamRef<jstring>& j_host,
+    jdouble level) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+
+  BrowserContext* context = BrowserContextFromJavaHandle(j_context);
+  if (!context) {
+    return;
+  }
+
+  HostZoomMap* host_zoom_map =
+      HostZoomMap::GetDefaultForBrowserContext(context);
+
+  std::string host(base::android::ConvertJavaStringToUTF8(env, j_host));
+  host_zoom_map->SetZoomLevelForHost(host, level);
+}
+
 jdouble JNI_HostZoomMapImpl_GetZoomLevel(
     JNIEnv* env,
     const base::android::JavaParamRef<jobject>& j_web_contents) {
@@ -621,6 +646,43 @@ jdouble JNI_HostZoomMapImpl_GetDefaultZoomLevel(
   return host_zoom_map->GetDefaultZoomLevel();
 }
 
+ScopedJavaLocalRef<jobjectArray> JNI_HostZoomMapImpl_GetAllHostZoomLevels(
+    JNIEnv* env,
+    const base::android::JavaParamRef<jobject>& j_context) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+
+  // Get instance of HostZoomMap.
+  BrowserContext* context = BrowserContextFromJavaHandle(j_context);
+  if (!context) {
+    return nullptr;
+  }
+
+  HostZoomMap* host_zoom_map =
+      HostZoomMap::GetDefaultForBrowserContext(context);
+
+  // Convert C++ vector of structs to vector of objects.
+  ScopedJavaLocalRef<jclass> type = base::android::GetClass(
+      env, "org/chromium/content_public/browser/SiteZoomInfo");
+  std::vector<ScopedJavaLocalRef<jobject>> jobject_vector;
+  for (const auto& entry : host_zoom_map->GetAllZoomLevels()) {
+    switch (entry.mode) {
+      case HostZoomMap::ZOOM_CHANGED_FOR_HOST: {
+        jobject_vector.push_back(Java_HostZoomMapImpl_buildSiteZoomInfo(
+            env, base::android::ConvertUTF8ToJavaString(env, entry.host),
+            static_cast<double>(entry.zoom_level)));
+        break;
+      }
+      case HostZoomMap::ZOOM_CHANGED_FOR_SCHEME_AND_HOST:
+        NOTREACHED();
+        break;
+      case HostZoomMap::ZOOM_CHANGED_TEMPORARY_ZOOM:
+        NOTREACHED();
+    }
+  }
+
+  return base::android::ToTypedJavaArrayOfObjects(env, jobject_vector, type);
+}
+
 jdouble JNI_HostZoomMapImpl_GetDesktopSiteZoomScale(
     JNIEnv* env,
     const base::android::JavaParamRef<jobject>& j_web_contents) {
@@ -634,5 +696,22 @@ jdouble JNI_HostZoomMapImpl_GetDesktopSiteZoomScale(
       entry && entry->GetIsOverridingUserAgent());
 }
 #endif
+
+double HostZoomMapImpl::GetZoomLevelForPreviewAndHost(const std::string& host) {
+  const auto it = host_zoom_levels_for_preview_.find(host);
+  return it != host_zoom_levels_for_preview_.end() ? it->second.level
+                                                   : default_zoom_level_;
+}
+
+void HostZoomMapImpl::SetZoomLevelForPreviewAndHost(const std::string& host,
+                                                    double level) {
+  if (blink::PageZoomValuesEqual(level, default_zoom_level_)) {
+    host_zoom_levels_for_preview_.erase(host);
+  } else {
+    ZoomLevel& zoomLevel = host_zoom_levels_for_preview_[host];
+    zoomLevel.level = level;
+    zoomLevel.last_modified = clock_->Now();
+  }
+}
 
 }  // namespace content

@@ -18,7 +18,6 @@
 #include "ui/aura/client/screen_position_client.h"
 #include "ui/aura/env.h"
 #include "ui/aura/test/aura_test_utils.h"
-#include "ui/aura/test/ui_controls_factory_aura.h"
 #include "ui/aura/window_event_dispatcher.h"
 #include "ui/base/test/ui_controls.h"
 #include "ui/gfx/native_widget_types.h"
@@ -36,7 +35,6 @@ using ui_controls::LEFT;
 using ui_controls::MIDDLE;
 using ui_controls::MouseButton;
 using ui_controls::RIGHT;
-using ui_controls::UIControlsAura;
 using ui_controls::UP;
 
 aura::Window* RootWindowForPoint(const gfx::Point& point,
@@ -87,6 +85,12 @@ void EnableUIControls() {
   }
 }
 
+void ResetUIControlsIfEnabled() {
+  if (g_ozone_ui_controls_test_helper) {
+    g_ozone_ui_controls_test_helper->Reset();
+  }
+}
+
 // An interface to provide Aura implementation of UI control.
 // static
 bool SendKeyPress(gfx::NativeWindow window,
@@ -107,7 +111,11 @@ bool SendKeyPressNotifyWhenDone(gfx::NativeWindow window,
                                 bool shift,
                                 bool alt,
                                 bool command,
-                                base::OnceClosure closure) {
+                                base::OnceClosure closure,
+                                KeyEventType wait_for) {
+  // This doesn't time out if `window` is deleted before the key release events
+  // are dispatched, so it's fine to ignore `wait_for` and always wait for key
+  // release events.
   DCHECK(!command);  // No command key on Aura
   return SendKeyEventsNotifyWhenDone(
       window, key, kKeyPress | kKeyRelease, std::move(closure),
@@ -178,8 +186,8 @@ bool SendMouseMoveNotifyWhenDone(int screen_x,
 
 #if !BUILDFLAG(IS_CHROMEOS_LACROS)
   if (root_location != root_current_location &&
-      g_ozone_ui_controls_test_helper->ButtonDownMask() == 0 &&
-      !g_ozone_ui_controls_test_helper->MustUseUiControlsForMoveCursorTo()) {
+      !g_ozone_ui_controls_test_helper->MustUseUiControlsForMoveCursorTo() &&
+      g_ozone_ui_controls_test_helper->ButtonDownMask() == 0) {
     // Move the cursor because EnterNotify/LeaveNotify are generated with the
     // current mouse position as a result of XGrabPointer()
     root_window->MoveCursorTo(root_location);
@@ -189,10 +197,8 @@ bool SendMouseMoveNotifyWhenDone(int screen_x,
   }
 #endif
 
-  gfx::Point screen_point(root_location);
-  host->ConvertDIPToScreenInPixels(&screen_point);
   g_ozone_ui_controls_test_helper->SendMouseMotionNotifyEvent(
-      host->GetAcceleratedWidget(), root_location, screen_point,
+      host->GetAcceleratedWidget(), root_location, screen_location,
       std::move(task));
   return true;
 }
@@ -216,7 +222,9 @@ bool SendMouseEventsNotifyWhenDone(MouseButton type,
     window_hint = nullptr;
   }
 
-  gfx::Point mouse_loc = aura::Env::GetInstance()->last_mouse_location();
+  gfx::Point mouse_loc_in_screen =
+      aura::Env::GetInstance()->last_mouse_location();
+  gfx::Point mouse_loc = mouse_loc_in_screen;
   aura::Window* root_window = RootWindowForPoint(mouse_loc, window_hint);
   if (root_window == nullptr) {
     return true;
@@ -228,11 +236,9 @@ bool SendMouseEventsNotifyWhenDone(MouseButton type,
     screen_position_client->ConvertPointFromScreen(root_window, &mouse_loc);
   }
 
-  gfx::Point mouse_root_loc = mouse_loc;
-  root_window->GetHost()->ConvertDIPToScreenInPixels(&mouse_root_loc);
   g_ozone_ui_controls_test_helper->SendMouseEvent(
       root_window->GetHost()->GetAcceleratedWidget(), type, button_state,
-      accelerator_state, mouse_loc, mouse_root_loc, std::move(task));
+      accelerator_state, mouse_loc, mouse_loc_in_screen, std::move(task));
   return true;
 }
 
@@ -275,6 +281,13 @@ bool SendTouchEventsNotifyWhenDone(int action,
       screen_location, std::move(task));
 
   return true;
+}
+#endif
+
+#if BUILDFLAG(IS_LINUX)
+// static
+void ForceUseScreenCoordinatesOnce() {
+  g_ozone_ui_controls_test_helper->ForceUseScreenCoordinatesOnce();
 }
 #endif
 

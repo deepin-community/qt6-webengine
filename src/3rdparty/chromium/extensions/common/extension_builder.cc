@@ -4,6 +4,8 @@
 
 #include "extensions/common/extension_builder.h"
 
+#include <optional>
+#include <string_view>
 #include <utility>
 
 #include "base/json/json_reader.h"
@@ -13,7 +15,6 @@
 #include "extensions/common/api/extension_action/action_info.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/manifest_constants.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace extensions {
 
@@ -24,52 +25,52 @@ struct ExtensionBuilder::ManifestData {
   std::string name;
   std::vector<std::string> permissions;
   std::vector<std::string> optional_permissions;
-  absl::optional<ActionInfo::Type> action;
-  absl::optional<BackgroundContext> background_context;
-  absl::optional<std::string> version;
-  absl::optional<int> manifest_version;
+  std::optional<ActionInfo::Type> action;
+  std::optional<BackgroundContext> background_context;
+  std::optional<std::string> version;
+  std::optional<int> manifest_version;
 
   // A ContentScriptEntry includes a string name, and a vector of string
   // match patterns.
   using ContentScriptEntry = std::pair<std::string, std::vector<std::string>>;
   std::vector<ContentScriptEntry> content_scripts;
 
-  absl::optional<base::Value::Dict> extra;
+  std::optional<base::Value::Dict> extra;
 
   base::Value::Dict GetValue() const {
-    DictionaryBuilder manifest;
-    manifest.Set(manifest_keys::kName, name)
-        .Set(manifest_keys::kManifestVersion, manifest_version.value_or(2))
-        .Set(manifest_keys::kVersion, version.value_or("0.1"))
-        .Set(manifest_keys::kDescription, "some description");
+    auto manifest =
+        base::Value::Dict()
+            .Set(manifest_keys::kName, name)
+            .Set(manifest_keys::kManifestVersion, manifest_version.value_or(2))
+            .Set(manifest_keys::kVersion, version.value_or("0.1"))
+            .Set(manifest_keys::kDescription, "some description");
 
     switch (type) {
       case Type::EXTENSION:
         break;  // Sufficient already.
       case Type::PLATFORM_APP: {
-        DictionaryBuilder background;
-        background.Set("scripts", ListBuilder().Append("test.js").Build());
-        manifest.Set(
-            "app",
-            DictionaryBuilder().Set("background", background.Build()).Build());
+        base::Value::Dict background;
+        background.Set("scripts", base::Value::List().Append("test.js"));
+        manifest.Set("app", base::Value::Dict().Set("background",
+                                                    std::move(background)));
         break;
       }
     }
 
     if (!permissions.empty()) {
-      ListBuilder permissions_builder;
+      base::Value::List permissions_builder;
       for (const std::string& permission : permissions)
         permissions_builder.Append(permission);
-      manifest.Set(manifest_keys::kPermissions, permissions_builder.Build());
+      manifest.Set(manifest_keys::kPermissions, std::move(permissions_builder));
     }
 
     if (!optional_permissions.empty()) {
-      ListBuilder permissions_builder;
+      base::Value::List permissions_builder;
       for (const std::string& permission : optional_permissions) {
         permissions_builder.Append(permission);
       }
       manifest.Set(manifest_keys::kOptionalPermissions,
-                   permissions_builder.Build());
+                   std::move(permissions_builder));
     }
 
     if (action) {
@@ -78,8 +79,8 @@ struct ExtensionBuilder::ManifestData {
     }
 
     if (background_context) {
-      DictionaryBuilder background;
-      absl::optional<bool> persistent;
+      base::Value::Dict background;
+      std::optional<bool> persistent;
       switch (*background_context) {
         case BackgroundContext::BACKGROUND_PAGE:
           background.Set("page", "background_page.html");
@@ -96,27 +97,30 @@ struct ExtensionBuilder::ManifestData {
       if (persistent) {
         background.Set("persistent", *persistent);
       }
-      manifest.Set("background", background.Build());
+      manifest.Set("background", std::move(background));
     }
 
     if (!content_scripts.empty()) {
-      ListBuilder scripts_value;
-      for (const auto& script : content_scripts) {
-        ListBuilder matches;
-        matches.Append(script.second.begin(), script.second.end());
+      base::Value::List scripts_value;
+      scripts_value.reserve(content_scripts.size());
+      for (const auto& [script_name, pattern_matches] : content_scripts) {
+        base::Value::List matches;
+        matches.reserve(pattern_matches.size());
+        for (const auto& pattern_match : pattern_matches) {
+          matches.Append(pattern_match);
+        }
         scripts_value.Append(
-            DictionaryBuilder()
+            base::Value::Dict()
                 .Set(api::content_scripts::ContentScript::kJs,
-                     ListBuilder().Append(script.first).Build())
+                     base::Value::List().Append(script_name))
                 .Set(api::content_scripts::ContentScript::kMatches,
-                     matches.Build())
-                .Build());
+                     std::move(matches)));
       }
       manifest.Set(api::content_scripts::ManifestKeys::kContentScripts,
-                   scripts_value.Build());
+                   std::move(scripts_value));
     }
 
-    base::Value::Dict result = manifest.Build();
+    base::Value::Dict result = std::move(manifest);
     if (extra)
       result.Merge(extra->Clone());
 
@@ -157,7 +161,7 @@ scoped_refptr<const Extension> ExtensionBuilder::Build() {
 
   // This allows `*manifest_value` to be passed as a reference instead of
   // needing to be cloned.
-  absl::optional<base::Value::Dict> manifest_data_value;
+  std::optional<base::Value::Dict> manifest_data_value;
   if (manifest_data_) {
     manifest_data_value = manifest_data_->GetValue();
   }
@@ -242,7 +246,7 @@ ExtensionBuilder& ExtensionBuilder::SetManifestVersion(int manifest_version) {
   return *this;
 }
 
-ExtensionBuilder& ExtensionBuilder::AddJSON(base::StringPiece json) {
+ExtensionBuilder& ExtensionBuilder::AddJSON(std::string_view json) {
   CHECK(manifest_data_);
   std::string wrapped_json = base::StringPrintf("{%s}", json.data());
   auto parsed = base::JSONReader::ReadAndReturnValueWithError(wrapped_json);
@@ -288,13 +292,13 @@ ExtensionBuilder& ExtensionBuilder::SetID(const std::string& id) {
   return *this;
 }
 
-void ExtensionBuilder::SetManifestKeyImpl(base::StringPiece key,
+void ExtensionBuilder::SetManifestKeyImpl(std::string_view key,
                                           base::Value value) {
   CHECK(manifest_data_);
   manifest_data_->get_extra().Set(key, std::move(value));
 }
 
-void ExtensionBuilder::SetManifestPathImpl(base::StringPiece path,
+void ExtensionBuilder::SetManifestPathImpl(std::string_view path,
                                            base::Value value) {
   CHECK(manifest_data_);
   manifest_data_->get_extra().SetByDottedPath(path, std::move(value));

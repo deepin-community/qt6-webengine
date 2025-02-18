@@ -7,10 +7,9 @@
 #include "base/bits.h"
 #include "base/command_line.h"
 #include "build/build_config.h"
-#include "components/viz/common/resources/resource_format.h"
-#include "components/viz/common/resources/resource_format_utils.h"
 #include "gpu/command_buffer/common/mailbox.h"
 #include "gpu/command_buffer/common/shared_image_usage.h"
+#include "gpu/command_buffer/service/feature_info.h"
 #include "gpu/command_buffer/service/service_utils.h"
 #include "gpu/command_buffer/service/shared_context_state.h"
 #include "gpu/command_buffer/service/shared_image/shared_image_backing.h"
@@ -18,6 +17,7 @@
 #include "gpu/command_buffer/service/shared_image/shared_image_manager.h"
 #include "gpu/command_buffer/service/shared_image/shared_image_representation.h"
 #include "gpu/command_buffer/service/shared_image/test_utils.h"
+#include "gpu/command_buffer/service/texture_manager.h"
 #include "gpu/config/gpu_driver_bug_workarounds.h"
 #include "gpu/config/gpu_feature_info.h"
 #include "gpu/config/gpu_preferences.h"
@@ -56,8 +56,9 @@ void CreateSharedContext(const GpuPreferences& preferences,
       base::MakeRefCounted<gles2::FeatureInfo>(workarounds, GpuFeatureInfo());
   context_state = base::MakeRefCounted<SharedContextState>(
       std::move(share_group), surface, context,
-      /*use_virtualized_gl_contexts=*/false, base::DoNothing());
-  context_state->InitializeGrContext(GpuPreferences(), workarounds, nullptr);
+      /*use_virtualized_gl_contexts=*/false, base::DoNothing(),
+      GrContextType::kGL);
+  context_state->InitializeSkia(GpuPreferences(), workarounds);
   context_state->InitializeGL(GpuPreferences(), feature_info);
 }
 
@@ -128,12 +129,15 @@ class GLES2ExternalFrameBufferTest
       return shared_image_representation_factory_->ProduceGLTexture(mailbox);
   }
 
+  // Creates a SharedImage that can be used for reading and writing via the
+  // GLES2 interface (these tests do both).
   Mailbox CreateSharedImage(const viz::SharedImageFormat& format) {
     auto mailbox = Mailbox::GenerateForSharedImage();
     backing_factory_->CreateSharedImage(
         mailbox, format, gfx::Size(64, 64), gfx::ColorSpace::CreateSRGB(),
         kTopLeft_GrSurfaceOrigin, kPremul_SkAlphaType, SurfaceHandle(),
-        SHARED_IMAGE_USAGE_GLES2);
+        SHARED_IMAGE_USAGE_GLES2_READ | SHARED_IMAGE_USAGE_GLES2_WRITE,
+        "TestLabel");
     return mailbox;
   }
 
@@ -176,8 +180,8 @@ class GLES2ExternalFrameBufferTest
   scoped_refptr<gl::GLSurface> surface_;
   scoped_refptr<gl::GLContext> context_;
   scoped_refptr<SharedContextState> context_state_;
-  std::unique_ptr<SharedImageFactory> backing_factory_;
   std::unique_ptr<SharedImageManager> shared_image_manager_;
+  std::unique_ptr<SharedImageFactory> backing_factory_;
   std::unique_ptr<MemoryTypeTracker> memory_type_tracker_;
   std::unique_ptr<SharedImageRepresentationFactory>
       shared_image_representation_factory_;
@@ -224,10 +228,8 @@ std::string TestParamToString(
 INSTANTIATE_TEST_SUITE_P(
     ,
     GLES2ExternalFrameBufferTest,
-    ::testing::Combine(::testing::Values(viz::SharedImageFormat::SinglePlane(
-                                             viz::ResourceFormat::RGBA_8888),
-                                         viz::SharedImageFormat::SinglePlane(
-                                             viz::ResourceFormat::RGBX_8888)),
+    ::testing::Combine(::testing::Values(viz::SinglePlaneFormat::kRGBA_8888,
+                                         viz::SinglePlaneFormat::kRGBX_8888),
                        ::testing::Values(0, 8),
                        ::testing::Bool(),
                        ::testing::Bool(),

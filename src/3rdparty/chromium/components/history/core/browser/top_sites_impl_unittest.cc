@@ -446,13 +446,15 @@ TEST_F(TopSitesImplTest, GetMostVisitedURLsAndQueries) {
 
     histogram_tester.ExpectTotalCount("History.TopSites.QueryFromHistoryTime",
                                       1);
-    histogram_tester.ExpectTotalCount("History.QueryMostVisitedURLsTime", 1);
     histogram_tester.ExpectTotalCount("History.QueryMostRepeatedQueriesTimeV2",
                                       0);
   }
   {
     base::test::ScopedFeatureList feature_list;
-    feature_list.InitAndEnableFeature(kOrganicRepeatableQueries);
+    feature_list.InitAndEnableFeatureWithParameters(
+        kOrganicRepeatableQueries,
+        {{kRepeatableQueriesIgnoreDuplicateVisits.name, "false"},
+         {kRepeatableQueriesMinVisitCount.name, "1"}});
     base::HistogramTester histogram_tester;
 
     RefreshTopSitesAndRecreate();
@@ -472,7 +474,6 @@ TEST_F(TopSitesImplTest, GetMostVisitedURLsAndQueries) {
 
     histogram_tester.ExpectTotalCount("History.TopSites.QueryFromHistoryTime",
                                       1);
-    histogram_tester.ExpectTotalCount("History.QueryMostVisitedURLsTime", 1);
     histogram_tester.ExpectTotalCount("History.QueryMostRepeatedQueriesTimeV2",
                                       1);
   }
@@ -480,7 +481,9 @@ TEST_F(TopSitesImplTest, GetMostVisitedURLsAndQueries) {
     base::test::ScopedFeatureList feature_list;
     feature_list.InitAndEnableFeatureWithParameters(
         kOrganicRepeatableQueries,
-        {{kPrivilegeRepeatableQueries.name, "true"}});
+        {{kPrivilegeRepeatableQueries.name, "true"},
+         {kRepeatableQueriesIgnoreDuplicateVisits.name, "false"},
+         {kRepeatableQueriesMinVisitCount.name, "1"}});
     base::HistogramTester histogram_tester;
 
     RefreshTopSitesAndRecreate();
@@ -499,15 +502,17 @@ TEST_F(TopSitesImplTest, GetMostVisitedURLsAndQueries) {
 
     histogram_tester.ExpectTotalCount("History.TopSites.QueryFromHistoryTime",
                                       1);
-    histogram_tester.ExpectTotalCount("History.QueryMostVisitedURLsTime", 1);
     histogram_tester.ExpectTotalCount("History.QueryMostRepeatedQueriesTimeV2",
                                       1);
   }
   {
     base::test::ScopedFeatureList feature_list;
     feature_list.InitAndEnableFeatureWithParameters(
-        kOrganicRepeatableQueries, {{kPrivilegeRepeatableQueries.name, "true"},
-                                    {kMaxNumRepeatableQueries.name, "1"}});
+        kOrganicRepeatableQueries,
+        {{kPrivilegeRepeatableQueries.name, "true"},
+         {kMaxNumRepeatableQueries.name, "1"},
+         {kRepeatableQueriesIgnoreDuplicateVisits.name, "false"},
+         {kRepeatableQueriesMinVisitCount.name, "1"}});
     base::HistogramTester histogram_tester;
 
     RefreshTopSitesAndRecreate();
@@ -525,7 +530,6 @@ TEST_F(TopSitesImplTest, GetMostVisitedURLsAndQueries) {
 
     histogram_tester.ExpectTotalCount("History.TopSites.QueryFromHistoryTime",
                                       1);
-    histogram_tester.ExpectTotalCount("History.QueryMostVisitedURLsTime", 1);
     histogram_tester.ExpectTotalCount("History.QueryMostRepeatedQueriesTimeV2",
                                       1);
   }

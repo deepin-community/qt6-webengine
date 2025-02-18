@@ -3,6 +3,3 @@
 # found in the LICENSE file.
 
 from __future__ import annotations
-
-from crossbench.probes.base import Probe, ProbeConfigParser
-from crossbench.probes.results import ProbeResult, ProbeResultDict

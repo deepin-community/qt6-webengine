@@ -326,8 +326,7 @@ TEST_F(UDPSocketTest, PartialRecv) {
   // Read just 2 bytes. Read() is expected to return the first 2 bytes from the
   // packet and discard the rest.
   const int kPartialReadSize = 2;
-  scoped_refptr<IOBuffer> buffer =
-      base::MakeRefCounted<IOBuffer>(kPartialReadSize);
+  auto buffer = base::MakeRefCounted<IOBufferWithSize>(kPartialReadSize);
   int rv =
       server_socket.RecvFrom(buffer.get(), kPartialReadSize,
                              &recv_from_address_, recv_callback.callback());
@@ -660,7 +659,7 @@ TEST_F(UDPSocketTest, ClientSetDoNotFragment) {
     // TODO(crbug.com/945590): IP_MTU_DISCOVER is not implemented on Fuchsia.
     EXPECT_THAT(rv, IsError(ERR_NOT_IMPLEMENTED));
 #elif BUILDFLAG(IS_MAC)
-    if (base::mac::IsAtLeastOS11()) {
+    if (base::mac::MacOSMajorVersion() >= 11) {
       EXPECT_THAT(rv, IsOk());
     } else {
       EXPECT_THAT(rv, IsError(ERR_NOT_IMPLEMENTED));
@@ -688,7 +687,7 @@ TEST_F(UDPSocketTest, ServerSetDoNotFragment) {
     // TODO(crbug.com/945590): IP_MTU_DISCOVER is not implemented on Fuchsia.
     EXPECT_THAT(rv, IsError(ERR_NOT_IMPLEMENTED));
 #elif BUILDFLAG(IS_MAC)
-    if (base::mac::IsAtLeastOS11()) {
+    if (base::mac::MacOSMajorVersion() >= 11) {
       EXPECT_THAT(rv, IsOk());
     } else {
       EXPECT_THAT(rv, IsError(ERR_NOT_IMPLEMENTED));
@@ -1626,16 +1625,18 @@ TEST_F(UDPSocketTest, LimitClientSocket) {
   socket2.reset();
   EXPECT_EQ(1, GetGlobalUDPSocketCountForTesting());
 
-  // Now that the count is below limit, try to connect socket3 again. This time
+  // Now that the count is below limit, try to connect another socket. This time
   // it will work.
-  EXPECT_THAT(socket3->Connect(server_address), IsOk());
+  auto socket4 = std::make_unique<UDPClientSocket>(DatagramSocket::DEFAULT_BIND,
+                                                   nullptr, NetLogSource());
+  EXPECT_THAT(socket4->Connect(server_address), IsOk());
   EXPECT_EQ(2, GetGlobalUDPSocketCountForTesting());
 
   // Verify that closing the two remaining sockets brings the open count back to
   // 0.
   socket1.reset();
   EXPECT_EQ(1, GetGlobalUDPSocketCountForTesting());
-  socket3.reset();
+  socket4.reset();
   EXPECT_EQ(0, GetGlobalUDPSocketCountForTesting());
 }
 

@@ -4,6 +4,7 @@
 
 #include <stddef.h>
 
+#include <cstddef>
 #include <memory>
 #include <utility>
 
@@ -55,6 +56,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/url_constants.h"
+#include "content/public/test/back_forward_cache_util.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test_utils.h"
@@ -63,10 +65,12 @@
 #include "content/public/test/prerender_test_util.h"
 #include "content/public/test/slow_download_http_response.h"
 #include "content/public/test/test_navigation_observer.h"
+#include "content/public/test/test_utils.h"
 #include "content/shell/browser/shell.h"
 #include "content/shell/browser/shell_browser_context.h"
 #include "content/shell/browser/shell_content_browser_client.h"
 #include "content/shell/browser/shell_download_manager_delegate.h"
+#include "content/test/content_browser_test_utils_internal.h"
 #include "net/base/features.h"
 #include "net/dns/dns_test_util.h"
 #include "net/dns/mock_host_resolver.h"
@@ -84,7 +88,6 @@
 #include "third_party/boringssl/src/include/openssl/ssl.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkColor.h"
-#include "ui/base/layout.h"
 #include "ui/compositor/compositor_switches.h"
 #include "ui/display/screen.h"
 #include "ui/gfx/codec/jpeg_codec.h"
@@ -246,30 +249,43 @@ class PrerenderDevToolsProtocolTest : public DevToolsProtocolTest {
 
   WebContents* web_contents() const { return shell()->web_contents(); }
 
+  std::string AttachToTabTargetAndGetSessionId() {
+    AttachToTabTarget(shell()->web_contents());
+    shell()->web_contents()->SetDelegate(this);
+
+    {
+      base::Value::Dict params;
+      params.Set("discover", true);
+      SendCommandSync("Target.setDiscoverTargets", std::move(params));
+    }
+
+    std::string frame_target_id;
+    for (int targetCount = 1; true; targetCount++) {
+      base::Value::Dict result;
+      result = WaitForNotification("Target.targetCreated", true);
+      if (*result.FindStringByDottedPath("targetInfo.type") == "page") {
+        frame_target_id =
+            std::string(*result.FindStringByDottedPath("targetInfo.targetId"));
+        break;
+      }
+      CHECK_LT(targetCount, 2);
+    }
+
+    {
+      base::Value::Dict params;
+      params.Set("targetId", frame_target_id);
+      params.Set("flatten", true);
+      const base::Value::Dict* result =
+          SendCommandSync("Target.attachToTarget", std::move(params));
+      CHECK(result);
+      std::string session_id(*result->FindString("sessionId"));
+      CHECK(session_id != "");
+      return session_id;
+    }
+  }
+
  private:
   std::unique_ptr<test::PrerenderTestHelper> prerender_helper_;
-};
-
-class PrerenderHoldbackDevToolsProtocolTest
-    : public PrerenderDevToolsProtocolTest {
- public:
-  PrerenderHoldbackDevToolsProtocolTest() {
-    feature_list_.InitAndEnableFeature(features::kPrerender2Holdback);
-  }
-
- private:
-  base::test::ScopedFeatureList feature_list_;
-};
-
-class PreloadingHoldbackDevToolsProtocolTest
-    : public PrerenderDevToolsProtocolTest {
- public:
-  PreloadingHoldbackDevToolsProtocolTest() {
-    feature_list_.InitAndEnableFeature(features::kPreloadingHoldback);
-  }
-
- private:
-  base::test::ScopedFeatureList feature_list_;
 };
 
 class MultiplePrerendersDevToolsProtocolTest
@@ -679,7 +695,7 @@ class CaptureScreenshotTest : public DevToolsProtocolTest {
                                 int height,
                                 float device_scale_factor,
                                 bool mobile,
-                                absl::optional<bool> fitWindow) {
+                                std::optional<bool> fitWindow) {
     auto params = base::Value::Dict();
     params.Set("width", width);
     params.Set("height", height);
@@ -723,7 +739,7 @@ class CaptureScreenshotTest : public DevToolsProtocolTest {
     // change during screenshotting. This verifies that the page doesn't observe
     // a change in frame size as a side effect of screenshotting.
     SetDeviceMetricsOverride(frame_size.width(), frame_size.height(),
-                             device_scale_factor, false, absl::nullopt);
+                             device_scale_factor, false, std::nullopt);
 
     // Resize frame to scaled blue box size.
     gfx::RectF clip;
@@ -948,7 +964,7 @@ IN_PROC_BROWSER_TEST_F(NoGPUCaptureScreenshotTest, MAYBE_LargeScreenshot) {
   SetDeviceMetricsOverride(/*width=*/1280, /*height=*/8440,
                            /*device_scale_factor=*/1,
                            /*mobile=*/false,
-                           /*fitWindow=*/absl::nullopt);
+                           /*fitWindow=*/std::nullopt);
   auto bitmap = CaptureScreenshot(ScreenshotEncoding::PNG, true,
                                   gfx::RectF(0, 0, 1280, 8440), 1);
   SendCommandSync("Emulation.clearDeviceMetricsOverride");
@@ -1680,6 +1696,27 @@ IN_PROC_BROWSER_TEST_F(DevToolsProtocolTest, InspectorTargetCrashedNavigate) {
   ClearNotifications();
   shell()->LoadURL(url_a);
   WaitForNotification("Inspector.targetReloadedAfterCrash", true);
+}
+
+IN_PROC_BROWSER_TEST_F(DevToolsProtocolTest, TargetGetTargetsAfterCrash) {
+  set_agent_host_can_close();
+  ASSERT_TRUE(embedded_test_server()->Start());
+  GURL url_a = embedded_test_server()->GetURL("a.com", "/title1.html");
+
+  NavigateToURLBlockUntilNavigationsComplete(shell(), url_a, 1);
+  Attach();
+  SendCommandSync("Inspector.enable");
+  SendCommandSync("Target.getTargets");
+  EXPECT_EQ(1u, result()->FindList("targetInfos")->size());
+
+  {
+    ScopedAllowRendererCrashes scoped_allow_renderer_crashes(shell());
+    shell()->LoadURL(GURL(blink::kChromeUICrashURL));
+    WaitForNotification("Inspector.targetCrashed");
+  }
+
+  SendCommandSync("Target.getTargets");
+  EXPECT_EQ(1u, result()->FindList("targetInfos")->size());
 }
 
 // Same as in DevToolsProtocolTest.InspectorTargetCrashedNavigate, but with a
@@ -2612,7 +2649,7 @@ class DevToolsProtocolDeviceEmulationPrerenderTest
 
   void SetUpOnMainThread() override {
     DevToolsProtocolDeviceEmulationTest::SetUpOnMainThread();
-    prerender_helper_.SetUp(embedded_test_server());
+    prerender_helper_.RegisterServerRequestMonitor(embedded_test_server());
   }
 
   // WebContentsDelegate overrides.
@@ -2622,6 +2659,41 @@ class DevToolsProtocolDeviceEmulationPrerenderTest
   }
 
   WebContents* GetWebContents() const { return shell()->web_contents(); }
+
+  std::string AttachToTabTargetAndGetSessionId() {
+    AttachToTabTarget(shell()->web_contents());
+    shell()->web_contents()->SetDelegate(this);
+
+    {
+      base::Value::Dict params;
+      params.Set("discover", true);
+      SendCommandSync("Target.setDiscoverTargets", std::move(params));
+    }
+
+    std::string frame_target_id;
+    for (int targetCount = 1; true; targetCount++) {
+      base::Value::Dict result;
+      result = WaitForNotification("Target.targetCreated", true);
+      if (*result.FindStringByDottedPath("targetInfo.type") == "page") {
+        frame_target_id =
+            std::string(*result.FindStringByDottedPath("targetInfo.targetId"));
+        break;
+      }
+      CHECK_LT(targetCount, 2);
+    }
+
+    {
+      base::Value::Dict params;
+      params.Set("targetId", frame_target_id);
+      params.Set("flatten", true);
+      const base::Value::Dict* result =
+          SendCommandSync("Target.attachToTarget", std::move(params));
+      CHECK(result);
+      std::string session_id(*result->FindString("sessionId"));
+      CHECK(session_id != "");
+      return session_id;
+    }
+  }
 
  protected:
   test::PrerenderTestHelper prerender_helper_;
@@ -2640,13 +2712,22 @@ IN_PROC_BROWSER_TEST_F(DevToolsProtocolDeviceEmulationPrerenderTest,
 
   GURL test_url = embedded_test_server()->GetURL("/devtools/navigation.html");
   NavigateToURLBlockUntilNavigationsComplete(shell(), test_url, 1);
-  Attach();
+  std::string session_id = AttachToTabTargetAndGetSessionId();
 
   const gfx::Size original_size = GetViewSize();
   const gfx::Size emulated_size =
       gfx::Size(original_size.width() - 50, original_size.height() - 50);
 
-  EmulateDeviceSize(emulated_size);
+  {
+    const gfx::Size size = emulated_size;
+    base::Value::Dict params;
+    params.Set("width", size.width());
+    params.Set("height", size.height());
+    params.Set("deviceScaleFactor", 0);
+    params.Set("mobile", false);
+    SendSessionCommand("Emulation.setDeviceMetricsOverride", std::move(params),
+                       session_id, true);
+  }
   EXPECT_EQ(emulated_size, GetViewSize());
 
   // Start a prerender and ensure frame size isn't changed.
@@ -2659,7 +2740,8 @@ IN_PROC_BROWSER_TEST_F(DevToolsProtocolDeviceEmulationPrerenderTest,
   prerender_helper_.NavigatePrimaryPage(prerender_url);
   EXPECT_EQ(emulated_size, GetViewSize());
 
-  SendCommandSync("Emulation.clearDeviceMetricsOverride");
+  SendSessionCommand("Emulation.clearDeviceMetricsOverride",
+                     base::Value::Dict(), session_id, true);
   EXPECT_EQ(original_size, GetViewSize());
 }
 
@@ -2717,11 +2799,9 @@ class DevToolsProtocolBackForwardCacheTest : public DevToolsProtocolTest {
  public:
   DevToolsProtocolBackForwardCacheTest() {
     feature_list_.InitWithFeaturesAndParameters(
-        {{features::kBackForwardCache, {{}}},
-         {features::kBackForwardCacheTimeToLiveControl,
-          {{"time_to_live_seconds", "3600"}}}},
-        // Allow BackForwardCache for all devices regardless of their memory.
-        {features::kBackForwardCacheMemoryControls});
+        GetDefaultEnabledBackForwardCacheFeaturesForTesting(
+            /*ignore_outstanding_network_request=*/false),
+        GetDefaultDisabledBackForwardCacheFeaturesForTesting());
   }
   ~DevToolsProtocolBackForwardCacheTest() override = default;
 
@@ -3157,6 +3237,31 @@ IN_PROC_BROWSER_TEST_F(DevToolsDownloadContentTest, DefaultDownloadHeadless) {
   ASSERT_EQ(download::DownloadItem::CANCELLED, download->GetState());
 }
 
+// Check that defaulting downloads cancels when there's no proxy
+// download delegate.
+IN_PROC_BROWSER_TEST_F(DevToolsDownloadContentTest,
+                       SetDownloadBehaviorAccessChecks) {
+  SetMayWriteLocalFiles(false);
+  Attach();
+  base::ScopedAllowBlockingForTesting allow_blocking;
+  base::ScopedTempDir temp_dir;
+  ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
+
+  base::Value::Dict params;
+  params.Set("behavior", "allow");
+  params.Set("downloadPath",
+             temp_dir.GetPath().AppendASCII("download").AsUTF8Unsafe());
+
+  SendCommandSync("Page.setDownloadBehavior", params.Clone());
+  ASSERT_TRUE(error());
+  EXPECT_EQ(*error()->FindString("message"), "Not allowed");
+  Detach();
+  SetMayWriteLocalFiles(true);
+  Attach();
+  SendCommandSync("Page.setDownloadBehavior", std::move(params));
+  EXPECT_FALSE(error());
+}
+
 // Flaky on ChromeOS https://crbug.com/860312
 // Also flaky on Wndows and other platforms: http://crbug.com/1070302
 // Check that downloading multiple (in this case, 2) files does not result in
@@ -3521,11 +3626,11 @@ IN_PROC_BROWSER_TEST_F(NetworkResponseProtocolTest, SecurityDetails) {
   ASSERT_TRUE(group);
   EXPECT_EQ("X25519", *group);
 
-  absl::optional<int> sigalg = response.FindIntByDottedPath(
+  std::optional<int> sigalg = response.FindIntByDottedPath(
       "response.securityDetails.serverSignatureAlgorithm");
   EXPECT_EQ(SSL_SIGN_RSA_PSS_RSAE_SHA384, sigalg);
 
-  absl::optional<bool> ech = response.FindBoolByDottedPath(
+  std::optional<bool> ech = response.FindBoolByDottedPath(
       "response.securityDetails.encryptedClientHello");
   EXPECT_EQ(false, ech);
 
@@ -3546,13 +3651,15 @@ IN_PROC_BROWSER_TEST_F(NetworkResponseProtocolTest, SecurityDetails) {
   ASSERT_EQ(1u, sans->GetList().size());
   EXPECT_EQ(base::Value("127.0.0.1"), sans->GetList()[0]);
 
-  absl::optional<double> valid_from =
+  std::optional<double> valid_from =
       response.FindDoubleByDottedPath("response.securityDetails.validFrom");
-  EXPECT_EQ(server.GetCertificate()->valid_start().ToDoubleT(), valid_from);
+  EXPECT_EQ(server.GetCertificate()->valid_start().InSecondsFSinceUnixEpoch(),
+            valid_from);
 
-  absl::optional<double> valid_to =
+  std::optional<double> valid_to =
       response.FindDoubleByDottedPath("response.securityDetails.validTo");
-  EXPECT_EQ(server.GetCertificate()->valid_expiry().ToDoubleT(), valid_to);
+  EXPECT_EQ(server.GetCertificate()->valid_expiry().InSecondsFSinceUnixEpoch(),
+            valid_to);
 }
 
 // Test SecurityDetails, but with a TLS 1.3 cipher suite, which should not
@@ -3604,11 +3711,11 @@ IN_PROC_BROWSER_TEST_F(NetworkResponseProtocolTest, SecurityDetailsTLS13) {
   ASSERT_TRUE(group);
   EXPECT_EQ("X25519", *group);
 
-  absl::optional<int> sigalg = response.FindIntByDottedPath(
+  std::optional<int> sigalg = response.FindIntByDottedPath(
       "response.securityDetails.serverSignatureAlgorithm");
   EXPECT_EQ(SSL_SIGN_RSA_PSS_RSAE_SHA384, sigalg);
 
-  absl::optional<bool> ech = response.FindBoolByDottedPath(
+  std::optional<bool> ech = response.FindBoolByDottedPath(
       "response.securityDetails.encryptedClientHello");
   EXPECT_EQ(false, ech);
 }
@@ -3701,8 +3808,7 @@ class NetworkResponseProtocolECHTest : public NetworkResponseProtocolTest {
       : ech_server_{net::EmbeddedTestServer::TYPE_HTTPS} {
     scoped_feature_list_.InitWithFeaturesAndParameters(
         /*enabled_features=*/
-        {{net::features::kEncryptedClientHello, {}},
-         {net::features::kUseDnsHttpsSvcb,
+        {{net::features::kUseDnsHttpsSvcb,
           {{"UseDnsHttpsSvcbEnforceSecureResponse", "true"}}}},
         /*disabled_features=*/{});
   }
@@ -3736,7 +3842,7 @@ class NetworkResponseProtocolECHTest : public NetworkResponseProtocolTest {
     host_resolver()->AddRule(kDohServerHostname, "127.0.0.1");
 
     // Configure the network service to use the test DoH server.
-    absl::optional<net::DnsOverHttpsConfig> doh_config =
+    std::optional<net::DnsOverHttpsConfig> doh_config =
         net::DnsOverHttpsConfig::FromString(doh_server_.GetTemplate());
     ASSERT_TRUE(doh_config.has_value());
     SetTestDohConfig(net::SecureDnsMode::kSecure,
@@ -3763,13 +3869,14 @@ IN_PROC_BROWSER_TEST_F(NetworkResponseProtocolECHTest, SecurityDetailsECH) {
   SendCommandAsync("Network.enable");
 
   base::Value::Dict response = FetchAndWaitForResponse(GetURL("/empty.html"));
-  absl::optional<bool> ech = response.FindBoolByDottedPath(
+  std::optional<bool> ech = response.FindBoolByDottedPath(
       "response.securityDetails.encryptedClientHello");
   EXPECT_EQ(true, ech);
 }
 
-IN_PROC_BROWSER_TEST_F(PrerenderDevToolsProtocolTest,
-                       ReportPrerenderDisallowedAPICancellationDetails) {
+IN_PROC_BROWSER_TEST_F(
+    PrerenderDevToolsProtocolTest,
+    PrerenderStatusUpdatedReportsFailureWithDisallowedMojoInterface) {
   base::HistogramTester histogram_tester;
   ASSERT_TRUE(embedded_test_server()->Start());
   const GURL kInitialUrl = GetUrl("/empty.html");
@@ -3782,8 +3889,7 @@ IN_PROC_BROWSER_TEST_F(PrerenderDevToolsProtocolTest,
   int host_id = AddPrerender(kPrerenderingUrl);
   auto* prerender_render_frame_host = GetPrerenderedMainFrameHost(host_id);
   Attach();
-  SendCommandSync("Page.enable");
-  SendCommandSync("Runtime.enable");
+  SendCommandSync("Preload.enable");
 
   // Executing `navigator.getGamepads()` to start binding the GamepadMonitor
   // interface, and this is expected to cause prerender cancellation because
@@ -3791,201 +3897,96 @@ IN_PROC_BROWSER_TEST_F(PrerenderDevToolsProtocolTest,
   ExecuteScriptAsyncWithoutUserGesture(prerender_render_frame_host,
                                        "navigator.getGamepads()");
 
-  base::Value::Dict result =
-      WaitForNotification("Page.prerenderAttemptCompleted", true);
+  base::Value::Dict result;
+  while (true) {
+    result = WaitForNotification("Preload.prerenderStatusUpdated", true);
+    if (*result.FindString("status") == "Failure") {
+      break;
+    }
+  }
 
-  // Verify Mojo capability control cancels prerendering.
-  EXPECT_FALSE(HasHostForUrl(kPrerenderingUrl));
-  EXPECT_THAT(*result.FindString("disallowedApiMethod"),
+  EXPECT_THAT(*result.FindString("disallowedMojoInterface"),
               Eq("device.mojom.GamepadMonitor"));
+}
 
-  histogram_tester.ExpectUniqueSample(
-      "Prerender.Experimental.PrerenderHostFinalStatus.SpeculationRule",
-      PrerenderFinalStatus::kMojoBinderPolicy, 1);
+IN_PROC_BROWSER_TEST_F(
+    PrerenderDevToolsProtocolTest,
+    PrerenderStatusUpdatedReportsFailureWithPrerenderMismatchedHeaders) {
+  const std::string user_agent_override = "foo";
+  ASSERT_TRUE(embedded_test_server()->Start());
+  // Navigate to an initial page.
+  const GURL initial_url = GetUrl("/empty.html");
+  ASSERT_TRUE(NavigateToURL(shell(), initial_url));
+
+  // Enable user agent override for future navigations.
+  UserAgentInjector injector(shell()->web_contents(), user_agent_override);
+
+  const GURL prerendering_url = GetUrl("/empty.html?prerender");
+
+  // Start prerendering.
+  const int host_id = AddPrerender(prerendering_url);
+
+  Attach();
+  SendCommandSync("Preload.enable");
+
+  RenderFrameHostImpl* prerender_rfh =
+      static_cast<RenderFrameHostImpl*>(GetPrerenderedMainFrameHost(host_id));
+  EXPECT_EQ(user_agent_override, EvalJs(prerender_rfh, "navigator.userAgent"));
+
+  // Stop overriding user agent from now on.
+  injector.set_is_overriding_user_agent(false);
+
+  // Activate the prerendered page.
+  test::PrerenderHostObserver host_observer(*web_contents(), host_id);
+  NavigatePrimaryPage(prerendering_url);
+  host_observer.WaitForDestroyed();
+
+  base::Value::Dict result;
+  while (true) {
+    result = WaitForNotification("Preload.prerenderStatusUpdated", true);
+    if (*result.FindString("status") == "Failure") {
+      break;
+    }
+  }
+  EXPECT_TRUE(result.Find("mismatchedHeaders"));
 }
 
 IN_PROC_BROWSER_TEST_F(PrerenderDevToolsProtocolTest,
-                       CheckReportedPrerenderFeatures) {
-  AttachToBrowserTarget();
-  base::Value::Dict paramsPrerenderHoldback;
-  paramsPrerenderHoldback.Set("featureState", "PrerenderHoldback");
-  const base::Value::Dict* result = SendCommand(
-      "SystemInfo.getFeatureState", std::move(paramsPrerenderHoldback));
-  EXPECT_THAT(result->FindBool("featureEnabled"), false);
-
-  base::Value::Dict paramsPreloadingHolback;
-  paramsPreloadingHolback.Set("featureState", "PreloadingHoldback");
-  result = SendCommand("SystemInfo.getFeatureState",
-                       std::move(paramsPreloadingHolback));
-  EXPECT_THAT(result->FindBool("featureEnabled"), false);
-}
-
-IN_PROC_BROWSER_TEST_F(PrerenderHoldbackDevToolsProtocolTest,
-                       CheckReportedPrerenderFeatures) {
-  AttachToBrowserTarget();
-  base::Value::Dict params;
-  params.Set("featureState", "PrerenderHoldback");
-  const base::Value::Dict* result =
-      SendCommand("SystemInfo.getFeatureState", std::move(params));
-  EXPECT_THAT(result->FindBool("featureEnabled"), true);
-}
-
-IN_PROC_BROWSER_TEST_F(PreloadingHoldbackDevToolsProtocolTest,
-                       CheckReportedPreloadingFeatures) {
-  AttachToBrowserTarget();
-  base::Value::Dict params;
-  params.Set("featureState", "PreloadingHoldback");
-  const base::Value::Dict* result =
-      SendCommand("SystemInfo.getFeatureState", std::move(params));
-  EXPECT_THAT(result->FindBool("featureEnabled"), true);
-}
-
-IN_PROC_BROWSER_TEST_F(PrerenderDevToolsProtocolTest,
-                       RemoveStoredPrerenderActivationIfNavigateAway) {
-  base::HistogramTester histogram_tester;
+                       RenderFrameDevToolsAgentHostCacheEvictionCrash) {
   ASSERT_TRUE(embedded_test_server()->Start());
   const GURL kInitialUrl = GetUrl("/empty.html");
   const GURL kPrerenderingUrl = GetUrl("/empty.html?prerender");
   WebContentsImpl* web_contents_impl =
       static_cast<WebContentsImpl*>(web_contents());
 
-  // Navigate to an initial page.
   ASSERT_TRUE(NavigateToURL(shell(), kInitialUrl));
 
-  // Make a prerendered page.
-  AddPrerender(kPrerenderingUrl);
+  // Attaching a session via a "tab" target is required to opt-in into
+  // FTN swapping mode during prerender activation.
+  AttachToTabTarget(web_contents_impl);
+  base::Value::Dict command_params;
+  command_params.Set("autoAttach", true);
+  command_params.Set("waitForDebuggerOnStart", false);
+  command_params.Set("flatten", true);
+  SendCommandSync("Target.setAutoAttach", std::move(command_params));
 
-  Attach();
-  SendCommandSync("Page.enable");
-  SendCommandSync("Runtime.enable");
+  // Stash current RFDTAH for WebContents that is about to be retained
+  // by BFCache after prerender navigation and flushed later.
+  auto old_host = DevToolsAgentHost::GetOrCreateFor(web_contents_impl);
+  RenderFrameDeletedObserver delete_observer(
+      web_contents_impl->GetPrimaryMainFrame());
+
+  // Activating a prerender should cause FTN swapping on the RFH and put
+  // the old one into the BFCache with frame_tree_node_ == nullptr.
+  AddPrerender(kPrerenderingUrl);
   NavigatePrimaryPage(kPrerenderingUrl);
 
-  WaitForNotification("Page.prerenderAttemptCompleted", true);
+  EXPECT_FALSE(delete_observer.deleted());
+  web_contents_impl->GetController().GetBackForwardCache().Flush();
+  delete_observer.WaitUntilDeleted();
 
-  // Navigate away from the prerendered page, and this should trigger the
-  // mechanism of removing the stored prerender activation.
-  ASSERT_TRUE(NavigateToURL(shell(), kInitialUrl));
-  ASSERT_FALSE(web_contents_impl
-                   ->last_navigation_was_prerender_activation_for_devtools());
-}
-
-IN_PROC_BROWSER_TEST_F(PrerenderDevToolsProtocolTest,
-                       NewPrerenderActivationOverrideTheOldOne) {
-  base::HistogramTester histogram_tester;
-  ASSERT_TRUE(embedded_test_server()->Start());
-  const GURL kInitialUrl = GetUrl("/empty.html");
-  const GURL kPrerenderingUrl = GetUrl("/empty.html?prerender");
-  const GURL kPrerenderingUrl2 = GetUrl("/title1.html?prerender2");
-  WebContentsImpl* web_contents_impl =
-      static_cast<WebContentsImpl*>(web_contents());
-
-  // Navigate to an initial page.
-  ASSERT_TRUE(NavigateToURL(shell(), kInitialUrl));
-
-  // Make a prerendered page.
-  AddPrerender(kPrerenderingUrl);
-
-  Attach();
-  SendCommandSync("Page.enable");
-  SendCommandSync("Runtime.enable");
-  NavigatePrimaryPage(kPrerenderingUrl);
-
-  WaitForNotification("Page.prerenderAttemptCompleted", true);
-
-  // Trigger another prerender activation.
-  AddPrerender(kPrerenderingUrl2);
-  NavigatePrimaryPage(kPrerenderingUrl2);
-  ASSERT_TRUE(web_contents_impl
-                  ->last_navigation_was_prerender_activation_for_devtools());
-}
-
-IN_PROC_BROWSER_TEST_F(MultiplePrerendersDevToolsProtocolTest,
-                       PrerenderActivation) {
-  ASSERT_TRUE(embedded_test_server()->Start());
-  const GURL kInitialUrl = GetUrl("/empty.html");
-  const GURL kPrerenderingUrl = GetUrl("/empty.html?prerender1");
-  const GURL kPrerenderingUrl2 = GetUrl("/title1.html?prerender2");
-
-  // Navigate to an initial page.
-  ASSERT_TRUE(NavigateToURL(shell(), kInitialUrl));
-
-  AddPrerender(kPrerenderingUrl);
-  AddPrerender(kPrerenderingUrl2);
-
-  EXPECT_TRUE(HasHostForUrl(kPrerenderingUrl));
-  EXPECT_TRUE(HasHostForUrl(kPrerenderingUrl2));
-
-  Attach();
-  SendCommandSync("Page.enable");
-  SendCommandSync("Runtime.enable");
-
-  // Ensure that prerenderAttemptCompleted can be fired properly with
-  // multiple speculation rules is enabled.
-  NavigatePrimaryPage(kPrerenderingUrl);
-  base::Value::Dict result =
-      WaitForNotification("Page.prerenderAttemptCompleted", true);
-  EXPECT_THAT(*result.FindString("finalStatus"), Eq("TriggerDestroyed"));
-
-  // TODO(crbug/1332386): Verifies that multiple activations can be received
-  // properly when crbug/1350676 is ready. kPrerenderingUrl2 should be canceled
-  // as navigating to kPrerenderingUrl2.
-  result = WaitForNotification("Page.prerenderAttemptCompleted", true);
-  EXPECT_THAT(*result.FindString("finalStatus"), Eq("Activated"));
-}
-
-IN_PROC_BROWSER_TEST_F(PrerenderHoldbackDevToolsProtocolTest,
-                       PrerenderActivation) {
-  ASSERT_TRUE(embedded_test_server()->Start());
-  const GURL kInitialUrl = GetUrl("/empty.html");
-  const GURL kPrerenderingUrl = GetUrl("/empty.html?prerender1");
-
-  // Navigate to an initial page.
-  ASSERT_TRUE(NavigateToURL(shell(), kInitialUrl));
-
-  Attach();
-  SendCommandSync("Page.enable");
-  SendCommandSync("Runtime.enable");
-
-  AddPrerender(kPrerenderingUrl);
-
-  EXPECT_TRUE(HasHostForUrl(kPrerenderingUrl));
-
-  NavigatePrimaryPage(kPrerenderingUrl);
-  base::Value::Dict result =
-      WaitForNotification("Page.prerenderAttemptCompleted", true);
-  EXPECT_THAT(*result.FindString("finalStatus"), Eq("Activated"));
-}
-
-IN_PROC_BROWSER_TEST_F(MultiplePrerendersDevToolsProtocolTest,
-                       MultiplePrerendersCancellation) {
-  ASSERT_TRUE(embedded_test_server()->Start());
-  const GURL kInitialUrl = GetUrl("/empty.html");
-  const GURL kPrerenderingUrl = GetUrl("/empty.html?prerender1");
-  const GURL kPrerenderingUrl2 = GetUrl("/title1.html?prerender2");
-  const GURL kNavigateAwayUrl = GetUrl("/empty.html?navigateway");
-
-  // Navigate to an initial page.
-  ASSERT_TRUE(NavigateToURL(shell(), kInitialUrl));
-
-  AddPrerender(kPrerenderingUrl);
-  AddPrerender(kPrerenderingUrl2);
-
-  EXPECT_TRUE(HasHostForUrl(kPrerenderingUrl));
-  EXPECT_TRUE(HasHostForUrl(kPrerenderingUrl2));
-
-  Attach();
-  SendCommandSync("Page.enable");
-  SendCommandSync("Runtime.enable");
-
-  ASSERT_TRUE(NavigateToURL(shell(), kNavigateAwayUrl));
-
-  // Both prerendered pages should receive prerenderAttemptCompleted for
-  // cancelation reasons.
-  base::Value::Dict result =
-      WaitForNotification("Page.prerenderAttemptCompleted", true);
-  EXPECT_THAT(*result.FindString("finalStatus"), Eq("TriggerDestroyed"));
-  result = WaitForNotification("Page.prerenderAttemptCompleted", true);
-  EXPECT_THAT(*result.FindString("finalStatus"), Eq("TriggerDestroyed"));
+  // Assure methods on disconnected host are safe to call.
+  EXPECT_THAT(old_host->GetTitle(), testing::Eq(""));
 }
 
 IN_PROC_BROWSER_TEST_F(DevToolsProtocolTest, ResponseAfterReload) {
@@ -4043,7 +4044,7 @@ class SharedStorageDevToolsProtocolTest : public DevToolsProtocolTest {
     ASSERT_TRUE(manager);
     base::test::TestFuture<storage::SharedStorageManager::OperationResult>
         future;
-    manager->MakeBudgetWithdrawal(url::Origin::Create(url), bits,
+    manager->MakeBudgetWithdrawal(net::SchemefulSite(url), bits,
                                   future.GetCallback());
     EXPECT_EQ(storage::SharedStorageManager::OperationResult::kSuccess,
               future.Get());

@@ -47,7 +47,6 @@
 #    (sorry about latter).
 # 6. Don't use [or hand-code with .byte] "rep ret." "ret" mnemonic is
 #    required to identify the spots, where to inject Win64 epilogue!
-#    But on the pros, it's then prefixed with rep automatically:-)
 # 7. Stick to explicit ip-relative addressing. If you have to use
 #    GOTPCREL addressing, stick to mov symbol@GOTPCREL(%rip),%r??.
 #    Both are recognized and translated to proper Win64 addressing
@@ -157,7 +156,7 @@ my %globals;
 		    $epilogue = "movq	8(%rsp),%rdi\n\t" .
 				"movq	16(%rsp),%rsi\n\t";
 		}
-	    	$epilogue . ".byte	0xf3,0xc3";
+	    	$epilogue . "ret";
 	    } elsif ($self->{op} eq "call" && !$elf && $current_segment eq ".init") {
 		".p2align\t3\n\t.quad";
 	    } else {
@@ -171,7 +170,7 @@ my %globals;
 		    $self->{op} = "mov	rdi,QWORD$PTR\[8+rsp\]\t;WIN64 epilogue\n\t".
 				  "mov	rsi,QWORD$PTR\[16+rsp\]\n\t";
 	    	}
-		$self->{op} .= "DB\t0F3h,0C3h\t\t;repret";
+		$self->{op} .= "ret";
 	    } elsif ($self->{op} =~ /^(pop|push)f/) {
 		$self->{op} .= $self->{sz};
 	    } elsif ($self->{op} eq "call" && $current_segment eq ".CRT\$XCU") {
@@ -1029,6 +1028,27 @@ ____
     }
 }
 { package directive;	# pick up directives, which start with .
+    my %sections;
+    sub nasm_section {
+	my ($name, $qualifiers) = @_;
+	my $ret = "section\t$name";
+	if (exists $sections{$name}) {
+	    # Work around https://bugzilla.nasm.us/show_bug.cgi?id=3392701. Only
+	    # emit section qualifiers the first time a section is referenced.
+	    # For all subsequent references, require the qualifiers match and
+	    # omit them.
+	    #
+	    # See also https://crbug.com/1422018 and b/270643835.
+	    my $old = $sections{$name};
+	    die "Inconsistent qualifiers: $qualifiers vs $old" if ($qualifiers ne "" && $qualifiers ne $old);
+	} else {
+	    $sections{$name} = $qualifiers;
+	    if ($qualifiers ne "") {
+		$ret .= " $qualifiers";
+	    }
+	}
+	return $ret;
+    }
     sub re {
 	my	($class, $line) = @_;
 	my	$self = {};
@@ -1107,6 +1127,9 @@ ____
 		    $self->{value} = ".p2align\t" . (log($$line)/log(2));
 		} elsif ($dir eq ".section") {
 		    $current_segment=$$line;
+		    if (!$elf && $current_segment eq ".rodata") {
+			if	($flavour eq "macosx") { $self->{value} = ".section\t__DATA,__const"; }
+		    }
 		    if (!$elf && $current_segment eq ".init") {
 			if	($flavour eq "macosx")	{ $self->{value} = ".mod_init_func"; }
 			elsif	($flavour eq "mingw64")	{ $self->{value} = ".section\t.ctors"; }
@@ -1134,7 +1157,7 @@ ____
 	    SWITCH: for ($dir) {
 		/\.text/    && do { my $v=undef;
 				    if ($nasm) {
-					$v="section	.text code align=64\n";
+					$v=nasm_section(".text", "code align=64")."\n";
 				    } else {
 					$v="$current_segment\tENDS\n" if ($current_segment);
 					$current_segment = ".text\$";
@@ -1147,7 +1170,7 @@ ____
 				  };
 		/\.data/    && do { my $v=undef;
 				    if ($nasm) {
-					$v="section	.data data align=8\n";
+					$v=nasm_section(".data", "data align=8")."\n";
 				    } else {
 					$v="$current_segment\tENDS\n" if ($current_segment);
 					$current_segment = "_DATA";
@@ -1159,18 +1182,20 @@ ____
 		/\.section/ && do { my $v=undef;
 				    $$line =~ s/([^,]*).*/$1/;
 				    $$line = ".CRT\$XCU" if ($$line eq ".init");
+				    $$line = ".rdata" if ($$line eq ".rodata");
 				    if ($nasm) {
-					$v="section	$$line";
-					if ($$line=~/\.([px])data/) {
-					    $v.=" rdata align=";
-					    $v.=$1 eq "p"? 4 : 8;
+					my $qualifiers = "";
+					if ($$line=~/\.([prx])data/) {
+					    $qualifiers = "rdata align=";
+					    $qualifiers .= $1 eq "p"? 4 : 8;
 					} elsif ($$line=~/\.CRT\$/i) {
-					    $v.=" rdata align=8";
+					    $qualifiers = "rdata align=8";
 					}
+					$v = nasm_section($$line, $qualifiers);
 				    } else {
 					$v="$current_segment\tENDS\n" if ($current_segment);
 					$v.="$$line\tSEGMENT";
-					if ($$line=~/\.([px])data/) {
+					if ($$line=~/\.([prx])data/) {
 					    $v.=" READONLY";
 					    $v.=" ALIGN(".($1 eq "p" ? 4 : 8).")" if ($masm>=$masmref);
 					} elsif ($$line=~/\.CRT\$/i) {
@@ -1473,6 +1498,7 @@ default	rel
 \%define XMMWORD
 \%define YMMWORD
 \%define ZMMWORD
+\%define _CET_ENDBR
 
 \%ifdef BORINGSSL_PREFIX
 \%include "boringssl_prefix_symbols_nasm.inc"
@@ -1496,16 +1522,9 @@ if ($gas) {
         die "unknown target: $flavour";
     }
     print <<___;
-#if defined(__has_feature)
-#if __has_feature(memory_sanitizer) && !defined(OPENSSL_NO_ASM)
-#define OPENSSL_NO_ASM
-#endif
-#endif
+#include <openssl/asm_base.h>
 
-#if defined(__x86_64__) && !defined(OPENSSL_NO_ASM) && $target
-#if defined(BORINGSSL_PREFIX)
-#include <boringssl_prefix_symbols_asm.h>
-#endif
+#if !defined(OPENSSL_NO_ASM) && defined(OPENSSL_X86_64) && $target
 ___
 }
 
@@ -1601,13 +1620,7 @@ print "\n$current_segment\tENDS\n"	if ($current_segment && $masm);
 if ($masm) {
     print "END\n";
 } elsif ($gas) {
-    print <<___;
-#endif
-#if defined(__ELF__)
-// See https://www.airs.com/blog/archives/518.
-.section .note.GNU-stack,"",\%progbits
-#endif
-___
+    print "#endif\n";
 } elsif ($nasm) {
     print <<___;
 \%else

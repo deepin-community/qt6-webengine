@@ -17,6 +17,7 @@
 #include "components/signin/public/base/signin_buildflags.h"
 #include "components/signin/public/base/signin_client.h"
 #include "components/signin/public/base/signin_switches.h"
+#include "components/signin/public/identity_manager/account_info.h"
 #include "components/signin/public/identity_manager/accounts_cookie_mutator.h"
 #include "components/signin/public/identity_manager/accounts_in_cookie_jar_info.h"
 #include "components/signin/public/identity_manager/accounts_mutator.h"
@@ -114,23 +115,23 @@ IdentityManager::IdentityManager(IdentityManager::InitParameters&& parameters)
           std::move(parameters.gaia_cookie_manager_service)),
       primary_account_manager_(std::move(parameters.primary_account_manager)),
       account_fetcher_service_(std::move(parameters.account_fetcher_service)),
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
       signin_client_(parameters.signin_client),
-#endif
 #if BUILDFLAG(IS_CHROMEOS)
       account_manager_facade_(parameters.account_manager_facade),
 #endif
-      identity_mutator_(std::move(parameters.primary_account_mutator),
-                        std::move(parameters.accounts_mutator),
-                        std::move(parameters.accounts_cookie_mutator),
-                        std::move(parameters.device_accounts_synchronizer)),
+      identity_mutator_(std::make_unique<IdentityMutator>(
+          std::move(parameters.primary_account_mutator),
+          std::move(parameters.accounts_mutator),
+          std::move(parameters.accounts_cookie_mutator),
+          std::move(parameters.device_accounts_synchronizer))),
       diagnostics_provider_(std::move(parameters.diagnostics_provider)),
-      account_consistency_(parameters.account_consistency) {
-
+      account_consistency_(parameters.account_consistency),
+      should_verify_scope_access_(parameters.should_verify_scope_access) {
 #if !defined(TOOLKIT_QT)
   DCHECK(account_fetcher_service_);
 #endif
   DCHECK(diagnostics_provider_);
+  DCHECK(signin_client_);
 
   primary_account_manager_observation_.Observe(primary_account_manager_.get());
   token_service_observation_.Observe(token_service_.get());
@@ -201,6 +202,8 @@ void IdentityManager::Shutdown() {
   token_service_observation_.Reset();
   primary_account_manager_observation_.Reset();
 
+  diagnostics_provider_.reset();
+  identity_mutator_.reset();
   account_fetcher_service_.reset();
   gaia_cookie_manager_service_.reset();
   primary_account_manager_.reset();
@@ -239,7 +242,8 @@ IdentityManager::CreateAccessTokenFetcherForAccount(
     AccessTokenFetcher::Mode mode) {
   return std::make_unique<AccessTokenFetcher>(
       account_id, oauth_consumer_name, token_service_.get(),
-      primary_account_manager_.get(), scopes, std::move(callback), mode);
+      primary_account_manager_.get(), scopes, std::move(callback), mode,
+      should_verify_scope_access_);
 }
 
 std::unique_ptr<AccessTokenFetcher>
@@ -253,7 +257,7 @@ IdentityManager::CreateAccessTokenFetcherForAccount(
   return std::make_unique<AccessTokenFetcher>(
       account_id, oauth_consumer_name, token_service_.get(),
       primary_account_manager_.get(), url_loader_factory, scopes,
-      std::move(callback), mode);
+      std::move(callback), mode, should_verify_scope_access_);
 }
 
 void IdentityManager::RemoveAccessTokenFromCache(
@@ -365,19 +369,19 @@ AccountsInCookieJarInfo IdentityManager::GetAccountsInCookieJar() const {
 }
 
 PrimaryAccountMutator* IdentityManager::GetPrimaryAccountMutator() {
-  return identity_mutator_.GetPrimaryAccountMutator();
+  return identity_mutator_->GetPrimaryAccountMutator();
 }
 
 AccountsMutator* IdentityManager::GetAccountsMutator() {
-  return identity_mutator_.GetAccountsMutator();
+  return identity_mutator_->GetAccountsMutator();
 }
 
 AccountsCookieMutator* IdentityManager::GetAccountsCookieMutator() {
-  return identity_mutator_.GetAccountsCookieMutator();
+  return identity_mutator_->GetAccountsCookieMutator();
 }
 
 DeviceAccountsSynchronizer* IdentityManager::GetDeviceAccountsSynchronizer() {
-  return identity_mutator_.GetDeviceAccountsSynchronizer();
+  return identity_mutator_->GetDeviceAccountsSynchronizer();
 }
 
 void IdentityManager::AddDiagnosticsObserver(DiagnosticsObserver* observer) {
@@ -396,14 +400,6 @@ void IdentityManager::OnNetworkInitialized() {
   DCHECK(false);  // we should never call network initialized
 #endif
 }
-
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-IdentityManager::AccountIdMigrationState
-IdentityManager::GetAccountIdMigrationState() const {
-  return static_cast<IdentityManager::AccountIdMigrationState>(
-      account_tracker_service_->GetMigrationState());
-}
-#endif
 
 CoreAccountId IdentityManager::PickAccountIdForAccount(
     const std::string& gaia,
@@ -443,7 +439,7 @@ base::android::ScopedJavaLocalRef<jobject> IdentityManager::GetJavaObject() {
 base::android::ScopedJavaLocalRef<jobject>
 IdentityManager::GetIdentityMutatorJavaObject() {
   return base::android::ScopedJavaLocalRef<jobject>(
-      identity_mutator_.GetJavaObject());
+      identity_mutator_->GetJavaObject());
 }
 
 void IdentityManager::RefreshAccountInfoIfStale(
@@ -460,8 +456,15 @@ void IdentityManager::RefreshAccountInfoIfStale(
 void IdentityManager::RefreshAccountInfoIfStale(
     JNIEnv* env,
     const base::android::JavaParamRef<jobject>& j_core_account_id) {
-  RefreshAccountInfoIfStale(
-      ConvertFromJavaCoreAccountId(env, j_core_account_id));
+  if (j_core_account_id) {
+    RefreshAccountInfoIfStale(
+        ConvertFromJavaCoreAccountId(env, j_core_account_id));
+  } else {
+    std::vector<CoreAccountInfo> accounts = GetAccountsWithRefreshTokens();
+    for (const CoreAccountInfo& account : accounts) {
+      RefreshAccountInfoIfStale(account.account_id);
+    }
+  }
 }
 
 base::android::ScopedJavaLocalRef<jobject>
@@ -502,6 +505,11 @@ IdentityManager::GetAccountsWithRefreshTokens(JNIEnv* env) const {
     env->SetObjectArrayElement(array.obj(), i, item.obj());
   }
   return array;
+}
+
+jboolean IdentityManager::IsClearPrimaryAccountAllowed(JNIEnv* env) const {
+  return signin_client_->IsClearPrimaryAccountAllowed(
+      HasPrimaryAccount(signin::ConsentLevel::kSync));
 }
 #endif
 

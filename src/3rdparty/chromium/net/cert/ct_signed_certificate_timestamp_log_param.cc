@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <memory>
+#include <string_view>
 #include <utility>
 
 #include "base/base64.h"
@@ -21,10 +22,9 @@ namespace {
 // Base64 encode the given |value| string and put it in |dict| with the
 // description |key|.
 void SetBinaryData(const char* key,
-                   base::StringPiece value,
+                   std::string_view value,
                    base::Value::Dict& dict) {
-  std::string b64_value;
-  base::Base64Encode(value, &b64_value);
+  std::string b64_value = base::Base64Encode(value);
 
   dict.Set(key, b64_value);
 }
@@ -71,26 +71,26 @@ base::Value::List SCTListToPrintableValues(
 
 }  // namespace
 
-base::Value NetLogSignedCertificateTimestampParams(
+base::Value::Dict NetLogSignedCertificateTimestampParams(
     const SignedCertificateTimestampAndStatusList* scts) {
   base::Value::Dict dict;
 
   dict.Set("scts", SCTListToPrintableValues(*scts));
 
-  return base::Value(std::move(dict));
+  return dict;
 }
 
-base::Value NetLogRawSignedCertificateTimestampParams(
-    base::StringPiece embedded_scts,
-    base::StringPiece sct_list_from_ocsp,
-    base::StringPiece sct_list_from_tls_extension) {
+base::Value::Dict NetLogRawSignedCertificateTimestampParams(
+    std::string_view embedded_scts,
+    std::string_view sct_list_from_ocsp,
+    std::string_view sct_list_from_tls_extension) {
   base::Value::Dict dict;
 
   SetBinaryData("embedded_scts", embedded_scts, dict);
   SetBinaryData("scts_from_ocsp_response", sct_list_from_ocsp, dict);
   SetBinaryData("scts_from_tls_extension", sct_list_from_tls_extension, dict);
 
-  return base::Value(std::move(dict));
+  return dict;
 }
 
 }  // namespace net

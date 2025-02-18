@@ -9,6 +9,7 @@
 #include <sstream>
 
 #include "base/files/safe_base_name.h"
+#include "base/strings/utf_ostream_operators.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "build/buildflag.h"
@@ -91,6 +92,11 @@ TEST_F(FilePathTest, DirName) {
     {FPL("//aa/bb"), FPL("//aa")},
     {FPL("//aa/"), FPL("//")},
     {FPL("//aa"), FPL("//")},
+#if BUILDFLAG(IS_POSIX)
+    {FPL("///aa/"), FPL("/")},
+    {FPL("///aa"), FPL("/")},
+    {FPL("///"), FPL("/")},
+#endif  // BUILDFLAG(IS_POSIX)
     {FPL("0:"), FPL(".")},
     {FPL("@:"), FPL(".")},
     {FPL("[:"), FPL(".")},
@@ -482,6 +488,9 @@ TEST_F(FilePathTest, PathComponentsTest) {
   const struct UnaryTestData cases[] = {
     { FPL("//foo/bar/baz/"),          FPL("|//|foo|bar|baz")},
     { FPL("///"),                     FPL("|/")},
+#if BUILDFLAG(IS_POSIX)
+    {FPL("///foo//bar/baz"),          FPL("|/|foo|bar|baz")},
+#endif  // BUILDFLAG(IS_POSIX)
     { FPL("/foo//bar//baz/"),         FPL("|/|foo|bar|baz")},
     { FPL("/foo/bar/baz/"),           FPL("|/|foo|bar|baz")},
     { FPL("/foo/bar/baz//"),          FPL("|/|foo|bar|baz")},

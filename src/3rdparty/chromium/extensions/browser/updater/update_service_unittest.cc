@@ -5,15 +5,17 @@
 #include <stddef.h>
 
 #include <memory>
+#include <optional>
+#include <string>
 #include <utility>
 #include <vector>
-
 #include "base/containers/contains.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
+#include "base/notreached.h"
 #include "base/run_loop.h"
 #include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
@@ -40,10 +42,8 @@
 #include "extensions/common/extension_features.h"
 #include "extensions/common/extension_urls.h"
 #include "extensions/common/manifest_url_handlers.h"
-#include "extensions/common/value_builder.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace {
 
@@ -58,7 +58,7 @@ class FakeUpdateClient : public update_client::UpdateClient {
 
   // Returns the data we've gotten from the CrxDataCallback for ids passed to
   // the Update function.
-  std::vector<absl::optional<update_client::CrxComponent>>* data() {
+  std::vector<std::optional<update_client::CrxComponent>>* data() {
     return &data_;
   }
 
@@ -85,7 +85,9 @@ class FakeUpdateClient : public update_client::UpdateClient {
     if (observer)
       observers_.push_back(observer);
   }
+
   void RemoveObserver(Observer* observer) override {}
+
   base::RepeatingClosure Install(
       const std::string& id,
       CrxDataCallback crx_data_callback,
@@ -93,11 +95,21 @@ class FakeUpdateClient : public update_client::UpdateClient {
       update_client::Callback callback) override {
     return base::DoNothing();
   }
+
   void Update(const std::vector<std::string>& ids,
               CrxDataCallback crx_data_callback,
               CrxStateChangeCallback crx_state_change_callback,
               bool is_foreground,
               update_client::Callback callback) override;
+
+  void CheckForUpdate(const std::string& id,
+                      CrxDataCallback crx_data_callback,
+                      CrxStateChangeCallback crx_state_change_callback,
+                      bool is_foreground,
+                      update_client::Callback callback) override {
+    NOTREACHED();
+  }
+
   bool GetCrxUpdateState(
       const std::string& id,
       update_client::CrxUpdateItem* update_item) const override {
@@ -114,14 +126,23 @@ class FakeUpdateClient : public update_client::UpdateClient {
       update_item->custom_updatecheck_data = custom_attributes;
     return true;
   }
+
   bool IsUpdating(const std::string& id) const override { return false; }
+
   void Stop() override {}
+
   void SendUninstallPing(const update_client::CrxComponent& crx_component,
                          int reason,
                          update_client::Callback callback) override {
     uninstall_pings_.emplace_back(crx_component.app_id, crx_component.version,
                                   reason);
   }
+
+  void SendInstallPing(const update_client::CrxComponent& crx_component,
+                       bool success,
+                       int error_code,
+                       int extra_code1,
+                       update_client::Callback callback) override {}
 
   void set_delay_update() { delay_update_ = true; }
 
@@ -134,6 +155,7 @@ class FakeUpdateClient : public update_client::UpdateClient {
   bool delay_update() const { return delay_update_; }
 
   UpdateRequest& update_request(int index) { return delayed_requests_[index]; }
+
   int num_update_requests() const {
     return static_cast<int>(delayed_requests_.size());
   }
@@ -197,24 +219,29 @@ class FakeUpdateClient : public update_client::UpdateClient {
     Finish(request);
   }
 
-  std::vector<absl::optional<update_client::CrxComponent>> data_;
+  std::vector<std::optional<update_client::CrxComponent>> data_;
   std::vector<UninstallPing> uninstall_pings_;
-  std::vector<Observer*> observers_;
+  std::vector<raw_ptr<Observer, VectorExperimental>> observers_;
 
-  bool delay_update_;
+  bool delay_update_ = false;
   bool is_malware_update_item_ = false;
   extensions::AllowlistState allowlist_state = extensions::ALLOWLIST_UNDEFINED;
   std::vector<UpdateRequest> delayed_requests_;
 };
 
-FakeUpdateClient::FakeUpdateClient() : delay_update_(false) {}
+FakeUpdateClient::FakeUpdateClient() = default;
 
 void FakeUpdateClient::Update(const std::vector<std::string>& ids,
                               CrxDataCallback crx_data_callback,
                               CrxStateChangeCallback crx_state_change_callback,
                               bool is_foreground,
                               update_client::Callback callback) {
-  data_ = std::move(crx_data_callback).Run(ids);
+  std::move(crx_data_callback)
+      .Run(
+          ids,
+          base::BindLambdaForTesting(
+              [&](const std::vector<std::optional<update_client::CrxComponent>>&
+                      output) { data_ = output; }));
 
   UpdateRequest request{ids, crx_state_change_callback, std::move(callback)};
 
@@ -278,21 +305,19 @@ class FakeExtensionSystem : public MockExtensionSystem {
                      bool install_immediately,
                      InstallUpdateCallback install_update_callback) override {
     base::DeletePathRecursively(temp_dir);
-    install_requests_.push_back(
-        InstallUpdateRequest(extension_id, temp_dir, install_immediately));
+    install_requests_.emplace_back(extension_id, temp_dir, install_immediately);
     if (!next_install_callback_.is_null()) {
       std::move(next_install_callback_).Run();
     }
-    std::move(install_update_callback).Run(absl::nullopt);
+    std::move(install_update_callback).Run(std::nullopt);
   }
 
   void PerformActionBasedOnOmahaAttributes(
       const std::string& extension_id,
-      const base::Value& attributes_value) override {
+      const base::Value::Dict& attributes) override {
     ExtensionRegistry* registry = ExtensionRegistry::Get(browser_context());
     scoped_refptr<const Extension> extension =
         ExtensionBuilder("1").SetVersion("1.2").SetID(extension_id).Build();
-    const base::Value::Dict& attributes = attributes_value.GetDict();
     const bool is_malware = attributes.FindBool("_malware").value_or(false);
     if (is_malware) {
       registry->AddDisabled(extension);
@@ -300,7 +325,7 @@ class FakeExtensionSystem : public MockExtensionSystem {
       registry->AddEnabled(extension);
     }
 
-    const absl::optional<bool> maybe_allowlisted =
+    const std::optional<bool> maybe_allowlisted =
         attributes.FindBool("_esbAllowlist");
     if (maybe_allowlisted) {
       extension_allowlist_states_[extension_id] =
@@ -360,10 +385,8 @@ class UpdateServiceTest : public ExtensionsTest {
                           const base::FilePath& relative_path,
                           const std::string& content) {
     base::FilePath full_path = directory.Append(relative_path);
-    if (!CreateDirectory(full_path.DirName()))
-      return false;
-    int result = base::WriteFile(full_path, content.data(), content.size());
-    return (static_cast<size_t>(result) == content.size());
+    return base::CreateDirectory(full_path.DirName()) &&
+           base::WriteFile(full_path, content);
   }
 
   FakeExtensionSystem* extension_system() {
@@ -480,7 +503,7 @@ class UpdateServiceTest : public ExtensionsTest {
   }
 
  private:
-  raw_ptr<UpdateService> update_service_ = nullptr;
+  raw_ptr<UpdateService, DanglingUntriaged> update_service_ = nullptr;
   scoped_refptr<FakeUpdateClient> update_client_;
   MockExtensionSystemFactory<FakeExtensionSystem>
       fake_extension_system_factory_;

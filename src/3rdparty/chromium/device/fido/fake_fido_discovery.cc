@@ -74,9 +74,16 @@ FakeFidoDiscovery* FakeFidoDiscoveryFactory::ForgeNextCableDiscovery(
 
 FakeFidoDiscovery* FakeFidoDiscoveryFactory::ForgeNextPlatformDiscovery(
     FakeFidoDiscovery::StartMode mode) {
-  next_platform_discovery_ = std::make_unique<FakeFidoDiscovery>(
-      FidoTransportProtocol::kInternal, mode);
-  return next_platform_discovery_.get();
+  next_platform_discovery_list_.emplace_back(
+      std::make_unique<FakeFidoDiscovery>(FidoTransportProtocol::kInternal,
+                                          mode));
+  return reinterpret_cast<FakeFidoDiscovery*>(
+      next_platform_discovery_list_.back().get());
+}
+
+void FakeFidoDiscoveryFactory::set_discover_win_webauthn_api_authenticator(
+    bool on) {
+  discover_win_webauthn_api_authenticator_ = on;
 }
 
 std::vector<std::unique_ptr<FidoDiscoveryBase>>
@@ -92,11 +99,22 @@ FakeFidoDiscoveryFactory::Create(FidoTransportProtocol transport) {
     case FidoTransportProtocol::kHybrid:
       return SingleDiscovery(std::move(next_cable_discovery_));
     case FidoTransportProtocol::kInternal:
-      return SingleDiscovery(std::move(next_platform_discovery_));
+      return std::move(next_platform_discovery_list_);
   }
   NOTREACHED();
   return {};
 }
+
+#if BUILDFLAG(IS_WIN)
+std::unique_ptr<device::FidoDiscoveryBase>
+FakeFidoDiscoveryFactory::MaybeCreateWinWebAuthnApiDiscovery() {
+  if (!discover_win_webauthn_api_authenticator_) {
+    return nullptr;
+  }
+
+  return FidoDiscoveryFactory::MaybeCreateWinWebAuthnApiDiscovery();
+}
+#endif
 
 }  // namespace test
 

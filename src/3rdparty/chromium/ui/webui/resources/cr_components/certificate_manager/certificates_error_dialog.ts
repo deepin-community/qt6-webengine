@@ -44,12 +44,7 @@ class CertificatesErrorDialogElement extends
 
   model: CertificatesError|CertificatesImportError;
 
-  override connectedCallback() {
-    super.connectedCallback();
-    this.$.dialog.showModal();
-  }
-
-  private onOkTap_() {
+  private onOkClick_() {
     this.$.dialog.close();
   }
 

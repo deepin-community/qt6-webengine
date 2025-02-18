@@ -115,12 +115,8 @@ const char kOtherAdUrl[] = "https://other-ads.com/ad/disallowed.html";
 const char kNonAdUrl[] = "https://foo.com/";
 const char kNonAdUrlSameOrigin[] = "https://ads.com/foo";
 const char kAllowedUrl[] = "https://foo.com/ad/not_disallowed.html";
-const char kMemoryAggregateMaxHistogramId[] =
-    "PageLoad.Clients.Ads.Memory.Aggregate.Max";
 const char kMemoryMainFrameMaxHistogramId[] =
     "PageLoad.Clients.Ads.Memory.MainFrame.Max";
-const char kMemoryPerFrameMaxHistogramId[] =
-    "PageLoad.Clients.Ads.Memory.PerFrame.Max";
 const char kMemoryUpdateCountHistogramId[] =
     "PageLoad.Clients.Ads.Memory.UpdateCount";
 
@@ -210,8 +206,8 @@ class ResourceLoadingCancellingThrottle
         std::vector<blink::UseCounterFeature>(), resources,
         mojom::FrameRenderDataUpdatePtr(absl::in_place),
         mojom::CpuTimingPtr(absl::in_place),
-        mojom::InputTimingPtr(absl::in_place),
-        mojom::SubresourceLoadMetricsPtr(absl::in_place), 0);
+        mojom::InputTimingPtr(absl::in_place), absl::nullopt,
+        mojom::SoftNavigationMetrics::New());
   }
 };
 
@@ -327,7 +323,7 @@ void TestHistograms(const base::HistogramTester& histograms,
     size_t cached_bytes = byte_count.first.cached_kb * 1024;
     size_t network_bytes = byte_count.first.uncached_kb * 1024;
     int matching_entries = 0;
-    for (auto const* entry : entries) {
+    for (const ukm::mojom::UkmEntry* entry : entries) {
       int64_t entry_cache_bytes = *ukm_recorder.GetEntryMetric(
           entry, ukm::builders::AdFrameLoad::kLoading_CacheBytes2Name);
       int64_t entry_network_bytes = *ukm_recorder.GetEntryMetric(
@@ -878,7 +874,8 @@ class AdsPageLoadMetricsObserverTest
   std::unique_ptr<base::SimpleTestTickClock> clock_;
 
   // A pointer to the AdsPageLoadMetricsObserver used by the tests.
-  raw_ptr<AdsPageLoadMetricsObserver> ads_observer_ = nullptr;
+  raw_ptr<AdsPageLoadMetricsObserver, AcrossTasksDanglingUntriaged>
+      ads_observer_ = nullptr;
 };
 
 INSTANTIATE_TEST_SUITE_P(All, AdsPageLoadMetricsObserverTest, testing::Bool());
@@ -1277,10 +1274,15 @@ TEST_P(AdsPageLoadMetricsObserverTest, MainFrameResource) {
   histogram_tester().ExpectUniqueSample(
       "PageLoad.Clients.Ads.AllPages.NonAdNetworkBytes", 10, 1);
 
-  // There are three FrameCounts.AdFrames.Total and two AllPages histograms
-  // recorded for each page load, one for each visibility type. There shouldn't
-  // be any other histograms for a page with no ad resources.
-  EXPECT_EQ(6u, histogram_tester()
+  // Verify that the average-viewport-ad-density was recorded as zero.
+  histogram_tester().ExpectUniqueSample(
+      "PageLoad.Clients.Ads.AverageViewportAdDensity", 0, 1);
+
+  // There are three FrameCounts.AdFrames.Total histograms (one for each
+  // visibility type), three AllPages histograms, and one
+  // AverageViewportAdDensity histogram recorded for each page load. There
+  // shouldn't be any other histograms for a page with no ad resources.
+  EXPECT_EQ(7u, histogram_tester()
                     .GetTotalCountsForPrefix("PageLoad.Clients.Ads.")
                     .size());
   EXPECT_EQ(0u, test_ukm_recorder()
@@ -1297,8 +1299,11 @@ TEST_P(AdsPageLoadMetricsObserverTest, NoBytesLoaded_NoHistogramsRecorded) {
 
   NavigateMainFrame(kNonAdUrl);
 
-  // Histograms should not be recorded for a page with no bytes.
-  EXPECT_EQ(0u, histogram_tester()
+  histogram_tester().ExpectUniqueSample(
+      "PageLoad.Clients.Ads.AverageViewportAdDensity", 0, 1);
+
+  // Other histograms should not be recorded for a page with no bytes.
+  EXPECT_EQ(1u, histogram_tester()
                     .GetTotalCountsForPrefix("PageLoad.Clients.Ads.")
                     .size());
   EXPECT_EQ(0u, test_ukm_recorder()
@@ -1730,6 +1735,9 @@ TEST_P(AdsPageLoadMetricsObserverTest, AdDensityDistributionMoments) {
       entries.front(),
       ukm::builders::AdPageLoadCustomSampling3::kKurtosisViewportAdDensityName,
       /*-ukm::GetExponentialBucketMin(-std::llround(-0.666667), 1.3)=*/-1);
+
+  histogram_tester().ExpectUniqueSample(
+      SuffixedHistogram("AverageViewportAdDensity"), 20, 1);
 }
 
 TEST_P(AdsPageLoadMetricsObserverTest, AdDensityOnPageWithoutAdBytes) {
@@ -1765,6 +1773,9 @@ TEST_P(AdsPageLoadMetricsObserverTest, AdDensityOnPageWithoutAdBytes) {
       entries.front(),
       ukm::builders::AdPageLoadCustomSampling3::kKurtosisViewportAdDensityName,
       -3);
+
+  histogram_tester().ExpectUniqueSample(
+      SuffixedHistogram("AverageViewportAdDensity"), 0, 1);
 }
 
 TEST_P(AdsPageLoadMetricsObserverTest, TestCpuTimingMetricsWindowedActivated) {
@@ -2174,12 +2185,6 @@ TEST_P(AdsPageLoadMetricsObserverTest, HeavyAdFeatureOff_UMARecorded) {
 
   histogram_tester().ExpectTotalCount(
       SuffixedHistogram("HeavyAds.InterventionType2"), 0);
-  histogram_tester().ExpectTotalCount(
-      SuffixedHistogram("HeavyAds.IgnoredByReload"), 0);
-
-  // There were heavy ads on the page and the page was navigated not reloaded.
-  histogram_tester().ExpectUniqueSample(
-      SuffixedHistogram("HeavyAds.UserDidReload"), false, 1);
 
   // Histogram is not logged when no frames are unloaded.
   histogram_tester().ExpectTotalCount(
@@ -2680,54 +2685,6 @@ TEST_P(AdsPageLoadMetricsObserverTest, HeavyAdPolicyProvided) {
   }
 }
 
-TEST_P(AdsPageLoadMetricsObserverTest,
-       HeavyAdPageNavigated_FrameMarkedAsNotRemoved) {
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(
-      heavy_ad_intervention::features::kHeavyAdIntervention);
-
-  RenderFrameHost* main_frame = NavigateMainFrame(kNonAdUrl);
-  RenderFrameHost* ad_frame = CreateAndNavigateSubFrame(kAdUrl, main_frame);
-
-  // Add enough data to trigger the intervention.
-  ResourceDataUpdate(ad_frame, ResourceCached::kNotCached,
-                     (heavy_ad_thresholds::kMaxNetworkBytes / 1024) + 1);
-
-  NavigateMainFrame(kNonAdUrl);
-
-  histogram_tester().ExpectUniqueSample(
-      SuffixedHistogram("HeavyAds.FrameRemovedPriorToPageEnd"), false, 1);
-}
-
-TEST_P(AdsPageLoadMetricsObserverTest,
-       HeavyAdFrameRemoved_FrameMarkedAsRemoved) {
-  // TODO(https://crbug.com/1301880): RenderFrameHostTester::Detach() doesn't
-  // work well with FencedFrames. Find a graceful way to detach it and enable
-  // the test.
-  if (WithFencedFrames())
-    return;
-
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitWithFeatures(
-      {}, {heavy_ad_intervention::features::kHeavyAdIntervention,
-           heavy_ad_intervention::features::kHeavyAdInterventionWarning});
-
-  RenderFrameHost* main_frame = NavigateMainFrame(kNonAdUrl);
-  RenderFrameHost* ad_frame = CreateAndNavigateSubFrame(kAdUrl, main_frame);
-
-  // Add enough data to trigger the intervention.
-  ResourceDataUpdate(ad_frame, ResourceCached::kNotCached,
-                     (heavy_ad_thresholds::kMaxNetworkBytes / 1024) + 1);
-
-  // Delete the root ad frame.
-  content::RenderFrameHostTester::For(ad_frame)->Detach();
-
-  NavigateMainFrame(kNonAdUrl);
-
-  histogram_tester().ExpectUniqueSample(
-      SuffixedHistogram("HeavyAds.FrameRemovedPriorToPageEnd"), true, 1);
-}
-
 // Verifies when a user reloads a page with a heavy ad we log it to metrics.
 TEST_P(AdsPageLoadMetricsObserverTest, HeavyAdPageReload_MetricsRecorded) {
   base::test::ScopedFeatureList feature_list;
@@ -2747,8 +2704,6 @@ TEST_P(AdsPageLoadMetricsObserverTest, HeavyAdPageReload_MetricsRecorded) {
   histogram_tester().ExpectUniqueSample(
       SuffixedHistogram("HeavyAds.ComputedTypeWithThresholdNoise"),
       HeavyAdStatus::kNetwork, 1);
-  histogram_tester().ExpectUniqueSample(
-      SuffixedHistogram("HeavyAds.UserDidReload"), true, 1);
 }
 
 // Verifies when a user reloads a page we do not trigger the heavy ad
@@ -2758,11 +2713,11 @@ TEST_P(AdsPageLoadMetricsObserverTest, HeavyAdPageReload_InterventionIgnored) {
   feature_list.InitAndEnableFeature(
       heavy_ad_intervention::features::kHeavyAdIntervention);
 
-  RenderFrameHost* main_frame = NavigateMainFrame(kNonAdUrl);
-
+  NavigateMainFrame(kNonAdUrl);
   // Reload the page.
   NavigationSimulator::Reload(web_contents());
 
+  RenderFrameHost* main_frame = web_contents()->GetPrimaryMainFrame();
   RenderFrameHost* ad_frame = CreateAndNavigateSubFrame(kAdUrl, main_frame);
 
   // Add enough data to trigger the intervention.
@@ -2771,14 +2726,6 @@ TEST_P(AdsPageLoadMetricsObserverTest, HeavyAdPageReload_InterventionIgnored) {
 
   // Verify we did not trigger the intervention.
   EXPECT_FALSE(HasInterventionReportsAfterFlush(ad_frame));
-  histogram_tester().ExpectUniqueSample(
-      SuffixedHistogram("HeavyAds.IgnoredByReload"), true, 1);
-
-  // Send another data update to the frame to ensure we do not record
-  // IgnoredByReload multiple times for a single frame.
-  ResourceDataUpdate(ad_frame, ResourceCached::kNotCached, 1);
-  histogram_tester().ExpectTotalCount(
-      SuffixedHistogram("HeavyAds.IgnoredByReload"), 1);
 }
 
 TEST_P(AdsPageLoadMetricsObserverTest,
@@ -2788,11 +2735,11 @@ TEST_P(AdsPageLoadMetricsObserverTest,
       {heavy_ad_intervention::features::kHeavyAdIntervention},
       {heavy_ad_intervention::features::kHeavyAdPrivacyMitigations});
 
-  RenderFrameHost* main_frame = NavigateMainFrame(kNonAdUrl);
-
+  NavigateMainFrame(kNonAdUrl);
   // Reload the page.
   NavigationSimulator::Reload(web_contents());
 
+  RenderFrameHost* main_frame = web_contents()->GetPrimaryMainFrame();
   RenderFrameHost* ad_frame = CreateAndNavigateSubFrame(kAdUrl, main_frame);
 
   // Add enough data to trigger the intervention.
@@ -2806,28 +2753,6 @@ TEST_P(AdsPageLoadMetricsObserverTest,
   // the privacy mitigations flag.
   histogram_tester().ExpectTotalCount(
       SuffixedHistogram("HeavyAds.IgnoredByReload"), 0);
-}
-
-// Verifies when there is no heavy ad on the page, we do not record aggregate
-// heavy ad metrics.
-TEST_P(AdsPageLoadMetricsObserverTest,
-       HeavyAdsNoHeavyAdFrame_AggregateHistogramsNotRecorded) {
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(
-      heavy_ad_intervention::features::kHeavyAdIntervention);
-
-  RenderFrameHost* main_frame = NavigateMainFrame(kNonAdUrl);
-  RenderFrameHost* ad_frame = CreateAndNavigateSubFrame(kAdUrl, main_frame);
-
-  // Don't load enough to reach the heavy ad threshold.
-  ResourceDataUpdate(ad_frame, ResourceCached::kNotCached,
-                     (heavy_ad_thresholds::kMaxNetworkBytes / 1024) - 1);
-
-  // Navigate again to trigger histograms.
-  NavigateFrame(kNonAdUrl, main_frame);
-
-  histogram_tester().ExpectTotalCount(
-      SuffixedHistogram("HeavyAds.UserDidReload"), 0);
 }
 
 TEST_P(AdsPageLoadMetricsObserverTest, HeavyAdBlocklistFull_NotFired) {
@@ -2884,8 +2809,6 @@ TEST_P(AdsPageLoadMetricsObserverTest,
   EXPECT_EQ(rfh_tester->GetHeavyAdIssueCount(
                 RenderFrameHostTester::HeavyAdIssueType::kAll),
             1);
-  histogram_tester().ExpectTotalCount(
-      SuffixedHistogram("HeavyAds.IgnoredByReload"), 0);
 
   // This histogram should not be recorded when the blocklist is disabled.
   histogram_tester().ExpectTotalCount(
@@ -3140,10 +3063,6 @@ TEST_P(AdsMemoryMeasurementTest, SingleAdFrame_MaxMemoryBytesRecorded) {
   // Navigate main frame to record histograms.
   NavigateMainFrame(kNonAdUrl);
 
-  histogram_tester().ExpectUniqueSample(kMemoryPerFrameMaxHistogramId, 10 + 30,
-                                        1);
-  histogram_tester().ExpectUniqueSample(kMemoryAggregateMaxHistogramId, 10 + 30,
-                                        1);
   histogram_tester().ExpectUniqueSample(kMemoryUpdateCountHistogramId, 3, 1);
 }
 
@@ -3175,10 +3094,6 @@ TEST_P(AdsMemoryMeasurementTest, MultiAdFramesNested_MaxMemoryBytesRecorded) {
   // Navigate main frame to record histograms.
   NavigateMainFrame(kNonAdUrl);
 
-  histogram_tester().ExpectUniqueSample(kMemoryPerFrameMaxHistogramId,
-                                        10 + 10 + 30 + 10, 1);
-  histogram_tester().ExpectUniqueSample(kMemoryAggregateMaxHistogramId,
-                                        10 + 10 + 30 + 10, 1);
   histogram_tester().ExpectUniqueSample(kMemoryUpdateCountHistogramId, 6, 1);
 }
 
@@ -3216,12 +3131,6 @@ TEST_P(AdsMemoryMeasurementTest,
   // Navigate main frame to record histograms.
   NavigateMainFrame(kNonAdUrl);
 
-  histogram_tester().ExpectBucketCount(kMemoryPerFrameMaxHistogramId,
-                                       10 - 9 + 1 + 50, 1);
-  histogram_tester().ExpectBucketCount(kMemoryPerFrameMaxHistogramId, 10 + 100,
-                                       1);
-  histogram_tester().ExpectUniqueSample(kMemoryAggregateMaxHistogramId,
-                                        10 - 9 + 10 + 100 + 1, 1);
   histogram_tester().ExpectUniqueSample(kMemoryUpdateCountHistogramId, 8, 1);
 }
 

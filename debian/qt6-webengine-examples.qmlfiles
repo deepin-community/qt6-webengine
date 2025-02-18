@@ -1,0 +1,1 @@
+-qmlFiles examples/**/*.qml examples/**/qmldir

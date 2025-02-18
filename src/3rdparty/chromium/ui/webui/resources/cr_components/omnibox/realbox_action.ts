@@ -4,6 +4,7 @@
 
 import '//resources/cr_elements/cr_shared_style.css.js';
 
+import {loadTimeData} from '//resources/js/load_time_data.js';
 import {sanitizeInnerHtml} from '//resources/js/parse_html_subset.js';
 import {PolymerElement} from '//resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
@@ -29,6 +30,15 @@ class RealboxActionElement extends PolymerElement {
       //========================================================================
       action: {
         type: Object,
+      },
+
+      /**
+       * Index of the action in the autocomplete result. Used to inform handler
+       * of action that was selected.
+       */
+      actionIndex: {
+        type: Number,
+        value: -1,
       },
 
       /**
@@ -65,10 +75,52 @@ class RealboxActionElement extends PolymerElement {
   }
 
   action: Action;
+  actionIndex: number;
   matchIndex: number;
   override ariaLabel: string;
   private hintHtml_: TrustedHTML;
   private tooltip_: string;
+
+  override ready() {
+    super.ready();
+
+    this.addEventListener('click', (event) => this.onActionClick_(event));
+    this.addEventListener('keydown', (event) => this.onActionKeyDown_(event));
+    this.addEventListener(
+        'mousedown', (event) => this.onActionMouseDown_(event));
+  }
+
+  private onActionClick_(e: MouseEvent|KeyboardEvent) {
+    this.dispatchEvent(new CustomEvent('execute-action', {
+      bubbles: true,
+      composed: true,
+      detail: {
+        event: e,
+        actionIndex: this.actionIndex,
+      },
+    }));
+
+    e.preventDefault();   // Prevents default browser action (navigation).
+    e.stopPropagation();  // Prevents <iron-selector> from selecting the match.
+  }
+
+  private onActionKeyDown_(e: KeyboardEvent) {
+    if (e.key && (e.key === 'Enter' || e.key === ' ')) {
+      this.onActionClick_(e);
+    }
+  }
+
+  private onActionMouseDown_(e: Event) {
+    if (loadTimeData.getBoolean('realboxCr23ExpandedStateLayout')) {
+      e.preventDefault();  // Prevents default browser action (focus).
+    }
+  }
+
+  private showCr23ActionIcon_(): boolean {
+    // Action icons are webkit-mask-image when chrome refresh expanded state
+    // layout is enabled.
+    return loadTimeData.getBoolean('realboxCr23ExpandedStateLayout');
+  }
 
   //============================================================================
   // Helpers

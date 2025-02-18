@@ -65,12 +65,12 @@ IN_PROC_BROWSER_TEST_F(SocketsTcpApiTest, SocketsTcpCreateGood) {
   socket_create_function->set_extension(empty_extension.get());
   socket_create_function->set_has_callback(true);
 
-  absl::optional<base::Value> result(
+  std::optional<base::Value> result(
       api_test_utils::RunFunctionAndReturnSingleResult(
           socket_create_function.get(), "[]", browser_context()));
   ASSERT_TRUE(result);
   ASSERT_TRUE(result->is_dict());
-  absl::optional<int> socket_id = result->GetDict().FindInt("socketId");
+  std::optional<int> socket_id = result->GetDict().FindInt("socketId");
   ASSERT_TRUE(socket_id);
   ASSERT_GT(*socket_id, 0);
 }
@@ -112,7 +112,8 @@ IN_PROC_BROWSER_TEST_F(SocketsTcpApiTest, SocketTcpExtension) {
   // Cache only lookup.
   params->source = net::HostResolverSource::LOCAL_ONLY;
   net::SchemefulSite site = net::SchemefulSite(test_extension->url());
-  net::NetworkAnonymizationKey network_anonymization_key(site, site);
+  auto network_anonymization_key =
+      net::NetworkAnonymizationKey::CreateSameSite(site);
   network::DnsLookupResult result1 =
       network::BlockingDnsLookup(network_context, host_port_pair,
                                  std::move(params), network_anonymization_key);

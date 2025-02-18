@@ -17,7 +17,7 @@
 #include "base/trace_event/trace_event.h"
 #include "third_party/perfetto/include/perfetto/tracing/traced_value.h"
 #include "third_party/skia/include/core/SkImageInfo.h"
-#include "ui/display/types/gamma_ramp_rgb_entry.h"
+#include "ui/display/types/display_color_management.h"
 #include "ui/ozone/platform/drm/common/drm_util.h"
 
 namespace ui {
@@ -293,13 +293,12 @@ bool DrmWrapper::AddFramebuffer2(uint32_t width,
  * Gamma
  *******/
 
-bool DrmWrapper::SetGammaRamp(
-    uint32_t crtc_id,
-    const std::vector<display::GammaRampRGBEntry>& lut) {
+bool DrmWrapper::SetGammaRamp(uint32_t crtc_id,
+                              const display::GammaCurve& curve) {
   ScopedDrmCrtcPtr crtc = GetCrtc(crtc_id);
   size_t gamma_size = static_cast<size_t>(crtc->gamma_size);
 
-  if (gamma_size == 0 && lut.empty()) {
+  if (gamma_size == 0 && curve.IsDefaultIdentity()) {
     return true;
   }
 
@@ -308,33 +307,12 @@ bool DrmWrapper::SetGammaRamp(
     return false;
   }
 
-  // TODO(robert.bradford) resample the incoming ramp to match what the kernel
-  // expects.
-  if (!lut.empty() && gamma_size != lut.size()) {
-    LOG(ERROR) << "Gamma table size mismatch: supplied " << lut.size()
-               << " expected " << gamma_size;
-    return false;
-  }
-
   std::vector<uint16_t> r, g, b;
-  r.reserve(gamma_size);
-  g.reserve(gamma_size);
-  b.reserve(gamma_size);
-
-  if (lut.empty()) {
-    // Create a linear gamma ramp table to deactivate the feature.
-    for (size_t i = 0; i < gamma_size; ++i) {
-      uint16_t value = (i * ((1 << 16) - 1)) / (gamma_size - 1);
-      r.push_back(value);
-      g.push_back(value);
-      b.push_back(value);
-    }
-  } else {
-    for (size_t i = 0; i < gamma_size; ++i) {
-      r.push_back(lut[i].r);
-      g.push_back(lut[i].g);
-      b.push_back(lut[i].b);
-    }
+  r.resize(gamma_size);
+  g.resize(gamma_size);
+  b.resize(gamma_size);
+  for (size_t i = 0; i < gamma_size; ++i) {
+    curve.Evaluate(i / (gamma_size - 1.f), r[i], g[i], b[i]);
   }
 
   DCHECK(drm_fd_.is_valid());
@@ -380,6 +358,7 @@ bool DrmWrapper::SetObjectProperty(uint32_t object_id,
 
 ScopedDrmPropertyPtr DrmWrapper::GetProperty(drmModeConnector* connector,
                                              const char* name) const {
+  DCHECK(drm_fd_.is_valid());
   TRACE_EVENT2("drm", "DrmWrapper::GetProperty", "connector",
                connector->connector_id, "name", name);
   for (int i = 0; i < connector->count_props; ++i) {
@@ -398,6 +377,7 @@ ScopedDrmPropertyPtr DrmWrapper::GetProperty(drmModeConnector* connector,
 }
 
 ScopedDrmPropertyPtr DrmWrapper::GetProperty(uint32_t id) const {
+  DCHECK(drm_fd_.is_valid());
   return ScopedDrmPropertyPtr(drmModeGetProperty(drm_fd_.get(), id));
 }
 
@@ -415,6 +395,7 @@ bool DrmWrapper::SetProperty(uint32_t connector_id,
 
 ScopedDrmPropertyBlob DrmWrapper::CreatePropertyBlob(const void* blob,
                                                      size_t size) {
+  DCHECK(drm_fd_.is_valid());
   uint32_t id = 0;
   int ret = drmModeCreatePropertyBlob(drm_fd_.get(), blob, size, &id);
   DCHECK(!ret && id);
@@ -428,11 +409,12 @@ ScopedDrmPropertyBlob DrmWrapper::CreatePropertyBlobWithFlags(const void* blob,
 // TODO(markyacoub): the flag requires being merged to libdrm then backported to
 // CrOS. Remove the #if once that happens.
 #if defined(DRM_MODE_CREATE_BLOB_WRITE_ONLY)
+  DCHECK(drm_fd_.is_valid());
   uint32_t id = 0;
   int ret = -1;
 
-  ret = drmModeCreatePropertyBlobWithFlags(file_.GetPlatformFile(), blob, size,
-                                           &id, flags);
+  ret =
+      drmModeCreatePropertyBlobWithFlags(drm_fd_.get(), blob, size, &id, flags);
   DCHECK(!ret && id);
   return std::make_unique<DrmPropertyBlobMetadata>(this, id);
 #else
@@ -441,6 +423,7 @@ ScopedDrmPropertyBlob DrmWrapper::CreatePropertyBlobWithFlags(const void* blob,
 }
 
 void DrmWrapper::DestroyPropertyBlob(uint32_t id) {
+  DCHECK(drm_fd_.is_valid());
   drmModeDestroyPropertyBlob(drm_fd_.get(), id);
 }
 
@@ -500,6 +483,11 @@ absl::optional<std::string> DrmWrapper::GetDriverName() const {
   }
 
   return std::string(version->name, version->name_len);
+}
+
+display::DrmFormatsAndModifiers DrmWrapper::GetFormatsAndModifiersForCrtc(
+    uint32_t crtc_id) const {
+  return display::DrmFormatsAndModifiers();
 }
 
 base::ScopedFD DrmWrapper::ToScopedFD(std::unique_ptr<DrmWrapper> drm) {

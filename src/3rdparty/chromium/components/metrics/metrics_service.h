@@ -33,7 +33,6 @@
 #include "build/chromeos_buildflags.h"
 #include "components/metrics/delegating_provider.h"
 #include "components/metrics/metrics_log.h"
-#include "components/metrics/metrics_log_manager.h"
 #include "components/metrics/metrics_log_store.h"
 #include "components/metrics/metrics_logs_event_manager.h"
 #include "components/metrics/metrics_provider.h"
@@ -45,10 +44,6 @@ FORWARD_DECLARE_TEST(ChromeMetricsServiceClientTest,
                      TestRegisterMetricsServiceProviders);
 FORWARD_DECLARE_TEST(IOSChromeMetricsServiceClientTest,
                      TestRegisterMetricsServiceProviders);
-
-namespace base {
-class PrefService;
-}  // namespace base
 
 namespace variations {
 class SyntheticTrialRegistry;
@@ -111,6 +106,11 @@ class MetricsService {
   // recording is not currently running.
   std::string GetClientId() const;
 
+  // Get the low entropy source values.
+  int GetLowEntropySource();
+  int GetOldLowEntropySource();
+  int GetPseudoLowEntropySource();
+
   // Set an external provided id for the metrics service. This method can be
   // set by a caller which wants to explicitly control the *next* id used by the
   // metrics service. Note that setting the external client id will *not* change
@@ -142,6 +142,9 @@ class MetricsService {
   // Called when the application is coming out of background mode.
   void OnAppEnterForeground(bool force_open_new_log = false);
 #endif  // BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
+
+  // Called when a document first starts loading.
+  void OnPageLoadStarted();
 
   // Signals that the browser is shutting down cleanly. Intended to be called
   // during shutdown after critical shutdown tasks have completed.
@@ -237,6 +240,14 @@ class MetricsService {
 
   variations::SyntheticTrialRegistry* GetSyntheticTrialRegistry();
 
+  // Returns the delay before the init tasks (to asynchronously initialize
+  // metrics providers) run.
+  base::TimeDelta GetInitializationDelay();
+
+  // Returns the delay before the task to update the "last alive timestamp" is
+  // run.
+  base::TimeDelta GetUpdateLastAliveTimestampDelay();
+
   MetricsLogStore* LogStoreForTest() {
     return reporting_service_.metrics_log_store();
   }
@@ -244,7 +255,7 @@ class MetricsService {
   // Test hook to safely stage the current log in the log store.
   bool StageCurrentLogForTest();
 
-  MetricsLog* GetCurrentLogForTest() { return log_manager_.current_log(); }
+  MetricsLog* GetCurrentLogForTest() { return current_log_.get(); }
 
   DelegatingProvider* GetDelegatingProviderForTesting() {
     return &delegating_provider_;
@@ -271,6 +282,12 @@ class MetricsService {
 #if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
   bool IsInForegroundForTesting() const { return is_in_foreground_; }
 #endif
+
+  // Creates a new MetricsLog instance with the given |log_type|.
+  std::unique_ptr<MetricsLog> CreateLogForTesting(
+      MetricsLog::LogType log_type) {
+    return CreateLog(log_type);
+  }
 
  protected:
   // Sets the persistent system profile. Virtual for tests.
@@ -314,6 +331,7 @@ class MetricsService {
 
     // This type is move only.
     FinalizedLog(FinalizedLog&& other);
+    FinalizedLog& operator=(FinalizedLog&& other);
 
     // The size of the uncompressed log data. This is only used for calculating
     // some metrics.
@@ -326,6 +344,12 @@ class MetricsService {
 
   // Writes snapshots of histograms owned by the StatisticsRecorder to a log.
   // Does not take ownership of the log.
+  // TODO(crbug/1423653): Although this class takes in |required_flags| in its
+  // constructor to filter the StatisticsRecorder histograms being put into
+  // the log, the |histogram_snapshot_manager_| is not aware of this. So if
+  // the |histogram_snapshot_manager_| is passed to some other caller, this
+  // caller will need to manually filter the histograms. Re-factor the code so
+  // that this is not needed.
   class MetricsLogHistogramWriter {
    public:
     explicit MetricsLogHistogramWriter(MetricsLog* log);
@@ -361,7 +385,8 @@ class MetricsService {
 
    private:
     // Used to select which histograms to record when calling
-    // SnapshotStatisticsRecorderHistograms().
+    // SnapshotStatisticsRecorderHistograms() or
+    // SnapshotStatisticsRecorderUnloggedSamples().
     const base::HistogramBase::Flags required_flags_;
 
     // Used to write histograms to the log passed in the constructor.
@@ -381,7 +406,9 @@ class MetricsService {
   // execution on a background thread.
   class IndependentMetricsLoader {
    public:
-    explicit IndependentMetricsLoader(std::unique_ptr<MetricsLog> log);
+    explicit IndependentMetricsLoader(std::unique_ptr<MetricsLog> log,
+                                      std::string app_version,
+                                      std::string signing_key);
 
     IndependentMetricsLoader(const IndependentMetricsLoader&) = delete;
     IndependentMetricsLoader& operator=(const IndependentMetricsLoader&) =
@@ -391,19 +418,36 @@ class MetricsService {
 
     // Call ProvideIndependentMetrics (which may execute on a background thread)
     // for the |metrics_provider| and execute the |done_callback| when complete
-    // with the result (true if successful). Though this can be called multiple
-    // times to include data from multiple providers, later calls will override
-    // system profile information set by earlier calls.
+    // with the result (true if successful). |done_callback| must own |this|.
     void Run(base::OnceCallback<void(bool)> done_callback,
              MetricsProvider* metrics_provider);
 
-    // Extract the filled log. No more Run() operations can be done after this.
-    std::unique_ptr<MetricsLog> ReleaseLog();
+    // Finalizes/serializes |log_|, and stores the result in |finalized_log_|.
+    // Should only be called once, after |log_| has been filled.
+    void FinalizeLog();
+
+    // Returns whether FinalizeLog() was called.
+    bool HasFinalizedLog();
+
+    // Extracts |finalized_log_|. Should be only called once, after
+    // FinalizeLog() has been called. No more operations should be done after
+    // this.
+    FinalizedLog ReleaseFinalizedLog();
 
    private:
     std::unique_ptr<MetricsLog> log_;
     std::unique_ptr<base::HistogramFlattener> flattener_;
     std::unique_ptr<base::HistogramSnapshotManager> snapshot_manager_;
+    bool run_called_ = false;
+
+    // Used for finalizing |log_| in FinalizeLog().
+    const std::string app_version_;
+    const std::string signing_key_;
+
+    // Stores the result of FinalizeLog().
+    FinalizedLog finalized_log_;
+    bool finalize_log_called_ = false;
+    bool release_finalized_log_called_ = false;
   };
 
   // Gets the LogStore for UMA logs.
@@ -498,7 +542,7 @@ class MetricsService {
 
   // Called via a callback after a periodic ongoing log (created through the
   // MetricsRotationScheduler) was stored in |log_store()|.
-  void OnPeriodicOngoingLogStored();
+  void OnAsyncPeriodicOngoingLogStored();
 
   // Prepares the initial stability log, which is only logged when the previous
   // run of Chrome crashed.  This log contains any stability metrics left over
@@ -542,12 +586,15 @@ class MetricsService {
   // Snapshots histogram deltas using the passed |log_histogram_writer| and then
   // finalizes |log| by calling FinalizeLog(). |log|, |current_app_version| and
   // |signing_key| are used to finalize the log (see FinalizeLog()).
+  // Semantically, this is equivalent to SnapshotUnloggedSamplesAndFinalizeLog()
+  // followed by MarkUnloggedSamplesAsLogged().
   static FinalizedLog SnapshotDeltasAndFinalizeLog(
       std::unique_ptr<MetricsLogHistogramWriter> log_histogram_writer,
       std::unique_ptr<MetricsLog> log,
       bool truncate_events,
-      std::string current_app_version,
-      std::string signing_key);
+      absl::optional<ChromeUserMetricsExtension::RealLocalTime> close_time,
+      std::string&& current_app_version,
+      std::string&& signing_key);
 
   // Snapshots unlogged histogram samples using the passed
   // |log_histogram_writer| and then finalizes |log| by calling FinalizeLog().
@@ -559,21 +606,24 @@ class MetricsService {
       MetricsLogHistogramWriter* log_histogram_writer,
       std::unique_ptr<MetricsLog> log,
       bool truncate_events,
-      std::string current_app_version,
-      std::string signing_key);
+      absl::optional<ChromeUserMetricsExtension::RealLocalTime> close_time,
+      std::string&& current_app_version,
+      std::string&& signing_key);
 
   // Finalizes |log| (see MetricsLog::FinalizeLog()). The |signing_key| is used
   // to compute a signature for the log.
-  static FinalizedLog FinalizeLog(std::unique_ptr<MetricsLog> log,
-                                  bool truncate_events,
-                                  std::string current_app_version,
-                                  std::string signing_key);
+  static FinalizedLog FinalizeLog(
+      std::unique_ptr<MetricsLog> log,
+      bool truncate_events,
+      absl::optional<ChromeUserMetricsExtension::RealLocalTime> close_time,
+      const std::string& current_app_version,
+      const std::string& signing_key);
 
   // Sub-service for uploading logs.
   MetricsReportingService reporting_service_;
 
-  // Manager for the various in-flight logs.
-  MetricsLogManager log_manager_;
+  // The log that we are still appending to.
+  std::unique_ptr<MetricsLog> current_log_;
 
   // Used to manage various metrics reporting state prefs, such as client id,
   // low entropy source and whether metrics reporting is enabled. Weak pointer.

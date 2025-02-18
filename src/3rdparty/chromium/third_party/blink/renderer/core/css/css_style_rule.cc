@@ -90,8 +90,12 @@ void CSSStyleRule::setSelectorText(const ExecutionContext* execution_context,
   HeapVector<CSSSelector> arena;
   StyleRule* parent_rule_for_nesting =
       FindClosestParentStyleRuleOrNull(parentRule());
+  CSSNestingType nesting_type = parent_rule_for_nesting
+                                    ? CSSNestingType::kNesting
+                                    : CSSNestingType::kNone;
   base::span<CSSSelector> selector_vector = CSSParser::ParseSelector(
-      context, parent_rule_for_nesting, parent_contents, selector_text, arena);
+      context, nesting_type, parent_rule_for_nesting, /*is_within_scope=*/false,
+      parent_contents, selector_text, arena);
   if (selector_vector.empty()) {
     return;
   }

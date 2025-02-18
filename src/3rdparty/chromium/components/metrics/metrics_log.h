@@ -16,7 +16,7 @@
 #include "base/functional/callback_forward.h"
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_base.h"
-#include "base/strings/string_piece_forward.h"
+#include "base/strings/string_piece.h"
 #include "base/time/time.h"
 #include "build/chromeos_buildflags.h"
 #include "components/metrics/metrics_reporting_default_state.h"
@@ -37,11 +37,20 @@ class NetworkTimeTracker;
 
 namespace metrics {
 
+// This SourceType is saved in Local state by unsent_log_store.cc and entries
+// should not be renumbered.
+enum UkmLogSourceType {
+  UKM_ONLY = 0,            // Log contains only UKM data.
+  APPKM_ONLY = 1,          // Log contains only AppKM data.
+  BOTH_UKM_AND_APPKM = 2,  // Log contains both AppKM and UKM data.
+};
+
 // Holds optional metadata associated with a log to be stored.
 struct LogMetadata {
   LogMetadata();
   LogMetadata(absl::optional<base::HistogramBase::Count> samples_count,
-              absl::optional<uint64_t> user_id);
+              absl::optional<uint64_t> user_id,
+              absl::optional<UkmLogSourceType> log_source_type);
   LogMetadata(const LogMetadata& other);
   ~LogMetadata();
 
@@ -54,6 +63,9 @@ struct LogMetadata {
 
   // User id associated with the log.
   absl::optional<uint64_t> user_id;
+
+  // For UKM logs, indicates the type of data.
+  absl::optional<UkmLogSourceType> log_source_type;
 };
 
 class MetricsServiceClient;
@@ -80,7 +92,6 @@ class MetricsLog {
   // |client_id| is the identifier for this profile on this installation
   // |session_id| is an integer that's incremented on each application launch
   // |client| is used to interact with the embedder.
-  // |local_state| is the PrefService that this instance should use.
   // Note: |this| instance does not take ownership of the |client|, but rather
   // stores a weak pointer to it. The caller should ensure that the |client| is
   // valid for the lifetime of this class.
@@ -133,6 +144,9 @@ class MetricsLog {
       const std::string& package_name,
       SystemProfileProto* system_profile);
 
+  // Assign a unique record id to this log.
+  void AssignRecordId(PrefService* local_state);
+
   // Records a user-initiated action.
   void RecordUserAction(const std::string& key, base::TimeTicks action_time);
 
@@ -170,15 +184,26 @@ class MetricsLog {
                                 DelegatingProvider* delegating_provider,
                                 PrefService* local_state);
 
+  // Returns the current time using |network_clock_| if non-null (falls back to
+  // |clock_| otherwise). If |record_time_zone| is true, the returned time will
+  // also be populated with the time zone. Must be called on the main thread.
+  ChromeUserMetricsExtension::RealLocalTime GetCurrentClockTime(
+      bool record_time_zone);
+
   // Finalizes the log. Calling this function will make a call to CloseLog().
   // |truncate_events| determines whether user action and omnibox data within
   // the log should be trimmed/truncated (for bandwidth concerns).
   // |current_app_version| is the current version of the application, and is
   // used to determine whether the log data was obtained in a previous version.
-  // The serialized proto of the finalized log will be written to |encoded_log|.
-  void FinalizeLog(bool truncate_events,
-                   const std::string& current_app_version,
-                   std::string* encoded_log);
+  // |close_time| is roughly the current time -- it is provided as a param
+  // since computing the current time can sometimes only be done on the main
+  // thread, and this method may be called on a background thread. The
+  // serialized proto of the finalized log will be written to |encoded_log|.
+  void FinalizeLog(
+      bool truncate_events,
+      const std::string& current_app_version,
+      absl::optional<ChromeUserMetricsExtension::RealLocalTime> close_time,
+      std::string* encoded_log);
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
   // Assigns a user ID to the log. This should be called immediately after

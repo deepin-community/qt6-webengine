@@ -8,6 +8,7 @@
 
 #include "base/logging.h"
 #include "base/task/sequenced_task_runner.h"
+#include "base/trace_event/trace_event.h"
 #include "media/base/video_util.h"
 #include "media/gpu/chromeos/gpu_buffer_layout.h"
 #include "media/gpu/chromeos/platform_video_frame_utils.h"
@@ -27,6 +28,7 @@ CroStatus::Or<scoped_refptr<VideoFrame>> DefaultCreateFrame(
     const gfx::Size& natural_size,
     bool use_protected,
     bool use_linear_buffers,
+    bool needs_detiling,
     base::TimeDelta timestamp) {
   if (use_protected && use_linear_buffers) {
     VLOGF(1) << "Linear buffers are unsupported when |use_protected| is true.";
@@ -42,12 +44,12 @@ CroStatus::Or<scoped_refptr<VideoFrame>> DefaultCreateFrame(
   if (!frame)
     return CroStatus::Codes::kFailedToCreateVideoFrame;
 
-  if (use_protected) {
-    media::VideoFrameMetadata frame_metadata;
-    frame_metadata.protected_video = true;
-    frame_metadata.hw_protected = true;
-    frame->set_metadata(frame_metadata);
-  }
+  // A SCANOUT usage was requested for the allocated |frame|, so there's a
+  // possibility that it can be promoted to overlay, mark it so.
+  frame->metadata().allow_overlay = true;
+  frame->metadata().protected_video = use_protected;
+  frame->metadata().hw_protected = use_protected;
+  frame->metadata().needs_detiling = needs_detiling;
   return frame;
 }
 
@@ -116,7 +118,8 @@ scoped_refptr<VideoFrame> PlatformVideoFramePool::GetFrame() {
     CHECK(use_linear_buffers_.has_value());
     CroStatus::Or<scoped_refptr<VideoFrame>> new_frame = create_frame_cb_.Run(
         format, coded_size, gfx::Rect(GetRectSizeFromOrigin(visible_rect_)),
-        coded_size, use_protected_, *use_linear_buffers_, base::TimeDelta());
+        coded_size, use_protected_, *use_linear_buffers_,
+        frame_layout_->fourcc() == Fourcc(Fourcc::MM21), base::TimeDelta());
     if (!new_frame.has_value()) {
       // TODO(crbug.com/c/1103510) Push the error up instead of dropping it.
       return nullptr;
@@ -140,18 +143,8 @@ scoped_refptr<VideoFrame> PlatformVideoFramePool::GetFrame() {
       base::BindOnce(&PlatformVideoFramePool::OnFrameReleasedThunk, weak_this_,
                      parent_task_runner_, std::move(origin_frame)));
 
-  // Clear all metadata before returning to client, in case origin frame has any
-  // unrelated metadata.
-  wrapped_frame->clear_metadata();
-
-  // We need to put this metadata in the wrapped frame if we are in protected
-  // mode.
-  if (use_protected_) {
-    media::VideoFrameMetadata frame_metadata;
-    frame_metadata.protected_video = true;
-    frame_metadata.hw_protected = true;
-    wrapped_frame->set_metadata(frame_metadata);
-  }
+  DCHECK_EQ(wrapped_frame->metadata().protected_video, use_protected_);
+  DCHECK_EQ(wrapped_frame->metadata().hw_protected, use_protected_);
 
   return wrapped_frame;
 }
@@ -210,9 +203,10 @@ CroStatus::Or<GpuBufferLayout> PlatformVideoFramePool::Initialize(
   if (!IsSameFormat_Locked(format, coded_size, visible_rect, use_protected)) {
     DVLOGF(4) << "The video frame format is changed. Clearing the pool.";
     free_frames_.clear();
-    auto maybe_frame = create_frame_cb_.Run(
-        format, coded_size, visible_rect, natural_size, use_protected,
-        *use_linear_buffers_, base::TimeDelta());
+    auto maybe_frame =
+        create_frame_cb_.Run(format, coded_size, visible_rect, natural_size,
+                             use_protected, *use_linear_buffers_,
+                             fourcc == Fourcc(Fourcc::MM21), base::TimeDelta());
     if (!maybe_frame.has_value())
       return std::move(maybe_frame).error();
     auto frame = std::move(maybe_frame).value();
@@ -300,6 +294,9 @@ void PlatformVideoFramePool::OnFrameReleasedThunk(
     absl::optional<base::WeakPtr<PlatformVideoFramePool>> pool,
     scoped_refptr<base::SequencedTaskRunner> task_runner,
     scoped_refptr<VideoFrame> origin_frame) {
+  TRACE_EVENT2("media", "PlatformVideoFramePool::OnFrameReleasedThunk",
+               "frame_id", origin_frame->unique_id(), "frame",
+               origin_frame->AsHumanReadableString());
   DCHECK(pool);
   DVLOGF(4);
 
@@ -310,6 +307,9 @@ void PlatformVideoFramePool::OnFrameReleasedThunk(
 
 void PlatformVideoFramePool::OnFrameReleased(
     scoped_refptr<VideoFrame> origin_frame) {
+  TRACE_EVENT2("media", "PlatformVideoFramePool::OnFrameReleased", "frame_id",
+               origin_frame->unique_id(), "frame",
+               origin_frame->AsHumanReadableString());
   DCHECK(parent_task_runner_->RunsTasksInCurrentSequence());
   DVLOGF(4);
   base::AutoLock auto_lock(lock_);

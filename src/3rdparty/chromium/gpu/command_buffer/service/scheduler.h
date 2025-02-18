@@ -16,6 +16,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
+#include "base/rand_util.h"
 #include "base/synchronization/lock.h"
 #include "base/time/time.h"
 #include "gpu/command_buffer/common/command_buffer_id.h"
@@ -122,11 +123,6 @@ class GPU_EXPORT Scheduler {
 
   // If the sequence should yield so that a higher priority sequence may run.
   bool ShouldYield(SequenceId sequence_id);
-
-  // Takes and resets current accumulated blocking time. Not available on all
-  // platforms. Must be enabled with --enable-gpu-blocked-time.
-  // Returns TimeDelta::Min() when not available.
-  base::TimeDelta TakeTotalBlockingTime();
 
   base::SingleThreadTaskRunner* GetTaskRunnerForTesting(SequenceId sequence_id);
 
@@ -421,16 +417,14 @@ class GPU_EXPORT Scheduler {
   base::flat_map<base::SingleThreadTaskRunner*, PerThreadState>
       per_thread_state_map_ GUARDED_BY(lock_);
 
-  // Accumulated time the thread was blocked during running task
-  base::TimeDelta total_blocked_time_ GUARDED_BY(lock_);
-  const bool blocked_time_collection_enabled_;
-
   // A pointer to a SchedulerDfs instance. If set, all public SchedulerDfs
   // methods are forwarded to this SchedulerDfs instance. |scheduler_dfs_| is
   // set depending on a Finch experimental feature.
   std::unique_ptr<SchedulerDfs> scheduler_dfs_;
 
  private:
+  base::MetricsSubSampler metrics_subsampler_;
+
   FRIEND_TEST_ALL_PREFIXES(SchedulerTest, StreamPriorities);
   FRIEND_TEST_ALL_PREFIXES(SchedulerTest, StreamDestroyRemovesPriorities);
   FRIEND_TEST_ALL_PREFIXES(SchedulerTest, StreamPriorityChangeWhileReleasing);

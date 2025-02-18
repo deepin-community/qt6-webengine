@@ -12,6 +12,7 @@
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
 #include "third_party/blink/renderer/core/html/html_meter_element.h"
 #include "third_party/blink/renderer/core/testing/dummy_page_holder.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 
 namespace blink {
 
@@ -23,6 +24,7 @@ class MeterShadowElementTest : public testing::Test {
   Document& GetDocument() { return dummy_page_holder_->GetDocument(); }
 
  private:
+  test::TaskEnvironment task_environment_;
   std::unique_ptr<DummyPageHolder> dummy_page_holder_;
 };
 
@@ -31,7 +33,8 @@ TEST_F(MeterShadowElementTest, LayoutObjectIsNotNeeded) {
     <meter id='m' style='-webkit-appearance:none' />
   )HTML");
 
-  auto* meter = To<HTMLMeterElement>(GetDocument().getElementById("m"));
+  auto* meter =
+      To<HTMLMeterElement>(GetDocument().getElementById(AtomicString("m")));
   ASSERT_TRUE(meter);
 
   auto* shadow_element = To<Element>(meter->GetShadowRoot()->firstChild());
@@ -44,17 +47,18 @@ TEST_F(MeterShadowElementTest, LayoutObjectIsNotNeeded) {
   GetDocument().GetStyleEngine().RecalcStyle();
   EXPECT_FALSE(shadow_element->GetComputedStyle());
 
-  scoped_refptr<const ComputedStyle> style =
+  const ComputedStyle* style =
       shadow_element->StyleForLayoutObject(StyleRecalcContext());
   EXPECT_FALSE(shadow_element->LayoutObjectIsNeeded(*style));
 }
 
-TEST_F(MeterShadowElementTest, OnlyChangeDirectionOnShadowElement) {
+TEST_F(MeterShadowElementTest, DontChangeDirectionOnShadowElement) {
   GetDocument().body()->setInnerHTML(R"HTML(
     <meter id='m' style='writing-mode:vertical-lr; direction: ltr;' />
   )HTML");
 
-  auto* meter = To<HTMLMeterElement>(GetDocument().getElementById("m"));
+  auto* meter =
+      To<HTMLMeterElement>(GetDocument().getElementById(AtomicString("m")));
   ASSERT_TRUE(meter);
 
   auto* shadow_element = To<Element>(meter->GetShadowRoot()->firstChild());
@@ -70,7 +74,7 @@ TEST_F(MeterShadowElementTest, OnlyChangeDirectionOnShadowElement) {
 
   EXPECT_TRUE(shadow_element->GetComputedStyle());
   EXPECT_EQ(shadow_element->GetComputedStyle()->Direction(),
-            TextDirection::kRtl);
+            TextDirection::kLtr);
 }
 
 }  // namespace blink

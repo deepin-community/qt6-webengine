@@ -50,8 +50,10 @@ class MEDIA_GPU_EXPORT AndroidVideoEncodeAccelerator
                   std::unique_ptr<MediaLog> media_log) override;
   void Encode(scoped_refptr<VideoFrame> frame, bool force_keyframe) override;
   void UseOutputBitstreamBuffer(BitstreamBuffer buffer) override;
-  void RequestEncodingParametersChange(const Bitrate& bitrate,
-                                       uint32_t framerate) override;
+  void RequestEncodingParametersChange(
+      const Bitrate& bitrate,
+      uint32_t framerate,
+      const absl::optional<gfx::Size>& size) override;
   void Destroy() override;
 
  private:
@@ -79,6 +81,8 @@ class MEDIA_GPU_EXPORT AndroidVideoEncodeAccelerator
   // does not provide these values, sets up |aligned_size_| such that encoded
   // frames are cropped to the nearest 16x16 alignment.
   bool SetInputBufferLayout();
+
+  void NotifyErrorStatus(EncoderStatus status);
 
   // Used to DCHECK that we are called on the correct sequence.
   SEQUENCE_CHECKER(sequence_checker_);

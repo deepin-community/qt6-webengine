@@ -64,19 +64,16 @@ DWORD Job::Init(JobLevel security_level,
           JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
       break;
     }
-    case JobLevel::kNone: {
-      return ERROR_BAD_ARGUMENTS;
-    }
   }
 
-  if (!::SetInformationJobObject(job_handle_.Get(),
+  if (!::SetInformationJobObject(job_handle_.get(),
                                  JobObjectExtendedLimitInformation, &jeli,
                                  sizeof(jeli))) {
     return ::GetLastError();
   }
 
   jbur.UIRestrictionsClass = jbur.UIRestrictionsClass & (~ui_exceptions);
-  if (!::SetInformationJobObject(job_handle_.Get(),
+  if (!::SetInformationJobObject(job_handle_.get(),
                                  JobObjectBasicUIRestrictions, &jbur,
                                  sizeof(jbur))) {
     return ::GetLastError();

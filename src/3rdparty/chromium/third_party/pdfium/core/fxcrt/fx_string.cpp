@@ -6,26 +6,95 @@
 
 #include "core/fxcrt/fx_string.h"
 
+#include <stdint.h>
+
 #include <iterator>
 
-#include "core/fxcrt/cfx_utf8decoder.h"
-#include "core/fxcrt/cfx_utf8encoder.h"
+#include "build/build_config.h"
+#include "core/fxcrt/bytestring.h"
+#include "core/fxcrt/code_point_view.h"
 #include "core/fxcrt/fx_extension.h"
 #include "core/fxcrt/span_util.h"
+#include "core/fxcrt/string_view_template.h"
+#include "core/fxcrt/utf16.h"
+#include "core/fxcrt/widestring.h"
 #include "third_party/base/compiler_specific.h"
-#include "third_party/base/span.h"
+#include "third_party/base/containers/span.h"
 
-ByteString FX_UTF8Encode(WideStringView wsStr) {
-  CFX_UTF8Encoder encoder;
-  for (size_t i = 0; i < wsStr.GetLength(); ++i)
-    encoder.Input(wsStr[i]);
+#if !defined(WCHAR_T_IS_16_BIT) && !defined(WCHAR_T_IS_32_BIT)
+#error "Unknown wchar_t size"
+#endif
+#if defined(WCHAR_T_IS_16_BIT) && defined(WCHAR_T_IS_32_BIT)
+#error "Conflicting wchar_t sizes"
+#endif
 
-  return ByteString(encoder.GetResult());
+namespace {
+
+// Appends a Unicode code point to a `ByteString` using UTF-8.
+//
+// TODO(crbug.com/pdfium/2041): Migrate to `ByteString`.
+void AppendCodePointToByteString(char32_t code_point, ByteString& buffer) {
+  if (code_point > pdfium::kMaximumSupplementaryCodePoint) {
+    // Invalid code point above U+10FFFF.
+    return;
+  }
+
+  if (code_point < 0x80) {
+    // 7-bit code points are unchanged in UTF-8.
+    buffer += code_point;
+    return;
+  }
+
+  int byte_size;
+  if (code_point < 0x800) {
+    byte_size = 2;
+  } else if (code_point < 0x10000) {
+    byte_size = 3;
+  } else {
+    byte_size = 4;
+  }
+
+  static constexpr uint8_t kPrefix[] = {0xc0, 0xe0, 0xf0};
+  int order = 1 << ((byte_size - 1) * 6);
+  buffer += kPrefix[byte_size - 2] | (code_point / order);
+  for (int i = 0; i < byte_size - 1; i++) {
+    code_point = code_point % order;
+    order >>= 6;
+    buffer += 0x80 | (code_point / order);
+  }
 }
 
-WideString FX_UTF8Decode(ByteStringView bsStr) {
-  CFX_UTF8Decoder decoder(bsStr);
-  return decoder.TakeResult();
+}  // namespace
+
+ByteString FX_UTF8Encode(WideStringView wsStr) {
+  ByteString buffer;
+  for (char32_t code_point : pdfium::CodePointView(wsStr)) {
+    AppendCodePointToByteString(code_point, buffer);
+  }
+  return buffer;
+}
+
+std::u16string FX_UTF16Encode(WideStringView wsStr) {
+  if (wsStr.IsEmpty()) {
+    return {};
+  }
+
+  std::u16string result;
+  result.reserve(wsStr.GetLength());
+
+  for (wchar_t c : wsStr) {
+#if defined(WCHAR_T_IS_32_BIT)
+    if (pdfium::IsSupplementary(c)) {
+      pdfium::SurrogatePair pair(c);
+      result.push_back(pair.high());
+      result.push_back(pair.low());
+      continue;
+    }
+#endif  // defined(WCHAR_T_IS_32_BIT)
+    result.push_back(c);
+  }
+
+  return result;
 }
 
 namespace {

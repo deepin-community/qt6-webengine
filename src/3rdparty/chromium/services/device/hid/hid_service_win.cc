@@ -4,6 +4,8 @@
 
 #include "services/device/hid/hid_service_win.h"
 
+#include <string_view>
+
 #define INITGUID
 
 #include <dbt.h>
@@ -241,7 +243,7 @@ absl::optional<std::wstring> GetParentInstanceId(
   instance_id = base::ToLowerASCII(*instance_id);
   // Remove trailing NUL bytes.
   return std::wstring(base::TrimString(
-      *instance_id, base::WStringPiece(L"\0", 1), base::TRIM_TRAILING));
+      *instance_id, std::wstring_view(L"\0", 1), base::TRIM_TRAILING));
 }
 
 mojom::HidReportItemPtr CreateHidReportItem(
@@ -380,7 +382,7 @@ std::string GetHidProductString(HANDLE device_handle) {
   // HidD_GetProductString is guaranteed to write a NUL-terminated string into
   // |buffer|. The characters following the string were value-initialized by
   // base::WriteInto and are also NUL. Trim the trailing NUL characters.
-  buffer = std::wstring(base::TrimString(buffer, base::WStringPiece(L"\0", 1),
+  buffer = std::wstring(base::TrimString(buffer, std::wstring_view(L"\0", 1),
                                          base::TRIM_TRAILING));
   return base::SysWideToUTF8(buffer);
 }
@@ -398,7 +400,7 @@ std::string GetHidSerialNumberString(HANDLE device_handle) {
   // HidD_GetSerialNumberString is guaranteed to write a NUL-terminated string
   // into |buffer|. The characters following the string were value-initialized
   // by base::WriteInto and are also NUL. Trim the trailing NUL characters.
-  buffer = std::wstring(base::TrimString(buffer, base::WStringPiece(L"\0", 1),
+  buffer = std::wstring(base::TrimString(buffer, std::wstring_view(L"\0", 1),
                                          base::TRIM_TRAILING));
   return base::SysWideToUTF8(buffer);
 }
@@ -669,13 +671,23 @@ void HidServiceWin::OnDeviceRemoved(const GUID& class_guid,
 // static
 base::win::ScopedHandle HidServiceWin::OpenDevice(
     const std::wstring& device_path) {
-  base::win::ScopedHandle file(
-      CreateFile(device_path.c_str(), GENERIC_WRITE | GENERIC_READ,
-                 FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
-                 FILE_FLAG_OVERLAPPED, nullptr));
-  if (!file.IsValid() && GetLastError() == ERROR_ACCESS_DENIED) {
-    file.Set(CreateFile(device_path.c_str(), GENERIC_READ, FILE_SHARE_READ,
-                        nullptr, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, nullptr));
+  constexpr DWORD kDesiredAccessModes[] = {
+      // Request read and write access.
+      GENERIC_WRITE | GENERIC_READ,
+      // Request read-only access.
+      GENERIC_READ,
+      // Don't request read or write access.
+      0,
+  };
+  base::win::ScopedHandle file;
+  for (const auto& desired_access : kDesiredAccessModes) {
+    file.Set(CreateFile(device_path.c_str(), desired_access,
+                        FILE_SHARE_READ | FILE_SHARE_WRITE,
+                        /*lpSecurityAttributes=*/nullptr, OPEN_EXISTING,
+                        FILE_FLAG_OVERLAPPED, /*hTemplateFile=*/nullptr));
+    if (file.IsValid() || GetLastError() != ERROR_ACCESS_DENIED) {
+      break;
+    }
   }
   return file;
 }

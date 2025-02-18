@@ -25,7 +25,9 @@
 
 #include "base/functional/callback_forward.h"
 #include "base/memory/ref_counted.h"
+#include "base/observer_list_types.h"
 #include "base/supports_user_data.h"
+#include "build/build_config.h"
 #include "components/download/public/common/download_danger_type.h"
 #include "components/download/public/common/download_export.h"
 #include "components/download/public/common/download_interrupt_reasons.h"
@@ -124,7 +126,7 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadItem : public base::SupportsUserData {
 
   // Interface that observers of a particular download must implement in order
   // to receive updates to the download's status.
-  class COMPONENTS_DOWNLOAD_EXPORT Observer {
+  class COMPONENTS_DOWNLOAD_EXPORT Observer : public base::CheckedObserver {
    public:
     virtual void OnDownloadUpdated(DownloadItem* download) {}
     virtual void OnDownloadOpened(DownloadItem* download) {}
@@ -135,7 +137,7 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadItem : public base::SupportsUserData {
     // down.
     virtual void OnDownloadDestroyed(DownloadItem* download) {}
 
-    virtual ~Observer() {}
+    ~Observer() override;
   };
 
   // A slice of the target file that has been received so far, used when
@@ -230,8 +232,8 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadItem : public base::SupportsUserData {
   virtual uint32_t GetId() const = 0;
 
   // Retrieve the GUID for this download. The returned string is never empty and
-  // will satisfy base::IsValidGUID() and uniquely identifies the download
-  // during its lifetime.
+  // will satisfy `base::Uuid::ParseCaseInsensitive().is_valid()` and uniquely
+  // identifies the download during its lifetime.
   virtual const std::string& GetGuid() const = 0;
 
   // Get the current state of the download. See DownloadState for descriptions
@@ -273,9 +275,6 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadItem : public base::SupportsUserData {
   // Returns the number of times the download has been auto-resumed since last
   // user triggered resumption.
   virtual int32_t GetAutoResumeCount() const = 0;
-
-  // Whether the download is off the record.
-  virtual bool IsOffTheRecord() const = 0;
 
   //    Origin State accessors -------------------------------------------------
 
@@ -440,6 +439,11 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadItem : public base::SupportsUserData {
 
   // Gets the pointer to the DownloadFile owned by this object.
   virtual DownloadFile* GetDownloadFile() = 0;
+
+#if BUILDFLAG(IS_ANDROID)
+  // Gets whether the download is triggered from external app.
+  virtual bool IsFromExternalApp() = 0;
+#endif  // BUILDFLAG(IS_ANDROID)
 
   //    Progress State accessors -----------------------------------------------
 

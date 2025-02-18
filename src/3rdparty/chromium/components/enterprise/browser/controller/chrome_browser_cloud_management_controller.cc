@@ -10,7 +10,7 @@
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/logging.h"
-#include "base/metrics/histogram_macros.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/notreached.h"
 #include "base/observer_list.h"
 #include "base/path_service.h"
@@ -21,6 +21,7 @@
 #include "components/enterprise/browser/controller/browser_dm_token_storage.h"
 #include "components/enterprise/browser/controller/chrome_browser_cloud_management_helper.h"
 #include "components/enterprise/browser/enterprise_switches.h"
+#include "components/enterprise/browser/reporting/real_time_report_controller.h"
 #include "components/policy/core/browser/browser_policy_connector.h"
 #include "components/policy/core/common/cloud/client_data_delegate.h"
 #include "components/policy/core/common/cloud/cloud_external_data_manager.h"
@@ -84,8 +85,6 @@ std::unique_ptr<MachineLevelUserCloudPolicyManager>
 ChromeBrowserCloudManagementController::CreatePolicyManager(
     ConfigurationPolicyProvider* platform_provider) {
   if (!IsEnabled()) {
-    LOG_POLICY(WARNING, CBCM_ENROLLMENT)
-        << "Could not create policy manager as CBCM is not enabled.";
     return nullptr;
   }
 
@@ -161,7 +160,9 @@ void ChromeBrowserCloudManagementController::Init(
   if (!IsEnabled()) {
     LOG_POLICY(ERROR, CBCM_ENROLLMENT)
         << "Cloud management controller initialization aborted as CBCM is not "
-           "enabled.";
+           "enabled. Please use the `--enable-chrome-browser-cloud-management` "
+           "command line flag to enable it if you are not using the official "
+           "Google Chrome build.";
     return;
   }
   LOG_POLICY(INFO, CBCM_ENROLLMENT)
@@ -331,7 +332,7 @@ void ChromeBrowserCloudManagementController::InvalidatePolicies() {
 void ChromeBrowserCloudManagementController::UnenrollCallback(
     const std::string& metric_name,
     bool success) {
-  UMA_HISTOGRAM_BOOLEAN(
+  base::UmaHistogramBoolean(
       base::StrCat(
           {"Enterprise.MachineLevelUserCloudPolicyEnrollment.", metric_name}),
       success);
@@ -441,7 +442,7 @@ void ChromeBrowserCloudManagementController::
         << "No DM token returned from browser registration.";
     RecordEnrollmentResult(
         ChromeBrowserCloudManagementEnrollmentResult::kFailedToFetch);
-    UMA_HISTOGRAM_TIMES(
+    base::UmaHistogramTimes(
         "Enterprise.MachineLevelUserCloudPolicyEnrollment.RequestFailureTime",
         enrollment_time);
     MachineLevelUserCloudPolicyManager* policy_manager =
@@ -455,7 +456,7 @@ void ChromeBrowserCloudManagementController::
 
   VLOG_POLICY(1, CBCM_ENROLLMENT) << "DM token retrieved from server.";
 
-  UMA_HISTOGRAM_TIMES(
+  base::UmaHistogramTimes(
       "Enterprise.MachineLevelUserCloudPolicyEnrollment.RequestSuccessTime",
       enrollment_time);
 
@@ -504,9 +505,10 @@ void ChromeBrowserCloudManagementController::CreateReportScheduler() {
   params.report_generator =
       std::make_unique<enterprise_reporting::ReportGenerator>(
           reporting_delegate_factory.get());
-  params.real_time_report_generator =
-      std::make_unique<enterprise_reporting::RealTimeReportGenerator>(
+  params.real_time_report_controller =
+      std::make_unique<enterprise_reporting::RealTimeReportController>(
           reporting_delegate_factory.get());
+
   report_scheduler_ = std::make_unique<enterprise_reporting::ReportScheduler>(
       std::move(params));
 
@@ -524,7 +526,7 @@ void ChromeBrowserCloudManagementController::DeferrableCreatePolicyManagerImpl(
 
 void ChromeBrowserCloudManagementController::RecordEnrollmentResult(
     ChromeBrowserCloudManagementEnrollmentResult result) {
-  UMA_HISTOGRAM_ENUMERATION(
+  base::UmaHistogramEnumeration(
       "Enterprise.MachineLevelUserCloudPolicyEnrollment.Result", result);
   for (auto& observer : observers_) {
     observer.OnEnrollmentResultRecorded();

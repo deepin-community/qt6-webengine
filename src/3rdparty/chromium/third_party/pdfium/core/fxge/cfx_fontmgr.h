@@ -15,12 +15,12 @@
 #include <tuple>
 
 #include "core/fxcrt/bytestring.h"
-#include "core/fxcrt/fixed_uninit_data_vector.h"
+#include "core/fxcrt/fixed_size_data_vector.h"
 #include "core/fxcrt/observed_ptr.h"
 #include "core/fxcrt/retain_ptr.h"
 #include "core/fxge/cfx_face.h"
 #include "core/fxge/freetype/fx_freetype.h"
-#include "third_party/base/span.h"
+#include "third_party/base/containers/span.h"
 
 class CFX_FontMapper;
 
@@ -29,16 +29,16 @@ class CFX_FontMgr {
   class FontDesc final : public Retainable, public Observable {
    public:
     CONSTRUCT_VIA_MAKE_RETAIN;
-    ~FontDesc() override;
 
     pdfium::span<const uint8_t> FontData() const { return m_pFontData; }
     void SetFace(size_t index, CFX_Face* face);
     CFX_Face* GetFace(size_t index) const;
 
    private:
-    explicit FontDesc(FixedUninitDataVector<uint8_t> data);
+    explicit FontDesc(FixedSizeDataVector<uint8_t> data);
+    ~FontDesc() override;
 
-    const FixedUninitDataVector<uint8_t> m_pFontData;
+    const FixedSizeDataVector<uint8_t> m_pFontData;
     ObservedPtr<CFX_Face> m_TTCFaces[16];
   };
 
@@ -56,12 +56,12 @@ class CFX_FontMgr {
   RetainPtr<FontDesc> AddCachedFontDesc(const ByteString& face_name,
                                         int weight,
                                         bool bItalic,
-                                        FixedUninitDataVector<uint8_t> data);
+                                        FixedSizeDataVector<uint8_t> data);
 
   RetainPtr<FontDesc> GetCachedTTCFontDesc(size_t ttc_size, uint32_t checksum);
   RetainPtr<FontDesc> AddCachedTTCFontDesc(size_t ttc_size,
                                            uint32_t checksum,
-                                           FixedUninitDataVector<uint8_t> data);
+                                           FixedSizeDataVector<uint8_t> data);
 
   RetainPtr<CFX_Face> NewFixedFace(RetainPtr<FontDesc> pDesc,
                                    pdfium::span<const uint8_t> span,

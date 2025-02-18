@@ -253,6 +253,7 @@ constexpr size_t kDefaultElementTimingBufferSize = 150;
 constexpr size_t kDefaultLayoutShiftBufferSize = 150;
 constexpr size_t kDefaultLargestContenfulPaintSize = 150;
 constexpr size_t kDefaultLongTaskBufferSize = 200;
+constexpr size_t kDefaultLongAnimationFrameBufferSize = 200;
 constexpr size_t kDefaultBackForwardCacheRestorationBufferSize = 200;
 constexpr size_t kDefaultSoftNavigationBufferSize = 50;
 // Paint timing entries is more than twice as much as the soft navigation buffer
@@ -424,6 +425,18 @@ PerformanceEntryVector Performance::GetEntriesForCurrentFrame(
                                            maybe_name);
   }
 
+  if (RuntimeEnabledFeatures::LongAnimationFrameTimingEnabled(
+          GetExecutionContext()) &&
+      long_animation_frame_buffer_.size()) {
+    entries = MergePerformanceEntryVectors(
+        entries, long_animation_frame_buffer_, maybe_name);
+  }
+
+  if (visibility_state_buffer_.size()) {
+    entries = MergePerformanceEntryVectors(entries, visibility_state_buffer_,
+                                           maybe_name);
+  }
+
   return entries;
 }
 
@@ -536,8 +549,9 @@ PerformanceEntryVector Performance::getEntriesByTypeInternal(
       entries = &longtask_buffer_;
       break;
 
-    // TaskAttribution entries are only associated to longtask entries.
+    // TaskAttribution & script entries are only associated to longtask entries.
     case PerformanceEntry::kTaskAttribution:
+    case PerformanceEntry::kScript:
       break;
 
     case PerformanceEntry::kLayoutShift:
@@ -565,6 +579,15 @@ PerformanceEntryVector Performance::getEntriesByTypeInternal(
         UseCounter::Count(GetExecutionContext(),
                           WebFeature::kSoftNavigationHeuristics);
         entries = &soft_navigation_buffer_;
+      }
+      break;
+
+    case PerformanceEntry::kLongAnimationFrame:
+      if (RuntimeEnabledFeatures::LongAnimationFrameTimingEnabled(
+              GetExecutionContext())) {
+        UseCounter::Count(GetExecutionContext(),
+                          WebFeature::kLongAnimationFrameRequested);
+        entries = &long_animation_frame_buffer_;
       }
       break;
 
@@ -721,6 +744,11 @@ bool Performance::IsElementTimingBufferFull() const {
 
 bool Performance::IsEventTimingBufferFull() const {
   return event_timing_buffer_.size() >= event_timing_buffer_max_size_;
+}
+
+bool Performance::IsLongAnimationFrameBufferFull() const {
+  return long_animation_frame_buffer_.size() >=
+         kDefaultLongAnimationFrameBufferSize;
 }
 
 void Performance::CopySecondaryBuffer() {
@@ -906,6 +934,8 @@ PerformanceMark* Performance::mark(ScriptState* script_state,
                                   ("mark_fully_visible"));
   DEFINE_THREAD_SAFE_STATIC_LOCAL(const AtomicString, mark_interactive,
                                   ("mark_interactive"));
+  DEFINE_THREAD_SAFE_STATIC_LOCAL(const AtomicString, mark_feature_usage,
+                                  ("mark_feature_usage"));
   if (mark_options &&
       (mark_options->hasStartTime() || mark_options->hasDetail())) {
     UseCounter::Count(GetExecutionContext(), WebFeature::kUserTimingL3);
@@ -943,10 +973,61 @@ PerformanceMark* Performance::mark(ScriptState* script_state,
             .SetUserTimingMarkInteractive(
                 base::Milliseconds(performance_mark->startTime()));
       }
+    } else if (mark_name == mark_feature_usage && mark_options->hasDetail()) {
+      if (RuntimeEnabledFeatures::PerformanceMarkFeatureUsageEnabled()) {
+        ProcessUserFeatureMark(mark_options);
+      }
     }
     NotifyObserversOfEntry(*performance_mark);
   }
   return performance_mark;
+}
+
+void Performance::ProcessUserFeatureMark(
+    const PerformanceMarkOptions* mark_options) {
+  const ExecutionContext* exec_context = GetExecutionContext();
+  if (!exec_context) {
+    return;
+  }
+
+  const ScriptValue& detail = mark_options->detail();
+  if (!detail.IsObject()) {
+    return;
+  }
+
+  v8::Isolate* isolate = GetExecutionContext()->GetIsolate();
+  v8::Local<v8::Context> current_context = isolate->GetCurrentContext();
+  v8::Local<v8::Object> object;
+  if (!detail.V8Value()->ToObject(current_context).ToLocal(&object)) {
+    return;
+  }
+
+  v8::Local<v8::Value> user_feature_name_val;
+  if (!object->Get(current_context, V8AtomicString(isolate, "feature"))
+           .ToLocal(&user_feature_name_val) ||
+      user_feature_name_val->IsUndefined()) {
+    return;
+  }
+
+  v8::Local<v8::String> user_feature_name;
+  if (!user_feature_name_val->ToString(current_context)
+           .ToLocal(&user_feature_name)) {
+    return;
+  }
+
+  String blink_user_feature_name =
+      ToBlinkString<String>(isolate, user_feature_name, kDoNotExternalize);
+
+  // Check if the user feature name is mapped to an allowed WebFeature.
+  auto maybe_web_feature =
+      PerformanceMark::GetWebFeatureForUserFeatureName(blink_user_feature_name);
+  if (!maybe_web_feature.has_value()) {
+    // We have no matching WebFeature translation yet, skip.
+    return;
+  }
+
+  // Tick the corresponding use counter.
+  UseCounter::Count(GetExecutionContext(), maybe_web_feature.value());
 }
 
 void Performance::clearMarks(const AtomicString& mark_name) {
@@ -1187,29 +1268,11 @@ DOMHighResTimeStamp Performance::MonotonicTimeToDOMHighResTimeStamp(
   return clamped_time;
 }
 
-// static
-base::TimeDelta Performance::MonotonicTimeToTimeDelta(
-    base::TimeTicks time_origin,
-    base::TimeTicks monotonic_time,
-    bool allow_negative_value,
-    bool cross_origin_isolated_capability) {
-  return base::Milliseconds(MonotonicTimeToDOMHighResTimeStamp(
-      time_origin, monotonic_time, allow_negative_value,
-      cross_origin_isolated_capability));
-}
-
 DOMHighResTimeStamp Performance::MonotonicTimeToDOMHighResTimeStamp(
     base::TimeTicks monotonic_time) const {
   return MonotonicTimeToDOMHighResTimeStamp(time_origin_, monotonic_time,
                                             false /* allow_negative_value */,
                                             cross_origin_isolated_capability_);
-}
-
-base::TimeDelta Performance::MonotonicTimeToTimeDelta(
-    base::TimeTicks monotonic_time) const {
-  return MonotonicTimeToTimeDelta(time_origin_, monotonic_time,
-                                  false /* allow_negative_value */,
-                                  cross_origin_isolated_capability_);
 }
 
 DOMHighResTimeStamp Performance::now() const {
@@ -1281,6 +1344,7 @@ void Performance::Trace(Visitor* visitor) const {
   visitor->Trace(visibility_state_buffer_);
   visitor->Trace(back_forward_cache_restoration_buffer_);
   visitor->Trace(soft_navigation_buffer_);
+  visitor->Trace(long_animation_frame_buffer_);
   visitor->Trace(navigation_timing_);
   visitor->Trace(user_timing_);
   visitor->Trace(paint_entries_timing_);
@@ -1291,7 +1355,7 @@ void Performance::Trace(Visitor* visitor) const {
   visitor->Trace(deliver_observations_timer_);
   visitor->Trace(resource_timing_buffer_full_timer_);
   visitor->Trace(background_tracing_helper_);
-  EventTargetWithInlineData::Trace(visitor);
+  EventTarget::Trace(visitor);
 }
 
 void Performance::SetClocksForTesting(const base::Clock* clock,
@@ -1303,6 +1367,14 @@ void Performance::SetClocksForTesting(const base::Clock* clock,
 
 void Performance::ResetTimeOriginForTesting(base::TimeTicks time_origin) {
   time_origin_ = time_origin;
+}
+
+// TODO(https://crbug.com/1457049): remove this once visited links are
+// partitioned.
+bool Performance::softNavPaintMetricsSupported() const {
+  CHECK(
+      RuntimeEnabledFeatures::SoftNavigationHeuristicsExposeFPAndFCPEnabled());
+  return true;
 }
 
 }  // namespace blink

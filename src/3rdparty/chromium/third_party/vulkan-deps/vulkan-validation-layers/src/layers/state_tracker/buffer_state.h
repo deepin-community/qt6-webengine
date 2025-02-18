@@ -18,55 +18,62 @@
  * limitations under the License.
  */
 #pragma once
+#include <variant>
 #include "state_tracker/device_memory_state.h"
-#include "range_vector.h"
+#include "containers/range_vector.h"
 
 class ValidationStateTracker;
+
+namespace vvl {
+
 class VideoProfileDesc;
 
-class BUFFER_STATE : public BINDABLE {
+class Buffer : public Bindable {
   public:
     const safe_VkBufferCreateInfo safe_create_info;
     const VkBufferCreateInfo &createInfo;
-    VkDeviceAddress deviceAddress;
     const VkMemoryRequirements requirements;
-    const VkMemoryRequirements *const memory_requirements_pointer = &requirements;
-    bool memory_requirements_checked;
+    VkDeviceAddress deviceAddress = 0;
+    // VkBufferUsageFlags2CreateInfoKHR can be used instead over the VkBufferCreateInfo::usage
+    const VkBufferUsageFlags2KHR usage;
 
-    vvl::unordered_set<std::shared_ptr<const VideoProfileDesc>> supported_video_profiles;
+    unordered_set<std::shared_ptr<const VideoProfileDesc>> supported_video_profiles;
 
-    BUFFER_STATE(ValidationStateTracker *dev_data, VkBuffer buff, const VkBufferCreateInfo *pCreateInfo);
+    Buffer(ValidationStateTracker *dev_data, VkBuffer buff, const VkBufferCreateInfo *pCreateInfo);
 
-    BUFFER_STATE(BUFFER_STATE const &rh_obj) = delete;
+    Buffer(Buffer const &rh_obj) = delete;
+
+    // This destructor is needed because Bindable depends on the tracker_ variant defined in this
+    // class. So we need to do the Destroy() work before tracker_ is destroyed.
+    virtual ~Buffer() {
+        if (!Destroyed()) {
+            Bindable::Destroy();
+        }
+    }
 
     VkBuffer buffer() const { return handle_.Cast<VkBuffer>(); }
+    std::optional<VkDeviceSize> ComputeValidSize(VkDeviceSize offset, VkDeviceSize size) const {
+        return ::ComputeValidSize(offset, size, createInfo.size);
+    }
+    VkDeviceSize ComputeSize(VkDeviceSize offset, VkDeviceSize size) const {
+        std::optional<VkDeviceSize> valid_size = ComputeValidSize(offset, size);
+        return valid_size.has_value() ? *valid_size : VkDeviceSize(0);
+    }
+    static VkDeviceSize ComputeSize(const std::shared_ptr<const Buffer> &buffer_state, VkDeviceSize offset,
+                                    VkDeviceSize size) {
+        return buffer_state ? buffer_state->ComputeSize(offset, size) : VkDeviceSize(0);
+    }
 
     sparse_container::range<VkDeviceAddress> DeviceAddressRange() const { return {deviceAddress, deviceAddress + createInfo.size}; }
+
+  private:
+    std::variant<std::monostate, BindableLinearMemoryTracker, BindableSparseMemoryTracker> tracker_;
 };
 
-using BUFFER_STATE_LINEAR = MEMORY_TRACKED_RESOURCE_STATE<BUFFER_STATE, BindableLinearMemoryTracker>;
-template <bool IS_RESIDENT>
-using BUFFER_STATE_SPARSE = MEMORY_TRACKED_RESOURCE_STATE<BUFFER_STATE, BindableSparseMemoryTracker<IS_RESIDENT>>;
-
-#ifdef VK_USE_PLATFORM_METAL_EXT
-static bool GetMetalExport(const VkBufferViewCreateInfo *info) {
-    bool retval = false;
-    auto export_metal_object_info = LvlFindInChain<VkExportMetalObjectCreateInfoEXT>(info->pNext);
-    while (export_metal_object_info) {
-        if (export_metal_object_info->exportObjectType == VK_EXPORT_METAL_OBJECT_TYPE_METAL_TEXTURE_BIT_EXT) {
-            retval = true;
-            break;
-        }
-        export_metal_object_info = LvlFindInChain<VkExportMetalObjectCreateInfoEXT>(export_metal_object_info->pNext);
-    }
-    return retval;
-}
-#endif
-
-class BUFFER_VIEW_STATE : public BASE_NODE {
+class BufferView : public StateObject {
   public:
     const VkBufferViewCreateInfo create_info;
-    std::shared_ptr<BUFFER_STATE> buffer_state;
+    std::shared_ptr<Buffer> buffer_state;
 #ifdef VK_USE_PLATFORM_METAL_EXT
     const bool metal_bufferview_export;
 #endif  // VK_USE_PLATFORM_METAL_EXT
@@ -74,28 +81,20 @@ class BUFFER_VIEW_STATE : public BASE_NODE {
     // both as a buffer (ex OpLoad) or image (ex OpImageWrite)
     const VkFormatFeatureFlags2KHR buf_format_features;
 
-    BUFFER_VIEW_STATE(const std::shared_ptr<BUFFER_STATE> &bf, VkBufferView bv, const VkBufferViewCreateInfo *ci,
-                      VkFormatFeatureFlags2KHR buf_ff)
-        : BASE_NODE(bv, kVulkanObjectTypeBufferView),
-          create_info(*ci),
-          buffer_state(bf),
-#ifdef VK_USE_PLATFORM_METAL_EXT
-          metal_bufferview_export(GetMetalExport(ci)),
-#endif
-          buf_format_features(buf_ff) {
-    }
+    BufferView(const std::shared_ptr<Buffer> &bf, VkBufferView bv, const VkBufferViewCreateInfo *ci,
+               VkFormatFeatureFlags2KHR buf_ff);
 
     void LinkChildNodes() override {
         // Connect child node(s), which cannot safely be done in the constructor.
         buffer_state->AddParent(this);
     }
-    virtual ~BUFFER_VIEW_STATE() {
+    virtual ~BufferView() {
         if (!Destroyed()) {
             Destroy();
         }
     }
 
-    BUFFER_VIEW_STATE(const BUFFER_VIEW_STATE &rh_obj) = delete;
+    BufferView(const BufferView &rh_obj) = delete;
 
     VkBufferView buffer_view() const { return handle_.Cast<VkBufferView>(); }
 
@@ -104,7 +103,17 @@ class BUFFER_VIEW_STATE : public BASE_NODE {
             buffer_state->RemoveParent(this);
             buffer_state = nullptr;
         }
-        BASE_NODE::Destroy();
+        StateObject::Destroy();
     }
     bool Invalid() const override { return Destroyed() || !buffer_state || buffer_state->Invalid(); }
+
+    VkDeviceSize Size() const {
+        VkDeviceSize size = create_info.range;
+        if (size == VK_WHOLE_SIZE) {
+            size = buffer_state->createInfo.size - create_info.offset;
+        }
+        return size;
+    }
 };
+
+}  // namespace vvl

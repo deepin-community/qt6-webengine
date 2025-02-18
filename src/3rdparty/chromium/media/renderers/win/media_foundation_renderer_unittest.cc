@@ -17,7 +17,6 @@
 #include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "base/win/scoped_com_initializer.h"
-#include "media/base/bind_to_current_loop.h"
 #include "media/base/demuxer_stream.h"
 #include "media/base/media_switches.h"
 #include "media/base/media_util.h"
@@ -124,7 +123,7 @@ class MediaFoundationRendererTest : public testing::Test {
         .WillRepeatedly(
             Invoke(this, &MediaFoundationRendererTest::GetAllStreams));
     EXPECT_CALL(media_resource_, GetType())
-        .WillRepeatedly(Return(MediaResource::STREAM));
+        .WillRepeatedly(Return(MediaResource::Type::kStream));
   }
 
   ~MediaFoundationRendererTest() override { mf_renderer_.reset(); }
@@ -133,8 +132,8 @@ class MediaFoundationRendererTest : public testing::Test {
     streams_.push_back(CreateMockDemuxerStream(type, encrypted));
   }
 
-  std::vector<DemuxerStream*> GetAllStreams() {
-    std::vector<DemuxerStream*> streams;
+  std::vector<raw_ptr<DemuxerStream, VectorExperimental>> GetAllStreams() {
+    std::vector<raw_ptr<DemuxerStream, VectorExperimental>> streams;
 
     for (auto& stream : streams_) {
       streams.push_back(stream.get());

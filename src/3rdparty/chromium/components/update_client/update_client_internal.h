@@ -44,6 +44,11 @@ class UpdateClientImpl : public UpdateClient {
       CrxDataCallback crx_data_callback,
       CrxStateChangeCallback crx_state_change_callback,
       Callback callback) override;
+  void CheckForUpdate(const std::string& id,
+                      CrxDataCallback crx_data_callback,
+                      CrxStateChangeCallback crx_state_change_callback,
+                      bool is_foreground,
+                      Callback callback) override;
   void Update(const std::vector<std::string>& ids,
               CrxDataCallback crx_data_callback,
               CrxStateChangeCallback crx_state_change_callback,
@@ -56,14 +61,19 @@ class UpdateClientImpl : public UpdateClient {
   void SendUninstallPing(const CrxComponent& crx_component,
                          int reason,
                          Callback callback) override;
+  void SendInstallPing(const CrxComponent& crx_component,
+                       bool success,
+                       int error_code,
+                       int extra_code1,
+                       Callback callback) override;
 
  private:
   ~UpdateClientImpl() override;
 
   void RunTask(scoped_refptr<Task> task);
   void OnTaskComplete(Callback callback, scoped_refptr<Task> task, Error error);
-
   void NotifyObservers(Observer::Events event, const std::string& id);
+  void RunOrEnqueueTask(scoped_refptr<Task> task);
 
   SEQUENCE_CHECKER(sequence_checker_);
 

@@ -266,8 +266,9 @@ class ContentSubresourceFilterThrottleManager
                            SubframeNavigationTaggedAsAdByRenderer);
   FRIEND_TEST_ALL_PREFIXES(ContentSubresourceFilterThrottleManagerTest,
                            GrandchildNavigationTaggedAsAdByRenderer);
-  FRIEND_TEST_ALL_PREFIXES(ContentSubresourceFilterThrottleManagerTest,
-                           AdTagCarriesAcrossProcesses);
+  FRIEND_TEST_ALL_PREFIXES(
+      SitePerProcessContentSubresourceFilterThrottleManagerTest,
+      AdTagCarriesAcrossProcesses);
   FRIEND_TEST_ALL_PREFIXES(ContentSubresourceFilterThrottleManagerTest,
                            FirstDisallowedLoadCalledOutOfOrder);
   std::unique_ptr<ChildFrameNavigationFilteringThrottle>
@@ -405,7 +406,8 @@ class ContentSubresourceFilterThrottleManager
   bool current_committed_load_has_notified_disallowed_load_ = false;
 
   // This member outlives this class.
-  raw_ptr<VerifiedRulesetDealer::Handle> dealer_handle_;
+  raw_ptr<VerifiedRulesetDealer::Handle, AcrossTasksDanglingUntriaged>
+      dealer_handle_;
 
   scoped_refptr<safe_browsing::SafeBrowsingDatabaseManager> database_manager_;
 

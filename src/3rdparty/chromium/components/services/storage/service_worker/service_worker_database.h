@@ -35,7 +35,6 @@ class Location;
 namespace leveldb {
 class DB;
 class Env;
-class Status;
 class WriteBatch;
 }  // namespace leveldb
 
@@ -289,8 +288,8 @@ class ServiceWorkerDatabase {
   // Resources are moved to the purgeable list. Returns OK if
   // they are successfully deleted or not found in the database. Otherwise,
   // returns an error.
-  Status DeleteAllDataForStorageKeys(
-      const std::set<blink::StorageKey>& keys,
+  Status DeleteAllDataForOrigins(
+      const std::set<url::Origin>& origins,
       std::vector<int64_t>* newly_purgeable_resources);
 
   // Completely deletes the contents of the database.
@@ -441,6 +440,8 @@ class ServiceWorkerDatabase {
                            NoCrossOriginEmbedderPolicyValue);
   FRIEND_TEST_ALL_PREFIXES(ServiceWorkerDatabaseTest, NoFetchHandlerType);
   FRIEND_TEST_ALL_PREFIXES(ServiceWorkerDatabaseTest, FetchHandlerType);
+  FRIEND_TEST_ALL_PREFIXES(ServiceWorkerDatabaseTest,
+                           RouterRulesLegacyPathname);
 };
 
 }  // namespace storage

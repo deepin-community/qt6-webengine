@@ -12,6 +12,9 @@
 #define SRC_DAWN_COMMON_LINKEDLIST_H_
 
 #include "dawn/common/Assert.h"
+#include "partition_alloc/pointers/raw_ptr.h"
+
+namespace dawn {
 
 // Simple LinkedList type. (See the Q&A section to understand how this
 // differs from std::list).
@@ -140,7 +143,7 @@ class LinkNode {
 
     // Check if |this| is in a list.
     bool IsInList() const {
-        ASSERT((this->previous_ == nullptr) == (this->next_ == nullptr));
+        DAWN_ASSERT((this->previous_ == nullptr) == (this->next_ == nullptr));
         return this->next_ != nullptr;
     }
 
@@ -169,8 +172,8 @@ class LinkNode {
 
   private:
     friend class LinkedList<T>;
-    LinkNode<T>* previous_;
-    LinkNode<T>* next_;
+    raw_ptr<LinkNode<T>> previous_;
+    raw_ptr<LinkNode<T>> next_;
 };
 
 template <typename T>
@@ -231,8 +234,8 @@ class LinkedListIterator {
     LinkNode<T>* operator*() const { return current_; }
 
   private:
-    LinkNode<T>* current_;
-    LinkNode<T>* next_;
+    raw_ptr<LinkNode<T>> current_;
+    raw_ptr<LinkNode<T>> next_;
 };
 
 template <typename T>
@@ -246,5 +249,7 @@ template <typename T>
 LinkedListIterator<T> end(LinkedList<T>& l) {
     return LinkedListIterator<T>(l.tail()->next());
 }
+
+}  // namespace dawn
 
 #endif  // SRC_DAWN_COMMON_LINKEDLIST_H_

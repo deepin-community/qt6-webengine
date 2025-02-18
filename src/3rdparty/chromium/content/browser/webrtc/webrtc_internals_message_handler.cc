@@ -36,10 +36,6 @@ void WebRTCInternalsMessageHandler::RegisterMessages() {
       "getStandardStats",
       base::BindRepeating(&WebRTCInternalsMessageHandler::OnGetStandardStats,
                           base::Unretained(this)));
-  web_ui()->RegisterMessageCallback(
-      "getLegacyStats",
-      base::BindRepeating(&WebRTCInternalsMessageHandler::OnGetLegacyStats,
-                          base::Unretained(this)));
 
   web_ui()->RegisterMessageCallback(
       "enableAudioDebugRecordings",
@@ -95,13 +91,6 @@ void WebRTCInternalsMessageHandler::OnGetStandardStats(
   }
 }
 
-void WebRTCInternalsMessageHandler::OnGetLegacyStats(
-    const base::Value::List& /* unused_list */) {
-  for (auto* host : PeerConnectionTrackerHost::GetAllHosts()) {
-    host->GetLegacyStats();
-  }
-}
-
 void WebRTCInternalsMessageHandler::OnSetAudioDebugRecordingsEnabled(
     bool enable,
     const base::Value::List& /* unused_list */) {
@@ -145,6 +134,9 @@ void WebRTCInternalsMessageHandler::OnDOMLoadDone(
   params.Set("eventLogRecordingsToggleable",
              webrtc_internals_->CanToggleEventLogRecordings());
 
+  for (auto* host : PeerConnectionTrackerHost::GetAllHosts()) {
+    host->GetCurrentState();
+  }
   ResolveJavascriptCallback(base::Value(callback_id), params);
 }
 

@@ -160,7 +160,7 @@ class ContentSettingsPattern::Builder
 
 ContentSettingsPattern::Builder::Builder() : is_valid_(true) {}
 
-ContentSettingsPattern::Builder::~Builder() {}
+ContentSettingsPattern::Builder::~Builder() = default;
 
 BuilderInterface* ContentSettingsPattern::Builder::WithPort(
     const std::string& port) {
@@ -354,13 +354,22 @@ ContentSettingsPattern::PatternParts::PatternParts(const PatternParts& other) =
 ContentSettingsPattern::PatternParts::PatternParts(PatternParts&& other) =
     default;
 
-ContentSettingsPattern::PatternParts::~PatternParts() {}
+ContentSettingsPattern::PatternParts::~PatternParts() = default;
 
 ContentSettingsPattern::PatternParts&
 ContentSettingsPattern::PatternParts::operator=(const PatternParts& other) =
     default;
 ContentSettingsPattern::PatternParts&
 ContentSettingsPattern::PatternParts::operator=(PatternParts&& other) = default;
+
+bool ContentSettingsPattern::PatternParts::operator==(
+    const ContentSettingsPattern::PatternParts& other) const {
+  return std::tie(scheme, is_scheme_wildcard, host, has_domain_wildcard, port,
+                  is_port_wildcard, path, is_path_wildcard) ==
+         std::tie(other.scheme, other.is_scheme_wildcard, other.host,
+                  other.has_domain_wildcard, other.port, other.is_port_wildcard,
+                  other.path, other.is_path_wildcard);
+}
 
 // ////////////////////////////////////////////////////////////////////////////
 // ContentSettingsPattern
@@ -453,6 +462,27 @@ ContentSettingsPattern ContentSettingsPattern::FromURLNoWildcard(
 }
 
 // static
+ContentSettingsPattern ContentSettingsPattern::FromURLToSchemefulSitePattern(
+    const GURL& url) {
+  std::string registrable_domain = GetDomainAndRegistry(
+      url, net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
+
+  auto builder = ContentSettingsPattern::CreateBuilder();
+
+  if (registrable_domain.empty()) {
+    registrable_domain = url.host();
+  } else {
+    builder->WithDomainWildcard();
+  }
+
+  return builder->WithScheme(url.scheme())
+      ->WithHost(registrable_domain)
+      ->WithPathWildcard()
+      ->WithPortWildcard()
+      ->Build();
+}
+
+// static
 ContentSettingsPattern ContentSettingsPattern::FromString(
     base::StringPiece pattern_spec) {
   ContentSettingsPattern::Builder builder;
@@ -526,6 +556,12 @@ ContentSettingsPattern ContentSettingsPattern::ToHostOnlyPattern(
   return builder->Build();
 }
 
+bool ContentSettingsPattern::CompareDomains::operator()(
+    const std::string_view& domain_a,
+    const std::string_view& domain_b) const {
+  return CompareDomainNames(domain_a, domain_b) > 0;
+}
+
 ContentSettingsPattern::ContentSettingsPattern() : is_valid_(false) {}
 
 ContentSettingsPattern::ContentSettingsPattern(PatternParts parts, bool valid)
@@ -557,8 +593,14 @@ bool ContentSettingsPattern::Matches(const GURL& url) const {
       local_url->scheme_piece() == url::kFileScheme)
     return parts_.is_path_wildcard || parts_.path == local_url->path_piece();
 
-  // Match the host part.
-  const std::string trimmed_host = net::TrimEndingDot(local_url->host_piece());
+  // Match the host part. Code is the same as url::TrimEndingDot but that method
+  // unnecessarily creates a new std::string.
+  std::string_view trimmed_host = local_url->host_piece();
+  size_t len = trimmed_host.length();
+  if (len > 1 && trimmed_host[len - 1] == '.') {
+    trimmed_host.remove_suffix(1);
+  }
+
   if (!parts_.has_domain_wildcard) {
     if (parts_.host != trimmed_host)
       return false;
@@ -602,6 +644,16 @@ std::string ContentSettingsPattern::ToString() const {
   if (IsValid())
     return content_settings::PatternParser::ToString(parts_);
   return std::string();
+}
+
+GURL ContentSettingsPattern::ToRepresentativeUrl() const {
+  if (IsValid()) {
+    GURL url = content_settings::PatternParser::ToRepresentativeUrl(parts_);
+    DCHECK(!url.is_valid() || Matches(url))
+        << "Invalid conversion: " << ToString() << " to " << url;
+    return url;
+  }
+  return GURL();
 }
 
 ContentSettingsPattern::SchemeType ContentSettingsPattern::GetScheme() const {

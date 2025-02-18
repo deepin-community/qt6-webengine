@@ -625,11 +625,11 @@ TEST_F(ReportingUploaderTest, DontCacheResponse) {
 // with a different one, and make sure only the requests with the same
 // NetworkAnonymizationKey share a socket.
 TEST_F(ReportingUploaderTest, RespectsNetworkAnonymizationKey) {
-  // While features::kPartitionConnectionsByNetworkIsolationKey is not needed
-  // for reporting code to respect NetworkAnonymizationKey, this test works by
-  // ensuring that Reporting's NetworkAnonymizationKey makes it to the socket
-  // pool layer and is respected there, so this test needs to enable
-  // kPartitionConnectionsByNetworkIsolationKey.
+  // While network state partitioning is not needed for reporting code to
+  // respect NetworkAnonymizationKey, this test works by ensuring that
+  // Reporting's NetworkAnonymizationKey makes it to the socket pool layer and
+  // is respected there, so this test needs to enable
+  // network state partitioning.
   base::test::ScopedFeatureList feature_list;
   feature_list.InitAndEnableFeature(
       features::kPartitionConnectionsByNetworkIsolationKey);
@@ -637,8 +637,6 @@ TEST_F(ReportingUploaderTest, RespectsNetworkAnonymizationKey) {
   const SchemefulSite kSite1 = SchemefulSite(kOrigin);
   const SchemefulSite kSite2(GURL("https://origin2/"));
   ASSERT_NE(kSite1, kSite2);
-  const NetworkIsolationKey kNetworkIsolationKey1(kSite1, kSite1);
-  const NetworkIsolationKey kNetworkIsolationKey2(kSite2, kSite2);
   const url::Origin kSiteOrigin1 = url::Origin::Create(kSite1.GetURL());
   const url::Origin kSiteOrigin2 = url::Origin::Create(kSite2.GetURL());
   const IsolationInfo kIsolationInfo1 =

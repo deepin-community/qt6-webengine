@@ -97,8 +97,13 @@ void QuicServer::Initialize() {
 }
 
 QuicServer::~QuicServer() {
-  close(fd_);
-  fd_ = -1;
+  if (event_loop_ != nullptr) {
+    if (!event_loop_->UnregisterSocket(fd_)) {
+      QUIC_LOG(ERROR) << "Failed to unregister socket: " << fd_;
+    }
+  }
+  (void)socket_api::Close(fd_);
+  fd_ = kInvalidSocketFd;
 
   // Should be fine without because nothing should send requests to the backend
   // after `this` is destroyed, but for extra pointer safety, clear the socket
@@ -133,12 +138,12 @@ bool QuicServer::CreateUDPSocketAndListen(const QuicSocketAddress& address) {
   QUIC_LOG(INFO) << "Listening on " << address.ToString();
   port_ = address.port();
   if (port_ == 0) {
-    QuicSocketAddress address;
-    if (address.FromSocket(fd_) != 0) {
+    QuicSocketAddress self_address;
+    if (self_address.FromSocket(fd_) != 0) {
       QUIC_LOG(ERROR) << "Unable to get self address.  Error: "
                       << strerror(errno);
     }
-    port_ = address.port();
+    port_ = self_address.port();
   }
 
   bool register_result = event_loop_->RegisterSocket(

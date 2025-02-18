@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include <optional>
 #include "base/containers/flat_map.h"
 #include "base/functional/callback.h"
 #include "base/memory/ptr_util.h"
@@ -17,7 +18,6 @@
 #include "cc/resources/cross_thread_shared_bitmap.h"
 #include "components/viz/common/resources/release_callback.h"
 #include "components/viz/common/resources/transferable_resource.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/gfx/hdr_metadata.h"
 
 namespace cc {
@@ -58,8 +58,7 @@ class CC_EXPORT TextureLayerImpl : public LayerImpl {
   void SetNearestNeighbor(bool nearest_neighbor);
   void SetUVTopLeft(const gfx::PointF& top_left);
   void SetUVBottomRight(const gfx::PointF& bottom_right);
-  void SetHDRConfiguration(gfx::HDRMode mode,
-                           absl::optional<gfx::HDRMetadata> hdr_metadata);
+  void SetHdrMetadata(const gfx::HDRMetadata& hdr_metadata);
 
   void SetTransferableResource(const viz::TransferableResource& resource,
                                viz::ReleaseCallback release_callback);
@@ -83,6 +82,7 @@ class CC_EXPORT TextureLayerImpl : public LayerImpl {
 
   const char* LayerTypeAsString() const override;
   void FreeTransferableResource();
+  void OnResourceEvicted();
 
   bool premultiplied_alpha_ = true;
   bool blend_background_color_ = false;
@@ -91,8 +91,7 @@ class CC_EXPORT TextureLayerImpl : public LayerImpl {
   bool nearest_neighbor_ = false;
   gfx::PointF uv_top_left_ = gfx::PointF();
   gfx::PointF uv_bottom_right_ = gfx::PointF(1.f, 1.f);
-  gfx::HDRMode hdr_mode_ = gfx::HDRMode::kDefault;
-  absl::optional<gfx::HDRMetadata> hdr_metadata_;
+  gfx::HDRMetadata hdr_metadata_;
 
   // True while the |transferable_resource_| is owned by this layer, and
   // becomes false once it is passed to another layer or to the

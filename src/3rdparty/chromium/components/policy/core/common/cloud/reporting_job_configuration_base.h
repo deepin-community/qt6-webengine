@@ -7,6 +7,7 @@
 
 #include <memory>
 #include <string>
+#include <string_view>
 
 #include "base/functional/callback.h"
 #include "base/values.h"
@@ -64,7 +65,7 @@ class POLICY_EXPORT ReportingJobConfigurationBase
     static std::string GetNamePath();
 
    private:
-    static std::string GetStringPath(base::StringPiece leaf_name);
+    static std::string GetStringPath(std::string_view leaf_name);
 
     // Keys used in Device dictionary.
     static const char kDMToken[];
@@ -81,7 +82,7 @@ class POLICY_EXPORT ReportingJobConfigurationBase
     // Dictionary Key Name
     static const char kBrowserKey[];
 
-    static base::Value BuildBrowserDictionary(bool include_device_info);
+    static base::Value::Dict BuildBrowserDictionary(bool include_device_info);
 
     static std::string GetBrowserIdPath();
     static std::string GetUserAgentPath();
@@ -89,7 +90,7 @@ class POLICY_EXPORT ReportingJobConfigurationBase
     static std::string GetChromeVersionPath();
 
    private:
-    static std::string GetStringPath(base::StringPiece leaf_name);
+    static std::string GetStringPath(std::string_view leaf_name);
 
     // Keys used in Browser dictionary.
     static const char kBrowserId[];

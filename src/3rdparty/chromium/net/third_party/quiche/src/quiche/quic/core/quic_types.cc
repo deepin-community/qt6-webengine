@@ -417,7 +417,8 @@ std::ostream& operator<<(std::ostream& os, const KeyUpdateReason reason) {
 }
 
 bool operator==(const ParsedClientHello& a, const ParsedClientHello& b) {
-  return a.sni == b.sni && a.uaid == b.uaid && a.alpns == b.alpns &&
+  return a.sni == b.sni && a.uaid == b.uaid &&
+         a.supported_groups == b.supported_groups && a.alpns == b.alpns &&
          a.retry_token == b.retry_token &&
          a.resumption_attempted == b.resumption_attempted &&
          a.early_data_attempted == b.early_data_attempted;
@@ -427,8 +428,41 @@ std::ostream& operator<<(std::ostream& os,
                          const ParsedClientHello& parsed_chlo) {
   os << "{ sni:" << parsed_chlo.sni << ", uaid:" << parsed_chlo.uaid
      << ", alpns:" << quiche::PrintElements(parsed_chlo.alpns)
+     << ", supported_groups:"
+     << quiche::PrintElements(parsed_chlo.supported_groups)
+     << ", resumption_attempted:" << parsed_chlo.resumption_attempted
+     << ", early_data_attempted:" << parsed_chlo.early_data_attempted
      << ", len(retry_token):" << parsed_chlo.retry_token.size() << " }";
   return os;
+}
+
+QUICHE_EXPORT std::string QuicPriorityTypeToString(QuicPriorityType type) {
+  switch (type) {
+    case quic::QuicPriorityType::kHttp:
+      return "HTTP (RFC 9218)";
+    case quic::QuicPriorityType::kWebTransport:
+      return "WebTransport (W3C API)";
+  }
+  return "(unknown)";
+}
+QUICHE_EXPORT std::ostream& operator<<(std::ostream& os,
+                                       QuicPriorityType type) {
+  os << QuicPriorityTypeToString(type);
+  return os;
+}
+
+std::string EcnCodepointToString(QuicEcnCodepoint ecn) {
+  switch (ecn) {
+    case ECN_NOT_ECT:
+      return "Not-ECT";
+    case ECN_ECT0:
+      return "ECT(0)";
+    case ECN_ECT1:
+      return "ECT(1)";
+    case ECN_CE:
+      return "CE";
+  }
+  return "";  // Handle compilation on windows for invalid enums
 }
 
 #undef RETURN_STRING_LITERAL  // undef for jumbo builds

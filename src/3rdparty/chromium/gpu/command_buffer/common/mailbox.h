@@ -31,6 +31,15 @@ namespace gles2 {
 class GLES2Implementation;
 }
 
+// Importance to use in tracing. Higher values get the memory cost attributed,
+// and equal values share the cost. We want the client to "win" over the
+// service, since the service is acting on its behalf.
+enum class TracingImportance : int {
+  kNotOwner = 0,
+  kServiceOwner = 1,
+  kClientOwner = 2,
+};
+
 // A mailbox is an unguessable name that references texture image data.
 // This name can be passed across processes permitting one context to share
 // texture image data with another. The mailbox name consists of a random
@@ -58,6 +67,12 @@ struct COMPONENT_EXPORT(GPU_MAILBOX) Mailbox {
   // Generate a unique unguessable mailbox name for use with the SharedImage
   // system.
   static Mailbox GenerateForSharedImage();
+
+  // A temporary solution until when kSharedBitmapToSharedImage is enabled by
+  // default and the legacy ShareBitmap path is removed.
+  static Mailbox GenerateLegacyMailboxForSharedBitmap() {
+    return GenerateLegacyMailbox();
+  }
 
   // Verify that the mailbox was created through Mailbox::Generate. This only
   // works in Debug (always returns true in Release). This is not a secure

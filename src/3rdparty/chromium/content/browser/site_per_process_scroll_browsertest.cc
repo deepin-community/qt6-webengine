@@ -10,8 +10,8 @@
 #include "build/build_config.h"
 #include "content/browser/renderer_host/cross_process_frame_connector.h"
 #include "content/browser/renderer_host/frame_tree.h"
-#include "content/browser/renderer_host/input/synthetic_smooth_scroll_gesture.h"
 #include "content/browser/renderer_host/render_frame_proxy_host.h"
+#include "content/common/input/synthetic_smooth_scroll_gesture.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
@@ -231,8 +231,7 @@ class SitePerProcessProgrammaticScrollTest : public SitePerProcessBrowserTest {
   void RunCommandAndWaitForResponse(FrameTreeNode* node,
                                     const std::string& command,
                                     const std::string& response) {
-    ASSERT_EQ(response,
-              EvalJs(node, command, content::EXECUTE_SCRIPT_USE_MANUAL_REPLY));
+    ASSERT_EQ(response, EvalJs(node, command));
   }
 
   gfx::Rect GetRectFromString(const std::string& str) {
@@ -839,13 +838,7 @@ IN_PROC_BROWSER_TEST_P(SitePerProcessBrowserTest,
   key_event.SetType(blink::WebKeyboardEvent::Type::kKeyUp);
   rwhv_child->GetRenderWidgetHost()->ForwardKeyboardEvent(key_event);
 
-  double scrolled_y =
-      EvalJs(root,
-             "waitForScrollDownPromise.then((scrolled_y) => {"
-             "  window.domAutomationController.send(scrolled_y);"
-             "});",
-             content::EXECUTE_SCRIPT_USE_MANUAL_REPLY)
-          .ExtractDouble();
+  double scrolled_y = EvalJs(root, "waitForScrollDownPromise").ExtractDouble();
   EXPECT_GT(scrolled_y, 0.0);
 }
 

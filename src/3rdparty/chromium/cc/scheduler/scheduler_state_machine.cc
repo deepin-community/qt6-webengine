@@ -10,6 +10,7 @@
 #include "base/trace_event/trace_event.h"
 #include "base/trace_event/traced_value.h"
 #include "base/values.h"
+#include "cc/base/features.h"
 
 namespace cc {
 
@@ -300,7 +301,8 @@ bool SchedulerStateMachine::PendingDrawsShouldBeAborted() const {
   // active tree and the main thread might be blocked on activation of
   // the most recent commit.
   return is_layer_tree_frame_sink_lost || !can_draw_ || !visible_ ||
-         begin_frame_source_paused_;
+         begin_frame_source_paused_ ||
+         waiting_for_activation_after_rendering_resumed_;
 }
 
 bool SchedulerStateMachine::ShouldAbortCurrentFrame() const {
@@ -940,10 +942,6 @@ void SchedulerStateMachine::WillCommit(bool commit_has_no_updates) {
       // need first draw to come through).
       active_tree_is_ready_to_draw_ = false;
     }
-
-    aborted_begin_main_frame_count_ = 0;
-  } else {
-    aborted_begin_main_frame_count_++;
   }
 
   // Update state related to forced draws.
@@ -982,6 +980,7 @@ void SchedulerStateMachine::WillActivate() {
   active_tree_needs_first_draw_ = pending_tree_needs_first_draw_on_activation_;
   pending_tree_needs_first_draw_on_activation_ = false;
   needs_redraw_ = true;
+  waiting_for_activation_after_rendering_resumed_ = false;
 
   previous_pending_tree_was_impl_side_ = current_pending_tree_is_impl_side_;
   current_pending_tree_is_impl_side_ = false;
@@ -1011,24 +1010,25 @@ void SchedulerStateMachine::WillDrawInternal() {
 
 void SchedulerStateMachine::DidDrawInternal(DrawResult draw_result) {
   switch (draw_result) {
-    case INVALID_RESULT:
-      NOTREACHED() << "Invalid return DrawResult:" << draw_result;
+    case DrawResult::kInvalidResult:
+      NOTREACHED() << "Invalid return DrawResult:"
+                   << static_cast<int>(DrawResult::kInvalidResult);
       break;
-    case DRAW_ABORTED_CANT_DRAW:
+    case DrawResult::kAbortedCantDraw:
       if (consecutive_cant_draw_count_++ < 3u) {
         needs_redraw_ = true;
       } else {
         NOTREACHED() << consecutive_cant_draw_count_ << " consecutve draws"
-                     << " with DRAW_ABORTED_CANT_DRAW result";
+                     << " with DrawResult::kAbortedCantDraw result";
       }
       break;
-    case DRAW_ABORTED_DRAINING_PIPELINE:
-    case DRAW_SUCCESS:
+    case DrawResult::kAbortedDrainingPipeline:
+    case DrawResult::kSuccess:
       consecutive_checkerboard_animations_ = 0;
       consecutive_cant_draw_count_ = 0;
       forced_redraw_state_ = ForcedRedrawOnTimeoutState::IDLE;
       break;
-    case DRAW_ABORTED_CHECKERBOARD_ANIMATIONS:
+    case DrawResult::kAbortedCheckerboardAnimations:
       DCHECK(!did_submit_in_last_frame_);
       needs_begin_main_frame_ = true;
       needs_redraw_ = true;
@@ -1043,7 +1043,7 @@ void SchedulerStateMachine::DidDrawInternal(DrawResult draw_result) {
         forced_redraw_state_ = ForcedRedrawOnTimeoutState::WAITING_FOR_COMMIT;
       }
       break;
-    case DRAW_ABORTED_MISSING_HIGH_RES_CONTENT:
+    case DrawResult::kAbortedMissingHighResContent:
       DCHECK(!did_submit_in_last_frame_);
       // It's not clear whether this missing content is because of missing
       // pictures (which requires a commit) or because of memory pressure
@@ -1065,7 +1065,7 @@ void SchedulerStateMachine::WillDraw() {
 }
 
 void SchedulerStateMachine::DidDraw(DrawResult draw_result) {
-  draw_succeeded_in_last_frame_ = draw_result == DRAW_SUCCESS;
+  draw_succeeded_in_last_frame_ = draw_result == DrawResult::kSuccess;
   DidDrawInternal(draw_result);
 }
 
@@ -1082,11 +1082,14 @@ void SchedulerStateMachine::SetMainThreadWantsBeginMainFrameNotExpectedMessages(
 }
 
 void SchedulerStateMachine::AbortDraw() {
+  if (begin_frame_source_paused_) {
+    draw_aborted_for_paused_begin_frame_ = true;
+  }
   // Pretend like the draw was successful.
   // Note: We may abort at any time and cannot DCHECK that
   // we haven't drawn in or swapped in the last frame here.
   WillDrawInternal();
-  DidDrawInternal(DRAW_ABORTED_DRAINING_PIPELINE);
+  DidDrawInternal(DrawResult::kAbortedDrainingPipeline);
 }
 
 void SchedulerStateMachine::WillPrepareTiles() {
@@ -1175,7 +1178,24 @@ void SchedulerStateMachine::SetDeferBeginMainFrame(
 }
 
 void SchedulerStateMachine::SetPauseRendering(bool pause_rendering) {
+  if (pause_rendering_ == pause_rendering) {
+    return;
+  }
+
   pause_rendering_ = pause_rendering;
+
+  // If we're resuming rendering, we shouldn't already have a pending tree from
+  // the main thread.
+  // Note: This is possible if the main thread does the following:
+  // 1. Pause rendering followed by a commit for the ongoing BeginMainFrame.
+  // 2. Resume rendering before the above commit activates.
+  // The current users of PauseRendering wait on the commit in #1 to be flushed
+  // so it can never happen.
+  DCHECK(pause_rendering_ || !has_pending_tree_);
+
+  // When resuming rendering, main thread always commits at least one frame.
+  // Dont draw any impl frames until this commit is activated.
+  waiting_for_activation_after_rendering_resumed_ = !pause_rendering_;
 }
 
 // These are the cases where we require a BeginFrame message to make progress
@@ -1343,6 +1363,15 @@ bool SchedulerStateMachine::ShouldTriggerBeginImplFrameDeadlineImmediately()
   if (active_tree_needs_first_draw_)
     return true;
 
+  if (base::FeatureList::IsEnabled(
+          features::kResetTimerWhenNoActiveTreeLikely) &&
+      !NewActiveTreeLikely() && !needs_redraw_) {
+    // Trigger deadline early if we don't expect to produce a frame soon so
+    // that display scheduler doesn't wait unnecessarily. This will send a
+    // DidNotProduceFrame ack if there's nothing to draw.
+    return true;
+  }
+
   if (!needs_redraw_)
     return false;
 
@@ -1426,6 +1455,10 @@ void SchedulerStateMachine::SetVisible(bool visible) {
 
 void SchedulerStateMachine::SetBeginFrameSourcePaused(bool paused) {
   begin_frame_source_paused_ = paused;
+  if (!paused) {
+    needs_redraw_ = draw_aborted_for_paused_begin_frame_;
+    draw_aborted_for_paused_begin_frame_ = false;
+  }
 }
 
 void SchedulerStateMachine::SetResourcelessSoftwareDraw(
@@ -1523,10 +1556,10 @@ void SchedulerStateMachine::BeginMainFrameAborted(CommitEarlyOutReason reason) {
     main_thread_missed_last_deadline_ = false;
 
     switch (reason) {
-      case CommitEarlyOutReason::ABORTED_NOT_VISIBLE:
-      case CommitEarlyOutReason::ABORTED_DEFERRED_MAIN_FRAME_UPDATE:
-      case CommitEarlyOutReason::ABORTED_DEFERRED_COMMIT:
-        // TODO(rendering-core) For ABORTED_DEFERRED_COMMIT we may wish to do
+      case CommitEarlyOutReason::kAbortedNotVisible:
+      case CommitEarlyOutReason::kAbortedDeferredMainFrameUpdate:
+      case CommitEarlyOutReason::kAbortedDeferredCommit:
+        // TODO(rendering-core) For kAbortedDeferredCommit we may wish to do
         // something different because we have updated the main frame, but we
         // have not committed it. So we do not necessarily need a begin main
         // frame but we do need a commit for the frame we deferred. In practice
@@ -1535,7 +1568,7 @@ void SchedulerStateMachine::BeginMainFrameAborted(CommitEarlyOutReason reason) {
         begin_main_frame_state_ = BeginMainFrameState::IDLE;
         SetNeedsBeginMainFrame();
         break;
-      case CommitEarlyOutReason::FINISHED_NO_UPDATES:
+      case CommitEarlyOutReason::kFinishedNoUpdates:
         WillCommit(/*commit_had_no_updates=*/true);
         break;
     }
@@ -1545,12 +1578,12 @@ void SchedulerStateMachine::BeginMainFrameAborted(CommitEarlyOutReason reason) {
     DCHECK_EQ(begin_main_frame_state_, BeginMainFrameState::READY_TO_COMMIT);
     next_begin_main_frame_state_ = BeginMainFrameState::IDLE;
     switch (reason) {
-      case CommitEarlyOutReason::ABORTED_NOT_VISIBLE:
-      case CommitEarlyOutReason::ABORTED_DEFERRED_MAIN_FRAME_UPDATE:
-      case CommitEarlyOutReason::ABORTED_DEFERRED_COMMIT:
+      case CommitEarlyOutReason::kAbortedNotVisible:
+      case CommitEarlyOutReason::kAbortedDeferredMainFrameUpdate:
+      case CommitEarlyOutReason::kAbortedDeferredCommit:
         SetNeedsBeginMainFrame();
         break;
-      case CommitEarlyOutReason::FINISHED_NO_UPDATES:
+      case CommitEarlyOutReason::kFinishedNoUpdates:
         commit_count_++;
         break;
     }

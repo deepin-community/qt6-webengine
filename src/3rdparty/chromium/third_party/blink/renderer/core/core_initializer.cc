@@ -33,6 +33,7 @@
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/web/blink.h"
 #include "third_party/blink/renderer/bindings/core/v8/binding_security.h"
+#include "third_party/blink/renderer/bindings/core/v8/script_state_impl.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_throw_dom_exception.h"
 #include "third_party/blink/renderer/core/css/css_default_style_sheets.h"
 #include "third_party/blink/renderer/core/css/media_feature_names.h"
@@ -50,12 +51,14 @@
 #include "third_party/blink/renderer/core/html_tokenizer_names.h"
 #include "third_party/blink/renderer/core/input_type_names.h"
 #include "third_party/blink/renderer/core/keywords.h"
+#include "third_party/blink/renderer/core/lcp_critical_path_predictor/element_locator.h"
 #include "third_party/blink/renderer/core/mathml_names.h"
 #include "third_party/blink/renderer/core/media_type_names.h"
 #include "third_party/blink/renderer/core/performance_entry_names.h"
 #include "third_party/blink/renderer/core/pointer_type_names.h"
 #include "third_party/blink/renderer/core/script_type_names.h"
 #include "third_party/blink/renderer/core/securitypolicyviolation_disposition_names.h"
+#include "third_party/blink/renderer/core/style/inset_area.h"
 #include "third_party/blink/renderer/core/svg_names.h"
 #include "third_party/blink/renderer/core/timezone/timezone_controller.h"
 #include "third_party/blink/renderer/core/workers/worker_thread.h"
@@ -156,15 +159,20 @@ void CoreInitializer::Initialize() {
 
   StringImpl::FreezeStaticStrings();
 
+  InsetArea::InitializeAnchorLengths();
+
   V8ThrowDOMException::Init();
 
   BindingSecurity::Init();
+  ScriptStateImpl::Init();
 
   TimeZoneController::Init();
 
   FontGlobalContext::Init();
 
   CSSDefaultStyleSheets::Init();
+
+  element_locator::TokenStreamMatcher::InitSets();
 }
 
 }  // namespace blink

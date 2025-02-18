@@ -67,7 +67,7 @@ class TCPServerSocketEventDispatcher : public BrowserContextKeyedAPI {
     ~AcceptParams();
 
     content::BrowserThread::ID thread_id;
-    raw_ptr<void> browser_context_id;
+    raw_ptr<void, LeakedDanglingUntriaged> browser_context_id;
     std::string extension_id;
     scoped_refptr<ServerSocketData> server_sockets;
     scoped_refptr<ClientSocketData> client_sockets;
@@ -85,7 +85,7 @@ class TCPServerSocketEventDispatcher : public BrowserContextKeyedAPI {
       const AcceptParams& params,
       int result,
       mojo::PendingRemote<network::mojom::TCPConnectedSocket> socket,
-      const absl::optional<net::IPEndPoint>& remote_addr,
+      const std::optional<net::IPEndPoint>& remote_addr,
       mojo::ScopedDataPipeConsumerHandle receive_pipe_handle,
       mojo::ScopedDataPipeProducerHandle send_pipe_handle);
 
@@ -100,7 +100,7 @@ class TCPServerSocketEventDispatcher : public BrowserContextKeyedAPI {
 
   // Usually IO thread (except for unit testing).
   content::BrowserThread::ID thread_id_;
-  const raw_ptr<content::BrowserContext> browser_context_;
+  raw_ptr<content::BrowserContext> browser_context_;
   scoped_refptr<ServerSocketData> server_sockets_;
   scoped_refptr<ClientSocketData> client_sockets_;
 };

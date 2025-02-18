@@ -40,6 +40,7 @@ import * as SDK from '../../../../core/sdk/sdk.js';
 import * as Protocol from '../../../../generated/protocol.js';
 import * as IssuesManager from '../../../../models/issues_manager/issues_manager.js';
 import * as NetworkForward from '../../../../panels/network/forward/forward.js';
+import * as IconButton from '../../../components/icon_button/icon_button.js';
 import * as UI from '../../legacy.js';
 import * as DataGrid from '../data_grid/data_grid.js';
 
@@ -221,7 +222,6 @@ export class CookiesTable extends UI.Widget.VBox {
         id: SDK.Cookie.Attributes.Priority,
         title: 'Priority',
         sortable: true,
-        sort: DataGrid.DataGrid.Order.Descending,
         weight: 7,
         editable: editable,
       },
@@ -289,7 +289,7 @@ export class CookiesTable extends UI.Widget.VBox {
     this.cookieToBlockedReasons = null;
   }
 
-  wasShown(): void {
+  override wasShown(): void {
     this.registerCSSFiles([cookiesTableStyles]);
   }
 
@@ -327,7 +327,7 @@ export class CookiesTable extends UI.Widget.VBox {
     };
   }
 
-  willHide(): void {
+  override willHide(): void {
     this.lastEditedColumnId = null;
   }
 
@@ -739,7 +739,7 @@ export class DataGridNode extends DataGrid.DataGrid.DataGridNode<DataGridNode> {
     this.blockedReasons = blockedReasons;
   }
 
-  createCells(element: Element): void {
+  override createCells(element: Element): void {
     super.createCells(element);
     if (this.blockedReasons && this.blockedReasons.length) {
       element.classList.add('flagged-cookie-attribute-row');
@@ -750,7 +750,7 @@ export class DataGridNode extends DataGrid.DataGrid.DataGridNode<DataGridNode> {
     this.expiresTooltip = tooltip;
   }
 
-  createCell(columnId: string): HTMLElement {
+  override createCell(columnId: string): HTMLElement {
     const cell = super.createCell(columnId);
     if (columnId === SDK.Cookie.Attributes.SourcePort) {
       UI.Tooltip.Tooltip.install(cell, i18nString(UIStrings.sourcePortTooltip));
@@ -775,12 +775,22 @@ export class DataGridNode extends DataGrid.DataGrid.DataGridNode<DataGridNode> {
         }
       }
     }
-
-    if (blockedReasonString) {
-      const infoElement = UI.Icon.Icon.create('smallicon-info', 'cookie-warning-icon');
-      UI.Tooltip.Tooltip.install(infoElement, blockedReasonString);
+    // When CookiesTable gets created in Application panel instead of Network Panel, `this.blockedReasons` only contains reasons for blocked cookies in responses.
+    // We want to show the warning icon for blocked cookies in requests as well.
+    if (columnId === SDK.Cookie.Attributes.Name &&
+        IssuesManager.RelatedIssue.hasThirdPartyPhaseoutCookieIssue(this.cookie)) {
+      const infoElement = new IconButton.Icon.Icon();
+      infoElement.data = {iconName: 'warning-filled', color: 'var(--icon-warning)', width: '14px', height: '14px'};
+      infoElement.onclick = (): Promise<void> => IssuesManager.RelatedIssue.reveal(this.cookie);
+      infoElement.style.cursor = 'pointer';
+      infoElement.title = blockedReasonString;
       cell.insertBefore(infoElement, cell.firstChild);
+    } else if (blockedReasonString) {
+      const infoElement = new IconButton.Icon.Icon();
+      infoElement.data = {iconName: 'info', color: 'var(--icon-info)', width: '14px', height: '14px'};
       cell.classList.add('flagged-cookie-attribute-cell');
+      infoElement.title = blockedReasonString;
+      cell.insertBefore(infoElement, cell.firstChild);
     }
 
     return cell;

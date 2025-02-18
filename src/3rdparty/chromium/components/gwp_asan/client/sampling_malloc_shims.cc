@@ -7,7 +7,7 @@
 #include <algorithm>
 #include <utility>
 
-#include "base/allocator/partition_allocator/shim/allocator_shim.h"
+#include "base/allocator/partition_allocator/src/partition_alloc/shim/allocator_shim.h"
 #include "base/check_op.h"
 #include "base/compiler_specific.h"
 #include "base/numerics/safe_math.h"
@@ -137,6 +137,12 @@ size_t GetSizeEstimateFn(const AllocatorDispatch* self,
   return self->next->get_size_estimate_function(self->next, address, context);
 }
 
+size_t GoodSizeFn(const AllocatorDispatch* self, size_t size, void* context) {
+  // We don't know whether the allocation would be handled by the guarded page
+  // allocator, cannot return what it would prefer here.
+  return self->next->good_size_function(self->next, size, context);
+}
+
 bool ClaimedAddressFn(const AllocatorDispatch* self,
                       void* address,
                       void* context) {
@@ -263,6 +269,7 @@ AllocatorDispatch g_allocator_dispatch = {
     &ReallocFn,
     &FreeFn,
     &GetSizeEstimateFn,
+    &GoodSizeFn,
     &ClaimedAddressFn,
     &BatchMallocFn,
     &BatchFreeFn,

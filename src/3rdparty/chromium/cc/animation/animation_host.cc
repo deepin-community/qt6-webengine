@@ -53,7 +53,7 @@ AnimationWorkletMutationState ToAnimationWorkletMutationState(
 }  // namespace
 
 std::unique_ptr<AnimationHost> AnimationHost::CreateMainInstance() {
-  return base::WrapUnique(new AnimationHost(ThreadInstance::MAIN));
+  return base::WrapUnique(new AnimationHost(ThreadInstance::kMain));
 }
 
 std::unique_ptr<AnimationHost> AnimationHost::CreateForTesting(
@@ -72,9 +72,9 @@ AnimationHost::~AnimationHost() {
 }
 
 std::unique_ptr<MutatorHost> AnimationHost::CreateImplInstance() const {
-  DCHECK_EQ(thread_instance_, ThreadInstance::MAIN);
+  DCHECK_EQ(thread_instance_, ThreadInstance::kMain);
   auto mutator_host_impl =
-      base::WrapUnique<MutatorHost>(new AnimationHost(ThreadInstance::IMPL));
+      base::WrapUnique<MutatorHost>(new AnimationHost(ThreadInstance::kImpl));
   return mutator_host_impl;
 }
 
@@ -211,7 +211,7 @@ void AnimationHost::RegisterAnimationForElement(ElementId element_id,
            mutator_host_client()->IsElementInPropertyTrees(
                model_element_id, ElementListType::ACTIVE));
     // Test thread_instance_ because LayerTreeHost has no pending tree.
-    DCHECK(thread_instance_ == ThreadInstance::MAIN ||
+    DCHECK(thread_instance_ == ThreadInstance::kMain ||
            !cc_keyframe_model->affects_pending_elements() ||
            mutator_host_client()->IsElementInPropertyTrees(
                model_element_id, ElementListType::PENDING));
@@ -283,7 +283,7 @@ void AnimationHost::SetMutatorHostClient(MutatorHostClient* client) {
   // DCHECKs that are easier to verify once `mutator_host_client_` has been
   // set.
   if (mutator_host_client() && !scroll_offset_animations_impl_.Read(*this)) {
-    if (thread_instance_ == ThreadInstance::IMPL) {
+    if (thread_instance_ == ThreadInstance::kImpl) {
       scroll_offset_animations_impl_.Write(*this) =
           std::make_unique<ScrollOffsetAnimationsImpl>(this);
     } else {
@@ -457,7 +457,12 @@ void AnimationHost::SetScrollAnimationDurationForTesting(
 }
 
 bool AnimationHost::NeedsTickAnimations() const {
-  return !ticking_animations_.Read(*this).empty();
+  for (auto& animation : ticking_animations_.Read(*this)) {
+    if (!animation->keyframe_effect()->awaiting_deletion()) {
+      return true;
+    }
+  }
+  return false;
 }
 
 void AnimationHost::TickMutator(base::TimeTicks monotonic_time,
@@ -527,21 +532,28 @@ bool AnimationHost::TickAnimations(base::TimeTicks monotonic_time,
   // mutator even if there are active scroll animations.
   // The ticking of worklet animations is deferred until draw to ensure that
   // mutator output takes effect in the same impl frame that it was mutated.
-  if (!NeedsTickAnimations())
+  if (is_active_tree && !NeedsTickAnimations()) {
     return false;
+  }
 
   TRACE_EVENT_INSTANT0("cc", "NeedsTickAnimations", TRACE_EVENT_SCOPE_THREAD);
 
   bool animated = false;
+  std::vector<AnimationTimeline*> scroll_timelines;
   for (auto& kv : id_to_timeline_map_.Read(*this)) {
     AnimationTimeline* timeline = kv.second.get();
     if (timeline->IsScrollTimeline()) {
-      animated |= timeline->TickScrollLinkedAnimations(
-          ticking_animations_.Read(*this), scroll_tree, is_active_tree);
+      scroll_timelines.push_back(timeline);
     } else {
       animated |= timeline->TickTimeLinkedAnimations(
-          ticking_animations_.Read(*this), monotonic_time);
+          ticking_animations_.Read(*this), monotonic_time, !is_active_tree);
     }
+  }
+  // Tick the scroll-linked animations last, since a smooth scroll (time-linked)
+  // might update the scroll offset.
+  for (auto* timeline : scroll_timelines) {
+    animated |= timeline->TickScrollLinkedAnimations(
+        ticking_animations_.Read(*this), scroll_tree, is_active_tree);
   }
 
   // TODO(majidvp): At the moment we call this for both active and pending
@@ -630,7 +642,7 @@ std::unique_ptr<MutatorEvents> AnimationHost::CreateEvents() {
 
 void AnimationHost::SetAnimationEvents(
     std::unique_ptr<MutatorEvents> mutator_events) {
-  DCHECK_EQ(thread_instance_, ThreadInstance::MAIN);
+  DCHECK_EQ(thread_instance_, ThreadInstance::kMain);
   auto events =
       base::WrapUnique(static_cast<AnimationEvents*>(mutator_events.release()));
 
@@ -738,7 +750,7 @@ void AnimationHost::ImplOnlyScrollAnimationCreate(
       animation_start_offset);
 }
 
-bool AnimationHost::ImplOnlyScrollAnimationUpdateTarget(
+std::optional<gfx::PointF> AnimationHost::ImplOnlyScrollAnimationUpdateTarget(
     const gfx::Vector2dF& scroll_delta,
     const gfx::PointF& max_scroll_offset,
     base::TimeTicks frame_monotonic_time,
@@ -781,8 +793,9 @@ void AnimationHost::AddToTicking(scoped_refptr<Animation> animation) {
 void AnimationHost::RemoveFromTicking(scoped_refptr<Animation> animation) {
   auto to_erase =
       base::ranges::find(ticking_animations_.Write(*this), animation);
-  if (to_erase != ticking_animations_.Write(*this).end())
+  if (to_erase != ticking_animations_.Write(*this).end()) {
     ticking_animations_.Write(*this).erase(to_erase);
+  }
 }
 
 const AnimationHost::AnimationsList&
@@ -883,6 +896,21 @@ void AnimationHost::StopThroughputTracking(
   pending_throughput_tracker_infos_.Write(*this).push_back(
       {sequnece_id, false});
   SetNeedsPushProperties();
+}
+
+bool AnimationHost::HasScrollLinkedAnimation(ElementId for_scroller) const {
+  for (auto& animation : ticking_animations_.Read(*this)) {
+    if (auto* timeline = animation->animation_timeline()) {
+      if (timeline->IsLinkedToScroller(for_scroller)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+bool AnimationHost::IsAutoScrolling() const {
+  return scroll_offset_animations_impl_.Read(*this)->IsAutoScrolling();
 }
 
 }  // namespace cc

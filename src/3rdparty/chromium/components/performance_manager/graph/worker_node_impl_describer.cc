@@ -4,7 +4,11 @@
 
 #include "components/performance_manager/graph/worker_node_impl_describer.h"
 
+#include <utility>
+
 #include "base/strings/string_number_conversions.h"
+#include "base/values.h"
+#include "components/performance_manager/graph/worker_node_impl.h"
 #include "components/performance_manager/public/graph/node_data_describer_registry.h"
 #include "components/performance_manager/public/graph/node_data_describer_util.h"
 
@@ -41,11 +45,19 @@ base::Value::Dict WorkerNodeImplDescriber::DescribeWorkerNodeData(
     return base::Value::Dict();
 
   base::Value::Dict ret;
-  ret.Set("browser_context_id", impl->browser_context_id());
-  ret.Set("worker_token", impl->worker_token().ToString());
-  ret.Set("url", impl->url().spec());
-  ret.Set("worker_type", WorkerTypeToString(impl->worker_type()));
-  ret.Set("priority", PriorityAndReasonToValue(impl->priority_and_reason()));
+  ret.Set("worker_type", WorkerTypeToString(impl->GetWorkerType()));
+  ret.Set("browser_context_id", impl->GetBrowserContextID());
+  ret.Set("worker_token", impl->GetWorkerToken().ToString());
+  ret.Set("resource_context", impl->GetResourceContext().ToString());
+  ret.Set("url", impl->GetURL().spec());
+  ret.Set("priority", PriorityAndReasonToValue(impl->GetPriorityAndReason()));
+
+  base::Value::Dict metrics;
+  metrics.Set("resident_set",
+              base::NumberToString(impl->GetResidentSetKbEstimate()));
+  metrics.Set("private_footprint",
+              base::NumberToString(impl->GetPrivateFootprintKbEstimate()));
+  ret.Set("metrics_estimates", std::move(metrics));
 
   return ret;
 }

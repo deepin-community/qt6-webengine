@@ -21,7 +21,6 @@
 #include "content/browser/renderer_host/frame_tree.h"
 #include "content/browser/renderer_host/frame_tree_node.h"
 #include "content/browser/renderer_host/cursor_manager.h"
-#include "content/browser/renderer_host/input/synthetic_gesture_target.h"
 #include "content/browser/renderer_host/render_frame_host_impl.h"
 #include "content/browser/renderer_host/render_view_host_delegate.h"
 #include "content/browser/renderer_host/render_view_host_impl.h"
@@ -29,6 +28,7 @@
 #include "content/browser/renderer_host/ui_events_helper.h"
 #include "content/common/content_switches_internal.h"
 #include "content/common/cursors/webcursor.h"
+#include "content/common/input/synthetic_gesture_target.h"
 #include "content/public/browser/web_contents.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/base/cursor/cursor.h"
@@ -159,6 +159,8 @@ RenderWidgetHostViewQt::RenderWidgetHostViewQt(content::RenderWidgetHost *widget
                                        host()->GetFrameSinkId(),
                                        &m_delegatedFrameHostClient,
                                        true /* should_register_frame_sink_id */));
+
+    m_delegatedFrameHost->SetIsFrameSinkIdOwner(true);
 
     content::ImageTransportFactory *imageTransportFactory = content::ImageTransportFactory::GetInstance();
     ui::ContextFactory *contextFactory = imageTransportFactory->GetContextFactory();
@@ -298,6 +300,12 @@ content::WebContentsAccessibility *RenderWidgetHostViewQt::GetWebContentsAccessi
     return m_webContentsAccessibility.get();
 }
 
+void RenderWidgetHostViewQt::OnRendererWidgetCreated()
+{
+    if (m_adapterClient)
+        SetBackgroundColor(toSk(m_adapterClient->backgroundColor()));
+}
+
 QObject *WebContentsAccessibilityQt::accessibilityParentObject() const
 {
     return m_rwhv->m_adapterClient->accessibilityParentObject();
@@ -380,7 +388,7 @@ void RenderWidgetHostViewQt::UpdateBackgroundColor()
     m_rootLayer->SetColor(color);
     m_uiCompositor->SetBackgroundColor(color);
 
-    if (color == SK_ColorTRANSPARENT)
+    if (color == SK_ColorTRANSPARENT && host()->owner_delegate())
         host()->owner_delegate()->SetBackgroundOpaque(false);
 }
 
@@ -615,7 +623,9 @@ void RenderWidgetHostViewQt::ImeCancelComposition()
     qApp->inputMethod()->reset();
 }
 
-void RenderWidgetHostViewQt::ImeCompositionRangeChanged(const gfx::Range&, const std::vector<gfx::Rect>&)
+void RenderWidgetHostViewQt::ImeCompositionRangeChanged(const gfx::Range &,
+                                                        const absl::optional<std::vector<gfx::Rect>> &,
+                                                        const absl::optional<std::vector<gfx::Rect>> &)
 {
     // FIXME: not implemented?
     QT_NOT_YET_IMPLEMENTED
@@ -834,11 +844,11 @@ void RenderWidgetHostViewQt::notifyHidden()
     m_delegatedFrameHost->DetachFromCompositor();
 }
 
-void RenderWidgetHostViewQt::ProcessAckedTouchEvent(const content::TouchEventWithLatencyInfo &touch, blink::mojom::InputEventResultState ack_result) {
-    Q_UNUSED(touch);
-    const bool eventConsumed = ack_result == blink::mojom::InputEventResultState::kConsumed;
-    const bool isSetNonBlocking = content::InputEventResultStateIsSetNonBlocking(ack_result);
-    m_gestureProvider.OnTouchEventAck(touch.event.unique_touch_event_id, eventConsumed, isSetNonBlocking);
+void RenderWidgetHostViewQt::ProcessAckedTouchEvent(const content::TouchEventWithLatencyInfo &touch, blink::mojom::InputEventResultState ack_result)
+{
+    const bool eventConsumed = (ack_result == blink::mojom::InputEventResultState::kConsumed);
+    const bool isSetBlocking = content::InputEventResultStateIsSetBlocking(ack_result);
+    m_gestureProvider.OnTouchEventAck(touch.event.unique_touch_event_id, eventConsumed, isSetBlocking);
 }
 
 void RenderWidgetHostViewQt::processMotionEvent(const ui::MotionEvent &motionEvent)
@@ -866,6 +876,11 @@ bool RenderWidgetHostViewQt::updateScreenInfo()
         return false;
 
     display::ScreenInfos newScreenInfos = screenInfosFromQtForUpdate(window->screen());
+
+    // We always want to use the scale from our current window
+    // This screen information is stored on a per-view basis
+    auto &screen = newScreenInfos.mutable_current();
+    screen.device_scale_factor = window->devicePixelRatio();
     if (screen_infos_ == newScreenInfos)
         return false;
 
@@ -896,7 +911,8 @@ void RenderWidgetHostViewQt::WheelEventAck(const blink::WebMouseWheelEvent &even
 {
     if (event.phase == blink::WebMouseWheelEvent::kPhaseEnded)
         return;
-    Q_ASSERT(m_wheelAckPending);
+    if (!m_wheelAckPending)
+        return;
     m_wheelAckPending = false;
     while (!m_pendingWheelEvents.isEmpty() && !m_wheelAckPending) {
         blink::WebMouseWheelEvent webEvent = m_pendingWheelEvents.takeFirst();
@@ -908,9 +924,10 @@ void RenderWidgetHostViewQt::WheelEventAck(const blink::WebMouseWheelEvent &even
 }
 
 void RenderWidgetHostViewQt::GestureEventAck(const blink::WebGestureEvent &event,
-                                             blink::mojom::InputEventResultState ack_result,
-                                             blink::mojom::ScrollResultDataPtr scroll_result_data)
+                                             blink::mojom::InputEventResultState ack_result)
 {
+    ForwardTouchpadZoomEventIfNecessary(event, ack_result);
+
     // Forward unhandled scroll events back as wheel events
     if (event.GetType() != blink::WebInputEvent::Type::kGestureScrollUpdate)
         return;
@@ -982,7 +999,6 @@ void RenderWidgetHostViewQt::TakeFallbackContentFrom(content::RenderWidgetHostVi
     CopyBackgroundColorIfPresentFrom(*viewQt);
 
     m_delegatedFrameHost->TakeFallbackContentFrom(viewQt->m_delegatedFrameHost.get());
-    host()->GetContentRenderingTimeoutFrom(viewQt->host());
 }
 
 void RenderWidgetHostViewQt::EnsureSurfaceSynchronizedForWebTest()

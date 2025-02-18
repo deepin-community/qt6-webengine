@@ -29,19 +29,26 @@ class DeviceInfo {
  public:
   enum class ScreenStatus { kUndetermined = 0, kLocked, kUnlocked };
   enum class DeviceType { kUnknown = 0, kPhone, kTablet, kLaptop };
-  enum class OsType { kUnknown = 0, kAndroid, kChromeOs, kIos, kWindows };
+  enum class OsType {
+    kUnknown = 0,
+    kAndroid,
+    kChromeOs,
+    kIos,
+    kWindows,
+    kMacOS
+  };
 
   virtual ~DeviceInfo() = default;
 
   // Gets device name.
-  virtual std::optional<std::u16string> GetOsDeviceName() const = 0;
+  virtual std::optional<std::string> GetOsDeviceName() const = 0;
   virtual DeviceType GetDeviceType() const = 0;
   virtual OsType GetOsType() const = 0;
 
   // Gets basic information of current user.
-  virtual std::optional<std::u16string> GetFullName() const = 0;
-  virtual std::optional<std::u16string> GetGivenName() const = 0;
-  virtual std::optional<std::u16string> GetLastName() const = 0;
+  virtual std::optional<std::string> GetFullName() const = 0;
+  virtual std::optional<std::string> GetGivenName() const = 0;
+  virtual std::optional<std::string> GetLastName() const = 0;
   virtual std::optional<std::string> GetProfileUserName() const = 0;
 
   // Gets known paths of current user.
@@ -59,6 +66,10 @@ class DeviceInfo {
       std::function<void(ScreenStatus)> callback) = 0;
   virtual void UnregisterScreenLockedListener(
       absl::string_view listener_name) = 0;
+
+  // Control device sleep
+  virtual bool PreventSleep() = 0;
+  virtual bool AllowSleep() = 0;
 };
 
 }  // namespace api

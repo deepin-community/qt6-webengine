@@ -74,7 +74,10 @@ static AOM_TOOLS_FORMAT_PRINTF(3, 0) void warn_or_exit_on_errorv(
 
     if (detail) fprintf(stderr, "    %s\n", detail);
 
-    if (fatal) exit(EXIT_FAILURE);
+    if (fatal) {
+      aom_codec_destroy(ctx);
+      exit(EXIT_FAILURE);
+    }
   }
 }
 
@@ -457,7 +460,6 @@ const arg_def_t *av1_key_val_args[] = {
   &g_av1_codec_arg_defs.sb_qp_sweep,
   &g_av1_codec_arg_defs.dist_metric,
   &g_av1_codec_arg_defs.kf_max_pyr_height,
-  &g_av1_codec_arg_defs.global_motion_method,
   NULL,
 };
 
@@ -1307,21 +1309,6 @@ static const char *file_type_to_string(enum VideoFileType t) {
   }
 }
 
-static const char *image_format_to_string(aom_img_fmt_t f) {
-  switch (f) {
-    case AOM_IMG_FMT_I420: return "I420";
-    case AOM_IMG_FMT_I422: return "I422";
-    case AOM_IMG_FMT_I444: return "I444";
-    case AOM_IMG_FMT_YV12: return "YV12";
-    case AOM_IMG_FMT_NV12: return "NV12";
-    case AOM_IMG_FMT_YV1216: return "YV1216";
-    case AOM_IMG_FMT_I42016: return "I42016";
-    case AOM_IMG_FMT_I42216: return "I42216";
-    case AOM_IMG_FMT_I44416: return "I44416";
-    default: return "Other";
-  }
-}
-
 static void show_stream_config(struct stream_state *stream,
                                struct AvxEncoderConfig *global,
                                struct AvxInputContext *input) {
@@ -1546,30 +1533,36 @@ static void initialize_encoder(struct stream_state *stream,
   if (stream->config.vmaf_model_path) {
     AOM_CODEC_CONTROL_TYPECHECKED(&stream->encoder, AV1E_SET_VMAF_MODEL_PATH,
                                   stream->config.vmaf_model_path);
+    ctx_exit_on_error(&stream->encoder, "Failed to set vmaf model path");
   }
 #endif
   if (stream->config.partition_info_path) {
     AOM_CODEC_CONTROL_TYPECHECKED(&stream->encoder,
                                   AV1E_SET_PARTITION_INFO_PATH,
                                   stream->config.partition_info_path);
+    ctx_exit_on_error(&stream->encoder, "Failed to set partition info path");
   }
   if (stream->config.enable_rate_guide_deltaq) {
     AOM_CODEC_CONTROL_TYPECHECKED(&stream->encoder,
                                   AV1E_ENABLE_RATE_GUIDE_DELTAQ,
                                   stream->config.enable_rate_guide_deltaq);
+    ctx_exit_on_error(&stream->encoder, "Failed to enable rate guide deltaq");
   }
   if (stream->config.rate_distribution_info) {
     AOM_CODEC_CONTROL_TYPECHECKED(&stream->encoder,
                                   AV1E_SET_RATE_DISTRIBUTION_INFO,
                                   stream->config.rate_distribution_info);
+    ctx_exit_on_error(&stream->encoder, "Failed to set rate distribution info");
   }
 
   if (stream->config.film_grain_filename) {
     AOM_CODEC_CONTROL_TYPECHECKED(&stream->encoder, AV1E_SET_FILM_GRAIN_TABLE,
                                   stream->config.film_grain_filename);
+    ctx_exit_on_error(&stream->encoder, "Failed to set film grain table");
   }
   AOM_CODEC_CONTROL_TYPECHECKED(&stream->encoder, AV1E_SET_COLOR_RANGE,
                                 stream->config.color_range);
+  ctx_exit_on_error(&stream->encoder, "Failed to set color range");
 
 #if CONFIG_AV1_DECODER
   if (global->test_decode != TEST_DECODE_OFF) {
@@ -2258,17 +2251,25 @@ int main(int argc, const char **argv_) {
               AOM_CODEC_CONTROL_TYPECHECKED(&stream->encoder,
                                             AV1E_SET_CHROMA_SUBSAMPLING_X,
                                             input.y4m.dst_c_dec_h >> 1);
+              ctx_exit_on_error(&stream->encoder,
+                                "Failed to set chroma subsampling x");
               AOM_CODEC_CONTROL_TYPECHECKED(&stream->encoder,
                                             AV1E_SET_CHROMA_SUBSAMPLING_Y,
                                             input.y4m.dst_c_dec_v >> 1);
+              ctx_exit_on_error(&stream->encoder,
+                                "Failed to set chroma subsampling y");
             } else if (input.bit_depth == 12 &&
                        input.file_type == FILE_TYPE_RAW) {
               AOM_CODEC_CONTROL_TYPECHECKED(&stream->encoder,
                                             AV1E_SET_CHROMA_SUBSAMPLING_X,
                                             stream->chroma_subsampling_x);
+              ctx_exit_on_error(&stream->encoder,
+                                "Failed to set chroma subsampling x");
               AOM_CODEC_CONTROL_TYPECHECKED(&stream->encoder,
                                             AV1E_SET_CHROMA_SUBSAMPLING_Y,
                                             stream->chroma_subsampling_y);
+              ctx_exit_on_error(&stream->encoder,
+                                "Failed to set chroma subsampling y");
             }
             break;
           default: break;

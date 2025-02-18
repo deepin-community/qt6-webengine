@@ -23,7 +23,10 @@
 #include <memory>
 #include <vector>
 
-#include "base/strings/string_piece.h"
+#include <optional>
+#include <string_view>
+
+#include "base/containers/span.h"
 #include "base/win/windows_types.h"
 #include "sandbox/win/src/sandbox_policy.h"
 #include "sandbox/win/src/sandbox_types.h"
@@ -31,6 +34,7 @@
 // sandbox: Google User-Land Application Sandbox
 namespace sandbox {
 
+class BrokerServicesTargetTracker;
 class PolicyDiagnosticsReceiver;
 class ProcessState;
 class TargetPolicy;
@@ -60,6 +64,11 @@ class [[clang::lto_visibility_public]] BrokerServices {
   // If the return is ERROR_GENERIC, you can call ::GetLastError() to get
   // more information.
   virtual ResultCode Init() = 0;
+
+  // May be called in place of Init in test code to add a tracker that validates
+  // job notifications and signals an event when all tracked processes are done.
+  virtual ResultCode InitForTesting(
+      std::unique_ptr<BrokerServicesTargetTracker> target_tracker) = 0;
 
   // Pre-creates an alternate desktop. Must be called before a non-default
   // desktop is used by any process.
@@ -95,7 +104,7 @@ class [[clang::lto_visibility_public]] BrokerServices {
   // policy which never shares its TargetConfig state with another policy
   // object. For such an object both its TargetConfig and TargetPolicy methods
   // must be called every time.
-  virtual std::unique_ptr<TargetPolicy> CreatePolicy(base::StringPiece tag) = 0;
+  virtual std::unique_ptr<TargetPolicy> CreatePolicy(std::string_view tag) = 0;
 
   // Creates a new target (child process) in a suspended state and takes
   // ownership of |policy|.
@@ -119,13 +128,6 @@ class [[clang::lto_visibility_public]] BrokerServices {
                                  std::unique_ptr<TargetPolicy> policy,
                                  DWORD* last_error,
                                  PROCESS_INFORMATION* target) = 0;
-
-  // This call blocks (waits) for all the targets to terminate.
-  // Returns:
-  //   ALL_OK if successful. All other return values imply failure.
-  //   If the return is ERROR_GENERIC, you can call ::GetLastError() to get
-  //   more information.
-  virtual ResultCode WaitForAllTargets() = 0;
 
   // This call creates a snapshot of policies managed by the sandbox and
   // returns them via a helper class.
@@ -187,6 +189,14 @@ class [[clang::lto_visibility_public]] TargetServices {
   // more information.
   virtual ResultCode Init() = 0;
 
+  // Returns a view of the delegate data blob - the target can use this data
+  // early in the process's lifetime to set itself up - the format of the data
+  // is decided by the embedder, and set using TargetPolicy::AddDelegateData().
+  // If no data was provided the span will have a size of zero. This method can
+  // be called at any time after Init(), but it is intended to be used sparingly
+  // prior to calling LowerToken().
+  virtual std::optional<base::span<const uint8_t>> GetDelegateData() = 0;
+
   // Discards the impersonation token and uses the lower token, call before
   // processing any untrusted data or running third-party code. If this call
   // fails the current process could be terminated immediately.
@@ -229,6 +239,18 @@ class [[clang::lto_visibility_public]] PolicyDiagnosticsReceiver {
   // will not be called.
   virtual void OnError(ResultCode code) = 0;
   virtual ~PolicyDiagnosticsReceiver() {}
+};
+
+// For tests only -  this class is notified when the sandbox's internal tracking
+// thread sees a process added or removed. Methods in this class should complete
+// quickly and should not have side effects.
+class [[clang::lto_visibility_public]] BrokerServicesTargetTracker {
+ public:
+  // Called when job notifications indicate that a new process is added.
+  virtual void OnTargetAdded() = 0;
+  // Called when job notifications indicate that a process has finished.
+  virtual void OnTargetRemoved() = 0;
+  virtual ~BrokerServicesTargetTracker() {}
 };
 
 }  // namespace sandbox

@@ -10,7 +10,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <limits>
 #include <memory>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -55,14 +57,15 @@ size_t ParseEnvLine(const wchar_t* input, std::wstring* key) {
   return cur + 1;
 }
 
-void CopyPolicyToTarget(const void* source, size_t size, void* dest) {
-  if (!source || !size)
+void CopyPolicyToTarget(base::span<const uint8_t> source, void* dest) {
+  if (!source.size()) {
     return;
-  memcpy(dest, source, size);
+  }
+  memcpy(dest, source.data(), source.size());
   sandbox::PolicyGlobal* policy =
       reinterpret_cast<sandbox::PolicyGlobal*>(dest);
 
-  size_t offset = reinterpret_cast<size_t>(source);
+  size_t offset = reinterpret_cast<size_t>(source.data());
 
   for (size_t i = 0; i < sandbox::kMaxServiceCount; i++) {
     size_t buffer = reinterpret_cast<size_t>(policy->entry[i]);
@@ -76,7 +79,7 @@ void CopyPolicyToTarget(const void* source, size_t size, void* dest) {
 // Checks that the impersonation token was applied successfully and hasn't been
 // reverted to an identification level token.
 bool CheckImpersonationToken(HANDLE thread) {
-  absl::optional<base::win::AccessToken> token =
+  std::optional<base::win::AccessToken> token =
       base::win::AccessToken::FromThread(thread);
   if (!token.has_value()) {
     return false;
@@ -90,7 +93,9 @@ bool CheckImpersonationToken(HANDLE thread) {
 SANDBOX_INTERCEPT DWORD g_sentinel_value_start = 0x53414E44;
 SANDBOX_INTERCEPT HANDLE g_shared_section;
 SANDBOX_INTERCEPT size_t g_shared_IPC_size;
+// The following may be zero if not needed in the child.
 SANDBOX_INTERCEPT size_t g_shared_policy_size;
+SANDBOX_INTERCEPT size_t g_delegate_data_size;
 // 'BOXY'
 SANDBOX_INTERCEPT DWORD g_sentinel_value_end = 0x424F5859;
 
@@ -159,7 +164,7 @@ ResultCode TargetProcess::Create(
     //    operation and tests.
     //  * "LOCALAPPDATA": Needed for App Container processes.
     //  * "CHROME_CRASHPAD_PIPE_NAME": Needed for crashpad.
-    static constexpr base::WStringPiece to_keep[] = {
+    static constexpr std::wstring_view to_keep[] = {
         L"Path",
         L"SystemDrive",
         L"SystemRoot",
@@ -226,32 +231,32 @@ ResultCode TargetProcess::Create(
 }
 
 ResultCode TargetProcess::TransferVariable(const char* name,
-                                           const void* address,
+                                           const void* local_address,
+                                           void* target_address,
                                            size_t size) {
   if (!sandbox_process_info_.IsValid())
     return SBOX_ERROR_UNEXPECTED_CALL;
 
-  void* child_var = const_cast<void*>(address);
 
 #if defined(SANDBOX_EXPORTS)
   HMODULE module = ::LoadLibrary(exe_name_.get());
   if (!module)
     return SBOX_ERROR_CANNOT_LOADLIBRARY_EXECUTABLE;
 
-  child_var = ::GetProcAddress(module, name);
+  target_address = ::GetProcAddress(module, name);
   ::FreeLibrary(module);
 
-  if (!child_var)
+  if (!target_address)
     return SBOX_ERROR_CANNOT_FIND_VARIABLE_ADDRESS;
 
   size_t offset =
-      reinterpret_cast<char*>(child_var) - reinterpret_cast<char*>(module);
-  child_var = reinterpret_cast<char*>(MainModule()) + offset;
+      reinterpret_cast<char*>(target_address) - reinterpret_cast<char*>(module);
+  target_address = reinterpret_cast<char*>(MainModule()) + offset;
 #endif
 
   SIZE_T written;
-  if (!::WriteProcessMemory(sandbox_process_info_.process_handle(), child_var,
-                            address, size, &written)) {
+  if (!::WriteProcessMemory(sandbox_process_info_.process_handle(),
+                            target_address, local_address, size, &written)) {
     return SBOX_ERROR_CANNOT_WRITE_VARIABLE_VALUE;
   }
   if (written != size)
@@ -262,11 +267,12 @@ ResultCode TargetProcess::TransferVariable(const char* name,
 
 // Construct the IPC server and the IPC dispatcher. When the target does
 // an IPC it will eventually call the dispatcher.
-ResultCode TargetProcess::Init(Dispatcher* ipc_dispatcher,
-                               void* policy,
-                               uint32_t shared_IPC_size,
-                               uint32_t shared_policy_size,
-                               DWORD* win_error) {
+ResultCode TargetProcess::Init(
+    Dispatcher* ipc_dispatcher,
+    std::optional<base::span<const uint8_t>> policy,
+    std::optional<base::span<const uint8_t>> delegate_data,
+    uint32_t shared_IPC_size,
+    DWORD* win_error) {
   ResultCode ret = SBOX_ALL_OK;
 #if !defined(SANDBOX_EXPORTS)
   ret = VerifySentinels();
@@ -281,42 +287,81 @@ ResultCode TargetProcess::Init(Dispatcher* ipc_dispatcher,
   // the rest, which boils down to calling MapViewofFile()
 
   // We use this single memory pool for IPC and for policy.
-  DWORD shared_mem_size =
-      static_cast<DWORD>(shared_IPC_size + shared_policy_size);
-  shared_section_.Set(::CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr,
-                                           PAGE_READWRITE | SEC_COMMIT, 0,
-                                           shared_mem_size, nullptr));
-  if (!shared_section_.IsValid()) {
+  size_t shared_mem_size = shared_IPC_size;
+  if (policy.has_value()) {
+    shared_mem_size += policy->size();
+  }
+  if (delegate_data.has_value()) {
+    shared_mem_size += delegate_data->size();
+  }
+
+  // This region should be small, so we only pass dwMaximumSizeLow below.
+  CHECK(shared_mem_size <= std::numeric_limits<DWORD>::max());
+
+  shared_section_.Set(::CreateFileMappingW(
+      INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE | SEC_COMMIT, 0,
+      static_cast<DWORD>(shared_mem_size), nullptr));
+  if (!shared_section_.is_valid()) {
     *win_error = ::GetLastError();
     return SBOX_ERROR_CREATE_FILE_MAPPING;
   }
 
   void* shared_memory = ::MapViewOfFile(
-      shared_section_.Get(), FILE_MAP_WRITE | FILE_MAP_READ, 0, 0, 0);
+      shared_section_.get(), FILE_MAP_WRITE | FILE_MAP_READ, 0, 0, 0);
   if (!shared_memory) {
     *win_error = ::GetLastError();
     return SBOX_ERROR_MAP_VIEW_OF_SHARED_SECTION;
   }
 
-  CopyPolicyToTarget(policy, shared_policy_size,
-                     reinterpret_cast<char*>(shared_memory) + shared_IPC_size);
+  // The IPC area is just zeros so we skip over it.
+  size_t current_offset = shared_IPC_size;
+  // PolicyGlobal region.
+  if (policy.has_value()) {
+    CopyPolicyToTarget(policy.value(),
+                       reinterpret_cast<char*>(shared_memory) + current_offset);
+    current_offset += policy->size();
+  }
+
+  // Delegate Data region.
+  if (delegate_data.has_value()) {
+    memcpy(reinterpret_cast<char*>(shared_memory) + current_offset,
+           delegate_data->data(), delegate_data->size());
+    current_offset += delegate_data->size();
+  }
+
+  // After all regions are written we should be at the end of the allocation.
+  CHECK_EQ(current_offset, shared_mem_size);
 
   // Set the global variables in the target. These are not used on the broker.
-  g_shared_IPC_size = shared_IPC_size;
-  ret = TransferVariable("g_shared_IPC_size", &g_shared_IPC_size,
-                         sizeof(g_shared_IPC_size));
-  g_shared_IPC_size = 0;
+  size_t transfer_shared_IPC_size = shared_IPC_size;
+  static_assert(sizeof(g_shared_IPC_size) == sizeof(transfer_shared_IPC_size));
+  ret = TransferVariable("g_shared_IPC_size", &transfer_shared_IPC_size,
+                         &g_shared_IPC_size, sizeof(g_shared_IPC_size));
   if (SBOX_ALL_OK != ret) {
     *win_error = ::GetLastError();
     return ret;
   }
-  g_shared_policy_size = shared_policy_size;
-  ret = TransferVariable("g_shared_policy_size", &g_shared_policy_size,
-                         sizeof(g_shared_policy_size));
-  g_shared_policy_size = 0;
-  if (SBOX_ALL_OK != ret) {
-    *win_error = ::GetLastError();
-    return ret;
+  if (policy.has_value()) {
+    size_t transfer_shared_policy_size = policy->size();
+    static_assert(sizeof(g_shared_policy_size) ==
+                  sizeof(transfer_shared_policy_size));
+    ret = TransferVariable("g_shared_policy_size", &transfer_shared_policy_size,
+                           &g_shared_policy_size, sizeof(g_shared_policy_size));
+    if (SBOX_ALL_OK != ret) {
+      *win_error = ::GetLastError();
+      return ret;
+    }
+  }
+  if (delegate_data.has_value()) {
+    size_t transfer_delegate_data_size = delegate_data->size();
+    static_assert(sizeof(g_delegate_data_size) ==
+                  sizeof(transfer_delegate_data_size));
+    ret = TransferVariable("g_delegate_data_size", &transfer_delegate_data_size,
+                           &g_delegate_data_size, sizeof(g_delegate_data_size));
+    if (SBOX_ALL_OK != ret) {
+      *win_error = ::GetLastError();
+      return ret;
+    }
   }
 
   ipc_server_ = std::make_unique<SharedMemIPCServer>(
@@ -328,17 +373,16 @@ ResultCode TargetProcess::Init(Dispatcher* ipc_dispatcher,
 
   DWORD access = FILE_MAP_READ | FILE_MAP_WRITE | SECTION_QUERY;
   HANDLE target_shared_section;
-  if (!::DuplicateHandle(::GetCurrentProcess(), shared_section_.Get(),
+  if (!::DuplicateHandle(::GetCurrentProcess(), shared_section_.get(),
                          sandbox_process_info_.process_handle(),
                          &target_shared_section, access, false, 0)) {
     *win_error = ::GetLastError();
     return SBOX_ERROR_DUPLICATE_SHARED_SECTION;
   }
 
-  g_shared_section = target_shared_section;
-  ret = TransferVariable("g_shared_section", &g_shared_section,
-                         sizeof(g_shared_section));
-  g_shared_section = nullptr;
+  static_assert(sizeof(g_shared_section) == sizeof(target_shared_section));
+  ret = TransferVariable("g_shared_section", &target_shared_section,
+                         &g_shared_section, sizeof(g_shared_section));
   if (SBOX_ALL_OK != ret) {
     *win_error = ::GetLastError();
     return ret;
@@ -402,7 +446,7 @@ std::unique_ptr<TargetProcess> TargetProcess::MakeTargetProcessForTesting(
 // static
 std::wstring TargetProcess::FilterEnvironment(
     const wchar_t* env,
-    const base::span<const base::WStringPiece> to_keep) {
+    const base::span<const std::wstring_view> to_keep) {
   std::wstring result;
 
   // Iterate all of the environment strings.

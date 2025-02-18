@@ -26,9 +26,9 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/ranges/algorithm.h"
+#include "base/task/bind_post_task.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/token.h"
-#include "media/base/bind_to_current_loop.h"
 #include "media/capture/mojom/video_capture_types.mojom-blink.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/platform/web_string.h"
@@ -87,7 +87,7 @@ WebVideoCaptureImplManager::~WebVideoCaptureImplManager() {
     Platform::Current()->GetIOTaskRunner()->DeleteSoon(FROM_HERE,
                                                        entry.impl.release());
   }
-  devices_.Clear();
+  devices_.clear();
 }
 
 base::OnceClosure WebVideoCaptureImplManager::UseDevice(
@@ -122,7 +122,8 @@ base::OnceClosure WebVideoCaptureImplManager::StartCapture(
     const media::VideoCaptureParams& params,
     const VideoCaptureStateUpdateCB& state_update_cb,
     const VideoCaptureDeliverFrameCB& deliver_frame_cb,
-    const VideoCaptureCropVersionCB& crop_version_cb) {
+    const VideoCaptureSubCaptureTargetVersionCB& sub_capture_target_version_cb,
+    const VideoCaptureNotifyFrameDroppedCB& frame_dropped_cb) {
   DCHECK(render_main_task_runner_->BelongsToCurrentThread());
   const auto it = base::ranges::find(devices_, id, &DeviceEntry::session_id);
   if (it == devices_.end())
@@ -135,7 +136,7 @@ base::OnceClosure WebVideoCaptureImplManager::StartCapture(
       FROM_HERE,
       base::BindOnce(&VideoCaptureImpl::StartCapture, it->impl->GetWeakPtr(),
                      client_id, params, state_update_cb, deliver_frame_cb,
-                     crop_version_cb));
+                     sub_capture_target_version_cb, frame_dropped_cb));
   return base::BindOnce(&WebVideoCaptureImplManager::StopCapture,
                         weak_factory_.GetWeakPtr(), client_id, id);
 }
@@ -271,18 +272,6 @@ void WebVideoCaptureImplManager::SuspendDevices(
   }
 }
 
-void WebVideoCaptureImplManager::OnFrameDropped(
-    const media::VideoCaptureSessionId& id,
-    media::VideoCaptureFrameDropReason reason) {
-  DCHECK(render_main_task_runner_->BelongsToCurrentThread());
-  const auto it = base::ranges::find(devices_, id, &DeviceEntry::session_id);
-  if (it == devices_.end())
-    return;
-  Platform::Current()->GetIOTaskRunner()->PostTask(
-      FROM_HERE, base::BindOnce(&VideoCaptureImpl::OnFrameDropped,
-                                it->impl->GetWeakPtr(), reason));
-}
-
 void WebVideoCaptureImplManager::OnLog(const media::VideoCaptureSessionId& id,
                                        const WebString& message) {
   DCHECK(render_main_task_runner_->BelongsToCurrentThread());
@@ -301,7 +290,7 @@ VideoCaptureFeedbackCB WebVideoCaptureImplManager::GetFeedbackCallback(
   DCHECK(render_main_task_runner_->BelongsToCurrentThread());
   return base::BindRepeating(
       &WebVideoCaptureImplManager::ProcessFeedback,
-      media::BindToCurrentLoop(base::BindRepeating(
+      base::BindPostTaskToCurrentDefault(base::BindRepeating(
           &WebVideoCaptureImplManager::ProcessFeedbackInternal,
           weak_factory_.GetMutableWeakPtr(), id)));
 }

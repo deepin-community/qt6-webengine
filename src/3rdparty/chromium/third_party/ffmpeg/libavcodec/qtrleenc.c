@@ -374,7 +374,7 @@ static int qtrle_encode_frame(AVCodecContext *avctx, AVPacket *pkt,
         return ret;
 
     if (avctx->gop_size == 0 || !s->previous_frame->data[0] ||
-        (s->avctx->frame_number % avctx->gop_size) == 0) {
+        (s->avctx->frame_num % avctx->gop_size) == 0) {
         /* I-Frame */
         s->key_frame = 1;
     } else {
@@ -385,8 +385,7 @@ static int qtrle_encode_frame(AVCodecContext *avctx, AVPacket *pkt,
     pkt->size = encode_frame(s, pict, pkt->data);
 
     /* save the current frame */
-    av_frame_unref(s->previous_frame);
-    ret = av_frame_ref(s->previous_frame, pict);
+    ret = av_frame_replace(s->previous_frame, pict);
     if (ret < 0) {
         av_log(avctx, AV_LOG_ERROR, "cannot add reference\n");
         return ret;

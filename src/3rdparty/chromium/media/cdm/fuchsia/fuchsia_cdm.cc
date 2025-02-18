@@ -108,8 +108,7 @@ CdmPromise::Exception ToCdmPromiseException(fuchsia::media::drm::Error error) {
 
     case fuchsia::media::drm::Error::NOT_PROVISIONED:
       // FuchsiaCdmManager is supposed to provision CDM.
-      NOTREACHED();
-      return CdmPromise::Exception::INVALID_STATE_ERROR;
+      NOTREACHED_NORETURN();
 
     case fuchsia::media::drm::Error::INTERNAL:
       DLOG(ERROR) << "CDM failed due to an internal error.";
@@ -356,6 +355,16 @@ void FuchsiaCdm::SetServerCertificate(
 
         promises_.ResolvePromise(promise_id);
       });
+}
+
+void FuchsiaCdm::GetStatusForPolicy(
+    media::HdcpVersion min_hdcp_version,
+    std::unique_ptr<KeyStatusCdmPromise> promise) {
+  REJECT_PROMISE_AND_RETURN_IF_BAD_CDM(promise, cdm_);
+
+  // Fuchsia devices do not support external display, so the internal display
+  // can support all HDCP levels.
+  promise->resolve(CdmKeyInformation::KeyStatus::USABLE);
 }
 
 void FuchsiaCdm::CreateSessionAndGenerateRequest(

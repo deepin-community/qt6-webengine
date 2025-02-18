@@ -72,6 +72,7 @@ component("ipc") {
       "message_router.h",
       "trace_ipc_message.cc",
       "trace_ipc_message.h",
+      "urgent_message_observer.h",
     ]
   }
 
@@ -259,7 +260,7 @@ static_library("test_sink") {
   ]
 }
 
-if (!is_ios) {
+if (use_blink) {
   source_set("run_all_unittests") {
     testonly = true
 

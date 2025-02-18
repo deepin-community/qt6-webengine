@@ -23,11 +23,14 @@
 #include "vp9/encoder/vp9_encoder.h"
 #include "vpx/vp8cx.h"
 #include "vp9/common/vp9_alloccommon.h"
+#include "vp9/common/vp9_scale.h"
 #include "vp9/vp9_cx_iface.h"
 #include "vp9/encoder/vp9_firstpass.h"
 #include "vp9/encoder/vp9_lookahead.h"
 #include "vp9/vp9_cx_iface.h"
 #include "vp9/vp9_iface_common.h"
+
+#include "vpx/vpx_tpl.h"
 
 typedef struct vp9_extracfg {
   int cpu_used;  // available cpu percentage in 1/16
@@ -129,6 +132,10 @@ struct vpx_codec_alg_priv {
   BufferPool *buffer_pool;
 };
 
+// Called by encoder_set_config() and encoder_encode() only. Must not be called
+// by encoder_init() because the `error` paramerer (cpi->common.error) will be
+// destroyed by vpx_codec_enc_init_ver() after encoder_init() returns an error.
+// See the "IMPORTANT" comment in vpx_codec_enc_init_ver().
 static vpx_codec_err_t update_error_state(
     vpx_codec_alg_priv_t *ctx, const struct vpx_internal_error_info *error) {
   const vpx_codec_err_t res = error->error_code;
@@ -635,8 +642,12 @@ static vpx_codec_err_t set_encoder_config(
 
   for (sl = 0; sl < oxcf->ss_number_layers; ++sl) {
     for (tl = 0; tl < oxcf->ts_number_layers; ++tl) {
-      oxcf->layer_target_bitrate[sl * oxcf->ts_number_layers + tl] =
-          1000 * cfg->layer_target_bitrate[sl * oxcf->ts_number_layers + tl];
+      const int layer = sl * oxcf->ts_number_layers + tl;
+      if (cfg->layer_target_bitrate[layer] > INT_MAX / 1000)
+        oxcf->layer_target_bitrate[layer] = INT_MAX;
+      else
+        oxcf->layer_target_bitrate[layer] =
+            1000 * cfg->layer_target_bitrate[layer];
     }
   }
   if (oxcf->ss_number_layers == 1 && oxcf->pass != 0) {
@@ -789,10 +800,22 @@ static vpx_codec_err_t encoder_set_config(vpx_codec_alg_priv_t *ctx,
   if (cfg->g_w != ctx->cfg.g_w || cfg->g_h != ctx->cfg.g_h) {
     if (cfg->g_lag_in_frames > 1 || cfg->g_pass != VPX_RC_ONE_PASS)
       ERROR("Cannot change width or height after initialization");
-    if (!valid_ref_frame_size(ctx->cfg.g_w, ctx->cfg.g_h, cfg->g_w, cfg->g_h) ||
+    // Note: function encoder_set_config() is allowed to be called multiple
+    // times. However, when the original frame width or height is less than two
+    // times of the new frame width or height, a forced key frame should be
+    // used. To make sure the correct detection of a forced key frame, we need
+    // to update the frame width and height only when the actual encoding is
+    // performed. cpi->last_coded_width and cpi->last_coded_height are used to
+    // track the actual coded frame size.
+    if ((ctx->cpi->last_coded_width && ctx->cpi->last_coded_height &&
+         !valid_ref_frame_size(ctx->cpi->last_coded_width,
+                               ctx->cpi->last_coded_height, cfg->g_w,
+                               cfg->g_h)) ||
         (ctx->cpi->initial_width && (int)cfg->g_w > ctx->cpi->initial_width) ||
-        (ctx->cpi->initial_height && (int)cfg->g_h > ctx->cpi->initial_height))
+        (ctx->cpi->initial_height &&
+         (int)cfg->g_h > ctx->cpi->initial_height)) {
       force_key = 1;
+    }
   }
 
   // Prevent increasing lag_in_frames. This check is stricter than it needs
@@ -813,6 +836,7 @@ static vpx_codec_err_t encoder_set_config(vpx_codec_alg_priv_t *ctx,
     assert(codec_err != VPX_CODEC_OK);
     return codec_err;
   }
+  ctx->cpi->common.error.setjmp = 1;
 
   ctx->cfg = *cfg;
   set_encoder_config(&ctx->oxcf, &ctx->cfg, &ctx->extra_cfg);
@@ -1068,6 +1092,7 @@ static vpx_codec_err_t ctrl_set_rtc_external_ratectrl(vpx_codec_alg_priv_t *ctx,
     cpi->compute_frame_low_motion_onepass = 0;
     cpi->rc.constrain_gf_key_freq_onepass_vbr = 0;
     cpi->cyclic_refresh->content_mode = 0;
+    cpi->disable_scene_detection_rtc_ratectrl = 1;
   }
   return VPX_CODEC_OK;
 }
@@ -1143,7 +1168,7 @@ static vpx_codec_err_t encoder_destroy(vpx_codec_alg_priv_t *ctx) {
 
 static void pick_quickcompress_mode(vpx_codec_alg_priv_t *ctx,
                                     unsigned long duration,
-                                    unsigned long deadline) {
+                                    vpx_enc_deadline_t deadline) {
   MODE new_mode = BEST;
 
 #if CONFIG_REALTIME_ONLY
@@ -1288,7 +1313,7 @@ static vpx_codec_err_t encoder_encode(vpx_codec_alg_priv_t *ctx,
                                       vpx_codec_pts_t pts_val,
                                       unsigned long duration,
                                       vpx_enc_frame_flags_t enc_flags,
-                                      unsigned long deadline) {
+                                      vpx_enc_deadline_t deadline) {
   volatile vpx_codec_err_t res = VPX_CODEC_OK;
   volatile vpx_enc_frame_flags_t flags = enc_flags;
   volatile vpx_codec_pts_t pts = pts_val;
@@ -1299,6 +1324,9 @@ static vpx_codec_err_t encoder_encode(vpx_codec_alg_priv_t *ctx,
   memset(&pkt, 0, sizeof(pkt));
 
   if (cpi == NULL) return VPX_CODEC_INVALID_PARAM;
+
+  cpi->last_coded_width = ctx->oxcf.width;
+  cpi->last_coded_height = ctx->oxcf.height;
 
   if (img != NULL) {
     res = validate_img(ctx, img);
@@ -1631,13 +1659,9 @@ static vpx_codec_err_t ctrl_set_roi_map(vpx_codec_alg_priv_t *ctx,
 
   if (data) {
     vpx_roi_map_t *roi = (vpx_roi_map_t *)data;
-
-    if (!vp9_set_roi_map(ctx->cpi, roi->roi_map, roi->rows, roi->cols,
-                         roi->delta_q, roi->delta_lf, roi->skip,
-                         roi->ref_frame)) {
-      return VPX_CODEC_OK;
-    }
-    return VPX_CODEC_INVALID_PARAM;
+    return vp9_set_roi_map(ctx->cpi, roi->roi_map, roi->rows, roi->cols,
+                           roi->delta_q, roi->delta_lf, roi->skip,
+                           roi->ref_frame);
   }
   return VPX_CODEC_INVALID_PARAM;
 }
@@ -1675,9 +1699,8 @@ static vpx_codec_err_t ctrl_set_scale_mode(vpx_codec_alg_priv_t *ctx,
   vpx_scaling_mode_t *const mode = va_arg(args, vpx_scaling_mode_t *);
 
   if (mode) {
-    const int res =
-        vp9_set_internal_size(ctx->cpi, (VPX_SCALING)mode->h_scaling_mode,
-                              (VPX_SCALING)mode->v_scaling_mode);
+    const int res = vp9_set_internal_size(ctx->cpi, mode->h_scaling_mode,
+                                          mode->v_scaling_mode);
     return (res == 0) ? VPX_CODEC_OK : VPX_CODEC_INVALID_PARAM;
   }
   return VPX_CODEC_INVALID_PARAM;
@@ -1933,16 +1956,28 @@ static vpx_codec_err_t ctrl_set_external_rate_control(vpx_codec_alg_priv_t *ctx,
     const FRAME_INFO *frame_info = &cpi->frame_info;
     vpx_rc_config_t ratectrl_config;
     vpx_codec_err_t codec_status;
+    memset(&ratectrl_config, 0, sizeof(ratectrl_config));
 
     ratectrl_config.frame_width = frame_info->frame_width;
     ratectrl_config.frame_height = frame_info->frame_height;
     ratectrl_config.show_frame_count = cpi->twopass.first_pass_info.num_frames;
-
+    ratectrl_config.max_gf_interval = oxcf->max_gf_interval;
+    ratectrl_config.min_gf_interval = oxcf->min_gf_interval;
     // TODO(angiebird): Double check whether this is the proper way to set up
     // target_bitrate and frame_rate.
     ratectrl_config.target_bitrate_kbps = (int)(oxcf->target_bandwidth / 1000);
     ratectrl_config.frame_rate_num = oxcf->g_timebase.den;
     ratectrl_config.frame_rate_den = oxcf->g_timebase.num;
+    ratectrl_config.overshoot_percent = oxcf->over_shoot_pct;
+    ratectrl_config.undershoot_percent = oxcf->under_shoot_pct;
+
+    if (oxcf->rc_mode == VPX_VBR) {
+      ratectrl_config.rc_mode = VPX_RC_VBR;
+    } else if (oxcf->rc_mode == VPX_Q) {
+      ratectrl_config.rc_mode = VPX_RC_QMODE;
+    } else if (oxcf->rc_mode == VPX_CQ) {
+      ratectrl_config.rc_mode = VPX_RC_CQ;
+    }
 
     codec_status = vp9_extrc_create(funcs, ratectrl_config, ext_ratectrl);
     if (codec_status != VPX_CODEC_OK) {
@@ -1968,6 +2003,15 @@ static vpx_codec_err_t ctrl_set_quantizer_one_pass(vpx_codec_alg_priv_t *ctx,
 
   res = update_extra_cfg(ctx, &extra_cfg);
   return res;
+}
+
+static vpx_codec_err_t ctrl_enable_external_rc_tpl(vpx_codec_alg_priv_t *ctx,
+                                                   va_list args) {
+  VP9_COMP *const cpi = ctx->cpi;
+  const int enable_flag = va_arg(args, int);
+  if (enable_flag != 0 && enable_flag != 1) return VPX_CODEC_INVALID_PARAM;
+  cpi->tpl_with_external_rc = enable_flag;
+  return VPX_CODEC_OK;
 }
 
 static vpx_codec_ctrl_fn_map_t encoder_ctrl_maps[] = {
@@ -2025,6 +2069,7 @@ static vpx_codec_ctrl_fn_map_t encoder_ctrl_maps[] = {
   { VP9E_SET_RTC_EXTERNAL_RATECTRL, ctrl_set_rtc_external_ratectrl },
   { VP9E_SET_EXTERNAL_RATE_CONTROL, ctrl_set_external_rate_control },
   { VP9E_SET_QUANTIZER_ONE_PASS, ctrl_set_quantizer_one_pass },
+  { VP9E_ENABLE_EXTERNAL_RC_TPL, ctrl_enable_external_rc_tpl },
 
   // Getters
   { VP8E_GET_LAST_QUANTIZER, ctrl_get_quantizer },
@@ -2065,8 +2110,8 @@ static vpx_codec_enc_cfg_map_t encoder_usage_cfg_map[] = {
         0,   // rc_resize_allowed
         0,   // rc_scaled_width
         0,   // rc_scaled_height
-        60,  // rc_resize_down_thresold
-        30,  // rc_resize_up_thresold
+        60,  // rc_resize_down_thresh
+        30,  // rc_resize_up_thresh
 
         VPX_VBR,      // rc_end_usage
         { NULL, 0 },  // rc_twopass_stats_in
@@ -2099,7 +2144,7 @@ static vpx_codec_enc_cfg_map_t encoder_usage_cfg_map[] = {
         { 0 },     // ts_rate_decimator
         0,         // ts_periodicity
         { 0 },     // ts_layer_id
-        { 0 },     // layer_taget_bitrate
+        { 0 },     // layer_target_bitrate
         0,         // temporal_layering_mode
         0,         // use_vizier_rc_params
         { 1, 1 },  // active_wq_factor

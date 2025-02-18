@@ -10,6 +10,7 @@
 #include "services/network/public/mojom/url_response_head.mojom.h"
 #include "third_party/blink/public/common/loader/referrer_utils.h"
 #include "third_party/blink/public/mojom/loader/code_cache.mojom-blink.h"
+#include "third_party/blink/public/mojom/timing/resource_timing.mojom-blink.h"
 #include "third_party/blink/public/platform/resource_load_info_notifier_wrapper.h"
 #include "third_party/blink/public/platform/url_conversion.h"
 #include "third_party/blink/public/platform/web_url.h"
@@ -57,11 +58,13 @@ void WorkerMainScriptLoader::Start(
   // TODO(crbug.com/929370): Support CSP check to post violation reports for
   // worker top-level scripts, if off-the-main-thread fetch is enabled.
 
+  // Currently we don't support ad resource check for the worker scripts.
   resource_load_info_notifier_wrapper_->NotifyResourceLoadInitiated(
       request_id_, GURL(initial_request_url_),
       initial_request_.HttpMethod().Latin1(),
       WebStringToGURL(WebString(initial_request_.ReferrerString())),
-      initial_request_.GetRequestDestination(), net::HIGHEST);
+      initial_request_.GetRequestDestination(), net::HIGHEST,
+      /*is_ad_resource=*/false);
 
   if (!worker_main_script_load_params->redirect_responses.empty()) {
     HandleRedirections(worker_main_script_load_params->redirect_infos,
@@ -271,8 +274,7 @@ void WorkerMainScriptLoader::NotifyCompletionIfAppropriate() {
     resource_load_observer_->DidFinishLoading(
         initial_request_.InspectorId(), base::TimeTicks::Now(),
         resource_response_.EncodedDataLength(),
-        resource_response_.DecodedBodyLength(),
-        /*should_report_corb_blocking=*/false);
+        resource_response_.DecodedBodyLength());
   } else {
     client->OnFailedLoadingWorkerMainScript();
     resource_load_observer_->DidFailLoading(
@@ -301,21 +303,6 @@ void WorkerMainScriptLoader::HandleRedirections(
     auto& redirect_info = redirect_infos[i];
     auto& redirect_response = redirect_responses[i];
     last_request_url_ = KURL(redirect_info.new_url);
-
-    std::unique_ptr<ResourceRequest> new_request =
-        initial_request_.CreateRedirectRequest(
-            KURL(redirect_info.new_url),
-            AtomicString::FromUTF8(redirect_info.new_method.data(),
-                                   redirect_info.new_method.length()),
-            redirect_info.new_site_for_cookies,
-            AtomicString::FromUTF8(redirect_info.new_referrer.data(),
-                                   redirect_info.new_referrer.length()),
-            ReferrerUtils::NetToMojoReferrerPolicy(
-                redirect_info.new_referrer_policy),
-            /*skip_service_worker=*/false);
-    WebURLResponse response = WebURLResponse::Create(
-        WebURL(last_request_url_), *redirect_response,
-        redirect_response->ssl_info.has_value(), request_id_);
     resource_load_info_notifier_wrapper_->NotifyResourceRedirectReceived(
         redirect_info, std::move(redirect_response));
   }

@@ -11,6 +11,7 @@
 
 #include "base/callback_list.h"
 #include "base/functional/callback.h"
+#include "base/metrics/field_trial_params.h"
 #include "base/time/time.h"
 #include "components/metrics/metrics_log_store.h"
 #include "components/metrics/metrics_log_uploader.h"
@@ -35,6 +36,10 @@ namespace metrics {
 class MetricsLogUploader;
 class MetricsService;
 
+namespace structured {
+class StructuredMetricsService;
+}
+
 // An abstraction of operations that depend on the embedder's (e.g. Chrome)
 // environment.
 class MetricsServiceClient {
@@ -58,6 +63,10 @@ class MetricsServiceClient {
 
   // Returns the UkmService instance that this client is associated with.
   virtual ukm::UkmService* GetUkmService();
+
+  // Returns the StructuredMetricsService instance that this client is
+  // associated with.
+  virtual structured::StructuredMetricsService* GetStructuredMetricsService();
 
   // Returns true if metrics should be uploaded for the given |user_id|, which
   // corresponds to the |user_id| field in ChromeUserMetricsExtension.
@@ -96,6 +105,11 @@ class MetricsServiceClient {
   // |serialized_environment| are consumed by the call, but the caller maintains
   // ownership.
   virtual void OnEnvironmentUpdate(std::string* serialized_environment) {}
+
+  // Collects child process histograms and merges them into StatisticsRecorder.
+  // Called when child process histograms need to be merged ASAP. For example,
+  // on Android, when the browser was backgrounded.
+  virtual void MergeSubprocessHistograms() {}
 
   // Called prior to a metrics log being closed, allowing the client to collect
   // extra histograms that will go in that log. Asynchronous API - the client

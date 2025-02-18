@@ -14,6 +14,7 @@ class Rect;
 
 namespace exo {
 class Surface;
+enum class OverlayPriority;
 
 // Observers can listen to various events on the Surfaces.
 class SurfaceObserver {
@@ -21,6 +22,10 @@ class SurfaceObserver {
   // Called at the top of the surface's destructor, to give observers a
   // chance to remove themselves.
   virtual void OnSurfaceDestroying(Surface* surface) = 0;
+
+  virtual void OnScaleFactorChanged(Surface* surface,
+                                    float old_scale_factor,
+                                    float new_scale_factor) {}
 
   // Called when the occlusion of the aura window corresponding to |surface|
   // changes.
@@ -58,6 +63,11 @@ class SurfaceObserver {
 
   // Called when tooltip is hidden.
   virtual void OnTooltipHidden(Surface* surface) {}
+
+  virtual void OnFullscreenStateChanged(bool fullscreen) {}
+
+  virtual void OnOverlayPriorityHintChanged(
+      OverlayPriority overlay_priority_hint) {}
 
  protected:
   virtual ~SurfaceObserver() {}

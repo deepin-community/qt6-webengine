@@ -16,7 +16,6 @@ class TestAutofillExternalDelegate : public AutofillExternalDelegate {
  public:
   explicit TestAutofillExternalDelegate(
       BrowserAutofillManager* autofill_manager,
-      AutofillDriver* autofill_driver,
       bool call_parent_methods);
 
   TestAutofillExternalDelegate(const TestAutofillExternalDelegate&) = delete;
@@ -30,22 +29,24 @@ class TestAutofillExternalDelegate : public AutofillExternalDelegate {
   void OnPopupHidden() override;
   void OnQuery(const FormData& form,
                const FormFieldData& field,
-               const gfx::RectF& bounds) override;
-  void OnSuggestionsReturned(
-      FieldGlobalId field_id,
-      const std::vector<Suggestion>& suggestions,
-      AutoselectFirstSuggestion autoselect_first_suggestion,
-      bool is_all_server_suggestions) override;
+               const gfx::RectF& bounds,
+               AutofillSuggestionTriggerSource trigger_source) override;
+  void OnSuggestionsReturned(FieldGlobalId field_id,
+                             const std::vector<Suggestion>& suggestions,
+                             bool is_all_server_suggestions) override;
   bool HasActiveScreenReader() const override;
-  void OnAutofillAvailabilityEvent(const mojom::AutofillState state) override;
+  void OnAutofillAvailabilityEvent(
+      mojom::AutofillSuggestionAvailability suggestion_availability) override;
 
   // Functions unique to TestAutofillExternalDelegate.
 
   void WaitForPopupHidden();
 
   void CheckSuggestions(FieldGlobalId field_id,
-                        size_t expected_num_suggestions,
-                        const Suggestion expected_suggestions[]);
+                        const std::vector<Suggestion>& expected_sugestions);
+
+  // Check that the autofill suggestions were not sent at all.
+  void CheckSuggestionsNotReturned(FieldGlobalId field_id);
 
   // Check that the autofill suggestions were sent, and that they match a page
   // but contain no results.
@@ -56,11 +57,13 @@ class TestAutofillExternalDelegate : public AutofillExternalDelegate {
   void CheckSuggestionCount(FieldGlobalId field_id,
                             size_t expected_num_suggestions);
 
+  const std::vector<Suggestion>& suggestions() const;
+
   bool on_query_seen() const;
 
   bool on_suggestions_returned_seen() const;
 
-  AutoselectFirstSuggestion autoselect_first_suggestion() const;
+  AutofillSuggestionTriggerSource trigger_source() const;
 
   bool is_all_server_suggestions() const;
 
@@ -82,9 +85,9 @@ class TestAutofillExternalDelegate : public AutofillExternalDelegate {
   // call to OnQuery.
   bool on_suggestions_returned_seen_ = false;
 
-  // Records if the first suggestion should be auto-selected.
-  AutoselectFirstSuggestion autoselect_first_suggestion_ =
-      AutoselectFirstSuggestion(false);
+  // Records the trigger source of `OnSuggestionsReturned()`.
+  AutofillSuggestionTriggerSource trigger_source_ =
+      AutofillSuggestionTriggerSource::kUnspecified;
 
   // Records whether the Autofill suggestions all come from Google Payments.
   bool is_all_server_suggestions_ = false;

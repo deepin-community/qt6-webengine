@@ -7,8 +7,6 @@
 
 #include <stddef.h>
 
-#include <functional>
-#include <map>
 #include <memory>
 #include <string>
 #include <utility>
@@ -16,10 +14,10 @@
 
 #include "absl/strings/string_view.h"
 #include "quiche/common/platform/api/quiche_export.h"
+#include "quiche/common/quiche_callbacks.h"
 #include "quiche/spdy/core/hpack/hpack_header_table.h"
 #include "quiche/spdy/core/hpack/hpack_output_stream.h"
 #include "quiche/spdy/core/http2_header_block.h"
-#include "quiche/spdy/core/spdy_protocol.h"
 
 // An HpackEncoder encodes header sets as outlined in
 // http://tools.ietf.org/html/rfc7541.
@@ -38,12 +36,12 @@ class QUICHE_EXPORT HpackEncoder {
   // Callers may provide a HeaderListener to be informed of header name-value
   // pairs processed by this encoder.
   using HeaderListener =
-      std::function<void(absl::string_view, absl::string_view)>;
+      quiche::MultiUseCallback<void(absl::string_view, absl::string_view)>;
 
   // An indexing policy should return true if the provided header name-value
   // pair should be inserted into the HPACK dynamic table.
   using IndexingPolicy =
-      std::function<bool(absl::string_view, absl::string_view)>;
+      quiche::MultiUseCallback<bool(absl::string_view, absl::string_view)>;
 
   HpackEncoder();
   HpackEncoder(const HpackEncoder&) = delete;
@@ -87,11 +85,15 @@ class QUICHE_EXPORT HpackEncoder {
 
   // This HpackEncoder will use |policy| to determine whether to insert header
   // name-value pairs into the dynamic table.
-  void SetIndexingPolicy(IndexingPolicy policy) { should_index_ = policy; }
+  void SetIndexingPolicy(IndexingPolicy policy) {
+    should_index_ = std::move(policy);
+  }
 
   // |listener| will be invoked for each header name-value pair processed by
   // this encoder.
-  void SetHeaderListener(HeaderListener listener) { listener_ = listener; }
+  void SetHeaderListener(HeaderListener listener) {
+    listener_ = std::move(listener);
+  }
 
   void DisableCompression() { enable_compression_ = false; }
 

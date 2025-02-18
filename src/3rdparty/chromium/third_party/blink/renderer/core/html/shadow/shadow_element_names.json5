@@ -13,6 +13,7 @@
     // ID names for UA shadow elements
     //
     {
+      // This has an experimental pseudo-element to expose it to the Web.
       name: "details-content",
       Symbol: "kIdDetailsContent",
     },
@@ -55,6 +56,10 @@
     {
       name: "password-reveal",
       Symbol: "kIdPasswordRevealButton",
+    },
+    {
+      name: "password-strong-label",
+      Symbol: "kIdPasswordStrongLabel",
     },
     {
       name: "thumb",
@@ -136,6 +141,10 @@
     {
       name: "-internal-datetime-container",
       Symbol: "kPseudoInternalDatetimeContainer",
+    },
+    {
+      name: "-internal-permission-text",
+      Symbol: "kPseudoInternalPermissionTextSpan",
     },
   ],
 }

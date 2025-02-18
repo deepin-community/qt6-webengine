@@ -13,6 +13,8 @@
 // limitations under the License.
 
 import {assertExists, assertTrue} from '../../base/logging';
+import {currentDateHourAndMinute} from '../../base/time';
+import {raf} from '../../core/raf_scheduler';
 import {globals} from '../../frontend/globals';
 import {autosaveConfigStore} from '../../frontend/record_config';
 import {
@@ -22,10 +24,9 @@ import {
 import {
   couldNotClaimInterface,
 } from '../../frontend/recording/reset_interface_modal';
+import {TraceConfig} from '../../protos';
 import {Actions} from '../actions';
 import {TRACE_SUFFIX} from '../constants';
-import {TraceConfig} from '../protos';
-import {currentDateHourAndMinute} from '../time';
 
 import {genTraceConfig} from './recording_config_utils';
 import {RecordingError, showRecordingModal} from './recording_error_handling';
@@ -266,7 +267,7 @@ export class RecordingPageController {
     }
     this.setState(state);
     globals.dispatch(Actions.setRecordingStatus({status: undefined}));
-    globals.rafScheduler.scheduleFullRedraw();
+    raf.scheduleFullRedraw();
   }
 
   maybeClearRecordingState(tracingSessionWrapper: TracingSessionWrapper): void {
@@ -353,11 +354,11 @@ export class RecordingPageController {
 
     if (!this.target) {
       this.setState(RecordingState.NO_TARGET);
-      globals.rafScheduler.scheduleFullRedraw();
+      raf.scheduleFullRedraw();
       return;
     }
     this.setState(RecordingState.TARGET_SELECTED);
-    globals.rafScheduler.scheduleFullRedraw();
+    raf.scheduleFullRedraw();
 
     this.tracingSessionWrapper = this.createTracingSessionWrapper(this.target);
     this.tracingSessionWrapper.fetchTargetInfo();
@@ -439,12 +440,13 @@ export class RecordingPageController {
     // We redraw if:
     // 1. We received a correct buffer usage value.
     // 2. We receive a RecordingError.
-    globals.rafScheduler.scheduleFullRedraw();
+    raf.scheduleFullRedraw();
   }
 
   initFactories() {
     assertTrue(this.state <= RecordingState.TARGET_INFO_DISPLAYED);
     for (const targetFactory of targetFactoryRegistry.listTargetFactories()) {
+      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
       if (targetFactory) {
         targetFactory.setOnTargetChange(this.onTargetChange.bind(this));
       }
@@ -480,7 +482,7 @@ export class RecordingPageController {
     // If the change happens for an existing target, the controller keeps the
     // currently selected target in focus.
     if (this.target && allTargets.includes(this.target)) {
-      globals.rafScheduler.scheduleFullRedraw();
+      raf.scheduleFullRedraw();
       return;
     }
     // If the change happens to a new target or the controller does not have a
@@ -500,7 +502,7 @@ export class RecordingPageController {
     globals.dispatch(Actions.setRecordingStatus({status: undefined}));
     // Redrawing because this method has changed the RecordingState, which will
     // affect the display of the record_page.
-    globals.rafScheduler.scheduleFullRedraw();
+    raf.scheduleFullRedraw();
   }
 
   private setState(state: RecordingState) {

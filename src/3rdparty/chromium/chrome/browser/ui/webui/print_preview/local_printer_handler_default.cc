@@ -22,7 +22,6 @@
 #include "content/public/browser/browser_thread.h"
 #include "printing/buildflags/buildflags.h"
 #include "printing/mojom/print.mojom.h"
-#include "printing/printing_features.h"
 
 #if BUILDFLAG(IS_MAC)
 #include "chrome/common/printing/printer_capabilities_mac.h"
@@ -33,6 +32,7 @@
 #endif
 
 #if BUILDFLAG(ENABLE_OOP_PRINTING)
+#include "chrome/browser/printing/prefs_util.h"
 #include "chrome/browser/printing/print_backend_service_manager.h"
 #include "chrome/browser/ui/webui/print_preview/printer_handler.h"
 #include "chrome/services/printing/public/mojom/print_backend_service.mojom.h"
@@ -55,8 +55,7 @@ scoped_refptr<base::TaskRunner> CreatePrinterHandlerTaskRunner() {
 #elif BUILDFLAG(IS_WIN)
   // Windows drivers are likely not thread-safe and need to be accessed on the
   // UI thread.
-  return content::GetUIThreadTaskRunner(
-      {base::MayBlock(), base::TaskPriority::USER_VISIBLE});
+  return content::GetUIThreadTaskRunner({base::TaskPriority::USER_VISIBLE});
 #else
   // Be conservative on unsupported platforms.
   return base::ThreadPool::CreateSingleThreadTaskRunner(kTraits);
@@ -241,7 +240,7 @@ void LocalPrinterHandlerDefault::GetDefaultPrinter(DefaultPrinterCallback cb) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
 #if BUILDFLAG(ENABLE_OOP_PRINTING)
-  if (base::FeatureList::IsEnabled(features::kEnableOopPrintDrivers)) {
+  if (IsOopPrintingEnabled()) {
     PRINTER_LOG(EVENT) << "Getting default printer via service";
     PrintBackendServiceManager& service_mgr =
         PrintBackendServiceManager::GetInstance();
@@ -265,7 +264,7 @@ void LocalPrinterHandlerDefault::StartGetPrinters(
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
 #if BUILDFLAG(ENABLE_OOP_PRINTING)
-  if (base::FeatureList::IsEnabled(features::kEnableOopPrintDrivers)) {
+  if (IsOopPrintingEnabled()) {
     PRINTER_LOG(EVENT) << "Enumerate printers start via service";
     PrintBackendServiceManager& service_mgr =
         PrintBackendServiceManager::GetInstance();
@@ -291,7 +290,7 @@ void LocalPrinterHandlerDefault::StartGetCapability(
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
 #if BUILDFLAG(ENABLE_OOP_PRINTING)
-  if (base::FeatureList::IsEnabled(features::kEnableOopPrintDrivers)) {
+  if (IsOopPrintingEnabled()) {
     PRINTER_LOG(EVENT) << "Getting printer capabilities via service for "
                        << device_name;
     PrintBackendServiceManager& service_mgr =

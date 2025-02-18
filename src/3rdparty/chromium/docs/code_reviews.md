@@ -10,14 +10,18 @@ and OWNERS policy changes launched on March 24, 2021, see
 
 # Code review policies
 
-Ideally the reviewer is someone who is familiar with the area of code you are
-touching. Any committer can review code, but an owner must provide a review
-for each directory you are touching. If you have doubts, look at the `git blame`
-for the file and the `OWNERS` files ([more info](#owners-files)).
+Any [committer](https://www.chromium.org/getting-involved/become-a-committer/#what-is-a-committer) can review code, but
+an owner must provide a review for each directory you are touching. Ideally you should choose
+reviewers who are familiar with the area of code you are touching. If you have doubts, look
+at the `git blame` for the file and the `OWNERS` files ([more info](#owners-files)).
 
 To indicate a positive review, the reviewer provides a `Code-Review +1` in
 Gerrit, also known as an LGTM ("Looks Good To Me"). A score of "-1" indicates
 the change should not be submitted as-is.
+
+Submissions to the chromium/src repository by a change contributor who is not a Chromium
+committer require two committers to Code-Review+1 the submission. If the owner of the CL
+is already a committer, then only one other committer is needed to review.
 
 If you have multiple reviewers, provide a message indicating what you expect
 from each reviewer. Otherwise people might assume their input is not required
@@ -25,6 +29,9 @@ or waste time with redundant reviews.
 
 Please also read [Respectful Changes](cl_respect.md) and
 [Respectful Code Reviews](cr_respect.md).
+
+There are also a [collection of tips](cl_tips.md) for productive reviews, though
+these are advisory and not policy.
 
 #### Expectations for all reviewers
 
@@ -129,6 +136,7 @@ like a long leave. If you were inactive only for a certain period of time
 while you were on a long leave and have been meeting the above owner's
 expectations in other times, you can create a CL to re-add yourself and land
 after getting local owner's approval (you can refer to this policy in the CL).
+The removal script will cc the removed owner and one other owner to avoid spam.
 
 ### OWNERS file details
 
@@ -228,10 +236,10 @@ either another committer to LGTM the CL or, for clean reverts, a `Bot-Commit:
 ## Mechanical changes
 
 ### Global Approvals
-For one-off CLs, API owners of `base`, `build`, `content`, `third_party/blink`
-and `url` can `Owners-Override +1` a change to their APIs to avoid waiting for
-rubberstamp +1s from affected directories' owners. This should only be used for
-mechanical updates to the affected directories.
+For one-off CLs, API owners of `base`, `build`, `content`,
+`third_party/blink/public` and `url` can `Owners-Override +1` a change to their
+APIs to avoid waiting for rubberstamp +1s from affected directories' owners.
+This should only be used for mechanical updates to the affected directories.
 
 If you are making one-off CLs that touch many directories and cannot be
 handled by the global approvers, you can ask one of Chrome ATLs.

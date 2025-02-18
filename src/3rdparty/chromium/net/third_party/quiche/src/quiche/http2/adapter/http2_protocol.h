@@ -85,6 +85,14 @@ enum class FrameType : uint8_t {
   CONTINUATION,
 };
 
+enum FrameFlags : uint8_t {
+  END_STREAM_FLAG = 0x1,
+  ACK_FLAG = END_STREAM_FLAG,
+  END_HEADERS_FLAG = 0x4,
+  PADDED_FLAG = 0x8,
+  PRIORITY_FLAG = 0x20,
+};
+
 // HTTP/2 error codes as specified in RFC 7540 Section 7.
 enum class Http2ErrorCode {
   HTTP2_NO_ERROR = 0x0,
@@ -124,12 +132,13 @@ enum Http2KnownSettingsId : Http2SettingsId {
 // Returns a human-readable string representation of the given SETTINGS |id| for
 // logging/debugging. Returns "SETTINGS_UNKNOWN" for IDs outside of the RFC 7540
 // Section 6.5.2 definitions.
-absl::string_view Http2SettingsIdToString(uint16_t id);
+QUICHE_EXPORT absl::string_view Http2SettingsIdToString(uint16_t id);
 
 // Returns a human-readable string representation of the given |error_code| for
 // logging/debugging. Returns "UNKNOWN_ERROR" for errors outside of RFC 7540
 // Section 7 definitions.
-absl::string_view Http2ErrorCodeToString(Http2ErrorCode error_code);
+QUICHE_EXPORT absl::string_view Http2ErrorCodeToString(
+    Http2ErrorCode error_code);
 
 enum class Perspective {
   kClient,

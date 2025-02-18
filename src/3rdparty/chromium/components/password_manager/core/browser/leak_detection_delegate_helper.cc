@@ -10,8 +10,8 @@
 #include "base/ranges/algorithm.h"
 #include "components/password_manager/core/browser/leak_detection/encryption_utils.h"
 #include "components/password_manager/core/browser/password_form.h"
-#include "components/password_manager/core/browser/password_store_interface.h"
-#include "components/password_manager/core/browser/psl_matching_helper.h"
+#include "components/password_manager/core/browser/password_store/password_store_interface.h"
+#include "components/password_manager/core/browser/password_store/psl_matching_helper.h"
 
 namespace password_manager {
 
@@ -78,7 +78,8 @@ void LeakDetectionDelegateHelper::ProcessResults() {
         PasswordForm form_to_update = *form.get();
         form_to_update.password_issues.insert_or_assign(
             InsecureType::kLeaked,
-            InsecurityMetadata(base::Time::Now(), IsMuted(false)));
+            InsecurityMetadata(base::Time::Now(), IsMuted(false),
+                               TriggerBackendNotification(false)));
         store.UpdateLogin(form_to_update);
       }
       all_urls_with_leaked_credentials.push_back(form->url);

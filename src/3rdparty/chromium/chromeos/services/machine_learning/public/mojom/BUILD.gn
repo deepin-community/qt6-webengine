@@ -37,4 +37,7 @@ mojom_component("mojom") {
 mojom("document_scanner_param_types") {
   sources = [ "document_scanner_param_types.mojom" ]
   webui_module_path = "/chromeos/services/machine_learning/public/mojom"
+
+  # ChromeOS relies heavily on old legacy bindings.
+  generate_legacy_js_bindings = true
 }

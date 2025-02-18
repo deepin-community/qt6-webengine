@@ -56,6 +56,7 @@ void CreateAndAddWhatsNewUIHtmlSource(Profile* profile) {
 // static
 void WhatsNewUI::RegisterLocalStatePrefs(PrefRegistrySimple* registry) {
   registry->RegisterIntegerPref(prefs::kLastWhatsNewVersion, 0);
+  registry->RegisterBooleanPref(prefs::kHasShownRefreshWhatsNew, false);
 }
 
 WhatsNewUI::WhatsNewUI(content::WebUI* web_ui)
@@ -89,6 +90,10 @@ void WhatsNewUI::CreateBrowserCommandHandler(
         pending_handler) {
   std::vector<browser_command::mojom::Command> supported_commands = {
       browser_command::mojom::Command::kOpenPerformanceSettings,
+      browser_command::mojom::Command::kOpenNTPAndStartCustomizeChromeTutorial,
+      browser_command::mojom::Command::kOpenPasswordManager,
+      browser_command::mojom::Command::kStartPasswordManagerTutorial,
+      browser_command::mojom::Command::kStartSavedTabGroupTutorial,
   };
   command_handler_ = std::make_unique<BrowserCommandHandler>(
       std::move(pending_handler), profile_, supported_commands);

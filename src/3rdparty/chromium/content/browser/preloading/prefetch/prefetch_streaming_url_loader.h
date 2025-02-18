@@ -7,7 +7,7 @@
 
 #include "base/time/time.h"
 #include "base/timer/timer.h"
-#include "content/browser/preloading/prefetch/prefetch_streaming_url_loader_status.h"
+#include "content/browser/preloading/prefetch/prefetch_streaming_url_loader_common_types.h"
 #include "content/common/content_export.h"
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
@@ -17,93 +17,97 @@
 
 namespace content {
 
+class PrefetchResponseReader;
+
+// `PrefetchStreamingURLLoader` is self-owned throughout its lifetime, and
+// deleted asynchronously when `prefetch_url_loader_` is finished or canceled
+// (e.g. on non-followed redirects or `CancelIfNotServing()`).
 class CONTENT_EXPORT PrefetchStreamingURLLoader
-    : public network::mojom::URLLoader,
-      public network::mojom::URLLoaderClient {
+    : public network::mojom::URLLoaderClient {
  public:
-  // This callback is used fo the owner to determine if the prefetch is valid
-  // based on |head|. If the prefetch should be servable based on |head|, then
-  // the callback should return |kHeadReceivedWaitingOnBody|. Otherwise it
-  // should return a valid failure reason.
-  using OnPrefetchResponseStartedCallback =
-      base::OnceCallback<PrefetchStreamingURLLoaderStatus(
-          network::mojom::URLResponseHead* head)>;
-
-  using OnPrefetchResponseCompletedCallback = base::OnceCallback<void(
-      const network::URLLoaderCompletionStatus& completion_status)>;
-  using OnPrefetchRedirectCallback = base::RepeatingCallback<void(
-      const net::RedirectInfo& redirect_info,
-      const network::mojom::URLResponseHead& response_head,
-      std::vector<std::string>* removed_headers)>;
-
-  PrefetchStreamingURLLoader(
+  static base::WeakPtr<PrefetchStreamingURLLoader> CreateAndStart(
       network::mojom::URLLoaderFactory* url_loader_factory,
-      std::unique_ptr<network::ResourceRequest> request,
+      const network::ResourceRequest& request,
       const net::NetworkTrafficAnnotationTag& network_traffic_annotation,
       base::TimeDelta timeout_duration,
       OnPrefetchResponseStartedCallback on_prefetch_response_started_callback,
       OnPrefetchResponseCompletedCallback
           on_prefetch_response_completed_callback,
-      OnPrefetchRedirectCallback on_prefetch_redirect_callback);
+      OnPrefetchRedirectCallback on_prefetch_redirect_callback,
+      base::OnceClosure on_received_head_callback,
+      base::WeakPtr<PrefetchResponseReader> response_reader);
+
+  // Must be called only from `CreateAndStart()`.
+  PrefetchStreamingURLLoader(
+      OnPrefetchResponseStartedCallback on_prefetch_response_started_callback,
+      OnPrefetchResponseCompletedCallback
+          on_prefetch_response_completed_callback,
+      OnPrefetchRedirectCallback on_prefetch_redirect_callback,
+      base::OnceClosure on_received_head_callback);
+
   ~PrefetchStreamingURLLoader() override;
 
   PrefetchStreamingURLLoader(const PrefetchStreamingURLLoader&) = delete;
   PrefetchStreamingURLLoader& operator=(const PrefetchStreamingURLLoader&) =
       delete;
 
-  // Registers a callback that is called once the head of the response is
-  // received via either |OnReceiveResponse| or |OnReceiveRedirect|. The
-  // callback is called once it is determined whether or not the prefetch is
-  // servable.
-  void SetOnReceivedHeadCallback(base::OnceClosure on_received_head_callback);
+  void SetResponseReader(base::WeakPtr<PrefetchResponseReader> response_reader);
 
-  bool Servable(base::TimeDelta cacheable_duration) const;
+  // Informs the URL loader of how to handle the most recent redirect. This
+  // should only be called after |on_prefetch_redirect_callback_| is called. The
+  // value of |new_status| should only be one of the following:
+  // - |kFollowRedirect|, if the redirect should be followed by |this|.
+  // - |kStopSwitchInNetworkContextForRedirect|, if the redirect will be
+  //   followed by a different |PrefetchStreamingURLLoader| due to a change in
+  //   network context.
+  // - |kFailedInvalidRedirect|, if the redirect should not be followed by
+  //   |this|.
+  void HandleRedirect(PrefetchRedirectStatus redirect_status,
+                      const net::RedirectInfo& redirect_info,
+                      network::mojom::URLResponseHeadPtr redirect_head);
 
-  absl::optional<network::URLLoaderCompletionStatus> GetCompletionStatus()
-      const {
-    return completion_status_;
-  }
-  const network::mojom::URLResponseHead* GetHead() const { return head_.get(); }
-
-  using RequestHandler = base::OnceCallback<void(
-      const network::ResourceRequest& resource_request,
-      mojo::PendingReceiver<network::mojom::URLLoader> url_loader_receiver,
-      mojo::PendingRemote<network::mojom::URLLoaderClient> forwarding_client)>;
-  RequestHandler ServingResponseHandler(
-      std::unique_ptr<PrefetchStreamingURLLoader> self);
-
-  // The streaming URL loader can be deleted in one of its callbacks, so instead
-  // of deleting it immediately, it is made self owned and then deletes itself.
-  void MakeSelfOwnedAndDeleteSoon(
-      std::unique_ptr<PrefetchStreamingURLLoader> self);
+  // Called from PrefetchResponseReader.
+  void SetPriority(net::RequestPriority priority, int32_t intra_priority_value);
+  void PauseReadingBodyFromNet();
+  void ResumeReadingBodyFromNet();
 
   base::WeakPtr<PrefetchStreamingURLLoader> GetWeakPtr() {
     return weak_ptr_factory_.GetWeakPtr();
   }
 
+  void OnStartServing();
+
+  // Cancels the prefetching and schedule deletion, if any of its corresponding
+  // `PrefetchResponseReader` does NOT start serving. This can cancel the
+  // prefetching prematurely and leave `this` and `PrefetchResponseReader`
+  // stalled.
+  // TODO(crbug.com/1449360): Consider cleaning up this behavior (== existing
+  // behavior, previously as `ResetAllStreamingURLLoaders()`).
+  void CancelIfNotServing();
+
+  // Only for CHECK()ing.
+  NOINLINE bool IsDeletionScheduledForCHECK() const;
+
+  void SetOnDeletionScheduledForTests(
+      base::OnceClosure on_deletion_scheduled_for_tests);
+
  private:
-  void BindAndStart(
-      std::unique_ptr<PrefetchStreamingURLLoader> self,
-      const network::ResourceRequest& request,
-      mojo::PendingReceiver<network::mojom::URLLoader> url_loader_receiver,
-      mojo::PendingRemote<network::mojom::URLLoaderClient> forwarding_client);
+  void Start(network::mojom::URLLoaderFactory* url_loader_factory,
+             const network::ResourceRequest& request,
+             const net::NetworkTrafficAnnotationTag& network_traffic_annotation,
+             base::TimeDelta timeout_duration);
 
-  // Sends all stored events in |event_queue_| to |serving_url_loader_client_|.
-  void RunEventQueue();
-
-  // Sends the |completion_status_| to |serving_url_loader_client_|.
-  void ForwardCompletionStatus();
-
+  // Disconnect prefetching URLLoader and schedule deletion of `this`.
+  // Currently this itself doesn't mark `this` or corresponding
+  // `PrefetchResponseReader` as failed.
   void DisconnectPrefetchURLLoaderMojo();
-  void OnServingURLLoaderMojoDisconnect();
-  void PostTaskToDeleteSelf();
 
   // network::mojom::URLLoaderClient
   void OnReceiveEarlyHints(network::mojom::EarlyHintsPtr early_hints) override;
   void OnReceiveResponse(
       network::mojom::URLResponseHeadPtr head,
       mojo::ScopedDataPipeConsumerHandle body,
-      absl::optional<mojo_base::BigBuffer> cached_metadata) override;
+      std::optional<mojo_base::BigBuffer> cached_metadata) override;
   void OnReceiveRedirect(const net::RedirectInfo& redirect_info,
                          network::mojom::URLResponseHeadPtr head) override;
   void OnUploadProgress(int64_t current_position,
@@ -113,31 +117,13 @@ class CONTENT_EXPORT PrefetchStreamingURLLoader
   void OnComplete(
       const network::URLLoaderCompletionStatus& completion_status) override;
 
-  // network::mojom::URLLoader
-  void FollowRedirect(
-      const std::vector<std::string>& removed_headers,
-      const net::HttpRequestHeaders& modified_headers,
-      const net::HttpRequestHeaders& modified_cors_exempt_headers,
-      const absl::optional<GURL>& new_url) override;
-  void SetPriority(net::RequestPriority priority,
-                   int32_t intra_priority_value) override;
-  void PauseReadingBodyFromNet() override;
-  void ResumeReadingBodyFromNet() override;
-
-  // Set when this manages its own lifetime.
   std::unique_ptr<PrefetchStreamingURLLoader> self_pointer_;
-
-  // Status of the URL loader. This recorded to UMA when the URL loader is
-  // deleted.
-  PrefetchStreamingURLLoaderStatus status_{
-      PrefetchStreamingURLLoaderStatus::kWaitingOnHead};
 
   // The timer that triggers a timeout when a request takes too long.
   base::OneShotTimer timeout_timer_;
 
-  // Once prefetching and serving is complete, then this can be deleted.
-  bool prefetch_url_loader_disconnected_{false};
-  bool serving_url_loader_disconnected_{false};
+  // Set if any of corresponding `PrefetchResponseReader` starts serving.
+  bool used_for_serving_{false};
 
   // The URL loader used to request the prefetch.
   mojo::Remote<network::mojom::URLLoader> prefetch_url_loader_;
@@ -149,22 +135,17 @@ class CONTENT_EXPORT PrefetchStreamingURLLoader
   OnPrefetchResponseStartedCallback on_prefetch_response_started_callback_;
   OnPrefetchResponseCompletedCallback on_prefetch_response_completed_callback_;
   OnPrefetchRedirectCallback on_prefetch_redirect_callback_;
+
+  // Called once it is determined whether or not the prefetch is servable, i.e.
+  // either when non-redirect response head is received, or when determined not
+  // servable.
   base::OnceClosure on_received_head_callback_;
 
-  // The prefetched data and metadata.
-  network::mojom::URLResponseHeadPtr head_;
-  mojo::ScopedDataPipeConsumerHandle body_;
-  bool servable_{false};
-  absl::optional<network::URLLoaderCompletionStatus> completion_status_;
-  absl::optional<base::TimeTicks> response_complete_time_;
+  // Called when deletion is scheduled. Only for testing corner cases around
+  // deletion.
+  base::OnceClosure on_deletion_scheduled_for_tests_;
 
-  // The URL Loader events that occur before serving the prefetch are queued up
-  // until the prefetch is served.
-  std::vector<base::OnceClosure> event_queue_;
-
-  // The URL loader client that will serve the prefetched data.
-  mojo::Receiver<network::mojom::URLLoader> serving_url_loader_receiver_{this};
-  mojo::Remote<network::mojom::URLLoaderClient> serving_url_loader_client_;
+  base::WeakPtr<PrefetchResponseReader> response_reader_;
 
   base::WeakPtrFactory<PrefetchStreamingURLLoader> weak_ptr_factory_{this};
 };

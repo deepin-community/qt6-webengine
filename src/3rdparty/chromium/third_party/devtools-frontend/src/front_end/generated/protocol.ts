@@ -101,7 +101,7 @@ export namespace Accessibility {
      */
     superseded?: boolean;
     /**
-     * The native markup source for this value, e.g. a <label> element.
+     * The native markup source for this value, e.g. a `<label>` element.
      */
     nativeSource?: AXValueNativeSourceType;
     /**
@@ -705,6 +705,7 @@ export namespace Audits {
     ExcludeSamePartyCrossPartyContext = 'ExcludeSamePartyCrossPartyContext',
     ExcludeDomainNonASCII = 'ExcludeDomainNonASCII',
     ExcludeThirdPartyCookieBlockedInFirstPartySet = 'ExcludeThirdPartyCookieBlockedInFirstPartySet',
+    ExcludeThirdPartyPhaseout = 'ExcludeThirdPartyPhaseout',
   }
 
   export const enum CookieWarningReason {
@@ -718,6 +719,8 @@ export namespace Audits {
     WarnSameSiteLaxCrossDowngradeLax = 'WarnSameSiteLaxCrossDowngradeLax',
     WarnAttributeValueExceedsMaxSize = 'WarnAttributeValueExceedsMaxSize',
     WarnDomainNonASCII = 'WarnDomainNonASCII',
+    WarnThirdPartyPhaseout = 'WarnThirdPartyPhaseout',
+    WarnCrossSiteRedirectDowngradeChangesInclusion = 'WarnCrossSiteRedirectDowngradeChangesInclusion',
   }
 
   export const enum CookieOperation {
@@ -770,6 +773,7 @@ export namespace Audits {
     Frame = 'Frame',
     Image = 'Image',
     Import = 'Import',
+    JSON = 'JSON',
     Manifest = 'Manifest',
     Ping = 'Ping',
     PluginData = 'PluginData',
@@ -779,6 +783,7 @@ export namespace Audits {
     Script = 'Script',
     ServiceWorker = 'ServiceWorker',
     SharedWorker = 'SharedWorker',
+    SpeculationRules = 'SpeculationRules',
     Stylesheet = 'Stylesheet',
     Track = 'Track',
     Video = 'Video',
@@ -915,31 +920,6 @@ export namespace Audits {
     type: SharedArrayBufferIssueType;
   }
 
-  export const enum TwaQualityEnforcementViolationType {
-    KHttpError = 'kHttpError',
-    KUnavailableOffline = 'kUnavailableOffline',
-    KDigitalAssetLinks = 'kDigitalAssetLinks',
-  }
-
-  export interface TrustedWebActivityIssueDetails {
-    /**
-     * The url that triggers the violation.
-     */
-    url: string;
-    violationType: TwaQualityEnforcementViolationType;
-    httpStatusCode?: integer;
-    /**
-     * The package name of the Trusted Web Activity client app. This field is
-     * only used when violation type is kDigitalAssetLinks.
-     */
-    packageName?: string;
-    /**
-     * The signature of the Trusted Web Activity client app. This field is only
-     * used when violation type is kDigitalAssetLinks.
-     */
-    signature?: string;
-  }
-
   export interface LowTextContrastIssueDetails {
     violatingNodeId: DOM.BackendNodeId;
     violatingNodeSelector: string;
@@ -966,16 +946,20 @@ export namespace Audits {
 
   export const enum AttributionReportingIssueType {
     PermissionPolicyDisabled = 'PermissionPolicyDisabled',
-    PermissionPolicyNotDelegated = 'PermissionPolicyNotDelegated',
     UntrustworthyReportingOrigin = 'UntrustworthyReportingOrigin',
     InsecureContext = 'InsecureContext',
     InvalidHeader = 'InvalidHeader',
     InvalidRegisterTriggerHeader = 'InvalidRegisterTriggerHeader',
-    InvalidEligibleHeader = 'InvalidEligibleHeader',
-    TooManyConcurrentRequests = 'TooManyConcurrentRequests',
     SourceAndTriggerHeaders = 'SourceAndTriggerHeaders',
     SourceIgnored = 'SourceIgnored',
     TriggerIgnored = 'TriggerIgnored',
+    OsSourceIgnored = 'OsSourceIgnored',
+    OsTriggerIgnored = 'OsTriggerIgnored',
+    InvalidRegisterOsSourceHeader = 'InvalidRegisterOsSourceHeader',
+    InvalidRegisterOsTriggerHeader = 'InvalidRegisterOsTriggerHeader',
+    WebAndOsHeaders = 'WebAndOsHeaders',
+    NoWebOrOsSupport = 'NoWebOrOsSupport',
+    NavigationRegistrationWithoutTransientUserActivation = 'NavigationRegistrationWithoutTransientUserActivation',
   }
 
   /**
@@ -1021,6 +1005,8 @@ export namespace Audits {
     FormInputAssignedAutocompleteValueToIdOrNameAttributeError = 'FormInputAssignedAutocompleteValueToIdOrNameAttributeError',
     FormLabelHasNeitherForNorNestedInput = 'FormLabelHasNeitherForNorNestedInput',
     FormLabelForMatchesNonExistingIdError = 'FormLabelForMatchesNonExistingIdError',
+    FormInputHasWrongButWellIntendedAutocompleteValueError = 'FormInputHasWrongButWellIntendedAutocompleteValueError',
+    ResponseWasBlockedByORB = 'ResponseWasBlockedByORB',
   }
 
   /**
@@ -1033,6 +1019,8 @@ export namespace Audits {
     errorType: GenericIssueErrorType;
     frameId?: Page.FrameId;
     violatingNodeId?: DOM.BackendNodeId;
+    violatingNodeAttribute?: string;
+    request?: AffectedRequest;
   }
 
   /**
@@ -1046,6 +1034,28 @@ export namespace Audits {
      * One of the deprecation names from third_party/blink/renderer/core/frame/deprecation/deprecation.json5
      */
     type: string;
+  }
+
+  /**
+   * This issue warns about sites in the redirect chain of a finished navigation
+   * that may be flagged as trackers and have their state cleared if they don't
+   * receive a user interaction. Note that in this context 'site' means eTLD+1.
+   * For example, if the URL `https://example.test:80/bounce` was in the
+   * redirect chain, the site reported would be `example.test`.
+   */
+  export interface BounceTrackingIssueDetails {
+    trackingSites: string[];
+  }
+
+  /**
+   * This issue warns about third-party sites that are accessing cookies on the
+   * current page, and have been permitted due to having a global metadata grant.
+   * Note that in this context 'site' means eTLD+1. For example, if the URL
+   * `https://example.test:80/web_page` was accessing cookies, the site reported
+   * would be `example.test`.
+   */
+  export interface CookieDeprecationMetadataIssueDetails {
+    allowedSites: string[];
   }
 
   export const enum ClientHintIssueReason {
@@ -1070,14 +1080,17 @@ export namespace Audits {
     WellKnownNoResponse = 'WellKnownNoResponse',
     WellKnownInvalidResponse = 'WellKnownInvalidResponse',
     WellKnownListEmpty = 'WellKnownListEmpty',
+    WellKnownInvalidContentType = 'WellKnownInvalidContentType',
     ConfigNotInWellKnown = 'ConfigNotInWellKnown',
     WellKnownTooBig = 'WellKnownTooBig',
     ConfigHttpNotFound = 'ConfigHttpNotFound',
     ConfigNoResponse = 'ConfigNoResponse',
     ConfigInvalidResponse = 'ConfigInvalidResponse',
+    ConfigInvalidContentType = 'ConfigInvalidContentType',
     ClientMetadataHttpNotFound = 'ClientMetadataHttpNotFound',
     ClientMetadataNoResponse = 'ClientMetadataNoResponse',
     ClientMetadataInvalidResponse = 'ClientMetadataInvalidResponse',
+    ClientMetadataInvalidContentType = 'ClientMetadataInvalidContentType',
     DisabledInSettings = 'DisabledInSettings',
     ErrorFetchingSignin = 'ErrorFetchingSignin',
     InvalidSigninResponse = 'InvalidSigninResponse',
@@ -1085,13 +1098,41 @@ export namespace Audits {
     AccountsNoResponse = 'AccountsNoResponse',
     AccountsInvalidResponse = 'AccountsInvalidResponse',
     AccountsListEmpty = 'AccountsListEmpty',
+    AccountsInvalidContentType = 'AccountsInvalidContentType',
     IdTokenHttpNotFound = 'IdTokenHttpNotFound',
     IdTokenNoResponse = 'IdTokenNoResponse',
     IdTokenInvalidResponse = 'IdTokenInvalidResponse',
+    IdTokenIdpErrorResponse = 'IdTokenIdpErrorResponse',
+    IdTokenCrossSiteIdpErrorResponse = 'IdTokenCrossSiteIdpErrorResponse',
     IdTokenInvalidRequest = 'IdTokenInvalidRequest',
+    IdTokenInvalidContentType = 'IdTokenInvalidContentType',
     ErrorIdToken = 'ErrorIdToken',
     Canceled = 'Canceled',
     RpPageNotVisible = 'RpPageNotVisible',
+    SilentMediationFailure = 'SilentMediationFailure',
+    ThirdPartyCookiesBlocked = 'ThirdPartyCookiesBlocked',
+    NotSignedInWithIdp = 'NotSignedInWithIdp',
+  }
+
+  export interface FederatedAuthUserInfoRequestIssueDetails {
+    federatedAuthUserInfoRequestIssueReason: FederatedAuthUserInfoRequestIssueReason;
+  }
+
+  /**
+   * Represents the failure reason when a getUserInfo() call fails.
+   * Should be updated alongside FederatedAuthUserInfoRequestResult in
+   * third_party/blink/public/mojom/devtools/inspector_issue.mojom.
+   */
+  export const enum FederatedAuthUserInfoRequestIssueReason {
+    NotSameOrigin = 'NotSameOrigin',
+    NotIframe = 'NotIframe',
+    NotPotentiallyTrustworthy = 'NotPotentiallyTrustworthy',
+    NoAPIPermission = 'NoApiPermission',
+    NotSignedInWithIdp = 'NotSignedInWithIdp',
+    NoAccountSharingPermission = 'NoAccountSharingPermission',
+    InvalidConfigOrWellKnown = 'InvalidConfigOrWellKnown',
+    InvalidAccountsResponse = 'InvalidAccountsResponse',
+    NoReturningUserFromFetchedAccounts = 'NoReturningUserFromFetchedAccounts',
   }
 
   /**
@@ -1101,6 +1142,67 @@ export namespace Audits {
   export interface ClientHintIssueDetails {
     sourceCodeLocation: SourceCodeLocation;
     clientHintIssueReason: ClientHintIssueReason;
+  }
+
+  export interface FailedRequestInfo {
+    /**
+     * The URL that failed to load.
+     */
+    url: string;
+    /**
+     * The failure message for the failed request.
+     */
+    failureMessage: string;
+    requestId?: Network.RequestId;
+  }
+
+  export const enum StyleSheetLoadingIssueReason {
+    LateImportRule = 'LateImportRule',
+    RequestFailed = 'RequestFailed',
+  }
+
+  /**
+   * This issue warns when a referenced stylesheet couldn't be loaded.
+   */
+  export interface StylesheetLoadingIssueDetails {
+    /**
+     * Source code position that referenced the failing stylesheet.
+     */
+    sourceCodeLocation: SourceCodeLocation;
+    /**
+     * Reason why the stylesheet couldn't be loaded.
+     */
+    styleSheetLoadingIssueReason: StyleSheetLoadingIssueReason;
+    /**
+     * Contains additional info when the failure was due to a request.
+     */
+    failedRequestInfo?: FailedRequestInfo;
+  }
+
+  export const enum PropertyRuleIssueReason {
+    InvalidSyntax = 'InvalidSyntax',
+    InvalidInitialValue = 'InvalidInitialValue',
+    InvalidInherits = 'InvalidInherits',
+    InvalidName = 'InvalidName',
+  }
+
+  /**
+   * This issue warns about errors in property rules that lead to property
+   * registrations being ignored.
+   */
+  export interface PropertyRuleIssueDetails {
+    /**
+     * Source code position of the property rule.
+     */
+    sourceCodeLocation: SourceCodeLocation;
+    /**
+     * Reason why the property rule was discarded.
+     */
+    propertyRuleIssueReason: PropertyRuleIssueReason;
+    /**
+     * The value of the property rule property that failed to parse
+     */
+    propertyValue?: string;
   }
 
   /**
@@ -1115,7 +1217,6 @@ export namespace Audits {
     HeavyAdIssue = 'HeavyAdIssue',
     ContentSecurityPolicyIssue = 'ContentSecurityPolicyIssue',
     SharedArrayBufferIssue = 'SharedArrayBufferIssue',
-    TrustedWebActivityIssue = 'TrustedWebActivityIssue',
     LowTextContrastIssue = 'LowTextContrastIssue',
     CorsIssue = 'CorsIssue',
     AttributionReportingIssue = 'AttributionReportingIssue',
@@ -1125,6 +1226,11 @@ export namespace Audits {
     DeprecationIssue = 'DeprecationIssue',
     ClientHintIssue = 'ClientHintIssue',
     FederatedAuthRequestIssue = 'FederatedAuthRequestIssue',
+    BounceTrackingIssue = 'BounceTrackingIssue',
+    CookieDeprecationMetadataIssue = 'CookieDeprecationMetadataIssue',
+    StylesheetLoadingIssue = 'StylesheetLoadingIssue',
+    FederatedAuthUserInfoRequestIssue = 'FederatedAuthUserInfoRequestIssue',
+    PropertyRuleIssue = 'PropertyRuleIssue',
   }
 
   /**
@@ -1139,7 +1245,6 @@ export namespace Audits {
     heavyAdIssueDetails?: HeavyAdIssueDetails;
     contentSecurityPolicyIssueDetails?: ContentSecurityPolicyIssueDetails;
     sharedArrayBufferIssueDetails?: SharedArrayBufferIssueDetails;
-    twaQualityEnforcementDetails?: TrustedWebActivityIssueDetails;
     lowTextContrastIssueDetails?: LowTextContrastIssueDetails;
     corsIssueDetails?: CorsIssueDetails;
     attributionReportingIssueDetails?: AttributionReportingIssueDetails;
@@ -1149,6 +1254,11 @@ export namespace Audits {
     deprecationIssueDetails?: DeprecationIssueDetails;
     clientHintIssueDetails?: ClientHintIssueDetails;
     federatedAuthRequestIssueDetails?: FederatedAuthRequestIssueDetails;
+    bounceTrackingIssueDetails?: BounceTrackingIssueDetails;
+    cookieDeprecationMetadataIssueDetails?: CookieDeprecationMetadataIssueDetails;
+    stylesheetLoadingIssueDetails?: StylesheetLoadingIssueDetails;
+    propertyRuleIssueDetails?: PropertyRuleIssueDetails;
+    federatedAuthUserInfoRequestIssueDetails?: FederatedAuthUserInfoRequestIssueDetails;
   }
 
   /**
@@ -1217,8 +1327,155 @@ export namespace Audits {
     reportAAA?: boolean;
   }
 
+  export interface CheckFormsIssuesResponse extends ProtocolResponseWithError {
+    formIssues: GenericIssueDetails[];
+  }
+
   export interface IssueAddedEvent {
     issue: InspectorIssue;
+  }
+}
+
+/**
+ * Defines commands and events for Autofill.
+ */
+export namespace Autofill {
+
+  export interface CreditCard {
+    /**
+     * 16-digit credit card number.
+     */
+    number: string;
+    /**
+     * Name of the credit card owner.
+     */
+    name: string;
+    /**
+     * 2-digit expiry month.
+     */
+    expiryMonth: string;
+    /**
+     * 4-digit expiry year.
+     */
+    expiryYear: string;
+    /**
+     * 3-digit card verification code.
+     */
+    cvc: string;
+  }
+
+  export interface AddressField {
+    /**
+     * address field name, for example GIVEN_NAME.
+     */
+    name: string;
+    /**
+     * address field value, for example Jon Doe.
+     */
+    value: string;
+  }
+
+  /**
+   * A list of address fields.
+   */
+  export interface AddressFields {
+    fields: AddressField[];
+  }
+
+  export interface Address {
+    /**
+     * fields and values defining an address.
+     */
+    fields: AddressField[];
+  }
+
+  /**
+   * Defines how an address can be displayed like in chrome://settings/addresses.
+   * Address UI is a two dimensional array, each inner array is an "address information line", and when rendered in a UI surface should be displayed as such.
+   * The following address UI for instance:
+   * [[{name: "GIVE_NAME", value: "Jon"}, {name: "FAMILY_NAME", value: "Doe"}], [{name: "CITY", value: "Munich"}, {name: "ZIP", value: "81456"}]]
+   * should allow the receiver to render:
+   * Jon Doe
+   * Munich 81456
+   */
+  export interface AddressUI {
+    /**
+     * A two dimension array containing the repesentation of values from an address profile.
+     */
+    addressFields: AddressFields[];
+  }
+
+  /**
+   * Specified whether a filled field was done so by using the html autocomplete attribute or autofill heuristics.
+   */
+  export const enum FillingStrategy {
+    AutocompleteAttribute = 'autocompleteAttribute',
+    AutofillInferred = 'autofillInferred',
+  }
+
+  export interface FilledField {
+    /**
+     * The type of the field, e.g text, password etc.
+     */
+    htmlType: string;
+    /**
+     * the html id
+     */
+    id: string;
+    /**
+     * the html name
+     */
+    name: string;
+    /**
+     * the field value
+     */
+    value: string;
+    /**
+     * The actual field type, e.g FAMILY_NAME
+     */
+    autofillType: string;
+    /**
+     * The filling strategy
+     */
+    fillingStrategy: FillingStrategy;
+    /**
+     * The form field's DOM node
+     */
+    fieldId: DOM.BackendNodeId;
+  }
+
+  export interface TriggerRequest {
+    /**
+     * Identifies a field that serves as an anchor for autofill.
+     */
+    fieldId: DOM.BackendNodeId;
+    /**
+     * Identifies the frame that field belongs to.
+     */
+    frameId?: Page.FrameId;
+    /**
+     * Credit card information to fill out the form. Credit card data is not saved.
+     */
+    card: CreditCard;
+  }
+
+  export interface SetAddressesRequest {
+    addresses: Address[];
+  }
+
+  /**
+   * Emitted when an address form is filled.
+   */
+  export interface AddressFormFilledEvent {
+    /**
+     * Information about the fields that were filled
+     */
+    filledFields: FilledField[];
+    /**
+     * An UI representation of the address used to fill the form.
+     * Consists of a 2D array where each child represents an address/profile line.
+     */
+    addressUi: AddressUI;
   }
 }
 
@@ -1368,6 +1625,7 @@ export namespace Browser {
     AudioCapture = 'audioCapture',
     BackgroundSync = 'backgroundSync',
     BackgroundFetch = 'backgroundFetch',
+    CapturedSurfaceControl = 'capturedSurfaceControl',
     ClipboardReadWrite = 'clipboardReadWrite',
     ClipboardSanitizedWrite = 'clipboardSanitizedWrite',
     DisplayCapture = 'displayCapture',
@@ -1401,7 +1659,7 @@ export namespace Browser {
 
   /**
    * Definition of PermissionDescriptor defined in the Permissions API:
-   * https://w3c.github.io/permissions/#dictdef-permissiondescriptor.
+   * https://w3c.github.io/permissions/#dom-permissiondescriptor.
    */
   export interface PermissionDescriptor {
     /**
@@ -1680,6 +1938,10 @@ export namespace Browser {
     commandId: BrowserCommandId;
   }
 
+  export interface AddPrivacySandboxEnrollmentOverrideRequest {
+    url: string;
+  }
+
   /**
    * Fired when page is about to start a download.
    */
@@ -1823,6 +2085,30 @@ export namespace CSS {
      * Value range in the underlying resource (if available).
      */
     range?: SourceRange;
+    /**
+     * Specificity of the selector.
+     */
+    specificity?: Specificity;
+  }
+
+  /**
+   * Specificity:
+   * https://drafts.csswg.org/selectors/#specificity-rules
+   */
+  export interface Specificity {
+    /**
+     * The a component, which represents the number of ID selectors.
+     */
+    a: integer;
+    /**
+     * The b component, which represents the number of class selectors, attributes selectors, and
+     * pseudo-classes.
+     */
+    b: integer;
+    /**
+     * The c component, which represents the number of type selectors and pseudo-elements.
+     */
+    c: integer;
   }
 
   /**
@@ -1889,7 +2175,7 @@ export namespace CSS {
     /**
      * Whether this stylesheet is mutable. Inline stylesheets become mutable
      * after they have been modified via CSSOM API.
-     * <link> element's stylesheets become mutable only if DevTools modifies them.
+     * `<link>` element's stylesheets become mutable only if DevTools modifies them.
      * Constructed stylesheets (new CSSStyleSheet()) are mutable immediately after creation.
      */
     isMutable: boolean;
@@ -1918,6 +2204,10 @@ export namespace CSS {
      * Column offset of the end of the stylesheet within the resource (zero based).
      */
     endColumn: number;
+    /**
+     * If the style sheet was loaded from a network resource, this indicates when the resource failed to load
+     */
+    loadingFailed?: boolean;
   }
 
   /**
@@ -1933,6 +2223,10 @@ export namespace CSS {
      * Rule selector data.
      */
     selectorList: SelectorList;
+    /**
+     * Array of selectors from ancestor style rules, sorted by distance from the current rule.
+     */
+    nestingSelectors?: string[];
     /**
      * Parent stylesheet's origin.
      */
@@ -1966,6 +2260,23 @@ export namespace CSS {
      * The array enumerates @scope at-rules starting with the innermost one, going outwards.
      */
     scopes?: CSSScope[];
+    /**
+     * The array keeps the types of ancestor CSSRules from the innermost going outwards.
+     */
+    ruleTypes?: CSSRuleType[];
+  }
+
+  /**
+   * Enum indicating the type of a CSS rule, used to represent the order of a style rule's ancestors.
+   * This list only contains rule types that are collected during the ancestor rule collection.
+   */
+  export const enum CSSRuleType {
+    MediaRule = 'MediaRule',
+    SupportsRule = 'SupportsRule',
+    ContainerRule = 'ContainerRule',
+    LayerRule = 'LayerRule',
+    ScopeRule = 'ScopeRule',
+    StyleRule = 'StyleRule',
   }
 
   /**
@@ -2310,6 +2621,10 @@ export namespace CSS {
      */
     familyName: string;
     /**
+     * Font's PostScript name reported by platform.
+     */
+    postScriptName: string;
+    /**
      * Indicates if the font was downloaded or resolved locally.
      */
     isCustomFont: boolean;
@@ -2393,6 +2708,36 @@ export namespace CSS {
   }
 
   /**
+   * CSS try rule representation.
+   */
+  export interface CSSTryRule {
+    /**
+     * The css style sheet identifier (absent for user agent stylesheet and user-specified
+     * stylesheet rules) this rule came from.
+     */
+    styleSheetId?: StyleSheetId;
+    /**
+     * Parent stylesheet's origin.
+     */
+    origin: StyleSheetOrigin;
+    /**
+     * Associated style declaration.
+     */
+    style: CSSStyle;
+  }
+
+  /**
+   * CSS position-fallback rule representation.
+   */
+  export interface CSSPositionFallbackRule {
+    name: Value;
+    /**
+     * List of keyframes.
+     */
+    tryRules: CSSTryRule[];
+  }
+
+  /**
    * CSS keyframes rule representation.
    */
   export interface CSSKeyframesRule {
@@ -2404,6 +2749,62 @@ export namespace CSS {
      * List of keyframes.
      */
     keyframes: CSSKeyframeRule[];
+  }
+
+  /**
+   * Representation of a custom property registration through CSS.registerProperty
+   */
+  export interface CSSPropertyRegistration {
+    propertyName: string;
+    initialValue?: Value;
+    inherits: boolean;
+    syntax: string;
+  }
+
+  /**
+   * CSS font-palette-values rule representation.
+   */
+  export interface CSSFontPaletteValuesRule {
+    /**
+     * The css style sheet identifier (absent for user agent stylesheet and user-specified
+     * stylesheet rules) this rule came from.
+     */
+    styleSheetId?: StyleSheetId;
+    /**
+     * Parent stylesheet's origin.
+     */
+    origin: StyleSheetOrigin;
+    /**
+     * Associated font palette name.
+     */
+    fontPaletteName: Value;
+    /**
+     * Associated style declaration.
+     */
+    style: CSSStyle;
+  }
+
+  /**
+   * CSS property at-rule representation.
+   */
+  export interface CSSPropertyRule {
+    /**
+     * The css style sheet identifier (absent for user agent stylesheet and user-specified
+     * stylesheet rules) this rule came from.
+     */
+    styleSheetId?: StyleSheetId;
+    /**
+     * Parent stylesheet's origin.
+     */
+    origin: StyleSheetOrigin;
+    /**
+     * Associated property name.
+     */
+    propertyName: Value;
+    /**
+     * Associated style declaration.
+     */
+    style: CSSStyle;
   }
 
   /**
@@ -2460,6 +2861,12 @@ export namespace CSS {
      * Text position of a new rule in the target style sheet.
      */
     location: SourceRange;
+    /**
+     * NodeId for the DOM node in whose context custom property declarations for registered properties should be
+     * validated. If omitted, declarations in the new rule text can only be validated statically, which may produce
+     * incorrect results if the declaration contains a var() for example.
+     */
+    nodeForPropertySyntaxValidation?: DOM.NodeId;
   }
 
   export interface AddRuleResponse extends ProtocolResponseWithError {
@@ -2592,6 +2999,22 @@ export namespace CSS {
      */
     cssKeyframesRules?: CSSKeyframesRule[];
     /**
+     * A list of CSS position fallbacks matching this node.
+     */
+    cssPositionFallbackRules?: CSSPositionFallbackRule[];
+    /**
+     * A list of CSS at-property rules matching this node.
+     */
+    cssPropertyRules?: CSSPropertyRule[];
+    /**
+     * A list of CSS property registrations matching this node.
+     */
+    cssPropertyRegistrations?: CSSPropertyRegistration[];
+    /**
+     * A font-palette-values rule matching this node.
+     */
+    cssFontPaletteValuesRule?: CSSFontPaletteValuesRule;
+    /**
      * Id of the first parent element that does not have display: contents.
      */
     parentLayoutNodeId?: DOM.NodeId;
@@ -2649,6 +3072,19 @@ export namespace CSS {
     nodeId: DOM.NodeId;
     propertyName: string;
     value: string;
+  }
+
+  export interface SetPropertyRulePropertyNameRequest {
+    styleSheetId: StyleSheetId;
+    range: SourceRange;
+    propertyName: string;
+  }
+
+  export interface SetPropertyRulePropertyNameResponse extends ProtocolResponseWithError {
+    /**
+     * The resulting key text after modification.
+     */
+    propertyName: Value;
   }
 
   export interface SetKeyframeKeyRequest {
@@ -2743,6 +3179,12 @@ export namespace CSS {
 
   export interface SetStyleTextsRequest {
     edits: StyleDeclarationEdit[];
+    /**
+     * NodeId for the DOM node in whose context custom property declarations for registered properties should be
+     * validated. If omitted, declarations in the new rule text can only be validated statically, which may produce
+     * incorrect results if the declaration contains a var() for example.
+     */
+    nodeForPropertySyntaxValidation?: DOM.NodeId;
   }
 
   export interface SetStyleTextsResponse extends ProtocolResponseWithError {
@@ -2884,6 +3326,10 @@ export namespace CacheStorage {
      */
     storageKey: string;
     /**
+     * Storage bucket of the cache.
+     */
+    storageBucket?: Storage.StorageBucket;
+    /**
      * The name of the cache.
      */
     cacheName: string;
@@ -2924,7 +3370,7 @@ export namespace CacheStorage {
 
   export interface RequestCacheNamesRequest {
     /**
-     * At least and at most one of securityOrigin, storageKey must be specified.
+     * At least and at most one of securityOrigin, storageKey, storageBucket must be specified.
      * Security origin.
      */
     securityOrigin?: string;
@@ -2932,6 +3378,10 @@ export namespace CacheStorage {
      * Storage key.
      */
     storageKey?: string;
+    /**
+     * Storage bucket. If not specified, it uses the default bucket.
+     */
+    storageBucket?: Storage.StorageBucket;
   }
 
   export interface RequestCacheNamesResponse extends ProtocolResponseWithError {
@@ -3054,8 +3504,8 @@ export namespace Cast {
  * the JavaScript object wrapper, etc. It is important that client receives DOM events only for the
  * nodes that are known to the client. Backend keeps track of the nodes that were sent to the client
  * and never sends the same node twice. It is client's responsibility to collect information about
- * the nodes that were sent to the client.<p>Note that `iframe` owner elements will return
- * corresponding document elements as their child nodes.</p>
+ * the nodes that were sent to the client. Note that `iframe` owner elements will return
+ * corresponding document elements as their child nodes.
  */
 export namespace DOM {
 
@@ -4457,10 +4907,9 @@ export namespace DOMDebugger {
 }
 
 /**
- * EventBreakpoints permits setting breakpoints on particular operations and
- * events in targets that run JavaScript but do not have a DOM.
- * JavaScript execution will stop on these operations as if there was a regular
- * breakpoint set.
+ * EventBreakpoints permits setting JavaScript breakpoints on operations and events
+ * occurring in native code invoked from JavaScript. Once breakpoint is hit, it is
+ * reported through Debugger domain, similarly to regular breakpoints being hit.
  */
 export namespace EventBreakpoints {
 
@@ -5218,6 +5667,18 @@ export namespace Emulation {
     maskLength: integer;
   }
 
+  export const enum DevicePostureType {
+    Continuous = 'continuous',
+    Folded = 'folded',
+  }
+
+  export interface DevicePosture {
+    /**
+     * Current posture of the device
+     */
+    type: DevicePostureType;
+  }
+
   export interface MediaFeature {
     name: string;
     value: string;
@@ -5264,6 +5725,51 @@ export namespace Emulation {
     mobile: boolean;
     bitness?: string;
     wow64?: boolean;
+  }
+
+  /**
+   * Used to specify sensor types to emulate.
+   * See https://w3c.github.io/sensors/#automation for more information.
+   */
+  export const enum SensorType {
+    AbsoluteOrientation = 'absolute-orientation',
+    Accelerometer = 'accelerometer',
+    AmbientLight = 'ambient-light',
+    Gravity = 'gravity',
+    Gyroscope = 'gyroscope',
+    LinearAcceleration = 'linear-acceleration',
+    Magnetometer = 'magnetometer',
+    Proximity = 'proximity',
+    RelativeOrientation = 'relative-orientation',
+  }
+
+  export interface SensorMetadata {
+    available?: boolean;
+    minimumFrequency?: number;
+    maximumFrequency?: number;
+  }
+
+  export interface SensorReadingSingle {
+    value: number;
+  }
+
+  export interface SensorReadingXYZ {
+    x: number;
+    y: number;
+    z: number;
+  }
+
+  export interface SensorReadingQuaternion {
+    x: number;
+    y: number;
+    z: number;
+    w: number;
+  }
+
+  export interface SensorReading {
+    single?: SensorReadingSingle;
+    xyz?: SensorReadingXYZ;
+    quaternion?: SensorReadingQuaternion;
   }
 
   /**
@@ -5367,6 +5873,11 @@ export namespace Emulation {
      * is turned-off.
      */
     displayFeature?: DisplayFeature;
+    /**
+     * If set, the posture of a foldable device. If not set the posture is set
+     * to continuous.
+     */
+    devicePosture?: DevicePosture;
   }
 
   export interface SetScrollbarsHiddenRequest {
@@ -5441,6 +5952,25 @@ export namespace Emulation {
      * Mock accuracy
      */
     accuracy?: number;
+  }
+
+  export interface GetOverriddenSensorInformationRequest {
+    type: SensorType;
+  }
+
+  export interface GetOverriddenSensorInformationResponse extends ProtocolResponseWithError {
+    requestedSamplingFrequency: number;
+  }
+
+  export interface SetSensorOverrideEnabledRequest {
+    enabled: boolean;
+    type: SensorType;
+    metadata?: SensorMetadata;
+  }
+
+  export interface SetSensorOverrideReadingsRequest {
+    type: SensorType;
+    reading: SensorReading;
   }
 
   export interface SetIdleOverrideRequest {
@@ -5558,7 +6088,7 @@ export namespace Emulation {
      */
     userAgent: string;
     /**
-     * Browser langugage to emulate.
+     * Browser language to emulate.
      */
     acceptLanguage?: string;
     /**
@@ -5599,7 +6129,7 @@ export namespace HeadlessExperimental {
      */
     format?: ScreenshotParamsFormat;
     /**
-     * Compression quality from range [0..100] (jpeg only).
+     * Compression quality from range [0..100] (jpeg and webp only).
      */
     quality?: integer;
     /**
@@ -5652,8 +6182,8 @@ export namespace HeadlessExperimental {
 export namespace IO {
 
   /**
-   * This is either obtained from another method or specified as `blob:&lt;uuid&gt;` where
-   * `&lt;uuid&gt` is an UUID of a Blob.
+   * This is either obtained from another method or specified as `blob:<uuid>` where
+   * `<uuid>` is an UUID of a Blob.
    */
   export type StreamHandle = OpaqueIdentifier<string, 'Protocol.IO.StreamHandle'>;
 
@@ -5874,7 +6404,7 @@ export namespace IndexedDB {
 
   export interface ClearObjectStoreRequest {
     /**
-     * At least and at most one of securityOrigin, storageKey must be specified.
+     * At least and at most one of securityOrigin, storageKey, or storageBucket must be specified.
      * Security origin.
      */
     securityOrigin?: string;
@@ -5882,6 +6412,10 @@ export namespace IndexedDB {
      * Storage key.
      */
     storageKey?: string;
+    /**
+     * Storage bucket. If not specified, it uses the default bucket.
+     */
+    storageBucket?: Storage.StorageBucket;
     /**
      * Database name.
      */
@@ -5894,7 +6428,7 @@ export namespace IndexedDB {
 
   export interface DeleteDatabaseRequest {
     /**
-     * At least and at most one of securityOrigin, storageKey must be specified.
+     * At least and at most one of securityOrigin, storageKey, or storageBucket must be specified.
      * Security origin.
      */
     securityOrigin?: string;
@@ -5902,6 +6436,10 @@ export namespace IndexedDB {
      * Storage key.
      */
     storageKey?: string;
+    /**
+     * Storage bucket. If not specified, it uses the default bucket.
+     */
+    storageBucket?: Storage.StorageBucket;
     /**
      * Database name.
      */
@@ -5910,7 +6448,7 @@ export namespace IndexedDB {
 
   export interface DeleteObjectStoreEntriesRequest {
     /**
-     * At least and at most one of securityOrigin, storageKey must be specified.
+     * At least and at most one of securityOrigin, storageKey, or storageBucket must be specified.
      * Security origin.
      */
     securityOrigin?: string;
@@ -5918,6 +6456,10 @@ export namespace IndexedDB {
      * Storage key.
      */
     storageKey?: string;
+    /**
+     * Storage bucket. If not specified, it uses the default bucket.
+     */
+    storageBucket?: Storage.StorageBucket;
     databaseName: string;
     objectStoreName: string;
     /**
@@ -5928,7 +6470,7 @@ export namespace IndexedDB {
 
   export interface RequestDataRequest {
     /**
-     * At least and at most one of securityOrigin, storageKey must be specified.
+     * At least and at most one of securityOrigin, storageKey, or storageBucket must be specified.
      * Security origin.
      */
     securityOrigin?: string;
@@ -5936,6 +6478,10 @@ export namespace IndexedDB {
      * Storage key.
      */
     storageKey?: string;
+    /**
+     * Storage bucket. If not specified, it uses the default bucket.
+     */
+    storageBucket?: Storage.StorageBucket;
     /**
      * Database name.
      */
@@ -5975,7 +6521,7 @@ export namespace IndexedDB {
 
   export interface GetMetadataRequest {
     /**
-     * At least and at most one of securityOrigin, storageKey must be specified.
+     * At least and at most one of securityOrigin, storageKey, or storageBucket must be specified.
      * Security origin.
      */
     securityOrigin?: string;
@@ -5983,6 +6529,10 @@ export namespace IndexedDB {
      * Storage key.
      */
     storageKey?: string;
+    /**
+     * Storage bucket. If not specified, it uses the default bucket.
+     */
+    storageBucket?: Storage.StorageBucket;
     /**
      * Database name.
      */
@@ -6008,7 +6558,7 @@ export namespace IndexedDB {
 
   export interface RequestDatabaseRequest {
     /**
-     * At least and at most one of securityOrigin, storageKey must be specified.
+     * At least and at most one of securityOrigin, storageKey, or storageBucket must be specified.
      * Security origin.
      */
     securityOrigin?: string;
@@ -6016,6 +6566,10 @@ export namespace IndexedDB {
      * Storage key.
      */
     storageKey?: string;
+    /**
+     * Storage bucket. If not specified, it uses the default bucket.
+     */
+    storageBucket?: Storage.StorageBucket;
     /**
      * Database name.
      */
@@ -6031,7 +6585,7 @@ export namespace IndexedDB {
 
   export interface RequestDatabaseNamesRequest {
     /**
-     * At least and at most one of securityOrigin, storageKey must be specified.
+     * At least and at most one of securityOrigin, storageKey, or storageBucket must be specified.
      * Security origin.
      */
     securityOrigin?: string;
@@ -6039,6 +6593,10 @@ export namespace IndexedDB {
      * Storage key.
      */
     storageKey?: string;
+    /**
+     * Storage bucket. If not specified, it uses the default bucket.
+     */
+    storageBucket?: Storage.StorageBucket;
   }
 
   export interface RequestDatabaseNamesResponse extends ProtocolResponseWithError {
@@ -6084,11 +6642,11 @@ export namespace Input {
     /**
      * The plane angle between the Y-Z plane and the plane containing both the stylus axis and the Y axis, in degrees of the range [-90,90], a positive tiltX is to the right (default: 0)
      */
-    tiltX?: integer;
+    tiltX?: number;
     /**
      * The plane angle between the X-Z plane and the plane containing both the stylus axis and the X axis, in degrees of the range [-90,90], a positive tiltY is towards the user (default: 0).
      */
-    tiltY?: integer;
+    tiltY?: number;
     /**
      * The clockwise rotation of a pen stylus around its own major axis, in degrees in the range [0,359] (default: 0).
      */
@@ -6347,11 +6905,11 @@ export namespace Input {
     /**
      * The plane angle between the Y-Z plane and the plane containing both the stylus axis and the Y axis, in degrees of the range [-90,90], a positive tiltX is to the right (default: 0).
      */
-    tiltX?: integer;
+    tiltX?: number;
     /**
      * The plane angle between the X-Z plane and the plane containing both the stylus axis and the X axis, in degrees of the range [-90,90], a positive tiltY is towards the user (default: 0).
      */
-    tiltY?: integer;
+    tiltY?: number;
     /**
      * The clockwise rotation of a pen stylus around its own major axis, in degrees in the range [0,359] (default: 0).
      */
@@ -7294,6 +7852,10 @@ export namespace Network {
      */
     pushEnd: number;
     /**
+     * Started receiving response headers.
+     */
+    receiveHeadersStart: number;
+    /**
      * Finished receiving response headers.
      */
     receiveHeadersEnd: number;
@@ -7556,6 +8118,10 @@ export namespace Network {
     InvalidPrivateNetworkAccess = 'InvalidPrivateNetworkAccess',
     UnexpectedPrivateNetworkAccess = 'UnexpectedPrivateNetworkAccess',
     NoCorsRedirectModeNotFollow = 'NoCorsRedirectModeNotFollow',
+    PreflightMissingPrivateNetworkAccessId = 'PreflightMissingPrivateNetworkAccessId',
+    PreflightMissingPrivateNetworkAccessName = 'PreflightMissingPrivateNetworkAccessName',
+    PrivateNetworkAccessPermissionUnavailable = 'PrivateNetworkAccessPermissionUnavailable',
+    PrivateNetworkAccessPermissionDenied = 'PrivateNetworkAccessPermissionDenied',
   }
 
   export interface CorsErrorStatus {
@@ -7617,6 +8183,10 @@ export namespace Network {
     UnspecifiedReason = 'unspecifiedReason',
   }
 
+  export interface ServiceWorkerRouterInfo {
+    ruleIdMatched: integer;
+  }
+
   /**
    * HTTP response data.
    */
@@ -7645,6 +8215,10 @@ export namespace Network {
      * Resource mimeType as determined by the browser.
      */
     mimeType: string;
+    /**
+     * Resource charset as determined by the browser (if applicable).
+     */
+    charset: string;
     /**
      * Refined HTTP request headers that were actually transmitted over the network.
      */
@@ -7681,6 +8255,10 @@ export namespace Network {
      * Specifies that the request was served from the prefetch cache.
      */
     fromPrefetchCache?: boolean;
+    /**
+     * Infomation about how Service Worker Static Router was used.
+     */
+    serviceWorkerRouterInfo?: ServiceWorkerRouterInfo;
     /**
      * Total number of bytes received for this request so far.
      */
@@ -7925,6 +8503,7 @@ export namespace Network {
     SameSiteUnspecifiedTreatedAsLax = 'SameSiteUnspecifiedTreatedAsLax',
     SameSiteNoneInsecure = 'SameSiteNoneInsecure',
     UserPreferences = 'UserPreferences',
+    ThirdPartyPhaseout = 'ThirdPartyPhaseout',
     ThirdPartyBlockedInFirstPartySet = 'ThirdPartyBlockedInFirstPartySet',
     SyntaxError = 'SyntaxError',
     SchemeNotSupported = 'SchemeNotSupported',
@@ -7938,6 +8517,8 @@ export namespace Network {
     SamePartyFromCrossPartyContext = 'SamePartyFromCrossPartyContext',
     SamePartyConflictsWithOtherAttributes = 'SamePartyConflictsWithOtherAttributes',
     NameValuePairExceedsMaxSize = 'NameValuePairExceedsMaxSize',
+    DisallowedCharacter = 'DisallowedCharacter',
+    NoCookieContent = 'NoCookieContent',
   }
 
   /**
@@ -7952,6 +8533,7 @@ export namespace Network {
     SameSiteUnspecifiedTreatedAsLax = 'SameSiteUnspecifiedTreatedAsLax',
     SameSiteNoneInsecure = 'SameSiteNoneInsecure',
     UserPreferences = 'UserPreferences',
+    ThirdPartyPhaseout = 'ThirdPartyPhaseout',
     ThirdPartyBlockedInFirstPartySet = 'ThirdPartyBlockedInFirstPartySet',
     UnknownError = 'UnknownError',
     SchemefulSameSiteStrict = 'SchemefulSameSiteStrict',
@@ -8211,7 +8793,7 @@ export namespace Network {
      */
     signatures: SignedExchangeSignature[];
     /**
-     * Signed exchange header integrity hash in the form of "sha256-<base64-hash-value>".
+     * Signed exchange header integrity hash in the form of `sha256-<base64-hash-value>`.
      */
     headerIntegrity: string;
   }
@@ -8275,6 +8857,7 @@ export namespace Network {
     Deflate = 'deflate',
     Gzip = 'gzip',
     Br = 'br',
+    Zstd = 'zstd',
   }
 
   export const enum PrivateNetworkRequestPolicy {
@@ -8336,9 +8919,21 @@ export namespace Network {
     reportOnlyReportingEndpoint?: string;
   }
 
+  export const enum ContentSecurityPolicySource {
+    HTTP = 'HTTP',
+    Meta = 'Meta',
+  }
+
+  export interface ContentSecurityPolicyStatus {
+    effectiveDirectives: string;
+    isEnforced: boolean;
+    source: ContentSecurityPolicySource;
+  }
+
   export interface SecurityIsolationStatus {
     coop?: CrossOriginOpenerPolicyStatus;
     coep?: CrossOriginEmbedderPolicyStatus;
+    csp?: ContentSecurityPolicyStatus[];
   }
 
   /**
@@ -8803,7 +9398,7 @@ export namespace Network {
      */
     userAgent: string;
     /**
-     * Browser langugage to emulate.
+     * Browser language to emulate.
      */
     acceptLanguage?: string;
     /**
@@ -8814,6 +9409,20 @@ export namespace Network {
      * To be sent in Sec-CH-UA-* headers and returned in navigator.userAgentData
      */
     userAgentMetadata?: Emulation.UserAgentMetadata;
+  }
+
+  export interface StreamResourceContentRequest {
+    /**
+     * Identifier of the request to stream.
+     */
+    requestId: RequestId;
+  }
+
+  export interface StreamResourceContentResponse extends ProtocolResponseWithError {
+    /**
+     * Data that has been buffered until streaming is enabled.
+     */
+    bufferedData: binary;
   }
 
   export interface GetSecurityIsolationStatusRequest {
@@ -8874,6 +9483,10 @@ export namespace Network {
      * Actual bytes received (might be less than dataLength for compressed encodings).
      */
     encodedDataLength: integer;
+    /**
+     * Data that was received.
+     */
+    data?: binary;
   }
 
   /**
@@ -8952,11 +9565,6 @@ export namespace Network {
      * Total number of bytes received for this request.
      */
     encodedDataLength: number;
-    /**
-     * Set when 1) response was blocked by Cross-Origin Read Blocking and also
-     * 2) this needs to be reported to the DevTools console.
-     */
-    shouldReportCorbBlocking?: boolean;
   }
 
   /**
@@ -9413,6 +10021,7 @@ export namespace Network {
   export const enum TrustTokenOperationDoneEventStatus {
     Ok = 'Ok',
     InvalidArgument = 'InvalidArgument',
+    MissingIssuerKeys = 'MissingIssuerKeys',
     FailedPrecondition = 'FailedPrecondition',
     ResourceExhausted = 'ResourceExhausted',
     AlreadyExists = 'AlreadyExists',
@@ -9911,6 +10520,24 @@ export namespace Overlay {
     outlineColor?: DOM.RGBA;
   }
 
+  /**
+   * Configuration for Window Controls Overlay
+   */
+  export interface WindowControlsOverlayConfig {
+    /**
+     * Whether the title bar CSS should be shown when emulating the Window Controls Overlay.
+     */
+    showCSS: boolean;
+    /**
+     * Seleted platforms to show the overlay.
+     */
+    selectedPlatform: string;
+    /**
+     * The theme color defined in app manifest.
+     */
+    themeColor: string;
+  }
+
   export interface ContainerQueryHighlightConfig {
     /**
      * A descriptor for the highlight appearance of container query containers.
@@ -10245,6 +10872,13 @@ export namespace Overlay {
     isolatedElementHighlightConfigs: IsolatedElementHighlightConfig[];
   }
 
+  export interface SetShowWindowControlsOverlayRequest {
+    /**
+     * Window Controls Overlay data, null means hide Window Controls Overlay
+     */
+    windowControlsOverlayConfig?: WindowControlsOverlayConfig;
+  }
+
   /**
    * Fired when the node should be inspected. This happens after call to `setInspectMode` or when
    * user manually inspects an element.
@@ -10361,12 +10995,14 @@ export namespace Page {
     Bluetooth = 'bluetooth',
     BrowsingTopics = 'browsing-topics',
     Camera = 'camera',
+    CapturedSurfaceControl = 'captured-surface-control',
     ChDpr = 'ch-dpr',
     ChDeviceMemory = 'ch-device-memory',
     ChDownlink = 'ch-downlink',
     ChEct = 'ch-ect',
     ChPrefersColorScheme = 'ch-prefers-color-scheme',
     ChPrefersReducedMotion = 'ch-prefers-reduced-motion',
+    ChPrefersReducedTransparency = 'ch-prefers-reduced-transparency',
     ChRtt = 'ch-rtt',
     ChSaveData = 'ch-save-data',
     ChUa = 'ch-ua',
@@ -10375,11 +11011,10 @@ export namespace Page {
     ChUaPlatform = 'ch-ua-platform',
     ChUaModel = 'ch-ua-model',
     ChUaMobile = 'ch-ua-mobile',
-    ChUaFull = 'ch-ua-full',
+    ChUaFormFactor = 'ch-ua-form-factor',
     ChUaFullVersion = 'ch-ua-full-version',
     ChUaFullVersionList = 'ch-ua-full-version-list',
     ChUaPlatformVersion = 'ch-ua-platform-version',
-    ChUaReduced = 'ch-ua-reduced',
     ChUaWow64 = 'ch-ua-wow64',
     ChViewportHeight = 'ch-viewport-height',
     ChViewportWidth = 'ch-viewport-width',
@@ -10414,6 +11049,9 @@ export namespace Page {
     Payment = 'payment',
     PictureInPicture = 'picture-in-picture',
     PrivateAggregation = 'private-aggregation',
+    PrivateStateTokenIssuance = 'private-state-token-issuance',
+    PrivateStateTokenRedemption = 'private-state-token-redemption',
+    PublickeyCredentialsCreate = 'publickey-credentials-create',
     PublickeyCredentialsGet = 'publickey-credentials-get',
     RunAdAuction = 'run-ad-auction',
     ScreenWakeLock = 'screen-wake-lock',
@@ -10423,11 +11061,13 @@ export namespace Page {
     SharedStorageSelectUrl = 'shared-storage-select-url',
     SmartCard = 'smart-card',
     StorageAccess = 'storage-access',
+    SubApps = 'sub-apps',
     SyncXhr = 'sync-xhr',
-    TrustTokenRedemption = 'trust-token-redemption',
     Unload = 'unload',
     Usb = 'usb',
+    UsbUnrestricted = 'usb-unrestricted',
     VerticalScroll = 'vertical-scroll',
+    WebPrinting = 'web-printing',
     WebShare = 'web-share',
     WindowManagement = 'window-management',
     WindowPlacement = 'window-placement',
@@ -11066,6 +11706,9 @@ export namespace Page {
     ActivationNavigationsDisallowedForBug1234857 = 'ActivationNavigationsDisallowedForBug1234857',
     ErrorDocument = 'ErrorDocument',
     FencedFramesEmbedder = 'FencedFramesEmbedder',
+    CookieDisabled = 'CookieDisabled',
+    HTTPAuthRequired = 'HTTPAuthRequired',
+    CookieFlushed = 'CookieFlushed',
     WebSocket = 'WebSocket',
     WebTransport = 'WebTransport',
     WebRTC = 'WebRTC',
@@ -11077,14 +11720,12 @@ export namespace Page {
     DocumentLoaded = 'DocumentLoaded',
     DedicatedWorkerOrWorklet = 'DedicatedWorkerOrWorklet',
     OutstandingNetworkRequestOthers = 'OutstandingNetworkRequestOthers',
-    OutstandingIndexedDBTransaction = 'OutstandingIndexedDBTransaction',
     RequestedMIDIPermission = 'RequestedMIDIPermission',
     RequestedAudioCapturePermission = 'RequestedAudioCapturePermission',
     RequestedVideoCapturePermission = 'RequestedVideoCapturePermission',
     RequestedBackForwardCacheBlockedSensors = 'RequestedBackForwardCacheBlockedSensors',
     RequestedBackgroundWorkPermission = 'RequestedBackgroundWorkPermission',
     BroadcastChannel = 'BroadcastChannel',
-    IndexedDBConnection = 'IndexedDBConnection',
     WebXR = 'WebXR',
     SharedWorker = 'SharedWorker',
     WebLocks = 'WebLocks',
@@ -11111,7 +11752,13 @@ export namespace Page {
     KeepaliveRequest = 'KeepaliveRequest',
     IndexedDBEvent = 'IndexedDBEvent',
     Dummy = 'Dummy',
-    AuthorizationHeader = 'AuthorizationHeader',
+    JsNetworkRequestReceivedCacheControlNoStoreResource = 'JsNetworkRequestReceivedCacheControlNoStoreResource',
+    WebRTCSticky = 'WebRTCSticky',
+    WebTransportSticky = 'WebTransportSticky',
+    WebSocketSticky = 'WebSocketSticky',
+    SmartCard = 'SmartCard',
+    LiveMediaStreamTrack = 'LiveMediaStreamTrack',
+    UnloadHandler = 'UnloadHandler',
     ContentSecurityHandler = 'ContentSecurityHandler',
     ContentWebAuthenticationAPI = 'ContentWebAuthenticationAPI',
     ContentFileChooser = 'ContentFileChooser',
@@ -11148,6 +11795,25 @@ export namespace Page {
     Circumstantial = 'Circumstantial',
   }
 
+  export interface BackForwardCacheBlockingDetails {
+    /**
+     * Url of the file where blockage happened. Optional because of tests.
+     */
+    url?: string;
+    /**
+     * Function name where blockage happened. Optional because of anonymous functions and tests.
+     */
+    function?: string;
+    /**
+     * Line number in the script (0-based).
+     */
+    lineNumber: integer;
+    /**
+     * Column number in the script (0-based).
+     */
+    columnNumber: integer;
+  }
+
   export interface BackForwardCacheNotRestoredExplanation {
     /**
      * Type of the reason
@@ -11163,6 +11829,7 @@ export namespace Page {
      * - EmbedderExtensionSentMessageToCachedFrame: the extension ID.
      */
     context?: string;
+    details?: BackForwardCacheBlockingDetails[];
   }
 
   export interface BackForwardCacheNotRestoredExplanationTree {
@@ -11178,81 +11845,6 @@ export namespace Page {
      * Array of children frame
      */
     children: BackForwardCacheNotRestoredExplanationTree[];
-  }
-
-  /**
-   * List of FinalStatus reasons for Prerender2.
-   */
-  export const enum PrerenderFinalStatus {
-    Activated = 'Activated',
-    Destroyed = 'Destroyed',
-    LowEndDevice = 'LowEndDevice',
-    InvalidSchemeRedirect = 'InvalidSchemeRedirect',
-    InvalidSchemeNavigation = 'InvalidSchemeNavigation',
-    InProgressNavigation = 'InProgressNavigation',
-    NavigationRequestBlockedByCsp = 'NavigationRequestBlockedByCsp',
-    MainFrameNavigation = 'MainFrameNavigation',
-    MojoBinderPolicy = 'MojoBinderPolicy',
-    RendererProcessCrashed = 'RendererProcessCrashed',
-    RendererProcessKilled = 'RendererProcessKilled',
-    Download = 'Download',
-    TriggerDestroyed = 'TriggerDestroyed',
-    NavigationNotCommitted = 'NavigationNotCommitted',
-    NavigationBadHttpStatus = 'NavigationBadHttpStatus',
-    ClientCertRequested = 'ClientCertRequested',
-    NavigationRequestNetworkError = 'NavigationRequestNetworkError',
-    MaxNumOfRunningPrerendersExceeded = 'MaxNumOfRunningPrerendersExceeded',
-    CancelAllHostsForTesting = 'CancelAllHostsForTesting',
-    DidFailLoad = 'DidFailLoad',
-    Stop = 'Stop',
-    SslCertificateError = 'SslCertificateError',
-    LoginAuthRequested = 'LoginAuthRequested',
-    UaChangeRequiresReload = 'UaChangeRequiresReload',
-    BlockedByClient = 'BlockedByClient',
-    AudioOutputDeviceRequested = 'AudioOutputDeviceRequested',
-    MixedContent = 'MixedContent',
-    TriggerBackgrounded = 'TriggerBackgrounded',
-    EmbedderTriggeredAndCrossOriginRedirected = 'EmbedderTriggeredAndCrossOriginRedirected',
-    MemoryLimitExceeded = 'MemoryLimitExceeded',
-    FailToGetMemoryUsage = 'FailToGetMemoryUsage',
-    DataSaverEnabled = 'DataSaverEnabled',
-    HasEffectiveUrl = 'HasEffectiveUrl',
-    ActivatedBeforeStarted = 'ActivatedBeforeStarted',
-    InactivePageRestriction = 'InactivePageRestriction',
-    StartFailed = 'StartFailed',
-    TimeoutBackgrounded = 'TimeoutBackgrounded',
-    CrossSiteRedirect = 'CrossSiteRedirect',
-    CrossSiteNavigation = 'CrossSiteNavigation',
-    SameSiteCrossOriginRedirect = 'SameSiteCrossOriginRedirect',
-    SameSiteCrossOriginNavigation = 'SameSiteCrossOriginNavigation',
-    SameSiteCrossOriginRedirectNotOptIn = 'SameSiteCrossOriginRedirectNotOptIn',
-    SameSiteCrossOriginNavigationNotOptIn = 'SameSiteCrossOriginNavigationNotOptIn',
-    ActivationNavigationParameterMismatch = 'ActivationNavigationParameterMismatch',
-    ActivatedInBackground = 'ActivatedInBackground',
-    EmbedderHostDisallowed = 'EmbedderHostDisallowed',
-    ActivationNavigationDestroyedBeforeSuccess = 'ActivationNavigationDestroyedBeforeSuccess',
-    TabClosedByUserGesture = 'TabClosedByUserGesture',
-    TabClosedWithoutUserGesture = 'TabClosedWithoutUserGesture',
-    PrimaryMainFrameRendererProcessCrashed = 'PrimaryMainFrameRendererProcessCrashed',
-    PrimaryMainFrameRendererProcessKilled = 'PrimaryMainFrameRendererProcessKilled',
-    ActivationFramePolicyNotCompatible = 'ActivationFramePolicyNotCompatible',
-    PreloadingDisabled = 'PreloadingDisabled',
-    BatterySaverEnabled = 'BatterySaverEnabled',
-    ActivatedDuringMainFrameNavigation = 'ActivatedDuringMainFrameNavigation',
-    PreloadingUnsupportedByWebContents = 'PreloadingUnsupportedByWebContents',
-  }
-
-  /**
-   * Preloading status values, see also PreloadingTriggeringOutcome. This
-   * status is shared by prefetchStatusUpdated and prerenderStatusUpdated.
-   */
-  export const enum PreloadingStatus {
-    Pending = 'Pending',
-    Running = 'Running',
-    Ready = 'Ready',
-    Success = 'Success',
-    Failure = 'Failure',
-    NotSupported = 'NotSupported',
   }
 
   export interface AddScriptToEvaluateOnLoadRequest {
@@ -11279,6 +11871,11 @@ export namespace Page {
      * to false.
      */
     includeCommandLineAPI?: boolean;
+    /**
+     * If true, runs the script immediately on existing execution contexts or worlds.
+     * Default: false.
+     */
+    runImmediately?: boolean;
   }
 
   export interface AddScriptToEvaluateOnNewDocumentResponse extends ProtocolResponseWithError {
@@ -11425,13 +12022,6 @@ export namespace Page {
      * as an ad. Only sent if frame is labelled as an ad and id is available.
      */
     adScriptId?: AdScriptId;
-  }
-
-  export interface GetCookiesResponse extends ProtocolResponseWithError {
-    /**
-     * Array of cookie objects.
-     */
-    cookies: Network.Cookie[];
   }
 
   export interface GetFrameTreeResponse extends ProtocolResponseWithError {
@@ -11648,6 +12238,14 @@ export namespace Page {
      * return as stream
      */
     transferMode?: PrintToPDFRequestTransferMode;
+    /**
+     * Whether or not to generate tagged (accessible) PDF. Defaults to embedder choice.
+     */
+    generateTaggedPDF?: boolean;
+    /**
+     * Whether or not to embed the document outline into the PDF.
+     */
+    generateDocumentOutline?: boolean;
   }
 
   export interface PrintToPDFResponse extends ProtocolResponseWithError {
@@ -11671,6 +12269,12 @@ export namespace Page {
      * Argument will be ignored if reloading dataURL origin.
      */
     scriptToEvaluateOnLoad?: string;
+    /**
+     * If set, an error will be thrown if the target page's main frame's
+     * loader id does not match the provided id. This prevents accidentally
+     * reloading an unintended target in case there's a racing navigation.
+     */
+    loaderId?: Network.LoaderId;
   }
 
   export interface RemoveScriptToEvaluateOnLoadRequest {
@@ -11975,6 +12579,10 @@ export namespace Page {
     enabled: boolean;
   }
 
+  export interface SetPrerenderingAllowedRequest {
+    isAllowed: boolean;
+  }
+
   export interface DomContentEventFiredEvent {
     timestamp: Network.MonotonicTime;
   }
@@ -11997,7 +12605,7 @@ export namespace Page {
      */
     mode: FileChooserOpenedEventMode;
     /**
-     * Input node id. Only present for file choosers opened via an <input type="file"> element.
+     * Input node id. Only present for file choosers opened via an `<input type="file">` element.
      */
     backendNodeId?: DOM.BackendNodeId;
   }
@@ -12268,49 +12876,6 @@ export namespace Page {
      * Tree structure of reasons why the page could not be cached for each frame.
      */
     notRestoredExplanationsTree?: BackForwardCacheNotRestoredExplanationTree;
-  }
-
-  /**
-   * Fired when a prerender attempt is completed.
-   */
-  export interface PrerenderAttemptCompletedEvent {
-    /**
-     * The frame id of the frame initiating prerendering.
-     */
-    initiatingFrameId: FrameId;
-    prerenderingUrl: string;
-    finalStatus: PrerenderFinalStatus;
-    /**
-     * This is used to give users more information about the name of the API call
-     * that is incompatible with prerender and has caused the cancellation of the attempt
-     */
-    disallowedApiMethod?: string;
-  }
-
-  /**
-   * TODO(crbug/1384419): Create a dedicated domain for preloading.
-   * Fired when a prefetch attempt is updated.
-   */
-  export interface PrefetchStatusUpdatedEvent {
-    /**
-     * The frame id of the frame initiating prefetch.
-     */
-    initiatingFrameId: FrameId;
-    prefetchUrl: string;
-    status: PreloadingStatus;
-  }
-
-  /**
-   * TODO(crbug/1384419): Create a dedicated domain for preloading.
-   * Fired when a prerender attempt is updated.
-   */
-  export interface PrerenderStatusUpdatedEvent {
-    /**
-     * The frame id of the frame initiating prerender.
-     */
-    initiatingFrameId: FrameId;
-    prerenderingUrl: string;
-    status: PreloadingStatus;
   }
 
   export interface LoadEventFiredEvent {
@@ -12906,6 +13471,7 @@ export namespace ServiceWorker {
     scriptResponseTime?: number;
     controlledClients?: Target.TargetID[];
     targetId?: Target.TargetID;
+    routerRules?: string;
   }
 
   /**
@@ -12999,6 +13565,7 @@ export namespace Storage {
     Cache_storage = 'cache_storage',
     Interest_groups = 'interest_groups',
     Shared_storage = 'shared_storage',
+    Storage_buckets = 'storage_buckets',
     All = 'all',
     Other = 'other',
   }
@@ -13027,6 +13594,11 @@ export namespace Storage {
   }
 
   /**
+   * Protected audience interest group auction identifier.
+   */
+  export type InterestGroupAuctionId = OpaqueIdentifier<string, 'Protocol.Storage.InterestGroupAuctionId'>;
+
+  /**
    * Enum of interest group access types.
    */
   export const enum InterestGroupAccessType {
@@ -13036,13 +13608,26 @@ export namespace Storage {
     Loaded = 'loaded',
     Bid = 'bid',
     Win = 'win',
+    AdditionalBid = 'additionalBid',
+    AdditionalBidWin = 'additionalBidWin',
+    TopLevelBid = 'topLevelBid',
+    TopLevelAdditionalBid = 'topLevelAdditionalBid',
+    Clear = 'clear',
+  }
+
+  /**
+   * Enum of auction events.
+   */
+  export const enum InterestGroupAuctionEventType {
+    Started = 'started',
+    ConfigResolved = 'configResolved',
   }
 
   /**
    * Ad advertising element inside an interest group.
    */
   export interface InterestGroupAd {
-    renderUrl: string;
+    renderURL: string;
     metadata?: string;
   }
 
@@ -13054,10 +13639,10 @@ export namespace Storage {
     name: string;
     expirationTime: Network.TimeSinceEpoch;
     joiningOrigin: string;
-    biddingUrl?: string;
-    biddingWasmHelperUrl?: string;
-    updateUrl?: string;
-    trustedBiddingSignalsUrl?: string;
+    biddingLogicURL?: string;
+    biddingWasmHelperURL?: string;
+    updateURL?: string;
+    trustedBiddingSignalsURL?: string;
     trustedBiddingSignalsKeys: string[];
     userBiddingSignals?: string;
     ads: InterestGroupAd[];
@@ -13177,6 +13762,212 @@ export namespace Storage {
      * SharedStorageAccessType.workletSet.
      */
     ignoreIfPresent?: boolean;
+  }
+
+  export const enum StorageBucketsDurability {
+    Relaxed = 'relaxed',
+    Strict = 'strict',
+  }
+
+  export interface StorageBucket {
+    storageKey: SerializedStorageKey;
+    /**
+     * If not specified, it is the default bucket of the storageKey.
+     */
+    name?: string;
+  }
+
+  export interface StorageBucketInfo {
+    bucket: StorageBucket;
+    id: string;
+    expiration: Network.TimeSinceEpoch;
+    /**
+     * Storage quota (bytes).
+     */
+    quota: number;
+    persistent: boolean;
+    durability: StorageBucketsDurability;
+  }
+
+  export const enum AttributionReportingSourceType {
+    Navigation = 'navigation',
+    Event = 'event',
+  }
+
+  export type UnsignedInt64AsBase10 = string;
+
+  export type UnsignedInt128AsBase16 = string;
+
+  export type SignedInt64AsBase10 = string;
+
+  export interface AttributionReportingFilterDataEntry {
+    key: string;
+    values: string[];
+  }
+
+  export interface AttributionReportingFilterConfig {
+    filterValues: AttributionReportingFilterDataEntry[];
+    /**
+     * duration in seconds
+     */
+    lookbackWindow?: integer;
+  }
+
+  export interface AttributionReportingFilterPair {
+    filters: AttributionReportingFilterConfig[];
+    notFilters: AttributionReportingFilterConfig[];
+  }
+
+  export interface AttributionReportingAggregationKeysEntry {
+    key: string;
+    value: UnsignedInt128AsBase16;
+  }
+
+  export interface AttributionReportingEventReportWindows {
+    /**
+     * duration in seconds
+     */
+    start: integer;
+    /**
+     * duration in seconds
+     */
+    ends: integer[];
+  }
+
+  export interface AttributionReportingTriggerSpec {
+    /**
+     * number instead of integer because not all uint32 can be represented by
+     * int
+     */
+    triggerData: number[];
+    eventReportWindows: AttributionReportingEventReportWindows;
+  }
+
+  export const enum AttributionReportingTriggerDataMatching {
+    Exact = 'exact',
+    Modulus = 'modulus',
+  }
+
+  export interface AttributionReportingSourceRegistration {
+    time: Network.TimeSinceEpoch;
+    /**
+     * duration in seconds
+     */
+    expiry: integer;
+    triggerSpecs: AttributionReportingTriggerSpec[];
+    /**
+     * duration in seconds
+     */
+    aggregatableReportWindow: integer;
+    type: AttributionReportingSourceType;
+    sourceOrigin: string;
+    reportingOrigin: string;
+    destinationSites: string[];
+    eventId: UnsignedInt64AsBase10;
+    priority: SignedInt64AsBase10;
+    filterData: AttributionReportingFilterDataEntry[];
+    aggregationKeys: AttributionReportingAggregationKeysEntry[];
+    debugKey?: UnsignedInt64AsBase10;
+    triggerDataMatching: AttributionReportingTriggerDataMatching;
+  }
+
+  export const enum AttributionReportingSourceRegistrationResult {
+    Success = 'success',
+    InternalError = 'internalError',
+    InsufficientSourceCapacity = 'insufficientSourceCapacity',
+    InsufficientUniqueDestinationCapacity = 'insufficientUniqueDestinationCapacity',
+    ExcessiveReportingOrigins = 'excessiveReportingOrigins',
+    ProhibitedByBrowserPolicy = 'prohibitedByBrowserPolicy',
+    SuccessNoised = 'successNoised',
+    DestinationReportingLimitReached = 'destinationReportingLimitReached',
+    DestinationGlobalLimitReached = 'destinationGlobalLimitReached',
+    DestinationBothLimitsReached = 'destinationBothLimitsReached',
+    ReportingOriginsPerSiteLimitReached = 'reportingOriginsPerSiteLimitReached',
+    ExceedsMaxChannelCapacity = 'exceedsMaxChannelCapacity',
+  }
+
+  export const enum AttributionReportingSourceRegistrationTimeConfig {
+    Include = 'include',
+    Exclude = 'exclude',
+  }
+
+  export interface AttributionReportingAggregatableValueEntry {
+    key: string;
+    /**
+     * number instead of integer because not all uint32 can be represented by
+     * int
+     */
+    value: number;
+  }
+
+  export interface AttributionReportingEventTriggerData {
+    data: UnsignedInt64AsBase10;
+    priority: SignedInt64AsBase10;
+    dedupKey?: UnsignedInt64AsBase10;
+    filters: AttributionReportingFilterPair;
+  }
+
+  export interface AttributionReportingAggregatableTriggerData {
+    keyPiece: UnsignedInt128AsBase16;
+    sourceKeys: string[];
+    filters: AttributionReportingFilterPair;
+  }
+
+  export interface AttributionReportingAggregatableDedupKey {
+    dedupKey?: UnsignedInt64AsBase10;
+    filters: AttributionReportingFilterPair;
+  }
+
+  export interface AttributionReportingTriggerRegistration {
+    filters: AttributionReportingFilterPair;
+    debugKey?: UnsignedInt64AsBase10;
+    aggregatableDedupKeys: AttributionReportingAggregatableDedupKey[];
+    eventTriggerData: AttributionReportingEventTriggerData[];
+    aggregatableTriggerData: AttributionReportingAggregatableTriggerData[];
+    aggregatableValues: AttributionReportingAggregatableValueEntry[];
+    debugReporting: boolean;
+    aggregationCoordinatorOrigin?: string;
+    sourceRegistrationTimeConfig: AttributionReportingSourceRegistrationTimeConfig;
+    triggerContextId?: string;
+  }
+
+  export const enum AttributionReportingEventLevelResult {
+    Success = 'success',
+    SuccessDroppedLowerPriority = 'successDroppedLowerPriority',
+    InternalError = 'internalError',
+    NoCapacityForAttributionDestination = 'noCapacityForAttributionDestination',
+    NoMatchingSources = 'noMatchingSources',
+    Deduplicated = 'deduplicated',
+    ExcessiveAttributions = 'excessiveAttributions',
+    PriorityTooLow = 'priorityTooLow',
+    NeverAttributedSource = 'neverAttributedSource',
+    ExcessiveReportingOrigins = 'excessiveReportingOrigins',
+    NoMatchingSourceFilterData = 'noMatchingSourceFilterData',
+    ProhibitedByBrowserPolicy = 'prohibitedByBrowserPolicy',
+    NoMatchingConfigurations = 'noMatchingConfigurations',
+    ExcessiveReports = 'excessiveReports',
+    FalselyAttributedSource = 'falselyAttributedSource',
+    ReportWindowPassed = 'reportWindowPassed',
+    NotRegistered = 'notRegistered',
+    ReportWindowNotStarted = 'reportWindowNotStarted',
+    NoMatchingTriggerData = 'noMatchingTriggerData',
+  }
+
+  export const enum AttributionReportingAggregatableResult {
+    Success = 'success',
+    InternalError = 'internalError',
+    NoCapacityForAttributionDestination = 'noCapacityForAttributionDestination',
+    NoMatchingSources = 'noMatchingSources',
+    ExcessiveAttributions = 'excessiveAttributions',
+    ExcessiveReportingOrigins = 'excessiveReportingOrigins',
+    NoHistograms = 'noHistograms',
+    InsufficientBudget = 'insufficientBudget',
+    NoMatchingSourceFilterData = 'noMatchingSourceFilterData',
+    NotRegistered = 'notRegistered',
+    ProhibitedByBrowserPolicy = 'prohibitedByBrowserPolicy',
+    Deduplicated = 'deduplicated',
+    ReportWindowPassed = 'reportWindowPassed',
+    ExcessiveReports = 'excessiveReports',
   }
 
   export interface GetStorageKeyForFrameRequest {
@@ -13368,6 +14159,10 @@ export namespace Storage {
     enable: boolean;
   }
 
+  export interface SetInterestGroupAuctionTrackingRequest {
+    enable: boolean;
+  }
+
   export interface GetSharedStorageMetadataRequest {
     ownerOrigin: string;
   }
@@ -13412,6 +14207,30 @@ export namespace Storage {
     enable: boolean;
   }
 
+  export interface SetStorageBucketTrackingRequest {
+    storageKey: string;
+    enable: boolean;
+  }
+
+  export interface DeleteStorageBucketRequest {
+    bucket: StorageBucket;
+  }
+
+  export interface RunBounceTrackingMitigationsResponse extends ProtocolResponseWithError {
+    deletedSites: string[];
+  }
+
+  export interface SetAttributionReportingLocalTestingModeRequest {
+    /**
+     * If enabled, noise is suppressed and reports are sent immediately.
+     */
+    enabled: boolean;
+  }
+
+  export interface SetAttributionReportingTrackingRequest {
+    enable: boolean;
+  }
+
   /**
    * A cache's contents have been modified.
    */
@@ -13424,6 +14243,10 @@ export namespace Storage {
      * Storage key to update.
      */
     storageKey: string;
+    /**
+     * Storage bucket to update.
+     */
+    bucketId: string;
     /**
      * Name of cache in origin.
      */
@@ -13442,6 +14265,10 @@ export namespace Storage {
      * Storage key to update.
      */
     storageKey: string;
+    /**
+     * Storage bucket to update.
+     */
+    bucketId: string;
   }
 
   /**
@@ -13456,6 +14283,10 @@ export namespace Storage {
      * Storage key to update.
      */
     storageKey: string;
+    /**
+     * Storage bucket to update.
+     */
+    bucketId: string;
     /**
      * Database to update.
      */
@@ -13478,16 +14309,53 @@ export namespace Storage {
      * Storage key to update.
      */
     storageKey: string;
+    /**
+     * Storage bucket to update.
+     */
+    bucketId: string;
   }
 
   /**
-   * One of the interest groups was accessed by the associated page.
+   * One of the interest groups was accessed. Note that these events are global
+   * to all targets sharing an interest group store.
    */
   export interface InterestGroupAccessedEvent {
     accessTime: Network.TimeSinceEpoch;
     type: InterestGroupAccessType;
     ownerOrigin: string;
     name: string;
+    /**
+     * For topLevelBid/topLevelAdditionalBid, and when appropriate,
+     * win and additionalBidWin
+     */
+    componentSellerOrigin?: string;
+    /**
+     * For bid or somethingBid event, if done locally and not on a server.
+     */
+    bid?: number;
+    bidCurrency?: string;
+    /**
+     * For non-global events --- links to interestGroupAuctionEvent
+     */
+    uniqueAuctionId?: InterestGroupAuctionId;
+  }
+
+  /**
+   * An auction involving interest groups is taking place. These events are
+   * target-specific.
+   */
+  export interface InterestGroupAuctionEventOccurredEvent {
+    eventTime: Network.TimeSinceEpoch;
+    type: InterestGroupAuctionEventType;
+    uniqueAuctionId: InterestGroupAuctionId;
+    /**
+     * Set for child auctions.
+     */
+    parentAuctionId?: InterestGroupAuctionId;
+    /**
+     * Set for started and configResolved
+     */
+    auctionConfig?: any;
   }
 
   /**
@@ -13516,6 +14384,25 @@ export namespace Storage {
      * presence/absence depends on `type`.
      */
     params: SharedStorageAccessParams;
+  }
+
+  export interface StorageBucketCreatedOrUpdatedEvent {
+    bucketInfo: StorageBucketInfo;
+  }
+
+  export interface StorageBucketDeletedEvent {
+    bucketId: string;
+  }
+
+  export interface AttributionReportingSourceRegisteredEvent {
+    registration: AttributionReportingSourceRegistration;
+    result: AttributionReportingSourceRegistrationResult;
+  }
+
+  export interface AttributionReportingTriggerRegisteredEvent {
+    registration: AttributionReportingTriggerRegistration;
+    eventLevel: AttributionReportingEventLevelResult;
+    aggregatable: AttributionReportingAggregatableResult;
   }
 }
 
@@ -14650,6 +15537,11 @@ export namespace Fetch {
    * The stage of the request can be determined by presence of responseErrorReason
    * and responseStatusCode -- the request is at the response stage if either
    * of these fields is present and in the request stage otherwise.
+   * Redirect responses and subsequent requests are reported similarly to regular
+   * responses and requests. Redirect responses may be distinguished by the value
+   * of `responseStatusCode` (which is one of 301, 302, 303, 307, 308) along with
+   * presence of the `location` header. Requests resulting from a redirect will
+   * have `redirectedRequestId` field set.
    */
   export interface RequestPausedEvent {
     /**
@@ -15064,6 +15956,18 @@ export namespace WebAuthn {
      * Defaults to false.
      */
     isUserVerified?: boolean;
+    /**
+     * Credentials created by this authenticator will have the backup
+     * eligibility (BE) flag set to this value. Defaults to false.
+     * https://w3c.github.io/webauthn/#sctn-credential-backup
+     */
+    defaultBackupEligibility?: boolean;
+    /**
+     * Credentials created by this authenticator will have the backup state
+     * (BS) flag set to this value. Defaults to false.
+     * https://w3c.github.io/webauthn/#sctn-credential-backup
+     */
+    defaultBackupState?: boolean;
   }
 
   export interface Credential {
@@ -15389,7 +16293,7 @@ export namespace Preload {
     loaderId: Network.LoaderId;
     /**
      * Source text of JSON representing the rule set. If it comes from
-     * <script> tag, it is the textContent of the node. Note that it is
+     * `<script>` tag, it is the textContent of the node. Note that it is
      * a JSON for valid case.
      *
      * See also:
@@ -15397,6 +16301,213 @@ export namespace Preload {
      * - https://github.com/WICG/nav-speculation/blob/main/triggers.md
      */
     sourceText: string;
+    /**
+     * A speculation rule set is either added through an inline
+     * `<script>` tag or through an external resource via the
+     * 'Speculation-Rules' HTTP header. For the first case, we include
+     * the BackendNodeId of the relevant `<script>` tag. For the second
+     * case, we include the external URL where the rule set was loaded
+     * from, and also RequestId if Network domain is enabled.
+     *
+     * See also:
+     * - https://wicg.github.io/nav-speculation/speculation-rules.html#speculation-rules-script
+     * - https://wicg.github.io/nav-speculation/speculation-rules.html#speculation-rules-header
+     */
+    backendNodeId?: DOM.BackendNodeId;
+    url?: string;
+    requestId?: Network.RequestId;
+    /**
+     * Error information
+     * `errorMessage` is null iff `errorType` is null.
+     */
+    errorType?: RuleSetErrorType;
+    /**
+     * TODO(https://crbug.com/1425354): Replace this property with structured error.
+     */
+    errorMessage?: string;
+  }
+
+  export const enum RuleSetErrorType {
+    SourceIsNotJsonObject = 'SourceIsNotJsonObject',
+    InvalidRulesSkipped = 'InvalidRulesSkipped',
+  }
+
+  /**
+   * The type of preloading attempted. It corresponds to
+   * mojom::SpeculationAction (although PrefetchWithSubresources is omitted as it
+   * isn't being used by clients).
+   */
+  export const enum SpeculationAction {
+    Prefetch = 'Prefetch',
+    Prerender = 'Prerender',
+  }
+
+  /**
+   * Corresponds to mojom::SpeculationTargetHint.
+   * See https://github.com/WICG/nav-speculation/blob/main/triggers.md#window-name-targeting-hints
+   */
+  export const enum SpeculationTargetHint {
+    Blank = 'Blank',
+    Self = 'Self',
+  }
+
+  /**
+   * A key that identifies a preloading attempt.
+   *
+   * The url used is the url specified by the trigger (i.e. the initial URL), and
+   * not the final url that is navigated to. For example, prerendering allows
+   * same-origin main frame navigations during the attempt, but the attempt is
+   * still keyed with the initial URL.
+   */
+  export interface PreloadingAttemptKey {
+    loaderId: Network.LoaderId;
+    action: SpeculationAction;
+    url: string;
+    targetHint?: SpeculationTargetHint;
+  }
+
+  /**
+   * Lists sources for a preloading attempt, specifically the ids of rule sets
+   * that had a speculation rule that triggered the attempt, and the
+   * BackendNodeIds of <a href> or <area href> elements that triggered the
+   * attempt (in the case of attempts triggered by a document rule). It is
+   * possible for mulitple rule sets and links to trigger a single attempt.
+   */
+  export interface PreloadingAttemptSource {
+    key: PreloadingAttemptKey;
+    ruleSetIds: RuleSetId[];
+    nodeIds: DOM.BackendNodeId[];
+  }
+
+  /**
+   * List of FinalStatus reasons for Prerender2.
+   */
+  export const enum PrerenderFinalStatus {
+    Activated = 'Activated',
+    Destroyed = 'Destroyed',
+    LowEndDevice = 'LowEndDevice',
+    InvalidSchemeRedirect = 'InvalidSchemeRedirect',
+    InvalidSchemeNavigation = 'InvalidSchemeNavigation',
+    NavigationRequestBlockedByCsp = 'NavigationRequestBlockedByCsp',
+    MainFrameNavigation = 'MainFrameNavigation',
+    MojoBinderPolicy = 'MojoBinderPolicy',
+    RendererProcessCrashed = 'RendererProcessCrashed',
+    RendererProcessKilled = 'RendererProcessKilled',
+    Download = 'Download',
+    TriggerDestroyed = 'TriggerDestroyed',
+    NavigationNotCommitted = 'NavigationNotCommitted',
+    NavigationBadHttpStatus = 'NavigationBadHttpStatus',
+    ClientCertRequested = 'ClientCertRequested',
+    NavigationRequestNetworkError = 'NavigationRequestNetworkError',
+    CancelAllHostsForTesting = 'CancelAllHostsForTesting',
+    DidFailLoad = 'DidFailLoad',
+    Stop = 'Stop',
+    SslCertificateError = 'SslCertificateError',
+    LoginAuthRequested = 'LoginAuthRequested',
+    UaChangeRequiresReload = 'UaChangeRequiresReload',
+    BlockedByClient = 'BlockedByClient',
+    AudioOutputDeviceRequested = 'AudioOutputDeviceRequested',
+    MixedContent = 'MixedContent',
+    TriggerBackgrounded = 'TriggerBackgrounded',
+    MemoryLimitExceeded = 'MemoryLimitExceeded',
+    DataSaverEnabled = 'DataSaverEnabled',
+    TriggerUrlHasEffectiveUrl = 'TriggerUrlHasEffectiveUrl',
+    ActivatedBeforeStarted = 'ActivatedBeforeStarted',
+    InactivePageRestriction = 'InactivePageRestriction',
+    StartFailed = 'StartFailed',
+    TimeoutBackgrounded = 'TimeoutBackgrounded',
+    CrossSiteRedirectInInitialNavigation = 'CrossSiteRedirectInInitialNavigation',
+    CrossSiteNavigationInInitialNavigation = 'CrossSiteNavigationInInitialNavigation',
+    SameSiteCrossOriginRedirectNotOptInInInitialNavigation = 'SameSiteCrossOriginRedirectNotOptInInInitialNavigation',
+    SameSiteCrossOriginNavigationNotOptInInInitialNavigation = 'SameSiteCrossOriginNavigationNotOptInInInitialNavigation',
+    ActivationNavigationParameterMismatch = 'ActivationNavigationParameterMismatch',
+    ActivatedInBackground = 'ActivatedInBackground',
+    EmbedderHostDisallowed = 'EmbedderHostDisallowed',
+    ActivationNavigationDestroyedBeforeSuccess = 'ActivationNavigationDestroyedBeforeSuccess',
+    TabClosedByUserGesture = 'TabClosedByUserGesture',
+    TabClosedWithoutUserGesture = 'TabClosedWithoutUserGesture',
+    PrimaryMainFrameRendererProcessCrashed = 'PrimaryMainFrameRendererProcessCrashed',
+    PrimaryMainFrameRendererProcessKilled = 'PrimaryMainFrameRendererProcessKilled',
+    ActivationFramePolicyNotCompatible = 'ActivationFramePolicyNotCompatible',
+    PreloadingDisabled = 'PreloadingDisabled',
+    BatterySaverEnabled = 'BatterySaverEnabled',
+    ActivatedDuringMainFrameNavigation = 'ActivatedDuringMainFrameNavigation',
+    PreloadingUnsupportedByWebContents = 'PreloadingUnsupportedByWebContents',
+    CrossSiteRedirectInMainFrameNavigation = 'CrossSiteRedirectInMainFrameNavigation',
+    CrossSiteNavigationInMainFrameNavigation = 'CrossSiteNavigationInMainFrameNavigation',
+    SameSiteCrossOriginRedirectNotOptInInMainFrameNavigation = 'SameSiteCrossOriginRedirectNotOptInInMainFrameNavigation',
+    SameSiteCrossOriginNavigationNotOptInInMainFrameNavigation = 'SameSiteCrossOriginNavigationNotOptInInMainFrameNavigation',
+    MemoryPressureOnTrigger = 'MemoryPressureOnTrigger',
+    MemoryPressureAfterTriggered = 'MemoryPressureAfterTriggered',
+    PrerenderingDisabledByDevTools = 'PrerenderingDisabledByDevTools',
+    SpeculationRuleRemoved = 'SpeculationRuleRemoved',
+    ActivatedWithAuxiliaryBrowsingContexts = 'ActivatedWithAuxiliaryBrowsingContexts',
+    MaxNumOfRunningEagerPrerendersExceeded = 'MaxNumOfRunningEagerPrerendersExceeded',
+    MaxNumOfRunningNonEagerPrerendersExceeded = 'MaxNumOfRunningNonEagerPrerendersExceeded',
+    MaxNumOfRunningEmbedderPrerendersExceeded = 'MaxNumOfRunningEmbedderPrerendersExceeded',
+    PrerenderingUrlHasEffectiveUrl = 'PrerenderingUrlHasEffectiveUrl',
+    RedirectedPrerenderingUrlHasEffectiveUrl = 'RedirectedPrerenderingUrlHasEffectiveUrl',
+    ActivationUrlHasEffectiveUrl = 'ActivationUrlHasEffectiveUrl',
+  }
+
+  /**
+   * Preloading status values, see also PreloadingTriggeringOutcome. This
+   * status is shared by prefetchStatusUpdated and prerenderStatusUpdated.
+   */
+  export const enum PreloadingStatus {
+    Pending = 'Pending',
+    Running = 'Running',
+    Ready = 'Ready',
+    Success = 'Success',
+    Failure = 'Failure',
+    NotSupported = 'NotSupported',
+  }
+
+  /**
+   * TODO(https://crbug.com/1384419): revisit the list of PrefetchStatus and
+   * filter out the ones that aren't necessary to the developers.
+   */
+  export const enum PrefetchStatus {
+    PrefetchAllowed = 'PrefetchAllowed',
+    PrefetchFailedIneligibleRedirect = 'PrefetchFailedIneligibleRedirect',
+    PrefetchFailedInvalidRedirect = 'PrefetchFailedInvalidRedirect',
+    PrefetchFailedMIMENotSupported = 'PrefetchFailedMIMENotSupported',
+    PrefetchFailedNetError = 'PrefetchFailedNetError',
+    PrefetchFailedNon2XX = 'PrefetchFailedNon2XX',
+    PrefetchFailedPerPageLimitExceeded = 'PrefetchFailedPerPageLimitExceeded',
+    PrefetchEvictedAfterCandidateRemoved = 'PrefetchEvictedAfterCandidateRemoved',
+    PrefetchEvictedForNewerPrefetch = 'PrefetchEvictedForNewerPrefetch',
+    PrefetchHeldback = 'PrefetchHeldback',
+    PrefetchIneligibleRetryAfter = 'PrefetchIneligibleRetryAfter',
+    PrefetchIsPrivacyDecoy = 'PrefetchIsPrivacyDecoy',
+    PrefetchIsStale = 'PrefetchIsStale',
+    PrefetchNotEligibleBrowserContextOffTheRecord = 'PrefetchNotEligibleBrowserContextOffTheRecord',
+    PrefetchNotEligibleDataSaverEnabled = 'PrefetchNotEligibleDataSaverEnabled',
+    PrefetchNotEligibleExistingProxy = 'PrefetchNotEligibleExistingProxy',
+    PrefetchNotEligibleHostIsNonUnique = 'PrefetchNotEligibleHostIsNonUnique',
+    PrefetchNotEligibleNonDefaultStoragePartition = 'PrefetchNotEligibleNonDefaultStoragePartition',
+    PrefetchNotEligibleSameSiteCrossOriginPrefetchRequiredProxy = 'PrefetchNotEligibleSameSiteCrossOriginPrefetchRequiredProxy',
+    PrefetchNotEligibleSchemeIsNotHttps = 'PrefetchNotEligibleSchemeIsNotHttps',
+    PrefetchNotEligibleUserHasCookies = 'PrefetchNotEligibleUserHasCookies',
+    PrefetchNotEligibleUserHasServiceWorker = 'PrefetchNotEligibleUserHasServiceWorker',
+    PrefetchNotEligibleBatterySaverEnabled = 'PrefetchNotEligibleBatterySaverEnabled',
+    PrefetchNotEligiblePreloadingDisabled = 'PrefetchNotEligiblePreloadingDisabled',
+    PrefetchNotFinishedInTime = 'PrefetchNotFinishedInTime',
+    PrefetchNotStarted = 'PrefetchNotStarted',
+    PrefetchNotUsedCookiesChanged = 'PrefetchNotUsedCookiesChanged',
+    PrefetchProxyNotAvailable = 'PrefetchProxyNotAvailable',
+    PrefetchResponseUsed = 'PrefetchResponseUsed',
+    PrefetchSuccessfulButNotUsed = 'PrefetchSuccessfulButNotUsed',
+    PrefetchNotUsedProbeFailed = 'PrefetchNotUsedProbeFailed',
+  }
+
+  /**
+   * Information of headers to be displayed when the header mismatch occurred.
+   */
+  export interface PrerenderMismatchedHeaders {
+    headerName: string;
+    initialValue?: string;
+    activationValue?: string;
   }
 
   /**
@@ -15408,6 +16519,152 @@ export namespace Preload {
 
   export interface RuleSetRemovedEvent {
     id: RuleSetId;
+  }
+
+  /**
+   * Fired when a preload enabled state is updated.
+   */
+  export interface PreloadEnabledStateUpdatedEvent {
+    disabledByPreference: boolean;
+    disabledByDataSaver: boolean;
+    disabledByBatterySaver: boolean;
+    disabledByHoldbackPrefetchSpeculationRules: boolean;
+    disabledByHoldbackPrerenderSpeculationRules: boolean;
+  }
+
+  /**
+   * Fired when a prefetch attempt is updated.
+   */
+  export interface PrefetchStatusUpdatedEvent {
+    key: PreloadingAttemptKey;
+    /**
+     * The frame id of the frame initiating prefetch.
+     */
+    initiatingFrameId: Page.FrameId;
+    prefetchUrl: string;
+    status: PreloadingStatus;
+    prefetchStatus: PrefetchStatus;
+    requestId: Network.RequestId;
+  }
+
+  /**
+   * Fired when a prerender attempt is updated.
+   */
+  export interface PrerenderStatusUpdatedEvent {
+    key: PreloadingAttemptKey;
+    status: PreloadingStatus;
+    prerenderStatus?: PrerenderFinalStatus;
+    /**
+     * This is used to give users more information about the name of Mojo interface
+     * that is incompatible with prerender and has caused the cancellation of the attempt.
+     */
+    disallowedMojoInterface?: string;
+    mismatchedHeaders?: PrerenderMismatchedHeaders[];
+  }
+
+  /**
+   * Send a list of sources for all preloading attempts in a document.
+   */
+  export interface PreloadingAttemptSourcesUpdatedEvent {
+    loaderId: Network.LoaderId;
+    preloadingAttemptSources: PreloadingAttemptSource[];
+  }
+}
+
+/**
+ * This domain allows interacting with the FedCM dialog.
+ */
+export namespace FedCm {
+
+  /**
+   * Whether this is a sign-up or sign-in action for this account, i.e.
+   * whether this account has ever been used to sign in to this RP before.
+   */
+  export const enum LoginState {
+    SignIn = 'SignIn',
+    SignUp = 'SignUp',
+  }
+
+  /**
+   * The types of FedCM dialogs.
+   */
+  export const enum DialogType {
+    AccountChooser = 'AccountChooser',
+    AutoReauthn = 'AutoReauthn',
+    ConfirmIdpLogin = 'ConfirmIdpLogin',
+    Error = 'Error',
+  }
+
+  /**
+   * The buttons on the FedCM dialog.
+   */
+  export const enum DialogButton {
+    ConfirmIdpLoginContinue = 'ConfirmIdpLoginContinue',
+    ErrorGotIt = 'ErrorGotIt',
+    ErrorMoreDetails = 'ErrorMoreDetails',
+  }
+
+  /**
+   * Corresponds to IdentityRequestAccount
+   */
+  export interface Account {
+    accountId: string;
+    email: string;
+    name: string;
+    givenName: string;
+    pictureUrl: string;
+    idpConfigUrl: string;
+    idpLoginUrl: string;
+    loginState: LoginState;
+    /**
+     * These two are only set if the loginState is signUp
+     */
+    termsOfServiceUrl?: string;
+    privacyPolicyUrl?: string;
+  }
+
+  export interface EnableRequest {
+    /**
+     * Allows callers to disable the promise rejection delay that would
+     * normally happen, if this is unimportant to what's being tested.
+     * (step 4 of https://fedidcg.github.io/FedCM/#browser-api-rp-sign-in)
+     */
+    disableRejectionDelay?: boolean;
+  }
+
+  export interface SelectAccountRequest {
+    dialogId: string;
+    accountIndex: integer;
+  }
+
+  export interface ClickDialogButtonRequest {
+    dialogId: string;
+    dialogButton: DialogButton;
+  }
+
+  export interface DismissDialogRequest {
+    dialogId: string;
+    triggerCooldown?: boolean;
+  }
+
+  export interface DialogShownEvent {
+    dialogId: string;
+    dialogType: DialogType;
+    accounts: Account[];
+    /**
+     * These exist primarily so that the caller can verify the
+     * RP context was used appropriately.
+     */
+    title: string;
+    subtitle?: string;
+  }
+
+  /**
+   * Triggered when a dialog is closed, either by user action, JS abort,
+   * or a command below.
+   */
+  export interface DialogClosedEvent {
+    dialogId: string;
   }
 }
 
@@ -16168,6 +17425,7 @@ export namespace Debugger {
     Other = 'other',
     PromiseRejection = 'promiseRejection',
     XHR = 'XHR',
+    Step = 'step',
   }
 
   /**
@@ -16241,7 +17499,7 @@ export namespace Debugger {
      */
     hash: string;
     /**
-     * Embedder-specific auxiliary data.
+     * Embedder-specific auxiliary data likely matching {isDefault: boolean, type: 'default'|'isolated'|'worker', frameId: string}
      */
     executionContextAuxData?: any;
     /**
@@ -16316,7 +17574,7 @@ export namespace Debugger {
      */
     hash: string;
     /**
-     * Embedder-specific auxiliary data.
+     * Embedder-specific auxiliary data likely matching {isDefault: boolean, type: 'default'|'isolated'|'worker', frameId: string}
      */
     executionContextAuxData?: any;
     /**
@@ -16819,7 +18077,30 @@ export namespace Runtime {
    */
   export type ScriptId = OpaqueIdentifier<string, 'Protocol.Runtime.ScriptId'>;
 
-  export const enum WebDriverValueType {
+  export const enum SerializationOptionsSerialization {
+    Deep = 'deep',
+    Json = 'json',
+    IdOnly = 'idOnly',
+  }
+
+  /**
+   * Represents options for serialization. Overrides `generatePreview` and `returnByValue`.
+   */
+  export interface SerializationOptions {
+    serialization: SerializationOptionsSerialization;
+    /**
+     * Deep serialization depth. Default is full depth. Respected only in `deep` serialization mode.
+     */
+    maxDepth?: integer;
+    /**
+     * Embedder-specific parameters. For example if connected to V8 in Chrome these control DOM
+     * serialization via `maxNodeDepth: integer` and `includeShadowTree: "none" | "open" | "all"`.
+     * Values can be only of type string or integer.
+     */
+    additionalParameters?: any;
+  }
+
+  export const enum DeepSerializedValueType {
     Undefined = 'undefined',
     Null = 'null',
     String = 'string',
@@ -16843,16 +18124,22 @@ export namespace Runtime {
     Arraybuffer = 'arraybuffer',
     Node = 'node',
     Window = 'window',
+    Generator = 'generator',
   }
 
   /**
-   * Represents the value serialiazed by the WebDriver BiDi specification
-   * https://w3c.github.io/webdriver-bidi.
+   * Represents deep serialized value.
    */
-  export interface WebDriverValue {
-    type: WebDriverValueType;
+  export interface DeepSerializedValue {
+    type: DeepSerializedValueType;
     value?: any;
     objectId?: string;
+    /**
+     * Set if value reference met more then once during serialization. In such
+     * case, value is provided only to one of the serialized values. Unique
+     * per value in the scope of one CDP call.
+     */
+    weakLocalObjectReference?: integer;
   }
 
   /**
@@ -16931,9 +18218,9 @@ export namespace Runtime {
      */
     description?: string;
     /**
-     * WebDriver BiDi representation of the value.
+     * Deep serialized value.
      */
-    webDriverValue?: WebDriverValue;
+    deepSerializedValue?: DeepSerializedValue;
     /**
      * Unique object identifier (for non-primitive values).
      */
@@ -17226,7 +18513,7 @@ export namespace Runtime {
      */
     uniqueId: string;
     /**
-     * Embedder-specific auxiliary data.
+     * Embedder-specific auxiliary data likely matching {isDefault: boolean, type: 'default'|'isolated'|'worker', frameId: string}
      */
     auxData?: any;
   }
@@ -17401,6 +18688,7 @@ export namespace Runtime {
     silent?: boolean;
     /**
      * Whether the result is expected to be a JSON object which should be sent by value.
+     * Can be overriden by `serializationOptions`.
      */
     returnByValue?: boolean;
     /**
@@ -17440,11 +18728,10 @@ export namespace Runtime {
      */
     uniqueContextId?: string;
     /**
-     * Whether the result should contain `webDriverValue`, serialized according to
-     * https://w3c.github.io/webdriver-bidi. This is mutually exclusive with `returnByValue`, but
-     * resulting `objectId` is still provided.
+     * Specifies the result serialization. If provided, overrides
+     * `generatePreview` and `returnByValue`.
      */
-    generateWebDriverValue?: boolean;
+    serializationOptions?: SerializationOptions;
   }
 
   export interface CallFunctionOnResponse extends ProtocolResponseWithError {
@@ -17568,9 +18855,10 @@ export namespace Runtime {
      */
     uniqueContextId?: string;
     /**
-     * Whether the result should be serialized according to https://w3c.github.io/webdriver-bidi.
+     * Specifies the result serialization. If provided, overrides
+     * `generatePreview` and `returnByValue`.
      */
-    generateWebDriverValue?: boolean;
+    serializationOptions?: SerializationOptions;
   }
 
   export interface EvaluateResponse extends ProtocolResponseWithError {

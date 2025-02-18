@@ -49,16 +49,18 @@
 #include "third_party/blink/renderer/core/editing/text_affinity.h"
 #include "third_party/blink/renderer/core/editing/visible_position.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
+#include "third_party/blink/renderer/core/html/forms/html_input_element.h"
+#include "third_party/blink/renderer/core/html/forms/html_text_area_element.h"
 #include "third_party/blink/renderer/core/html/forms/text_control_inner_elements.h"
 #include "third_party/blink/renderer/core/html/html_br_element.h"
 #include "third_party/blink/renderer/core/html/html_div_element.h"
 #include "third_party/blink/renderer/core/html/parser/html_parser_idioms.h"
 #include "third_party/blink/renderer/core/html/shadow/shadow_element_names.h"
 #include "third_party/blink/renderer/core/html_names.h"
+#include "third_party/blink/renderer/core/layout/inline/fragment_items.h"
+#include "third_party/blink/renderer/core/layout/inline/inline_cursor.h"
+#include "third_party/blink/renderer/core/layout/inline/offset_mapping.h"
 #include "third_party/blink/renderer/core/layout/layout_block_flow.h"
-#include "third_party/blink/renderer/core/layout/ng/inline/ng_fragment_items.h"
-#include "third_party/blink/renderer/core/layout/ng/inline/ng_inline_cursor.h"
-#include "third_party/blink/renderer/core/layout/ng/inline/ng_offset_mapping.h"
 #include "third_party/blink/renderer/core/page/focus_controller.h"
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/platform/bindings/exception_messages.h"
@@ -71,17 +73,16 @@ namespace blink {
 
 namespace {
 
-Position GetNextSoftBreak(const NGOffsetMapping& mapping,
-                          NGInlineCursor& cursor) {
+Position GetNextSoftBreak(const OffsetMapping& mapping, InlineCursor& cursor) {
   while (cursor) {
     DCHECK(cursor.Current().IsLineBox()) << cursor;
-    const auto* break_token = cursor.Current().InlineBreakToken();
+    const auto* break_token = cursor.Current().GetInlineBreakToken();
     cursor.MoveToNextLine();
     // We don't need to emit a LF for the last line.
     if (!cursor)
       return Position();
     if (break_token && !break_token->IsForcedBreak())
-      return mapping.GetFirstPosition(break_token->TextOffset());
+      return mapping.GetFirstPosition(break_token->StartTextOffset());
   }
   return Position();
 }
@@ -129,9 +130,11 @@ void TextControlElement::DispatchBlurEvent(
 
 void TextControlElement::DefaultEventHandler(Event& event) {
   if (event.type() == event_type_names::kWebkitEditableContentChanged &&
-      GetLayoutObject() && GetLayoutObject()->IsTextControlIncludingNG()) {
+      GetLayoutObject() && GetLayoutObject()->IsTextControl()) {
     last_change_was_user_edit_ = !GetDocument().IsRunningExecCommand();
-    user_has_edited_the_field_ |= last_change_was_user_edit_;
+    if (last_change_was_user_edit_) {
+      SetUserHasEditedTheField();
+    }
 
     if (IsFocused()) {
       // Updating the cache in SelectionChanged() isn't enough because
@@ -157,7 +160,9 @@ void TextControlElement::ForwardEvent(Event& event) {
   if (event.type() == event_type_names::kBlur ||
       event.type() == event_type_names::kFocus)
     return;
-  InnerEditorElement()->DefaultEventHandler(event);
+  if (auto* inner_editor = InnerEditorElement()) {
+    inner_editor->DefaultEventHandler(event);
+  }
 }
 
 String TextControlElement::StrippedPlaceholder() const {
@@ -181,47 +186,47 @@ String TextControlElement::StrippedPlaceholder() const {
   return stripped.ToString();
 }
 
-static bool IsNotLineBreak(UChar ch) {
-  return ch != kNewlineCharacter && ch != kCarriageReturnCharacter;
-}
-
-bool TextControlElement::IsPlaceholderEmpty() const {
-  const AtomicString& attribute_value =
-      FastGetAttribute(html_names::kPlaceholderAttr);
-  return attribute_value.GetString().Find(IsNotLineBreak) == kNotFound;
-}
-
 bool TextControlElement::PlaceholderShouldBeVisible() const {
   return SupportsPlaceholder() && InnerEditorValue().empty() &&
-         !IsPlaceholderEmpty() && SuggestedValue().empty();
+         FastHasAttribute(html_names::kPlaceholderAttr) &&
+         SuggestedValue().empty();
 }
 
 HTMLElement* TextControlElement::PlaceholderElement() const {
+  ShadowRoot* root = UserAgentShadowRoot();
+  if (!root) {
+    return nullptr;
+  }
   if (!SupportsPlaceholder())
     return nullptr;
-  DCHECK(UserAgentShadowRoot());
-  auto* element = UserAgentShadowRoot()->getElementById(
-      shadow_element_names::kIdPlaceholder);
+  auto* element = root->getElementById(shadow_element_names::kIdPlaceholder);
   CHECK(!element || IsA<HTMLElement>(element));
   return To<HTMLElement>(element);
 }
 
 void TextControlElement::UpdatePlaceholderVisibility() {
+  bool place_holder_was_visible = IsPlaceholderVisible();
   HTMLElement* placeholder = PlaceholderElement();
   if (!placeholder) {
     UpdatePlaceholderText();
-    SetPlaceholderVisibility(PlaceholderShouldBeVisible());
-    return;
+    placeholder = PlaceholderElement();
   }
-
-  bool place_holder_was_visible = IsPlaceholderVisible();
   SetPlaceholderVisibility(PlaceholderShouldBeVisible());
 
-  placeholder->SetInlineStyleProperty(
-      CSSPropertyID::kDisplay,
-      IsPlaceholderVisible() || !SuggestedValue().empty() ? CSSValueID::kBlock
-                                                          : CSSValueID::kNone,
-      true);
+  if (placeholder) {
+    placeholder->SetInlineStyleProperty(
+        CSSPropertyID::kDisplay,
+        // The placeholder "element" is used to display both the placeholder
+        // "value" and the suggested value. Which is why even if the placeholder
+        // value is not visible, we still show the placeholder element during a
+        // preview state so that the suggested value becomes visible. This
+        // mechanism will change, since Autofill previews are expected to move
+        // to the browser process (as per crbug.com/1474969).
+        IsPlaceholderVisible() || !SuggestedValue().IsNull()
+            ? CSSValueID::kBlock
+            : CSSValueID::kNone,
+        true);
+  }
 
   // If there was a visibility change not caused by the suggested value, set
   // that the pseudo state changed.
@@ -251,7 +256,7 @@ void TextControlElement::select() {
   // the selection.
   Focus(FocusParams(SelectionBehaviorOnFocus::kNone,
                     mojom::blink::FocusType::kScript, nullptr,
-                    FocusOptions::Create(), /*gate_on_user_activation=*/true));
+                    FocusOptions::Create()));
   RestoreCachedSelection();
 }
 
@@ -286,6 +291,11 @@ void TextControlElement::SetFocused(bool flag,
 }
 
 void TextControlElement::DispatchFormControlChangeEvent() {
+  if (UserHasEditedTheField()) {
+    // If the user has edited the field, then at this point we should also start
+    // matching :user-valid/:user-invalid.
+    SetUserHasEditedTheFieldAndBlurred();
+  }
   if (!value_before_first_user_edit_.IsNull() &&
       !EqualIgnoringNullity(value_before_first_user_edit_, Value())) {
     ClearValueBeforeFirstUserEdit();
@@ -481,7 +491,7 @@ bool TextControlElement::SetSelectionRange(
   if (ShouldApplySelectionCache() || !isConnected())
     return did_change;
 
-  HTMLElement* inner_editor = InnerEditorElement();
+  HTMLElement* inner_editor = EnsureInnerEditorElement();
   if (!frame || !inner_editor)
     return did_change;
 
@@ -833,8 +843,9 @@ Node* TextControlElement::CreatePlaceholderBreakElement() const {
 void TextControlElement::AddPlaceholderBreakElementIfNecessary() {
   HTMLElement* inner_editor = InnerEditorElement();
   if (inner_editor->GetLayoutObject() &&
-      !inner_editor->GetLayoutObject()->Style()->PreserveNewline())
+      inner_editor->GetLayoutObject()->Style()->ShouldCollapseBreaks()) {
     return;
+  }
   auto* last_child_text_node = DynamicTo<Text>(inner_editor->lastChild());
   if (!last_child_text_node)
     return;
@@ -848,10 +859,8 @@ void TextControlElement::SetInnerEditorValue(const String& value) {
   if (!IsTextControl() || OpenShadowRoot())
     return;
 
-  DCHECK(InnerEditorElement());
-
   bool text_is_changed = value != InnerEditorValue();
-  HTMLElement* inner_editor = InnerEditorElement();
+  HTMLElement* inner_editor = EnsureInnerEditorElement();
   if (!text_is_changed && inner_editor->HasChildren())
     return;
 
@@ -908,24 +917,6 @@ String TextControlElement::InnerEditorValue() const {
   return result.ToString();
 }
 
-static void GetNextSoftBreak(RootInlineBox*& line,
-                             Node*& break_node,
-                             unsigned& break_offset) {
-  RootInlineBox* next;
-  for (; line; line = next) {
-    next = line->NextRootBox();
-    if (next && !line->EndsWithBreak()) {
-      DCHECK(line->LineBreakObj());
-      break_node = line->LineBreakObj().GetNode();
-      break_offset = line->LineBreakPos();
-      line = next;
-      return;
-    }
-  }
-  break_node = nullptr;
-  break_offset = 0;
-}
-
 String TextControlElement::ValueWithHardLineBreaks() const {
   // FIXME: It's not acceptable to ignore the HardWrap setting when there is no
   // layoutObject.  While we have no evidence this has ever been a practical
@@ -939,10 +930,10 @@ String TextControlElement::ValueWithHardLineBreaks() const {
     return Value();
 
   if (layout_object->IsLayoutNGObject()) {
-    NGInlineCursor cursor(*layout_object);
+    InlineCursor cursor(*layout_object);
     if (!cursor)
       return Value();
-    const auto* mapping = NGInlineNode::GetOffsetMapping(layout_object);
+    const auto* mapping = InlineNode::GetOffsetMapping(layout_object);
     if (!mapping)
       return Value();
     Position break_position = GetNextSoftBreak(*mapping, cursor);
@@ -973,36 +964,7 @@ String TextControlElement::ValueWithHardLineBreaks() const {
     return result.ToString();
   }
 
-  Node* break_node;
-  unsigned break_offset;
-  RootInlineBox* line = layout_object->FirstRootBox();
-  if (!line)
-    return Value();
-
-  GetNextSoftBreak(line, break_node, break_offset);
-
-  StringBuilder result;
-  for (Node& node : NodeTraversal::DescendantsOf(*inner_text)) {
-    if (IsA<HTMLBRElement>(node)) {
-      DCHECK_EQ(&node, inner_text->lastChild());
-    } else if (auto* text_node = DynamicTo<Text>(node)) {
-      String data = text_node->data();
-      unsigned length = data.length();
-      unsigned position = 0;
-      while (break_node == node && break_offset <= length) {
-        if (break_offset > position) {
-          result.Append(data, position, break_offset - position);
-          position = break_offset;
-          result.Append(kNewlineCharacter);
-        }
-        GetNextSoftBreak(line, break_node, break_offset);
-      }
-      result.Append(data, position, length - position);
-    }
-    while (break_node == node)
-      GetNextSoftBreak(line, break_node, break_offset);
-  }
-  return result.ToString();
+  return Value();
 }
 
 TextControlElement* EnclosingTextControl(const Position& position) {
@@ -1038,8 +1000,13 @@ String TextControlElement::DirectionForFormData() const {
        element = Traversal<HTMLElement>::FirstAncestor(*element)) {
     const AtomicString& dir_attribute_value =
         element->FastGetAttribute(html_names::kDirAttr);
-    if (dir_attribute_value.IsNull())
+    if (dir_attribute_value.IsNull()) {
+      auto* input_element = DynamicTo<HTMLInputElement>(*this);
+      if (input_element && input_element->IsTelephone()) {
+        break;
+      }
       continue;
+    }
 
     if (EqualIgnoringASCIICase(dir_attribute_value, "rtl") ||
         EqualIgnoringASCIICase(dir_attribute_value, "ltr"))
@@ -1064,22 +1031,21 @@ void TextControlElement::SetAutofillValue(const String& value,
            value.empty() ? WebAutofillState::kNotFilled : autofill_state);
 }
 
-// TODO(crbug.com/772433): Create and use a new suggested-value element instead.
 void TextControlElement::SetSuggestedValue(const String& value) {
   // Avoid calling maxLength() if possible as it's non-trivial.
   const String new_suggested_value =
       value.empty() ? value : value.Substring(0, maxLength());
-  if (new_suggested_value == suggested_value_)
+  if (new_suggested_value == suggested_value_) {
     return;
+  }
   suggested_value_ = new_suggested_value;
 
-  if (!suggested_value_.empty() && !InnerEditorValue().empty()) {
-    // If there is an inner editor value, hide it so the suggested value can be
-    // shown to the user.
+  // A null value indicates that the inner editor value should be shown, and a
+  // non-null one indicates it should be hidden so that the suggested value can
+  // be shown.
+  if (!value.IsNull() && !InnerEditorValue().empty()) {
     InnerEditorElement()->SetVisibility(false);
-  } else if (suggested_value_.empty() && InnerEditorElement()) {
-    // If there is no suggested value and there is an InnerEditorElement, reset
-    // its visibility.
+  } else if (value.IsNull() && InnerEditorElement()) {
     InnerEditorElement()->SetVisibility(true);
   }
 
@@ -1106,7 +1072,7 @@ HTMLElement* TextControlElement::CreateInnerEditorElement() {
   DCHECK(!inner_editor_);
   inner_editor_ =
       MakeGarbageCollected<TextControlInnerEditorElement>(GetDocument());
-  return inner_editor_;
+  return inner_editor_.Get();
 }
 
 const String& TextControlElement::SuggestedValue() const {
@@ -1120,12 +1086,12 @@ void TextControlElement::Trace(Visitor* visitor) const {
 
 void TextControlElement::CloneNonAttributePropertiesFrom(
     const Element& source,
-    CloneChildrenFlag flag) {
+    NodeCloningData& data) {
   const TextControlElement& source_element =
       static_cast<const TextControlElement&>(source);
   last_change_was_user_edit_ = source_element.last_change_was_user_edit_;
-  user_has_edited_the_field_ = source_element.user_has_edited_the_field_;
-  HTMLFormControlElement::CloneNonAttributePropertiesFrom(source, flag);
+  interacted_state_ = source_element.interacted_state_;
+  HTMLFormControlElement::CloneNonAttributePropertiesFrom(source, data);
 }
 
 ETextOverflow TextControlElement::ValueForTextOverflow() const {

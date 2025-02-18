@@ -33,8 +33,9 @@
 #include <memory>
 #include <utility>
 
-#include "base/allocator/partition_allocator/page_allocator.h"
+#include "base/allocator/partition_allocator/src/partition_alloc/page_allocator.h"
 #include "base/command_line.h"
+#include "base/ranges/algorithm.h"
 #include "base/task/single_thread_task_runner.h"
 #include "build/build_config.h"
 #include "mojo/public/cpp/bindings/binder_map.h"
@@ -79,7 +80,7 @@
 #endif
 
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID) || \
-    BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
+    BUILDFLAG(IS_APPLE) || BUILDFLAG(IS_WIN)
 #include "third_party/blink/renderer/controller/highest_pmf_reporter.h"
 #include "third_party/blink/renderer/controller/user_level_memory_pressure_signal_generator.h"
 #endif
@@ -98,11 +99,7 @@ class EndOfTaskRunner : public Thread::TaskObserver {
   void WillProcessTask(const base::PendingTask&, bool) override {
     AnimationClock::NotifyTaskStart();
   }
-
-  void DidProcessTask(const base::PendingTask&) override {
-    // TODO(tzik): Move rejected promise handling to EventLoop.
-    V8Initializer::ReportRejectedPromisesOnMainThread();
-  }
+  void DidProcessTask(const base::PendingTask& pending_task) override {}
 };
 
 Thread::TaskObserver* g_end_of_task_runner = nullptr;
@@ -119,8 +116,9 @@ void InitializeCommon(Platform* platform, mojo::BinderMap* binders) {
   // Reserve address space on 32 bit Windows, to make it likelier that large
   // array buffer allocations succeed.
   BOOL is_wow_64 = -1;
-  if (!IsWow64Process(GetCurrentProcess(), &is_wow_64))
+  if (!IsWow64Process(GetCurrentProcess(), &is_wow_64)) {
     is_wow_64 = FALSE;
+  }
   if (!is_wow_64) {
     // Try to reserve as much address space as we reasonably can.
     const size_t kMB = 1024 * 1024;
@@ -146,8 +144,8 @@ void InitializeCommon(Platform* platform, mojo::BinderMap* binders) {
   std::string js_command_line_flag =
       base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
           blink::switches::kJavaScriptFlags);
-  V8Initializer::InitializeMainThread(V8ContextSnapshot::GetReferenceTable(),
-                                      js_command_line_flag);
+  blink::V8Initializer::InitializeIsolateHolder(
+      blink::V8ContextSnapshot::GetReferenceTable(), js_command_line_flag);
 
   GetBlinkInitializer().RegisterInterfaces(*binders);
 
@@ -155,10 +153,15 @@ void InitializeCommon(Platform* platform, mojo::BinderMap* binders) {
   g_end_of_task_runner = new EndOfTaskRunner;
   Thread::Current()->AddTaskObserver(g_end_of_task_runner);
 
-  GetBlinkInitializer().RegisterMemoryWatchers();
+  GetBlinkInitializer().RegisterMemoryWatchers(platform);
 
   // Initialize performance manager.
   RendererResourceCoordinatorImpl::MaybeInitialize();
+
+  // The ArrayBuffer partition is placed inside V8's virtual memory cage if it
+  // is enabled. For that reason, the partition can only be initialized after V8
+  // has been initialized.
+  WTF::Partitions::InitializeArrayBufferPartition();
 }
 
 }  // namespace
@@ -170,6 +173,7 @@ void Initialize(Platform* platform,
   DCHECK(binders);
   Platform::InitializeMainThread(platform, main_thread_scheduler);
   InitializeCommon(platform, binders);
+  V8Initializer::InitializeMainThread();
 }
 
 // Function defined in third_party/blink/public/web/blink.h.
@@ -180,9 +184,26 @@ void CreateMainThreadAndInitialize(Platform* platform,
   InitializeCommon(platform, binders);
 }
 
+void InitializeWithoutIsolateForTesting(
+    Platform* platform,
+    mojo::BinderMap* binders,
+    scheduler::WebThreadScheduler* main_thread_scheduler) {
+  Platform::InitializeMainThread(platform, main_thread_scheduler);
+  InitializeCommon(platform, binders);
+}
+
+v8::Isolate* CreateMainThreadIsolate() {
+  return V8Initializer::InitializeMainThread();
+}
+
 // Function defined in third_party/blink/public/web/blink.h.
 void SetIsCrossOriginIsolated(bool value) {
   Agent::SetIsCrossOriginIsolated(value);
+}
+
+// Function defined in third_party/blink/public/web/blink.h.
+void SetIsWebSecurityDisabled(bool value) {
+  Agent::SetIsWebSecurityDisabled(value);
 }
 
 // Function defined in third_party/blink/public/web/blink.h.
@@ -191,14 +212,18 @@ void SetIsIsolatedContext(bool value) {
 }
 
 // Function defined in third_party/blink/public/web/blink.h.
+bool IsIsolatedContext() {
+  return Agent::IsIsolatedContext();
+}
+
+// Function defined in third_party/blink/public/web/blink.h.
 void SetCorsExemptHeaderList(
     const WebVector<WebString>& web_cors_exempt_header_list) {
   Vector<String> cors_exempt_header_list(
       base::checked_cast<wtf_size_t>(web_cors_exempt_header_list.size()));
-  std::transform(web_cors_exempt_header_list.begin(),
-                 web_cors_exempt_header_list.end(),
-                 cors_exempt_header_list.begin(),
-                 [](const WebString& h) { return WTF::String(h); });
+  base::ranges::transform(web_cors_exempt_header_list,
+                          cors_exempt_header_list.begin(),
+                          &WebString::operator WTF::String);
   LoaderFactoryForFrame::SetCorsExemptHeaderList(
       std::move(cors_exempt_header_list));
 }
@@ -245,26 +270,29 @@ void BlinkInitializer::RegisterInterfaces(mojo::BinderMap& binders) {
       main_thread_task_runner);
 }
 
-void BlinkInitializer::RegisterMemoryWatchers() {
+void BlinkInitializer::RegisterMemoryWatchers(Platform* platform) {
   scoped_refptr<base::SingleThreadTaskRunner> main_thread_task_runner =
       Thread::MainThread()->GetTaskRunner(MainThreadTaskRunnerRestricted());
 #if BUILDFLAG(IS_ANDROID)
   // Initialize CrashMemoryMetricsReporterImpl in order to assure that memory
   // allocation does not happen in OnOOMCallback.
   CrashMemoryMetricsReporterImpl::Instance();
+
+  // Initialize UserLevelMemoryPressureSignalGenerator so it starts monitoring.
+  if (platform->IsUserLevelMemoryPressureSignalEnabled()) {
+    UserLevelMemoryPressureSignalGenerator::Initialize(platform,
+                                                       main_thread_task_runner);
+  }
 #endif
 
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID) || \
-    BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
-  // Initialize UserLevelMemoryPressureSignalGenerator so it starts monitoring.
-  UserLevelMemoryPressureSignalGenerator::Initialize(main_thread_task_runner);
-
+    BUILDFLAG(IS_APPLE) || BUILDFLAG(IS_WIN)
   // Start reporting the highest private memory footprint after the first
   // navigation.
   HighestPmfReporter::Initialize(main_thread_task_runner);
 #endif
 
-#if BUILDFLAG(IS_ANDROID) && !defined(ARCH_CPU_64_BITS)
+#if BUILDFLAG(IS_ANDROID)
   // Initialize PrivateMemoryFootprintProvider to start providing the value
   // for the browser process.
   PrivateMemoryFootprintProvider::Initialize(main_thread_task_runner);

@@ -12,10 +12,13 @@
 #include "color_chooser_qt.h"
 #include "custom_handlers/protocol_handler_registry_factory.h"
 #include "custom_handlers/register_protocol_handler_request_controller_impl.h"
+#include "desktop_media_controller.h"
+#include "desktop_media_controller_p.h"
 #include "file_picker_controller.h"
 #include "find_text_helper.h"
 #include "javascript_dialog_manager_qt.h"
 #include "media_capture_devices_dispatcher.h"
+#include "native_web_keyboard_event_qt.h"
 #include "profile_adapter.h"
 #include "profile_qt.h"
 #include "qwebengineloadinginfo.h"
@@ -244,9 +247,9 @@ void WebContentsDelegateQt::LoadProgressChanged(double progress)
 
 bool WebContentsDelegateQt::HandleKeyboardEvent(content::WebContents *, const content::NativeWebKeyboardEvent &event)
 {
-    Q_ASSERT(!event.skip_in_browser);
+    Q_ASSERT(!event.skip_if_unhandled);
     if (event.os_event)
-        m_viewClient->unhandledKeyEvent(reinterpret_cast<QKeyEvent *>(event.os_event));
+        m_viewClient->unhandledKeyEvent(ToKeyEvent(event.os_event));
     // FIXME: ?
     return true;
 }
@@ -476,6 +479,14 @@ void WebContentsDelegateQt::DidStopLoading()
     m_loadingInfo.clear();
 }
 
+void WebContentsDelegateQt::emitLoadSucceeded(const QUrl &url)
+{
+    // Used by CustomURLLoader to emit LoadSucceeded bypassing the inner state of this delegate
+    m_viewClient->loadFinished(
+            QWebEngineLoadingInfo(url, QWebEngineLoadingInfo::LoadSucceededStatus));
+    m_viewClient->updateNavigationActions();
+}
+
 void WebContentsDelegateQt::didFailLoad(const QUrl &url, int errorCode, const QString &errorDescription)
 {
     m_viewClient->iconChanged(QUrl());
@@ -618,9 +629,45 @@ void WebContentsDelegateQt::FindReply(content::WebContents *source, int request_
     m_findTextHelper->handleFindReply(source, request_id, number_of_matches, selection_rect, active_match_ordinal, final_update);
 }
 
+static void processMediaAccessRequest(content::WebContents *webContents,
+                                      const content::MediaStreamRequest &request,
+                                      content::MediaResponseCallback callback,
+                                      content::DesktopMediaID id)
+{
+    MediaCaptureDevicesDispatcher::GetInstance()->processMediaAccessRequest(
+            webContents, request, std::move(callback), id);
+}
+
+static inline bool needsPickerDialog(const content::MediaStreamRequest &request)
+{
+    return (request.requested_video_device_id.empty() && // device already selected in chooseDesktopMedia
+            (request.video_type == blink::mojom::MediaStreamType::GUM_DESKTOP_VIDEO_CAPTURE
+            || request.video_type == blink::mojom::MediaStreamType::DISPLAY_VIDEO_CAPTURE));
+}
+
 void WebContentsDelegateQt::RequestMediaAccessPermission(content::WebContents *web_contents, const content::MediaStreamRequest &request,  content::MediaResponseCallback callback)
 {
-    MediaCaptureDevicesDispatcher::GetInstance()->processMediaAccessRequest(web_contents, request, std::move(callback));
+    if (needsPickerDialog(request)) {
+#if QT_CONFIG(webengine_webrtc)
+        base::OnceCallback<void(content::DesktopMediaID)> cb = base::BindOnce(
+                &processMediaAccessRequest, web_contents, std::move(request), std::move(callback));
+        // ownership is taken by the request
+        auto *controller = new DesktopMediaController(
+                new DesktopMediaControllerPrivate(std::move(cb)));
+        QObject::connect(controller, &DesktopMediaController::mediaListsInitialized, [controller, delegate = AsWeakPtr()]() {
+            if (delegate)
+                delegate->adapterClient()->desktopMediaRequested(controller);
+            else
+                controller->deleteLater();
+        });
+#else
+    // To keep the old behavior return the default screen even if webrtc is disabled
+    processMediaAccessRequest(web_contents, std::move(request), std::move(callback),
+                              content::DesktopMediaID(content::DesktopMediaID::TYPE_SCREEN, 0));
+#endif  // QT_CONFIG(webengine_webrtc)
+    } else {
+        processMediaAccessRequest(web_contents, std::move(request), std::move(callback), {});
+    }
 }
 
 void WebContentsDelegateQt::SetContentsBounds(content::WebContents *source, const gfx::Rect &bounds)
@@ -694,9 +741,9 @@ void WebContentsDelegateQt::selectClientCert(const QSharedPointer<ClientCertSele
     m_viewClient->selectClientCert(selectController);
 }
 
-void WebContentsDelegateQt::requestFeaturePermission(ProfileAdapter::PermissionType feature, const QUrl &requestingOrigin)
+void WebContentsDelegateQt::requestFeaturePermission(QWebEnginePermission::PermissionType permissionType, const QUrl &requestingOrigin)
 {
-    m_viewClient->runFeaturePermissionRequest(feature, requestingOrigin);
+    m_viewClient->runFeaturePermissionRequest(permissionType, requestingOrigin);
 }
 
 extern WebContentsAdapterClient::NavigationType pageTransitionToNavigationType(ui::PageTransition transition);
@@ -721,7 +768,7 @@ void WebContentsDelegateQt::launchExternalURL(const QUrl &url, ui::PageTransitio
     }
 
     if (navigationAllowedByPolicy) {
-        m_viewClient->navigationRequested(pageTransitionToNavigationType(page_transition), url, navigationRequestAccepted, is_main_frame);
+        m_viewClient->navigationRequested(pageTransitionToNavigationType(page_transition), url, navigationRequestAccepted, is_main_frame, false);
 #if QT_CONFIG(desktopservices)
         if (navigationRequestAccepted)
             QDesktopServices::openUrl(url);
@@ -747,13 +794,24 @@ void WebContentsDelegateQt::BeforeUnloadFired(content::WebContents *tab, bool pr
         m_viewClient->windowCloseRejected();
 }
 
-bool WebContentsDelegateQt::CheckMediaAccessPermission(content::RenderFrameHost *, const GURL& security_origin, blink::mojom::MediaStreamType type)
+bool WebContentsDelegateQt::CheckMediaAccessPermission(content::RenderFrameHost *rfh,
+                                                       const url::Origin &security_origin,
+                                                       blink::mojom::MediaStreamType type)
 {
+    Q_ASSERT(rfh);
     switch (type) {
     case blink::mojom::MediaStreamType::DEVICE_AUDIO_CAPTURE:
-        return m_viewClient->profileAdapter()->checkPermission(toQt(security_origin), ProfileAdapter::AudioCapturePermission);
+        return m_viewClient->profileAdapter()->getPermissionState(
+            toQt(security_origin),
+            QWebEnginePermission::PermissionType::MediaAudioCapture,
+            rfh)
+                == QWebEnginePermission::State::Granted;
     case blink::mojom::MediaStreamType::DEVICE_VIDEO_CAPTURE:
-        return m_viewClient->profileAdapter()->checkPermission(toQt(security_origin), ProfileAdapter::VideoCapturePermission);
+        return m_viewClient->profileAdapter()->getPermissionState(
+            toQt(security_origin),
+            QWebEnginePermission::PermissionType::MediaVideoCapture,
+            rfh)
+                == QWebEnginePermission::State::Granted;
     default:
         LOG(INFO) << "WebContentsDelegateQt::CheckMediaAccessPermission: "
                   << "Unsupported media stream type checked " << type;

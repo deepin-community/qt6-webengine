@@ -24,6 +24,7 @@
 
 #include <string.h>
 
+#include <concepts>
 #include <limits>
 #include <memory>
 #include <type_traits>
@@ -118,7 +119,7 @@ struct GenericHashTraitsBase {
 
   // Defines the empty value which is used to fill unused slots in the hash
   // table. This function is preferred to IsEmptyValue() when the empty value
-  // can be represented with a value that can be safely and trivially
+  // can be represented with a value that can be safely and cheaply
   // compared/assigned to another value. By default, the default constructor
   // is used.
   static T EmptyValue() { return T(); }
@@ -142,8 +143,7 @@ struct GenericHashTraitsBase {
   // define either this function or both IsDeletedValue() and
   // ConstructDeletedValue(). This function is preferred to IsDeletedValue()
   // and ConstructDeletedValue() when the deleted value can be represented with
-  // a value that can be safely and trivially compared/assigned to another
-  // value.
+  // a value that can be safely and cheaply compared/assigned to another value.
   // This is for key types only.
   // NOTE: The destructor of the returned value *may not* be called, so the
   // value should not own any dynamically allocated resources.
@@ -195,7 +195,8 @@ struct GenericHashTraitsBase {
   struct NeedsToForbidGCOnMove {
     // TODO(yutak): Consider using of std:::is_trivially_move_constructible
     // when it is accessible.
-    static constexpr bool value = !std::is_pod<T>::value;
+    static constexpr bool value =
+        !std::is_trivial_v<T> || !std::is_standard_layout_v<T>;
   };
 
   // The kCanTraceConcurrently value is used by Oilpan concurrent marking. Only
@@ -226,13 +227,12 @@ struct IntHashTraits
 
 // Default traits for an enum type.  0 is very popular, and -1 is also popular.
 // So we use -128 and -127.
-template <typename T, auto empty_value = -128, auto deleted_value = -127>
-struct EnumHashTraits
-    : internal::IntOrEnumHashTraits<T, empty_value, deleted_value> {
+template <typename T>
+struct EnumHashTraits : internal::IntOrEnumHashTraits<T, -128, -127> {
   static_assert(std::is_enum_v<T>);
 };
 
-template <typename T, typename Enable = void>
+template <typename T>
 struct GenericHashTraits : internal::GenericHashTraitsBase<T> {
   static_assert(!std::is_integral_v<T>);
   static_assert(!std::is_enum_v<T>);
@@ -240,16 +240,16 @@ struct GenericHashTraits : internal::GenericHashTraitsBase<T> {
 };
 
 template <typename T>
-struct GenericHashTraits<T, std::enable_if_t<std::is_integral_v<T>>>
-    : IntHashTraits<T> {};
+  requires std::integral<T>
+struct GenericHashTraits<T> : IntHashTraits<T> {};
 
 template <typename T>
-struct GenericHashTraits<T, std::enable_if_t<std::is_enum_v<T>>>
-    : EnumHashTraits<T> {};
+  requires std::is_enum_v<T>
+struct GenericHashTraits<T> : EnumHashTraits<T> {};
 
 template <typename T>
-struct GenericHashTraits<T, std::enable_if_t<std::is_floating_point_v<T>>>
-    : internal::GenericHashTraitsBase<T> {
+  requires std::floating_point<T>
+struct GenericHashTraits<T> : internal::GenericHashTraitsBase<T> {
   static unsigned GetHash(T key) { return HashFloat(key); }
   static bool Equal(T a, T b) { return FloatEqualForHash(a, b); }
   static constexpr T EmptyValue() { return std::numeric_limits<T>::infinity(); }
@@ -454,8 +454,8 @@ struct HashTraitsDeletedValueHelper {
     return value == Traits::DeletedValue();
   }
   static void ConstructDeletedValue(typename Traits::TraitType& slot) {
-    static_assert(std::is_trivially_destructible_v<typename Traits::TraitType>);
-    slot = Traits::DeletedValue();
+    new (NotNullTag::kNotNull, &slot)
+        typename Traits::TraitType(Traits::DeletedValue());
   }
 };
 template <typename Traits>
@@ -544,9 +544,6 @@ struct OneFieldHashTraits : GenericHashTraits<T> {
     static const bool value =
         FieldTraits::template NeedsToForbidGCOnMove<>::value;
   };
-
-  static constexpr bool kCanTraceConcurrently =
-      FieldTraits::kCanTraceConcurrently;
 };
 
 // A HashTraits type for T to delegate all HashTraits API to two fields.
@@ -599,14 +596,6 @@ struct TwoFieldsHashTraits : OneFieldHashTraits<T, first_field, FirstTraits> {
         FirstTraits::template NeedsToForbidGCOnMove<>::value ||
         SecondTraits::template NeedsToForbidGCOnMove<>::value;
   };
-
-  // Even non-traceable keys need to have their trait set. This is because
-  // non-traceable keys still need to be processed concurrently for checking
-  // empty/deleted state.
-  static constexpr bool kCanTraceConcurrently =
-      FirstTraits::kCanTraceConcurrently &&
-      (SecondTraits::kCanTraceConcurrently ||
-       !IsTraceable<typename SecondTraits::TraitType>::value);
 };
 
 template <typename FirstTraitsArg,

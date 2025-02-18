@@ -36,7 +36,6 @@
 #include "third_party/blink/renderer/core/css/css_property_names.h"
 #include "third_party/blink/renderer/core/css/style_change_reason.h"
 #include "third_party/blink/renderer/core/dom/element.h"
-#include "third_party/blink/renderer/core/fetch/trust_token_issuance_authorization.h"
 #include "third_party/blink/renderer/core/frame/csp/content_security_policy.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/html/client_hints_util.h"
@@ -68,16 +67,6 @@ String ConvertToReportValue(const AtomicString& value) {
   return value.GetString().Left(kMaxLengthToReport);
 }
 
-bool AnonymousIframeEnabled(const FeatureContext* context) {
-  // AnonymousIframe is enabled via command line flags, or via the Origin Trial.
-  // The origin trial is gated using the `AnonymousIframeOriginTrial` flag until
-  // AnonymousIframe is safe to use. It is useful, because the OT token do not
-  // enforce a specific version.
-  return RuntimeEnabledFeatures::AnonymousIframeEnabled(nullptr) ||
-         (RuntimeEnabledFeatures::AnonymousIframeEnabled(context) &&
-          base::FeatureList::IsEnabled(features::kAnonymousIframeOriginTrial));
-}
-
 }  // namespace
 
 HTMLIFrameElement::HTMLIFrameElement(Document& document)
@@ -103,8 +92,9 @@ const AttrNameToTrustedType& HTMLIFrameElement::GetCheckedAttributeTypes()
 }
 
 void HTMLIFrameElement::SetCollapsed(bool collapse) {
-  if (collapsed_by_client_ == collapse)
+  if (collapsed_by_client_ == collapse) {
     return;
+  }
 
   collapsed_by_client_ = collapse;
 
@@ -133,8 +123,9 @@ DOMFeaturePolicy* HTMLIFrameElement::featurePolicy() {
 bool HTMLIFrameElement::IsPresentationAttribute(
     const QualifiedName& name) const {
   if (name == html_names::kWidthAttr || name == html_names::kHeightAttr ||
-      name == html_names::kAlignAttr || name == html_names::kFrameborderAttr)
+      name == html_names::kAlignAttr || name == html_names::kFrameborderAttr) {
     return true;
+  }
   return HTMLFrameElementBase::IsPresentationAttribute(name);
 }
 
@@ -186,10 +177,24 @@ void HTMLIFrameElement::ParseAttribute(
       FrameOwnerPropertiesChanged();
       should_call_did_change_attributes = true;
     }
-    if (name_.Contains('\n'))
+    if (name_.Contains('\n')) {
       UseCounter::Count(GetDocument(), WebFeature::kFrameNameContainsNewline);
-    if (name_.Contains('<'))
+    }
+    if (name_.Contains('<')) {
       UseCounter::Count(GetDocument(), WebFeature::kFrameNameContainsBrace);
+    }
+    if (name_.Contains('\n') && name_.Contains('<')) {
+      UseCounter::Count(GetDocument(), WebFeature::kDanglingMarkupInWindowName);
+      if (!name_.EndsWith('>')) {
+        UseCounter::Count(GetDocument(),
+                          WebFeature::kDanglingMarkupInWindowNameNotEndsWithGT);
+        if (!name_.EndsWith('\n')) {
+          UseCounter::Count(
+              GetDocument(),
+              WebFeature::kDanglingMarkupInWindowNameNotEndsWithNewLineOrGT);
+        }
+      }
+    }
   } else if (name == html_names::kSandboxAttr) {
     sandbox_->DidUpdateAttributeValue(params.old_value, value);
 
@@ -197,13 +202,8 @@ void HTMLIFrameElement::ParseAttribute(
         network::mojom::blink::WebSandboxFlags::kNone;
     if (!value.IsNull()) {
       using network::mojom::blink::WebSandboxFlags;
-      WebSandboxFlags ignored_flags =
-          !RuntimeEnabledFeatures::StorageAccessAPIEnabled()
-              ? WebSandboxFlags::kStorageAccessByUserActivation
-              : WebSandboxFlags::kNone;
-
       auto parsed = network::ParseWebSandboxPolicy(sandbox_->value().Utf8(),
-                                                   ignored_flags);
+                                                   WebSandboxFlags::kNone);
       current_flags = parsed.flags;
       if (!parsed.error_message.empty()) {
         GetDocument().AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
@@ -272,8 +272,59 @@ void HTMLIFrameElement::ParseAttribute(
       should_call_did_change_attributes = true;
       UseCounter::Count(GetDocument(), WebFeature::kIFrameCSPAttribute);
     }
+  } else if (name == html_names::kBrowsingtopicsAttr) {
+    if (RuntimeEnabledFeatures::TopicsAPIEnabled(GetExecutionContext()) &&
+        GetExecutionContext()->IsSecureContext()) {
+      bool old_browsing_topics = !params.old_value.IsNull();
+      bool new_browsing_topics = !params.new_value.IsNull();
+
+      if (new_browsing_topics) {
+        UseCounter::Count(GetDocument(),
+                          WebFeature::kIframeBrowsingTopicsAttribute);
+      }
+
+      if (new_browsing_topics != old_browsing_topics) {
+        should_call_did_change_attributes = true;
+      }
+    }
+  } else if (name == html_names::kAdauctionheadersAttr &&
+             RuntimeEnabledFeatures::FledgeNegativeTargetingEnabled(
+                 GetExecutionContext())) {
+    if (!GetExecutionContext()->IsSecureContext()) {
+      GetDocument().AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
+          mojom::blink::ConsoleMessageSource::kOther,
+          mojom::blink::ConsoleMessageLevel::kError,
+          String("adAuctionHeaders: Protected Audience APIs "
+                 "are only available in secure contexts.")));
+    } else {
+      if (params.new_value.IsNull() != params.old_value.IsNull()) {
+        should_call_did_change_attributes = true;
+      }
+      if (!params.new_value.IsNull()) {
+        UseCounter::Count(GetDocument(),
+                          WebFeature::kSharedStorageAPI_Iframe_Attribute);
+      }
+    }
+  } else if (name == html_names::kSharedstoragewritableAttr &&
+             RuntimeEnabledFeatures::SharedStorageAPIM118Enabled(
+                 GetExecutionContext())) {
+    if (!GetExecutionContext()->IsSecureContext()) {
+      GetDocument().AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
+          mojom::blink::ConsoleMessageSource::kOther,
+          mojom::blink::ConsoleMessageLevel::kError,
+          String("sharedStorageWritable: sharedStorage operations "
+                 "are only available in secure contexts.")));
+    } else {
+      if (params.new_value.IsNull() != params.old_value.IsNull()) {
+        should_call_did_change_attributes = true;
+      }
+      if (!params.new_value.IsNull()) {
+        UseCounter::Count(GetDocument(),
+                          WebFeature::kSharedStorageAPI_Iframe_Attribute);
+      }
+    }
   } else if (name == html_names::kCredentiallessAttr &&
-             AnonymousIframeEnabled(GetExecutionContext())) {
+             RuntimeEnabledFeatures::AnonymousIframeEnabled()) {
     bool new_value = !value.IsNull();
     if (credentialless_ != new_value) {
       credentialless_ = new_value;
@@ -293,7 +344,7 @@ void HTMLIFrameElement::ParseAttribute(
       required_policy_ = value;
       UpdateRequiredPolicy();
     }
-  } else if (name == html_names::kTrusttokenAttr) {
+  } else if (name == html_names::kPrivatetokenAttr) {
     UseCounter::Count(GetDocument(), WebFeature::kTrustTokenIframe);
     trust_token_ = value;
   } else {
@@ -303,7 +354,8 @@ void HTMLIFrameElement::ParseAttribute(
     // proper solution.
     // To avoid polluting the console, this is being recorded only once per
     // page.
-    if (name == "gesture" && value == "media" && GetDocument().Loader() &&
+    if (name == AtomicString("gesture") && value == AtomicString("media") &&
+        GetDocument().Loader() &&
         !GetDocument().Loader()->GetUseCounter().IsCounted(
             WebFeature::kHTMLIFrameElementGestureMedia)) {
       UseCounter::Count(GetDocument(),
@@ -341,8 +393,9 @@ void HTMLIFrameElement::ParseAttribute(
 
 DocumentPolicyFeatureState HTMLIFrameElement::ConstructRequiredPolicy() const {
   if (!RuntimeEnabledFeatures::DocumentPolicyNegotiationEnabled(
-          GetExecutionContext()))
+          GetExecutionContext())) {
     return {};
+  }
 
   if (!required_policy_.empty()) {
     UseCounter::Count(
@@ -379,8 +432,9 @@ DocumentPolicyFeatureState HTMLIFrameElement::ConstructRequiredPolicy() const {
 }
 
 ParsedPermissionsPolicy HTMLIFrameElement::ConstructContainerPolicy() const {
-  if (!GetExecutionContext())
+  if (!GetExecutionContext()) {
     return ParsedPermissionsPolicy();
+  }
 
   scoped_refptr<const SecurityOrigin> src_origin =
       GetOriginForPermissionsPolicy();
@@ -429,8 +483,9 @@ ParsedPermissionsPolicy HTMLIFrameElement::ConstructContainerPolicy() const {
 
   // Update the JavaScript policy object associated with this iframe, if it
   // exists.
-  if (policy_)
+  if (policy_) {
     policy_->UpdateContainerPolicy(container_policy, src_origin);
+  }
 
   for (const auto& message : logger.GetMessages()) {
     GetDocument().AddConsoleMessage(
@@ -448,8 +503,7 @@ bool HTMLIFrameElement::LayoutObjectIsNeeded(const DisplayStyle& style) const {
          HTMLElement::LayoutObjectIsNeeded(style);
 }
 
-LayoutObject* HTMLIFrameElement::CreateLayoutObject(const ComputedStyle&,
-                                                    LegacyLayout) {
+LayoutObject* HTMLIFrameElement::CreateLayoutObject(const ComputedStyle&) {
   return MakeGarbageCollected<LayoutIFrame>(this);
 }
 
@@ -459,8 +513,9 @@ Node::InsertionNotificationRequest HTMLIFrameElement::InsertedInto(
       HTMLFrameElementBase::InsertedInto(insertion_point);
 
   auto* html_doc = DynamicTo<HTMLDocument>(GetDocument());
-  if (html_doc && insertion_point.IsInDocumentTree())
+  if (html_doc && insertion_point.IsInDocumentTree()) {
     html_doc->AddNamedItem(name_);
+  }
   LogAddElementIfIsolatedWorldAndInDocument("iframe", html_names::kSrcAttr);
   return result;
 }
@@ -468,8 +523,9 @@ Node::InsertionNotificationRequest HTMLIFrameElement::InsertedInto(
 void HTMLIFrameElement::RemovedFrom(ContainerNode& insertion_point) {
   HTMLFrameElementBase::RemovedFrom(insertion_point);
   auto* html_doc = DynamicTo<HTMLDocument>(GetDocument());
-  if (html_doc && insertion_point.IsInDocumentTree())
+  if (html_doc && insertion_point.IsInDocumentTree()) {
     html_doc->RemoveNamedItem(name_);
+  }
 }
 
 bool HTMLIFrameElement::IsInteractiveContent() const {
@@ -482,8 +538,9 @@ network::mojom::ReferrerPolicy HTMLIFrameElement::ReferrerPolicyAttribute() {
 
 network::mojom::blink::TrustTokenParamsPtr
 HTMLIFrameElement::ConstructTrustTokenParams() const {
-  if (!trust_token_)
+  if (!trust_token_) {
     return nullptr;
+  }
 
   JSONParseError parse_error;
   std::unique_ptr<JSONValue> parsed_attribute =
@@ -523,12 +580,12 @@ HTMLIFrameElement::ConstructTrustTokenParams() const {
 
   if (!GetExecutionContext()->IsFeatureEnabled(
           mojom::blink::PermissionsPolicyFeature::kTrustTokenRedemption)) {
-    GetExecutionContext()->AddConsoleMessage(
-        MakeGarbageCollected<ConsoleMessage>(
-            mojom::blink::ConsoleMessageSource::kOther,
-            mojom::blink::ConsoleMessageLevel::kError,
-            "Trust Tokens: Attempted redemption or signing without the "
-            "trust-token-redemption Permissions Policy feature present."));
+    GetExecutionContext()->AddConsoleMessage(MakeGarbageCollected<
+                                             ConsoleMessage>(
+        mojom::blink::ConsoleMessageSource::kOther,
+        mojom::blink::ConsoleMessageLevel::kError,
+        "Trust Tokens: Attempted redemption or signing without the "
+        "private-state-token-redemption Permissions Policy feature present."));
     return nullptr;
   }
 
@@ -540,8 +597,9 @@ void HTMLIFrameElement::DidChangeAttributes() {
   // the subframe hasn't been created yet; or if we are in the middle of
   // swapping one frame for another, in which case the final state
   // will be propagated at the end of the swapping operation.
-  if (is_swapping_frames() || !ContentFrame())
+  if (is_swapping_frames() || !ContentFrame()) {
     return;
+  }
 
   // ParseContentSecurityPolicies needs a url to resolve report endpoints and
   // for matching the keyword 'self'. However, the csp attribute does not allow
@@ -560,6 +618,26 @@ void HTMLIFrameElement::DidChangeAttributes() {
   attributes->parsed_csp_attribute = csp.empty() ? nullptr : std::move(csp[0]);
   attributes->credentialless = credentialless_;
 
+  if (RuntimeEnabledFeatures::TopicsAPIEnabled(GetExecutionContext()) &&
+      GetExecutionContext()->IsSecureContext()) {
+    attributes->browsing_topics =
+        !FastGetAttribute(html_names::kBrowsingtopicsAttr).IsNull();
+  }
+
+  if (RuntimeEnabledFeatures::FledgeNegativeTargetingEnabled(
+          GetExecutionContext()) &&
+      GetExecutionContext()->IsSecureContext()) {
+    attributes->ad_auction_headers =
+        !FastGetAttribute(html_names::kAdauctionheadersAttr).IsNull();
+  }
+
+  if (RuntimeEnabledFeatures::SharedStorageAPIM118Enabled(
+          GetExecutionContext()) &&
+      GetExecutionContext()->IsSecureContext()) {
+    attributes->shared_storage_writable_opted_in =
+        !FastGetAttribute(html_names::kSharedstoragewritableAttr).IsNull();
+  }
+
   attributes->id = ConvertToReportValue(id_);
   attributes->name = ConvertToReportValue(name_);
   attributes->src = ConvertToReportValue(src_);
@@ -568,8 +646,9 @@ void HTMLIFrameElement::DidChangeAttributes() {
 
   // Make sure we update the srcdoc value, if any, in the browser.
   String srcdoc_value = "";
-  if (FastHasAttribute(html_names::kSrcdocAttr))
+  if (FastHasAttribute(html_names::kSrcdocAttr)) {
     srcdoc_value = FastGetAttribute(html_names::kSrcdocAttr).GetString();
+  }
   GetDocument().GetFrame()->GetLocalFrameHostRemote().DidChangeSrcDoc(
       ContentFrame()->GetFrameToken(), srcdoc_value);
 }

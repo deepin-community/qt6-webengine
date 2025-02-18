@@ -6,7 +6,6 @@
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_GEOMETRY_CALCULATION_EXPRESSION_NODE_H_
 
 #include "base/check_op.h"
-#include "third_party/blink/renderer/platform/geometry/anchor_query_enums.h"
 #include "third_party/blink/renderer/platform/geometry/length.h"
 #include "third_party/blink/renderer/platform/wtf/casting.h"
 #include "third_party/blink/renderer/platform/wtf/ref_counted.h"
@@ -22,6 +21,16 @@ enum class CalculationOperator {
   kMin,
   kMax,
   kClamp,
+  kRoundNearest,
+  kRoundUp,
+  kRoundDown,
+  kRoundToZero,
+  kMod,
+  kRem,
+  kHypot,
+  kAbs,
+  kSign,
+  kProgress,
   kInvalid
 };
 
@@ -41,8 +50,10 @@ class PLATFORM_EXPORT CalculationExpressionNode
   }
 
   bool HasAnchorQueries() const { return has_anchor_queries_; }
+  bool HasAutoAnchorPositioning() const { return has_auto_anchor_positioning_; }
 
   virtual bool IsNumber() const { return false; }
+  virtual bool IsIdentifier() const { return false; }
   virtual bool IsPixelsAndPercent() const { return false; }
   virtual bool IsOperation() const { return false; }
   virtual bool IsAnchorQuery() const { return false; }
@@ -53,7 +64,7 @@ class PLATFORM_EXPORT CalculationExpressionNode
   virtual ~CalculationExpressionNode() = default;
 
 #if DCHECK_IS_ON()
-  enum class ResultType { kInvalid, kNumber, kPixelsAndPercent };
+  enum class ResultType { kInvalid, kNumber, kPixelsAndPercent, kIdent };
 
   virtual ResultType ResolvedResultType() const = 0;
 
@@ -65,6 +76,7 @@ class PLATFORM_EXPORT CalculationExpressionNode
   virtual bool Equals(const CalculationExpressionNode& other) const = 0;
 
   bool has_anchor_queries_ = false;
+  bool has_auto_anchor_positioning_ = false;
 };
 
 class PLATFORM_EXPORT CalculationExpressionNumberNode final
@@ -101,6 +113,48 @@ struct DowncastTraits<CalculationExpressionNumberNode> {
   }
 };
 
+class PLATFORM_EXPORT CalculationExpressionIdentifierNode final
+    : public CalculationExpressionNode {
+ public:
+  explicit CalculationExpressionIdentifierNode(AtomicString identifier)
+      : identifier_(std::move(identifier)) {
+#if DCHECK_IS_ON()
+    result_type_ = ResultType::kIdent;
+#endif
+  }
+
+  const AtomicString& Value() const { return identifier_; }
+
+  // Implement |CalculationExpressionNode|:
+  float Evaluate(float max_value, const Length::AnchorEvaluator*) const final {
+    return 0.0f;
+  }
+  bool Equals(const CalculationExpressionNode& other) const final {
+    return other.IsIdentifier() &&
+           DynamicTo<CalculationExpressionIdentifierNode>(other)->Value() ==
+               Value();
+  }
+  scoped_refptr<const CalculationExpressionNode> Zoom(
+      double factor) const final {
+    return this;
+  }
+  bool IsIdentifier() const final { return true; }
+
+#if DCHECK_IS_ON()
+  ResultType ResolvedResultType() const final { return ResultType::kIdent; }
+#endif
+
+ private:
+  AtomicString identifier_;
+};
+
+template <>
+struct DowncastTraits<CalculationExpressionIdentifierNode> {
+  static bool AllowFrom(const CalculationExpressionNode& node) {
+    return node.IsIdentifier();
+  }
+};
+
 class PLATFORM_EXPORT CalculationExpressionPixelsAndPercentNode final
     : public CalculationExpressionNode {
  public:
@@ -114,6 +168,8 @@ class PLATFORM_EXPORT CalculationExpressionPixelsAndPercentNode final
   float Pixels() const { return value_.pixels; }
   float Percent() const { return value_.percent; }
   PixelsAndPercent GetPixelsAndPercent() const { return value_; }
+  bool HasExplicitPixels() const { return value_.has_explicit_pixels; }
+  bool HasExplicitPercent() const { return value_.has_explicit_percent; }
 
   // Implement |CalculationExpressionNode|:
   float Evaluate(float max_value, const Length::AnchorEvaluator*) const final;
@@ -167,6 +223,7 @@ class PLATFORM_EXPORT CalculationExpressionOperationNode final
 
  private:
   bool ComputeHasAnchorQueries() const;
+  bool ComputeHasAutoAnchorPositioning() const;
 
   Children children_;
   CalculationOperator operator_;

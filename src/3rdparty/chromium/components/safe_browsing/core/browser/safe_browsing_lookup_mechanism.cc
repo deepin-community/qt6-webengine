@@ -3,40 +3,37 @@
 // found in the LICENSE file.
 
 #include "components/safe_browsing/core/browser/safe_browsing_lookup_mechanism.h"
+#include "components/safe_browsing/core/browser/db/v4_protocol_manager_util.h"
 
 namespace safe_browsing {
 
 SafeBrowsingLookupMechanism::SafeBrowsingLookupMechanism(
     const GURL& url,
     const SBThreatTypeSet& threat_types,
-    scoped_refptr<SafeBrowsingDatabaseManager> database_manager,
-    bool can_check_db,
-    MechanismExperimentHashDatabaseCache experiment_cache_selection)
+    scoped_refptr<SafeBrowsingDatabaseManager> database_manager)
     : url_(url),
       threat_types_(threat_types),
-      database_manager_(database_manager),
-      can_check_db_(can_check_db),
-      experiment_cache_selection_(experiment_cache_selection) {}
+      database_manager_(database_manager) {}
 
 SafeBrowsingLookupMechanism::~SafeBrowsingLookupMechanism() = default;
 
 SafeBrowsingLookupMechanism::StartCheckResult::StartCheckResult(
-    bool is_safe_synchronously,
-    bool did_check_url_real_time_allowlist)
-    : is_safe_synchronously(is_safe_synchronously),
-      did_check_url_real_time_allowlist(did_check_url_real_time_allowlist) {}
+    bool is_safe_synchronously)
+    : is_safe_synchronously(is_safe_synchronously) {}
 
 SafeBrowsingLookupMechanism::CompleteCheckResult::CompleteCheckResult(
     const GURL& url,
     SBThreatType threat_type,
     const ThreatMetadata& metadata,
-    bool is_from_url_real_time_check,
+    absl::optional<ThreatSource> threat_source,
     std::unique_ptr<RTLookupResponse> url_real_time_lookup_response)
     : url(url),
       threat_type(threat_type),
       metadata(metadata),
-      is_from_url_real_time_check(is_from_url_real_time_check),
-      url_real_time_lookup_response(std::move(url_real_time_lookup_response)) {}
+      threat_source(threat_source),
+      url_real_time_lookup_response(std::move(url_real_time_lookup_response)) {
+  DCHECK(threat_source.has_value() || threat_type == SB_THREAT_TYPE_SAFE);
+}
 
 SafeBrowsingLookupMechanism::CompleteCheckResult::~CompleteCheckResult() =
     default;
@@ -56,6 +53,8 @@ void SafeBrowsingLookupMechanism::CompleteCheck(
     std::unique_ptr<CompleteCheckResult> result) {
   DCHECK(complete_check_callback_);
   std::move(complete_check_callback_).Run(std::move(result));
+  // NOTE: Invoking the callback results in the synchronous destruction of this
+  // object, so there is nothing safe to do here but return.
 }
 
 }  // namespace safe_browsing

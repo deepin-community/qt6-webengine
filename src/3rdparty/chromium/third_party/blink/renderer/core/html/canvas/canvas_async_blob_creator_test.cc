@@ -45,7 +45,7 @@ class MockCanvasAsyncBlobCreator : public CanvasAsyncBlobCreator {
       fail_encoder_initialization_for_test_ = true;
     enforce_idle_encoding_for_test_ = true;
   }
-
+  void Run() { loop_.Run(); }
   CanvasAsyncBlobCreator::IdleTaskStatus GetIdleTaskStatus() {
     return idle_task_status_;
   }
@@ -53,8 +53,12 @@ class MockCanvasAsyncBlobCreator : public CanvasAsyncBlobCreator {
   MOCK_METHOD0(SignalTaskSwitchInStartTimeoutEventForTesting, void());
   MOCK_METHOD0(SignalTaskSwitchInCompleteTimeoutEventForTesting, void());
 
+ private:
+  base::RunLoop loop_;
+
  protected:
-  void CreateBlobAndReturnResult() override {}
+  void CreateBlobAndReturnResult(Vector<unsigned char> encoded_image) override {
+  }
   void CreateNullAndReturnResult() override {}
   void SignalAlternativeCodePathFinishedForTesting() override;
   void PostDelayedTaskToCurrentThread(const base::Location&,
@@ -63,7 +67,7 @@ class MockCanvasAsyncBlobCreator : public CanvasAsyncBlobCreator {
 };
 
 void MockCanvasAsyncBlobCreator::SignalAlternativeCodePathFinishedForTesting() {
-  test::ExitRunLoop();
+  loop_.Quit();
 }
 
 void MockCanvasAsyncBlobCreator::PostDelayedTaskToCurrentThread(
@@ -146,7 +150,8 @@ class CanvasAsyncBlobCreatorTest : public PageTestBase {
 CanvasAsyncBlobCreatorTest::CanvasAsyncBlobCreatorTest() = default;
 
 scoped_refptr<StaticBitmapImage> CreateTransparentImage(int width, int height) {
-  sk_sp<SkSurface> surface = SkSurface::MakeRasterN32Premul(width, height);
+  sk_sp<SkSurface> surface =
+      SkSurfaces::Raster(SkImageInfo::MakeN32Premul(width, height));
   if (!surface)
     return nullptr;
   return UnacceleratedStaticBitmapImage::Create(surface->makeImageSnapshot());
@@ -192,7 +197,7 @@ TEST_F(CanvasAsyncBlobCreatorTest,
               SignalTaskSwitchInStartTimeoutEventForTesting());
 
   AsyncBlobCreator()->ScheduleAsyncBlobCreation(1.0);
-  test::EnterRunLoop();
+  AsyncBlobCreator()->Run();
 
   testing::Mock::VerifyAndClearExpectations(AsyncBlobCreator());
   EXPECT_EQ(IdleTaskStatus::kIdleTaskSwitchedToImmediateTask,
@@ -208,9 +213,8 @@ TEST_F(CanvasAsyncBlobCreatorTest,
   PrepareMockCanvasAsyncBlobCreatorWithoutComplete();
   EXPECT_CALL(*(AsyncBlobCreator()),
               SignalTaskSwitchInCompleteTimeoutEventForTesting());
-
   AsyncBlobCreator()->ScheduleAsyncBlobCreation(1.0);
-  test::EnterRunLoop();
+  AsyncBlobCreator()->Run();
 
   testing::Mock::VerifyAndClearExpectations(AsyncBlobCreator());
   EXPECT_EQ(IdleTaskStatus::kIdleTaskSwitchedToImmediateTask,
@@ -222,9 +226,8 @@ TEST_F(CanvasAsyncBlobCreatorTest, IdleTaskFailedWhenStartTimeoutEventHappens) {
   // either the StartTimeoutEvent or the CompleteTimeoutEvent is inspecting
   // the idle task status.
   PrepareMockCanvasAsyncBlobCreatorFail();
-
   AsyncBlobCreator()->ScheduleAsyncBlobCreation(1.0);
-  test::EnterRunLoop();
+  AsyncBlobCreator()->Run();
 
   EXPECT_EQ(IdleTaskStatus::kIdleTaskFailed,
             AsyncBlobCreator()->GetIdleTaskStatus());

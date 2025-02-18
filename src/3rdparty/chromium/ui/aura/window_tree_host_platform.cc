@@ -32,6 +32,7 @@
 
 #if BUILDFLAG(IS_OZONE)
 #include "ui/events/keycodes/dom/dom_keyboard_layout_map.h"
+#include "ui/events/ozone/events_ozone.h"
 #include "ui/ozone/public/ozone_platform.h"
 #endif
 
@@ -119,6 +120,11 @@ void WindowTreeHostPlatform::SetBoundsInPixels(const gfx::Rect& bounds) {
 }
 
 void WindowTreeHostPlatform::SetCapture() {
+#if BUILDFLAG(IS_OZONE)
+  if (ui::IsNativeUiEventDispatchDisabled()) {
+    return;
+  }
+#endif
   platform_window_->SetCapture();
 }
 
@@ -175,6 +181,13 @@ void WindowTreeHostPlatform::SetCursorNative(gfx::NativeCursor cursor) {
 
 void WindowTreeHostPlatform::MoveCursorToScreenLocationInPixels(
     const gfx::Point& location_in_pixels) {
+#if BUILDFLAG(IS_OZONE)
+  if (ui::IsNativeUiEventDispatchDisabled()) {
+    // Unit tests should not test or rely on the native cursor position because
+    // it is shared between multiple tests.
+    return;
+  }
+#endif
   platform_window_->MoveCursorTo(location_in_pixels);
 }
 
@@ -315,21 +328,18 @@ int64_t WindowTreeHostPlatform::OnStateUpdate(
 
   // Only set the sequence ID if this change will produce a frame.
   // If it won't, we may wait indefinitely for a frame that will never come.
-  bool produces_frame = old.bounds_dip.size() != latest.bounds_dip.size() ||
-                        old.size_px != latest.size_px ||
-                        old.window_scale != latest.window_scale ||
-                        old.raster_scale != latest.raster_scale;
-
-  if (produces_frame) {
-    // Update window()'s LocalSurfaceId. This will ensure that the parent ID is
-    // updated both here and for LayerTreeHostImpl. So, the CompositorFrame sent
-    // by LayerTreeHostImpl will include the updated parent ID for
-    // synchronization. Some operations may have already updated the
-    // LocalSurfaceId, but this only modifies pending commit state, so it's not
-    // expensive.
-    window()->AllocateLocalSurfaceId();
-    compositor()->SetLocalSurfaceIdFromParent(window()->GetLocalSurfaceId());
+  if (!latest.ProducesFrameOnUpdateFrom(old)) {
+    return -1;
   }
+
+  // Update window()'s LocalSurfaceId. This will ensure that the parent ID is
+  // updated both here and for LayerTreeHostImpl. So, the CompositorFrame sent
+  // by LayerTreeHostImpl will include the updated parent ID for
+  // synchronization. Some operations may have already updated the
+  // LocalSurfaceId, but this only modifies pending commit state, so it's not
+  // expensive.
+  window()->AllocateLocalSurfaceId();
+  compositor()->SetLocalSurfaceIdFromParent(window()->GetLocalSurfaceId());
 
   return window()->GetLocalSurfaceId().parent_sequence_number();
 }

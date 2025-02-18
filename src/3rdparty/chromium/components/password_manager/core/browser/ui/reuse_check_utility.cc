@@ -7,9 +7,10 @@
 
 #include <unordered_map>
 
+#include "base/metrics/histogram_functions.h"
 #include "base/strings/string_util.h"
 #include "components/password_manager/core/browser/affiliation/affiliation_utils.h"
-#include "components/password_manager/core/browser/psl_matching_helper.h"
+#include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 
 namespace password_manager {
 
@@ -71,7 +72,9 @@ bool HasOnlyAndroidApps(const CredentialUIEntry* credential) {
 bool IsMainDomainEqual(const std::set<std::string>& signon_realms) {
   std::set<std::string> domain_parts;
   for (const auto& signon_realm : signon_realms) {
-    domain_parts.insert(GetRegistryControlledDomain(GURL(signon_realm)));
+    domain_parts.insert(net::registry_controlled_domains::GetDomainAndRegistry(
+        GURL(signon_realm),
+        net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES));
   }
 
   return domain_parts.size() == 1;
@@ -136,6 +139,11 @@ base::flat_set<std::u16string> BulkReuseCheck(
     }
     reused_passwords.insert(password);
   }
+
+  base::UmaHistogramCounts1000("PasswordManager.ReuseCheck.CheckedPasswords",
+                               password_to_credentials.size());
+  base::UmaHistogramCounts1000("PasswordManager.ReuseCheck.ReusedPasswords",
+                               reused_passwords.size());
   return reused_passwords;
 }
 
