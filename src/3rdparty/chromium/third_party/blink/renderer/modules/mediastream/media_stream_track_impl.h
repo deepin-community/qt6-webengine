@@ -28,12 +28,14 @@
 
 #include <memory>
 
+#include "build/build_config.h"
 #include "third_party/blink/renderer/bindings/core/v8/active_script_wrappable.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_capture_handle.h"
 #include "third_party/blink/renderer/modules/event_target_modules.h"
 #include "third_party/blink/renderer/modules/mediastream/media_constraints.h"
 #include "third_party/blink/renderer/modules/mediastream/media_stream_track.h"
+#include "third_party/blink/renderer/modules/mediastream/media_stream_track_video_stats.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_set.h"
 #include "third_party/blink/renderer/platform/mediastream/media_stream_descriptor.h"
@@ -89,6 +91,7 @@ class MODULES_EXPORT MediaStreamTrackImpl : public MediaStreamTrack,
   MediaTrackCapabilities* getCapabilities() const override;
   MediaTrackConstraints* getConstraints() const override;
   MediaTrackSettings* getSettings() const override;
+  MediaStreamTrackVideoStats* stats() override;
   CaptureHandle* getCaptureHandle() const override;
   ScriptPromise applyConstraints(ScriptState*,
                                  const MediaTrackConstraints*) override;
@@ -112,7 +115,7 @@ class MODULES_EXPORT MediaStreamTrackImpl : public MediaStreamTrack,
     return ready_state_;
   }
 
-  MediaStreamComponent* Component() const override { return component_; }
+  MediaStreamComponent* Component() const override { return component_.Get(); }
   bool Ended() const override;
 
   void RegisterMediaStream(MediaStream*) override;
@@ -124,13 +127,29 @@ class MODULES_EXPORT MediaStreamTrackImpl : public MediaStreamTrack,
   void AddedEventListener(const AtomicString&,
                           RegisteredEventListener&) override;
 
+#if !BUILDFLAG(IS_ANDROID)
+  void SendWheel(
+      double relative_x,
+      double relative_y,
+      int wheel_delta_x,
+      int wheel_delta_y,
+      base::OnceCallback<void(bool, const String&)> callback) override;
+  void GetZoomLevel(base::OnceCallback<void(absl::optional<int>, const String&)>
+                        callback) override;
+  void SetZoomLevel(
+      int zoom_level,
+      base::OnceCallback<void(bool, const String&)> callback) override;
+#endif
+
   // ScriptWrappable
   bool HasPendingActivity() const final;
 
   std::unique_ptr<AudioSourceProvider> CreateWebAudioSource(
       int context_sample_rate) override;
 
-  ImageCapture* GetImageCapture() override { return image_capture_; }
+  MediaStreamTrackPlatform::VideoFrameStats GetVideoFrameStats() const;
+
+  ImageCapture* GetImageCapture() override { return image_capture_.Get(); }
 
   absl::optional<const MediaStreamDevice> device() const override;
 
@@ -147,8 +166,6 @@ class MODULES_EXPORT MediaStreamTrackImpl : public MediaStreamTrack,
   // Useful for sub-classes, as they need to clone both state from
   // this class as well as of their own class.
   void CloneInternal(MediaStreamTrackImpl*);
-
-  std::unique_ptr<MediaStreamTrackPlatform> ClonePlatformTrack();
 
  private:
   friend class CanvasCaptureMediaStreamTrack;
@@ -186,20 +203,28 @@ class MODULES_EXPORT MediaStreamTrackImpl : public MediaStreamTrack,
   FrameScheduler::SchedulingAffectingFeatureHandle
       feature_handle_for_scheduler_;
 
+  // This handle notifies the scheduler about a live media stream track
+  // for the purpose of disabling/enabling BFCache. When there is a live stream
+  // track, the page should not be BFCached.
+  // TODO(crbug.com/1502395): Currently we intentionally use this handler for
+  // BFCache although its behavior is almost the same as the one above. The one
+  // above uses the WebRTC feature even though it's not necessarily related to
+  // Web RTC. Discuss with those who own the handler and merge the two handlers
+  // into one.
+  FrameScheduler::SchedulingAffectingFeatureHandle
+      feature_handle_for_scheduler_on_live_media_stream_track_;
+
   MediaStreamSource::ReadyState ready_state_;
-  // has_clones indicates if clone has been called on this MediaStreamTrack or
-  // if it is cloned from another MediaStreamTrack. If set, it will remain true
-  // even if the other MediaStreamTrack is gargabe-collected.
-  bool has_clones_ = false;
   HeapHashSet<Member<MediaStream>> registered_media_streams_;
   bool is_iterating_registered_media_streams_ = false;
-  Member<MediaStreamComponent> component_;
+  const Member<MediaStreamComponent> component_;
   Member<ImageCapture> image_capture_;
   WeakMember<ExecutionContext> execution_context_;
   HeapHashSet<WeakMember<MediaStreamTrack::Observer>> observers_;
   bool muted_ = false;
   MediaConstraints constraints_;
   absl::optional<bool> suppress_local_audio_playback_setting_;
+  Member<MediaStreamTrackVideoStats> video_stats_;
 };
 
 }  // namespace blink

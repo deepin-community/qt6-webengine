@@ -51,6 +51,8 @@ enum ColorModel {
   // Used in Xerox printer PPDs.
   [MinVersion=1] kXeroxXROutputColorPrintAsColor,
   [MinVersion=1] kXeroxXROutputColorPrintAsGrayscale,
+  [MinVersion=2] kHpPjlColorAsGrayNo,   // Used in HP printer PPDs.
+  [MinVersion=2] kHpPjlColorAsGrayYes,  // Used in HP printer PPDs.
 };
 
 // Print job duplex mode values.
@@ -96,9 +98,11 @@ enum PrintScalingOption {
 enum SkiaDocumentType {
   // PDF document type.
   kPDF,
-  // MultiPictureDocument type. kMSKP is an experimental, fragile, and
-  // diagnostic-only document type.
+  // MultiPictureDocument type
   kMSKP,
+  // XPS document type.
+  [EnableIf=is_win]
+  kXPS,
 };
 
 // Metafile data type encapsulated by a player.

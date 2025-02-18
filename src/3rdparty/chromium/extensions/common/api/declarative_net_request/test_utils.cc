@@ -11,9 +11,9 @@
 #include "extensions/common/api/declarative_net_request.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/manifest_constants.h"
-#include "extensions/common/value_builder.h"
 
 namespace extensions {
+
 namespace keys = manifest_keys;
 namespace dnr_api = api::declarative_net_request;
 
@@ -46,16 +46,16 @@ base::Value ToValue(const TestRulesetInfo& info) {
 
 template <typename T>
 base::Value::List ToValue(const std::vector<T>& vec) {
-  ListBuilder builder;
+  base::Value::List builder;
   for (const T& t : vec)
     builder.Append(ToValue(t));
-  return builder.Build();
+  return builder;
 }
 
 template <typename T>
 void SetValue(base::Value::Dict& dict,
               const char* key,
-              const absl::optional<T>& value) {
+              const std::optional<T>& value) {
   if (!value)
     return;
 
@@ -88,6 +88,8 @@ base::Value::Dict TestRuleCondition::ToValue() const {
   SetValue(dict, kTabIdsKey, tab_ids);
   SetValue(dict, kExcludedTabIdsKey, excluded_tab_ids);
   SetValue(dict, kDomainTypeKey, domain_type);
+  SetValue(dict, kResponseHeadersKey, response_headers);
+  SetValue(dict, kExcludedResponseHeadersKey, excluded_response_headers);
 
   return dict;
 }
@@ -158,7 +160,7 @@ base::Value::Dict TestRuleRedirect::ToValue() const {
 
 TestHeaderInfo::TestHeaderInfo(std::string header,
                                std::string operation,
-                               absl::optional<std::string> value)
+                               std::optional<std::string> value)
     : header(std::move(header)),
       operation(std::move(operation)),
       value(std::move(value)) {}
@@ -171,6 +173,26 @@ base::Value::Dict TestHeaderInfo::ToValue() const {
   SetValue(dict, kHeaderNameKey, header);
   SetValue(dict, kHeaderOperationKey, operation);
   SetValue(dict, kHeaderValueKey, value);
+  return dict;
+}
+
+TestHeaderCondition::TestHeaderCondition(
+    std::string header,
+    std::vector<std::string> values,
+    std::vector<std::string> excluded_values)
+    : header(std::move(header)),
+      values(std::move(values)),
+      excluded_values(std::move(excluded_values)) {}
+TestHeaderCondition::~TestHeaderCondition() = default;
+TestHeaderCondition::TestHeaderCondition(const TestHeaderCondition&) = default;
+TestHeaderCondition& TestHeaderCondition::operator=(
+    const TestHeaderCondition&) = default;
+
+base::Value::Dict TestHeaderCondition::ToValue() const {
+  base::Value::Dict dict;
+  SetValue(dict, kHeaderNameKey, header);
+  SetValue(dict, kHeaderValuesKey, values);
+  SetValue(dict, kHeaderExcludedValuesKey, excluded_values);
   return dict;
 }
 
@@ -290,27 +312,26 @@ base::Value::Dict CreateManifest(
   if (flags & kConfig_HasBackgroundScript)
     background_scripts.push_back("background.js");
 
-  DictionaryBuilder manifest_builder;
+  base::Value::Dict manifest_builder;
 
   if (flags & kConfig_OmitDeclarativeNetRequestKey) {
     DCHECK(ruleset_info.empty());
   } else {
     manifest_builder.Set(
         dnr_api::ManifestKeys::kDeclarativeNetRequest,
-        DictionaryBuilder()
-            .Set(dnr_api::DNRInfo::kRuleResources, ToValue(ruleset_info))
-            .Build());
+        base::Value::Dict().Set(dnr_api::DNRInfo::kRuleResources,
+                                ToValue(ruleset_info)));
   }
 
-  return manifest_builder.Set(keys::kName, extension_name)
+  // std::move() to trigger rvalue overloads.
+  return std::move(manifest_builder)
+      .Set(keys::kName, extension_name)
       .Set(keys::kPermissions, ToValue(permissions))
       .Set(keys::kVersion, "1.0")
       .Set(keys::kManifestVersion, 2)
-      .Set("background", DictionaryBuilder()
-                             .Set("scripts", ToValue(background_scripts))
-                             .Build())
-      .Set(keys::kBrowserAction, DictionaryBuilder().Build())
-      .Build();
+      .Set("background",
+           base::Value::Dict().Set("scripts", ToValue(background_scripts)))
+      .Set(keys::kBrowserAction, base::Value::Dict());
 }
 
 base::Value::List ToListValue(const std::vector<std::string>& vec) {
@@ -335,9 +356,8 @@ void WriteManifestAndRulesets(const base::FilePath& extension_dir,
   // Persists a background script if needed.
   if (flags & ConfigFlag::kConfig_HasBackgroundScript) {
     std::string content = "chrome.test.sendMessage('ready');";
-    CHECK_EQ(static_cast<int>(content.length()),
-             base::WriteFile(extension_dir.Append(kBackgroundScriptFilepath),
-                             content.c_str(), content.length()));
+    CHECK(base::WriteFile(extension_dir.Append(kBackgroundScriptFilepath),
+                          content));
   }
 
   // Persist manifest file.

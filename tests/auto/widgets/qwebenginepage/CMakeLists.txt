@@ -9,6 +9,7 @@ qt_internal_add_test(tst_qwebenginepage
         tst_qwebenginepage.cpp
     LIBRARIES
         Qt::CorePrivate
+        Qt::GuiPrivate
         Qt::NetworkPrivate
         Qt::WebEngineCorePrivate
         Qt::WebEngineWidgets
@@ -24,6 +25,7 @@ set(tst_qwebenginepage_resource_files
     "resources/content.html"
     "resources/dynamicFrame.html"
     "resources/foo.txt"
+    "resources/fontaccess.html"
     "resources/frame_a.html"
     "resources/frame_c.html"
     "resources/framedindex.html"

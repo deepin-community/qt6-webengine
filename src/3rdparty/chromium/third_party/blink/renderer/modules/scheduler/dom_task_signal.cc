@@ -16,7 +16,6 @@
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/modules/scheduler/task_priority_change_event.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
-#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/wtf/casting.h"
 
 namespace blink {
@@ -37,26 +36,31 @@ class RepeatingCallbackAlgorithm final : public DOMTaskSignal::Algorithm {
 
 }  // namespace
 
+// static
+DOMTaskSignal* DOMTaskSignal::CreateFixedPriorityTaskSignal(
+    ScriptState* script_state,
+    const AtomicString& priority) {
+  HeapVector<Member<AbortSignal>> source_abort_signals;
+  return MakeGarbageCollected<DOMTaskSignal>(script_state, priority, nullptr,
+                                             source_abort_signals);
+}
+
 DOMTaskSignal::DOMTaskSignal(ExecutionContext* context,
                              const AtomicString& priority,
                              SignalType signal_type)
     : AbortSignal(context, signal_type), priority_(priority) {
-  if (RuntimeEnabledFeatures::AbortSignalAnyEnabled()) {
-    DCHECK_NE(signal_type, AbortSignal::SignalType::kComposite);
-    priority_composition_manager_ =
-        MakeGarbageCollected<SourceSignalCompositionManager>(
-            *this, AbortSignalCompositionType::kPriority);
-  }
+  DCHECK_NE(signal_type, AbortSignal::SignalType::kComposite);
+  priority_composition_manager_ =
+      MakeGarbageCollected<SourceSignalCompositionManager>(
+          *this, AbortSignalCompositionType::kPriority);
 }
 
 DOMTaskSignal::DOMTaskSignal(
     ScriptState* script_state,
     const AtomicString& priority,
     DOMTaskSignal* priority_source_signal,
-    HeapVector<Member<AbortSignal>> abort_source_signals)
+    HeapVector<Member<AbortSignal>>& abort_source_signals)
     : AbortSignal(script_state, abort_source_signals), priority_(priority) {
-  DCHECK(RuntimeEnabledFeatures::AbortSignalAnyEnabled());
-
   HeapVector<Member<AbortSignal>> signals;
   if (priority_source_signal) {
     signals.push_back(priority_source_signal);
@@ -87,13 +91,14 @@ AtomicString DOMTaskSignal::priority() {
 
 DOMTaskSignal::AlgorithmHandle* DOMTaskSignal::AddPriorityChangeAlgorithm(
     base::RepeatingClosure algorithm) {
-  if (RuntimeEnabledFeatures::AbortSignalAnyEnabled() &&
-      priority_composition_manager_->IsSettled()) {
+  CHECK_NE(GetSignalType(), SignalType::kInternal);
+  if (priority_composition_manager_->IsSettled()) {
     return nullptr;
   }
   auto* callback_algorithm =
       MakeGarbageCollected<RepeatingCallbackAlgorithm>(std::move(algorithm));
-  auto* handle = MakeGarbageCollected<AlgorithmHandle>(callback_algorithm);
+  auto* handle =
+      MakeGarbageCollected<AlgorithmHandle>(callback_algorithm, this);
   // This always appends since `handle` is not already in the collection.
   priority_change_algorithms_.insert(handle);
   return handle;
@@ -101,6 +106,7 @@ DOMTaskSignal::AlgorithmHandle* DOMTaskSignal::AddPriorityChangeAlgorithm(
 
 void DOMTaskSignal::SignalPriorityChange(const AtomicString& priority,
                                          ExceptionState& exception_state) {
+  CHECK_NE(GetSignalType(), SignalType::kInternal);
   if (is_priority_changing_) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kNotAllowedError,
@@ -112,7 +118,6 @@ void DOMTaskSignal::SignalPriorityChange(const AtomicString& priority,
   is_priority_changing_ = true;
   const AtomicString previous_priority = priority_;
   priority_ = priority;
-  priority_change_status_ = PriorityChangeStatus::kPriorityHasChanged;
 
   for (AlgorithmHandle* handle : priority_change_algorithms_) {
     handle->GetAlgorithm()->Run();
@@ -123,19 +128,15 @@ void DOMTaskSignal::SignalPriorityChange(const AtomicString& priority,
   DispatchEvent(*TaskPriorityChangeEvent::Create(
       event_type_names::kPrioritychange, init));
 
-  if (RuntimeEnabledFeatures::AbortSignalAnyEnabled()) {
-    if (auto* source_signal_manager = DynamicTo<SourceSignalCompositionManager>(
-            *priority_composition_manager_.Get())) {
-      // Dependents can be added while dispatching events, but none are removed
-      // since having an active iterator will strongify weak references, making
-      // the following iteration safe.
-      //
-      // TODO(crbug.com/1323391): Should this ignore newly added signals or not?
-      // It probably doesn't matter much, but it should be specced and tested.
-      for (auto& abort_signal : source_signal_manager->GetDependentSignals()) {
-        To<DOMTaskSignal>(abort_signal.Get())
-            ->SignalPriorityChange(priority, exception_state);
-      }
+  if (auto* source_signal_manager = DynamicTo<SourceSignalCompositionManager>(
+          *priority_composition_manager_.Get())) {
+    // Dependents can be added while dispatching events, but none are removed
+    // since having an active iterator will strongify weak references, making
+    // the following iteration safe. Signaling priority change on newly added
+    // dependent signals has no effect since the new priority is already set.
+    for (auto& abort_signal : source_signal_manager->GetDependentSignals()) {
+      To<DOMTaskSignal>(abort_signal.Get())
+          ->SignalPriorityChange(priority, exception_state);
     }
   }
 
@@ -149,14 +150,10 @@ void DOMTaskSignal::Trace(Visitor* visitor) const {
 }
 
 bool DOMTaskSignal::HasFixedPriority() const {
-  if (RuntimeEnabledFeatures::AbortSignalAnyEnabled()) {
-    return priority_composition_manager_->IsSettled();
-  }
-  return false;
+  return priority_composition_manager_->IsSettled();
 }
 
 void DOMTaskSignal::DetachFromController() {
-  DCHECK(RuntimeEnabledFeatures::AbortSignalAnyEnabled());
   AbortSignal::DetachFromController();
 
   priority_composition_manager_->Settle();
@@ -164,34 +161,26 @@ void DOMTaskSignal::DetachFromController() {
 
 AbortSignalCompositionManager* DOMTaskSignal::GetCompositionManager(
     AbortSignalCompositionType composition_type) {
-  DCHECK(RuntimeEnabledFeatures::AbortSignalAnyEnabled());
   if (composition_type != AbortSignalCompositionType::kPriority) {
     return AbortSignal::GetCompositionManager(composition_type);
   }
-  return priority_composition_manager_;
+  return priority_composition_manager_.Get();
 }
 
 void DOMTaskSignal::OnSignalSettled(
     AbortSignalCompositionType composition_type) {
-  if (composition_type != AbortSignalCompositionType::kPriority) {
-    AbortSignal::OnSignalSettled(composition_type);
-    return;
+  if (composition_type == AbortSignalCompositionType::kPriority) {
+    priority_change_algorithms_.clear();
   }
-  priority_change_algorithms_.clear();
+  AbortSignal::OnSignalSettled(composition_type);
 }
 
-bool DOMTaskSignal::HasPendingActivity() const {
-  if (GetSignalType() != SignalType::kComposite) {
-    DCHECK_EQ(GetSignalType(), SignalType::kController);
-    return false;
+bool DOMTaskSignal::IsSettledFor(
+    AbortSignalCompositionType composition_type) const {
+  if (composition_type == AbortSignalCompositionType::kPriority) {
+    return priority_composition_manager_->IsSettled();
   }
-  DCHECK(RuntimeEnabledFeatures::AbortSignalAnyEnabled());
-  // True if priority changes for this signal can occur and be observed.
-  bool has_pending_priority_activity =
-      !priority_composition_manager_->IsSettled() &&
-      (HasEventListeners(event_type_names::kPrioritychange) ||
-       !priority_change_algorithms_.empty());
-  return has_pending_priority_activity || AbortSignal::HasPendingActivity();
+  return AbortSignal::IsSettledFor(composition_type);
 }
 
 }  // namespace blink

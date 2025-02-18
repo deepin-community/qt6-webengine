@@ -10,9 +10,10 @@
 
 #include "base/base64.h"
 #include "base/command_line.h"
+#include "base/debug/crash_logging.h"
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
-#include "base/json/json_string_value_serializer.h"
+#include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/strings/string_util.h"
@@ -95,8 +96,7 @@ const net::HttpRequestHeaders GetDiscourseContext(
   std::string serialized;
   proto.SerializeToString(&serialized);
 
-  std::string encoded_context;
-  base::Base64Encode(serialized, &encoded_context);
+  std::string encoded_context = base::Base64Encode(serialized);
   // The server memoizer expects a web-safe encoding.
   std::replace(encoded_context.begin(), encoded_context.end(), '+', '-');
   std::replace(encoded_context.begin(), encoded_context.end(), '/', '_');
@@ -126,7 +126,7 @@ void ContextualSearchDelegateImpl::GatherAndSaveSurroundingText(
   blink::mojom::LocalFrame::GetTextSurroundingSelectionCallback
       get_text_callback = base::BindOnce(
           &ContextualSearchDelegateImpl::OnTextSurroundingSelectionAvailable,
-          AsWeakPtr(), context, callback);
+          weak_ptr_factory_.GetWeakPtr(), context, callback);
   if (!context)
     return;
 
@@ -170,6 +170,9 @@ void ContextualSearchDelegateImpl::ResolveSearchTermFromContext(
     SearchTermResolutionCallback callback) {
   DCHECK(context);
   GURL request_url(BuildRequestUrl(context.get()));
+
+  SCOPED_CRASH_KEY_STRING1024("contextual_search", "url",
+                              request_url.possibly_invalid_spec());
   DCHECK(request_url.is_valid()) << request_url.possibly_invalid_spec();
 
   auto resource_request = std::make_unique<network::ResourceRequest>();
@@ -177,7 +180,7 @@ void ContextualSearchDelegateImpl::ResolveSearchTermFromContext(
 
   // Populates the discourse context and adds it to the HTTP header of the
   // search term resolution request.
-  resource_request->headers.CopyFrom(GetDiscourseContext(*context));
+  resource_request->headers = GetDiscourseContext(*context);
 
   // Disable cookies for this request.
   resource_request->credentials_mode = network::mojom::CredentialsMode::kOmit;
@@ -357,7 +360,7 @@ std::string ContextualSearchDelegateImpl::BuildRequestUrl(
       context->GetTranslationLanguages().detected_language,
       context->GetTranslationLanguages().target_language,
       context->GetTranslationLanguages().fluent_languages,
-      context->GetRelatedSearchesStamp());
+      context->GetRelatedSearchesStamp(), context->GetApplyLangHint());
 
   search_terms_args.contextual_search_params = params;
 
@@ -397,10 +400,11 @@ void ContextualSearchDelegateImpl::OnTextSurroundingSelectionAvailable(
 
   // Pin the start and end offsets to ensure they point within the string.
   uint32_t surrounding_length = surrounding_text.length();
-  // TODO(crbug.com/1343955): The case where end_offset < start_offset should be
-  // handled here as well.
   start_offset = std::min(surrounding_length, start_offset);
   end_offset = std::min(surrounding_length, end_offset);
+  if (end_offset < start_offset) {
+    return;
+  }
 
   context->SetSelectionSurroundings(start_offset, end_offset, surrounding_text);
 
@@ -408,7 +412,6 @@ void ContextualSearchDelegateImpl::OnTextSurroundingSelectionAvailable(
   // surroundings to use as a sample of the surrounding text.
   int sample_surrounding_size = field_trial_->GetSampleSurroundingSize();
   DCHECK(sample_surrounding_size >= 0);
-  DCHECK(start_offset <= end_offset);
   size_t selection_start = start_offset;
   size_t selection_end = end_offset;
   int sample_padding_each_side = sample_surrounding_size / 2;
@@ -445,12 +448,15 @@ void ContextualSearchDelegateImpl::DecodeSearchTermFromJsonResponse(
   const std::string& proper_json =
       contains_xssi_escape ? response.substr(sizeof(kXssiEscape) - 1)
                            : response;
-  JSONStringValueDeserializer deserializer(proper_json);
-  std::unique_ptr<base::Value> root =
-      deserializer.Deserialize(nullptr, nullptr);
-  const base::Value::Dict* dict = root->GetIfDict();
-  if (!dict)
+  absl::optional<base::Value> root = base::JSONReader::Read(proper_json);
+  if (!root) {
     return;
+  }
+
+  const base::Value::Dict* dict = root->GetIfDict();
+  if (!dict) {
+    return;
+  }
 
   auto extract_string = [&dict](base::StringPiece key, std::string* out) {
     const std::string* string_pointer = dict->FindString(key);

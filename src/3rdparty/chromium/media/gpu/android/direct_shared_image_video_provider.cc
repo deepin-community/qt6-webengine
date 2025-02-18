@@ -81,7 +81,7 @@ void DirectSharedImageVideoProvider::RequestImage(ImageReadyCB cb,
   //
   // Also note that CodecImage shouldn't be the thing that's added to the
   // group anyway.  The thing that owns buffer management is all we really
-  // care about, and that doesn't have anything to do with GLImage.
+  // care about.
 
   // Note: `cb` is only run on successful creation, so this does not use
   // `AsyncCall()` + `Then()` to chain the callbacks.
@@ -196,10 +196,6 @@ bool GpuSharedImageVideoFactory::CreateImageInternal(
     scoped_refptr<gpu::RefCountedLock> drdc_lock) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   if (!MakeContextCurrent(stub_))
-    return false;
-
-  gpu::gles2::ContextGroup* group = stub_->decoder_context()->GetContextGroup();
-  if (!group)
     return false;
 
   const auto& coded_size = spec.coded_size;

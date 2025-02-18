@@ -122,6 +122,8 @@ void CheckDescriptionLabels(const AudioDeviceDescriptions& descriptions,
       EXPECT_TRUE(base::EndsWith(description.device_name,
                                  real_communications_label,
                                  base::CompareCase::SENSITIVE));
+    } else if (description.unique_id == real_default_id) {
+      EXPECT_TRUE(description.is_system_default);
     }
   }
 }
@@ -234,6 +236,7 @@ class AudioManagerTest : public ::testing::Test {
     // Flush the message loop to run any shutdown tasks posted by AudioManager.
     if (audio_manager_) {
       audio_manager_->Shutdown();
+      device_info_accessor_.reset();
       audio_manager_.reset();
     }
 

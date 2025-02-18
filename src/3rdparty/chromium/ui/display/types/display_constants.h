@@ -6,12 +6,17 @@
 #define UI_DISPLAY_TYPES_DISPLAY_CONSTANTS_H_
 
 #include <stdint.h>
+
 #include <array>
 
 #include "base/containers/flat_map.h"
+#include "ui/display/types/display_types_export.h"
 #include "ui/gfx/geometry/size_conversions.h"
 
 namespace display {
+
+// 1 inch in mm.
+constexpr float kInchInMm = 25.4f;
 
 // Display ID that represents an invalid display. Often used as a default value
 // before display IDs are known.
@@ -306,6 +311,10 @@ constexpr struct Data {
 // See third_party/libdrm/src/include/drm/drm_fourcc.h for the canonical list of
 // formats and modifiers
 using DrmFormatsAndModifiers = base::flat_map<uint32_t, std::vector<uint64_t>>;
+
+// Converts the display connection type from enum to string.
+DISPLAY_TYPES_EXPORT std::string DisplayConnectionTypeString(
+    DisplayConnectionType type);
 
 }  // namespace display
 

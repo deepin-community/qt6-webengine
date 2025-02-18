@@ -217,6 +217,100 @@ TEST(ContentSettingsPatternTest, FromURLNoWildcard) {
   EXPECT_TRUE(pattern.Matches(GURL("devtools://devtools")));
 }
 
+TEST(ContentSettingsPatternTest, URLToSchemefulSitePattern) {
+  // Only uses the eTLD+1 (aka registrable domain)
+  EXPECT_EQ("http://[*.]google.com",
+            ContentSettingsPattern::FromURLToSchemefulSitePattern(
+                GURL("http://mail.google.com"))
+                .ToString());
+  EXPECT_EQ("http://[*.]google.com",
+            ContentSettingsPattern::FromURLToSchemefulSitePattern(
+                GURL("http://www.foo.mail.google.com"))
+                .ToString());
+  EXPECT_EQ("http://[*.]google.com",
+            ContentSettingsPattern::FromURLToSchemefulSitePattern(
+                GURL("http://google.com"))
+                .ToString());
+
+  // Includes the (right) scheme
+  EXPECT_EQ("http://[*.]google.com",
+            ContentSettingsPattern::FromURLToSchemefulSitePattern(
+                GURL("http://google.com"))
+                .ToString());
+  EXPECT_EQ("https://[*.]google.com",
+            ContentSettingsPattern::FromURLToSchemefulSitePattern(
+                GURL("https://google.com"))
+                .ToString());
+
+  // Strips the port
+  EXPECT_EQ("http://[*.]google.com",
+            ContentSettingsPattern::FromURLToSchemefulSitePattern(
+                GURL("http://google.com:3000"))
+                .ToString());
+  EXPECT_EQ("http://[*.]google.com",
+            ContentSettingsPattern::FromURLToSchemefulSitePattern(
+                GURL("http://google.com:80"))
+                .ToString());
+  EXPECT_EQ("https://[*.]google.com",
+            ContentSettingsPattern::FromURLToSchemefulSitePattern(
+                GURL("https://google.com:443"))
+                .ToString());
+
+  // Strips the path
+  EXPECT_EQ("http://[*.]google.com",
+            ContentSettingsPattern::FromURLToSchemefulSitePattern(
+                GURL("http://google.com/example/"))
+                .ToString());
+  EXPECT_EQ("http://[*.]google.com",
+            ContentSettingsPattern::FromURLToSchemefulSitePattern(
+                GURL("http://google.com/example/example.html"))
+                .ToString());
+
+  // Opaque origins shouldn't match anything.
+  EXPECT_EQ("", ContentSettingsPattern::FromURLToSchemefulSitePattern(
+                    GURL("data:text/html,<body>Hello World</body>"))
+                    .ToString());
+
+  // This should mirror SchemefulSite which considers file URLs
+  // equal, ignoring the path.
+  EXPECT_EQ("file:///*", ContentSettingsPattern::FromURLToSchemefulSitePattern(
+                             GURL("file:///foo/bar.html"))
+                             .ToString());
+
+  EXPECT_EQ("https://127.0.0.1",
+            ContentSettingsPattern::FromURLToSchemefulSitePattern(
+                GURL("https://127.0.0.1:8080"))
+                .ToString());
+  EXPECT_EQ("https://[::1]",
+            ContentSettingsPattern::FromURLToSchemefulSitePattern(
+                GURL("https://[::1]:8080"))
+                .ToString());
+
+  EXPECT_EQ("https://localhost",
+            ContentSettingsPattern::FromURLToSchemefulSitePattern(
+                GURL("https://localhost:3000"))
+                .ToString());
+
+  // Invalid patterns
+  EXPECT_FALSE(ContentSettingsPattern::FromURLToSchemefulSitePattern(
+                   GURL("invalid://test:3000"))
+                   .IsValid());
+  EXPECT_FALSE(ContentSettingsPattern::FromURLToSchemefulSitePattern(
+                   GURL("invalid://test.com/path"))
+                   .IsValid());
+
+  // URL patterns that are not currently matched
+  EXPECT_EQ("", ContentSettingsPattern::FromURLToSchemefulSitePattern(
+                    GURL("filesystem:http://www.google.com/temporary/"))
+                    .ToString());
+  EXPECT_EQ("", ContentSettingsPattern::FromURLToSchemefulSitePattern(
+                    GURL("chrome://test"))
+                    .ToString());
+  EXPECT_EQ("", ContentSettingsPattern::FromURLToSchemefulSitePattern(
+                    GURL("devtools://devtools/"))
+                    .ToString());
+}
+
 // The static Wildcard() method goes through a fast path and avoids the Builder
 // pattern. Ensure that it yields the exact same behavior.
 TEST(ContentSettingsPatternTest, ValidWildcardFastPath) {
@@ -919,4 +1013,34 @@ TEST(ContentSettingsPatternTest, MatchesSingleOrigin) {
   EXPECT_TRUE(
       ContentSettingsPattern::FromURL(GURL("file:///foo/bar/example.txt"))
           .MatchesSingleOrigin());
+}
+
+TEST(ContentSettingsPatternTest, ToRepresentativeUrl) {
+  EXPECT_EQ(Pattern("*").ToRepresentativeUrl(), GURL());
+  EXPECT_EQ(Pattern("https://*").ToRepresentativeUrl(), GURL());
+
+  EXPECT_EQ(Pattern("https://example.com:443").ToRepresentativeUrl(),
+            GURL("https://example.com"));
+  EXPECT_EQ(Pattern("https://foo.com:*").ToRepresentativeUrl(),
+            GURL("https://foo.com"));
+  EXPECT_EQ(Pattern("*://example.com:443").ToRepresentativeUrl(),
+            GURL("https://example.com"));
+  EXPECT_EQ(Pattern("*://example.com:4443").ToRepresentativeUrl(),
+            GURL("https://example.com:4443"));
+  EXPECT_EQ(Pattern("https://[*.]example.com:443").ToRepresentativeUrl(),
+            GURL("https://example.com"));
+  EXPECT_EQ(Pattern("*://[*.]example.com:*").ToRepresentativeUrl(),
+            GURL("https://example.com"));
+
+  EXPECT_EQ(Pattern("http://example.com").ToRepresentativeUrl(),
+            GURL("http://example.com"));
+  EXPECT_EQ(Pattern("http://example.com:8080").ToRepresentativeUrl(),
+            GURL("http://example.com:8080"));
+
+  EXPECT_EQ(Pattern("chrome://settings").ToRepresentativeUrl(),
+            GURL("chrome://settings"));
+
+  EXPECT_EQ(Pattern("file:///*").ToRepresentativeUrl(), GURL());
+  EXPECT_EQ(Pattern("file:///foo/bar/example.txt").ToRepresentativeUrl(),
+            GURL("file:///foo/bar/example.txt"));
 }

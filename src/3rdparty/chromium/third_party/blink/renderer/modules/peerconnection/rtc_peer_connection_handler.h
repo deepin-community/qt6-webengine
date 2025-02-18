@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 
+#include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/task/single_thread_task_runner.h"
@@ -37,8 +38,6 @@
 #include "third_party/blink/renderer/platform/peerconnection/rtc_session_description_platform.h"
 #include "third_party/blink/renderer/platform/peerconnection/rtc_session_description_request.h"
 #include "third_party/blink/renderer/platform/peerconnection/rtc_stats.h"
-#include "third_party/blink/renderer/platform/peerconnection/rtc_stats_request.h"
-#include "third_party/blink/renderer/platform/peerconnection/rtc_stats_response_base.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
@@ -52,7 +51,6 @@ namespace blink {
 class PeerConnectionDependencyFactory;
 class PeerConnectionTracker;
 class RTCAnswerOptionsPlatform;
-class RTCLegacyStats;
 class RTCOfferOptionsPlatform;
 class RTCPeerConnectionHandlerClient;
 class RTCSessionDescriptionInit;
@@ -107,42 +105,6 @@ class MODULES_EXPORT ParsedSessionDescription {
   String sdp_;
 
   webrtc::SdpParseError error_;
-};
-
-// Mockable wrapper for blink::RTCStatsResponseBase
-class MODULES_EXPORT LocalRTCStatsResponse : public rtc::RefCountInterface {
- public:
-  explicit LocalRTCStatsResponse(RTCStatsResponseBase* impl) : impl_(impl) {}
-
-  virtual RTCStatsResponseBase* webKitStatsResponse() const;
-  virtual void addStats(const RTCLegacyStats& stats);
-
- protected:
-  ~LocalRTCStatsResponse() override {}
-  // Constructor for creating mocks.
-  LocalRTCStatsResponse() {}
-
- private:
-  Persistent<RTCStatsResponseBase> impl_;
-};
-
-// Mockable wrapper for RTCStatsRequest
-class MODULES_EXPORT LocalRTCStatsRequest : public rtc::RefCountInterface {
- public:
-  explicit LocalRTCStatsRequest(RTCStatsRequest* impl);
-  // Constructor for testing.
-  LocalRTCStatsRequest();
-
-  virtual bool hasSelector() const;
-  virtual MediaStreamComponent* component() const;
-  virtual void requestSucceeded(const LocalRTCStatsResponse* response);
-  virtual scoped_refptr<LocalRTCStatsResponse> createResponse();
-
- protected:
-  ~LocalRTCStatsRequest() override;
-
- private:
-  CrossThreadPersistent<RTCStatsRequest> impl_;
 };
 
 // RTCPeerConnectionHandler is a delegate for the RTC PeerConnection API
@@ -205,11 +167,7 @@ class MODULES_EXPORT RTCPeerConnectionHandler {
                                RTCIceCandidatePlatform* candidate);
   virtual void RestartIce();
 
-  virtual void GetStats(RTCStatsRequest* request);
-  virtual void GetStats(
-      RTCStatsReportCallback callback,
-      const Vector<webrtc::NonStandardGroupId>& exposed_group_ids,
-      bool is_track_stats_deprecation_trial_enabled);
+  virtual void GetStats(RTCStatsReportCallback callback);
   virtual webrtc::RTCErrorOr<std::unique_ptr<RTCRtpTransceiverPlatform>>
   AddTransceiverWithTrack(MediaStreamComponent* component,
                           const webrtc::RtpTransceiverInit& init);
@@ -222,7 +180,10 @@ class MODULES_EXPORT RTCPeerConnectionHandler {
   virtual webrtc::RTCErrorOr<std::unique_ptr<RTCRtpTransceiverPlatform>>
   RemoveTrack(blink::RTCRtpSenderPlatform* web_sender);
 
-  virtual scoped_refptr<webrtc::DataChannelInterface> CreateDataChannel(
+  Vector<std::unique_ptr<blink::RTCRtpSenderPlatform>> GetPlatformSenders()
+      const;
+
+  virtual rtc::scoped_refptr<webrtc::DataChannelInterface> CreateDataChannel(
       const String& label,
       const webrtc::DataChannelInit& init);
   virtual webrtc::PeerConnectionInterface* NativePeerConnection();
@@ -236,17 +197,13 @@ class MODULES_EXPORT RTCPeerConnectionHandler {
   virtual void TrackIceConnectionStateChange(
       webrtc::PeerConnectionInterface::IceConnectionState state);
 
-  // Delegate functions to allow for mocking of WebKit interfaces.
-  // getStats takes ownership of request parameter.
-  virtual void getStats(const scoped_refptr<LocalRTCStatsRequest>& request);
-
   // Asynchronously calls native_peer_connection_->getStats on the signaling
-  // thread.
+  // thread. (Future cleanup potential: just use the other GetStats() method?)
   void GetStandardStatsForTracker(
-      scoped_refptr<webrtc::RTCStatsCollectorCallback> observer);
-  void GetStats(webrtc::StatsObserver* observer,
-                webrtc::PeerConnectionInterface::StatsOutputLevel level,
-                rtc::scoped_refptr<webrtc::MediaStreamTrackInterface> selector);
+      rtc::scoped_refptr<webrtc::RTCStatsCollectorCallback> observer);
+
+  // Allows webrtc-internals to request a brief dump of the current state.
+  void EmitCurrentStateForTracker();
 
   // Tells the |client_| to close RTCPeerConnection.
   // Make it virtual for testing purpose.
@@ -313,7 +270,7 @@ class MODULES_EXPORT RTCPeerConnectionHandler {
       std::vector<blink::RtpTransceiverState> transceiver_states,
       bool is_remote_description,
       bool is_rollback);
-  void OnDataChannel(scoped_refptr<webrtc::DataChannelInterface> channel);
+  void OnDataChannel(rtc::scoped_refptr<webrtc::DataChannelInterface> channel);
   void OnIceCandidate(const String& sdp,
                       const String& sdp_mid,
                       int sdp_mline_index,
@@ -417,12 +374,9 @@ class MODULES_EXPORT RTCPeerConnectionHandler {
   // first call fails.
   bool initialize_called_ = false;
 
-  // |client_| is a raw pointer to the blink object (blink::RTCPeerConnection)
+  // |client_| points to the blink object (blink::RTCPeerConnection)
   // that owns this object.
-  // It is valid for the lifetime of this object, but is cleared when
-  // CloseAndUnregister() is called, in order to make sure it doesn't
-  // interfere with garbage collection of the owner object.
-  RTCPeerConnectionHandlerClient* client_ = nullptr;
+  WeakPersistent<RTCPeerConnectionHandlerClient> client_;
   // True if this PeerConnection has been closed.
   // After the PeerConnection has been closed, this object may no longer
   // forward callbacks to blink.
@@ -442,7 +396,7 @@ class MODULES_EXPORT RTCPeerConnectionHandler {
   // references on the signaling thread during GC.
   scoped_refptr<base::SingleThreadTaskRunner> signaling_thread_;
 
-  blink::WebLocalFrame* frame_ = nullptr;
+  raw_ptr<blink::WebLocalFrame, ExperimentalRenderer> frame_ = nullptr;
 
   // Map and owners of track adapters. Every track that is in use by the peer
   // connection has an associated blink and webrtc layer representation of it.
@@ -471,7 +425,7 @@ class MODULES_EXPORT RTCPeerConnectionHandler {
   CrossThreadPersistent<Observer> peer_connection_observer_;
 
   // |native_peer_connection_| is the libjingle native PeerConnection object.
-  scoped_refptr<webrtc::PeerConnectionInterface> native_peer_connection_;
+  rtc::scoped_refptr<webrtc::PeerConnectionInterface> native_peer_connection_;
 
   // The last applied configuration. Used so that the constraints
   // used when constructing the PeerConnection carry over when

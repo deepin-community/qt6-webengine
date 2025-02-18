@@ -142,11 +142,6 @@ struct BLINK_COMMON_EXPORT
     return data.webrtc_local_ips_allowed_urls;
   }
 
-  static const bool& webrtc_allow_legacy_tls_protocols(
-      const ::blink::RendererPreferences& data) {
-    return data.webrtc_allow_legacy_tls_protocols;
-  }
-
   static const ::blink::UserAgentOverride& user_agent_override(
       const ::blink::RendererPreferences& data) {
     return data.user_agent_override;
@@ -155,6 +150,11 @@ struct BLINK_COMMON_EXPORT
   static const std::string& accept_languages(
       const ::blink::RendererPreferences& data) {
     return data.accept_languages;
+  }
+
+  static const bool& send_subresource_notification(
+      const ::blink::RendererPreferences& data) {
+    return data.send_subresource_notification;
   }
 
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)

@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "base/component_export.h"
+#include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/strings/string_split.h"
 #include "build/build_config.h"
@@ -42,6 +43,8 @@ struct COMPONENT_EXPORT(AX_PLATFORM) AXLegacyHypertext {
   ~AXLegacyHypertext();
   AXLegacyHypertext(const AXLegacyHypertext& other);
   AXLegacyHypertext& operator=(const AXLegacyHypertext& other);
+  AXLegacyHypertext(AXLegacyHypertext&& other) noexcept;
+  AXLegacyHypertext& operator=(AXLegacyHypertext&& other);
 
   // A flag that should be set if the hypertext information in this struct is
   // out-of-date and needs to be updated. This flag should always be set upon
@@ -101,7 +104,8 @@ class COMPONENT_EXPORT(AX_PLATFORM) AXPlatformNodeBase : public AXPlatformNode {
   void NotifyAccessibilityEvent(ax::mojom::Event event_type) override;
 
 #if BUILDFLAG(IS_APPLE)
-  void AnnounceText(const std::u16string& text) override;
+  void AnnounceTextAs(const std::u16string& text,
+                      AnnouncementType announcement_type) override;
 #endif
 
   AXPlatformNodeDelegate* GetDelegate() const override;

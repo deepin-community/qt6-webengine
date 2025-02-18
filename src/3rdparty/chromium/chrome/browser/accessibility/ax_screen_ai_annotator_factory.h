@@ -25,6 +25,8 @@ class AXScreenAIAnnotatorFactory : public ProfileKeyedServiceFactory {
 
   static void EnsureExistsForBrowserContext(content::BrowserContext* context);
 
+  static void EnsureFactoryBuilt();
+
  private:
   friend class base::NoDestructor<AXScreenAIAnnotatorFactory>;
   static AXScreenAIAnnotatorFactory* GetInstance();
@@ -33,7 +35,7 @@ class AXScreenAIAnnotatorFactory : public ProfileKeyedServiceFactory {
   ~AXScreenAIAnnotatorFactory() override;
 
   // BrowserContextKeyedServiceFactory:
-  KeyedService* BuildServiceInstanceFor(
+  std::unique_ptr<KeyedService> BuildServiceInstanceForBrowserContext(
       content::BrowserContext* context) const override;
 };
 

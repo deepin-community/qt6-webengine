@@ -4,13 +4,13 @@
 
 import * as i18n from '../../core/i18n/i18n.js';
 import * as SDK from '../../core/sdk/sdk.js';
-import * as UI from '../../ui/legacy/legacy.js';
-
-import type * as DataGrid from '../../ui/components/data_grid/data_grid.js';
 import type * as Protocol from '../../generated/protocol.js';
+import type * as DataGrid from '../../ui/components/data_grid/data_grid.js';
 import * as SourceFrame from '../../ui/legacy/components/source_frame/source_frame.js';
-import * as ApplicationComponents from './components/components.js';
+import * as UI from '../../ui/legacy/legacy.js';
+import * as VisualLogging from '../../ui/visual_logging/visual_logging.js';
 
+import * as ApplicationComponents from './components/components.js';
 import sharedStorageEventsViewStyles from './sharedStorageEventsView.css.js';
 
 const UIStrings = {
@@ -44,6 +44,8 @@ export class SharedStorageEventsView extends UI.SplitWidget.SplitWidget {
   constructor() {
     super(/* isVertical */ false, /* secondIsSidebar: */ true);
 
+    this.element.setAttribute('jslog', `${VisualLogging.pane().context('shared-storage-events')}`);
+
     const topPanel = new UI.Widget.VBox();
     this.#noDisplayView = new UI.Widget.VBox();
 
@@ -54,9 +56,10 @@ export class SharedStorageEventsView extends UI.SplitWidget.SplitWidget {
 
     topPanel.contentElement.appendChild(this.#sharedStorageEventGrid);
     this.#sharedStorageEventGrid.addEventListener('cellfocused', this.#onFocus.bind(this));
+    this.#sharedStorageEventGrid.setAttribute('jslog', `${VisualLogging.section().context('events-table')}`);
 
     this.#getMainFrameResourceTreeModel()?.addEventListener(
-        SDK.ResourceTreeModel.Events.MainFrameNavigated, this.clearEvents, this);
+        SDK.ResourceTreeModel.Events.PrimaryPageChanged, this.clearEvents, this);
 
     this.#noDisplayView.contentElement.classList.add('placeholder');
     const noDisplayDiv = this.#noDisplayView.contentElement.createChild('div');
@@ -64,8 +67,8 @@ export class SharedStorageEventsView extends UI.SplitWidget.SplitWidget {
   }
 
   #getMainFrameResourceTreeModel(): SDK.ResourceTreeModel.ResourceTreeModel|null {
-    const mainFrameTarget = SDK.TargetManager.TargetManager.instance().mainFrameTarget();
-    return mainFrameTarget?.model(SDK.ResourceTreeModel.ResourceTreeModel) || null;
+    const primaryPageTarget = SDK.TargetManager.TargetManager.instance().primaryPageTarget();
+    return primaryPageTarget?.model(SDK.ResourceTreeModel.ResourceTreeModel) || null;
   }
 
   #getMainFrame(): SDK.ResourceTreeModel.ResourceTreeFrame|null {
@@ -76,7 +79,7 @@ export class SharedStorageEventsView extends UI.SplitWidget.SplitWidget {
     return this.#getMainFrame()?.id || this.#defaultId;
   }
 
-  wasShown(): void {
+  override wasShown(): void {
     super.wasShown();
     const sidebar = this.sidebarWidget();
     if (sidebar) {

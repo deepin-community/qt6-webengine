@@ -34,8 +34,6 @@
 #include "base/files/scoped_file.h"
 #include "base/logging.h"
 #include "base/memory/raw_ptr_exclusion.h"
-#include "base/metrics/histogram_macros.h"
-#include "base/posix/eintr_wrapper.h"
 #include "base/process/environment_internal.h"
 #include "base/process/process.h"
 #include "base/process/process_metrics.h"
@@ -43,7 +41,6 @@
 #include "base/threading/platform_thread.h"
 #include "base/threading/platform_thread_internal_posix.h"
 #include "base/threading/scoped_blocking_call.h"
-#include "base/time/time.h"
 #include "base/trace_event/base_tracing.h"
 #include "build/build_config.h"
 
@@ -60,7 +57,7 @@
 #include <sys/ucontext.h>
 #endif
 
-#if BUILDFLAG(IS_APPLE)
+#if BUILDFLAG(IS_MAC)
 #error "macOS should use launch_mac.cc"
 #endif
 
@@ -312,7 +309,6 @@ Process LaunchProcess(const std::vector<std::string>& argv,
   }
 
   pid_t pid;
-  base::TimeTicks before_fork = TimeTicks::Now();
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_AIX)
   if (options.clone_flags) {
     // Signal handling in this function assumes the creation of a new
@@ -339,11 +335,7 @@ Process LaunchProcess(const std::vector<std::string>& argv,
 
   // Always restore the original signal mask in the parent.
   if (pid != 0) {
-    base::TimeTicks after_fork = TimeTicks::Now();
     SetSignalMask(orig_sigmask);
-
-    base::TimeDelta fork_time = after_fork - before_fork;
-    UMA_HISTOGRAM_TIMES("MPArch.ForkTime", fork_time);
   }
 
   if (pid < 0) {
@@ -362,31 +354,23 @@ Process LaunchProcess(const std::vector<std::string>& argv,
     // might do things like block waiting for threads that don't even exist
     // in the child.
 
-#if defined(TOOLKIT_QT)
-    if (options.zygote_control_fd != -1) {
-      // Based on base::SetCloseOnExec().
-      auto RemoveCloseOnExec = [](int fd) -> bool {
-        const int flags = fcntl(fd, F_GETFD);
-        if (flags == -1)
-          return false;
-        if ((flags & FD_CLOEXEC) == 0)
-          return true;
-        if (fcntl(fd, F_SETFD, flags & ~FD_CLOEXEC) == -1)
-          return false;
-        return true;
-      };
-
-      if (!RemoveCloseOnExec(options.zygote_control_fd)) {
-        RAW_LOG(ERROR, "Failed to remove FD_CLOEXEC flag from zygote control file descriptor:");
-        RAW_LOG(ERROR, strerror(errno));
-      }
-    }
-#endif
-
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
     // See comments on the ResetFDOwnership() declaration in
     // base/files/scoped_file.h regarding why this is called early here.
     subtle::ResetFDOwnership();
+
+    // The parent process might set FD_CLOEXEC flag on certain file
+    // descriptors to prevent them leaking into child processes of the
+    // embedder application. Remove the flag from the file descriptors
+    // which meant to be inherited by the child process.
+    //
+    // Cannot use STL iterators here, since debug iterators use locks.
+    // NOLINTNEXTLINE(modernize-loop-convert)
+    for (size_t i = 0; i < options.fds_to_remove_cloexec.size(); ++i) {
+      if (!RemoveCloseOnExec(options.fds_to_remove_cloexec[i])) {
+        RAW_LOG(WARNING, "Failed to remove FD_CLOEXEC flag");
+      }
+    }
 #endif
 
     {
@@ -720,19 +704,23 @@ int CloneHelper(void* arg) {
 // |stack_buf| is allocated on thread stack instead of ASan's fake stack.
 // Under ASan longjmp() will attempt to clean up the area between the old and
 // new stack pointers and print a warning that may confuse the user.
-__attribute__((no_sanitize_address))
-#endif
-NOINLINE pid_t
+NOINLINE __attribute__((no_sanitize_address)) pid_t
 CloneAndLongjmpInChild(int flags, pid_t* ptid, pid_t* ctid, jmp_buf* env) {
+#else
+NOINLINE pid_t CloneAndLongjmpInChild(int flags,
+                                      pid_t* ptid,
+                                      pid_t* ctid,
+                                      jmp_buf* env) {
+#endif
   // We use the libc clone wrapper instead of making the syscall
   // directly because making the syscall may fail to update the libc's
   // internal pid cache. The libc interface unfortunately requires
   // specifying a new stack, so we use setjmp/longjmp to emulate
   // fork-like behavior.
   alignas(16) char stack_buf[PTHREAD_STACK_MIN];
-#if defined(ARCH_CPU_X86_FAMILY) || defined(ARCH_CPU_ARM_FAMILY) ||   \
-    defined(ARCH_CPU_MIPS_FAMILY) || defined(ARCH_CPU_S390_FAMILY) || \
-    defined(ARCH_CPU_PPC64_FAMILY) || defined(ARCH_CPU_LOONG_FAMILY) || \
+#if defined(ARCH_CPU_X86_FAMILY) || defined(ARCH_CPU_ARM_FAMILY) ||         \
+    defined(ARCH_CPU_MIPS_FAMILY) || defined(ARCH_CPU_S390_FAMILY) ||       \
+    defined(ARCH_CPU_PPC64_FAMILY) || defined(ARCH_CPU_LOONGARCH_FAMILY) || \
     defined(ARCH_CPU_RISCV_FAMILY)
   // The stack grows downward.
   void* stack = stack_buf + sizeof(stack_buf);

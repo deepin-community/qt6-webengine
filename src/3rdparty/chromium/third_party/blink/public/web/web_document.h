@@ -32,6 +32,7 @@
 #define THIRD_PARTY_BLINK_PUBLIC_WEB_WEB_DOCUMENT_H_
 
 #include "net/cookies/site_for_cookies.h"
+#include "net/url_request/referrer_policy.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
 #include "services/network/public/mojom/referrer_policy.mojom-shared.h"
 #include "services/network/public/mojom/restricted_cookie_manager.mojom-shared.h"
@@ -106,6 +107,12 @@ class BLINK_EXPORT WebDocument : public WebNode {
   // cookie blocking.
   net::SiteForCookies SiteForCookies() const;
 
+  // The `HasStorageAccess` boolean is used to determine whether this document
+  // has opted into using the Storage Access API. This is relevant when
+  // attempting to access cookies in a context where third-party cookies may be
+  // blocked.
+  bool HasStorageAccess() const;
+
   WebSecurityOrigin TopFrameOrigin() const;
   WebElement DocumentElement() const;
   WebElement Body() const;
@@ -145,13 +152,15 @@ class BLINK_EXPORT WebDocument : public WebNode {
 
   void SetShowBeforeUnloadDialog(bool show_dialog);
 
-  // See cc/paint/element_id.h for the definition of these id.
-  uint64_t GetVisualViewportScrollingElementIdForTesting();
+  cc::ElementId GetVisualViewportScrollingElementIdForTesting();
 
   bool IsLoaded();
 
   // Returns true if the document is in prerendering.
   bool IsPrerendering();
+
+  // Returns true if the document has a Document Picture-in-Picture window.
+  bool HasDocumentPictureInPictureWindow() const;
 
   // Return true if  accessibility processing has been enabled.
   bool IsAccessibilityEnabled();
@@ -164,6 +173,12 @@ class BLINK_EXPORT WebDocument : public WebNode {
   void SetCookieManager(
       CrossVariantMojoRemote<
           network::mojom::RestrictedCookieManagerInterfaceBase> cookie_manager);
+
+  // Returns the referrer policy for this document's referrer.
+  net::ReferrerPolicy GetReferrerPolicy() const;
+
+  // Returns the referrer for this document.
+  WebString OutgoingReferrer() const;
 
 #if INSIDE_BLINK
   WebDocument(Document*);

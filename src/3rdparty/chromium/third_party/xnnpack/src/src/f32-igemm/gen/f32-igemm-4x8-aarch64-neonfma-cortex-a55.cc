@@ -29,9 +29,9 @@ class Generator : public MacroAssembler {
 //     size_t nc,                         x1
 //     size_t kc,                         x2 / x0
 //     size_t ks,                         x3 / x9
-//     const float**restrict a,           x4
-//     const void*restrict w,             x5
-//     uint8_t*restrict c,                x6
+//     const float** restrict a,           x4
+//     const void* restrict w,             x5
+//     uint8_t* restrict c,                x6
 //     size_t cm_stride,                  x7
 //     size_t cn_stride,                  [sp] -> x10
 //     size_t a_offset,                   [sp + 8] -> x11
@@ -68,7 +68,7 @@ class Generator : public MacroAssembler {
 void Generator::generate(size_t max_mr, size_t nc_mod_nr, size_t kc, size_t ks, const jit_gemm_params* jit_gemm_params)
 {
   assert(max_mr <= 4);
-  assert(nc_mod_nr < 8);
+  assert(nc_mod_nr < 8 || nc_mod_nr == SIZE_MAX);
   assert(kc != 0);
   assert(kc % sizeof(float) == 0);
   assert(ks != 0);
@@ -122,23 +122,49 @@ void Generator::generate(size_t max_mr, size_t nc_mod_nr, size_t kc, size_t ks, 
   ldp(q20, q21, mem[x5], 32);
   if (max_mr > 1) {
     mov(v22.v16b(), v20.v16b());
+  }
+  prfm(kPLDL1KEEP, mem[x13, 0]); // Prefetch A
+  prfm(kPLDL1KEEP, mem[x13, 64]);
+  if (max_mr > 1) {
     mov(v23.v16b(), v21.v16b());
   }
+  prfm(kPLDL1KEEP, mem[x14, 0]);
+  prfm(kPLDL1KEEP, mem[x14, 64]);
   if (max_mr > 2) {
     mov(v24.v16b(), v20.v16b());
+  }
+  prfm(kPLDL1KEEP, mem[x15, 0]);
+  prfm(kPLDL1KEEP, mem[x15, 64]);
+  if (max_mr > 2) {
     mov(v25.v16b(), v21.v16b());
   }
+  prfm(kPLDL1KEEP, mem[x8, 0]);
+  prfm(kPLDL1KEEP, mem[x8, 64]);
   if (max_mr > 3) {
     mov(v26.v16b(), v20.v16b());
+  }
+  prfm(kPLDL1KEEP, mem[x5, 0]); // Prefetch B
+  prfm(kPLDL1KEEP, mem[x5, 64]);
+  if (max_mr > 3) {
     mov(v27.v16b(), v21.v16b());
   }
+  prfm(kPLDL1KEEP, mem[x5, 128]);
+  prfm(kPLDL1KEEP, mem[x5, 192]);
 
   mov(x9, x3); // p = ks
 
   bind(l1);
   // Load next 4 A pointers
-  ldp(x13, x14, mem[x4], 16);
-  if (max_mr > 2) {
+  if (max_mr == 1) {
+    ldr(x13, mem[x4], 8);
+  }
+  if (max_mr > 1) {
+    ldp(x13, x14, mem[x4], 16);
+  }
+  if (max_mr == 3) {
+    ldr(x15, mem[x4], 8);
+  }
+  if (max_mr > 3) {
     ldp(x15, x8, mem[x4], 16);
   }
 

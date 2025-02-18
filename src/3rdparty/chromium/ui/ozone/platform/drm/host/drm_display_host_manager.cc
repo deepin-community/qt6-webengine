@@ -240,7 +240,6 @@ base::FilePath GetPrimaryDisplayCardPath() {
   }
 
   LOG(FATAL) << "Failed to open primary graphics device.";
-  return base::FilePath();  // Not reached.
 }
 
 }  // namespace
@@ -268,7 +267,6 @@ DrmDisplayHostManager::DrmDisplayHostManager(
                                         /*is_primary_device=*/true);
     if (!primary_drm_device_) {
       LOG(FATAL) << "Failed to open primary graphics card";
-      return;
     }
     host_properties->supports_overlays = primary_drm_device_->is_atomic();
     drm_devices_[primary_graphics_card_path_] =
@@ -285,8 +283,7 @@ DrmDisplayHostManager::DrmDisplayHostManager(
   for (auto& display_info : display_infos) {
     // Create a dummy DisplaySnapshot and resolve display ID collisions.
     std::unique_ptr<display::DisplaySnapshot> current_display_snapshot =
-        CreateDisplaySnapshot(*primary_drm_device_, display_info.get(), 0,
-                              gfx::Point(), display::DrmFormatsAndModifiers());
+        CreateDisplaySnapshot(*primary_drm_device_, display_info.get(), 0);
 
     const auto colliding_display_snapshot_iter =
         edid_id_collision_map.find(current_display_snapshot->edid_display_id());
@@ -678,7 +675,7 @@ void DrmDisplayHostManager::GpuShouldDisplayEventTriggerConfiguration(
 
 void DrmDisplayHostManager::RunUpdateDisplaysCallback(
     display::GetDisplaysCallback callback) const {
-  std::vector<display::DisplaySnapshot*> snapshots;
+  std::vector<raw_ptr<display::DisplaySnapshot, VectorExperimental>> snapshots;
   for (const auto& display : displays_)
     snapshots.push_back(display->snapshot());
 

@@ -173,7 +173,10 @@ class SequenceLocalSyncEventWatcher::SequenceLocalState {
   }
 
  private:
-  using StorageSlotType = base::SequenceLocalStorageSlot<SequenceLocalState>;
+  // GenericSequenceLocalStorageSlot needs to be specified since
+  // SequenceLocalStorageSlot doesn't support forward declared types.
+  using StorageSlotType =
+      base::GenericSequenceLocalStorageSlot<SequenceLocalState>;
   static StorageSlotType& GetStorageSlot() {
     static StorageSlotType storage;
     return storage;
@@ -258,7 +261,7 @@ class SequenceLocalSyncEventWatcher::Registration {
 
  private:
   const base::WeakPtr<SequenceLocalState> weak_shared_state_;
-  const raw_ptr<SequenceLocalState, DanglingUntriaged> shared_state_;
+  const raw_ptr<SequenceLocalState, AcrossTasksDanglingUntriaged> shared_state_;
   WatcherStateMap::iterator watcher_state_iterator_;
   const scoped_refptr<WatcherState> watcher_state_;
 };

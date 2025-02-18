@@ -562,6 +562,7 @@ class PathParser {
     '-crash-log.txt': 'crash_log',
     '-stderr.txt': 'stderr',
     '-command.txt': 'command',
+    '-trace.pftrace': 'trace',
   };
   static numCachedTests = 0;
   static numCachedArtifacts = 0;
@@ -638,7 +639,7 @@ class PathParser {
     cache = PathParser.resultDBArtifacts[this.path] =
         { artifacts: {}, expiration: 0 };
     let promise = PathParser.queryArtifacts({
-      testIdRegexp: `ninja://:[^/]*${this.path}`,
+      testIdRegexp: `ninja://:[^/]*${this.path.replace(/[.?+]/g, '\\$&')}`,
       expectancy: 'ALL',
     }).then(() => { return Promise.resolve(cache.artifacts); });
     // If the promise is not fulfilled immediately, save the promise in the
@@ -668,9 +669,12 @@ class PathParser {
             let responseJson = JSON.parse(response);
             if (responseJson.artifacts) {
               for (let artifact of responseJson.artifacts) {
-                let [_, testPath] = artifact.name.match(
+                let match = artifact.name.match(
                     /\/tests\/ninja:%2F%2F:[^%]*(%2F.*)\/results\//);
-                testPath = decodeURIComponent(testPath);
+                if (!match) {
+                  continue;
+                }
+                let testPath = decodeURIComponent(match[1]);
                 let cache = PathParser.resultDBArtifacts[testPath];
                 if (!cache) {
                   cache = PathParser.resultDBArtifacts[testPath] =
@@ -689,6 +693,7 @@ class PathParser {
               }
             }
             if (responseJson.nextPageToken) {
+              // TODO: Don't resolve() until continuation is loaded.
               console.log('Requesting next page');
               PathParser.queryArtifacts(testResultPredicate,
                                         responseJson.nextPageToken);
@@ -1027,6 +1032,11 @@ const Report = {
           break;
         default:
           console.error("unexpected actual", test.actual);
+      }
+      let trace_link = pathParser.resultLink("-trace.pftrace");
+      if (trace_link && trace_link != "about:blank") {
+        toolbars.push(new NonSelectableLinkToolbar().createDom(
+          trace_link, "Perfetto trace file", "trace"));
       }
     }
     if (test.has_stderr) {
@@ -1758,9 +1768,7 @@ const GUI = {
       document.querySelector("#count_unexpected_pass").parentElement.classList.add("good");
 
     document.querySelector("#summary_total").innerText = counts.count_all;
-    if (!GUI.hasBaseExpectations)
-      document.querySelector("#flag-toolbar").classList.add("hidden");
-    else {
+    if (GUI.hasBaseExpectations || fullResults.flag_name) {
       document.querySelector("#flag-toolbar").classList.remove("hidden");
       let flagName = fullResults.flag_name || "";
       flagName = flagName.replace('/', '')
@@ -1768,6 +1776,8 @@ const GUI = {
       Array.from(document.querySelectorAll(".flag_name")).forEach( el => {
         el.innerText = flagName;
       });
+    } else {
+      document.querySelector("#flag-toolbar").classList.add("hidden");
     }
   },
 
@@ -2807,6 +2817,22 @@ class PlainHtmlToolbar extends TXToolbar {
     return dom;
   }
 } // class PlainHtmlToolbar
+
+class NonSelectableLinkToolbar extends TXToolbar {
+  createDom(linkOrPromise, title, innerHTML) {
+    super.importStyle();
+    this.toolbar = document.createElement("li");
+    this.toolbar.classList.add("tx-toolbar");
+    let anchor = document.createElement('a');
+    Promise.resolve(linkOrPromise).then(href => {
+      anchor.href = href;
+    });
+    anchor.title = title;
+    anchor.innerHTML = innerHTML;
+    this.toolbar.appendChild(anchor);
+    return this.toolbar;
+  }
+}
 
 class SimpleLinkToolbar extends TXToolbar {
   createDom(linkOrPromise, title, innerHTML) {

@@ -16,9 +16,7 @@
 #include "components/viz/service/viz_service_export.h"
 #include "gpu/command_buffer/common/constants.h"
 #include "gpu/command_buffer/service/sequence_id.h"
-#include "gpu/config/gpu_preferences.h"
 #include "gpu/ipc/common/surface_handle.h"
-#include "third_party/skia/include/core/SkSurfaceCharacterization.h"
 #include "ui/gl/gl_surface_format.h"
 
 class GURL;
@@ -30,6 +28,7 @@ class Presenter;
 
 namespace gpu {
 
+class DawnContextProvider;
 class GpuDriverBugWorkarounds;
 class ImageTransportSurfaceDelegate;
 class MailboxManager;
@@ -38,6 +37,7 @@ class SharedImageManager;
 class SingleTaskSequence;
 class SyncPointManager;
 struct GpuFeatureInfo;
+struct GpuPreferences;
 
 namespace raster {
 class GrShaderCache;
@@ -47,7 +47,6 @@ class GrShaderCache;
 
 namespace viz {
 
-class DawnContextProvider;
 class VulkanContextProvider;
 
 // This class exists to allow SkiaOutputSurfaceImpl to ignore differences
@@ -73,7 +72,7 @@ class VIZ_SERVICE_EXPORT SkiaOutputSurfaceDependency {
   // May return null.
   virtual VulkanContextProvider* GetVulkanContextProvider() = 0;
   // May return null.
-  virtual DawnContextProvider* GetDawnContextProvider() = 0;
+  virtual gpu::DawnContextProvider* GetDawnContextProvider() = 0;
   virtual const gpu::GpuPreferences& GetGpuPreferences() const = 0;
   virtual const gpu::GpuFeatureInfo& GetGpuFeatureInfo() = 0;
   virtual gpu::MailboxManager* GetMailboxManager() = 0;
@@ -82,8 +81,7 @@ class VIZ_SERVICE_EXPORT SkiaOutputSurfaceDependency {
   virtual bool IsOffscreen() = 0;
   virtual gpu::SurfaceHandle GetSurfaceHandle() = 0;
   virtual scoped_refptr<gl::Presenter> CreatePresenter(
-      base::WeakPtr<gpu::ImageTransportSurfaceDelegate> stub,
-      gl::GLSurfaceFormat format) = 0;
+      base::WeakPtr<gpu::ImageTransportSurfaceDelegate> stub) = 0;
   virtual scoped_refptr<gl::GLSurface> CreateGLSurface(
       base::WeakPtr<gpu::ImageTransportSurfaceDelegate> stub,
       gl::GLSurfaceFormat format) = 0;
@@ -105,27 +103,10 @@ class VIZ_SERVICE_EXPORT SkiaOutputSurfaceDependency {
   virtual void DidLoseContext(gpu::error::ContextLostReason reason,
                               const GURL& active_url) = 0;
 
-  virtual base::TimeDelta GetGpuBlockedTimeSinceLastSwap() = 0;
   virtual bool NeedsSupportForExternalStencil() = 0;
 
   // This returns true if CompositorGpuThread(aka DrDc thread) is enabled.
   virtual bool IsUsingCompositorGpuThread() = 0;
-
-  gpu::GrContextType gr_context_type() const {
-    return GetGpuPreferences().gr_context_type;
-  }
-
-  bool IsUsingVulkan() const {
-    return gr_context_type() == gpu::GrContextType::kVulkan;
-  }
-
-  bool IsUsingDawn() const {
-    return gr_context_type() == gpu::GrContextType::kDawn;
-  }
-
-  bool IsUsingMetal() const {
-    return gr_context_type() == gpu::GrContextType::kMetal;
-  }
 };
 
 }  // namespace viz

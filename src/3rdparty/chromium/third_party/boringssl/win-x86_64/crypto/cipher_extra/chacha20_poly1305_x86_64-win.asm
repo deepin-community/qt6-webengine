@@ -6,6 +6,7 @@ default	rel
 %define XMMWORD
 %define YMMWORD
 %define ZMMWORD
+%define _CET_ENDBR
 
 %ifdef BORINGSSL_PREFIX
 %include "boringssl_prefix_symbols_nasm.inc"
@@ -16,6 +17,7 @@ EXTERN	OPENSSL_ia32cap_P
 
 chacha20_poly1305_constants:
 
+section	.rdata rdata align=8
 ALIGN	64
 $L$chacha20_consts:
 	DB	'e','x','p','a','n','d',' ','3','2','-','b','y','t','e',' ','k'
@@ -53,6 +55,8 @@ $L$and_masks:
 	DB	0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0x00,0x00
 	DB	0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0x00
 	DB	0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff
+section	.text
+
 
 
 ALIGN	64
@@ -108,7 +112,7 @@ $L$poly_fast_tls_ad:
 	adc	r11,r9
 	adc	r12,0
 
-	DB	0F3h,0C3h		;repret
+	ret
 $L$hash_ad_loop:
 
 	cmp	r8,16
@@ -217,7 +221,7 @@ $L$hash_ad_tail_loop:
 
 
 $L$hash_ad_done:
-	DB	0F3h,0C3h		;repret
+	ret
 
 
 
@@ -238,6 +242,7 @@ $L$SEH_begin_chacha20_poly1305_open:
 
 
 
+_CET_ENDBR
 	push	rbp
 
 	push	rbx
@@ -1886,7 +1891,7 @@ $L$open_sse_finalize:
 
 	mov	rdi,QWORD[8+rsp]	;WIN64 epilogue
 	mov	rsi,QWORD[16+rsp]
-	DB	0F3h,0C3h		;repret
+	ret
 
 $L$open_sse_128:
 
@@ -2144,6 +2149,7 @@ $L$SEH_begin_chacha20_poly1305_seal:
 
 
 
+_CET_ENDBR
 	push	rbp
 
 	push	rbx
@@ -3972,7 +3978,7 @@ $L$do_length_block:
 
 	mov	rdi,QWORD[8+rsp]	;WIN64 epilogue
 	mov	rsi,QWORD[16+rsp]
-	DB	0F3h,0C3h		;repret
+	ret
 
 $L$seal_sse_128:
 

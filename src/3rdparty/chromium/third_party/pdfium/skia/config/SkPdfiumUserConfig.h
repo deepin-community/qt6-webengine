@@ -107,14 +107,15 @@
 // #endif
 
 
-/* Determines whether to build code that supports the GPU backend. Some classes
+/* Determines whether to build code that supports the Ganesh GPU backend. Some classes
    that are not GPU-specific, such as SkShader subclasses, have optional code
-   that is used allows them to interact with the GPU backend. If you'd like to
-   omit this code set SK_SUPPORT_GPU to 0. This also allows you to omit the gpu
-   directories from your include search path when you're not building the GPU
-   backend. Defaults to 1 (build the GPU code).
- */
-// #define SK_SUPPORT_GPU 1
+   that is used to interact with this GPU backend. If you'd like to
+   include this code, include -DSK_GANESH in your cflags or uncomment below.
+   Defaults to not set (No Ganesh GPU backend).
+   This define affects the ABI of Skia, so make sure it matches the client which uses
+   the compiled version of Skia.
+*/
+// #define SK_GANESH
 
 /* Skia makes use of histogram logging macros to trace the frequency of
  * events. By default, Skia provides no-op versions of these macros.
@@ -187,44 +188,11 @@ SK_API void SkDebugf_FileLine(const char* file,
 
 #endif
 
-// These flags are no longer defined in Skia, but we have them (temporarily)
-// until we update our call-sites (typically these are for API changes).
-//
-// Remove these as we update our sites.
-//
-#ifndef SK_SUPPORT_LEGACY_GETTOPDEVICE
-#define SK_SUPPORT_LEGACY_GETTOPDEVICE
-#endif
-
-#ifndef SK_SUPPORT_EXOTIC_CLIPOPS
-#define SK_SUPPORT_EXOTIC_CLIPOPS
-#endif
-
-#ifndef SK_SUPPORT_LEGACY_GETDEVICE
-#define SK_SUPPORT_LEGACY_GETDEVICE
-#endif
-
 // Workaround for poor anisotropic mipmap quality,
 // pending Skia ripmap support.
 // (https://bugs.chromium.org/p/skia/issues/detail?id=4863)
 #ifndef SK_SUPPORT_LEGACY_ANISOTROPIC_MIPMAP_SCALE
 #define SK_SUPPORT_LEGACY_ANISOTROPIC_MIPMAP_SCALE
-#endif
-
-#ifndef SK_SUPPORT_LEGACY_REFENCODEDDATA_NOCTX
-#define SK_SUPPORT_LEGACY_REFENCODEDDATA_NOCTX
-#endif
-
-#ifndef SK_IGNORE_ETC1_SUPPORT
-#define SK_IGNORE_ETC1_SUPPORT
-#endif
-
-#ifndef SK_IGNORE_GPU_DITHER
-#define SK_IGNORE_GPU_DITHER
-#endif
-
-#ifndef SK_SUPPORT_LEGACY_EVAL_CUBIC
-#define SK_SUPPORT_LEGACY_EVAL_CUBIC
 #endif
 
 ///////////////////////// Imported from BUILD.gn

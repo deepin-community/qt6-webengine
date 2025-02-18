@@ -7,10 +7,10 @@
 #include "build/build_config.h"
 #include "third_party/blink/public/mojom/webpreferences/web_preferences.mojom-blink.h"
 #include "third_party/blink/renderer/core/dom/node_computed_style.h"
+#include "third_party/blink/renderer/core/dom/text.h"
 #include "third_party/blink/renderer/core/editing/position_with_affinity.h"
 #include "third_party/blink/renderer/core/editing/text_affinity.h"
 #include "third_party/blink/renderer/core/html/html_iframe_element.h"
-#include "third_party/blink/renderer/core/page/named_pages_mapper.h"
 #include "third_party/blink/renderer/core/page/print_context.h"
 #include "third_party/blink/renderer/core/testing/core_unit_test_helper.h"
 #include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
@@ -34,14 +34,14 @@ TEST_F(LayoutViewTest, UpdateCountersLayout) {
   )HTML");
 
   UpdateAllLifecyclePhasesForTest();
-  Element* inc = GetDocument().getElementById("inc");
+  Element* inc = GetDocument().getElementById(AtomicString("inc"));
 
-  inc->setAttribute("class", "incX");
+  inc->setAttribute(html_names::kClassAttr, AtomicString("incX"));
   GetDocument().UpdateStyleAndLayoutTree();
   EXPECT_FALSE(GetDocument().View()->NeedsLayout());
 
   UpdateAllLifecyclePhasesForTest();
-  inc->setAttribute("class", "incY");
+  inc->setAttribute(html_names::kClassAttr, AtomicString("incY"));
   GetDocument().UpdateStyleAndLayoutTree();
   EXPECT_TRUE(GetDocument().View()->NeedsLayout());
 }
@@ -51,7 +51,8 @@ TEST_F(LayoutViewTest, DisplayNoneFrame) {
     <iframe id="iframe" style="display:none"></iframe>
   )HTML");
 
-  auto* iframe = To<HTMLIFrameElement>(GetDocument().getElementById("iframe"));
+  auto* iframe = To<HTMLIFrameElement>(
+      GetDocument().getElementById(AtomicString("iframe")));
   Document* frame_doc = iframe->contentDocument();
   ASSERT_TRUE(frame_doc);
   frame_doc->OverrideIsInitialEmptyDocument();
@@ -103,7 +104,7 @@ TEST_F(LayoutViewTest, NamedPages) {
   ASSERT_TRUE(view);
 
   ScopedPrintContext print_context(&GetDocument().View()->GetFrame());
-  print_context->BeginPrintMode(500, 500);
+  print_context->BeginPrintMode(WebPrintParams(gfx::SizeF(500, 500)));
 
   EXPECT_EQ(view->NamedPageAtIndex(0), AtomicString());
   EXPECT_EQ(view->NamedPageAtIndex(1), AtomicString());
@@ -115,16 +116,9 @@ TEST_F(LayoutViewTest, NamedPages) {
   EXPECT_EQ(view->NamedPageAtIndex(7), AtomicString());
   EXPECT_EQ(view->NamedPageAtIndex(8), "yksi");
 
-  if (RuntimeEnabledFeatures::LayoutNGPrintingEnabled()) {
-    // LayoutNGPrinting doesn't provide a name for pages that don't exist.
-    EXPECT_EQ(view->NamedPageAtIndex(9), AtomicString());
-    EXPECT_EQ(view->NamedPageAtIndex(100), AtomicString());
-  } else {
-    // The legacy API, on the other hand, has no clue about how many pages we
-    // have, so it will just return the last page name, for good measure.
-    EXPECT_EQ(view->NamedPageAtIndex(9), "yksi");
-    EXPECT_EQ(view->NamedPageAtIndex(100), "yksi");
-  }
+  // We don't provide a name for pages that don't exist.
+  EXPECT_EQ(view->NamedPageAtIndex(9), AtomicString());
+  EXPECT_EQ(view->NamedPageAtIndex(100), AtomicString());
 }
 
 TEST_F(LayoutViewTest, NamedPagesAbsPos) {
@@ -146,7 +140,7 @@ TEST_F(LayoutViewTest, NamedPagesAbsPos) {
   ASSERT_TRUE(view);
 
   ScopedPrintContext print_context(&GetDocument().View()->GetFrame());
-  print_context->BeginPrintMode(500, 500);
+  print_context->BeginPrintMode(WebPrintParams(gfx::SizeF(500, 500)));
 
   EXPECT_EQ(view->NamedPageAtIndex(0), "woohoo");
   EXPECT_EQ(view->NamedPageAtIndex(1), "woohoo");
@@ -258,7 +252,7 @@ TEST_P(LayoutViewHitTestTest, BlockInInlineWithListItem) {
   // |LayoutObject::CreatePositionWithAffinity()| for anonymous block
   // containing list marker.
   // LayoutNGBlockFlow (anonymous)
-  //    LayoutNGInsideListMarker {::marker}
+  //    LayoutInsideListMarker {::marker}
   //      LayoutText (anonymous)
   //      LayoutInline {SPAN}
   EXPECT_EQ(PositionWithAffinity(Position(span, 0)), HitTest(0, 5));
@@ -354,7 +348,7 @@ TEST_P(LayoutViewHitTestTest, FloatLeftLeft) {
       "#target { width: 70px; }"
       ".float { float: left; margin-right: 10px; }");
   SetBodyInnerHTML("<div id=target><div class=float>ab</div>xy</div>");
-  // NGFragmentItem
+  // FragmentItem
   //   [0] kLine (30,0)x(20,10)
   //   [1] kBox/Floating (0,0)x(20,10)
   //   [2] kText "xy" (30,0)x(20,10)
@@ -389,7 +383,7 @@ TEST_P(LayoutViewHitTestTest, FloatLeftMiddle) {
       "#target { width: 70px; }"
       ".float { float: left; margin-right: 10px; }");
   SetBodyInnerHTML("<div id=target>x<div class=float>ab</div>y</div>");
-  // NGFragmentItem
+  // FragmentItem
   //   [0] kLine (30,0)x(20,10)
   //   [1] kText "x" (30,0)x(10,10)
   //   [1] kBox/Floating (0,0)x(20,10)
@@ -424,7 +418,7 @@ TEST_P(LayoutViewHitTestTest, FloatLeftRight) {
       "#target { width: 70px; }"
       ".float { float: left; margin-right: 10px; }");
   SetBodyInnerHTML("<div id=target>xy<div class=float>ab</div></div>");
-  // NGFragmentItem
+  // FragmentItem
   //   [0] kLine (30,0)x(20,10)
   //   [1] kText "xy" (30,0)x(20,10)
   //   [2] kBox/Floating (0,0)x(20,10)
@@ -459,7 +453,7 @@ TEST_P(LayoutViewHitTestTest, FloatRightLeft) {
       "#target { width: 50px; }"
       ".float { float: right; }");
   SetBodyInnerHTML("<div id=target>xy<div class=float>ab</div></div>");
-  // NGFragmentItem
+  // FragmentItem
   //   [0] kLine (0,0)x(20,10)
   //   [1] kBox/Floating (30,0)x(20,10)
   auto& target = *GetElementById("target");
@@ -505,7 +499,7 @@ TEST_P(LayoutViewHitTestTest, FloatRightMiddle) {
       "#target { width: 50px; }"
       ".float { float: right; }");
   SetBodyInnerHTML("<div id=target>x<div class=float>ab</div>y</div>");
-  // NGFragmentItem
+  // FragmentItem
   //   [0] kLine (0,0)x(20,10)
   //   [1] kText "x" (0,0)x(10,10)
   //   [2] kBox/Floating (30,0)x(20,10)
@@ -577,10 +571,10 @@ TEST_P(LayoutViewHitTestTest, PositionAbsolute) {
       "#target { width: 70px; }"
       ".abspos { position: absolute; left: 40px; top: 0px; }");
   SetBodyInnerHTML("<div id=target><div class=abspos>ab</div>xy</div>");
-  // NGFragmentItem
+  // FragmentItem
   //   [0] kLine (0,0)x(20,10)
   //   [2] kText "xy" (30,0)x(20,10)
-  // Note: position:absolute isn't in NGFragmentItems of #target.
+  // Note: position:absolute isn't in FragmentItems of #target.
   auto& target = *GetElementById("target");
   auto& ab = *To<Text>(target.firstChild()->firstChild());
   auto& xy = *To<Text>(target.lastChild());
@@ -630,9 +624,11 @@ TEST_P(LayoutViewHitTestTest, HitTestHorizontal) {
   //   |                  |
   //   |------------------|
   // (50, 180)         (250, 180)
-  auto* div = GetDocument().getElementById("div");
-  auto* text1 = GetDocument().getElementById("span1")->firstChild();
-  auto* text2 = GetDocument().getElementById("span2")->firstChild();
+  auto* div = GetDocument().getElementById(AtomicString("div"));
+  auto* text1 =
+      GetDocument().getElementById(AtomicString("span1"))->firstChild();
+  auto* text2 =
+      GetDocument().getElementById(AtomicString("span2"))->firstChild();
 
   HitTestResult result;
   // In body, but not in any descendants.
@@ -748,9 +744,11 @@ TEST_P(LayoutViewHitTestTest, HitTestVerticalLR) {
   //   |   Z              |
   //   |------------------|
   // (50, 180)         (250, 180)
-  auto* div = GetDocument().getElementById("div");
-  auto* text1 = GetDocument().getElementById("span1")->firstChild();
-  auto* text2 = GetDocument().getElementById("span2")->firstChild();
+  auto* div = GetDocument().getElementById(AtomicString("div"));
+  auto* text1 =
+      GetDocument().getElementById(AtomicString("span1"))->firstChild();
+  auto* text2 =
+      GetDocument().getElementById(AtomicString("span2"))->firstChild();
 
   HitTestResult result;
   // In body, but not in any descendants.
@@ -858,9 +856,11 @@ TEST_P(LayoutViewHitTestTest, HitTestVerticalRL) {
   //   |              Z   |
   //   |------------------|
   // (50, 180)         (250, 180)
-  auto* div = GetDocument().getElementById("div");
-  auto* text1 = GetDocument().getElementById("span1")->firstChild();
-  auto* text2 = GetDocument().getElementById("span2")->firstChild();
+  auto* div = GetDocument().getElementById(AtomicString("div"));
+  auto* text1 =
+      GetDocument().getElementById(AtomicString("span1"))->firstChild();
+  auto* text2 =
+      GetDocument().getElementById(AtomicString("span2"))->firstChild();
 
   HitTestResult result;
   // In body, but not in any descendants.
@@ -983,8 +983,8 @@ TEST_P(LayoutViewHitTestTest, HitTestVerticalRLRoot) {
   // .                           .
   // +----...--------------------+ (800, 600)
 
-  auto* div = GetDocument().getElementById("div");
-  auto* text = GetDocument().getElementById("span")->firstChild();
+  auto* div = GetDocument().getElementById(AtomicString("div"));
+  auto* text = GetDocument().getElementById(AtomicString("span"))->firstChild();
   HitTestResult result;
   // Not in any element. Should fallback to documentElement.
   GetLayoutView().HitTest(HitTestLocation(PhysicalOffset(1, 1)), result);
@@ -1339,7 +1339,7 @@ TEST_P(LayoutViewHitTestTest, TextCombineOneTextNode) {
   //        LayoutText {#text} at (5,0) size 100x100
   //          text run at (5,0) width 100: "a"
   //        LayoutInline {C} at (5,100) size 100x100
-  //          LayoutNGTextCombine (anonymous) at (5,100) size 100x100
+  //          LayoutTextCombine (anonymous) at (5,100) size 100x100
   //            LayoutText {#text} at (-5,0) size 110x100
   //              text run at (0,0) width 500: "01234"
   //        LayoutText {#text} at (5,200) size 100x100
@@ -1385,7 +1385,7 @@ TEST_P(LayoutViewHitTestTest, TextCombineTwoTextNodes) {
   //         LayoutText {#text} at (5,0) size 100x100
   //           text run at (5,0) width 100: "a"
   //         LayoutInline {C} at (5,100) size 100x100
-  //           LayoutNGTextCombine (anonymous) at (5,100) size 100x100
+  //           LayoutTextCombine (anonymous) at (5,100) size 100x100
   //             LayoutText {#text} at (-5,0) size 66x100
   //               text run at (0,0) width 300: "012"
   //             LayoutWordBreak {WBR} at (61,0) size 0x100

@@ -17,7 +17,8 @@ static enum xnn_status create_slice_operator(
     const struct xnn_value* values,
     size_t num_values,
     struct xnn_operator_data* opdata,
-    const struct xnn_caches* caches)
+    struct xnn_code_cache* code_cache,
+  struct xnn_weights_cache* weights_cache)
 {
   assert(node->num_inputs == 1);
   const uint32_t input_id = node->inputs[0];
@@ -25,37 +26,24 @@ static enum xnn_status create_slice_operator(
   assert(input_id < num_values);
 
   assert(node->num_outputs == 1);
-  const uint32_t output_id = node->outputs[0];
-  assert(output_id != XNN_INVALID_VALUE_ID);
-  assert(output_id < num_values);
 
   enum xnn_status status;
   switch (node->compute_type) {
-#ifndef XNN_NO_F16_OPERATORS
     case xnn_compute_type_fp16:
       status = xnn_create_slice_nd_x16(/*flags=*/0, &opdata->operator_objects[0]);
       break;
-#endif  // !defined(XNN_NO_F16_OPERATORS)
     case xnn_compute_type_fp32:
       status = xnn_create_slice_nd_x32(/*flags=*/0, &opdata->operator_objects[0]);
       break;
-#ifndef XNN_NO_QS8_OPERATORS
     case xnn_compute_type_qs8:
-#endif  // !defined(XNN_NO_QS8_OPERATORS)
-#ifndef XNN_NO_QU8_OPERATORS
     case xnn_compute_type_qu8:
-#endif  // !defined(XNN_NO_QU8_OPERATORS)
-#if !defined(XNN_NO_QS8_OPERATORS) || !defined(XNN_NO_QU8_OPERATORS)
       status = xnn_create_slice_nd_x8(/*flags=*/0, &opdata->operator_objects[0]);
       break;
-#endif  // !defined(XNN_NO_QS8_OPERATORS) || !defined(XNN_NO_QU8_OPERATORS)
     default:
       XNN_UNREACHABLE;
   }
 
   if (status == xnn_status_success) {
-    opdata->inputs[0] = input_id;
-    opdata->outputs[0] = output_id;
     memcpy(opdata->offsets, node->params.slice.offsets, sizeof(opdata->offsets));
     memcpy(opdata->sizes, node->params.slice.sizes, sizeof(opdata->sizes));
     opdata->shape1 = values[input_id].shape;
@@ -64,54 +52,77 @@ static enum xnn_status create_slice_operator(
   return status;
 }
 
+static enum xnn_status reshape_slice_operator(
+    struct xnn_operator_data* opdata,
+    struct xnn_value* values,
+    size_t num_values,
+    pthreadpool_t threadpool)
+{
+  const size_t num_dims = opdata->shape1.num_dims;
+  switch (opdata->operator_objects[0]->type) {
+    case xnn_operator_type_slice_nd_x8:
+      return xnn_reshape_slice_nd_x8(
+          opdata->operator_objects[0], num_dims,
+          opdata->shape1.dim, opdata->offsets, opdata->sizes,
+          threadpool);
+      break;
+    case xnn_operator_type_slice_nd_x16:
+      return xnn_reshape_slice_nd_x16(
+          opdata->operator_objects[0], num_dims,
+          opdata->shape1.dim, opdata->offsets, opdata->sizes,
+          threadpool);
+      break;
+    case xnn_operator_type_slice_nd_x32:
+      return xnn_reshape_slice_nd_x32(
+          opdata->operator_objects[0], num_dims,
+          opdata->shape1.dim, opdata->offsets, opdata->sizes,
+          threadpool);
+      break;
+    default:
+      XNN_UNREACHABLE;
+  }
+}
+
 static enum xnn_status setup_slice_operator(
     const struct xnn_operator_data* opdata,
-    const struct xnn_blob* blobs,
-    size_t num_blobs,
+    const struct xnn_value* values,
+    size_t num_values,
     pthreadpool_t threadpool)
 {
   const uint32_t input_id = opdata->inputs[0];
   assert(input_id != XNN_INVALID_VALUE_ID);
-  assert(input_id < num_blobs);
+  assert(input_id < num_values);
 
   const uint32_t output_id = opdata->outputs[0];
   assert(output_id != XNN_INVALID_VALUE_ID);
-  assert(output_id < num_blobs);
+  assert(output_id < num_values);
 
-  const struct xnn_blob* input_blob = blobs + input_id;
-  const void* input_data = input_blob->data;
+  const struct xnn_value* input_value = values + input_id;
+  const void* input_data = input_value->data;
   assert(input_data != NULL);
 
-  const struct xnn_blob* output_blob = blobs + output_id;
-  void* output_data = output_blob->data;
+  const struct xnn_value* output_value = values + output_id;
+  void* output_data = output_value->data;
   assert(output_data != NULL);
 
-  const size_t num_dims = opdata->shape1.num_dims;
   switch (opdata->operator_objects[0]->type) {
-#if !defined(XNN_NO_QS8_OPERATORS) || !defined(XNN_NO_QU8_OPERATORS)
     case xnn_operator_type_slice_nd_x8:
       return xnn_setup_slice_nd_x8(
-          opdata->operator_objects[0], num_dims,
-          opdata->shape1.dim, opdata->offsets, opdata->sizes,
-          input_data, output_data, threadpool);
+          opdata->operator_objects[0],
+          input_data, output_data);
       break;
-#endif  // !defined(XNN_NO_QS8_OPERATORS) || !defined(XNN_NO_QU8_OPERATORS)
-#ifndef XNN_NO_F16_OPERATORS
     case xnn_operator_type_slice_nd_x16:
       return xnn_setup_slice_nd_x16(
-          opdata->operator_objects[0], num_dims,
-          opdata->shape1.dim, opdata->offsets, opdata->sizes,
-          input_data, output_data, threadpool);
+          opdata->operator_objects[0],
+          input_data, output_data);
       break;
-#endif  // !defined(XNN_NO_F16_OPERATORS)
-  case xnn_operator_type_slice_nd_x32:
-    return xnn_setup_slice_nd_x32(
-        opdata->operator_objects[0], num_dims,
-        opdata->shape1.dim, opdata->offsets, opdata->sizes,
-        input_data, output_data, threadpool);
-    break;
-  default:
-    XNN_UNREACHABLE;
+    case xnn_operator_type_slice_nd_x32:
+      return xnn_setup_slice_nd_x32(
+          opdata->operator_objects[0],
+          input_data, output_data);
+      break;
+    default:
+      XNN_UNREACHABLE;
   }
 }
 
@@ -163,12 +174,8 @@ enum xnn_status xnn_define_static_slice(
 
   switch (input_value->datatype) {
     case xnn_datatype_fp32:
-#ifndef XNN_NO_QS8_OPERATORS
     case xnn_datatype_qint8:
-#endif  // !defined(XNN_NO_QS8_OPERATORS)
-#ifndef XNN_NO_QU8_OPERATORS
     case xnn_datatype_quint8:
-#endif  // !defined(XNN_NO_QU8_OPERATORS)
       break;
     default:
       xnn_log_error(
@@ -228,16 +235,12 @@ enum xnn_status xnn_define_static_slice(
     case xnn_datatype_fp32:
       compute_type = xnn_compute_type_fp32;
       break;
-#ifndef XNN_NO_QS8_OPERATORS
     case xnn_datatype_qint8:
       compute_type = xnn_compute_type_qs8;
       break;
-#endif  // !defined(XNN_NO_QS8_OPERATORS)
-#ifndef XNN_NO_QU8_OPERATORS
     case xnn_datatype_quint8:
       compute_type = xnn_compute_type_qu8;
       break;
-#endif  // !defined(XNN_NO_QU8_OPERATORS)
     default:
       xnn_log_error(
         "failed to define %s operator with output ID #%" PRIu32 ": unsupported Value datatype %s (%d)",
@@ -252,13 +255,11 @@ enum xnn_status xnn_define_static_slice(
     return status;
   }
 
-#if !defined(XNN_NO_QU8_OPERATORS) || !defined(XNN_NO_QS8_OPERATORS)
   status = xnn_subgraph_check_quantization_parameter_matches(
       xnn_node_type_static_slice, input_id, input_value, output_id, output_value);
   if (status != xnn_status_success) {
     return status;
   }
-#endif  // !defined(XNN_NO_QU8_OPERATORS) || !defined(XNN_NO_QS8_OPERATORS)
 
   struct xnn_node* node = xnn_subgraph_new_node(subgraph);
   if (node == NULL) {
@@ -277,6 +278,7 @@ enum xnn_status xnn_define_static_slice(
   memcpy(node->params.slice.sizes, sizes, num_dims * sizeof(size_t));
 
   node->create = create_slice_operator;
+  node->reshape = reshape_slice_operator;
   node->setup = setup_slice_operator;
 
   return xnn_status_success;

@@ -5,6 +5,7 @@
 #include "services/network/trust_tokens/trust_token_request_helper_factory.h"
 
 #include <memory>
+#include <string_view>
 #include <utility>
 
 #include "base/metrics/histogram_functions.h"
@@ -35,7 +36,7 @@ namespace {
 
 using Outcome = internal::TrustTokenRequestHelperFactoryOutcome;
 
-base::StringPiece OutcomeToString(Outcome outcome) {
+std::string_view OutcomeToString(Outcome outcome) {
   switch (outcome) {
     case Outcome::kSuccessfullyCreatedAnIssuanceHelper:
       return "Successfully created an issuance helper";
@@ -63,12 +64,10 @@ void LogOutcome(const net::NetLogWithSource& log,
       base::StrCat({"Net.TrustTokens.RequestHelperFactoryOutcome.",
                     internal::TrustTokenOperationTypeToString(operation)}),
       outcome);
-  log.EndEvent(net::NetLogEventType::TRUST_TOKEN_OPERATION_REQUESTED,
-               [outcome]() {
-                 base::Value ret(base::Value::Type::DICT);
-                 ret.SetStringKey("outcome", OutcomeToString(outcome));
-                 return ret;
-               });
+  log.EndEvent(
+      net::NetLogEventType::TRUST_TOKEN_OPERATION_REQUESTED, [outcome]() {
+        return base::Value::Dict().Set("outcome", OutcomeToString(outcome));
+      });
 }
 
 }  // namespace
@@ -102,7 +101,7 @@ void TrustTokenRequestHelperFactory::CreateTrustTokenHelperForRequest(
     return;
   }
 
-  for (base::StringPiece header : TrustTokensRequestHeaders()) {
+  for (std::string_view header : TrustTokensRequestHeaders()) {
     if (headers.HasHeader(header)) {
       LogOutcome(
           net_log, params.operation,

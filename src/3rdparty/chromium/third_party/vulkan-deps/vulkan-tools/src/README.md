@@ -1,35 +1,18 @@
-# Vulkan Ecosystem Components
+# KhronosGroup/Vulkan-Tools
 
-This project provides Khronos official Vulkan Tools and Utilities for Windows, Linux, Android, and MacOS.
+This project provides Vulkan tools and utilities that can assist development by enabling developers to verify their applications correct use of the Vulkan API.
 
-## Default branch changed to 'main' 2023-01-16
-
-As discussed in #729, the default branch of this repository is now 'main'. This change should be largely transparent to repository users, since github rewrites many references to the old 'master' branch to 'main'. However, if you have a checked-out local clone, you may wish to take the following steps as recommended by github:
-
-```sh
-git branch -m master main
-git fetch origin
-git branch -u origin/main main
-git remote set-head origin -a
-```
-
-## CI Build Status
-[![Build Status](https://github.com/KhronosGroup/Vulkan-Tools/workflows/CI%20Build/badge.svg?branch=main)](https://github.com/KhronosGroup/Vulkan-Tools/actions)
-
-## Introduction
-
-This project provides Vulkan tools and utilities that can assist development by enabling developers to
-verify their applications correct use of the Vulkan API.
+## Intro
 
 The following components are available in this repository:
+
 - [*Mock ICD*](icd/)
 - [*Vkcube and Vkcube++ Demo*](cube/)
 - [*VulkanInfo*](vulkaninfo/)
 - [*Windows Runtime*](windows-runtime-installer/)
 
 ## Contact Information
-* [Tobin Ehlis](mailto:tobine@google.com)
-* [Mark Lobodzinski](mailto:mark@lunarg.com)
+* [Charles Giessen](mailto:charles@lunarg.com)
 
 ## Information for Developing or Contributing:
 
@@ -38,16 +21,15 @@ Please see the [GOVERNANCE.md](GOVERNANCE.md) file in this repository for reposi
 
 ## How to Build and Run
 
-[BUILD.md](BUILD.md)
-Includes directions for building all components as well as running the vkcube demo applications.
+[BUILD.md](BUILD.md) includes directions for building all components as well as running the vkcube demo applications.
 
 ## Version Tagging Scheme
 
-Updates to the `Vulkan-Tools` repository which correspond to a new Vulkan specification release are tagged using the following format: `v<`_`version`_`>` (e.g., `v1.1.96`).
+Updates to this repository which correspond to a new Vulkan specification release are tagged using the following format: `v<`_`version`_`>` (e.g., `v1.3.266`).
 
-**Note**: Marked version releases have undergone thorough testing but do not imply the same quality level as SDK tags. SDK tags follow the `sdk-<`_`version`_`>.<`_`patch`_`>` format (e.g., `sdk-1.1.92.0`).
+**Note**: Marked version releases have undergone thorough testing but do not imply the same quality level as SDK tags. SDK tags follow the `vulkan-sdk-<`_`version`_`>.<`_`patch`_`>` format (e.g., `vulkan-sdk-1.3.266.0`).
 
-This scheme was adopted following the 1.1.96 Vulkan specification release.
+This scheme was adopted following the `1.3.266` Vulkan specification release.
 
 ## License
 This work is released as open source under a Apache-style license from Khronos including a Khronos copyright.

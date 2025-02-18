@@ -20,11 +20,16 @@
 #include "media/filters/ffmpeg_demuxer.h"
 #include "url/gurl.h"
 
+#if BUILDFLAG(ENABLE_HLS_DEMUXER)
+#include "media/filters/hls_manifest_demuxer_engine.h"
+#include "media/filters/manifest_demuxer.h"
+#endif  // BUILDFLAG(ENABLE_HLS_DEMUXER)
+
 namespace media {
 
 namespace {
 
-#if BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(ENABLE_HLS_DEMUXER) || BUILDFLAG(IS_ANDROID)
 
 // These values are persisted to logs. Entries should not be renumbered and
 // numeric values should never be reused.
@@ -87,7 +92,23 @@ MimeType TranslateMimeTypeToHistogramEnum(const base::StringPiece& mime_type) {
   return MimeType::kOtherMimeType;
 }
 
+HlsFallbackImplementation SelectHlsFallbackImplementation() {
+#if BUILDFLAG(ENABLE_HLS_DEMUXER)
+  if (base::FeatureList::IsEnabled(kBuiltInHlsPlayer)) {
+    return HlsFallbackImplementation::kBuiltinHlsPlayer;
+  }
 #endif
+
+#if BUILDFLAG(IS_ANDROID)
+  if (base::FeatureList::IsEnabled(kHlsPlayer)) {
+    return HlsFallbackImplementation::kMediaPlayer;
+  }
+#endif
+
+  return HlsFallbackImplementation::kNone;
+}
+
+#endif  // BUILDFLAG(ENABLE_HLS_DEMUXER) || BUILDFLAG(IS_ANDROID)
 
 #if BUILDFLAG(ENABLE_FFMPEG)
 // Returns true if `url` represents (or is likely to) a local file.
@@ -107,6 +128,7 @@ DemuxerManager::DemuxerManager(
     MediaLog* log,
     net::SiteForCookies site_for_cookies,
     url::Origin top_frame_origin,
+    bool has_storage_access,
     bool enable_instant_source_buffer_gc,
     std::unique_ptr<Demuxer> demuxer_override)
     : client_(client),
@@ -114,12 +136,21 @@ DemuxerManager::DemuxerManager(
       media_log_(log->Clone()),
       site_for_cookies_(std::move(site_for_cookies)),
       top_frame_origin_(std::move(top_frame_origin)),
+#if BUILDFLAG(IS_ANDROID)
+      has_storage_access_(has_storage_access),
+#endif  // BUILDFLAG(IS_ANDROID)
       enable_instant_source_buffer_gc_(enable_instant_source_buffer_gc),
       demuxer_override_(std::move(demuxer_override)) {
   DCHECK(client_);
 }
 
-DemuxerManager::~DemuxerManager() = default;
+DemuxerManager::~DemuxerManager() {
+  // ManifestDemuxer has multiple outstanding weak pointers bound to the media
+  // thread, and needs to be deleted there.
+  if (GetDemuxerType() == DemuxerType::kManifestDemuxer) {
+    media_task_runner_->DeleteSoon(FROM_HERE, std::move(demuxer_));
+  }
+}
 
 void DemuxerManager::InvalidateWeakPtrs() {
   weak_factory_.InvalidateWeakPtrs();
@@ -138,29 +169,27 @@ void DemuxerManager::OnPipelineError(PipelineStatus error) {
     return client_->OnError(std::move(error));
   }
 
-#if BUILDFLAG(IS_ANDROID)
-  if (error == DEMUXER_ERROR_DETECTED_HLS) {
+#if BUILDFLAG(ENABLE_HLS_DEMUXER) || BUILDFLAG(IS_ANDROID)
+  bool can_play_hls =
+      SelectHlsFallbackImplementation() != HlsFallbackImplementation::kNone;
+  if (can_play_hls && error == DEMUXER_ERROR_DETECTED_HLS) {
     PipelineStatus reset_status =
-        ResetAfterHlsDetected(client_->IsSecurityOriginCryptographic());
+        SelectHlsFallbackMechanism(client_->IsSecurityOriginCryptographic());
     if (!reset_status.is_ok()) {
       client_->OnError(std::move(reset_status).AddCause(std::move(error)));
       return;
     }
-    // We have to stop the pipeline and delete the demuxer thread dumper pronto.
+
+    // The data source must be stopped after the client, after which the
+    // old demuxer and data source can be freed.
     client_->StopForDemuxerReset();
-
-    // The data source must be stopped after the client.
     data_source_->Stop();
-
-    // Free the demuxer and data source now that they are stopped. After that,
-    // we can try restarting the client. If the client gets deleted in the mean
-    // time, we can stop there.
     FreeResourcesAfterMediaThreadWait(base::BindOnce(
         &DemuxerManager::RestartClientForHLS, weak_factory_.GetWeakPtr()));
 
     return;
   }
-#endif
+#endif  // BUILDFLAG(ENABLE_HLS_DEMUXER) || BUILDFLAG(IS_ANDROID)
 
   client_->OnError(std::move(error));
 }
@@ -192,10 +221,47 @@ void DemuxerManager::SetLoadedUrl(GURL url) {
   loaded_url_ = std::move(url);
 }
 
-PipelineStatus DemuxerManager::ResetAfterHlsDetected(bool cryptographic_url) {
-#if BUILDFLAG(IS_ANDROID)
-  // If HLS isn't enabled, HLS detection should be the error.
-  if (!base::FeatureList::IsEnabled(kHlsPlayer)) {
+const GURL& DemuxerManager::LoadedUrl() const {
+  return loaded_url_;
+}
+
+#if BUILDFLAG(ENABLE_HLS_DEMUXER) || BUILDFLAG(IS_ANDROID)
+
+void DemuxerManager::PopulateHlsHistograms(bool cryptographic_url) {
+  DCHECK(data_source_);
+
+  if (auto* co_data_source = data_source_->GetAsCrossOriginDataSource()) {
+    MimeType mime_type =
+        TranslateMimeTypeToHistogramEnum(co_data_source->GetMimeType());
+    base::UmaHistogramEnumeration("Media.WebMediaPlayerImpl.HLS.MimeType",
+                                  mime_type);
+
+    bool is_cross_origin = co_data_source->IsCorsCrossOrigin();
+    UMA_HISTOGRAM_BOOLEAN("Media.WebMediaPlayerImpl.HLS.IsCorsCrossOrigin",
+                          is_cross_origin);
+    if (is_cross_origin) {
+      UMA_HISTOGRAM_BOOLEAN("Media.WebMediaPlayerImpl.HLS.HasAccessControl",
+                            co_data_source->HasAccessControl());
+      base::UmaHistogramEnumeration(
+          "Media.WebMediaPlayerImpl.HLS.CorsCrossOrigin.MimeType", mime_type);
+    }
+  } else {
+    UMA_HISTOGRAM_BOOLEAN("Media.WebMediaPlayerImpl.HLS.IsCorsCrossOrigin",
+                          false);
+  }
+
+  bool is_mixed_content =
+      cryptographic_url &&
+      (!loaded_url_.SchemeIsCryptographic() ||
+       GetDataSourceUrlAfterRedirects()->SchemeIsCryptographic());
+  UMA_HISTOGRAM_BOOLEAN("Media.WebMediaPlayerImpl.HLS.IsMixedContent",
+                        is_mixed_content);
+}
+
+PipelineStatus DemuxerManager::SelectHlsFallbackMechanism(
+    bool cryptographic_url) {
+  hls_fallback_ = SelectHlsFallbackImplementation();
+  if (hls_fallback_ == HlsFallbackImplementation::kNone) {
     return DEMUXER_ERROR_DETECTED_HLS;
   }
 
@@ -208,45 +274,31 @@ PipelineStatus DemuxerManager::ResetAfterHlsDetected(bool cryptographic_url) {
   // android's HLS implementation. Since HLS is enabled, we should report a
   // failed external renderer, since we know MediaPlayerRenderer would fail
   // anyway here.
-  // TODO(crbug/1266991): Consider allowing data:// URLs for the native HLS
-  // implementation.
-  const auto* co_data_source = data_source_->GetAsCrossOriginDataSource();
-  if (!co_data_source) {
+  bool is_mp = hls_fallback_ == HlsFallbackImplementation::kMediaPlayer;
+  if (!data_source_->GetAsCrossOriginDataSource() && is_mp) {
+    // Media player requires that the data source not be a data:// url.
     return PIPELINE_ERROR_EXTERNAL_RENDERER_FAILED;
   }
 
-  // Record the fallback.
-  bool manifest_url_is_cryptographic =
-      loaded_url_.SchemeIsCryptographic() &&
-      GetDataSourceUrlAfterRedirects()->SchemeIsCryptographic();
-  MimeType mime_type =
-      TranslateMimeTypeToHistogramEnum(co_data_source->GetMimeType());
-  bool is_cross_origin = co_data_source->IsCorsCrossOrigin();
-  base::UmaHistogramEnumeration("Media.WebMediaPlayerImpl.HLS.MimeType",
-                                mime_type);
-  UMA_HISTOGRAM_BOOLEAN("Media.WebMediaPlayerImpl.HLS.IsCorsCrossOrigin",
-                        is_cross_origin);
-  UMA_HISTOGRAM_BOOLEAN("Media.WebMediaPlayerImpl.HLS.IsMixedContent",
-                        cryptographic_url && !manifest_url_is_cryptographic);
-  if (is_cross_origin) {
-    UMA_HISTOGRAM_BOOLEAN("Media.WebMediaPlayerImpl.HLS.HasAccessControl",
-                          co_data_source->HasAccessControl());
-    base::UmaHistogramEnumeration(
-        "Media.WebMediaPlayerImpl.HLS.CorsCrossOrigin.MimeType", mime_type);
+  loaded_url_ = GetDataSourceUrlAfterRedirects().value();
+
+  // We do not support using blob and filesystem schemes with the Android
+  // MediaPlayer. Fail now rather than during MediaPlayerRender initialization.
+  if (is_mp &&
+      (loaded_url_.SchemeIsBlob() || loaded_url_.SchemeIsFileSystem())) {
+    return PIPELINE_ERROR_EXTERNAL_RENDERER_FAILED;
   }
 
-  // Can't fail anymore, so set hls flag to true for next time we create a
-  // new demuxer.
-  demuxer_found_hls_ = true;
-  loaded_url_ = GetDataSourceUrlAfterRedirects().value();
+  PopulateHlsHistograms(cryptographic_url);
+
   if (client_) {
     client_->UpdateLoadedUrl(loaded_url_);
   }
+
   return OkStatus();
-#else
-  return DEMUXER_ERROR_DETECTED_HLS;
-#endif  // BUILDFLAG(IS_ANDROID)
 }
+
+#endif  // BUILDFLAG(ENABLE_HLS_DEMUXER) || BUILDFLAG(IS_ANDROID)
 
 absl::optional<double> DemuxerManager::GetDemuxerDuration() {
   if (!demuxer_) {
@@ -265,7 +317,7 @@ absl::optional<double> DemuxerManager::GetDemuxerDuration() {
   return static_cast<ChunkDemuxer*>(demuxer_.get())->GetDuration();
 }
 
-absl::optional<DemuxerType> DemuxerManager::GetDemuxerType() {
+absl::optional<DemuxerType> DemuxerManager::GetDemuxerType() const {
   if (!demuxer_) {
     return absl::nullopt;
   }
@@ -309,19 +361,43 @@ void DemuxerManager::RespondToDemuxerMemoryUsageReport(
   }
 }
 
+void DemuxerManager::DisableDemuxerCanChangeType() {
+  demuxer_->DisableCanChangeType();
+}
+
 PipelineStatus DemuxerManager::CreateDemuxer(
     bool load_media_source,
     DataSource::Preload preload,
-    bool has_poster,
-    DemuxerManager::DemuxerCreatedCB on_demuxer_created) {
+    bool needs_first_frame,
+    DemuxerManager::DemuxerCreatedCB on_demuxer_created,
+    base::flat_map<std::string, std::string> headers) {
   // TODO(crbug/1377053) return a better error
   if (!client_) {
     return DEMUXER_ERROR_COULD_NOT_OPEN;
   }
 
+  // We can only do a universal suspend for posters, unless the flag is enabled.
+  auto suspended_mode = Pipeline::StartType::kSuspendAfterMetadataForAudioOnly;
+  if (!needs_first_frame) {
+    suspended_mode = Pipeline::StartType::kSuspendAfterMetadata;
+  }
+
+#if BUILDFLAG(ENABLE_HLS_DEMUXER)
+  if (hls_fallback_ == HlsFallbackImplementation::kBuiltinHlsPlayer ||
+      (base::FeatureList::IsEnabled(kBuiltInHlsPlayer) &&
+       loaded_url_.path_piece().ends_with(".m3u8"))) {
+    SetDemuxer(CreateHlsDemuxer());
+    return std::move(on_demuxer_created)
+        .Run(demuxer_.get(), suspended_mode, /*is_streaming=*/false,
+             /*is_static=*/false);
+  }
+#endif  // BUILDFLAG(ENABLE_HLS_DEMUXER)
+
 #if BUILDFLAG(IS_ANDROID)
-  if (demuxer_found_hls_ || client_->IsMediaPlayerRendererClient()) {
-    SetDemuxer(CreateMediaUrlDemuxer(demuxer_found_hls_));
+  const bool media_player_hls =
+      hls_fallback_ == HlsFallbackImplementation::kMediaPlayer;
+  if (media_player_hls || client_->IsMediaPlayerRendererClient()) {
+    SetDemuxer(CreateMediaUrlDemuxer(media_player_hls, headers));
     return std::move(on_demuxer_created)
         .Run(demuxer_.get(), Pipeline::StartType::kNormal,
              /*is_streaming = */ false,
@@ -363,11 +439,6 @@ PipelineStatus DemuxerManager::CreateDemuxer(
              is_static);
   }
 
-  // We can only do a universal suspend for posters, unless the flag is enabled.
-  auto suspended_mode = Pipeline::StartType::kSuspendAfterMetadataForAudioOnly;
-  if (has_poster || base::FeatureList::IsEnabled(kPreloadMetadataLazyLoad)) {
-    suspended_mode = Pipeline::StartType::kSuspendAfterMetadata;
-  }
   return std::move(on_demuxer_created)
       .Run(demuxer_.get(), suspended_mode, IsStreaming(), is_static);
 }
@@ -378,7 +449,7 @@ void DemuxerManager::SetAllowMediaPlayerRendererCredentials(bool allow) {
 }
 #endif  // BUILDFLAG(IS_ANDROID)
 
-const DataSource* DemuxerManager::GetDataSourceForTesting() const {
+DataSource* DemuxerManager::GetDataSourceForTesting() const {
   return data_source_.get();
 }
 
@@ -397,11 +468,11 @@ void DemuxerManager::SetPreload(DataSource::Preload preload) {
   }
 }
 
-void DemuxerManager::StopAndResetClient(Client* client) {
+void DemuxerManager::StopAndResetClient() {
   if (data_source_) {
     data_source_->Stop();
   }
-  client_ = client;
+  client_ = nullptr;
 }
 
 int64_t DemuxerManager::GetDataSourceMemoryUsage() {
@@ -419,9 +490,11 @@ void DemuxerManager::OnDataSourcePlaybackRateChange(double rate, bool paused) {
 }
 
 bool DemuxerManager::WouldTaintOrigin() const {
-  if (demuxer_found_hls_) {
+  if (hls_fallback_ != HlsFallbackImplementation::kNone) {
     // HLS manifests might pull segments from a different origin. We can't know
     // for sure, so we conservatively say yes here.
+    // TODO (crbug/1266991) We will be able to know for sure with the builtin
+    // player, when that's implemented.
     return true;
   }
 
@@ -474,6 +547,16 @@ bool DemuxerManager::PassedDataSourceTimingAllowOriginCheck() const {
   return data_source_ ? data_source_->PassedTimingAllowOriginCheck() : true;
 }
 
+bool DemuxerManager::IsLiveContent() const {
+  // Manifest demuxer reports true live content accurately, while all other
+  // demuxers do not. TODO(crbug/1266991): Consider making IsSeekable return
+  // an enum class with vod/semi-live/true-live states.
+  if (GetDemuxerType() == DemuxerType::kManifestDemuxer) {
+    return !demuxer_->IsSeekable();
+  }
+  return false;
+}
+
 std::unique_ptr<Demuxer> DemuxerManager::CreateChunkDemuxer() {
   if (base::FeatureList::IsEnabled(kMemoryPressureBasedSourceBufferGC)) {
     memory_pressure_listener_ = std::make_unique<base::MemoryPressureListener>(
@@ -507,12 +590,30 @@ std::unique_ptr<Demuxer> DemuxerManager::CreateFFmpegDemuxer() {
 }
 #endif  // BUILDFLAG(ENABLE_FFMPEG)
 
+#if BUILDFLAG(ENABLE_HLS_DEMUXER)
+std::unique_ptr<Demuxer> DemuxerManager::CreateHlsDemuxer() {
+  auto engine = std::make_unique<HlsManifestDemuxerEngine>(
+      client_->GetHlsDataSourceProvider(), media_task_runner_, loaded_url_,
+      media_log_.get());
+  return std::make_unique<ManifestDemuxer>(
+      media_task_runner_,
+      base::BindPostTaskToCurrentDefault(base::BindRepeating(
+          &DemuxerManager::DemuxerRequestsSeek, weak_factory_.GetWeakPtr())),
+      std::move(engine), media_log_.get());
+}
+#endif
+
 #if BUILDFLAG(IS_ANDROID)
 std::unique_ptr<Demuxer> DemuxerManager::CreateMediaUrlDemuxer(
-    bool expect_hls_content) {
-  return std::make_unique<MediaUrlDemuxer>(
-      media_task_runner_, loaded_url_, site_for_cookies_, top_frame_origin_,
-      allow_media_player_renderer_credentials_, expect_hls_content);
+    bool expect_hls_content,
+    base::flat_map<std::string, std::string> headers) {
+  std::unique_ptr<MediaUrlDemuxer> media_url_demuxer =
+      std::make_unique<MediaUrlDemuxer>(
+          media_task_runner_, loaded_url_, site_for_cookies_, top_frame_origin_,
+          has_storage_access_, allow_media_player_renderer_credentials_,
+          expect_hls_content);
+  media_url_demuxer->SetHeaders(headers);
+  return media_url_demuxer;
 }
 #endif  // BUILDFLAG(IS_ANDROID)
 
@@ -608,11 +709,11 @@ void DemuxerManager::OnFFmpegMediaTracksUpdated(
   bool is_first_audio_track = true;
   bool is_first_video_track = true;
   for (const auto& track : tracks->tracks()) {
-    if (track->type() == MediaTrack::Audio) {
+    if (track->type() == MediaTrack::Type::kAudio) {
       client_->AddAudioTrack(track->id().value(), track->label().value(),
                              track->language().value(), is_first_audio_track);
       is_first_audio_track = false;
-    } else if (track->type() == MediaTrack::Video) {
+    } else if (track->type() == MediaTrack::Type::kVideo) {
       client_->AddVideoTrack(track->id().value(), track->label().value(),
                              track->language().value(), is_first_video_track);
       is_first_video_track = false;
@@ -623,5 +724,12 @@ void DemuxerManager::OnFFmpegMediaTracksUpdated(
   }
 }
 #endif  // BUILDFLAG(ENABLE_FFMPEG)
+
+void DemuxerManager::DemuxerRequestsSeek(base::TimeDelta time) {
+  if (!client_) {
+    return;
+  }
+  client_->DemuxerRequestsSeek(time);
+}
 
 }  // namespace media

@@ -12,8 +12,12 @@
 #include <utility>
 #include <vector>
 
+#include "base/check.h"
 #include "base/check_op.h"
 #include "base/command_line.h"
+#include "base/json/json_reader.h"
+#include "base/notreached.h"
+#include "base/values.h"
 #include "build/chromeos_buildflags.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/user_activity/user_activity_detector.h"
@@ -23,8 +27,9 @@
 #include "ui/display/display_switches.h"
 #include "ui/display/manager/display_layout_store.h"
 #include "ui/display/manager/display_manager.h"
-#include "ui/display/manager/display_manager_utilities.h"
+#include "ui/display/manager/display_properties_parser.h"
 #include "ui/display/manager/touch_device_manager.h"
+#include "ui/display/manager/util/display_manager_util.h"
 #include "ui/display/types/display_constants.h"
 #include "ui/display/types/display_mode.h"
 #include "ui/display/types/display_snapshot.h"
@@ -38,9 +43,6 @@ namespace display {
 
 namespace {
 
-// TODO(crbug/1262970): Delete when we can read radius from command line.
-const float kRoundedDisplayRadius = 16.0;
-
 // The DPI threshold to determine the device scale factor.
 // DPI higher than |dpi| will use |device_scale_factor|.
 struct DeviceScaleFactorDPIThreshold {
@@ -49,7 +51,7 @@ struct DeviceScaleFactorDPIThreshold {
 };
 
 // Update the list of zoom levels whenever a new device scale factor is added
-// here. See zoom level list in /ui/display/manager/display_manager_util.cc
+// here. See zoom level list in /ui/display/manager/util/display_manager_util.cc
 const DeviceScaleFactorDPIThreshold kThresholdTableForInternal[] = {
     {310.f, kDsf_2_666}, {270.0f, 2.4f},  {230.0f, 2.0f}, {220.0f, kDsf_1_777},
     {180.0f, 1.6f},      {150.0f, 1.25f}, {0.0f, 1.0f},
@@ -78,6 +80,31 @@ ManagedDisplayInfo::ManagedDisplayModeList GetModeListWithAllRefreshRates(
       });
 
   return display_mode_list;
+}
+
+absl::optional<gfx::RoundedCornersF> ParsePanelRadiiFromCommandLine() {
+  if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kDisplayProperties)) {
+    return absl::nullopt;
+  }
+
+  absl::optional<base::Value> display_switch_value = base::JSONReader::Read(
+      base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
+          switches::kDisplayProperties));
+
+  if (!display_switch_value.has_value()) {
+    return absl::nullopt;
+  }
+
+  return ParseDisplayPanelRadii(&display_switch_value.value());
+}
+
+absl::optional<float> GetVSyncRateMin(const DisplaySnapshot* snapshot,
+                                      const DisplayMode* mode_info) {
+  if (snapshot->vsync_rate_min().has_value()) {
+    return mode_info->GetVSyncRateMin(snapshot->vsync_rate_min().value());
+  }
+  return absl::nullopt;
 }
 
 }  // namespace
@@ -166,7 +193,8 @@ DisplayChangeObserver::GetExternalManagedDisplayModeList(
 }
 
 DisplayChangeObserver::DisplayChangeObserver(DisplayManager* display_manager)
-    : display_manager_(display_manager) {
+    : internal_panel_radii_(ParsePanelRadiiFromCommandLine()),
+      display_manager_(display_manager) {
   ui::DeviceDataManager::GetInstance()->AddObserver(this);
 }
 
@@ -180,10 +208,7 @@ MultipleDisplayState DisplayChangeObserver::GetStateForDisplayIds(
   if (display_states.size() == 1)
     return MULTIPLE_DISPLAY_STATE_SINGLE;
   DisplayIdList list =
-      GenerateDisplayIdList(display_states.begin(), display_states.end(),
-                            [](const DisplaySnapshot* display_state) {
-                              return display_state->display_id();
-                            });
+      GenerateDisplayIdList(display_states, &DisplaySnapshot::display_id);
   return display_manager_->ShouldSetMirrorModeOn(
              list, /*should_check_hardware_mirroring=*/true)
              ? MULTIPLE_DISPLAY_STATE_MULTI_MIRROR
@@ -280,7 +305,8 @@ ManagedDisplayInfo DisplayChangeObserver::CreateManagedDisplayInfo(
     bool native,
     float device_scale_factor,
     float dpi,
-    const std::string& name) {
+    const std::string& name,
+    const gfx::RoundedCornersF& panel_radii) {
   const bool has_overscan = snapshot->has_overscan();
   const int64_t id = snapshot->display_id();
 
@@ -329,6 +355,11 @@ ManagedDisplayInfo DisplayChangeObserver::CreateManagedDisplayInfo(
 
   new_info.set_refresh_rate(mode_info->refresh_rate());
   new_info.set_is_interlaced(mode_info->is_interlaced());
+  new_info.set_vsync_rate_min(GetVSyncRateMin(snapshot, mode_info));
+  new_info.set_variable_refresh_rate_state(
+      snapshot->variable_refresh_rate_state());
+  new_info.set_connection_type(snapshot->type());
+  new_info.set_physical_size(snapshot->physical_size());
 
   ManagedDisplayInfo::ManagedDisplayModeList display_modes =
       (snapshot->type() == DISPLAY_CONNECTION_TYPE_INTERNAL)
@@ -337,12 +368,8 @@ ManagedDisplayInfo DisplayChangeObserver::CreateManagedDisplayInfo(
   new_info.SetManagedDisplayModes(display_modes);
 
   new_info.set_maximum_cursor_size(snapshot->maximum_cursor_size());
-  // Temporary adding rounded corners to the internal display info.
-  if (display::features::IsRoundedDisplayEnabled() &&
-      snapshot->type() == DISPLAY_CONNECTION_TYPE_INTERNAL) {
-    new_info.set_rounded_corners_radii(
-        gfx::RoundedCornersF(kRoundedDisplayRadius));
-  }
+
+  new_info.set_panel_corners_radii(panel_radii);
 
   new_info.SetDRMFormatsAndModifiers(snapshot->GetDRMFormatsAndModifiers());
 
@@ -353,7 +380,7 @@ void DisplayChangeObserver::UpdateInternalDisplay(
     const DisplayConfigurator::DisplayStateList& display_states) {
   bool force_first_display_internal = ForceFirstDisplayInternal();
 
-  for (auto* state : display_states) {
+  for (display::DisplaySnapshot* state : display_states) {
     if (state->type() == DISPLAY_CONNECTION_TYPE_INTERNAL ||
         (force_first_display_internal &&
          (!HasInternalDisplay() || IsInternalDisplayId(state->display_id())))) {
@@ -394,12 +421,14 @@ ManagedDisplayInfo DisplayChangeObserver::CreateManagedDisplayInfoInternal(
     native = true;
     device_scale_factor = FindDeviceScaleFactor(dpi, mode_info->size());
   } else {
-    ManagedDisplayMode mode;
-    if (display_manager_->GetSelectedModeForDisplayId(snapshot->display_id(),
-                                                      &mode)) {
-      device_scale_factor = mode.device_scale_factor();
-      native = mode.native();
-    }
+    // DisplaySnapshot stores the native_mode info. For external display, use it
+    // to determine if current mode_info is native or not.
+    const DisplayMode* native_mode = snapshot->native_mode();
+    native = *mode_info == *native_mode;
+
+    // External display scale factor is always 1.
+    CHECK(snapshot->type() != DISPLAY_CONNECTION_TYPE_INTERNAL);
+    device_scale_factor = 1.0f;
   }
   std::string name = (snapshot->type() == DISPLAY_CONNECTION_TYPE_INTERNAL)
                          ? l10n_util::GetStringUTF8(IDS_DISPLAY_NAME_INTERNAL)
@@ -409,8 +438,15 @@ ManagedDisplayInfo DisplayChangeObserver::CreateManagedDisplayInfoInternal(
     name = l10n_util::GetStringUTF8(IDS_DISPLAY_NAME_UNKNOWN);
   }
 
+  gfx::RoundedCornersF panel_radii;
+
+  if (display::features::IsRoundedDisplayEnabled() &&
+      snapshot->type() == display::DISPLAY_CONNECTION_TYPE_INTERNAL) {
+    panel_radii = internal_panel_radii_.value_or(gfx::RoundedCornersF());
+  }
+
   return CreateManagedDisplayInfo(snapshot, mode_info, native,
-                                  device_scale_factor, dpi, name);
+                                  device_scale_factor, dpi, name, panel_radii);
 }
 
 }  // namespace display

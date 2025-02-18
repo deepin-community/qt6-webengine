@@ -4,8 +4,15 @@
 
 import {sendWithPromise} from 'chrome://resources/js/cr.js';
 
+export interface Application {
+  name: string;
+  icon?: string;
+  permissions: string[];
+}
+
 export interface Extension {
   name: string;
+  icon?: string;
   permissions: string[];
 }
 
@@ -15,6 +22,7 @@ export enum ReportingType {
   USER = 'user',
   USER_ACTIVITY = 'user-activity',
   EXTENSIONS = 'extensions',
+  LEGACY_TECH = 'legacy-tech',
 }
 
 export interface BrowserReportingResponse {
@@ -23,8 +31,9 @@ export interface BrowserReportingResponse {
 }
 
 interface ManagedDataResponse {
+  applicationReportingSubtitle: string;
   browserManagementNotice: string;
-  extensionReportingTitle: string;
+  extensionReportingSubtitle: string;
   managedWebsitesSubtitle: string;
   pageSubtitle: string;
   managed: boolean;
@@ -70,12 +79,15 @@ export enum DeviceReportingType {
   LOGIN_LOGOUT = 'login-logout',
   CRD_SESSIONS = 'crd sessions',
   PERIPHERALS = 'peripherals',
+  LEGACY_TECH = 'legacy-tech',
+  WEBSITE_INFO_AND_ACTIVITY = 'website info and activity',
 }
 
 
 export interface DeviceReportingResponse {
   messageId: string;
   reportingType: DeviceReportingType;
+  messageParams?: string[];
 }
 // </if>
 
@@ -84,6 +96,8 @@ export interface ManagementBrowserProxy {
   getExtensions(): Promise<Extension[]>;
 
   getManagedWebsites(): Promise<string[]>;
+
+  getApplications(): Promise<Application[]>;
 
   // <if expr="is_chromeos">
   /**
@@ -119,6 +133,10 @@ export class ManagementBrowserProxyImpl implements ManagementBrowserProxy {
 
   getManagedWebsites() {
     return sendWithPromise('getManagedWebsites');
+  }
+
+  getApplications() {
+    return sendWithPromise('getApplications');
   }
 
   // <if expr="is_chromeos">

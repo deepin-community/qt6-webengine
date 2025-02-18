@@ -8,21 +8,22 @@
 #ifndef THIRD_PARTY_BLINK_PUBLIC_COMMON_FENCED_FRAME_REDACTED_FENCED_FRAME_CONFIG_H_
 #define THIRD_PARTY_BLINK_PUBLIC_COMMON_FENCED_FRAME_REDACTED_FENCED_FRAME_CONFIG_H_
 
-#include "base/containers/flat_map.h"
-#include "base/functional/callback_forward.h"
-#include "base/memory/raw_ptr.h"
+#include <string>
+#include <utility>
+#include <vector>
+
+#include "net/base/schemeful_site.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/common/common_export.h"
-#include "third_party/blink/public/mojom/fenced_frame/fenced_frame.mojom.h"
 #include "third_party/blink/public/mojom/fenced_frame/fenced_frame_config.mojom-forward.h"
+#include "third_party/blink/public/mojom/permissions_policy/permissions_policy.mojom.h"
 #include "ui/gfx/geometry/size.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
 namespace content {
-struct FencedFrameConfig;
-struct FencedFrameProperties;
-FORWARD_DECLARE_TEST(FencedFrameConfigMojomTraitsTest, ConfigMojomTraitsTest);
+class FencedFrameConfig;
+class FencedFrameProperties;
 }  // namespace content
 
 namespace blink::FencedFrame {
@@ -55,23 +56,26 @@ struct BLINK_COMMON_EXPORT AdAuctionData {
 };
 
 // The metadata for the shared storage runURLSelectionOperation's budget,
-// which includes the shared storage's origin and the amount of budget to
+// which includes the shared storage's `site` and the amount of budget to
 // charge when a fenced frame that originates from the URN is navigating a top
 // frame. Before the fenced frame results in a top navigation, this
 // `SharedStorageBudgetMetadata` will be stored/associated with the URN inside
 // the `FencedFrameURLMapping`.
 struct BLINK_COMMON_EXPORT SharedStorageBudgetMetadata {
-  url::Origin origin;
+  net::SchemefulSite site;
   double budget_to_charge = 0;
 
-  // The bools `top_navigated` and `report_event_called` need to be mutable
-  // because the overall `FencedFrameConfig`/`FencedFrameProperties` object is
-  // const in virtually all cases, except that we want to change each of these
-  // bools to true after a frame with this config navigates the top for the
-  // first time or calls `fence.reportEvent() with a shared storage reporting
-  // destination for the first time, respectively.
+  // The bool `top_navigated` needs to be mutable because the overall
+  // `FencedFrameConfig`/`FencedFrameProperties` object is const in virtually
+  // all cases, except that we want to change this bool to true after a frame
+  // with this config navigates the top for the first time.
   mutable bool top_navigated = false;
-  mutable bool report_event_called = false;
+};
+
+struct BLINK_COMMON_EXPORT ParentPermissionsInfo {
+  std::vector<blink::ParsedPermissionsPolicyDeclaration>
+      parsed_permissions_policy;
+  url::Origin origin;
 };
 
 // Represents a potentially opaque (redacted) value.
@@ -130,15 +134,19 @@ struct BLINK_COMMON_EXPORT RedactedFencedFrameConfig {
     return shared_storage_budget_metadata_;
   }
   const DeprecatedFencedFrameMode& mode() const { return mode_; }
+  const std::vector<blink::mojom::PermissionsPolicyFeature>&
+  effective_enabled_permissions() const {
+    return effective_enabled_permissions_;
+  }
+  const absl::optional<ParentPermissionsInfo> parent_permissions_info() const {
+    return parent_permissions_info_;
+  }
 
  private:
-  friend struct content::FencedFrameConfig;
+  friend class content::FencedFrameConfig;
   friend struct mojo::StructTraits<
       blink::mojom::FencedFrameConfigDataView,
       blink::FencedFrame::RedactedFencedFrameConfig>;
-
-  FRIEND_TEST_ALL_PREFIXES(::content::FencedFrameConfigMojomTraitsTest,
-                           ConfigMojomTraitsTest);
 
   absl::optional<GURL> urn_uuid_;
   absl::optional<RedactedFencedFrameProperty<GURL>> mapped_url_;
@@ -155,6 +163,18 @@ struct BLINK_COMMON_EXPORT RedactedFencedFrameConfig {
 
   // TODO(crbug.com/1347953): Not yet used.
   DeprecatedFencedFrameMode mode_ = DeprecatedFencedFrameMode::kDefault;
+
+  std::vector<blink::mojom::PermissionsPolicyFeature>
+      effective_enabled_permissions_;
+
+  // Fenced frames with flexible permissions are allowed to inherit certain
+  // permissions policies from their parent. However, a fenced frame's renderer
+  // process doesn't have access to its parent. Since this is how
+  // `SecurityContextInit::ApplyPermissionsPolicy()` learns what the parent
+  // permissions policies are, this will not work for MPArch. Instead, the
+  // browser gives the renderer this information through the fenced frame
+  // config.
+  absl::optional<ParentPermissionsInfo> parent_permissions_info_;
 };
 
 // Represents a set of fenced frame properties (instantiated from a config) that
@@ -200,15 +220,22 @@ struct BLINK_COMMON_EXPORT RedactedFencedFrameProperties {
     return has_fenced_frame_reporting_;
   }
   const DeprecatedFencedFrameMode& mode() const { return mode_; }
+  const std::vector<blink::mojom::PermissionsPolicyFeature>&
+  effective_enabled_permissions() const {
+    return effective_enabled_permissions_;
+  }
+  const absl::optional<ParentPermissionsInfo> parent_permissions_info() const {
+    return parent_permissions_info_;
+  }
+  bool can_disable_untrusted_network() const {
+    return can_disable_untrusted_network_;
+  }
 
  private:
-  friend struct content::FencedFrameProperties;
+  friend class content::FencedFrameProperties;
   friend struct mojo::StructTraits<
       blink::mojom::FencedFramePropertiesDataView,
       blink::FencedFrame::RedactedFencedFrameProperties>;
-
-  FRIEND_TEST_ALL_PREFIXES(::content::FencedFrameConfigMojomTraitsTest,
-                           ConfigMojomTraitsTest);
 
   absl::optional<RedactedFencedFrameProperty<GURL>> mapped_url_;
   absl::optional<RedactedFencedFrameProperty<gfx::Size>> container_size_;
@@ -223,6 +250,10 @@ struct BLINK_COMMON_EXPORT RedactedFencedFrameProperties {
       shared_storage_budget_metadata_;
   bool has_fenced_frame_reporting_ = false;
   DeprecatedFencedFrameMode mode_ = DeprecatedFencedFrameMode::kDefault;
+  std::vector<blink::mojom::PermissionsPolicyFeature>
+      effective_enabled_permissions_;
+  absl::optional<ParentPermissionsInfo> parent_permissions_info_;
+  bool can_disable_untrusted_network_ = false;
 };
 
 }  // namespace blink::FencedFrame

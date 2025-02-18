@@ -1,20 +1,32 @@
-// Copyright 2020 The Dawn Authors
+// Copyright 2020 The Dawn & Tint Authors
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "dawn/native/CopyTextureForBrowserHelper.h"
 
-#include <unordered_set>
 #include <utility>
 
 #include "dawn/common/Log.h"
@@ -355,7 +367,7 @@ ResultOrError<RenderPipelineBase*> GetOrCreateCopyTextureForBrowserPipeline(
         Ref<RenderPipelineBase> pipeline;
         DAWN_TRY_ASSIGN(
             pipeline, CreateCopyForBrowserPipeline(device, dstFormat, shaderModule, "copyTexture"));
-        store->copyTextureForBrowserPipelines.insert({dstFormat, std::move(pipeline)});
+        store->copyTextureForBrowserPipelines.emplace(dstFormat, std::move(pipeline));
     }
 
     return GetCachedCopyTexturePipeline(store, dstFormat);
@@ -371,7 +383,7 @@ ResultOrError<RenderPipelineBase*> GetOrCreateCopyExternalTextureForBrowserPipel
         Ref<RenderPipelineBase> pipeline;
         DAWN_TRY_ASSIGN(pipeline, CreateCopyForBrowserPipeline(device, dstFormat, shaderModule,
                                                                "copyExternalTexture"));
-        store->copyExternalTextureForBrowserPipelines.insert({dstFormat, std::move(pipeline)});
+        store->copyExternalTextureForBrowserPipelines.emplace(dstFormat, std::move(pipeline));
     }
 
     return GetCachedCopyExternalTexturePipeline(store, dstFormat);
@@ -583,7 +595,7 @@ MaybeError DoCopyForBrowser(DeviceBase* device,
     passEncoder->APISetViewport(destination->origin.x, destination->origin.y, copySize->width,
                                 copySize->height, 0.0, 1.0);
     passEncoder->APIDraw(3);
-    passEncoder->APIEnd();
+    passEncoder->End();
 
     // Finsh encoding.
     Ref<CommandBufferBase> commandBuffer;
@@ -600,8 +612,7 @@ MaybeError ValidateCopyForBrowserDestination(DeviceBase* device,
                                              const Extent3D& copySize,
                                              const CopyTextureForBrowserOptions& options) {
     DAWN_TRY(device->ValidateObject(destination.texture));
-    DAWN_INVALID_IF(destination.texture->GetTextureState() == TextureBase::TextureState::Destroyed,
-                    "Destination texture %s is destroyed.", destination.texture);
+    DAWN_TRY(destination.texture->ValidateCanUseInSubmitNow());
     DAWN_TRY_CONTEXT(ValidateImageCopyTexture(device, destination, copySize),
                      "validating the ImageCopyTexture for the destination");
     DAWN_TRY_CONTEXT(ValidateTextureCopyRange(device, destination, copySize),
@@ -652,8 +663,7 @@ MaybeError ValidateCopyTextureForBrowser(DeviceBase* device,
                                          const CopyTextureForBrowserOptions* options) {
     // Validate source
     DAWN_TRY(device->ValidateObject(source->texture));
-    DAWN_INVALID_IF(source->texture->GetTextureState() == TextureBase::TextureState::Destroyed,
-                    "Source texture %s is destroyed.", source->texture);
+    DAWN_TRY(source->texture->ValidateCanUseInSubmitNow());
     DAWN_TRY_CONTEXT(ValidateImageCopyTexture(device, *source, *copySize),
                      "validating the ImageCopyTexture for the source");
     DAWN_TRY_CONTEXT(ValidateTextureCopyRange(device, *source, *copySize),
@@ -694,18 +704,20 @@ MaybeError ValidateCopyExternalTextureForBrowser(DeviceBase* device,
     DAWN_TRY(device->ValidateObject(source->externalTexture));
     DAWN_TRY(source->externalTexture->ValidateCanUseInSubmitNow());
 
-    const Extent2D& sourceVisibleSize = source->externalTexture->GetVisibleSize();
+    Extent2D sourceSize;
+    sourceSize.width = source->naturalSize.width;
+    sourceSize.height = source->naturalSize.height;
 
     // All texture dimensions are in uint32_t so by doing checks in uint64_t we avoid
     // overflows.
     DAWN_INVALID_IF(
         static_cast<uint64_t>(source->origin.x) + static_cast<uint64_t>(copySize->width) >
-                static_cast<uint64_t>(sourceVisibleSize.width) ||
+                static_cast<uint64_t>(sourceSize.width) ||
             static_cast<uint64_t>(source->origin.y) + static_cast<uint64_t>(copySize->height) >
-                static_cast<uint64_t>(sourceVisibleSize.height) ||
+                static_cast<uint64_t>(sourceSize.height) ||
             static_cast<uint64_t>(source->origin.z) > 0,
-        "Texture copy range (origin: %s, copySize: %s) touches outside of %s visible size (%s).",
-        &source->origin, copySize, source->externalTexture, &sourceVisibleSize);
+        "Texture copy range (origin: %s, copySize: %s) touches outside of %s source size (%s).",
+        &source->origin, copySize, source->externalTexture, &sourceSize);
     DAWN_INVALID_IF(source->origin.z > 0, "Source has a non-zero z origin (%u).", source->origin.z);
     DAWN_INVALID_IF(
         options->internalUsage && !device->HasFeature(Feature::DawnInternalUsages),
@@ -731,8 +743,7 @@ MaybeError DoCopyExternalTextureForBrowser(DeviceBase* device,
                                            const CopyTextureForBrowserOptions* options) {
     TextureInfo info;
     info.origin = source->origin;
-    const Extent2D& visibleSize = source->externalTexture->GetVisibleSize();
-    info.size = {visibleSize.width, visibleSize.height, 1};
+    info.size = {source->naturalSize.width, source->naturalSize.height, 1};
 
     RenderPipelineBase* pipeline;
     DAWN_TRY_ASSIGN(pipeline, GetOrCreateCopyExternalTextureForBrowserPipeline(
@@ -748,7 +759,7 @@ MaybeError DoCopyTextureForBrowser(DeviceBase* device,
                                    const CopyTextureForBrowserOptions* options) {
     TextureInfo info;
     info.origin = source->origin;
-    info.size = source->texture->GetSize();
+    info.size = source->texture->GetSize(source->aspect);
 
     Ref<TextureViewBase> srcTextureView = nullptr;
     TextureViewDescriptor srcTextureViewDesc = {};

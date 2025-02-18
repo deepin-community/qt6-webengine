@@ -35,7 +35,6 @@
 #include "ui/base/cursor/mojom/cursor_type.mojom-shared.h"
 #include "ui/base/ime/init/input_method_factory.h"
 #include "ui/base/ime/input_method.h"
-#include "ui/base/layout.h"
 #include "ui/base/ui_base_features.h"
 #include "ui/base/view_prop.h"
 #include "ui/compositor/compositor.h"
@@ -53,6 +52,10 @@
 #include "ui/gfx/icc_profile.h"
 #include "ui/gfx/switches.h"
 #include "ui/platform_window/platform_window_init_properties.h"
+
+#if BUILDFLAG(IS_WIN)
+#include <windows.h>
+#endif  // BUILDFLAG(IS_WIN)
 
 namespace aura {
 
@@ -173,6 +176,9 @@ WindowTreeHost::VideoCaptureLock::VideoCaptureLock(WindowTreeHost* host)
 ////////////////////////////////////////////////////////////////////////////////
 // WindowTreeHost, public:
 
+const char WindowTreeHost::kWindowTreeHostUsesParent[] =
+    "__AURA_WINDOW_TREE_HOST_USE_PARENT_OF_ACCELERATED_WIDGET__";
+
 WindowTreeHost::~WindowTreeHost() {
   DCHECK(!compositor_) << "compositor must be destroyed before root window";
 }
@@ -180,6 +186,11 @@ WindowTreeHost::~WindowTreeHost() {
 // static
 WindowTreeHost* WindowTreeHost::GetForAcceleratedWidget(
     gfx::AcceleratedWidget widget) {
+#if BUILDFLAG(IS_WIN)
+  if (ui::ViewProp::GetValue(widget, kWindowTreeHostUsesParent)) {
+    widget = ::GetParent(widget);
+  }
+#endif  // BUILDFLAG(IS_WIN)
   return reinterpret_cast<WindowTreeHost*>(
       ui::ViewProp::GetValue(widget, kWindowTreeHostForAcceleratedWidget));
 }
@@ -256,9 +267,9 @@ void WindowTreeHost::UpdateCompositorScaleAndSize(
     const gfx::Size& new_size_in_pixels) {
   gfx::Rect new_bounds(new_size_in_pixels);
   if (compositor_->display_transform_hint() ==
-          gfx::OVERLAY_TRANSFORM_ROTATE_90 ||
+          gfx::OVERLAY_TRANSFORM_ROTATE_CLOCKWISE_90 ||
       compositor_->display_transform_hint() ==
-          gfx::OVERLAY_TRANSFORM_ROTATE_270) {
+          gfx::OVERLAY_TRANSFORM_ROTATE_CLOCKWISE_270) {
     new_bounds.Transpose();
   }
 
@@ -504,15 +515,18 @@ void WindowTreeHost::UnlockMouse(Window* window) {
 
 std::unique_ptr<WindowTreeHost::VideoCaptureLock>
 WindowTreeHost::CreateVideoCaptureLock() {
+  if (!NativeWindowOcclusionTracker::
+          IsNativeWindowOcclusionTrackingAlwaysEnabled(this)) {
+    return nullptr;
+  }
+  // Throtting doesn't actually change the visibility, so no need for the lock.
+  if (ShouldThrottleWhenOccluded())
+    return nullptr;
+
   ++video_capture_count_;
   MaybeUpdateComposibleVisibilityForVideoLockCountChange();
-  OnVideoCaptureLockChanged();
   // WrapUnique() is used as constructor is private.
   return base::WrapUnique(new VideoCaptureLock(this));
-}
-
-bool WindowTreeHost::HasVideoCaptureLocks() const {
-  return video_capture_count_ > 0;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -639,7 +653,7 @@ void WindowTreeHost::InitCompositor() {
 
   display::Display display =
       display::Screen::GetScreen()->GetDisplayNearestWindow(window());
-  compositor_->SetDisplayColorSpaces(display.color_spaces());
+  compositor_->SetDisplayColorSpaces(display.GetColorSpaces());
 }
 
 void WindowTreeHost::OnAcceleratedWidgetAvailable() {
@@ -696,7 +710,7 @@ void WindowTreeHost::OnHostDisplayChanged() {
     return;
   display::Display display =
       display::Screen::GetScreen()->GetDisplayNearestWindow(window());
-  compositor_->SetDisplayColorSpaces(display.color_spaces());
+  compositor_->SetDisplayColorSpaces(display.GetColorSpaces());
 }
 
 void WindowTreeHost::OnHostCloseRequested() {
@@ -720,7 +734,7 @@ void WindowTreeHost::OnDisplayMetricsChanged(const display::Display& display,
                                              uint32_t metrics) {
   if (metrics & DisplayObserver::DISPLAY_METRIC_COLOR_SPACE && compositor_ &&
       display.id() == GetDisplayId())
-    compositor_->SetDisplayColorSpaces(display.color_spaces());
+    compositor_->SetDisplayColorSpaces(display.GetColorSpaces());
 
 // Chrome OS is handled in WindowTreeHostManager::OnDisplayMetricsChanged.
 // Chrome OS requires additional handling for the bounds that we do not need to
@@ -751,18 +765,9 @@ void WindowTreeHost::DecrementVideoCaptureCount() {
   DCHECK_GT(video_capture_count_, 0);
   --video_capture_count_;
   MaybeUpdateComposibleVisibilityForVideoLockCountChange();
-  OnVideoCaptureLockChanged();
 }
 
 void WindowTreeHost::MaybeUpdateComposibleVisibilityForVideoLockCountChange() {
-  // Throttling doesn't actually change the visibility, so no need for the
-  // lock.
-  if (!NativeWindowOcclusionTracker::
-          IsNativeWindowOcclusionTrackingAlwaysEnabled(this) ||
-      ShouldThrottleWhenOccluded()) {
-    return;
-  }
-
   // Should only be called if the occlusion is applied to the compositor.
   DCHECK(!ShouldThrottleWhenOccluded());
 

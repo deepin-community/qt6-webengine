@@ -12,7 +12,9 @@
 #include "chrome/grit/app_home_resources.h"
 #include "chrome/grit/app_home_resources_map.h"
 #include "chrome/grit/generated_resources.h"
+#include "chrome/grit/theme_resources.h"
 #include "content/public/browser/web_ui_data_source.h"
+#include "ui/base/resource/resource_bundle.h"
 
 namespace webapps {
 
@@ -22,16 +24,16 @@ void AddAppHomeLocalizedStrings(content::WebUIDataSource* ui_source) {
   static constexpr webui::LocalizedString kAppHomeLocalizedStrings[] = {
       {"appHomeTitle", IDS_APP_HOME_TITLE},
       {"appWindowOpenLabel", IDS_APP_HOME_OPEN_IN_WINDOW},
-      {"appWindowOpenCheckboxLabel",
-       IDS_ACCNAME_APP_HOME_OPEN_IN_WINDOW_CHECKBOX},
       {"appLaunchAtStartupLabel", IDS_APP_HOME_LAUNCH_AT_STARTUP},
-      {"appLaunchAtStartupCheckboxLabel",
-       IDS_ACCNAME_APP_HOME_LAUNCH_AT_STARTUP_CHECKBOX},
       {"createShortcutForAppLabel", IDS_APP_HOME_CREATE_SHORTCUT},
       {"installLocallyLabel", IDS_APP_HOME_INSTALL_LOCALLY},
       {"uninstallAppLabel", IDS_APP_HOME_UNINSTALL_APP},
+      {"removeAppLabel", IDS_APP_HOME_REMOVE_APP},
       {"appSettingsLabel", IDS_APP_HOME_APP_SETTINGS},
-      {"viewInWebStore", IDS_NEW_TAB_APP_DETAILS}};
+      {"viewInWebStore", IDS_NEW_TAB_APP_DETAILS},
+      {"notInstalled", IDS_ACCNAME_APP_HOME_NOT_INSTALLED},
+      {"appAppearanceLabel", IDS_APP_HOME_APP_NO_APPS},
+      {"learnToInstall", IDS_APP_HOME_APP_LEARN_INSTALL}};
   ui_source->AddLocalizedStrings(kAppHomeLocalizedStrings);
 }
 
@@ -51,6 +53,13 @@ void AppHomeUI::BindInterface(
   page_factory_receiver_.reset();
 
   page_factory_receiver_.Bind(std::move(receiver));
+}
+
+// static
+base::RefCountedMemory* AppHomeUI::GetFaviconResourceBytes(
+    ui::ResourceScaleFactor scale_factor) {
+  return ui::ResourceBundle::GetSharedInstance().LoadDataResourceBytesForScale(
+      IDR_BOOKMARK_BAR_APPS_SHORTCUT, scale_factor);
 }
 
 void AppHomeUI::CreatePageHandler(

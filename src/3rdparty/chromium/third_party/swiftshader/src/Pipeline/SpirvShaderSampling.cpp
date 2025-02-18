@@ -66,7 +66,7 @@ SpirvEmitter::ImageSampler *SpirvEmitter::getImageSampler(const vk::Device *devi
 			samplerState.customBorder = vkSamplerState->customBorderColor;
 
 			samplerState.mipmapFilter = convertMipmapMode(vkSamplerState);
-			samplerState.highPrecisionFiltering = (vkSamplerState->filteringPrecision == VK_SAMPLER_FILTERING_PRECISION_MODE_HIGH_GOOGLE);
+			samplerState.highPrecisionFiltering = vkSamplerState->highPrecisionFiltering;
 
 			samplerState.compareEnable = (vkSamplerState->compareEnable != VK_FALSE);
 			samplerState.compareOp = vkSamplerState->compareOp;
@@ -107,6 +107,12 @@ SpirvEmitter::ImageSampler *SpirvEmitter::getImageSampler(const vk::Device *devi
 			{
 				samplerState.minLod = 0.0f;
 				samplerState.maxLod = 0.0f;
+			}
+			// Otherwise make sure LOD is clamped for robustness
+			else
+			{
+				samplerState.minLod = imageViewState.minLod;
+				samplerState.maxLod = imageViewState.maxLod;
 			}
 		}
 		else if(samplerMethod == Write)

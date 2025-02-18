@@ -1,0 +1,53 @@
+--- a/src/3rdparty/chromium/components/autofill/core/browser/BUILD.gn
++++ b/src/3rdparty/chromium/components/autofill/core/browser/BUILD.gn
+@@ -827,6 +827,7 @@ jumbo_static_library("browser") {
+ 
+     deps = []
+     deps = [
++      ":buildflags",
+       "//base",
+       "//base:i18n",
+       "//build:branding_buildflags",
+--- a/src/3rdparty/chromium/qtwebengine/browser/extensions/api/BUILD.gn
++++ b/src/3rdparty/chromium/qtwebengine/browser/extensions/api/BUILD.gn
+@@ -28,6 +28,7 @@ source_set("tabs") {
+   ]
+ 
+   deps = [
++    "//build/config/chromebox_for_meetings:buildflags",
+     "//chrome/common:buildflags",
+     "//content/public/browser",
+     "//extensions/browser",
+--- a/src/3rdparty/chromium/components/history/core/browser/BUILD.gn
++++ b/src/3rdparty/chromium/components/history/core/browser/BUILD.gn
+@@ -175,6 +175,10 @@ static_library("browser") {
+       "//components/signin/public/identity_manager",
+       "//components/sync",
+     ]
++
++    deps += [
++      "//components/signin/public/base:signin_buildflags",
++    ]
+   }
+ 
+   if (is_android) {
+--- a/src/3rdparty/chromium/qtwebengine/browser/extensions/api/BUILD.gn
++++ b/src/3rdparty/chromium/qtwebengine/browser/extensions/api/BUILD.gn
+@@ -45,6 +45,7 @@ source_set("webrtc_desktop_capture_private") {
+ 
+   deps = [
+     "//content/public/browser",
++    "//qtwebengine/common/extensions/api:api",
+   ]
+ }
+
+--- a/src/core/ozone/BUILD.gn
++++ b/src/core/ozone/BUILD.gn
+@@ -21,6 +21,7 @@ source_set("qt") {
+ 
+   deps = [
+     "//base",
++    "//media/gpu:buildflags",
+     "//ui/base:buildflags",
+     "//ui/ozone:ozone_base",
+     "//ui/ozone/common",

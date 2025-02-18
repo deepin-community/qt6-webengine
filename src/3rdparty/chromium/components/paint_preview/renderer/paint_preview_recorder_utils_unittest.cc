@@ -12,6 +12,7 @@
 #include "base/files/file.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/memory/discardable_memory_allocator.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/read_only_shared_memory_region.h"
 #include "base/notreached.h"
 #include "base/test/task_environment.h"
@@ -29,13 +30,27 @@
 #include "components/paint_preview/common/serialized_recording.h"
 #include "components/paint_preview/common/test_utils.h"
 #include "mojo/public/cpp/base/big_buffer.h"
+#include "skia/ext/font_utils.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
+#include "third_party/skia/include/codec/SkCodec.h"
+#include "third_party/skia/include/codec/SkPngDecoder.h"
+#include "third_party/skia/include/core/SkBitmap.h"
+#include "third_party/skia/include/core/SkBlendMode.h"
+#include "third_party/skia/include/core/SkCanvas.h"
+#include "third_party/skia/include/core/SkColor.h"
+#include "third_party/skia/include/core/SkData.h"
 #include "third_party/skia/include/core/SkFont.h"
+#include "third_party/skia/include/core/SkImage.h"
+#include "third_party/skia/include/core/SkM44.h"
+#include "third_party/skia/include/core/SkPicture.h"
+#include "third_party/skia/include/core/SkRect.h"
 #include "third_party/skia/include/core/SkRefCnt.h"
+#include "third_party/skia/include/core/SkSamplingOptions.h"
 #include "third_party/skia/include/core/SkTextBlob.h"
 #include "third_party/skia/include/core/SkTypeface.h"
+#include "third_party/skia/include/encode/SkPngEncoder.h"
 
 namespace paint_preview {
 
@@ -44,7 +59,7 @@ namespace {
 cc::PaintRecord AddLink(const std::string& link, const SkRect& rect) {
   cc::PaintRecorder link_recorder;
   cc::PaintCanvas* link_canvas = link_recorder.beginRecording();
-  link_canvas->Annotate(cc::PaintCanvas::AnnotationType::URL, rect,
+  link_canvas->Annotate(cc::PaintCanvas::AnnotationType::kUrl, rect,
                         SkData::MakeWithCString(link.c_str()));
   return link_recorder.finishRecordingAsPicture();
 }
@@ -52,7 +67,7 @@ cc::PaintRecord AddLink(const std::string& link, const SkRect& rect) {
 }  // namespace
 
 TEST(PaintPreviewRecorderUtilsTest, TestParseGlyphs) {
-  auto typeface = SkTypeface::MakeDefault();
+  sk_sp<SkTypeface> typeface = skia::DefaultTypeface();
   SkFont font(typeface);
   std::string unichars_1 = "abc";
   std::string unichars_2 = "efg";
@@ -272,7 +287,7 @@ class PaintPreviewRecorderUtilsSerializeAsSkPictureTest
   cc::PaintRecorder recorder;
 
   // Valid after SetUp() until SerializeAsSkPicture() is called.
-  cc::PaintCanvas* canvas{};
+  raw_ptr<cc::PaintCanvas, ExperimentalRenderer> canvas = nullptr;
 
  protected:
   base::test::TaskEnvironment task_environment_;
@@ -368,7 +383,7 @@ TEST_P(PaintPreviewRecorderUtilsSerializeAsSkPictureTest,
             .set_id(cc::PaintImage::GetNextId())
             .set_texture_backing(
                 sk_sp<FakeTextureBacking>(
-                    new FakeTextureBacking(SkImage::MakeFromBitmap(bitmap))),
+                    new FakeTextureBacking(SkImages::RasterFromBitmap(bitmap))),
                 cc::PaintImage::GetNextContentId())
             .TakePaintImage();
     canvas->drawImage(paint_image, 0U, 0U);
@@ -395,9 +410,13 @@ TEST_P(PaintPreviewRecorderUtilsSerializeAsSkPictureTest,
     bitmap.allocN32Pixels(dimensions.width(), dimensions.height());
     SkCanvas sk_canvas(bitmap);
     sk_canvas.drawColor(SkColors::kRed);
-    auto sk_image = SkImage::MakeFromBitmap(bitmap);
-    auto data = sk_image->encodeToData();
-    auto lazy_sk_image = SkImage::MakeFromEncoded(data);
+    auto sk_image = SkImages::RasterFromBitmap(bitmap);
+    auto data = SkPngEncoder::Encode(nullptr, sk_image.get(), {});
+    CHECK(data);
+    ASSERT_TRUE(SkPngDecoder::IsPng(data->data(), data->size()));
+    SkCodecs::Register(SkPngDecoder::Decoder());
+    auto lazy_sk_image = SkImages::DeferredFromEncodedData(data);
+    CHECK(lazy_sk_image);
     ASSERT_TRUE(lazy_sk_image->isLazyGenerated());
     cc::PaintImage paint_image =
         cc::PaintImageBuilder::WithDefault()

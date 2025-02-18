@@ -16,6 +16,10 @@ build_webui("build") {
     "metrics_internals.ts",
   ]
 
+  if (is_chromeos_ash) {
+    non_web_component_files += [ "structured/structured_utils.ts" ]
+  }
+
   html_to_wrapper_template = "native"
 
   ts_composite = true
@@ -24,8 +28,6 @@ build_webui("build") {
     "//ui/webui/resources/cr_elements:build_ts",
     "//ui/webui/resources/js:build_ts",
   ]
-
-  ts_use_local_config = false
 
   grit_output_dir = "$root_gen_dir/components"
 }

@@ -8,6 +8,7 @@
 #include <string>
 
 #include "base/memory/singleton.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
 #include "media/capture/capture_export.h"
 #include "media/capture/video/chromeos/camera_app_device_impl.h"
@@ -42,7 +43,7 @@ class CAPTURE_EXPORT CameraAppDeviceBridgeImpl
 
   void OnVideoCaptureDeviceCreated(
       const std::string& device_id,
-      scoped_refptr<base::SingleThreadTaskRunner> ipc_task_runner);
+      scoped_refptr<base::SingleThreadTaskRunner> vcd_task_runner);
 
   void OnVideoCaptureDeviceClosing(const std::string& device_id);
 
@@ -68,7 +69,7 @@ class CAPTURE_EXPORT CameraAppDeviceBridgeImpl
 
   void RemoveCameraAppDevice(const std::string& device_id);
 
-  void RemoveIpcTaskRunner(const std::string& device_id);
+  void RemoveVCDTaskRunner(const std::string& device_id);
 
   // cros::mojom::CameraAppDeviceBridge implementations.
   void GetCameraAppDevice(const std::string& device_id,
@@ -81,8 +82,18 @@ class CAPTURE_EXPORT CameraAppDeviceBridgeImpl
       bool enabled,
       SetVirtualDeviceEnabledCallback callback) override;
 
+  void SetDeviceInUse(const std::string& device_id, bool in_use);
+
+  void IsDeviceInUse(const std::string& device_id,
+                     IsDeviceInUseCallback callback) override;
+
  private:
   friend struct base::DefaultSingletonTraits<CameraAppDeviceBridgeImpl>;
+
+  void StopOnIPCThread();
+
+  void BindReceiverOnIPCThread(
+      mojo::PendingReceiver<cros::mojom::CameraAppDeviceBridge> receiver);
 
   bool is_supported_;
 
@@ -101,7 +112,17 @@ class CAPTURE_EXPORT CameraAppDeviceBridgeImpl
 
   base::Lock task_runner_map_lock_;
   base::flat_map<std::string, scoped_refptr<base::SingleThreadTaskRunner>>
-      ipc_task_runners_ GUARDED_BY(task_runner_map_lock_);
+      vcd_task_runners_ GUARDED_BY(task_runner_map_lock_);
+
+  base::Lock devices_in_use_lock_;
+  base::flat_set<std::string> devices_in_use_ GUARDED_BY(devices_in_use_lock_);
+
+  // TODO(b/308549369, b/308797472): Once mojo service manager issue in the VCD
+  // utility process is fixed, remove this thread and let CameraHalDelegate owns
+  // CameraAppDeviceBridgeImpl.
+  base::Thread ipc_thread_;
+
+  scoped_refptr<base::SingleThreadTaskRunner> ipc_task_runner_;
 };
 
 }  // namespace media

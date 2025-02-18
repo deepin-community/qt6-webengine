@@ -26,8 +26,8 @@ class QuicCryptoStream;
 // provides functionality common to both the client and server, such as moving
 // messages between the TLS stack and the QUIC crypto stream, and handling
 // derivation of secrets.
-class QUIC_EXPORT_PRIVATE TlsHandshaker : public TlsConnection::Delegate,
-                                          public CryptoMessageParser {
+class QUICHE_EXPORT TlsHandshaker : public TlsConnection::Delegate,
+                                    public CryptoMessageParser {
  public:
   // TlsHandshaker does not take ownership of any of its arguments; they must
   // outlive the TlsHandshaker.
@@ -166,11 +166,16 @@ class QUIC_EXPORT_PRIVATE TlsHandshaker : public TlsConnection::Delegate,
   // See |SSL_CTX_set_info_callback| for the meaning of |type| and |value|.
   void InfoCallback(int /*type*/, int /*value*/) override {}
 
+  // Message callback from BoringSSL, for debugging purposes. See
+  // |SSL_CTX_set_msg_callback| for how to interpret |version|, |content_type|,
+  // and |data|.
+  void MessageCallback(bool is_write, int version, int content_type,
+                       absl::string_view data) override;
+
  private:
   // ProofVerifierCallbackImpl handles the result of an asynchronous certificate
   // verification operation.
-  class QUIC_EXPORT_PRIVATE ProofVerifierCallbackImpl
-      : public ProofVerifierCallback {
+  class QUICHE_EXPORT ProofVerifierCallbackImpl : public ProofVerifierCallback {
    public:
     explicit ProofVerifierCallbackImpl(TlsHandshaker* parent);
     ~ProofVerifierCallbackImpl() override;
@@ -220,9 +225,7 @@ class QUIC_EXPORT_PRIVATE TlsHandshaker : public TlsConnection::Delegate,
     // https://www.iana.org/assignments/tls-parameters/tls-parameters.xhtml#tls-parameters-6
     uint8_t desc;
   };
-  absl::optional<TlsAlert> last_tls_alert_;
-  const bool dont_close_connection_in_tls_alert_callback_ =
-      GetQuicReloadableFlag(quic_dont_close_connection_in_tls_alert_callback);
+  std::optional<TlsAlert> last_tls_alert_;
 };
 
 }  // namespace quic

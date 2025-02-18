@@ -7,6 +7,7 @@
 
 #include <memory>
 
+#include "base/memory/raw_ptr.h"
 #include "base/observer_list.h"
 #include "chromeos/ui/frame/caption_buttons/snap_controller.h"
 #include "components/exo/surface_delegate.h"
@@ -41,6 +42,8 @@ class SubSurface : public SurfaceDelegate,
   SubSurface& operator=(const SubSurface&) = delete;
 
   ~SubSurface() override;
+
+  Surface* surface() { return surface_; }
 
   // This schedules a sub-surface position change. The sub-surface will be
   // moved so, that its origin (top-left corner pixel) will be at the |position|
@@ -93,7 +96,8 @@ class SubSurface : public SurfaceDelegate,
   void UnsetCanGoBack() override {}
   void SetPip() override {}
   void UnsetPip() override {}
-  void SetFloat() override {}
+  void SetFloatToLocation(
+      chromeos::FloatStartLocation float_start_location) override {}
   void SetAspectRatio(const gfx::SizeF& aspect_ratio) override {}
   void MoveToDesk(int desk_index) override {}
   void SetVisibleOnAllWorkspaces() override {}
@@ -101,6 +105,7 @@ class SubSurface : public SurfaceDelegate,
   void Pin(bool trusted) override {}
   void Unpin() override {}
   void SetSystemModal(bool system_modal) override {}
+  void SetTopInset(int height) override {}
   SecurityDelegate* GetSecurityDelegate() override;
 
   // Overridden from SurfaceObserver:
@@ -111,8 +116,8 @@ class SubSurface : public SurfaceDelegate,
   void RemoveSubSurfaceObserver(SubSurfaceObserver* observer);
 
  private:
-  Surface* surface_;
-  Surface* parent_;
+  raw_ptr<Surface> surface_;
+  raw_ptr<Surface> parent_;
   bool is_synchronized_ = true;
 
   // Surface observer list. Surface does not own the observers.

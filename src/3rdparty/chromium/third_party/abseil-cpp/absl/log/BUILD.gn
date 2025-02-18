@@ -48,7 +48,9 @@ absl_source_set("flags") {
     "//third_party/abseil-cpp/absl/flags:marshalling",
     "//third_party/abseil-cpp/absl/log/internal:config",
     "//third_party/abseil-cpp/absl/log/internal:flags",
+    "//third_party/abseil-cpp/absl/log/internal:vlog_config",
     "//third_party/abseil-cpp/absl/strings",
+    "//third_party/abseil-cpp/absl/strings:string_view",
   ]
 }
 
@@ -60,8 +62,10 @@ absl_source_set("globals") {
     "//third_party/abseil-cpp/absl/base:config",
     "//third_party/abseil-cpp/absl/base:core_headers",
     "//third_party/abseil-cpp/absl/base:log_severity",
+    "//third_party/abseil-cpp/absl/base:raw_logging_internal",
     "//third_party/abseil-cpp/absl/hash",
-    "//third_party/abseil-cpp/absl/strings",
+    "//third_party/abseil-cpp/absl/log/internal:vlog_config",
+    "//third_party/abseil-cpp/absl/strings:string_view",
   ]
 }
 
@@ -78,7 +82,10 @@ absl_source_set("initialize") {
 
 absl_source_set("log") {
   public = [ "log.h" ]
-  deps = [ "//third_party/abseil-cpp/absl/log/internal:log_impl" ]
+  deps = [
+    ":vlog_is_on",
+    "//third_party/abseil-cpp/absl/log/internal:log_impl",
+  ]
 }
 
 absl_source_set("log_entry") {
@@ -89,7 +96,7 @@ absl_source_set("log_entry") {
     "//third_party/abseil-cpp/absl/base:core_headers",
     "//third_party/abseil-cpp/absl/base:log_severity",
     "//third_party/abseil-cpp/absl/log/internal:config",
-    "//third_party/abseil-cpp/absl/strings",
+    "//third_party/abseil-cpp/absl/strings:string_view",
     "//third_party/abseil-cpp/absl/time",
     "//third_party/abseil-cpp/absl/types:span",
   ]
@@ -119,8 +126,8 @@ absl_source_set("log_streamer") {
     ":absl_log",
     "//third_party/abseil-cpp/absl/base:config",
     "//third_party/abseil-cpp/absl/base:log_severity",
-    "//third_party/abseil-cpp/absl/strings",
     "//third_party/abseil-cpp/absl/strings:internal",
+    "//third_party/abseil-cpp/absl/strings:string_view",
     "//third_party/abseil-cpp/absl/types:optional",
     "//third_party/abseil-cpp/absl/utility",
   ]
@@ -137,7 +144,7 @@ absl_source_set("scoped_mock_log") {
     "//third_party/abseil-cpp/absl/base:config",
     "//third_party/abseil-cpp/absl/base:log_severity",
     "//third_party/abseil-cpp/absl/base:raw_logging_internal",
-    "//third_party/abseil-cpp/absl/strings",
+    "//third_party/abseil-cpp/absl/strings:string_view",
     "//third_party/googletest:gmock",
     "//third_party/googletest:gtest",
   ]
@@ -149,7 +156,38 @@ absl_source_set("structured") {
   deps = [
     "//third_party/abseil-cpp/absl/base:config",
     "//third_party/abseil-cpp/absl/log/internal:structured",
+    "//third_party/abseil-cpp/absl/strings:string_view",
+  ]
+}
+
+absl_source_set("absl_vlog_is_on") {
+  public = [ "absl_vlog_is_on.h" ]
+  visibility = [ "./*" ]
+  deps = [
+    "//third_party/abseil-cpp/absl/base:config",
+    "//third_party/abseil-cpp/absl/base:core_headers",
+    "//third_party/abseil-cpp/absl/log/internal:vlog_config",
     "//third_party/abseil-cpp/absl/strings",
+  ]
+}
+
+absl_source_set("vlog_is_on") {
+  public = [ "vlog_is_on.h" ]
+  visibility = [ "./*" ]
+  deps = [ ":absl_vlog_is_on" ]
+}
+
+absl_test("vlog_is_on_test") {
+  sources = [ "vlog_is_on_test.cc" ]
+  deps = [
+    ":flags",
+    ":globals",
+    ":log",
+    ":scoped_mock_log",
+    ":vlog_is_on",
+    "//third_party/abseil-cpp/absl/base:log_severity",
+    "//third_party/abseil-cpp/absl/flags:flag",
+    "//third_party/abseil-cpp/absl/types:optional",
   ]
 }
 
@@ -185,7 +223,7 @@ absl_test("check_test") {
 
 absl_source_set("check_test_impl") {
   testonly = true
-  public = [ "check_test_impl.h" ]
+  public = [ "check_test_impl.inc" ]
   visibility = [ ":*" ]
   deps = [
     "//third_party/abseil-cpp/absl/base:config",
@@ -246,7 +284,7 @@ absl_test("log_basic_test") {
 }
 
 absl_source_set("log_basic_test_impl") {
-  public = [ "log_basic_test_impl.h" ]
+  public = [ "log_basic_test_impl.inc" ]
   testonly = true
   visibility = [ ":*" ]
   deps = [
@@ -274,6 +312,7 @@ absl_test("log_entry_test") {
     "//third_party/abseil-cpp/absl/log/internal:format",
     "//third_party/abseil-cpp/absl/log/internal:test_helpers",
     "//third_party/abseil-cpp/absl/strings",
+    "//third_party/abseil-cpp/absl/strings:string_view",
     "//third_party/abseil-cpp/absl/time",
     "//third_party/abseil-cpp/absl/types:span",
   ]
@@ -288,6 +327,7 @@ absl_test("log_format_test") {
     "//third_party/abseil-cpp/absl/log/internal:test_matchers",
     "//third_party/abseil-cpp/absl/strings",
     "//third_party/abseil-cpp/absl/strings:str_format",
+    "//third_party/abseil-cpp/absl/strings:string_view",
     "//third_party/abseil-cpp/absl/types:optional",
   ]
 }
@@ -313,11 +353,10 @@ absl_test("log_sink_test") {
     ":log_sink_registry",
     ":scoped_mock_log",
     "//third_party/abseil-cpp/absl/base:core_headers",
-    "//third_party/abseil-cpp/absl/base:raw_logging_internal",
     "//third_party/abseil-cpp/absl/log/internal:test_actions",
     "//third_party/abseil-cpp/absl/log/internal:test_helpers",
     "//third_party/abseil-cpp/absl/log/internal:test_matchers",
-    "//third_party/abseil-cpp/absl/strings",
+    "//third_party/abseil-cpp/absl/strings:string_view",
   ]
 }
 
@@ -333,7 +372,7 @@ absl_test("log_streamer_test") {
     "//third_party/abseil-cpp/absl/log/internal:test_actions",
     "//third_party/abseil-cpp/absl/log/internal:test_helpers",
     "//third_party/abseil-cpp/absl/log/internal:test_matchers",
-    "//third_party/abseil-cpp/absl/strings",
+    "//third_party/abseil-cpp/absl/strings:string_view",
   ]
 }
 
@@ -347,6 +386,7 @@ absl_test("log_modifier_methods_test") {
     "//third_party/abseil-cpp/absl/log/internal:test_helpers",
     "//third_party/abseil-cpp/absl/log/internal:test_matchers",
     "//third_party/abseil-cpp/absl/strings",
+    "//third_party/abseil-cpp/absl/strings:string_view",
     "//third_party/abseil-cpp/absl/time",
   ]
 }
@@ -366,6 +406,7 @@ absl_test("scoped_mock_log_test") {
     "//third_party/abseil-cpp/absl/log/internal:test_matchers",
     "//third_party/abseil-cpp/absl/memory",
     "//third_party/abseil-cpp/absl/strings",
+    "//third_party/abseil-cpp/absl/strings:string_view",
     "//third_party/abseil-cpp/absl/synchronization",
   ]
 }
@@ -379,8 +420,10 @@ absl_test("stripping_test") {
     "//third_party/abseil-cpp/absl/base:strerror",
     "//third_party/abseil-cpp/absl/flags:program_name",
     "//third_party/abseil-cpp/absl/log/internal:test_helpers",
+    "//third_party/abseil-cpp/absl/status",
     "//third_party/abseil-cpp/absl/strings",
     "//third_party/abseil-cpp/absl/strings:str_format",
+    "//third_party/abseil-cpp/absl/strings:string_view",
   ]
 }
 

@@ -102,8 +102,8 @@ class ClientChangeVerifier {
   }
 
  private:
-  TextInputClient* previous_client_ = nullptr;
-  TextInputClient* next_client_ = nullptr;
+  raw_ptr<TextInputClient> previous_client_ = nullptr;
+  raw_ptr<TextInputClient> next_client_ = nullptr;
   bool call_expected_ = false;
   bool on_will_change_focused_client_called_ = false;
   bool on_did_change_focused_client_called_ = false;

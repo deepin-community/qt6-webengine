@@ -3,59 +3,69 @@
 # found in the LICENSE file.
 
 from __future__ import annotations
-import pathlib
 
-from typing import TYPE_CHECKING
+import pathlib
+from typing import TYPE_CHECKING, cast
 
 from crossbench import helper
-from crossbench.browsers.chromium import Chromium
-from crossbench.probes.base import Probe
-from crossbench.probes.results import ProbeResult
+from crossbench.browsers.chromium.chromium import Chromium
+from crossbench.probes.chromium_probe import ChromiumProbe
+from crossbench.probes.probe import ProbeContext, ResultLocation
+from crossbench.probes.results import BrowserProbeResult, LocalProbeResult, ProbeResult
 
 if TYPE_CHECKING:
-  from crossbench.browsers.base import Browser
-  from crossbench.runner import Run
+  from crossbench.browsers.browser import Browser
+  from crossbench.runner.run import Run
 
 
-class V8TurbolizerProbe(Probe):
+class V8TurbolizerProbe(ChromiumProbe):
   """
   Chromium-only Probe for extracting detailed turbofan graphs.
   Note: This probe can have significant overhead.
-  Tool: https://v8.github.io/tools/head/turbolizer/index.html
+  Tool: https://v8.dev/tools/head/turbolizer
   """
   NAME = "v8.turbolizer"
-
-  def is_compatible(self, browser: Browser) -> bool:
-    return isinstance(browser, Chromium)
+  RESULT_LOCATION = ResultLocation.BROWSER
 
   def attach(self, browser: Browser) -> None:
     super().attach(browser)
     assert isinstance(browser, Chromium)
-    browser.flags.set("--no-sandbox")
-    browser.js_flags.set("--trace-turbo")
+    chromium = cast(Chromium, browser)
+    chromium.flags.set("--no-sandbox")
+    chromium.js_flags.set("--trace-turbo")
 
-  class Scope(Probe.Scope):
+  def get_context(self, run: Run) -> V8TurbolizerProbeContext:
+    return V8TurbolizerProbeContext(self, run)
 
-    @property
-    def results_dir(self) -> pathlib.Path:
-      # Put v8.turbolizer files into separate dirs in case we have
-      # multiple isolates
-      turbolizer_log_dir = super().results_file
-      turbolizer_log_dir.mkdir(exist_ok=True)
-      return turbolizer_log_dir
 
-    def setup(self, run: Run) -> None:
-      run.extra_js_flags["--trace-turbo-path"] = str(self.results_dir)
-      run.extra_js_flags["--trace-turbo-cfg-file"] = str(self.results_dir /
-                                                         "cfg.graph")
+class V8TurbolizerProbeContext(ProbeContext[V8TurbolizerProbe]):
 
-    def start(self, run: Run) -> None:
-      pass
+  @property
+  def results_dir(self) -> pathlib.Path:
+    # Put v8.turbolizer files into separate dirs in case we have
+    # multiple isolates
+    turbolizer_log_dir = super().result_path
+    turbolizer_log_dir.mkdir(exist_ok=True)
+    return turbolizer_log_dir
 
-    def stop(self, run: Run) -> None:
-      pass
+  def setup(self) -> None:
+    js_flags = self.session.extra_js_flags
+    js_flags["--trace-turbo-path"] = str(self.results_dir)
+    js_flags["--trace-turbo-cfg-file"] = str(self.results_dir / "cfg.graph")
 
-    def tear_down(self, run: Run) -> ProbeResult:
-      log_dir = self.results_file.parent
-      log_files = helper.sort_by_file_size(log_dir.glob("*"))
-      return ProbeResult(file=tuple(log_files))
+  def start(self) -> None:
+    pass
+
+  def stop(self) -> None:
+    pass
+
+  def tear_down(self) -> ProbeResult:
+    log_dir = self.result_path.parent
+    # Copy the files from a potentially remote browser to a the local result
+    # dir.
+    result: BrowserProbeResult = self.browser_result(file=(log_dir,))
+    local_log_dir = result.file
+    assert local_log_dir.is_dir
+    # Sort files locally after transferring them.
+    log_files = helper.sort_by_file_size(local_log_dir.glob("*"))
+    return LocalProbeResult(file=(log_files))

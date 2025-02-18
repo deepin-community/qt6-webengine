@@ -1,5 +1,5 @@
 // Copyright (C) 2023 The Qt Company Ltd.
-// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
 import QtQuick
 import QtTest
@@ -13,14 +13,14 @@ WebEngineView {
     property bool deniedGeolocation: false
     property bool geoPermissionRequested: false
 
-    onFeaturePermissionRequested: function(securityOrigin, feature) {
-        if (feature === WebEngineView.Geolocation) {
+    onPermissionRequested: function(perm) {
+        if (perm.permissionType === WebEnginePermission.PermissionType.Geolocation) {
             geoPermissionRequested = true
             if (deniedGeolocation) {
-                webEngineView.grantFeaturePermission(securityOrigin, feature, false)
+                perm.deny()
             }
             else {
-                webEngineView.grantFeaturePermission(securityOrigin, feature, true)
+                perm.grant()
             }
         }
     }

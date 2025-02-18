@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include <optional>
 #include "base/gtest_prod_util.h"
 #include "base/memory/scoped_refptr.h"
 #include "cc/paint/frame_metadata.h"
@@ -15,11 +16,11 @@
 #include "cc/paint/paint_export.h"
 #include "cc/paint/paint_record.h"
 #include "gpu/command_buffer/common/mailbox.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/skia/include/core/SkImage.h"
 #include "third_party/skia/include/core/SkImageInfo.h"
 #include "third_party/skia/include/core/SkRefCnt.h"
 #include "third_party/skia/include/core/SkYUVAPixmaps.h"
+#include "third_party/skia/include/private/SkGainmapInfo.h"
 #include "ui/gfx/display_color_spaces.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
@@ -40,6 +41,28 @@ class PaintWorkletInput;
 class TextureBacking;
 
 enum class ImageType { kPNG, kJPEG, kWEBP, kGIF, kICO, kBMP, kAVIF, kInvalid };
+
+enum class AuxImage : size_t { kDefault = 0, kGainmap = 1 };
+static constexpr std::array<AuxImage, 2> kAllAuxImages = {AuxImage::kDefault,
+                                                          AuxImage::kGainmap};
+constexpr size_t AuxImageIndex(AuxImage aux_image) {
+  return static_cast<size_t>(aux_image);
+}
+static constexpr size_t kAuxImageCount = 2;
+static constexpr size_t kAuxImageIndexDefault =
+    AuxImageIndex(AuxImage::kDefault);
+static constexpr size_t kAuxImageIndexGainmap =
+    AuxImageIndex(AuxImage::kGainmap);
+constexpr const char* AuxImageName(AuxImage aux_image) {
+  switch (aux_image) {
+    case AuxImage::kDefault:
+      return "default";
+      break;
+    case AuxImage::kGainmap:
+      return "gainmap";
+      break;
+  }
+}
 
 enum class YUVSubsampling { k410, k411, k420, k422, k440, k444, kUnknown };
 
@@ -62,7 +85,7 @@ struct CC_PAINT_EXPORT ImageHeaderMetadata {
   YUVSubsampling yuv_subsampling = YUVSubsampling::kUnknown;
 
   // The HDR metadata included with the image, if present.
-  absl::optional<gfx::HDRMetadata> hdr_metadata;
+  std::optional<gfx::HDRMetadata> hdr_metadata;
 
   // The visible size of the image (i.e., the area that contains meaningful
   // pixels).
@@ -72,7 +95,7 @@ struct CC_PAINT_EXPORT ImageHeaderMetadata {
   // |image_size| for a 4:2:0 JPEG is 12x31, its coded size should be 16x32
   // because the size of a minimum-coded unit for 4:2:0 is 16x16.
   // A zero-initialized |coded_size| indicates an invalid image.
-  absl::optional<gfx::Size> coded_size;
+  std::optional<gfx::Size> coded_size;
 
   // Whether the image embeds an ICC color profile.
   bool has_embedded_color_profile = false;
@@ -81,11 +104,11 @@ struct CC_PAINT_EXPORT ImageHeaderMetadata {
   bool all_data_received_prior_to_decode = false;
 
   // For JPEGs only: whether the image is progressive (as opposed to baseline).
-  absl::optional<bool> jpeg_is_progressive;
+  std::optional<bool> jpeg_is_progressive;
 
   // For WebPs only: whether this is a simple-format lossy image. See
   // https://developers.google.com/speed/webp/docs/riff_container#simple_file_format_lossy.
-  absl::optional<bool> webp_is_non_extended_lossy;
+  std::optional<bool> webp_is_non_extended_lossy;
 };
 
 // A representation of an image for the compositor.  This is the most abstract
@@ -161,8 +184,8 @@ class CC_PAINT_EXPORT PaintImage {
     }
   };
 
-  enum class AnimationType { ANIMATED, VIDEO, STATIC };
-  enum class CompletionState { DONE, PARTIALLY_DONE };
+  enum class AnimationType { kAnimated, kVideo, kStatic };
+  enum class CompletionState { kDone, kPartiallyDone };
   enum class DecodingMode {
     // No preference has been specified. The compositor may choose to use sync
     // or async decoding. See CheckerImageTracker for the default behaviour.
@@ -209,13 +232,15 @@ class CC_PAINT_EXPORT PaintImage {
   // guaranteed to be stable. That is,
   // GetSupportedDecodeSize(GetSupportedDecodeSize(size)) is guaranteed to be
   // GetSupportedDecodeSize(size).
-  SkISize GetSupportedDecodeSize(const SkISize& requested_size) const;
+  SkISize GetSupportedDecodeSize(const SkISize& requested_size,
+                                 AuxImage aux_image = AuxImage::kDefault) const;
 
   // Decode the image into RGBX into the pixels of the specified SkPixmap.
   // Returns true on success and false on failure. Note that for non-lazy images
   // this will do a copy or readback if the image is texture backed.
   bool Decode(SkPixmap pixmap,
               size_t frame_index,
+              AuxImage aux_image,
               GeneratorClientId client_id) const;
 
   // Decode the image into YUV into |pixmaps|.
@@ -227,6 +252,7 @@ class CC_PAINT_EXPORT PaintImage {
   //    needs a separate YUV frame buffer cache.
   bool DecodeYuv(const SkYUVAPixmaps& pixmaps,
                  size_t frame_index,
+                 AuxImage aux_image,
                  GeneratorClientId client_id) const;
 
   // Returns the SkImage associated with this PaintImage. If PaintImage is
@@ -247,12 +273,13 @@ class CC_PAINT_EXPORT PaintImage {
   gpu::Mailbox GetMailbox() const;
 
   Id stable_id() const { return id_; }
-  SkImageInfo GetSkImageInfo() const;
+  SkImageInfo GetSkImageInfo(AuxImage aux_image = AuxImage::kDefault) const;
   AnimationType animation_type() const { return animation_type_; }
   CompletionState completion_state() const { return completion_state_; }
   bool is_multipart() const { return is_multipart_; }
   bool is_high_bit_depth() const { return is_high_bit_depth_; }
   bool may_be_lcp_candidate() const { return may_be_lcp_candidate_; }
+  bool no_cache() const { return no_cache_; }
   int repetition_count() const { return repetition_count_; }
   bool ShouldAnimate() const;
   AnimationSequenceId reset_animation_sequence_id() const {
@@ -276,6 +303,10 @@ class CC_PAINT_EXPORT PaintImage {
   SkColorSpace* color_space() const {
     return paint_worklet_input_ ? nullptr : GetSkImageInfo().colorSpace();
   }
+  gfx::Size GetSize(AuxImage aux_image) const;
+  SkISize GetSkISize(AuxImage aux_image) const {
+    return GetSkImageInfo(aux_image).dimensions();
+  }
 
   gfx::ContentColorUsage GetContentColorUsage(bool* is_hlg = nullptr) const;
 
@@ -285,6 +316,7 @@ class CC_PAINT_EXPORT PaintImage {
   // SkPixmaps to pass DecodeYuv() and render with the correct YUV->RGB
   // transformation.
   bool IsYuv(const SkYUVAPixmapInfo::SupportedDataTypes& supported_data_types,
+             AuxImage aux_image,
              SkYUVAPixmapInfo* info = nullptr) const;
 
   // Get metadata associated with this image.
@@ -316,6 +348,22 @@ class CC_PAINT_EXPORT PaintImage {
   }
 
   bool IsOpaque() const;
+  bool HasGainmap() const {
+    DCHECK_EQ(gainmap_paint_image_generator_ != nullptr,
+              gainmap_info_.has_value());
+    return gainmap_paint_image_generator_.get();
+  }
+  const SkGainmapInfo& GetGainmapInfo() const {
+    DCHECK(HasGainmap());
+    return gainmap_info_.value();
+  }
+
+  std::optional<gfx::HDRMetadata> GetHDRMetadata() const {
+    if (const auto* image_metadata = GetImageHeaderMetadata()) {
+      return image_metadata->hdr_metadata;
+    }
+    return std::nullopt;
+  }
 
   std::string ToString() const;
 
@@ -339,9 +387,6 @@ class CC_PAINT_EXPORT PaintImage {
   friend class PaintShader;
   friend class blink::VideoFrame;
 
-  bool DecodeFromGenerator(SkPixmap pixmap,
-                           size_t frame_index,
-                           GeneratorClientId client_id) const;
   bool DecodeFromSkImage(SkPixmap pixmap,
                          size_t frame_index,
                          GeneratorClientId client_id) const;
@@ -355,17 +400,25 @@ class CC_PAINT_EXPORT PaintImage {
   const sk_sp<SkImage>& GetSkImage() const;
 
   sk_sp<SkImage> sk_image_;
-  absl::optional<PaintRecord> paint_record_;
+  std::optional<PaintRecord> paint_record_;
   gfx::Rect paint_record_rect_;
 
   ContentId content_id_ = kInvalidContentId;
 
   sk_sp<PaintImageGenerator> paint_image_generator_;
+
+  // Gainmap HDR metadata.
+  sk_sp<PaintImageGenerator> gainmap_paint_image_generator_;
+  std::optional<SkGainmapInfo> gainmap_info_;
+
+  // The HDR metadata for non-gainmap HDR rendering.
+  std::optional<gfx::HDRMetadata> hdr_metadata_;
+
   sk_sp<TextureBacking> texture_backing_;
 
   Id id_ = 0;
-  AnimationType animation_type_ = AnimationType::STATIC;
-  CompletionState completion_state_ = CompletionState::DONE;
+  AnimationType animation_type_ = AnimationType::kStatic;
+  CompletionState completion_state_ = CompletionState::kDone;
   int repetition_count_ = kAnimationNone;
 
   // Whether the data fetched for this image is a part of a multpart response.
@@ -379,6 +432,11 @@ class CC_PAINT_EXPORT PaintImage {
   // it, but this flag is intended for metrics on when we do not present the
   // image when the system claims.
   bool may_be_lcp_candidate_ = false;
+
+  // Indicates that the image is unlikely to be re-used past the first frame it
+  // appears in. Used as a hint to avoid caching it downstream, but is not a
+  // mandate.
+  bool no_cache_ = false;
 
   // An incrementing sequence number maintained by the painter to indicate if
   // this animation should be reset in the compositor. Incrementing this number

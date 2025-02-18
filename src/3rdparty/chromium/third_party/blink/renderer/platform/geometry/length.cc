@@ -27,11 +27,24 @@
 
 #include "third_party/blink/renderer/platform/geometry/blend.h"
 #include "third_party/blink/renderer/platform/geometry/calculation_value.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/hash_map.h"
 #include "third_party/blink/renderer/platform/wtf/size_assertions.h"
+#include "third_party/blink/renderer/platform/wtf/static_constructors.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 
 namespace blink {
+
+PLATFORM_EXPORT DEFINE_GLOBAL(Length, g_auto_length);
+PLATFORM_EXPORT DEFINE_GLOBAL(Length, g_none_length);
+PLATFORM_EXPORT DEFINE_GLOBAL(Length, g_fixed_zero_length);
+
+// static
+void Length::Initialize() {
+  new (WTF::NotNullTag::kNotNull, (void*)&g_auto_length) Length(kAuto);
+  new (WTF::NotNullTag::kNotNull, (void*)&g_none_length) Length(kNone);
+  new (WTF::NotNullTag::kNotNull, (void*)&g_fixed_zero_length) Length(kFixed);
+}
 
 class CalculationValueHandleMap {
   USING_FAST_MALLOC(CalculationValueHandleMap);
@@ -119,14 +132,15 @@ Length Length::BlendSameTypes(const Length& from,
 PixelsAndPercent Length::GetPixelsAndPercent() const {
   switch (GetType()) {
     case kFixed:
-      return PixelsAndPercent(Value(), 0);
+      return PixelsAndPercent(Value());
     case kPercent:
-      return PixelsAndPercent(0, Value());
+      return PixelsAndPercent(0.0f, Value(), /*has_explicit_pixels=*/false,
+                              /*has_explicit_percent=*/true);
     case kCalculated:
       return GetCalculationValue().GetPixelsAndPercent();
     default:
       NOTREACHED();
-      return PixelsAndPercent(0, 0);
+      return PixelsAndPercent(0.0f, 0.0f, false, false);
   }
 }
 
@@ -140,15 +154,18 @@ Length Length::SubtractFromOneHundredPercent() const {
   if (IsPercent())
     return Length::Percent(100 - Value());
   DCHECK(IsSpecified());
-  scoped_refptr<const CalculationValue> result =
-      AsCalculationValue()->SubtractFromOneHundredPercent();
-  if (result->IsExpression() ||
-      (result->Pixels() != 0 && result->Percent() != 0)) {
-    return Length(std::move(result));
+  return Length(AsCalculationValue()->SubtractFromOneHundredPercent());
+}
+
+Length Length::Add(const Length& other) const {
+  CHECK(IsSpecified());
+  if (IsFixed() && other.IsFixed()) {
+    return Length::Fixed(Pixels() + other.Pixels());
   }
-  if (result->Percent())
-    return Length::Percent(result->Percent());
-  return Length::Fixed(result->Pixels());
+  if (IsPercent() && other.IsPercent()) {
+    return Length::Percent(Percent() + other.Percent());
+  }
+  return Length(AsCalculationValue()->Add(*other.AsCalculationValue()));
 }
 
 Length Length::Zoom(double factor) const {
@@ -195,6 +212,10 @@ bool Length::IsCalculatedEqual(const Length& o) const {
 
 bool Length::HasAnchorQueries() const {
   return IsCalculated() && GetCalculationValue().HasAnchorQueries();
+}
+
+bool Length::HasAutoAnchorPositioning() const {
+  return IsCalculated() && GetCalculationValue().HasAutoAnchorPositioning();
 }
 
 String Length::ToString() const {

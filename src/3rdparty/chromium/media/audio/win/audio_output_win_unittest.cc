@@ -14,6 +14,7 @@
 #include "base/memory/aligned_memory.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ptr_exclusion.h"
 #include "base/run_loop.h"
 #include "base/sync_socket.h"
 #include "base/test/task_environment.h"
@@ -150,7 +151,7 @@ class ReadOnlyMappedFile {
 
  private:
   HANDLE fmap_;
-  raw_ptr<char> start_;
+  raw_ptr<char, AllowPtrArithmetic> start_;
   uint32_t size_;
 };
 
@@ -544,13 +545,17 @@ class SyncSocketSource : public AudioOutputStream::AudioSourceCallback {
 };
 
 struct SyncThreadContext {
-  base::SyncSocket* socket;
+  // This field is not a raw_ptr<> because it was filtered by the rewriter for:
+  // #reinterpret-cast-trivial-type
+  RAW_PTR_EXCLUSION base::SyncSocket* socket;
   int sample_rate;
   int channels;
   int frames;
   double sine_freq;
   uint32_t packet_size_bytes;
-  AudioOutputBuffer* buffer;
+  // This field is not a raw_ptr<> because it was filtered by the rewriter for:
+  // #reinterpret-cast-trivial-type
+  RAW_PTR_EXCLUSION AudioOutputBuffer* buffer;
   int total_packets;
 };
 

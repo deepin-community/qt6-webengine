@@ -34,8 +34,11 @@ class NetworkFetcher {
                               int64_t xheader_retry_after_sec)>;
   using DownloadToFileCompleteCallback =
       base::OnceCallback<void(int net_error, int64_t content_size)>;
+
+  // `content_length` is -1 if the value is not known.
   using ResponseStartedCallback =
       base::OnceCallback<void(int response_code, int64_t content_length)>;
+
   // `current` is the number of bytes received thus far.
   using ProgressCallback = base::RepeatingCallback<void(int64_t current)>;
 
@@ -66,7 +69,9 @@ class NetworkFetcher {
       ResponseStartedCallback response_started_callback,
       ProgressCallback progress_callback,
       PostRequestCompleteCallback post_request_complete_callback) = 0;
-  virtual void DownloadToFile(
+
+  // Returns a cancellation closure.
+  virtual base::OnceClosure DownloadToFile(
       const GURL& url,
       const base::FilePath& file_path,
       ResponseStartedCallback response_started_callback,

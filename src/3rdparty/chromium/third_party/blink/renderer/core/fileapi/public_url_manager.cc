@@ -30,6 +30,7 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/notreached.h"
 #include "base/strings/strcat.h"
+#include "base/types/pass_key.h"
 #include "base/unguessable_token.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "net/base/features.h"
@@ -144,6 +145,22 @@ PublicURLManager::PublicURLManager(ExecutionContext* execution_context)
   }
 }
 
+PublicURLManager::PublicURLManager(
+    base::PassKey<StorageAccessHandle>,
+    ExecutionContext* execution_context,
+    mojo::PendingAssociatedRemote<mojom::blink::BlobURLStore>
+        frame_url_store_remote)
+    : ExecutionContextLifecycleObserver(execution_context),
+      frame_url_store_(execution_context),
+      worker_url_store_(execution_context) {
+  if (base::FeatureList::IsEnabled(net::features::kSupportPartitionedBlobUrl)) {
+    execution_context_type_ = ExecutionContextIdForHistogram::kFrame;
+  }
+  frame_url_store_.Bind(
+      std::move(frame_url_store_remote),
+      execution_context->GetTaskRunner(TaskType::kFileReading));
+}
+
 mojom::blink::BlobURLStore& PublicURLManager::GetBlobURLStore() {
   DCHECK_NE(frame_url_store_.is_bound(), worker_url_store_.is_bound());
   if (frame_url_store_.is_bound()) {
@@ -159,8 +176,8 @@ String PublicURLManager::RegisterURL(URLRegistrable* registrable) {
   if (is_stopped_)
     return String();
 
-  SecurityOrigin* origin = GetExecutionContext()->GetMutableSecurityOrigin();
-  const KURL& url = BlobURL::CreatePublicURL(origin);
+  const KURL& url =
+      BlobURL::CreatePublicURL(GetExecutionContext()->GetSecurityOrigin());
   DCHECK(!url.IsEmpty());
   const String& url_string = url.GetString();
 
@@ -213,12 +230,15 @@ String PublicURLManager::RegisterURL(URLRegistrable* registrable) {
     registrable->CloneMojoBlob(std::move(blob_receiver));
   } else {
     URLRegistry* registry = &registrable->Registry();
-    registry->RegisterURL(origin, url, registrable);
+    registry->RegisterURL(url, registrable);
     url_to_registry_.insert(url_string, registry);
   }
 
-  if (origin->SerializesAsNull())
-    BlobURLNullOriginMap::GetInstance()->Add(url, origin);
+  SecurityOrigin* mutable_origin =
+      GetExecutionContext()->GetMutableSecurityOrigin();
+  if (mutable_origin->SerializesAsNull()) {
+    BlobURLNullOriginMap::GetInstance()->Add(url, mutable_origin);
+  }
 
   return url_string;
 }

@@ -4,7 +4,8 @@
 
 #include "third_party/blink/renderer/core/frame/remote_frame_view.h"
 
-#include "base/cxx17_backports.h"
+#include <algorithm>
+
 #include "components/paint_preview/common/paint_preview_tracker.h"
 #include "printing/buildflags/buildflags.h"
 #include "third_party/blink/public/common/frame/frame_owner_element_type.h"
@@ -46,8 +47,7 @@ LocalFrameView* RemoteFrameView::ParentFrameView() const {
     return nullptr;
 
   HTMLFrameOwnerElement* owner = remote_frame_->DeprecatedLocalOwner();
-  if (owner && (owner->OwnerType() == FrameOwnerElementType::kPortal ||
-                owner->OwnerType() == FrameOwnerElementType::kFencedframe)) {
+  if (owner && owner->OwnerType() == FrameOwnerElementType::kFencedframe) {
     return owner->GetDocument().GetFrame()->View();
   }
 
@@ -65,8 +65,7 @@ LocalFrameView* RemoteFrameView::ParentLocalRootFrameView() const {
     return nullptr;
 
   HTMLFrameOwnerElement* owner = remote_frame_->DeprecatedLocalOwner();
-  if (owner && (owner->OwnerType() == FrameOwnerElementType::kPortal ||
-                owner->OwnerType() == FrameOwnerElementType::kFencedframe)) {
+  if (owner && owner->OwnerType() == FrameOwnerElementType::kFencedframe) {
     return owner->GetDocument().GetFrame()->LocalFrameRoot().View();
   }
 
@@ -121,8 +120,10 @@ void RemoteFrameView::SetNeedsOcclusionTracking(bool needs_tracking) {
     return;
   needs_occlusion_tracking_ = needs_tracking;
   if (needs_tracking) {
-    if (LocalFrameView* parent_view = ParentLocalRootFrameView())
+    if (LocalFrameView* parent_view = ParentLocalRootFrameView()) {
+      parent_view->SetIntersectionObservationState(LocalFrameView::kRequired);
       parent_view->ScheduleAnimation();
+    }
   }
 }
 
@@ -251,8 +252,8 @@ void RemoteFrameView::UpdateCompositingScaleFactor() {
   constexpr float kMinCompositingScaleFactor = 0.25f;
   constexpr float kMaxCompositingScaleFactor = 5.0f;
   compositing_scale_factor_ =
-      base::clamp(compositing_scale_factor_, kMinCompositingScaleFactor,
-                  kMaxCompositingScaleFactor);
+      std::clamp(compositing_scale_factor_, kMinCompositingScaleFactor,
+                 kMaxCompositingScaleFactor);
 
   if (compositing_scale_factor_ != previous_scale_factor)
     remote_frame_->SynchronizeVisualProperties();
@@ -264,7 +265,6 @@ void RemoteFrameView::Dispose() {
   // RemoteFrameView is disconnected before detachment.
   if (owner_element && owner_element->OwnedEmbeddedContentView() == this)
     owner_element->SetEmbeddedContentView(nullptr);
-  SetNeedsOcclusionTracking(false);
 }
 
 void RemoteFrameView::SetFrameRect(const gfx::Rect& rect) {

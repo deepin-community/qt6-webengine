@@ -24,6 +24,7 @@
 #include "web_contents_adapter.h"
 #include "web_contents_adapter_client.h"
 #include "web_contents_view_qt.h"
+#include "net/resource_request_body_qt.h"
 
 // originally based on aw_proxying_url_loader_factory.cc:
 // Copyright 2018 The Chromium Authors. All rights reserved.
@@ -64,6 +65,7 @@ ASSERT_ENUMS_MATCH(QWebEngineUrlRequestInfo::ResourceTypeCspReport, blink::mojom
 ASSERT_ENUMS_MATCH(QWebEngineUrlRequestInfo::ResourceTypePluginResource, blink::mojom::ResourceType::kPluginResource)
 ASSERT_ENUMS_MATCH(QWebEngineUrlRequestInfo::ResourceTypeNavigationPreloadMainFrame, blink::mojom::ResourceType::kNavigationPreloadMainFrame)
 ASSERT_ENUMS_MATCH(QWebEngineUrlRequestInfo::ResourceTypeNavigationPreloadSubFrame, blink::mojom::ResourceType::kNavigationPreloadSubFrame)
+ASSERT_ENUMS_MATCH(QWebEngineUrlRequestInfo::ResourceTypeJson, blink::mojom::ResourceType::kJson)
 ASSERT_ENUMS_MATCH(QWebEngineUrlRequestInfo::ResourceTypeLast, blink::mojom::ResourceType::kMaxValue)
 
 extern WebContentsAdapterClient::NavigationType pageTransitionToNavigationType(ui::PageTransition transition);
@@ -163,6 +165,7 @@ private:
     // error didn't occur.
     int error_status_ = net::OK;
     network::ResourceRequest request_;
+    ResourceRequestBody request_body_;
     network::mojom::URLResponseHeadPtr current_response_;
 
     const net::MutableNetworkTrafficAnnotationTag traffic_annotation_;
@@ -196,6 +199,7 @@ InterceptedRequest::InterceptedRequest(ProfileAdapter *profile_adapter,
     , request_id_(request_id)
     , options_(options)
     , request_(request)
+    , request_body_(ResourceRequestBody(request_.request_body.get()))
     , traffic_annotation_(traffic_annotation)
     , proxied_loader_receiver_(this, std::move(loader_receiver))
     , target_client_(std::move(client))
@@ -332,7 +336,7 @@ void InterceptedRequest::Restart()
 
     auto info = new QWebEngineUrlRequestInfoPrivate(
             resourceType, navigationType, originalUrl, firstPartyUrl, initiator,
-            QByteArray::fromStdString(request_.method), headers);
+            QByteArray::fromStdString(request_.method), &request_body_, headers);
     Q_ASSERT(!request_info_);
     request_info_.reset(new QWebEngineUrlRequestInfo(info));
 
@@ -370,8 +374,9 @@ void InterceptedRequest::ContinueAfterIntercept()
         }
 
         if (info.changed) {
+            // Used the same error code as AwProxyingURLLoaderFactory's blocked request.
             if (info.shouldBlockRequest)
-                return SendErrorAndCompleteImmediately(net::ERR_BLOCKED_BY_CLIENT);
+                return SendErrorAndCompleteImmediately(net::ERR_ACCESS_DENIED);
 
             if (info.shouldRedirectRequest) {
                 net::RedirectInfo::FirstPartyURLPolicy first_party_url_policy =

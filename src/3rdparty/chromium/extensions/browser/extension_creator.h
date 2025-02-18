@@ -8,10 +8,9 @@
 #include <stdint.h>
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
-
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace base {
 class FilePath;
@@ -36,13 +35,12 @@ class ExtensionCreator {
   ExtensionCreator& operator=(const ExtensionCreator&) = delete;
 
   // Settings to specify treatment of special or ignorable error conditions.
+  // TODO(tjudkins): We should get rid of these flags and instead use explicit
+  // boolean parameters in their place if they are still needed.
   enum RunFlags {
     kNoRunFlags = 0,
     kOverwriteCRX = 1 << 0,
     kRequireModernManifestVersion = 1 << 1,
-    // DEPRECATED.
-    // kBookmarkApp = 1 << 2,
-    kSystemApp = 1 << 3,
   };
 
   // Categories of error that may need special handling on the UI end.
@@ -76,10 +74,8 @@ class ExtensionCreator {
                        const base::FilePath& private_key_output_path,
                        int run_flags);
 
-  // Validates the manifest by trying to load the extension.
-  bool ValidateManifest(const base::FilePath& extension_dir,
-                        crypto::RSAPrivateKey* key_pair,
-                        int run_flags);
+  // Validates the extension by trying to load it and checking language files.
+  bool ValidateExtension(const base::FilePath& extension_dir, int run_flags);
 
   // Reads private key from |private_key_path|.
   std::unique_ptr<crypto::RSAPrivateKey> ReadInputKey(
@@ -98,12 +94,12 @@ class ExtensionCreator {
   // Creates a CRX file at |crx_path|, signed with |private_key| and with the
   // contents of the archive at |zip_path|. Injects
   // |compressed_verified_contents| in the header if it not equal to
-  // absl::nullopt.
+  // std::nullopt.
   bool CreateCrx(
       const base::FilePath& zip_path,
       crypto::RSAPrivateKey* private_key,
       const base::FilePath& crx_path,
-      const absl::optional<std::string>& compressed_verified_contents);
+      const std::optional<std::string>& compressed_verified_contents);
 
   // Creates a temporary directory to store zipped extension and then creates
   // CRX using the zipped extension.
@@ -111,7 +107,7 @@ class ExtensionCreator {
       const base::FilePath& extension_dir,
       const base::FilePath& crx_path,
       crypto::RSAPrivateKey* private_key,
-      const absl::optional<std::string>& compressed_verified_contents);
+      const std::optional<std::string>& compressed_verified_contents);
 
   // Holds a message for any error that is raised during Run(...).
   std::string error_message_;

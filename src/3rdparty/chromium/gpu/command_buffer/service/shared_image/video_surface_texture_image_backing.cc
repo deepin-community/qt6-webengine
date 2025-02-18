@@ -7,7 +7,6 @@
 #include <utility>
 
 #include "base/task/single_thread_task_runner.h"
-#include "components/viz/common/resources/resource_format_utils.h"
 #include "components/viz/common/resources/resource_sizes.h"
 #include "gpu/command_buffer/common/shared_image_usage.h"
 #include "gpu/command_buffer/service/abstract_texture_android.h"
@@ -19,7 +18,6 @@
 #include "gpu/command_buffer/service/skia_utils.h"
 #include "gpu/command_buffer/service/texture_manager.h"
 #include "gpu/command_buffer/service/texture_owner.h"
-#include "third_party/skia/include/core/SkPromiseImageTexture.h"
 #include "third_party/skia/include/gpu/GrBackendSemaphore.h"
 #include "third_party/skia/include/gpu/GrBackendSurface.h"
 #include "ui/gl/gl_utils.h"
@@ -57,14 +55,6 @@ VideoSurfaceTextureImageBacking::~VideoSurfaceTextureImageBacking() {
   context_state_.reset();
   stream_texture_sii_->ReleaseResources();
   stream_texture_sii_.reset();
-}
-
-size_t VideoSurfaceTextureImageBacking::GetEstimatedSizeForMemoryDump() const {
-  DCHECK(gpu_main_task_runner_->RunsTasksInCurrentSequence());
-
-  // This backing contributes to gpu memory only if its bound to the texture
-  // and not when the backing is created.
-  return stream_texture_sii_->IsUsingGpuMemory() ? GetEstimatedSize() : 0;
 }
 
 void VideoSurfaceTextureImageBacking::OnContextLost() {
@@ -238,8 +228,8 @@ VideoSurfaceTextureImageBacking::ProduceGLTexturePassthrough(
       manager, this, tracker, std::move(texture));
 }
 
-std::unique_ptr<SkiaImageRepresentation>
-VideoSurfaceTextureImageBacking::ProduceSkia(
+std::unique_ptr<SkiaGaneshImageRepresentation>
+VideoSurfaceTextureImageBacking::ProduceSkiaGanesh(
     SharedImageManager* manager,
     MemoryTypeTracker* tracker,
     scoped_refptr<SharedContextState> context_state) {
@@ -289,7 +279,7 @@ VideoSurfaceTextureImageBacking::ProduceSkia(
 
 void VideoSurfaceTextureImageBacking::BeginGLReadAccess(
     const GLuint service_id) {
-  stream_texture_sii_->UpdateAndBindTexImage(service_id);
+  stream_texture_sii_->UpdateAndBindTexImage();
 }
 
 // Representation of VideoSurfaceTextureImageBacking as an overlay plane.

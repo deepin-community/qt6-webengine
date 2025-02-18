@@ -7,8 +7,9 @@
 #ifndef CORE_FXGE_DIB_SCANLINECOMPOSER_IFACE_H_
 #define CORE_FXGE_DIB_SCANLINECOMPOSER_IFACE_H_
 
+#include "core/fxcrt/data_vector.h"
 #include "core/fxge/dib/fx_dib.h"
-#include "third_party/base/span.h"
+#include "third_party/base/containers/span.h"
 
 class ScanlineComposerIface {
  public:
@@ -22,7 +23,7 @@ class ScanlineComposerIface {
   virtual bool SetInfo(int width,
                        int height,
                        FXDIB_Format src_format,
-                       pdfium::span<const uint32_t> src_palette) = 0;
+                       DataVector<uint32_t> src_palette) = 0;
 };
 
 #endif  // CORE_FXGE_DIB_SCANLINECOMPOSER_IFACE_H_

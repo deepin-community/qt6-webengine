@@ -47,7 +47,6 @@ UtilitySandboxedProcessLauncherDelegate::
       sandbox_type_ == sandbox::mojom::Sandbox::kIconReader ||
       sandbox_type_ == sandbox::mojom::Sandbox::kMediaFoundationCdm ||
       sandbox_type_ == sandbox::mojom::Sandbox::kWindowsSystemProxyResolver ||
-      sandbox_type_ == sandbox::mojom::Sandbox::kFileUtil ||
 #endif
 #if BUILDFLAG(IS_MAC)
       sandbox_type_ == sandbox::mojom::Sandbox::kMirroring ||
@@ -56,6 +55,7 @@ UtilitySandboxedProcessLauncherDelegate::
       sandbox_type_ == sandbox::mojom::Sandbox::kService ||
       sandbox_type_ == sandbox::mojom::Sandbox::kServiceWithJit ||
       sandbox_type_ == sandbox::mojom::Sandbox::kNetwork ||
+      sandbox_type_ == sandbox::mojom::Sandbox::kOnDeviceModelExecution ||
       sandbox_type_ == sandbox::mojom::Sandbox::kCdm ||
 #if BUILDFLAG(ENABLE_OOP_PRINTING)
       sandbox_type_ == sandbox::mojom::Sandbox::kPrintBackend ||
@@ -113,10 +113,19 @@ ZygoteCommunication* UtilitySandboxedProcessLauncherDelegate::GetZygote() {
   if (sandbox::policy::IsUnsandboxedSandboxType(sandbox_type_))
     return nullptr;
 
+  // TODO(crbug.com/1427280): remove this special case and fork from the zygote.
+  // For now, browser tests fail when forking the network service from the
+  // unsandboxed zygote, as the forked process only creates the
+  // NetworkServiceTestHelper if the process is exec'd.
+  if (sandbox_type_ == sandbox::mojom::Sandbox::kNetwork) {
+    return nullptr;
+  }
+
   // Utility processes which need specialized sandboxes fork from the
   // unsandboxed zygote and then apply their actual sandboxes in the forked
   // process upon startup.
   if (sandbox_type_ == sandbox::mojom::Sandbox::kNetwork ||
+      sandbox_type_ == sandbox::mojom::Sandbox::kOnDeviceModelExecution ||
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_ASH)
       sandbox_type_ == sandbox::mojom::Sandbox::kHardwareVideoDecoding ||
 #endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_ASH)

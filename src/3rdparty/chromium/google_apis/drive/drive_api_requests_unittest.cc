@@ -11,6 +11,7 @@
 #include <memory>
 #include <utility>
 
+#include "base/containers/contains.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
@@ -23,6 +24,7 @@
 #include "base/test/values_test_util.h"
 #include "base/time/time.h"
 #include "base/values.h"
+#include "google_apis/common/base_requests.h"
 #include "google_apis/common/dummy_auth_service.h"
 #include "google_apis/common/request_sender.h"
 #include "google_apis/common/test_util.h"
@@ -87,7 +89,9 @@ class TestBatchableDelegate : public BatchableDelegate {
         content_data_(content_data),
         callback_(std::move(callback)) {}
   GURL GetURL() const override { return url_; }
-  std::string GetRequestType() const override { return "PUT"; }
+  HttpRequestMethod GetRequestType() const override {
+    return HttpRequestMethod::kPut;
+  }
   std::vector<std::string> GetExtraRequestHeaders() const override {
     return std::vector<std::string>();
   }
@@ -274,7 +278,7 @@ class DriveApiRequestsTest : public testing::Test {
   std::unique_ptr<net::test_server::HttpResponse> HandleChildrenDeleteRequest(
       const net::test_server::HttpRequest& request) {
     if (request.method != net::test_server::METHOD_DELETE ||
-        request.relative_url.find("/children/") == std::string::npos) {
+        !base::Contains(request.relative_url, "/children/")) {
       // The request is not the "Children: delete" request. Delegate the
       // processing to the next handler.
       return nullptr;
@@ -312,7 +316,7 @@ class DriveApiRequestsTest : public testing::Test {
   std::unique_ptr<net::test_server::HttpResponse> HandleDeleteRequest(
       const net::test_server::HttpRequest& request) {
     if (request.method != net::test_server::METHOD_DELETE ||
-        request.relative_url.find("/files/") == std::string::npos) {
+        !base::Contains(request.relative_url, "/files/")) {
       // The file is not file deletion request. Delegate the processing to the
       // next handler.
       return nullptr;
@@ -584,9 +588,21 @@ TEST_F(DriveApiRequestsTest, DriveApiDataRequest_Fields) {
 }
 
 TEST_F(DriveApiRequestsTest, FilesInsertRequest) {
-  const base::Time::Exploded kModifiedDate = {2012, 7, 0, 19, 15, 59, 13, 123};
-  const base::Time::Exploded kLastViewedByMeDate = {2013, 7,  0,  19,
-                                                    15,   59, 13, 123};
+  static constexpr base::Time::Exploded kModifiedDate = {.year = 2012,
+                                                         .month = 7,
+                                                         .day_of_month = 19,
+                                                         .hour = 15,
+                                                         .minute = 59,
+                                                         .second = 13,
+                                                         .millisecond = 123};
+  static constexpr base::Time::Exploded kLastViewedByMeDate = {
+      .year = 2013,
+      .month = 7,
+      .day_of_month = 19,
+      .hour = 15,
+      .minute = 59,
+      .second = 13,
+      .millisecond = 123};
 
   // Set an expected data file containing the directory's entry data.
   expected_data_file_path_ =
@@ -654,9 +670,21 @@ TEST_F(DriveApiRequestsTest, FilesInsertRequest) {
 }
 
 TEST_F(DriveApiRequestsTest, FilesPatchRequest) {
-  const base::Time::Exploded kModifiedDate = {2012, 7, 0, 19, 15, 59, 13, 123};
-  const base::Time::Exploded kLastViewedByMeDate = {2013, 7,  0,  19,
-                                                    15,   59, 13, 123};
+  static constexpr base::Time::Exploded kModifiedDate = {.year = 2012,
+                                                         .month = 7,
+                                                         .day_of_month = 19,
+                                                         .hour = 15,
+                                                         .minute = 59,
+                                                         .second = 13,
+                                                         .millisecond = 123};
+  static constexpr base::Time::Exploded kLastViewedByMeDate = {
+      .year = 2013,
+      .month = 7,
+      .day_of_month = 19,
+      .hour = 15,
+      .minute = 59,
+      .second = 13,
+      .millisecond = 123};
 
   // Set an expected data file containing valid result.
   expected_data_file_path_ =
@@ -835,7 +863,13 @@ TEST_F(DriveApiRequestsTest, ChangesListNextPageRequest) {
 }
 
 TEST_F(DriveApiRequestsTest, FilesCopyRequest) {
-  const base::Time::Exploded kModifiedDate = {2012, 7, 0, 19, 15, 59, 13, 123};
+  static constexpr base::Time::Exploded kModifiedDate = {.year = 2012,
+                                                         .month = 7,
+                                                         .day_of_month = 19,
+                                                         .hour = 15,
+                                                         .minute = 59,
+                                                         .second = 13,
+                                                         .millisecond = 123};
 
   // Set an expected data file containing the dummy file entry data.
   // It'd be returned if we copy a file.
@@ -1501,9 +1535,21 @@ TEST_F(DriveApiRequestsTest, UploadNewLargeFileRequest) {
 }
 
 TEST_F(DriveApiRequestsTest, UploadNewFileWithMetadataRequest) {
-  const base::Time::Exploded kModifiedDate = {2012, 7, 0, 19, 15, 59, 13, 123};
-  const base::Time::Exploded kLastViewedByMeDate = {2013, 7,  0,  19,
-                                                    15,   59, 13, 123};
+  static constexpr base::Time::Exploded kModifiedDate = {.year = 2012,
+                                                         .month = 7,
+                                                         .day_of_month = 19,
+                                                         .hour = 15,
+                                                         .minute = 59,
+                                                         .second = 13,
+                                                         .millisecond = 123};
+  static constexpr base::Time::Exploded kLastViewedByMeDate = {
+      .year = 2013,
+      .month = 7,
+      .day_of_month = 19,
+      .hour = 15,
+      .minute = 59,
+      .second = 13,
+      .millisecond = 123};
 
   // Set an expected url for uploading.
   expected_upload_path_ = kTestUploadNewFilePath;
@@ -1874,9 +1920,21 @@ TEST_F(DriveApiRequestsTest,
 }
 
 TEST_F(DriveApiRequestsTest, UploadExistingFileWithMetadataRequest) {
-  const base::Time::Exploded kModifiedDate = {2012, 7, 0, 19, 15, 59, 13, 123};
-  const base::Time::Exploded kLastViewedByMeDate = {2013, 7,  0,  19,
-                                                    15,   59, 13, 123};
+  static constexpr base::Time::Exploded kModifiedDate = {.year = 2012,
+                                                         .month = 7,
+                                                         .day_of_month = 19,
+                                                         .hour = 15,
+                                                         .minute = 59,
+                                                         .second = 13,
+                                                         .millisecond = 123};
+  static constexpr base::Time::Exploded kLastViewedByMeDate = {
+      .year = 2013,
+      .month = 7,
+      .day_of_month = 19,
+      .hour = 15,
+      .minute = 59,
+      .second = 13,
+      .millisecond = 123};
 
   // Set an expected url for uploading.
   expected_upload_path_ = kTestUploadExistingFilePath;

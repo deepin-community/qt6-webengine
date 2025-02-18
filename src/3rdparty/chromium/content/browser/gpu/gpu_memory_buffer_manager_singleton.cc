@@ -14,6 +14,7 @@
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "gpu/ipc/common/gpu_memory_buffer_support.h"
+#include "ui/base/ozone_buildflags.h"
 #include "ui/base/ui_base_features.h"
 
 #if BUILDFLAG(IS_OZONE)
@@ -37,13 +38,13 @@ viz::mojom::GpuService* GetGpuService(
   return nullptr;
 }
 
-#if defined(USE_OZONE_PLATFORM_X11)
+#if BUILDFLAG(IS_OZONE_X11)
 bool ShouldSetBufferFormatsFromGpuExtraInfo() {
   return ui::OzonePlatform::GetInstance()
       ->GetPlatformProperties()
       .fetch_buffer_formats_for_gmb_on_gpu;
 }
-#endif
+#endif  // BUILDFLAG(IS_OZONE_X11)
 
 scoped_refptr<base::SingleThreadTaskRunner> GetTaskRunner() {
 #if BUILDFLAG(IS_MAC)
@@ -52,6 +53,31 @@ scoped_refptr<base::SingleThreadTaskRunner> GetTaskRunner() {
   return GetUIThreadTaskRunner({});
 #endif
 }
+
+#if BUILDFLAG(IS_LINUX)
+bool IsGpuMemoryBufferNV12Supported() {
+  static bool is_computed = false;
+  static bool supported = false;
+  if (is_computed) {
+    return supported;
+  }
+
+  auto* gmb_mgr = GpuMemoryBufferManagerSingleton::GetInstance();
+  if (gmb_mgr) {
+    auto gmb = gmb_mgr->CreateGpuMemoryBuffer(
+        gfx::Size(2, 2), gfx::BufferFormat::YUV_420_BIPLANAR,
+        gfx::BufferUsage::GPU_READ_CPU_READ_WRITE, gpu::kNullSurfaceHandle,
+        nullptr);
+    if (gmb && gmb->GetType() == gfx::GpuMemoryBufferType::NATIVE_PIXMAP) {
+      supported = true;
+    }
+  }
+
+  is_computed = true;
+
+  return supported;
+}
+#endif  // BUILDFLAG(IS_LINUX)
 
 }  // namespace
 
@@ -80,18 +106,24 @@ GpuMemoryBufferManagerSingleton::GetInstance() {
 }
 
 void GpuMemoryBufferManagerSingleton::OnGpuExtraInfoUpdate() {
-#if defined(USE_OZONE_PLATFORM_X11)
+#if BUILDFLAG(IS_OZONE_X11)
   // X11 fetches buffer formats on gpu and passes them via gpu extra info.
-  if (!ShouldSetBufferFormatsFromGpuExtraInfo())
-    return;
-
-  gpu::GpuMemoryBufferConfigurationSet configs;
-  for (const auto& config : gpu_data_manager_impl_->GetGpuExtraInfo()
-                                .gpu_memory_buffer_support_x11) {
-    configs.insert(config);
+  if (ShouldSetBufferFormatsFromGpuExtraInfo()) {
+    gpu::GpuMemoryBufferConfigurationSet configs;
+    for (const auto& config : gpu_data_manager_impl_->GetGpuExtraInfo()
+                                  .gpu_memory_buffer_support_x11) {
+      configs.insert(config);
+    }
+    SetNativeConfigurations(std::move(configs));
   }
-  SetNativeConfigurations(std::move(configs));
-#endif
+#endif  // BUILDFLAG(IS_OZONE_X11)
+#if BUILDFLAG(IS_LINUX)
+  // Dynamic check whether the NV12 format is supported as it may be
+  // inconsistent between the system GBM (Generic Buffer Management) and
+  // chromium miniGBM.
+  gpu_data_manager_impl_->SetGpuMemoryBufferNV12Supported(
+      IsGpuMemoryBufferNV12Supported());
+#endif  // BUILDFLAG(IS_LINUX)
 }
 
 }  // namespace content

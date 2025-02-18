@@ -4,6 +4,7 @@
 
 #include "extensions/renderer/bindings/api_binding_js_util.h"
 
+#include <optional>
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
 #include "content/public/renderer/v8_value_converter.h"
@@ -48,6 +49,7 @@ gin::ObjectTemplateBuilder APIBindingJSUtil::GetObjectTemplateBuilder(
       .SetMethod("setLastError", &APIBindingJSUtil::SetLastError)
       .SetMethod("clearLastError", &APIBindingJSUtil::ClearLastError)
       .SetMethod("hasLastError", &APIBindingJSUtil::HasLastError)
+      .SetMethod("getLastErrorMessage", &APIBindingJSUtil::GetLastErrorMessage)
       .SetMethod("runCallbackWithLastError",
                  &APIBindingJSUtil::RunCallbackWithLastError)
       .SetMethod("handleException", &APIBindingJSUtil::HandleException)
@@ -61,7 +63,7 @@ gin::ObjectTemplateBuilder APIBindingJSUtil::GetObjectTemplateBuilder(
 void APIBindingJSUtil::SendRequest(
     gin::Arguments* arguments,
     const std::string& name,
-    const std::vector<v8::Local<v8::Value>>& request_args,
+    const v8::LocalVector<v8::Value>& request_args,
     v8::Local<v8::Value> options) {
   v8::Isolate* isolate = arguments->isolate();
   v8::HandleScope handle_scope(isolate);
@@ -86,8 +88,6 @@ void APIBindingJSUtil::SendRequest(
     // type. We could, if we wanted to be a bit more verbose.
     options_dict.Get("customCallback", &custom_callback);
   }
-
-  v8::Local<v8::Function> callback;
 
   // Some APIs (like fileSystem and contextMenus) don't provide arguments that
   // match the expected schema. For now, we need to ignore these and trust the
@@ -209,6 +209,22 @@ void APIBindingJSUtil::HasLastError(gin::Arguments* arguments) {
   arguments->Return(has_last_error);
 }
 
+void APIBindingJSUtil::GetLastErrorMessage(gin::Arguments* arguments) {
+  v8::Isolate* isolate = arguments->isolate();
+  v8::HandleScope handle_scope(isolate);
+
+  std::optional<std::string> last_error_message =
+      request_handler_->last_error()->GetErrorMessage(
+          arguments->GetHolderCreationContext());
+  if (last_error_message) {
+    arguments->Return(*last_error_message);
+  } else {
+    // TODO(tjudkins): It would be nicer to return a v8::Undefined here, but the
+    // gin converter doesn't support it at the moment.
+    arguments->Return(v8::Local<v8::Value>());
+  }
+}
+
 void APIBindingJSUtil::RunCallbackWithLastError(
     gin::Arguments* arguments,
     const std::string& error,
@@ -323,7 +339,7 @@ void APIBindingJSUtil::ValidateCustomSignature(
     NOTREACHED();
   }
 
-  std::vector<v8::Local<v8::Value>> vector_arguments;
+  v8::LocalVector<v8::Value> vector_arguments(isolate);
   if (!gin::ConvertFromV8(isolate, arguments_to_validate, &vector_arguments)) {
     NOTREACHED();
     return;

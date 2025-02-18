@@ -13,6 +13,7 @@
 
 #include "base/containers/flat_map.h"
 #include "base/containers/flat_set.h"
+#include "base/feature_list.h"
 #include "base/files/file_path.h"
 #include "base/sequence_checker.h"
 #include "base/thread_annotations.h"
@@ -33,6 +34,8 @@ class Statement;
 
 namespace content {
 
+BASE_DECLARE_FEATURE(kFirstPartySetsDatabaseUseBuiltInRecoveryIfSupported);
+
 // Wraps its own `sql::Database` instance on behalf of the First-Party Sets
 // database implementation. This class must be accessed and destroyed on the
 // same sequence. The sequence must outlive |this|.
@@ -51,9 +54,9 @@ class CONTENT_EXPORT FirstPartySetsDatabase {
     // `LazyInit()` failed and a more specific error wasn't diagnosed.
     kError = 2,
     // `LazyInit()` failed due to a compatible version number being too high.
-    kTooNew = 3,
+    // kTooNew = 3, // No longer used
     // `LazyInit()` failed due to a version number being too low.
-    kTooOld = 4,
+    // kTooOld = 4,  // No longer used
     // `LazyInit()` was successful but data is considered corrupted.
     kCorrupted = 5,
 
@@ -86,7 +89,7 @@ class CONTENT_EXPORT FirstPartySetsDatabase {
   [[nodiscard]] bool InsertBrowserContextCleared(
       const std::string& browser_context_id);
 
-  // TODO(crbug.com/1219656): Consider returning absl::nullopt for all the
+  // TODO(crbug.com/1219656): Consider returning std::nullopt for all the
   // fetching methods when having query errors
 
   // Gets the global First-Party Sets and the config used by

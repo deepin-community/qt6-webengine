@@ -42,25 +42,12 @@ namespace media {
 
 const int64_t kStartPlayingTimeInMs = 100;
 
-ACTION_P2(SetBool, var, value) {
-  *var = value;
-}
-
 ACTION_P3(SetBufferingState, renderer_client, buffering_state, reason) {
   (*renderer_client)->OnBufferingStateChange(buffering_state, reason);
 }
 
 ACTION_P2(SetError, renderer_client, error) {
   (*renderer_client)->OnError(error);
-}
-
-ACTION(PostCallback) {
-  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, arg0);
-}
-
-ACTION(PostQuitWhenIdle) {
-  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
-      FROM_HERE, base::RunLoop::QuitCurrentWhenIdleClosureDeprecated());
 }
 
 class RendererImplTest : public ::testing::Test {
@@ -363,15 +350,15 @@ class RendererImplTest : public ::testing::Test {
   base::SimpleTestTickClock test_tick_clock_;
 
   std::unique_ptr<StrictMock<MockDemuxer>> demuxer_;
-  raw_ptr<StrictMock<MockVideoRenderer>> video_renderer_;
-  raw_ptr<StrictMock<MockAudioRenderer>> audio_renderer_;
+  raw_ptr<StrictMock<MockVideoRenderer>, DanglingUntriaged> video_renderer_;
+  raw_ptr<StrictMock<MockAudioRenderer>, DanglingUntriaged> audio_renderer_;
   std::unique_ptr<RendererImpl> renderer_impl_;
   std::unique_ptr<StrictMock<MockCdmContext>> cdm_context_;
 
   StrictMock<MockTimeSource> time_source_;
   std::unique_ptr<StrictMock<MockDemuxerStream>> audio_stream_;
   std::unique_ptr<StrictMock<MockDemuxerStream>> video_stream_;
-  std::vector<DemuxerStream*> streams_;
+  std::vector<raw_ptr<DemuxerStream, VectorExperimental>> streams_;
   // This field is not a raw_ptr<> because it was filtered by the rewriter for:
   // #addr-of
   RAW_PTR_EXCLUSION RendererClient* video_renderer_client_;
@@ -383,6 +370,12 @@ class RendererImplTest : public ::testing::Test {
   bool is_encrypted_ = false;
   bool is_cdm_set_ = false;
 };
+
+TEST_F(RendererImplTest, NoStreams) {
+  // Ensure initialization without streams fails and doesn't crash.
+  EXPECT_CALL(*demuxer_, GetAllStreams()).WillRepeatedly(Return(streams_));
+  InitializeAndExpect(PIPELINE_ERROR_COULD_NOT_RENDER);
+}
 
 TEST_F(RendererImplTest, Destroy_BeforeInitialize) {
   Destroy();

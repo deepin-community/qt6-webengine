@@ -8,7 +8,6 @@
 #include <utility>
 
 #include "base/auto_reset.h"
-#include "base/cxx17_backports.h"
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/task/delay_policy.h"
@@ -28,6 +27,10 @@ base::TimeDelta ComputeAdpfTarget(const BeginFrameArgs& args) {
     return deadline.latch_delta * 3 / 4;
   }
   return base::Milliseconds(12);
+}
+
+bool DrawImmediatelyWhenInteractive() {
+  return features::ShouldDrawImmediatelyWhenInteractive();
 }
 
 }  // namespace
@@ -98,9 +101,16 @@ DisplayScheduler::~DisplayScheduler() {
   StopObservingBeginFrames();
 }
 
+void DisplayScheduler::SetDamageTracker(DisplayDamageTracker* damage_tracker) {
+  DisplaySchedulerBase::SetDamageTracker(damage_tracker);
+  damage_tracker->SetDisplayBeginFrameSourceId(
+      begin_frame_source_->source_id());
+}
+
 void DisplayScheduler::SetVisible(bool visible) {
-  if (visible_ == visible)
+  if (visible_ == visible) {
     return;
+  }
 
   visible_ = visible;
   // If going invisible, we'll stop observing begin frames once we try
@@ -184,13 +194,15 @@ void DisplayScheduler::MaybeCreateHintSession(
 
 void DisplayScheduler::ReportFrameTime(
     base::TimeDelta frame_time,
-    base::flat_set<base::PlatformThreadId> thread_ids) {
+    base::flat_set<base::PlatformThreadId> thread_ids,
+    base::TimeTicks draw_start,
+    HintSession::BoostType boost_type) {
   MaybeCreateHintSession(std::move(thread_ids));
   if (hint_session_) {
     UMA_HISTOGRAM_CUSTOM_MICROSECONDS_TIMES("Compositing.Display.AdpfHintUs",
                                             frame_time, base::Microseconds(1),
                                             base::Milliseconds(50), 50);
-    hint_session_->ReportCpuCompletionTime(frame_time);
+    hint_session_->ReportCpuCompletionTime(frame_time, draw_start, boost_type);
   }
 }
 
@@ -311,7 +323,7 @@ int DisplayScheduler::MaxPendingSwaps() const {
   // here the 0.8 constant is chosen to bias rounding up.
   int deadline_max_pending_swaps =
       (total_time_nanos + 0.8 * interval_nanos) / interval_nanos;
-  return base::clamp(deadline_max_pending_swaps, 0, param_max_pending_swaps);
+  return std::clamp(deadline_max_pending_swaps, 0, param_max_pending_swaps);
 }
 
 void DisplayScheduler::SetNeedsOneBeginFrame(bool needs_draw) {
@@ -394,8 +406,11 @@ DisplayScheduler::DesiredBeginFrameDeadlineMode() const {
     return BeginFrameDeadlineMode::kImmediate;
   }
 
-  if (pending_swaps_ >= MaxPendingSwaps()) {
-    TRACE_EVENT_INSTANT0("viz", "Swap throttled", TRACE_EVENT_SCOPE_THREAD);
+  const int max_pending_swaps = MaxPendingSwaps();
+  if (pending_swaps_ >= max_pending_swaps) {
+    TRACE_EVENT_INSTANT2("viz", "Swap throttled", TRACE_EVENT_SCOPE_THREAD,
+                         "pending_swaps", pending_swaps_, "max_pending_swaps",
+                         max_pending_swaps);
     return BeginFrameDeadlineMode::kLate;
   }
 
@@ -404,8 +419,14 @@ DisplayScheduler::DesiredBeginFrameDeadlineMode() const {
     return BeginFrameDeadlineMode::kLate;
   }
 
+  // Only wait if we actually have pending surfaces and we're not forcing draw
+  // due to an ongoing interaction.
+  bool wait_for_pending_surfaces =
+      has_pending_surfaces_ && !(DrawImmediatelyWhenInteractive() &&
+                                 damage_tracker_->HasDamageDueToInteraction());
+
   bool all_surfaces_ready =
-      !has_pending_surfaces_ && damage_tracker_->IsRootSurfaceValid() &&
+      !wait_for_pending_surfaces && damage_tracker_->IsRootSurfaceValid() &&
       !damage_tracker_->expecting_root_surface_damage_because_of_resize();
 
   // When no draw is needed, only allow an early deadline in full-pipe mode.
@@ -472,11 +493,9 @@ void DisplayScheduler::ScheduleBeginFrameDeadline() {
     return;
   }
 
-  begin_frame_deadline_timer_.Start(
-      FROM_HERE, desired_deadline, begin_frame_deadline_closure_,
-      deadline_mode == BeginFrameDeadlineMode::kLate
-          ? base::subtle::DelayPolicy::kFlexibleNoSooner
-          : base::subtle::DelayPolicy::kPrecise);
+  begin_frame_deadline_timer_.Start(FROM_HERE, desired_deadline,
+                                    begin_frame_deadline_closure_,
+                                    base::subtle::DelayPolicy::kPrecise);
   TRACE_EVENT2("viz", "Using new deadline", "deadline_mode", deadline_mode,
                "desired_deadline", desired_deadline);
 }
@@ -514,6 +533,7 @@ void DisplayScheduler::DidFinishFrame(bool did_draw) {
   BeginFrameAck ack(current_begin_frame_args_, did_draw);
   if (client_)
     client_->DidFinishFrame(ack);
+  damage_tracker_->DidFinishFrame();
 }
 
 void DisplayScheduler::DidSwapBuffers() {

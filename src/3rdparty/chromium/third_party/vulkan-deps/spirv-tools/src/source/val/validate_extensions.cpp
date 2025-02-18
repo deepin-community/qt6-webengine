@@ -18,22 +18,18 @@
 #include <string>
 #include <vector>
 
-#include "spirv/unified1/NonSemanticClspvReflection.h"
-
 #include "NonSemanticShaderDebugInfo100.h"
 #include "OpenCLDebugInfo100.h"
 #include "source/common_debug_info.h"
-#include "source/diagnostic.h"
 #include "source/enum_string_mapping.h"
 #include "source/extensions.h"
 #include "source/latest_version_glsl_std_450_header.h"
 #include "source/latest_version_opencl_std_header.h"
-#include "source/opcode.h"
 #include "source/spirv_constant.h"
-#include "source/spirv_target_env.h"
 #include "source/val/instruction.h"
 #include "source/val/validate.h"
 #include "source/val/validation_state.h"
+#include "spirv/unified1/NonSemanticClspvReflection.h"
 
 namespace spvtools {
 namespace val {
@@ -486,8 +482,8 @@ spv_result_t ValidateClspvReflectionArgumentBuffer(ValidationState_t& _,
   return SPV_SUCCESS;
 }
 
-spv_result_t ValidateClspvReflectionArgumentOffsetBuffer(ValidationState_t& _,
-                                                         const Instruction* inst) {
+spv_result_t ValidateClspvReflectionArgumentOffsetBuffer(
+    ValidationState_t& _, const Instruction* inst) {
   const auto num_operands = inst->operands().size();
   if (auto error = ValidateKernelDecl(_, inst)) {
     return error;
@@ -806,7 +802,7 @@ spv_result_t ValidateClspvReflectionPushConstantData(ValidationState_t& _,
 }
 
 spv_result_t ValidateClspvReflectionPrintfInfo(ValidationState_t& _,
-                                              const Instruction* inst) {
+                                               const Instruction* inst) {
   if (!IsUint32Constant(_, inst->GetOperandAs<uint32_t>(4))) {
     return _.diag(SPV_ERROR_INVALID_ID, inst)
            << "PrintfID must be a 32-bit unsigned integer OpConstant";
@@ -827,8 +823,8 @@ spv_result_t ValidateClspvReflectionPrintfInfo(ValidationState_t& _,
   return SPV_SUCCESS;
 }
 
-spv_result_t ValidateClspvReflectionPrintfStorageBuffer(ValidationState_t& _,
-                                                        const Instruction* inst) {
+spv_result_t ValidateClspvReflectionPrintfStorageBuffer(
+    ValidationState_t& _, const Instruction* inst) {
   if (!IsUint32Constant(_, inst->GetOperandAs<uint32_t>(4))) {
     return _.diag(SPV_ERROR_INVALID_ID, inst)
            << "DescriptorSet must be a 32-bit unsigned integer OpConstant";
@@ -847,8 +843,8 @@ spv_result_t ValidateClspvReflectionPrintfStorageBuffer(ValidationState_t& _,
   return SPV_SUCCESS;
 }
 
-spv_result_t ValidateClspvReflectionPrintfPushConstant(ValidationState_t& _,
-                                                       const Instruction* inst) {
+spv_result_t ValidateClspvReflectionPrintfPushConstant(
+    ValidationState_t& _, const Instruction* inst) {
   if (!IsUint32Constant(_, inst->GetOperandAs<uint32_t>(4))) {
     return _.diag(SPV_ERROR_INVALID_ID, inst)
            << "Offset must be a 32-bit unsigned integer OpConstant";
@@ -3172,16 +3168,16 @@ spv_result_t ValidateExtInst(ValidationState_t& _, const Instruction* inst) {
           break;
         }
         case CommonDebugInfoDebugTypePointer: {
-          auto validate_base_type =
-              ValidateOperandBaseType(_, inst, 5, ext_inst_name);
+          auto validate_base_type = ValidateOperandDebugType(
+              _, "Base Type", inst, 5, ext_inst_name, false);
           if (validate_base_type != SPV_SUCCESS) return validate_base_type;
           CHECK_CONST_UINT_OPERAND("Storage Class", 6);
           CHECK_CONST_UINT_OPERAND("Flags", 7);
           break;
         }
         case CommonDebugInfoDebugTypeQualifier: {
-          auto validate_base_type =
-              ValidateOperandBaseType(_, inst, 5, ext_inst_name);
+          auto validate_base_type = ValidateOperandDebugType(
+              _, "Base Type", inst, 5, ext_inst_name, false);
           if (validate_base_type != SPV_SUCCESS) return validate_base_type;
           CHECK_CONST_UINT_OPERAND("Type Qualifier", 6);
           break;

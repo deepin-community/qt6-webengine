@@ -4,8 +4,10 @@
 
 import * as Common from '../../../core/common/common.js';
 import * as i18n from '../../../core/i18n/i18n.js';
+import * as TextUtils from '../../../models/text_utils/text_utils.js';
 import * as WindowBoundsService from '../../../services/window_bounds/window_bounds.js';
 import * as CM from '../../../third_party/codemirror.next/codemirror.next.js';
+import * as UI from '../../legacy/legacy.js';
 import * as CodeHighlighter from '../code_highlighter/code_highlighter.js';
 import * as Icon from '../icon_button/icon_button.js';
 
@@ -18,6 +20,13 @@ const UIStrings = {
    *@description Label text for the editor
    */
   codeEditor: 'Code editor',
+  /**
+   *@description Aria alert to read the suggestion for the suggestion box when typing in text editor
+   *@example {name} PH1
+   *@example {2} PH2
+   *@example {5} PH3
+   */
+  sSuggestionSOfS: '{PH1}, suggestion {PH2} of {PH3}',
 };
 const str_ = i18n.i18n.registerUIStrings('ui/components/text_editor/config.ts', UIStrings);
 const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
@@ -71,6 +80,8 @@ export const tabMovesFocus = DynamicSetting.bool('textEditorTabMovesFocus', [], 
   shift: (view: CM.EditorView): boolean => view.state.doc.length ? CM.indentLess(view) : false,
 }]));
 
+const disableConservativeCompletion = CM.StateEffect.define();
+
 // When enabled, this suppresses the behavior of showCompletionHint
 // and accepting of completions with Enter until the user selects a
 // completion beyond the initially selected one. Used in the console.
@@ -82,7 +93,8 @@ export const conservativeCompletion = CM.StateField.define<boolean>({
     if (CM.completionStatus(tr.state) !== 'active') {
       return true;
     }
-    if ((CM.selectedCompletionIndex(tr.startState) ?? 0) !== (CM.selectedCompletionIndex(tr.state) ?? 0)) {
+    if ((CM.selectedCompletionIndex(tr.startState) ?? 0) !== (CM.selectedCompletionIndex(tr.state) ?? 0) ||
+        tr.effects.some(e => e.is(disableConservativeCompletion))) {
       return false;
     }
     return value;
@@ -110,15 +122,42 @@ function acceptCompletionIfAtEndOfLine(view: CM.EditorView): boolean {
 // This is a wrapper around CodeMirror's own moveCompletionSelection command, which
 // selects the first selection if the state of the selection is conservative, and
 // otherwise behaves as normal.
-function moveCompletionSelectionIfNotConversative(
+function moveCompletionSelectionIfNotConservative(
     forward: boolean, by: 'option'|'page' = 'option'): ((view: CM.EditorView) => boolean) {
   return view => {
-    if (view.state.field(conservativeCompletion, false)) {
-      // There's no CodeMirror API to select the first item, so we just go down and up here.
-      return CM.moveCompletionSelection(true, 'option')(view) && CM.moveCompletionSelection(false, 'option')(view);
+    if (CM.completionStatus(view.state) !== 'active') {
+      return false;
     }
-    return CM.moveCompletionSelection(forward, by)(view);
+    if (view.state.field(conservativeCompletion, false)) {
+      view.dispatch({effects: disableConservativeCompletion.of(null)});
+      announceSelectedCompletionInfo(view);
+      return true;
+    }
+    const moveSelectionResult = CM.moveCompletionSelection(forward, by)(view);
+    announceSelectedCompletionInfo(view);
+    return moveSelectionResult;
   };
+}
+
+function moveCompletionSelectionBackwardWrapper(): ((view: CM.EditorView) => boolean) {
+  return view => {
+    if (CM.completionStatus(view.state) !== 'active') {
+      return false;
+    }
+    CM.moveCompletionSelection(false)(view);
+    announceSelectedCompletionInfo(view);
+    return true;
+  };
+}
+
+function announceSelectedCompletionInfo(view: CM.EditorView): void {
+  const ariaMessage = i18nString(UIStrings.sSuggestionSOfS, {
+    PH1: CM.selectedCompletion(view.state)?.label || '',
+    PH2: (CM.selectedCompletionIndex(view.state) || 0) + 1,
+    PH3: CM.currentCompletions(view.state).length,
+  });
+
+  UI.ARIAUtils.alert(ariaMessage);
 }
 
 export const autocompletion = new DynamicSetting<boolean>(
@@ -132,16 +171,17 @@ export const autocompletion = new DynamicSetting<boolean>(
             return state.field(conservativeCompletion, false) ? 'cm-conservativeCompletion' : '';
           },
           defaultKeymap: false,
+          updateSyncTime: 100,
         }),
          CM.Prec.highest(CM.keymap.of([
            {key: 'End', run: acceptCompletionIfAtEndOfLine},
            {key: 'ArrowRight', run: acceptCompletionIfAtEndOfLine},
            {key: 'Ctrl-Space', run: CM.startCompletion},
            {key: 'Escape', run: CM.closeCompletion},
-           {key: 'ArrowDown', run: moveCompletionSelectionIfNotConversative(true)},
-           {key: 'ArrowUp', run: CM.moveCompletionSelection(false)},
-           {mac: 'Ctrl-n', run: moveCompletionSelectionIfNotConversative(true)},
-           {mac: 'Ctrl-p', run: CM.moveCompletionSelection(false)},
+           {key: 'ArrowDown', run: moveCompletionSelectionIfNotConservative(true)},
+           {key: 'ArrowUp', run: moveCompletionSelectionBackwardWrapper()},
+           {mac: 'Ctrl-n', run: moveCompletionSelectionIfNotConservative(true)},
+           {mac: 'Ctrl-p', run: moveCompletionSelectionBackwardWrapper()},
            {key: 'PageDown', run: CM.moveCompletionSelection(true, 'page')},
            {key: 'PageUp', run: CM.moveCompletionSelection(false, 'page')},
            {key: 'Enter', run: acceptCompletionIfNotConservative},
@@ -152,14 +192,14 @@ export const bracketMatching = DynamicSetting.bool('textEditorBracketMatching', 
 export const codeFolding = DynamicSetting.bool('textEditorCodeFolding', [
   CM.foldGutter({
     markerDOM(open: boolean): HTMLElement {
-      const iconName = open ? 'triangle-expanded' : 'triangle-collapsed';
+      const iconName = open ? 'triangle-down' : 'triangle-right';
       const icon = new Icon.Icon.Icon();
       icon.setAttribute('class', open ? 'cm-foldGutterElement' : 'cm-foldGutterElement cm-foldGutterElement-folded');
       icon.data = {
         iconName,
-        color: 'var(--color-text-secondary)',
-        width: '12px',
-        height: '12px',
+        color: 'var(--icon-fold-marker)',
+        width: '14px',
+        height: '14px',
       };
       return icon;
     },
@@ -167,30 +207,11 @@ export const codeFolding = DynamicSetting.bool('textEditorCodeFolding', [
   CM.keymap.of(CM.foldKeymap),
 ]);
 
-export function guessIndent(doc: CM.Text): string {
-  const values: {[indent: string]: number} = Object.create(null);
-  let scanned = 0;
-  for (let cur = doc.iterLines(1, Math.min(doc.lines + 1, LINES_TO_SCAN_FOR_INDENTATION_GUESSING)); !cur.next().done;) {
-    let space = (/^\s*/.exec(cur.value) as string[])[0];
-    if (space.length === cur.value.length || !space.length || cur.value[space.length] === '*') {
-      continue;
-    }
-    if (space[0] === '\t') {
-      space = '\t';
-    } else if (/[^ ]/.test(space)) {
-      continue;
-    }
-    scanned++;
-    values[space] = (values[space] || 0) + 1;
-  }
-  const minOccurrence = scanned * 0.05;
-  const shortest = Object.entries(values).reduce((shortest, [string, count]): string|null => {
-    return count < minOccurrence || shortest && shortest.length < string.length ? shortest : string;
-  }, null as string | null);
-  return shortest ?? Common.Settings.Settings.instance().moduleSetting('textEditorIndent').get();
-}
-
-const deriveIndentUnit = CM.Prec.highest(CM.indentUnit.compute([], (state: CM.EditorState) => guessIndent(state.doc)));
+const deriveIndentUnit = CM.Prec.highest(CM.indentUnit.compute([], (state: CM.EditorState) => {
+  const lines = state.doc.iterLines(1, Math.min(state.doc.lines + 1, LINES_TO_SCAN_FOR_INDENTATION_GUESSING));
+  const indentUnit = TextUtils.TextUtils.detectIndentation(lines);
+  return indentUnit ?? Common.Settings.Settings.instance().moduleSetting('textEditorIndent').get();
+}));
 
 export const autoDetectIndent = DynamicSetting.bool('textEditorAutoDetectIndent', deriveIndentUnit);
 
@@ -274,8 +295,10 @@ const baseKeymap = CM.keymap.of([
   {key: 'Ctrl-m', run: CM.cursorMatchingBracket, shift: CM.selectMatchingBracket},
   {key: 'Mod-/', run: CM.toggleComment},
   {key: 'Mod-d', run: CM.selectNextOccurrence},
-  {key: 'Alt-ArrowLeft', mac: 'Ctrl-ArrowLeft', run: CM.cursorSubwordBackward, shift: CM.selectSubwordBackward},
-  {key: 'Alt-ArrowRight', mac: 'Ctrl-ArrowRight', run: CM.cursorSubwordForward, shift: CM.selectSubwordForward},
+  {key: 'Alt-ArrowLeft', mac: 'Ctrl-ArrowLeft', run: CM.cursorSyntaxLeft, shift: CM.selectSyntaxLeft},
+  {key: 'Alt-ArrowRight', mac: 'Ctrl-ArrowRight', run: CM.cursorSyntaxRight, shift: CM.selectSyntaxRight},
+  {key: 'Ctrl-ArrowLeft', mac: 'Alt-ArrowLeft', run: CM.cursorGroupLeft, shift: CM.selectGroupLeft},
+  {key: 'Ctrl-ArrowRight', mac: 'Alt-ArrowRight', run: CM.cursorGroupRight, shift: CM.selectGroupRight},
   ...CM.standardKeymap,
   ...CM.historyKeymap,
 ]);
@@ -323,6 +346,7 @@ export function baseConfiguration(text: string|CM.Text): CM.Extension {
       parent: getTooltipHost() as unknown as HTMLElement,
       tooltipSpace: getTooltipSpace,
     }),
+    CM.bidiIsolates(),
   ];
 }
 
@@ -355,7 +379,7 @@ function getTooltipHost(): ShadowRoot {
                                  }),
                                ],
                              })
-                             .facet(CM.EditorView.styleModule);
+                             .facet<readonly CM.StyleModule[]>(CM.EditorView.styleModule);
     const host = document.body.appendChild(document.createElement('div'));
     host.className = 'editor-tooltip-host';
     tooltipHost = host.attachShadow({mode: 'open'});
@@ -369,7 +393,7 @@ class CompletionHint extends CM.WidgetType {
     super();
   }
 
-  eq(other: CompletionHint): boolean {
+  override eq(other: CompletionHint): boolean {
     return this.text === other.text;
   }
 

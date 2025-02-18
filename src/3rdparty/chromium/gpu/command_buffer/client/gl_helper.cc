@@ -13,6 +13,7 @@
 
 #include "base/bits.h"
 #include "base/check_op.h"
+#include "base/containers/contains.h"
 #include "base/containers/queue.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
@@ -125,11 +126,11 @@ class I420ConverterImpl : public I420Converter {
   const std::unique_ptr<GLHelper::ScalerInterface> v_planerizer_;
 
   // Intermediate texture, holding the scaler's output.
-  absl::optional<TextureHolder> intermediate_;
+  std::optional<TextureHolder> intermediate_;
 
   // Intermediate texture, holding the UV interim output (if the MRT shader
   // is being used).
-  absl::optional<ScopedTexture> uv_;
+  std::optional<ScopedTexture> uv_;
 };
 
 }  // namespace
@@ -497,8 +498,7 @@ bool GLHelper::CopyTextureToImpl::IsBGRAReadbackSupported() {
     if (auto* extensions = gl_->GetString(GL_EXTENSIONS)) {
       const std::string extensions_string =
           " " + std::string(reinterpret_cast<const char*>(extensions)) + " ";
-      if (extensions_string.find(" GL_EXT_read_format_bgra ") !=
-          std::string::npos) {
+      if (base::Contains(extensions_string, " GL_EXT_read_format_bgra ")) {
         bgra_support_ = BGRA_SUPPORTED;
       }
     }
@@ -547,8 +547,7 @@ GLint GLHelper::MaxDrawBuffers() {
     if (extensions) {
       const std::string extensions_string =
           " " + std::string(reinterpret_cast<const char*>(extensions)) + " ";
-      if (extensions_string.find(" GL_EXT_draw_buffers ") !=
-          std::string::npos) {
+      if (base::Contains(extensions_string, " GL_EXT_draw_buffers ")) {
         gl_->GetIntegerv(GL_MAX_DRAW_BUFFERS_EXT, &max_draw_buffers_);
         DCHECK_GE(max_draw_buffers_, 0);
       }
@@ -697,7 +696,7 @@ void I420ConverterImpl::EnsureTexturesSizedFor(
     if (!intermediate_ || intermediate_->size() != scaler_output_size)
       intermediate_.emplace(gl_, scaler_output_size);
   } else {
-    intermediate_ = absl::nullopt;
+    intermediate_ = std::nullopt;
   }
 
   // Size the interim UV plane and the three output planes.

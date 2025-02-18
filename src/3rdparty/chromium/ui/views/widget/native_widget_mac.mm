@@ -9,15 +9,15 @@
 #include <CoreFoundation/CoreFoundation.h>
 
 #include <utility>
+#include <vector>
 
 #include "base/base64.h"
 #include "base/functional/callback.h"
-#include "base/mac/scoped_nsobject.h"
+#include "base/lazy_instance.h"
 #include "base/no_destructor.h"
 #include "base/strings/sys_string_conversions.h"
 #include "components/crash/core/common/crash_key.h"
 #import "components/remote_cocoa/app_shim/bridged_content_view.h"
-#import "components/remote_cocoa/app_shim/immersive_mode_controller.h"
 #import "components/remote_cocoa/app_shim/native_widget_mac_nswindow.h"
 #import "components/remote_cocoa/app_shim/native_widget_ns_window_bridge.h"
 #import "components/remote_cocoa/app_shim/views_nswindow_delegate.h"
@@ -51,8 +51,8 @@ namespace views {
 
 namespace {
 
-static base::RepeatingCallback<void(NativeWidgetMac*)>*
-    g_init_native_widget_callback = nullptr;
+base::LazyInstance<base::RepeatingCallbackList<void(NativeWidgetMac*)>>::
+    DestructorAtExit g_init_native_widget_callbacks = LAZY_INSTANCE_INITIALIZER;
 
 uint64_t StyleMaskForParams(const Widget::InitParams& params) {
   // If the Widget is modal, it will be displayed as a sheet. This works best if
@@ -70,8 +70,7 @@ uint64_t StyleMaskForParams(const Widget::InitParams& params) {
 
   if (params.type == Widget::InitParams::TYPE_WINDOW) {
     return NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
-           NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable |
-           NSWindowStyleMaskTexturedBackground;
+           NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable;
   }
   return NSWindowStyleMaskBorderless;
 }
@@ -223,9 +222,9 @@ void NativeWidgetMac::InitNativeWidget(Widget::InitParams params) {
     ns_window_host_->CreateRemoteNSWindow(application_host,
                                           std::move(create_window_params));
   } else {
-    base::scoped_nsobject<NativeWidgetMacNSWindow> window(
-        [CreateNSWindow(create_window_params.get()) retain]);
-    ns_window_host_->CreateInProcessNSWindowBridge(std::move(window));
+    NativeWidgetMacNSWindow* window =
+        CreateNSWindow(create_window_params.get());
+    ns_window_host_->CreateInProcessNSWindowBridge(window);
   }
 
   // If the z-order wasn't specifically set to something other than `kNormal`,
@@ -236,7 +235,7 @@ void NativeWidgetMac::InitNativeWidget(Widget::InitParams params) {
     if (auto* parent_widget = Widget::GetWidgetForNativeView(params.parent)) {
       // If our parent is z-ordered above us, then float a bit higher.
       params.z_order =
-          std::max(params.z_order.value_or(ui::ZOrderLevel::kNormal),
+          std::max(params.z_order.value_or(params.EffectiveZOrderLevel()),
                    parent_widget->GetZOrderLevel());
     }
   }
@@ -253,6 +252,7 @@ void NativeWidgetMac::InitNativeWidget(Widget::InitParams params) {
     SetZOrderLevel(params.EffectiveZOrderLevel());
 
   GetNSWindowMojo()->SetIgnoresMouseEvents(!params.accept_events);
+  GetNSWindowMojo()->SetVisibleOnAllSpaces(params.visible_on_all_workspaces);
 
   delegate_->OnNativeWidgetCreated();
 
@@ -270,13 +270,56 @@ void NativeWidgetMac::InitNativeWidget(Widget::InitParams params) {
   }
   ns_window_host_->CreateCompositor(params);
 
-  if (g_init_native_widget_callback)
-    g_init_native_widget_callback->Run(this);
+  g_init_native_widget_callbacks.Get().Notify(this);
 }
 
 void NativeWidgetMac::OnWidgetInitDone() {
   OnSizeConstraintsChanged();
   ns_window_host_->OnWidgetInitDone();
+}
+
+void NativeWidgetMac::ReparentNativeViewImpl(gfx::NativeView new_parent) {
+  gfx::NativeView child = GetNativeView();
+  DCHECK_NE(child, new_parent);
+  DCHECK([new_parent.GetNativeNSView() window]);
+  CHECK(new_parent);
+  CHECK_NE([child.GetNativeNSView() superview], new_parent.GetNativeNSView());
+
+  NativeWidgetMacNSWindowHost* child_window_host =
+      NativeWidgetMacNSWindowHost::GetFromNativeView(child);
+  DCHECK(child_window_host);
+  gfx::NativeView widget_view =
+      child_window_host->native_widget_mac()->GetNativeView();
+  DCHECK_EQ(child, widget_view);
+  gfx::NativeWindow widget_window =
+      child_window_host->native_widget_mac()->GetNativeWindow();
+  DCHECK(
+      [child.GetNativeNSView() isDescendantOf:widget_view.GetNativeNSView()]);
+  DCHECK(widget_window && ![widget_window.GetNativeNSWindow() isSheet]);
+
+  NativeWidgetMacNSWindowHost* parent_window_host =
+      NativeWidgetMacNSWindowHost::GetFromNativeView(new_parent);
+
+  // Early out for no-op changes.
+  if (child == widget_view &&
+      child_window_host->parent() == parent_window_host) {
+    return;
+  }
+
+  // First notify all the widgets that they are being disassociated from their
+  // previous parent.
+  Widget::Widgets widgets;
+  GetAllChildWidgets(child, &widgets);
+  for (auto* widget : widgets) {
+    widget->NotifyNativeViewHierarchyWillChange();
+  }
+
+  child_window_host->SetParent(parent_window_host);
+
+  // And now, notify them that they have a brand new parent.
+  for (auto* widget : widgets) {
+    widget->NotifyNativeViewHierarchyChanged();
+  }
 }
 
 std::unique_ptr<NonClientFrameView>
@@ -310,11 +353,11 @@ const Widget* NativeWidgetMac::GetWidget() const {
 }
 
 gfx::NativeView NativeWidgetMac::GetNativeView() const {
-  // The immersive mode's overlay widget content view is moved to an another
-  // NSWindow when entering fullscreen. When the view is moved, the current
-  // content view will be nil. Return the cached original content view instead.
-  NSView* contentView = (NSView*)GetNativeWindowProperty(
-      views::NativeWidgetMacNSWindowHost::kImmersiveContentNSView);
+  // When a widget becomes a subwidget, its contentView moves to an another
+  // NSWindow. When this happens, the window's contentView will be nil.
+  // Return the cached original contentView instead.
+  NSView* contentView = (__bridge NSView*)GetNativeWindowProperty(
+      views::NativeWidgetMacNSWindowHost::kMovedContentNSView);
   if (contentView) {
     return gfx::NativeView(contentView);
   }
@@ -514,10 +557,7 @@ void NativeWidgetMac::SetBoundsConstrained(const gfx::Rect& bounds) {
 void NativeWidgetMac::SetSize(const gfx::Size& size) {
   if (!ns_window_host_)
     return;
-  // Ensure the top-left corner stays in-place (rather than the bottom-left,
-  // which -[NSWindow setContentSize:] would do).
-  ns_window_host_->SetBoundsInScreen(
-      gfx::Rect(GetWindowBoundsInScreen().origin(), size));
+  ns_window_host_->SetSize(size);
 }
 
 void NativeWidgetMac::StackAbove(gfx::NativeView native_view) {
@@ -588,8 +628,9 @@ void NativeWidgetMac::CloseNow() {
 
 void NativeWidgetMac::Show(ui::WindowShowState show_state,
                            const gfx::Rect& restore_bounds) {
-  if (!GetNSWindowMojo())
+  if (!GetNSWindowHost()) {
     return;
+  }
 
   switch (show_state) {
     case ui::SHOW_STATE_DEFAULT:
@@ -608,13 +649,13 @@ void NativeWidgetMac::Show(ui::WindowShowState show_state,
   if (show_state == ui::SHOW_STATE_INACTIVE) {
     window_state = WindowVisibilityState::kShowInactive;
   } else if (show_state == ui::SHOW_STATE_MINIMIZED) {
-    window_state = WindowVisibilityState::kHideWindow;
+    window_state = WindowVisibilityState::kMiniaturizeWindow;
   } else if (show_state == ui::SHOW_STATE_DEFAULT) {
     window_state = delegate_->CanActivate()
                        ? window_state
                        : WindowVisibilityState::kShowInactive;
   }
-  GetNSWindowMojo()->SetVisibilityState(window_state);
+  GetNSWindowHost()->SetVisibilityState(window_state);
 
   // Ignore the SetInitialFocus() result. BridgedContentView should get
   // firstResponder status regardless.
@@ -622,9 +663,10 @@ void NativeWidgetMac::Show(ui::WindowShowState show_state,
 }
 
 void NativeWidgetMac::Hide() {
-  if (!GetNSWindowMojo())
+  if (!GetNSWindowHost()) {
     return;
-  GetNSWindowMojo()->SetVisibilityState(WindowVisibilityState::kHideWindow);
+  }
+  GetNSWindowHost()->SetVisibilityState(WindowVisibilityState::kHideWindow);
 }
 
 bool NativeWidgetMac::IsVisible() const {
@@ -632,9 +674,10 @@ bool NativeWidgetMac::IsVisible() const {
 }
 
 void NativeWidgetMac::Activate() {
-  if (!GetNSWindowMojo())
+  if (!GetNSWindowHost()) {
     return;
-  GetNSWindowMojo()->SetVisibilityState(
+  }
+  GetNSWindowHost()->SetVisibilityState(
       WindowVisibilityState::kShowAndActivateWindow);
 }
 
@@ -724,10 +767,11 @@ void NativeWidgetMac::SetOpacity(float opacity) {
   GetNSWindowMojo()->SetOpacity(opacity);
 }
 
-void NativeWidgetMac::SetAspectRatio(const gfx::SizeF& aspect_ratio) {
+void NativeWidgetMac::SetAspectRatio(const gfx::SizeF& aspect_ratio,
+                                     const gfx::Size& excluded_margin) {
   if (!GetNSWindowMojo())
     return;
-  GetNSWindowMojo()->SetAspectRatio(aspect_ratio);
+  GetNSWindowMojo()->SetAspectRatio(aspect_ratio, excluded_margin);
 }
 
 void NativeWidgetMac::FlashFrame(bool flash_frame) {
@@ -852,10 +896,6 @@ void NativeWidgetMac::SetVisibilityAnimationTransition(
     GetNSWindowMojo()->SetTransitionsToAnimate(transitions);
 }
 
-bool NativeWidgetMac::IsTranslucentWindowOpacitySupported() const {
-  return false;
-}
-
 ui::GestureRecognizer* NativeWidgetMac::GetGestureRecognizer() {
   static base::NoDestructor<ui::GestureRecognizerImplMac> recognizer;
   return recognizer.get();
@@ -899,24 +939,16 @@ base::WeakPtr<internal::NativeWidgetPrivate> NativeWidgetMac::GetWeakPtr() {
 }
 
 // static
-void NativeWidgetMac::SetInitNativeWidgetCallback(
-    base::RepeatingCallback<void(NativeWidgetMac*)> callback) {
-  DCHECK(!g_init_native_widget_callback || callback.is_null());
-  if (callback.is_null()) {
-    if (g_init_native_widget_callback) {
-      delete g_init_native_widget_callback;
-      g_init_native_widget_callback = nullptr;
-    }
-    return;
-  }
-  g_init_native_widget_callback =
-      new base::RepeatingCallback<void(NativeWidgetMac*)>(std::move(callback));
+base::CallbackListSubscription
+NativeWidgetMac::RegisterInitNativeWidgetCallback(
+    const base::RepeatingCallback<void(NativeWidgetMac*)>& callback) {
+  DCHECK(!callback.is_null());
+  return g_init_native_widget_callbacks.Get().Add(callback);
 }
 
 NativeWidgetMacNSWindow* NativeWidgetMac::CreateNSWindow(
     const remote_cocoa::mojom::CreateWindowParams* params) {
-  return remote_cocoa::NativeWidgetNSWindowBridge::CreateNSWindow(params)
-      .autorelease();
+  return remote_cocoa::NativeWidgetNSWindowBridge::CreateNSWindow(params);
 }
 
 remote_cocoa::ApplicationHost*
@@ -1122,44 +1154,9 @@ void NativeWidgetPrivate::GetAllOwnedWidgets(gfx::NativeView native_view,
 // static
 void NativeWidgetPrivate::ReparentNativeView(gfx::NativeView child,
                                              gfx::NativeView new_parent) {
-  DCHECK_NE(child, new_parent);
-  DCHECK([new_parent.GetNativeNSView() window]);
-  CHECK(new_parent);
-  CHECK_NE([child.GetNativeNSView() superview], new_parent.GetNativeNSView());
-
-  NativeWidgetMacNSWindowHost* child_window_host =
-      NativeWidgetMacNSWindowHost::GetFromNativeView(child);
-  DCHECK(child_window_host);
-  gfx::NativeView widget_view =
-      child_window_host->native_widget_mac()->GetNativeView();
-  DCHECK_EQ(child, widget_view);
-  gfx::NativeWindow widget_window =
-      child_window_host->native_widget_mac()->GetNativeWindow();
-  DCHECK(
-      [child.GetNativeNSView() isDescendantOf:widget_view.GetNativeNSView()]);
-  DCHECK(widget_window && ![widget_window.GetNativeNSWindow() isSheet]);
-
-  NativeWidgetMacNSWindowHost* parent_window_host =
-      NativeWidgetMacNSWindowHost::GetFromNativeView(new_parent);
-
-  // Early out for no-op changes.
-  if (child == widget_view &&
-      child_window_host->parent() == parent_window_host) {
-    return;
-  }
-
-  // First notify all the widgets that they are being disassociated from their
-  // previous parent.
-  Widget::Widgets widgets;
-  GetAllChildWidgets(child, &widgets);
-  for (auto* widget : widgets)
-    widget->NotifyNativeViewHierarchyWillChange();
-
-  child_window_host->SetParent(parent_window_host);
-
-  // And now, notify them that they have a brand new parent.
-  for (auto* widget : widgets)
-    widget->NotifyNativeViewHierarchyChanged();
+  Widget::GetWidgetForNativeView(child)
+      ->native_widget_private()
+      ->ReparentNativeViewImpl(new_parent);
 }
 
 // static

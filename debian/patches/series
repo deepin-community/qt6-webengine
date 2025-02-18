@@ -1,3 +1,12 @@
+# fixed in 6.9.0 (maybe)
+arm64_xnnpack.diff
+
+# time_t 64 fix for zlib
+time-bits.diff
+
+# fix for ninja 1.12
+ninja.diff
+
 # remove catapult
 remove_catapult_3rdparty.patch
 remove_catapult_core.patch
@@ -8,29 +17,14 @@ reduce_debugging_info.patch
 # rewrite compressing files in devtools-frontend
 compressing_files.patch
 
+# disable check for 32bit Node.js
+disable_32bit_node_check.patch
+
 # enable support for i386
 support-i386.patch
 
-# enable support for riscv64
-riscv-angle.patch
-riscv-base.patch
-riscv-crashpad.patch
-riscv-dav1d.patch
-riscv-libgav1.patch
-# old libyuv, no rvv support
-# riscv-libyuv.patch
-riscv-sandbox.patch
-riscv-ffmpeg-script.patch
-riscv-ffmpeg-generated.patch
-riscv-ffmpeg-generated-files.patch
-riscv-hack-devtools-remove-terser.patch
+# Set the Hunspell .bdic binary dictionaries path.
+hunspell-bdic.patch
 
-# enable support for loong64
-#
-# FIXME: Applied as target specific patch (debian/rules: patch_loong64),
-# further triage needed.
-#
-# loong64.patch
-
-Add-missing-dependencies-to-avoid-compilation-errors.patch
-suopport-Qt6.8-rebuild.patch
+# fix build with ccache
+ccache.diff

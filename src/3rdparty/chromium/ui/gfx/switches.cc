@@ -18,11 +18,6 @@ const char kAnimationDurationScale[] = "animation-duration-scale";
 const char kDisableFontSubpixelPositioning[] =
     "disable-font-subpixel-positioning";
 
-// Disables new code to run SharedImages for NaCL swapchain. This overrides
-// value of kPPAPISharedImagesSwapChain feature flag.
-const char kDisablePPAPISharedImagesSwapChain[] =
-    "disable-ppapi-shared-images-swapchain";
-
 // Enable native CPU-mappable GPU memory buffer support on Linux.
 const char kEnableNativeGpuMemoryBuffers[] = "enable-native-gpu-memory-buffers";
 
@@ -44,36 +39,40 @@ const char kNoXshm[] = "no-xshm";
 }  // namespace switches
 
 namespace features {
-CONSTINIT const base::Feature kOddHeightMultiPlanarBuffers(
+#if BUILDFLAG(IS_APPLE)
+BASE_FEATURE(kOddHeightMultiPlanarBuffers,
              "OddHeightMultiPlanarBuffers",
-#if BUILDFLAG(IS_APPLE)
-             base::FEATURE_ENABLED_BY_DEFAULT
-#else
-             base::FEATURE_DISABLED_BY_DEFAULT
-#endif
-);
-
-CONSTINIT const base::Feature kOddWidthMultiPlanarBuffers(
-             "OddWidthMultiPlanarBuffers",
-#if BUILDFLAG(IS_APPLE)
-             base::FEATURE_ENABLED_BY_DEFAULT
-#else
-             base::FEATURE_DISABLED_BY_DEFAULT
-#endif
-);
-
-BASE_FEATURE(kPPAPISharedImagesSwapChain,
-             "PPAPISharedImagesSwapChain",
              base::FEATURE_ENABLED_BY_DEFAULT);
+#else
+BASE_FEATURE(kOddHeightMultiPlanarBuffers,
+             "OddHeightMultiPlanarBuffers",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+#endif
+
+#if BUILDFLAG(IS_APPLE)
+BASE_FEATURE(kOddWidthMultiPlanarBuffers,
+             "OddWidthMultiPlanarBuffers",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+#else
+BASE_FEATURE(kOddWidthMultiPlanarBuffers,
+             "OddWidthMultiPlanarBuffers",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+#endif
+
+#if BUILDFLAG(IS_CHROMEOS_LACROS)
+BASE_FEATURE(kUseSmartRefForGPUFenceHandle,
+             "UseSmartRefForGPUFenceHandle",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+#else
+BASE_FEATURE(kUseSmartRefForGPUFenceHandle,
+             "UseSmartRefForGPUFenceHandle",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+#endif
 
 #if BUILDFLAG(IS_CHROMEOS)
-BASE_FEATURE(kVariableGoogleSansFont,
-             "VariableGoogleSansFont",
+BASE_FEATURE(kEnableIntelMediaCompression,
+             "EnableIntelMediaCompression",
              base::FEATURE_DISABLED_BY_DEFAULT);
-
-GFX_SWITCHES_EXPORT bool UseVariableGoogleSansFont() {
-  return base::FeatureList::IsEnabled(kVariableGoogleSansFont);
-}
 #endif
 
 }  // namespace features

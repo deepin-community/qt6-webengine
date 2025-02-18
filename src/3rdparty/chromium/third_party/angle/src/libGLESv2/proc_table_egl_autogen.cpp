@@ -45,6 +45,7 @@ namespace egl
 const ProcEntry g_procTable[] = {
     {"ANGLEGetDisplayPlatform", P(ANGLEGetDisplayPlatform)},
     {"ANGLEResetDisplayPlatform", P(ANGLEResetDisplayPlatform)},
+    {"eglAcquireExternalContextANGLE", P(EGL_AcquireExternalContextANGLE)},
     {"eglBindAPI", P(EGL_BindAPI)},
     {"eglBindTexImage", P(EGL_BindTexImage)},
     {"eglChooseConfig", P(EGL_ChooseConfig)},
@@ -130,6 +131,7 @@ const ProcEntry g_procTable[] = {
     {"eglQuerySurfacePointerANGLE", P(EGL_QuerySurfacePointerANGLE)},
     {"eglReacquireHighPowerGPUANGLE", P(EGL_ReacquireHighPowerGPUANGLE)},
     {"eglReleaseDeviceANGLE", P(EGL_ReleaseDeviceANGLE)},
+    {"eglReleaseExternalContextANGLE", P(EGL_ReleaseExternalContextANGLE)},
     {"eglReleaseHighPowerGPUANGLE", P(EGL_ReleaseHighPowerGPUANGLE)},
     {"eglReleaseTexImage", P(EGL_ReleaseTexImage)},
     {"eglReleaseThread", P(EGL_ReleaseThread)},
@@ -510,12 +512,16 @@ const ProcEntry g_procTable[] = {
     {"glFogx", P(GL_Fogx)},
     {"glFogxv", P(GL_Fogxv)},
     {"glFramebufferFetchBarrierEXT", P(GL_FramebufferFetchBarrierEXT)},
+    {"glFramebufferFoveationConfigQCOM", P(GL_FramebufferFoveationConfigQCOM)},
+    {"glFramebufferFoveationParametersQCOM", P(GL_FramebufferFoveationParametersQCOM)},
     {"glFramebufferMemorylessPixelLocalStorageANGLE", P(GL_FramebufferMemorylessPixelLocalStorageANGLE)},
     {"glFramebufferParameteri", P(GL_FramebufferParameteri)},
     {"glFramebufferParameteriMESA", P(GL_FramebufferParameteriMESA)},
     {"glFramebufferPixelLocalClearValuefvANGLE", P(GL_FramebufferPixelLocalClearValuefvANGLE)},
     {"glFramebufferPixelLocalClearValueivANGLE", P(GL_FramebufferPixelLocalClearValueivANGLE)},
     {"glFramebufferPixelLocalClearValueuivANGLE", P(GL_FramebufferPixelLocalClearValueuivANGLE)},
+    {"glFramebufferPixelLocalStorageInterruptANGLE", P(GL_FramebufferPixelLocalStorageInterruptANGLE)},
+    {"glFramebufferPixelLocalStorageRestoreANGLE", P(GL_FramebufferPixelLocalStorageRestoreANGLE)},
     {"glFramebufferRenderbuffer", P(GL_FramebufferRenderbuffer)},
     {"glFramebufferRenderbufferOES", P(GL_FramebufferRenderbufferOES)},
     {"glFramebufferTexture", P(GL_FramebufferTexture)},
@@ -607,7 +613,9 @@ const ProcEntry g_procTable[] = {
     {"glGetFramebufferParameterivMESA", P(GL_GetFramebufferParameterivMESA)},
     {"glGetFramebufferParameterivRobustANGLE", P(GL_GetFramebufferParameterivRobustANGLE)},
     {"glGetFramebufferPixelLocalStorageParameterfvANGLE", P(GL_GetFramebufferPixelLocalStorageParameterfvANGLE)},
+    {"glGetFramebufferPixelLocalStorageParameterfvRobustANGLE", P(GL_GetFramebufferPixelLocalStorageParameterfvRobustANGLE)},
     {"glGetFramebufferPixelLocalStorageParameterivANGLE", P(GL_GetFramebufferPixelLocalStorageParameterivANGLE)},
+    {"glGetFramebufferPixelLocalStorageParameterivRobustANGLE", P(GL_GetFramebufferPixelLocalStorageParameterivRobustANGLE)},
     {"glGetGraphicsResetStatus", P(GL_GetGraphicsResetStatus)},
     {"glGetGraphicsResetStatusEXT", P(GL_GetGraphicsResetStatusEXT)},
     {"glGetInteger64i_v", P(GL_GetInteger64i_v)},
@@ -1051,6 +1059,8 @@ const ProcEntry g_procTable[] = {
     {"glPointSizePointerOES", P(GL_PointSizePointerOES)},
     {"glPointSizex", P(GL_PointSizex)},
     DESKTOP_ONLY("glPolygonMode", GL_PolygonMode)
+    {"glPolygonModeANGLE", P(GL_PolygonModeANGLE)},
+    {"glPolygonModeNV", P(GL_PolygonModeNV)},
     {"glPolygonOffset", P(GL_PolygonOffset)},
     DESKTOP_ONLY("glPolygonOffsetClamp", GL_PolygonOffsetClamp)
     {"glPolygonOffsetClampEXT", P(GL_PolygonOffsetClampEXT)},
@@ -1397,6 +1407,7 @@ const ProcEntry g_procTable[] = {
     DESKTOP_ONLY("glTextureBarrier", GL_TextureBarrier)
     DESKTOP_ONLY("glTextureBuffer", GL_TextureBuffer)
     DESKTOP_ONLY("glTextureBufferRange", GL_TextureBufferRange)
+    {"glTextureFoveationParametersQCOM", P(GL_TextureFoveationParametersQCOM)},
     DESKTOP_ONLY("glTextureParameterIiv", GL_TextureParameterIiv)
     DESKTOP_ONLY("glTextureParameterIuiv", GL_TextureParameterIuiv)
     DESKTOP_ONLY("glTextureParameterf", GL_TextureParameterf)

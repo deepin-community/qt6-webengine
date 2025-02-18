@@ -46,7 +46,8 @@ export class LighthouseReportRenderer {
       const ext = blob.type.match('json') ? '.json' : '.html';
       const basename = `${sanitizedDomain}-${timestamp}${ext}` as Platform.DevToolsPath.RawPathString;
       const text = await blob.text();
-      void Workspace.FileManager.FileManager.instance().save(basename, text, true /* forceSaveAs */);
+      await Workspace.FileManager.FileManager.instance().save(basename, text, true /* forceSaveAs */);
+      Workspace.FileManager.FileManager.instance().close(basename);
     }
 
     async function onPrintOverride(rootEl: HTMLElement): Promise<void> {
@@ -106,7 +107,7 @@ export class LighthouseReportRenderer {
   }
 
   static async waitForMainTargetLoad(): Promise<void> {
-    const mainTarget = SDK.TargetManager.TargetManager.instance().mainFrameTarget();
+    const mainTarget = SDK.TargetManager.TargetManager.instance().primaryPageTarget();
     if (!mainTarget) {
       return;
     }
@@ -118,7 +119,7 @@ export class LighthouseReportRenderer {
   }
 
   static async linkifyNodeDetails(el: Element): Promise<void> {
-    const mainTarget = SDK.TargetManager.TargetManager.instance().mainFrameTarget();
+    const mainTarget = SDK.TargetManager.TargetManager.instance().primaryPageTarget();
     if (!mainTarget) {
       return;
     }

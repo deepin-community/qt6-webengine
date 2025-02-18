@@ -21,7 +21,9 @@ using testing::UnorderedElementsAre;
 
 namespace ui {
 
-using BasicAXTreeSerializer = AXTreeSerializer<const AXNode*>;
+using BasicAXTreeSerializer =
+    AXTreeSerializer<const AXNode*,
+                     std::vector<raw_ptr<const AXNode, VectorExperimental>>>;
 
 // The framework for these tests is that each test sets up |treedata0_|
 // and |treedata1_| and then calls GetTreeSerializer, which creates a
@@ -198,7 +200,7 @@ TEST_F(AXTreeSerializerTest, ReparentingUpdatesSubtree) {
 // Similar to ReparentingUpdatesSubtree, except that InvalidateSubtree is
 // called on id=1 - we need to make sure that the reparenting is still
 // detected.
-TEST_F(AXTreeSerializerTest, ReparentingWithInvalidationUpdatesSubtree) {
+TEST_F(AXTreeSerializerTest, ReparentingWithDirtySubtreeUpdates) {
   // (1 (2 (3 (4 (5)))))
   treedata0_.root_id = 1;
   treedata0_.nodes.resize(5);
@@ -229,7 +231,7 @@ TEST_F(AXTreeSerializerTest, ReparentingWithInvalidationUpdatesSubtree) {
 
   CreateTreeSerializer();
   AXTreeUpdate update;
-  serializer_->InvalidateSubtree(tree1_->GetFromId(1));
+  serializer_->MarkSubtreeDirty(tree1_->GetFromId(1));
   ASSERT_TRUE(serializer_->SerializeChanges(tree1_->GetFromId(4), &update));
 
   // The update should unserialize without errors.
@@ -237,8 +239,8 @@ TEST_F(AXTreeSerializerTest, ReparentingWithInvalidationUpdatesSubtree) {
   EXPECT_TRUE(dst_tree.Unserialize(update)) << dst_tree.error();
 }
 
-// A variant of AXTreeSource that returns true for IsValid() for one
-// particular id.
+// A variant of AXTreeSource that does not serialize one particular id,
+// returning nullptr from methods that try to retrieve it.
 class AXTreeSourceWithInvalidId : public AXTreeSource<const AXNode*> {
  public:
   AXTreeSourceWithInvalidId(AXTree* tree, int invalid_id)
@@ -257,14 +259,17 @@ class AXTreeSourceWithInvalidId : public AXTreeSource<const AXNode*> {
     return true;
   }
   AXNode* GetRoot() const override { return tree_->root(); }
-  AXNode* GetFromId(AXNodeID id) const override { return tree_->GetFromId(id); }
+  AXNode* GetFromId(AXNodeID id) const override {
+    return id == invalid_id_ ? nullptr : tree_->GetFromId(id);
+  }
   AXNodeID GetId(const AXNode* node) const override { return node->id(); }
   void CacheChildrenIfNeeded(const AXNode*) override {}
   size_t GetChildCount(const AXNode* node) const override {
     return node->children().size();
   }
   AXNode* ChildAt(const AXNode* node, size_t index) const override {
-    return node->children()[index];
+    AXNode* result = node->children()[index];
+    return result->id() == invalid_id_ ? nullptr : result;
   }
   void ClearChildCache(const AXNode*) override {}
 
@@ -273,9 +278,6 @@ class AXTreeSourceWithInvalidId : public AXTreeSource<const AXNode*> {
   }
   bool IsIgnored(const AXNode* node) const override {
     return node->IsIgnored();
-  }
-  bool IsValid(const AXNode* node) const override {
-    return node != nullptr && node->id() != invalid_id_;
   }
   bool IsEqual(const AXNode* node1, const AXNode* node2) const override {
     return node1 == node2;
@@ -310,16 +312,17 @@ TEST(AXTreeSerializerInvalidTest, InvalidChild) {
 
   BasicAXTreeSerializer serializer(&source);
   AXTreeUpdate update;
-#if !defined(GTEST_HAS_DEATH_TEST)
-  // Do not complete test.
-#elif DCHECK_IS_ON()
-  EXPECT_DEATH(serializer.SerializeChanges(tree.root(), &update), "");
-#else
+  // TODO(crbug.com/1432184, crbug.com/1432126, crbug.com/1431535,
+  // crbug.com/1418319): Once the DCHECKs in BlinkAXTreeSource::ChildAt()
+  // are resolved, and CHECKs for ChildAt() return values are restored in
+  // AXTreeSerializer, turn this into a death expectation.
+  // EXPECT_DEATH_IF_SUPPORTED(serializer.SerializeChanges(tree.root(),
+  // &update),
+  //                           "");
   ASSERT_TRUE(serializer.SerializeChanges(tree.root(), &update));
   ASSERT_EQ(2U, update.nodes.size());
   EXPECT_EQ(1, update.nodes[0].id);
   EXPECT_EQ(2, update.nodes[1].id);
-#endif
 }
 
 // Test that we can set a maximum number of nodes to serialize.
@@ -387,7 +390,7 @@ TEST_F(AXTreeSerializerTest, DuplicateIdsCrashes) {
   // This could not happen with an AXTree, but could happen with
   // another AXTreeSource if the structure it wraps is buggy. We want to
   // fail but not crash when that happens.
-  std::vector<AXNode*> node2_children;
+  std::vector<raw_ptr<AXNode, VectorExperimental>> node2_children;
   node2_children.push_back(tree1_->GetFromId(7));
   node2_children.push_back(tree1_->GetFromId(6));
   tree1_->GetFromId(2)->SwapChildren(&node2_children);
@@ -534,7 +537,7 @@ TEST_F(AXTreeSerializerTest, TestPartialSerialization) {
     // The result should be indistinguishable from the source tree.
     std::unique_ptr<AXTreeSource<const AXNode*>> dst_tree_source(
         dst_tree.CreateTreeSource());
-    AXTreeSerializer<const AXNode*> serializer(dst_tree_source.get());
+    BasicAXTreeSerializer serializer(dst_tree_source.get());
     AXTreeUpdate dst_update;
     CHECK(serializer.SerializeChanges(dst_tree.root(), &dst_update));
     ASSERT_EQ(treedata1_.ToString(), dst_update.ToString());

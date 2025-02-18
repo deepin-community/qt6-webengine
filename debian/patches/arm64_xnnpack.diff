@@ -1,0 +1,9 @@
+--- a/src/3rdparty/chromium/third_party/xnnpack/BUILD.gn
++++ b/src/3rdparty/chromium/third_party/xnnpack/BUILD.gn
+@@ -27,4 +27,5 @@ 
+ 
++  cflags = [ "-Wno-error=incompatible-pointer-types" ]
+   if (is_clang || !is_win) {
+-    cflags = [
++    cflags += [
+       "-Wno-unused-function",

@@ -14,11 +14,14 @@
 
 #include "connections/dart/core_adapter_dart.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 
 #include "connections/core.h"
+#include "connections/implementation/flags/nearby_connections_feature_flags.h"
 #include "connections/payload.h"
+#include "internal/flags/nearby_flags.h"
 #include "internal/platform/count_down_latch.h"
 #include "internal/platform/logging.h"
 
@@ -375,7 +378,10 @@ void EnableBleV2Dart(Core *pCore, int64_t enable, Dart_Port result_cb) {
   }
   port = result_cb;
 
-  FeatureFlags::GetMutableFlagsForTesting().support_ble_v2 = enable;
+  NearbyFlags::GetInstance().OverrideBoolFlagValue(
+      connections::config_package_nearby::nearby_connections_feature::
+          kEnableBleV2,
+      enable);
   PostResult(result_cb, Status::kSuccess);
 }
 
@@ -419,7 +425,8 @@ void StartAdvertisingDart(
 
   ConnectionRequestInfoW info{
       connection_request_info_dart.endpoint_info,
-      strlen(connection_request_info_dart.endpoint_info), listener};
+      static_cast<size_t>(connection_request_info_dart.endpoint_info_size),
+      listener};
 
   ResultCallbackW callback;
   SetResultCallback(callback, result_cb);

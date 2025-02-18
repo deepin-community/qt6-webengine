@@ -238,6 +238,7 @@ scoped_refptr<StaticBitmapImage> CreateImageFromVideoFrame(
   }
 
   return resource_provider->Snapshot(
+      FlushReason::kNon2DCanvas,
       prefer_tagged_orientation
           ? VideoTransformationToImageOrientation(transform)
           : ImageOrientationEnum::kDefault);
@@ -261,7 +262,7 @@ bool DrawVideoFrameIntoResourceProvider(
       return false;  // Unable to get/create a shared main thread context.
     }
     if (!raster_context_provider->GrContext() &&
-        !raster_context_provider->ContextCapabilities().supports_oop_raster) {
+        !raster_context_provider->ContextCapabilities().gpu_rasterization) {
       DLOG(ERROR) << "Unable to process a texture backed VideoFrame w/o a "
                      "GrContext or OOP raster support.";
       return false;  // The context has been lost.
@@ -336,16 +337,16 @@ scoped_refptr<viz::RasterContextProvider> GetRasterContextProvider() {
 std::unique_ptr<CanvasResourceProvider> CreateResourceProviderForVideoFrame(
     const SkImageInfo& info,
     viz::RasterContextProvider* raster_context_provider) {
+  constexpr auto kFilterQuality = cc::PaintFlags::FilterQuality::kLow;
+  constexpr auto kShouldInitialize =
+      CanvasResourceProvider::ShouldInitialize::kNo;
   if (!ShouldCreateAcceleratedImages(raster_context_provider)) {
-    return CanvasResourceProvider::CreateBitmapProvider(
-        info, cc::PaintFlags::FilterQuality::kLow,
-        CanvasResourceProvider::ShouldInitialize::kNo);
+    return CanvasResourceProvider::CreateBitmapProvider(info, kFilterQuality,
+                                                        kShouldInitialize);
   }
   return CanvasResourceProvider::CreateSharedImageProvider(
-      info, cc::PaintFlags::FilterQuality::kLow,
-      CanvasResourceProvider::ShouldInitialize::kNo,
+      info, kFilterQuality, kShouldInitialize,
       SharedGpuContext::ContextProviderWrapper(), RasterMode::kGPU,
-      false,  // Origin of GL texture is bottom left on screen
       gpu::SHARED_IMAGE_USAGE_DISPLAY_READ);
 }
 

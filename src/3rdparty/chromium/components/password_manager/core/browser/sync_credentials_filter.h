@@ -12,7 +12,7 @@
 #include "base/memory/raw_ptr.h"
 #include "components/password_manager/core/browser/credentials_filter.h"
 #include "components/password_manager/core/browser/password_manager_client.h"
-#include "components/sync/driver/sync_service.h"
+#include "components/sync/service/sync_service.h"
 
 namespace password_manager {
 
@@ -41,8 +41,6 @@ class SyncCredentialsFilter : public CredentialsFilter {
   bool ShouldSaveGaiaPasswordHash(const PasswordForm& form) const override;
   bool ShouldSaveEnterprisePasswordHash(
       const PasswordForm& form) const override;
-  void ReportFormLoginSuccess(
-      const PasswordFormManager& form_manager) const override;
   bool IsSyncAccountEmail(const std::string& username) const override;
 
  private:

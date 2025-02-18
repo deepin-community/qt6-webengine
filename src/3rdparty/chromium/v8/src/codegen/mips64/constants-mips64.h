@@ -197,7 +197,6 @@ const int32_t kPrefHintPrepareForStore = 30;
 
 // Actual value of root register is offset from the root array's start
 // to take advantage of negative displacement values.
-// TODO(sigurds): Choose best value.
 constexpr int kRootRegisterBias = 256;
 
 // Helper functions for converting between register numbers and names.
@@ -1054,7 +1053,7 @@ enum MSAMinorOpcode : uint32_t {
 // The 'U' prefix is used to specify unsigned comparisons.
 // Opposite conditions must be paired as odd/even numbers
 // because 'NegateCondition' function flips LSB to negate condition.
-enum Condition {
+enum Condition : int {
   overflow = 0,
   no_overflow = 1,
   Uless = 2,
@@ -1748,7 +1747,7 @@ class Instruction : public InstructionGetters<InstructionBase> {
   // reference to an instruction is to convert a pointer. There is no way
   // to allocate or create instances of class Instruction.
   // Use the At(pc) function to create references to Instruction.
-  static Instruction* At(byte* pc) {
+  static Instruction* At(uint8_t* pc) {
     return reinterpret_cast<Instruction*>(pc);
   }
 

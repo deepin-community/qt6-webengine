@@ -21,6 +21,10 @@
 
 using ProviderAccount = DeviceAccountsProvider::AccountInfo;
 
+namespace {
+constexpr char kNoBindingChallenge[] = "";
+}
+
 class ProfileOAuth2TokenServiceIOSDelegateTest
     : public PlatformTest,
       public OAuth2AccessTokenConsumer,
@@ -129,7 +133,7 @@ TEST_F(ProfileOAuth2TokenServiceIOSDelegateTest,
   EXPECT_EQ(1, token_revoked_count_);
   EXPECT_EQ(0U, oauth2_delegate_->GetAccounts().size());
   EXPECT_FALSE(oauth2_delegate_->RefreshTokenIsAvailable(
-      CoreAccountId("another_account")));
+      CoreAccountId::FromGaiaId("another_account")));
 }
 
 TEST_F(ProfileOAuth2TokenServiceIOSDelegateTest,
@@ -255,8 +259,8 @@ TEST_F(ProfileOAuth2TokenServiceIOSDelegateTest, StartRequestSuccess) {
   scopes.push_back("scope");
   std::unique_ptr<OAuth2AccessTokenFetcher> fetcher1(
       oauth2_delegate_->CreateAccessTokenFetcher(
-          GetAccountId(account1), oauth2_delegate_->GetURLLoaderFactory(),
-          this));
+          GetAccountId(account1), oauth2_delegate_->GetURLLoaderFactory(), this,
+          kNoBindingChallenge));
   fetcher1->Start("foo", "bar", scopes);
   EXPECT_EQ(0, access_token_success_);
   EXPECT_EQ(0, access_token_failure_);
@@ -280,8 +284,8 @@ TEST_F(ProfileOAuth2TokenServiceIOSDelegateTest, StartRequestFailure) {
   scopes.push_back("scope");
   std::unique_ptr<OAuth2AccessTokenFetcher> fetcher1(
       oauth2_delegate_->CreateAccessTokenFetcher(
-          GetAccountId(account1), oauth2_delegate_->GetURLLoaderFactory(),
-          this));
+          GetAccountId(account1), oauth2_delegate_->GetURLLoaderFactory(), this,
+          kNoBindingChallenge));
   fetcher1->Start("foo", "bar", scopes);
   EXPECT_EQ(0, access_token_success_);
   EXPECT_EQ(0, access_token_failure_);
@@ -330,6 +334,7 @@ TEST_F(ProfileOAuth2TokenServiceIOSDelegateTest, GetAuthError) {
   oauth2_delegate_->UpdateAuthError(GetAccountId(account1), error);
   EXPECT_EQ(error, oauth2_delegate_->GetAuthError(GetAccountId(account1)));
   // Unknown account has no error.
-  EXPECT_EQ(GoogleServiceAuthError::AuthErrorNone(),
-            oauth2_delegate_->GetAuthError(CoreAccountId("gaia_2")));
+  EXPECT_EQ(
+      GoogleServiceAuthError::AuthErrorNone(),
+      oauth2_delegate_->GetAuthError(CoreAccountId::FromGaiaId("gaia_2")));
 }

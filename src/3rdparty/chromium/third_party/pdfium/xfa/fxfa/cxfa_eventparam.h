@@ -12,8 +12,6 @@
 #include "v8/include/cppgc/macros.h"
 #include "xfa/fxfa/fxfa_basic.h"
 
-class CXFA_Node;
-
 enum XFA_EVENTTYPE : uint8_t {
   XFA_EVENT_Click,
   XFA_EVENT_Change,
@@ -49,10 +47,8 @@ enum XFA_EVENTTYPE : uint8_t {
 };
 
 class CXFA_EventParam {
-  CPPGC_STACK_ALLOCATED();  // Raw/Unowned pointers allowed.
-
  public:
-  CXFA_EventParam();
+  explicit CXFA_EventParam(XFA_EVENTTYPE type);
   CXFA_EventParam(const CXFA_EventParam& other);
   ~CXFA_EventParam();
 
@@ -61,17 +57,17 @@ class CXFA_EventParam {
 
   WideString GetNewText() const;
 
-  XFA_EVENTTYPE m_eType = XFA_EVENT_Unknown;
+  XFA_EVENTTYPE m_eType;
   bool m_bCancelAction = false;
   bool m_bKeyDown = false;
   bool m_bModifier = false;
   bool m_bReenter = false;
   bool m_bShift = false;
   bool m_bIsFormReady = false;
+  bool m_bTargeted = true;
   int32_t m_iCommitKey = 0;
   int32_t m_iSelEnd = 0;
   int32_t m_iSelStart = 0;
-  UnownedPtr<CXFA_Node> m_pTarget;  // OK, stack-only.
   WideString m_wsResult;
   WideString m_wsChange;
   WideString m_wsFullText;

@@ -82,6 +82,7 @@ const cfg = {
   watch: false,
   verbose: false,
   debug: false,
+  bigtrace: false,
   startHttpServer: false,
   httpServerListenHost: '127.0.0.1',
   httpServerListenPort: 10000,
@@ -108,14 +109,15 @@ const cfg = {
   outGenDir: '',
   outDistDir: '',
   outExtDir: '',
+  outBigtraceDistDir: '',
 };
 
 const RULES = [
   {r: /ui\/src\/assets\/index.html/, f: copyIndexHtml},
+  {r: /ui\/src\/assets\/bigtrace.html/, f: copyBigtraceHtml},
   {r: /ui\/src\/assets\/((.*)[.]png)/, f: copyAssets},
   {r: /buildtools\/typefaces\/(.+[.]woff2)/, f: copyAssets},
   {r: /buildtools\/catapult_trace_viewer\/(.+(js|html))/, f: copyAssets},
-  {r: /ui\/src\/assets\/.+[.]scss/, f: compileScss},
   {r: /ui\/src\/assets\/.+[.]scss/, f: compileScss},
   {r: /ui\/src\/chrome_extension\/.*/, f: copyExtensionAssets},
   {
@@ -135,27 +137,28 @@ const subprocesses = [];
 
 async function main() {
   const parser = new argparse.ArgumentParser();
-  parser.addArgument('--out', {help: 'Output directory'});
-  parser.addArgument(['--watch', '-w'], {action: 'storeTrue'});
-  parser.addArgument(['--serve', '-s'], {action: 'storeTrue'});
-  parser.addArgument('--serve-host', {help: '--serve bind host'});
-  parser.addArgument('--serve-port', {help: '--serve bind port', type: 'int'});
-  parser.addArgument(['--verbose', '-v'], {action: 'storeTrue'});
-  parser.addArgument(['--no-build', '-n'], {action: 'storeTrue'});
-  parser.addArgument(['--no-wasm', '-W'], {action: 'storeTrue'});
-  parser.addArgument(['--run-unittests', '-t'], {action: 'storeTrue'});
-  parser.addArgument(['--run-integrationtests', '-T'], {action: 'storeTrue'});
-  parser.addArgument(['--debug', '-d'], {action: 'storeTrue'});
-  parser.addArgument(['--interactive', '-i'], {action: 'storeTrue'});
-  parser.addArgument(['--rebaseline', '-r'], {action: 'storeTrue'});
-  parser.addArgument(['--no-depscheck'], {action: 'storeTrue'});
-  parser.addArgument('--cross-origin-isolation', {action: 'storeTrue'});
-  parser.addArgument(
-      ['--test-filter', '-f'],
-      {help: 'filter Jest tests by regex, e.g. \'chrome_render\''});
-  parser.addArgument(['--no-override-gn-args'], {action: 'storeTrue'});
+  parser.add_argument('--out', {help: 'Output directory'});
+  parser.add_argument('--watch', '-w', {action: 'store_true'});
+  parser.add_argument('--serve', '-s', {action: 'store_true'});
+  parser.add_argument('--serve-host', {help: '--serve bind host'});
+  parser.add_argument('--serve-port', {help: '--serve bind port', type: 'int'});
+  parser.add_argument('--verbose', '-v', {action: 'store_true'});
+  parser.add_argument('--no-build', '-n', {action: 'store_true'});
+  parser.add_argument('--no-wasm', '-W', {action: 'store_true'});
+  parser.add_argument('--run-unittests', '-t', {action: 'store_true'});
+  parser.add_argument('--run-integrationtests', '-T', {action: 'store_true'});
+  parser.add_argument('--debug', '-d', {action: 'store_true'});
+  parser.add_argument('--bigtrace', {action: 'store_true'});
+  parser.add_argument('--interactive', '-i', {action: 'store_true'});
+  parser.add_argument('--rebaseline', '-r', {action: 'store_true'});
+  parser.add_argument('--no-depscheck', {action: 'store_true'});
+  parser.add_argument('--cross-origin-isolation', {action: 'store_true'});
+  parser.add_argument('--test-filter', '-f', {
+    help: 'filter Jest tests by regex, e.g. \'chrome_render\'',
+  });
+  parser.add_argument('--no-override-gn-args', {action: 'store_true'});
 
-  const args = parser.parseArgs();
+  const args = parser.parse_args();
   const clean = !args.no_build;
   cfg.outDir = path.resolve(ensureDir(args.out || cfg.outDir));
   cfg.outUiDir = ensureDir(pjoin(cfg.outDir, 'ui'), clean);
@@ -171,8 +174,12 @@ async function main() {
   cfg.watch = !!args.watch;
   cfg.verbose = !!args.verbose;
   cfg.debug = !!args.debug;
+  cfg.bigtrace = !!args.bigtrace;
   cfg.startHttpServer = args.serve;
   cfg.noOverrideGnArgs = !!args.no_override_gn_args;
+  if (args.bigtrace) {
+    cfg.outBigtraceDistDir = ensureDir(pjoin(cfg.outDistDir, 'bigtrace'));
+  }
   if (args.serve_host) {
     cfg.httpServerListenHost = args.serve_host;
   }
@@ -237,10 +244,23 @@ async function main() {
     scanDir('buildtools/typefaces');
     scanDir('buildtools/catapult_trace_viewer');
     generateImports('ui/src/tracks', 'all_tracks.ts');
+    generateImports('ui/src/plugins', 'all_plugins.ts');
     compileProtos();
     genVersion();
     transpileTsProject('ui');
     transpileTsProject('ui/src/service_worker');
+    if (cfg.bigtrace) {
+      transpileTsProject('ui/src/bigtrace');
+    }
+
+    if (cfg.watch) {
+      transpileTsProject('ui', {watch: cfg.watch});
+      transpileTsProject('ui/src/service_worker', {watch: cfg.watch});
+      if (cfg.bigtrace) {
+        transpileTsProject('ui/src/bigtrace', {watch: cfg.watch});
+      }
+    }
+
     bundleJs('rollup.config.js');
     genServiceWorkerManifestJson();
 
@@ -249,7 +269,6 @@ async function main() {
     // - Regenerates the ServiceWorker file map.
     scanDir(cfg.outDistRootDir);
   }
-
 
   // We should enter the loop only in watch mode, where tsc and rollup are
   // asynchronous because they run in watch mode.
@@ -299,33 +318,43 @@ function runTests(cfgFile) {
   }
   if (cfg.watch) {
     args.push('--watchAll');
-    addTask(execNode, ['jest', args, {async: true}]);
+    addTask(execModule, ['jest', args, {async: true}]);
   } else {
-    addTask(execNode, ['jest', args]);
+    addTask(execModule, ['jest', args]);
   }
 }
 
-function copyIndexHtml(src) {
-  const indexHtml = () => {
-    let html = fs.readFileSync(src).toString();
-    // First copy the index.html as-is into the dist/v1.2.3/ directory. This is
-    // only used for archival purporses, so one can open
-    // ui.perfetto.dev/v1.2.3/ to skip the auto-update and channel logic.
-    fs.writeFileSync(pjoin(cfg.outDistDir, 'index.html'), html);
+function cpHtml(src, filename) {
+  let html = fs.readFileSync(src).toString();
+  // First copy the html as-is into the dist/v1.2.3/ directory. This is
+  // only used for archival purporses, so one can open
+  // ui.perfetto.dev/v1.2.3/ to skip the auto-update and channel logic.
+  fs.writeFileSync(pjoin(cfg.outDistDir, filename), html);
 
-    // Then copy it into the dist/ root by patching the version code.
-    // TODO(primiano): in next CLs, this script should take a
-    // --release_map=xxx.json argument, to populate this with multiple channels.
-    const versionMap = JSON.stringify({'stable': cfg.version});
-    const bodyRegex = /data-perfetto_version='[^']*'/;
-    html = html.replace(bodyRegex, `data-perfetto_version='${versionMap}'`);
-    fs.writeFileSync(pjoin(cfg.outDistRootDir, 'index.html'), html);
-  };
-  addTask(indexHtml);
+  // Then copy it into the dist/ root by patching the version code.
+  // TODO(primiano): in next CLs, this script should take a
+  // --release_map=xxx.json argument, to populate this with multiple channels.
+  const versionMap = JSON.stringify({'stable': cfg.version});
+  const bodyRegex = /data-perfetto_version='[^']*'/;
+  html = html.replace(bodyRegex, `data-perfetto_version='${versionMap}'`);
+  fs.writeFileSync(pjoin(cfg.outDistRootDir, filename), html);
+}
+
+function copyIndexHtml(src) {
+  addTask(cpHtml, [src, 'index.html']);
+}
+
+function copyBigtraceHtml(src) {
+  if (cfg.bigtrace) {
+    addTask(cpHtml, [src, 'bigtrace.html']);
+  }
 }
 
 function copyAssets(src, dst) {
   addTask(cp, [src, pjoin(cfg.outDistDir, 'assets', dst)]);
+  if (cfg.bigtrace) {
+    addTask(cp, [src, pjoin(cfg.outBigtraceDistDir, 'assets', dst)]);
+  }
 }
 
 function copyUiTestArtifactsAssets(src, dst) {
@@ -338,12 +367,23 @@ function compileScss() {
   // In watch mode, don't exit(1) if scss fails. It can easily happen by
   // having a typo in the css. It will still print an error.
   const noErrCheck = !!cfg.watch;
-  addTask(execNode, ['node-sass', ['--quiet', src, dst], {noErrCheck}]);
+  const args = [src, dst];
+  if (!cfg.verbose) {
+    args.unshift('--quiet');
+  }
+  addTask(execModule, ['sass', args, {noErrCheck}]);
+  if (cfg.bigtrace) {
+    addTask(cp, [dst, pjoin(cfg.outBigtraceDistDir, 'perfetto.css')]);
+  }
 }
 
 function compileProtos() {
   const dstJs = pjoin(cfg.outGenDir, 'protos.js');
   const dstTs = pjoin(cfg.outGenDir, 'protos.d.ts');
+  // We've ended up pulling in all the protos (via trace.proto,
+  // trace_packet.proto) below which means |dstJs| ends up being
+  // 23k lines/12mb. We should probably not do that.
+  // TODO(hjd): Figure out how to use lazy with pbjs/pbts.
   const inputs = [
     'protos/perfetto/common/trace_stats.proto',
     'protos/perfetto/common/tracing_service_capabilities.proto',
@@ -361,6 +401,8 @@ function compileProtos() {
   const pbjsArgs = [
     '--no-beautify',
     '--force-number',
+    '--no-delimited',
+    '--no-verify',
     '-t',
     'static-module',
     '-w',
@@ -370,9 +412,14 @@ function compileProtos() {
     '-o',
     dstJs,
   ].concat(inputs);
-  addTask(execNode, ['pbjs', pbjsArgs]);
+  addTask(execModule, ['pbjs', pbjsArgs]);
+
+  // Note: If you are looking into slowness of pbts it is not pbts
+  // itself that is slow. It invokes jsdoc to parse the comments out of
+  // the |dstJs| with https://github.com/hegemonic/catharsis which is
+  // pinning a CPU core the whole time.
   const pbtsArgs = ['--no-comments', '-p', ROOT_DIR, '-o', dstTs, dstJs];
-  addTask(execNode, ['pbts', pbtsArgs]);
+  addTask(execModule, ['pbts', pbtsArgs]);
 }
 
 function generateImports(dir, name) {
@@ -450,13 +497,14 @@ function buildWasm(skipWasmBuild) {
 
 // This transpiles all the sources (frontend, controller, engine, extension) in
 // one go. The only project that has a dedicated invocation is service_worker.
-function transpileTsProject(project) {
+function transpileTsProject(project, options) {
   const args = ['--project', pjoin(ROOT_DIR, project)];
-  if (cfg.watch) {
+
+  if (options !== undefined && options.watch) {
     args.push('--watch', '--preserveWatchOutput');
-    addTask(execNode, ['tsc', args, {async: true}]);
+    addTask(execModule, ['tsc', args, {async: true}]);
   } else {
-    addTask(execNode, ['tsc', args]);
+    addTask(execModule, ['tsc', args]);
   }
 }
 
@@ -464,14 +512,17 @@ function transpileTsProject(project) {
 function bundleJs(cfgName) {
   const rcfg = pjoin(ROOT_DIR, 'ui/config', cfgName);
   const args = ['-c', rcfg, '--no-indent'];
+  if (cfg.bigtrace) {
+    args.push('--environment', 'ENABLE_BIGTRACE:true');
+  }
   args.push(...(cfg.verbose ? [] : ['--silent']));
   if (cfg.watch) {
-    // --waitForBundleInput is so that we can run tsc --watch and rollup --watch
-    // together, without having to wait that tsc completes the first build.
-    args.push('--watch', '--waitForBundleInput', '--no-watch.clearScreen');
-    addTask(execNode, ['rollup', args, {async: true}]);
+    // --waitForBundleInput is sadly quite busted so it is required ts
+    // has build at least once before invoking this.
+    args.push('--watch', '--no-watch.clearScreen');
+    addTask(execModule, ['rollup', args, {async: true}]);
   } else {
-    addTask(execNode, ['rollup', args]);
+    addTask(execModule, ['rollup', args]);
   }
 }
 
@@ -705,11 +756,9 @@ function exec(cmd, args, opts) {
   }
 }
 
-function execNode(module, args, opts) {
+function execModule(module, args, opts) {
   const modPath = pjoin(ROOT_DIR, 'ui/node_modules/.bin', module);
-  const nodeBin = pjoin(ROOT_DIR, 'tools/node');
-  args = [modPath].concat(args || []);
-  return exec(nodeBin, args, opts);
+  return exec(modPath, args || [], opts);
 }
 
 // ------------------------------------------

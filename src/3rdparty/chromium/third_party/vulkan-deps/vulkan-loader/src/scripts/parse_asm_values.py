@@ -39,6 +39,8 @@ compiler = sys.argv[4]
 # Only used with GAS - MASM doesn't need this, as it has its own way to determine x86 vs x64
 arch = sys.argv[5]
 
+POSIX_COMPILERS = ["GNU", "Clang", "AppleClang"]
+
 if destination_file is None or source_asm_file is None or assembler_type is None or compiler is None or arch is None:
     print("Required command line arguments were not provided")
     sys.exit(1)
@@ -70,7 +72,7 @@ with open(destination_file, "w", encoding="utf-8") as dest:
         # let the assembler know which platform to use
         if arch == "x86_64":
             dest.write(".set X86_64, 1\n")
-        elif arch == "aarch64":
+        elif arch == "aarch64" or arch == "arm64":
             dest.write(".set AARCH_64, 1\n")
         # Nothing to write in the x86 case
 
@@ -80,13 +82,13 @@ with open(destination_file, "w", encoding="utf-8") as dest:
             if d == "VULKAN_LOADER_ERROR_BIT":
                 continue # skip due to special case
             match = re.search(d + " DD [ ]*([0-9a-f]+)H", asm_intermediate_file)
-        elif compiler == "Clang" or compiler == "GNU":
+        elif compiler in POSIX_COMPILERS:
             match = re.search(d + " = ([0-9]+)", asm_intermediate_file)
 
         if match:
             if compiler == "MSVC":
                 value = str(int(match.group(1), 16))
-            elif compiler == "Clang" or compiler == "GNU":
+            elif compiler in POSIX_COMPILERS:
                 value = match.group(1)
             if assembler_type == "MASM":
             # MASM uses hex values, decode them here

@@ -5,6 +5,7 @@
 #ifndef MOJO_PUBLIC_CPP_BASE_VALUES_MOJOM_TRAITS_H_
 #define MOJO_PUBLIC_CPP_BASE_VALUES_MOJOM_TRAITS_H_
 
+#include <string_view>
 #include <vector>
 
 #include "base/component_export.h"
@@ -54,6 +55,15 @@ struct ArrayTraits<base::Value::List> {
   static const base::Value& GetAt(const base::Value::List& in, size_t index) {
     return in[index];
   }
+
+  static base::Value& GetAt(base::Value::List& in, size_t index) {
+    return in[index];
+  }
+
+  static bool Resize(base::Value::List& in, size_t size) {
+    in.resize(size);
+    return true;
+  }
 };
 
 template <>
@@ -65,31 +75,6 @@ struct COMPONENT_EXPORT(MOJO_BASE_SHARED_TRAITS)
 
   static bool Read(mojo_base::mojom::ListValueDataView data,
                    base::Value::List* out);
-};
-
-template <>
-struct MapTraits<base::Value> {
-  using Key = std::string;
-  using Value = base::Value;
-  using Iterator = base::Value::const_dict_iterator_proxy::const_iterator;
-
-  static size_t GetSize(const base::Value& input) {
-    DCHECK(input.is_dict());
-    return input.GetDict().size();
-  }
-
-  static Iterator GetBegin(const base::Value& input) {
-    DCHECK(input.is_dict());
-    return input.DictItems().cbegin();
-  }
-
-  static void AdvanceIterator(Iterator& iterator) { ++iterator; }
-
-  static const Key& GetKey(const Iterator& iterator) { return iterator->first; }
-
-  static const Value& GetValue(const Iterator& iterator) {
-    return iterator->second;
-  }
 };
 
 template <>
@@ -128,7 +113,7 @@ struct COMPONENT_EXPORT(MOJO_BASE_SHARED_TRAITS)
     return value.GetDouble();
   }
 
-  static base::StringPiece string_value(const base::Value& value) {
+  static std::string_view string_value(const base::Value& value) {
     return value.GetString();
   }
 

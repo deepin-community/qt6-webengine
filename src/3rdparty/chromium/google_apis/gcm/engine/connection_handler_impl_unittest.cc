@@ -256,16 +256,14 @@ void GCMConnectionHandlerImplTest::BuildSocket(const ReadList& read_list,
   const url::Origin kOrigin = url::Origin::Create(kDestination);
   mojo_socket_factory_remote_->CreateProxyResolvingSocket(
       kDestination,
-      net::NetworkAnonymizationKey(
-          /*top_frame_site=*/net::SchemefulSite(kOrigin),
-          /*frame_site=*/net::SchemefulSite(kOrigin)),
+      net::NetworkAnonymizationKey::CreateSameSite(net::SchemefulSite(kOrigin)),
       std::move(options),
       net::MutableNetworkTrafficAnnotationTag(TRAFFIC_ANNOTATION_FOR_TESTS),
       mojo_socket_remote_.BindNewPipeAndPassReceiver(),
       mojo::NullRemote() /* observer */,
       base::BindLambdaForTesting(
-          [&](int result, const absl::optional<net::IPEndPoint>& local_addr,
-              const absl::optional<net::IPEndPoint>& peer_addr,
+          [&](int result, const std::optional<net::IPEndPoint>& local_addr,
+              const std::optional<net::IPEndPoint>& peer_addr,
               mojo::ScopedDataPipeConsumerHandle receive_pipe_handle,
               mojo::ScopedDataPipeProducerHandle send_pipe_handle) {
             net_error = result;

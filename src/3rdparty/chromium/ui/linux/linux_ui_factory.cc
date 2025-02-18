@@ -9,10 +9,13 @@
 
 #include "base/command_line.h"
 #include "base/environment.h"
+#include "base/memory/raw_ptr.h"
 #include "base/nix/xdg_util.h"
+#include "base/no_destructor.h"
 #include "base/strings/string_util.h"
 #include "build/chromecast_buildflags.h"
 #include "ui/base/buildflags.h"
+#include "ui/base/ui_base_switches.h"
 #include "ui/color/system_theme.h"
 #include "ui/linux/fallback_linux_ui.h"
 #include "ui/linux/linux_ui.h"
@@ -33,12 +36,18 @@ namespace ui {
 
 namespace {
 
-const char kUiToolkitFlag[] = "ui-toolkit";
+std::vector<raw_ptr<LinuxUiTheme, VectorExperimental>>& GetLinuxUiThemesImpl() {
+  static base::NoDestructor<
+      std::vector<raw_ptr<LinuxUiTheme, VectorExperimental>>>
+      themes;
+  return *themes;
+}
 
 std::unique_ptr<LinuxUiAndTheme> CreateGtkUi() {
 #if BUILDFLAG(USE_GTK)
   auto gtk_ui = BuildGtkUi();
   if (gtk_ui->Initialize()) {
+    GetLinuxUiThemesImpl().push_back(gtk_ui.get());
     return gtk_ui;
   }
 #endif
@@ -61,6 +70,7 @@ std::unique_ptr<LinuxUiAndTheme> CreateQtUi() {
 #if BUILDFLAG(USE_QT)
   auto qt_ui = qt::CreateQtUi(GetGtkUi());
   if (qt_ui->Initialize()) {
+    GetLinuxUiThemesImpl().push_back(qt_ui.get());
     return qt_ui;
   }
 #endif
@@ -87,8 +97,8 @@ LinuxUiAndTheme* GetFallbackUi() {
 
 LinuxUiAndTheme* GetDefaultLinuxUiAndTheme() {
   auto* cmd_line = base::CommandLine::ForCurrentProcess();
-  std::string ui_toolkit =
-      base::ToLowerASCII(cmd_line->GetSwitchValueASCII(kUiToolkitFlag));
+  std::string ui_toolkit = base::ToLowerASCII(
+      cmd_line->GetSwitchValueASCII(switches::kUiToolkitFlag));
   if (ui_toolkit == "gtk") {
     if (auto* gtk_ui = GetGtkUi()) {
       return gtk_ui;
@@ -127,7 +137,7 @@ LinuxUiAndTheme* GetDefaultLinuxUiAndTheme() {
 
 }  // namespace
 
-BASE_FEATURE(kAllowQt, "AllowQt", base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kAllowQt, "AllowQt", base::FEATURE_ENABLED_BY_DEFAULT);
 
 LinuxUi* GetDefaultLinuxUi() {
   auto* linux_ui = GetDefaultLinuxUiAndTheme();
@@ -156,6 +166,11 @@ LinuxUiTheme* GetLinuxUiTheme(SystemTheme system_theme) {
   }
 }
 
+const std::vector<raw_ptr<LinuxUiTheme, VectorExperimental>>&
+GetLinuxUiThemes() {
+  return GetLinuxUiThemesImpl();
+}
+
 SystemTheme GetDefaultSystemTheme() {
   std::unique_ptr<base::Environment> env = base::Environment::Create();
 
@@ -169,6 +184,7 @@ SystemTheme GetDefaultSystemTheme() {
     case base::nix::DESKTOP_ENVIRONMENT_KDE3:
     case base::nix::DESKTOP_ENVIRONMENT_KDE4:
     case base::nix::DESKTOP_ENVIRONMENT_KDE5:
+    case base::nix::DESKTOP_ENVIRONMENT_KDE6:
     case base::nix::DESKTOP_ENVIRONMENT_UKUI:
     case base::nix::DESKTOP_ENVIRONMENT_DEEPIN:
     case base::nix::DESKTOP_ENVIRONMENT_LXQT:

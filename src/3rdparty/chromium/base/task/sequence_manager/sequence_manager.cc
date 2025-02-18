@@ -96,8 +96,8 @@ SequenceManager::PrioritySettings::TaskPriorityToProto(
 
 SequenceManager::PrioritySettings::~PrioritySettings() = default;
 
-SequenceManager::PrioritySettings::PrioritySettings(PrioritySettings&&) =
-    default;
+SequenceManager::PrioritySettings::PrioritySettings(
+    PrioritySettings&&) noexcept = default;
 
 SequenceManager::PrioritySettings& SequenceManager::PrioritySettings::operator=(
     PrioritySettings&&) = default;
@@ -136,6 +136,13 @@ SequenceManager::Settings::Builder&
 SequenceManager::Settings::Builder::SetAddQueueTimeToTasks(
     bool add_queue_time_to_tasks_val) {
   settings_.add_queue_time_to_tasks = add_queue_time_to_tasks_val;
+  return *this;
+}
+
+SequenceManager::Settings::Builder&
+SequenceManager::Settings::Builder::SetCanRunTasksByBatches(
+    bool can_run_tasks_by_batches_val) {
+  settings_.can_run_tasks_by_batches = can_run_tasks_by_batches_val;
   return *this;
 }
 

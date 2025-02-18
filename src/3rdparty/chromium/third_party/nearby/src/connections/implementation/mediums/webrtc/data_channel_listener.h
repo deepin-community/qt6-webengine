@@ -15,9 +15,10 @@
 #ifndef CORE_INTERNAL_MEDIUMS_WEBRTC_DATA_CHANNEL_LISTENER_H_
 #define CORE_INTERNAL_MEDIUMS_WEBRTC_DATA_CHANNEL_LISTENER_H_
 
+#ifndef NO_WEBRTC
+
+#include "absl/functional/any_invocable.h"
 #include "connections/implementation/mediums/webrtc_socket.h"
-#include "connections/listeners.h"
-#include "internal/platform/byte_array.h"
 
 namespace nearby {
 namespace connections {
@@ -27,15 +28,17 @@ namespace mediums {
 struct DataChannelListener {
   // Called when the data channel is open and the socket wraper is ready to
   // read and write.
-  std::function<void(WebRtcSocketWrapper)> data_channel_open_cb =
+  absl::AnyInvocable<void(WebRtcSocketWrapper)> data_channel_open_cb =
       [](WebRtcSocketWrapper) {};
 
   // Called when the data channel is closed.
-  std::function<void()> data_channel_closed_cb = []() {};
+  absl::AnyInvocable<void()> data_channel_closed_cb = []() {};
 };
 
 }  // namespace mediums
 }  // namespace connections
 }  // namespace nearby
+
+#endif
 
 #endif  // CORE_INTERNAL_MEDIUMS_WEBRTC_DATA_CHANNEL_LISTENER_H_

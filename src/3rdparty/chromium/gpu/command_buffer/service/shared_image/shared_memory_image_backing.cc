@@ -9,11 +9,12 @@
 #include "base/notreached.h"
 #include "base/trace_event/process_memory_dump.h"
 #include "components/viz/common/resources/resource_sizes.h"
+#include "components/viz/common/resources/shared_image_format_utils.h"
 #include "gpu/command_buffer/common/mailbox.h"
 #include "gpu/command_buffer/common/shared_image_trace_utils.h"
 #include "gpu/command_buffer/service/memory_tracking.h"
 #include "gpu/command_buffer/service/shared_context_state.h"
-#include "gpu/command_buffer/service/shared_image/shared_image_format_utils.h"
+#include "gpu/command_buffer/service/shared_image/shared_image_format_service_utils.h"
 #include "gpu/command_buffer/service/shared_image/shared_image_manager.h"
 #include "gpu/command_buffer/service/shared_image/shared_image_representation.h"
 #include "gpu/command_buffer/service/shared_memory_region_wrapper.h"
@@ -65,13 +66,13 @@ class OverlayImageRepresentationImpl : public OverlayImageRepresentation {
   void EndReadAccess(gfx::GpuFenceHandle release_fence) override {}
 
 #if BUILDFLAG(IS_WIN)
-  absl::optional<gl::DCLayerOverlayImage> GetDCLayerOverlayImage() override {
+  std::optional<gl::DCLayerOverlayImage> GetDCLayerOverlayImage() override {
     // This should only be called for the backing which references the Y plane,
     // eg. plane_index=0, of an NV12 shmem GMB - see allow_shm_overlay in
     // SharedImageFactory. This allows access to both Y and UV planes.
     const auto& shm_wrapper = static_cast<SharedMemoryImageBacking*>(backing())
                                   ->shared_memory_wrapper();
-    return absl::make_optional<gl::DCLayerOverlayImage>(
+    return std::make_optional<gl::DCLayerOverlayImage>(
         size(), shm_wrapper.GetMemory(0), shm_wrapper.GetStride(0));
   }
 #endif
@@ -98,6 +99,11 @@ void SharedMemoryImageBacking::SetClearedRect(const gfx::Rect& cleared_rect) {
   NOTREACHED();
 }
 
+gfx::GpuMemoryBufferHandle
+SharedMemoryImageBacking::GetGpuMemoryBufferHandle() {
+  return handle_.Clone();
+}
+
 const SharedMemoryRegionWrapper&
 SharedMemoryImageBacking::shared_memory_wrapper() {
   return shared_memory_wrapper_;
@@ -110,9 +116,10 @@ const std::vector<SkPixmap>& SharedMemoryImageBacking::pixmaps() {
 std::unique_ptr<DawnImageRepresentation> SharedMemoryImageBacking::ProduceDawn(
     SharedImageManager* manager,
     MemoryTypeTracker* tracker,
-    WGPUDevice device,
-    WGPUBackendType backend_type,
-    std::vector<WGPUTextureFormat> view_formats) {
+    const wgpu::Device& device,
+    wgpu::BackendType backend_type,
+    std::vector<wgpu::TextureFormat> view_formats,
+    scoped_refptr<SharedContextState> context_state) {
   NOTIMPLEMENTED_LOG_ONCE();
   return nullptr;
 }
@@ -132,7 +139,8 @@ SharedMemoryImageBacking::ProduceGLTexturePassthrough(
   return nullptr;
 }
 
-std::unique_ptr<SkiaImageRepresentation> SharedMemoryImageBacking::ProduceSkia(
+std::unique_ptr<SkiaGaneshImageRepresentation>
+SharedMemoryImageBacking::ProduceSkiaGanesh(
     SharedImageManager* manager,
     MemoryTypeTracker* tracker,
     scoped_refptr<SharedContextState> context_state) {
@@ -180,8 +188,9 @@ base::trace_event::MemoryAllocatorDump* SharedMemoryImageBacking::OnMemoryDump(
   // various GPU dumps.
   auto shared_memory_guid = shared_memory_wrapper_.GetMappingGuid();
   if (!shared_memory_guid.is_empty()) {
-    pmd->CreateSharedMemoryOwnershipEdge(client_guid, shared_memory_guid,
-                                         kNonOwningEdgeImportance);
+    pmd->CreateSharedMemoryOwnershipEdge(
+        client_guid, shared_memory_guid,
+        static_cast<int>(TracingImportance::kNotOwner));
   }
   return dump;
 }
@@ -194,7 +203,9 @@ SharedMemoryImageBacking::SharedMemoryImageBacking(
     GrSurfaceOrigin surface_origin,
     SkAlphaType alpha_type,
     uint32_t usage,
-    SharedMemoryRegionWrapper wrapper)
+    SharedMemoryRegionWrapper wrapper,
+    gfx::GpuMemoryBufferHandle handle,
+    std::optional<gfx::BufferUsage> buffer_usage)
     : SharedImageBacking(mailbox,
                          format,
                          size,
@@ -203,8 +214,10 @@ SharedMemoryImageBacking::SharedMemoryImageBacking(
                          alpha_type,
                          usage,
                          format.EstimatedSizeInBytes(size),
-                         false),
-      shared_memory_wrapper_(std::move(wrapper)) {
+                         false,
+                         std::move(buffer_usage)),
+      shared_memory_wrapper_(std::move(wrapper)),
+      handle_(std::move(handle)) {
   DCHECK(shared_memory_wrapper_.IsValid());
 
   for (int plane = 0; plane < format.NumberOfPlanes(); ++plane) {

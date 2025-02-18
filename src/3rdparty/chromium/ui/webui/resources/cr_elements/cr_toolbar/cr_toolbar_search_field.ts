@@ -18,12 +18,12 @@ import {getTemplate} from './cr_toolbar_search_field.html.js';
 export interface CrToolbarSearchFieldElement {
   $: {
     searchInput: HTMLInputElement,
+    searchTerm: HTMLElement,
     spinnerTemplate: DomIf,
   };
 }
 
 const CrToolbarSearchFieldElementBase = CrSearchFieldMixin(PolymerElement);
-
 
 export class CrToolbarSearchFieldElement extends
     CrToolbarSearchFieldElementBase {
@@ -46,7 +46,6 @@ export class CrToolbarSearchFieldElement extends
         type: Boolean,
         value: false,
         notify: true,
-        observer: 'showingSearchChanged_',
         reflectToAttribute: true,
       },
 
@@ -85,7 +84,6 @@ export class CrToolbarSearchFieldElement extends
 
   override ready() {
     super.ready();
-
     this.addEventListener('click', e => this.showSearch_(e));
   }
 
@@ -146,6 +144,8 @@ export class CrToolbarSearchFieldElement extends
   private onSearchTermKeydown_(e: KeyboardEvent) {
     if (e.key === 'Escape') {
       this.showingSearch = false;
+      this.setValue('');
+      this.getSearchInput().blur();
     }
   }
 
@@ -153,27 +153,15 @@ export class CrToolbarSearchFieldElement extends
     if (e.target !== this.shadowRoot!.querySelector('#clearSearch')) {
       this.showingSearch = true;
     }
+    if (this.narrow) {
+      this.focus_();
+    }
   }
 
   private clearSearch_() {
     this.setValue('');
     this.focus_();
     this.spinnerActive = false;
-  }
-
-  private showingSearchChanged_(_current: boolean, previous?: boolean) {
-    // Prevent unnecessary 'search-changed' event from firing on startup.
-    if (previous === undefined) {
-      return;
-    }
-
-    if (this.showingSearch) {
-      this.focus_();
-      return;
-    }
-
-    this.setValue('');
-    this.getSearchInput().blur();
   }
 }
 

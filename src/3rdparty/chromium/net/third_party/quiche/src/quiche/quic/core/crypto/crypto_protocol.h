@@ -31,7 +31,7 @@ using ServerConfigID = std::string;
 // "QNZR", "B2HI", "H2PR", "FIFO", "LIFO", "RRWS", "QNSP", "B2CL", "CHSP",
 // "BPTE", "ACKD", "AKD2", "AKD4", "MAD1", "MAD4", "MAD5", "ACD0", "ACKQ",
 // "TLPR", "CCS\0", "PDP4", "NCHP", "NBPE", "2RTO", "3RTO", "4RTO", "6RTO",
-// "PDP1", "PDP2", "PDP3", "PDP5" "QLVE"
+// "PDP1", "PDP2", "PDP3", "PDP5", "QLVE", "RVCM"
 
 // clang-format off
 const QuicTag kCHLO = TAG('C', 'H', 'L', 'O');   // Client hello
@@ -279,11 +279,6 @@ const QuicTag kAPTO = TAG('A', 'P', 'T', 'O');   // Use 1.5 * initial RTT before
 
 const QuicTag kELDT = TAG('E', 'L', 'D', 'T');   // Enable Loss Detection Tuning
 
-// TODO(haoyuewang) Remove RVCM option once
-// --quic_remove_connection_migration_connection_option_v2 is deprecated.
-const QuicTag kRVCM = TAG('R', 'V', 'C', 'M');   // Validate the new address
-                                                 // upon client address change.
-
 const QuicTag kSPAD = TAG('S', 'P', 'A', 'D');   // Use server preferred address
 const QuicTag kSPA2 = TAG('S', 'P', 'A', '2');   // Start validating server
                                                  // preferred address once it is
@@ -304,8 +299,9 @@ const QuicTag kNCMR = TAG('N', 'C', 'M', 'R');   // Do not attempt connection
 // Allows disabling defer_send_in_response_to_packets in QuicConnection.
 const QuicTag kDFER = TAG('D', 'F', 'E', 'R');   // Do not defer sending.
 
-// Disable Pacing offload option.
-const QuicTag kNPCO = TAG('N', 'P', 'C', 'O');    // No pacing offload.
+// Pacing options.
+const QuicTag kNPCO = TAG('N', 'P', 'C', 'O');  // No pacing offload.
+const QuicTag kRNIB = TAG('R', 'N', 'I', 'B');  // Remove non-initial burst.
 
 // Enable bandwidth resumption experiment.
 const QuicTag kBWRE = TAG('B', 'W', 'R', 'E');  // Bandwidth resumption.
@@ -436,6 +432,8 @@ const QuicTag kINVC = TAG('I', 'N', 'V', 'C');   // Send connection close for
                                                  // INVALID_VERSION
 
 const QuicTag kMPQC = TAG('M', 'P', 'Q', 'C');   // Multi-port QUIC connection
+const QuicTag kMPQM = TAG('M', 'P', 'Q', 'M');   // Enable multi-port QUIC
+                                                 // migration
 
 // Client Hints triggers.
 const QuicTag kGWCH = TAG('G', 'W', 'C', 'H');
@@ -465,6 +463,23 @@ const QuicTag kPAD  = TAG('P', 'A', 'D', '\0');  // Padding
 
 // Stats collection tags
 const QuicTag kEPID = TAG('E', 'P', 'I', 'D');  // Endpoint identifier.
+
+const QuicTag kMCS1 = TAG('M', 'C', 'S', '1');
+const QuicTag kMCS2 = TAG('M', 'C', 'S', '2');
+const QuicTag kMCS3 = TAG('M', 'C', 'S', '3');
+const QuicTag kMCS4 = TAG('M', 'C', 'S', '4');
+const QuicTag kMCS5 = TAG('M', 'C', 'S', '5');
+
+// Per-loop stream limit experiments
+const QuicTag kSLP1 = TAG('S', 'L', 'P', '1');  // 1 new request per event loop
+const QuicTag kSLP2 = TAG('S', 'L', 'P', '2');  // 2 new requests per event loop
+const QuicTag kSLPF = TAG('S', 'L', 'P', 'F');  // number of new requests per
+                                                // event loop according to
+                                                // internal flag.
+
+constexpr QuicTag kBSUS = TAG('B', 'S', 'U', 'S');  // Blocks server connection
+                                                    // until the SETTINGS frame
+                                                    // is received.
 
 // clang-format on
 

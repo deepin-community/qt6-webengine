@@ -5,18 +5,23 @@
 #include "components/password_manager/core/browser/affiliation/affiliations_prefetcher.h"
 
 #include <algorithm>
+#include <optional>
 #include <utility>
 
 #include "base/barrier_callback.h"
 #include "base/check_op.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
+#include "base/strings/strcat.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/time/time.h"
 #include "components/password_manager/core/browser/affiliation/affiliation_service.h"
 #include "components/password_manager/core/browser/affiliation/affiliation_utils.h"
+#include "components/password_manager/core/browser/features/password_features.h"
 #include "components/password_manager/core/browser/password_form.h"
 #include "components/password_manager/core/common/password_manager_features.h"
+#include "components/webauthn/core/browser/passkey_model.h"
+#include "components/webauthn/core/browser/passkey_model_change.h"
 
 namespace password_manager {
 
@@ -24,12 +29,27 @@ namespace {
 
 constexpr base::TimeDelta kInitializationDelayOnStartup = base::Seconds(30);
 
+// Filling across affiliated sites is implemented differently on Android.
 bool IsFacetValidForAffiliation(const FacetURI& facet) {
-  return facet.IsValidAndroidFacetURI() ||
-         (facet.IsValidWebFacetURI() &&
-          (base::FeatureList::IsEnabled(
-               features::kFillingAcrossAffiliatedWebsites) ||
-           base::FeatureList::IsEnabled(features::kPasswordsGrouping)));
+#if BUILDFLAG(IS_ANDROID)
+  return facet.IsValidAndroidFacetURI();
+#else
+  return facet.IsValidAndroidFacetURI() || facet.IsValidWebFacetURI();
+#endif
+}
+
+std::optional<FacetURI> FacetURIFromPasskey(
+    const sync_pb::WebauthnCredentialSpecifics& passkey) {
+  std::string as_url = base::StrCat(
+      {url::kHttpsScheme, url::kStandardSchemeSeparator, passkey.rp_id()});
+  FacetURI facet_uri = FacetURI::FromPotentiallyInvalidSpec(as_url);
+  if (!facet_uri.is_valid()) {
+    return std::nullopt;
+  }
+  if (!IsFacetValidForAffiliation(facet_uri)) {
+    return std::nullopt;
+  }
+  return facet_uri;
 }
 
 }  // namespace
@@ -63,12 +83,40 @@ void AffiliationsPrefetcher::RegisterPasswordStore(
   }
 }
 
+void AffiliationsPrefetcher::RegisterPasskeyModel(
+    webauthn::PasskeyModel* passkey_model) {
+  passkey_model_observation_.Observe(passkey_model);
+
+  // If initialization had already happened, immediately prefetch affiliation
+  // info for all passkeys.
+  if (is_ready_) {
+    for (const auto& passkey : passkey_model->GetAllPasskeys()) {
+      std::optional<FacetURI> facet = FacetURIFromPasskey(passkey);
+      if (facet) {
+        affiliation_service_->Prefetch(std::move(*facet), base::Time::Max());
+      }
+    }
+  }
+}
+
 void AffiliationsPrefetcher::Shutdown() {
   for (const auto& store : password_stores_) {
     store->RemoveObserver(this);
   }
   password_stores_.clear();
   pending_initializations_.clear();
+  passkey_model_observation_.Reset();
+}
+
+void AffiliationsPrefetcher::DisablePrefetching() {
+  // Don't do anything if prefetching was canceled already.
+  if (is_prefetching_canceled_) {
+    return;
+  }
+
+  is_prefetching_canceled_ = true;
+  // Clear existing cache.
+  affiliation_service_->KeepPrefetchForFacets({});
 }
 
 void AffiliationsPrefetcher::OnLoginsChanged(
@@ -81,11 +129,8 @@ void AffiliationsPrefetcher::OnLoginsChanged(
 
     if (!facet_uri.is_valid())
       continue;
-    // Require a valid Android Facet if filling across affiliated websites is
-    // disabled.
-    if (!facet_uri.IsValidAndroidFacetURI() &&
-        !base::FeatureList::IsEnabled(
-            features::kFillingAcrossAffiliatedWebsites)) {
+
+    if (!IsFacetValidForAffiliation(facet_uri)) {
       continue;
     }
 
@@ -123,6 +168,29 @@ void AffiliationsPrefetcher::OnLoginsRetained(
   affiliation_service_->KeepPrefetchForFacets(std::move(facets));
 }
 
+void AffiliationsPrefetcher::OnPasskeysChanged(
+    const std::vector<webauthn::PasskeyModelChange>& changes) {
+  std::vector<FacetURI> facet_uris_to_trim;
+  for (const webauthn::PasskeyModelChange& change : changes) {
+    std::optional<FacetURI> facet = FacetURIFromPasskey(change.passkey());
+    if (!facet) {
+      continue;
+    }
+
+    if (change.type() == webauthn::PasskeyModelChange::ChangeType::ADD) {
+      affiliation_service_->Prefetch(std::move(*facet), base::Time::Max());
+    } else if (change.type() ==
+               webauthn::PasskeyModelChange::ChangeType::REMOVE) {
+      affiliation_service_->CancelPrefetch(std::move(*facet),
+                                           base::Time::Max());
+    }
+  }
+}
+
+void AffiliationsPrefetcher::OnPasskeyModelShuttingDown() {
+  passkey_model_observation_.Reset();
+}
+
 void AffiliationsPrefetcher::OnGetPasswordStoreResults(
     std::vector<std::unique_ptr<PasswordForm>> results) {
   DCHECK(on_password_forms_received_barrier_callback_);
@@ -139,6 +207,13 @@ void AffiliationsPrefetcher::OnResultFromAllStoresReceived(
     return;
   }
 
+  // If no calls to Register* happened before |kInitializationDelayOnStartup|,
+  // don't do anything.
+  if (results.empty() && !passkey_model_observation_.IsObserving()) {
+    is_ready_ = true;
+    return;
+  }
+
   std::vector<FacetURI> facets;
   for (const auto& result_per_store : results) {
     for (const auto& form : result_per_store) {
@@ -149,16 +224,30 @@ void AffiliationsPrefetcher::OnResultFromAllStoresReceived(
       }
     }
   }
+  if (passkey_model_observation_.IsObserving()) {
+    for (const auto& passkey :
+         passkey_model_observation_.GetSource()->GetAllPasskeys()) {
+      std::optional<FacetURI> facet = FacetURIFromPasskey(passkey);
+      if (facet) {
+        facets.push_back(std::move(*facet));
+      }
+    }
+  }
   affiliation_service_->KeepPrefetchForFacets(facets);
   affiliation_service_->TrimUnusedCache(std::move(facets));
-
   is_ready_ = true;
 }
 
 void AffiliationsPrefetcher::InitializeWithPasswordStores() {
-  // If no calls to RegisterPasswordStore happened before
-  // |kInitializationDelayOnStartup| return early.
-  if (pending_initializations_.empty()) {
+  // Don't do anything if prefetching is canceled.
+  if (is_prefetching_canceled_) {
+    return;
+  }
+
+  // If no calls to Register* happened before |kInitializationDelayOnStartup|
+  // return early.
+  if (pending_initializations_.empty() &&
+      !passkey_model_observation_.IsObserving()) {
     is_ready_ = true;
     return;
   }

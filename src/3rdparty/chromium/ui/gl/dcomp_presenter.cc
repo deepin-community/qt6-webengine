@@ -15,9 +15,7 @@
 #include "ui/gfx/presentation_feedback.h"
 #include "ui/gfx/swap_result.h"
 #include "ui/gl/dc_layer_tree.h"
-#include "ui/gl/direct_composition_child_surface_win.h"
 #include "ui/gl/direct_composition_support.h"
-#include "ui/gl/gl_angle_util_win.h"
 #include "ui/gl/gl_surface_egl.h"
 #include "ui/gl/vsync_thread_win.h"
 
@@ -41,17 +39,16 @@ DCompPresenter::PendingFrame::~PendingFrame() = default;
 DCompPresenter::PendingFrame& DCompPresenter::PendingFrame::operator=(
     PendingFrame&& other) = default;
 
-DCompPresenter::DCompPresenter(
-    GLDisplayEGL* display,
-    VSyncCallback vsync_callback,
-    const DirectCompositionSurfaceWin::Settings& settings)
-    : Presenter(display, gfx::Size(1, 1)),
-      vsync_callback_(std::move(vsync_callback)),
+DCompPresenter::DCompPresenter(GLDisplayEGL* display,
+                               VSyncCallback vsync_callback,
+                               const Settings& settings)
+    : vsync_callback_(std::move(vsync_callback)),
       vsync_thread_(VSyncThreadWin::GetInstance()),
       task_runner_(base::SingleThreadTaskRunner::GetCurrentDefault()),
       max_pending_frames_(settings.max_pending_frames),
       layer_tree_(std::make_unique<DCLayerTree>(
           settings.disable_nv12_dynamic_textures,
+          settings.disable_vp_auto_hdr,
           settings.disable_vp_scaling,
           settings.disable_vp_super_resolution,
           settings.force_dcomp_triple_buffer_video_swap_chain,
@@ -61,17 +58,17 @@ DCompPresenter::~DCompPresenter() {
   Destroy();
 }
 
-bool DCompPresenter::Initialize(GLSurfaceFormat format) {
+bool DCompPresenter::Initialize() {
   if (!DirectCompositionSupported()) {
     DLOG(ERROR) << "Direct composition not supported";
     return false;
   }
 
-  d3d11_device_ = QueryD3D11DeviceObjectFromANGLE();
+  d3d11_device_ = GetDirectCompositionD3D11Device();
 
   child_window_.Initialize();
 
-  if (!layer_tree_->Initialize(window())) {
+  if (!layer_tree_->Initialize(window(), d3d11_device_)) {
     return false;
   }
 
@@ -101,17 +98,11 @@ bool DCompPresenter::Resize(const gfx::Size& size,
                             float scale_factor,
                             const gfx::ColorSpace& color_space,
                             bool has_alpha) {
-  if (!SurfacelessEGL::Resize(size, scale_factor, color_space, has_alpha)) {
+  if (!Presenter::Resize(size, scale_factor, color_space, has_alpha)) {
     return false;
   }
 
-  // Force a resize and redraw (but not a move, activate, etc.).
-  if (!SetWindowPos(window(), nullptr, 0, 0, size.width(), size.height(),
-                    SWP_NOMOVE | SWP_NOACTIVATE | SWP_NOCOPYBITS |
-                        SWP_NOOWNERZORDER | SWP_NOZORDER)) {
-    return false;
-  }
-  return true;
+  return child_window_.Resize(size);
 }
 
 gfx::VSyncProvider* DCompPresenter::GetVSyncProvider() {
@@ -166,10 +157,6 @@ void DCompPresenter::Present(SwapCompletionCallback completion_callback,
       .Run(gfx::SwapCompletionResult(gfx::SwapResult::SWAP_ACK));
 }
 
-bool DCompPresenter::SupportsDCLayers() const {
-  return true;
-}
-
 bool DCompPresenter::SupportsProtectedVideo() const {
   // TODO(magchen): Check the gpu driver date (or a function) which we know this
   // new support is enabled.
@@ -180,6 +167,10 @@ bool DCompPresenter::SetDrawRectangle(const gfx::Rect& rect) {
   // Do not create query for empty damage so that 3D engine is not used when
   // only presenting video in overlay.
   create_query_this_frame_ = !rect.IsEmpty();
+  return true;
+}
+
+bool DCompPresenter::SupportsViewporter() const {
   return true;
 }
 
@@ -236,10 +227,6 @@ void DCompPresenter::HandleVSyncOnMainThread(base::TimeTicks vsync_time,
   last_vsync_interval_ = interval;
 
   CheckPendingFrames();
-
-  UMA_HISTOGRAM_COUNTS_100("GPU.DirectComposition.NumPendingFrames",
-                           pending_frames_.size());
-
   if (SupportsLowLatencyPresentation() && VSyncCallbackEnabled() &&
       pending_frames_.size() < max_pending_frames_) {
     DCHECK(vsync_callback_);

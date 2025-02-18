@@ -7,8 +7,8 @@
 
 #include "base/memory/weak_ptr.h"
 #include "base/sequence_checker.h"
+#include "components/safe_browsing/core/browser/database_manager_mechanism.h"
 #include "components/safe_browsing/core/browser/db/database_manager.h"
-#include "components/safe_browsing/core/browser/hash_database_mechanism.h"
 #include "components/safe_browsing/core/browser/hashprefix_realtime/hash_realtime_service.h"
 #include "components/safe_browsing/core/browser/safe_browsing_lookup_mechanism.h"
 #include "url/gurl.h"
@@ -22,19 +22,11 @@ class HashRealTimeMechanism : public SafeBrowsingLookupMechanism {
       const GURL& url,
       const SBThreatTypeSet& threat_types,
       scoped_refptr<SafeBrowsingDatabaseManager> database_manager,
-      bool can_check_db,
       scoped_refptr<base::SequencedTaskRunner> ui_task_runner,
-      base::WeakPtr<HashRealTimeService> lookup_service_on_ui,
-      MechanismExperimentHashDatabaseCache experiment_cache_selection);
+      base::WeakPtr<HashRealTimeService> lookup_service_on_ui);
   HashRealTimeMechanism(const HashRealTimeMechanism&) = delete;
   HashRealTimeMechanism& operator=(const HashRealTimeMechanism&) = delete;
   ~HashRealTimeMechanism() override;
-
-  // Returns whether the |url| is eligible for hash-prefix real-time checks.
-  // It's never eligible if the |request_destination| is not mainframe.
-  static bool CanCheckUrl(
-      const GURL& url,
-      network::mojom::RequestDestination request_destination);
 
  private:
   // SafeBrowsingLookupMechanism implementation:
@@ -72,7 +64,8 @@ class HashRealTimeMechanism : public SafeBrowsingLookupMechanism {
       std::unique_ptr<SafeBrowsingLookupMechanism::CompleteCheckResult> result);
   void OnHashDatabaseCompleteCheckResultInternal(
       SBThreatType threat_type,
-      const ThreatMetadata& metadata);
+      const ThreatMetadata& metadata,
+      absl::optional<ThreatSource> threat_source);
 
   SEQUENCE_CHECKER(sequence_checker_);
 
@@ -85,7 +78,7 @@ class HashRealTimeMechanism : public SafeBrowsingLookupMechanism {
 
   // This will be created in cases where the hash-prefix real-time check decides
   // to fall back to the hash-based database checks.
-  std::unique_ptr<HashDatabaseMechanism> hash_database_mechanism_ = nullptr;
+  std::unique_ptr<DatabaseManagerMechanism> hash_database_mechanism_ = nullptr;
 
   base::WeakPtrFactory<HashRealTimeMechanism> weak_factory_{this};
 };

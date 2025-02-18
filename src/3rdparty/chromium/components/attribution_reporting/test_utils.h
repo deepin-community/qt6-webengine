@@ -5,96 +5,73 @@
 #ifndef COMPONENTS_ATTRIBUTION_REPORTING_TEST_UTILS_H_
 #define COMPONENTS_ATTRIBUTION_REPORTING_TEST_UTILS_H_
 
-#include <stddef.h>
+#include <iosfwd>
 
-#include <ostream>
-#include <vector>
+#include "components/attribution_reporting/filters.h"
+#include "components/attribution_reporting/source_type.mojom-forward.h"
+#include "components/attribution_reporting/trigger_config.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
-#include "components/attribution_reporting/bounded_list.h"
+namespace base {
+class TimeDelta;
+}  // namespace base
 
 namespace attribution_reporting {
 
+class AggregatableTriggerConfig;
 class AggregatableTriggerData;
 class AggregatableValues;
 class AggregationKeys;
 class DestinationSet;
-class FilterData;
-class Filters;
+class EventReportWindows;
 class SuitableOrigin;
+class SummaryBuckets;
 
 struct AggregatableDedupKey;
 struct EventTriggerData;
-struct FilterPair;
+struct OsRegistrationItem;
 struct SourceRegistration;
 struct TriggerRegistration;
 
-bool operator==(const AggregationKeys&, const AggregationKeys&);
+FiltersDisjunction FiltersForSourceType(
+    mojom::SourceType,
+    absl::optional<base::TimeDelta> lookback_window = absl::nullopt);
 
 std::ostream& operator<<(std::ostream&, const AggregationKeys&);
 
-bool operator==(const FilterData&, const FilterData&);
-
 std::ostream& operator<<(std::ostream&, const FilterData&);
-
-bool operator==(const FilterPair&, const FilterPair&);
 
 std::ostream& operator<<(std::ostream&, const FilterPair&);
 
-bool operator==(const Filters&, const Filters&);
-
-std::ostream& operator<<(std::ostream&, const Filters&);
-
-bool operator==(const DestinationSet&, const DestinationSet&);
-
 std::ostream& operator<<(std::ostream&, const DestinationSet&);
 
-bool operator==(const SourceRegistration&, const SourceRegistration&);
+std::ostream& operator<<(std::ostream&, const EventReportWindows&);
 
 std::ostream& operator<<(std::ostream&, const SourceRegistration&);
 
-bool operator==(const AggregatableValues&, const AggregatableValues&);
-
 std::ostream& operator<<(std::ostream&, const AggregatableValues&);
-
-bool operator==(const AggregatableTriggerData&, const AggregatableTriggerData&);
 
 std::ostream& operator<<(std::ostream&, const AggregatableTriggerData&);
 
-bool operator==(const EventTriggerData&, const EventTriggerData&);
-
 std::ostream& operator<<(std::ostream&, const EventTriggerData&);
-
-bool operator==(const TriggerRegistration&, const TriggerRegistration&);
 
 std::ostream& operator<<(std::ostream&, const TriggerRegistration&);
 
-bool operator==(const SuitableOrigin&, const SuitableOrigin&);
-
 std::ostream& operator<<(std::ostream&, const SuitableOrigin&);
-
-bool operator==(const AggregatableDedupKey&, const AggregatableDedupKey&);
 
 std::ostream& operator<<(std::ostream&, const AggregatableDedupKey&);
 
-template <typename T, size_t kMaxSize>
-bool operator==(const BoundedList<T, kMaxSize>& a,
-                const BoundedList<T, kMaxSize>& b) {
-  return a.vec() == b.vec();
-}
+std::ostream& operator<<(std::ostream&, const OsRegistrationItem&);
 
-template <typename T, size_t kMaxSize>
-std::ostream& operator<<(std::ostream& out,
-                         const BoundedList<T, kMaxSize>& list) {
-  out << "[";
+std::ostream& operator<<(std::ostream&, const SummaryBuckets&);
 
-  const char* separator = "";
-  for (const auto& item : list.vec()) {
-    out << separator << item;
-    separator = ", ";
-  }
+std::ostream& operator<<(std::ostream&, const TriggerSpec&);
 
-  return out << "]";
-}
+std::ostream& operator<<(std::ostream&, const TriggerSpecs&);
+
+std::ostream& operator<<(std::ostream&, const TriggerSpecs::const_iterator&);
+
+std::ostream& operator<<(std::ostream&, const AggregatableTriggerConfig&);
 
 }  // namespace attribution_reporting
 

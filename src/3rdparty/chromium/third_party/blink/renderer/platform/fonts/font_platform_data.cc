@@ -65,7 +65,7 @@ namespace {
 BASE_FEATURE(kOptimizeLinuxFonts,
              "OptimizeLinuxFonts",
              base::FEATURE_DISABLED_BY_DEFAULT);
-#endif
+#endif  //  BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
 
 }  // namespace
 
@@ -153,7 +153,7 @@ FontPlatformData::FontPlatformData(sk_sp<SkTypeface> typeface,
     : typeface_(typeface),
 #if !BUILDFLAG(IS_WIN) && !BUILDFLAG(IS_MAC)
       family_(family),
-#endif
+#endif  // !BUILDFLAG(IS_WIN) && !BUILDFLAG(IS_MAC)
       text_size_(text_size),
       synthetic_bold_(synthetic_bold),
       synthetic_italic_(synthetic_italic),
@@ -169,7 +169,7 @@ FontPlatformData::FontPlatformData(sk_sp<SkTypeface> typeface,
       base::FeatureList::IsEnabled(kOptimizeLinuxFonts);
 #else
   bool override_font_name_and_size = false;
-#endif
+#endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
   if (override_font_name_and_size) {
     system_style = QuerySystemRenderStyle(
         FontFamilyName().Utf8(), 0, typeface_->fontStyle(), text_rendering);
@@ -188,9 +188,9 @@ FontPlatformData::FontPlatformData(sk_sp<SkTypeface> typeface,
   }
 #else
   auto system_style = QuerySystemForRenderStyle();
-#endif
+#endif  // !BUILDFLAG(IS_WIN)
   style_.OverrideWith(system_style);
-#endif
+#endif  // !BUILDFLAG(IS_MAC)
 }
 
 FontPlatformData::~FontPlatformData() = default;
@@ -223,7 +223,7 @@ bool FontPlatformData::operator==(const FontPlatformData& a) const {
          orientation_ == a.orientation_;
 }
 
-SkFontID FontPlatformData::UniqueID() const {
+SkTypefaceID FontPlatformData::UniqueID() const {
   return Typeface()->uniqueID();
 }
 
@@ -263,7 +263,7 @@ bool FontPlatformData::HasSpaceInLigaturesOrKerning(
 }
 
 unsigned FontPlatformData::GetHash() const {
-  unsigned h = SkTypeface::UniqueID(Typeface());
+  unsigned h = UniqueID();
   h ^= 0x01010101 * ((static_cast<int>(is_hash_table_deleted_value_) << 3) |
                      (static_cast<int>(orientation_) << 2) |
                      (static_cast<int>(synthetic_bold_) << 1) |
@@ -340,11 +340,14 @@ WebFontRenderStyle FontPlatformData::QuerySystemRenderStyle(
     // 0 means HINTING_NONE, see |ConvertHinting| in font_service_app.cc.
     result.hint_style = 0;
   }
-#endif
+#endif  // !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_FUCHSIA) &&
+        // !BUILDFLAG(IS_IOS)
 
   return result;
 }
+#endif  // !BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_WIN)
 
+#if !BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_WIN) && !BUILDFLAG(IS_IOS)
 SkFont FontPlatformData::CreateSkFont(const FontDescription*) const {
   SkFont font;
   style_.ApplyToSkFont(&font);
@@ -359,7 +362,7 @@ SkFont FontPlatformData::CreateSkFont(const FontDescription*) const {
 
   return font;
 }
-#endif
+#endif  // !BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_WIN) && !BUILDFLAG(IS_IOS)
 
 scoped_refptr<OpenTypeVerticalData> FontPlatformData::CreateVerticalData()
     const {

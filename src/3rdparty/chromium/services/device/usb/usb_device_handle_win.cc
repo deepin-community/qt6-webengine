@@ -14,6 +14,7 @@
 #include <memory>
 #include <numeric>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -44,7 +45,7 @@ using mojom::UsbTransferStatus;
 
 namespace {
 
-const base::WStringPiece kWinUsbDriverName = L"winusb";
+const std::wstring_view kWinUsbDriverName = L"winusb";
 
 uint8_t BuildRequestFlags(UsbTransferDirection direction,
                           UsbControlTransferType request_type,
@@ -1043,7 +1044,7 @@ void UsbDeviceHandleWin::GotDescriptorFromNodeConnection(
     std::pair<DWORD, DWORD> result_and_bytes_transferred) {
   if (result_and_bytes_transferred.first != ERROR_SUCCESS) {
     SetLastError(result_and_bytes_transferred.first);
-    USB_PLOG(ERROR) << "Failed to read descriptor from node connection";
+    USB_PLOG(DEBUG) << "Failed to read descriptor from node connection";
     std::move(callback).Run(UsbTransferStatus::TRANSFER_ERROR,
                             /*buffer=*/nullptr, /*length=*/0);
     return;

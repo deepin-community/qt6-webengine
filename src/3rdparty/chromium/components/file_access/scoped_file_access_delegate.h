@@ -5,6 +5,7 @@
 #ifndef COMPONENTS_FILE_ACCESS_SCOPED_FILE_ACCESS_DELEGATE_H_
 #define COMPONENTS_FILE_ACCESS_SCOPED_FILE_ACCESS_DELEGATE_H_
 
+#include <memory>
 #include <vector>
 
 #include "base/component_export.h"
@@ -24,14 +25,28 @@ namespace file_access {
 // this class can exist at a time. The class itself also manages this one
 // instance. When it is replaced the old instance is destructed. This instance
 // is constructed and destructed on the UI thread. So all methods should only be
-// called from the UI thread. The exception is RequestFilesAccessForSystemIO,
+// called from the UI thread. The exception is RequestDefaultFilesAccessIO,
 // which takes care of hopping correctly between the threads and providing this
 // to packages without direct access to the UI thread.
 class COMPONENT_EXPORT(FILE_ACCESS) ScopedFileAccessDelegate {
  public:
-  using RequestFilesAccessForSystemIOCallback =
+  using RequestFilesAccessIOCallback =
       base::RepeatingCallback<void(const std::vector<base::FilePath>&,
                                    base::OnceCallback<void(ScopedFileAccess)>)>;
+
+  using RequestFilesAccessCheckDefaultCallback =
+      base::RepeatingCallback<void(const std::vector<base::FilePath>&,
+                                   base::OnceCallback<void(ScopedFileAccess)>,
+                                   bool check_default)>;
+  // When new entries are added, EnterpriseDlpFilesDefaultAccess enum in
+  // histograms/enums.xml should be updated.
+  enum class DefaultAccess {
+    kMyFilesAllow = 0,
+    kMyFilesDeny = 1,
+    kSystemFilesAllow = 2,
+    kSystemFilesDeny = 3,
+    kMaxValue = kSystemFilesDeny
+  };
 
   ScopedFileAccessDelegate(const ScopedFileAccessDelegate&) = delete;
   ScopedFileAccessDelegate& operator=(const ScopedFileAccessDelegate&) = delete;
@@ -62,9 +77,35 @@ class COMPONENT_EXPORT(FILE_ACCESS) ScopedFileAccessDelegate {
       const std::vector<base::FilePath>& files,
       base::OnceCallback<void(file_access::ScopedFileAccess)> callback) = 0;
 
-  // Called from the IO thread. Switches to the UI thread and calls
+  // If feature DataControlsDefaultDeny is not set, requests access to |files|.
+  // |callback| is called with a token that should be hold until `open()`
+  // operation on the files finished. If the feature is set the `callback` is
+  // called with a dummy `ScopedFileAccess`, which will lead the daemon to deny
+  // access, if the file is restricted.
+  virtual void RequestDefaultFilesAccess(
+      const std::vector<base::FilePath>& files,
+      base::OnceCallback<void(file_access::ScopedFileAccess)> callback) = 0;
+
+  // Creates a callback to gain file access for the given `destination`. The
+  // callback should be called on the IO thread. The method itself from the UI
+  // thread.
+  virtual RequestFilesAccessIOCallback CreateFileAccessCallback(
+      const GURL& destination) const = 0;
+
+  // Called from the IO thread. Depending on the default behaviour
+  // (kDataControlsDefaultDeny feature) executes the callback without requesting
+  // file access (denying access to managed files) or switch to the UI thread
+  // and call RequestFilesAccessForSystem there. The `callback` is run on the IO
+  // thread in both cases. The feature might get removed at some point
+  // (b/306619855); the behaviour after that will like executing the `callback`
+  // directly.
+  static void RequestDefaultFilesAccessIO(
+      const std::vector<base::FilePath>& files,
+      base::OnceCallback<void(ScopedFileAccess)> callback);
+
+  // Called from the IO thread. The method will switch to the UI thread and call
   // RequestFilesAccessForSystem there. The `callback` is run on the IO thread
-  // again.
+  // with the gained file access token.
   static void RequestFilesAccessForSystemIO(
       const std::vector<base::FilePath>& files,
       base::OnceCallback<void(ScopedFileAccess)> callback);
@@ -105,7 +146,7 @@ class COMPONENT_EXPORT(FILE_ACCESS) ScopedFileAccessDelegate {
     // Otherwise, it destroys the original callback when this class is
     // destroyed.
     explicit ScopedRequestFilesAccessCallbackForTesting(
-        RequestFilesAccessForSystemIOCallback callback,
+        RequestFilesAccessIOCallback callback,
         bool restore_original_callback = true);
 
     virtual ~ScopedRequestFilesAccessCallbackForTesting();
@@ -121,8 +162,13 @@ class COMPONENT_EXPORT(FILE_ACCESS) ScopedFileAccessDelegate {
 
    private:
     bool restore_original_callback_;
-    RequestFilesAccessForSystemIOCallback* original_callback_ = nullptr;
+    std::unique_ptr<RequestFilesAccessCheckDefaultCallback> original_callback_ =
+        nullptr;
   };
+  // Get a callback to get file access to files for system component
+  // destination. Can be called from IO or UI thread. The callback should be
+  // called on IO thread only.
+  static RequestFilesAccessIOCallback GetCallbackForSystem();
 
  protected:
   ScopedFileAccessDelegate();
@@ -136,9 +182,33 @@ class COMPONENT_EXPORT(FILE_ACCESS) ScopedFileAccessDelegate {
   // A single instance for a callback living on the IO thread which switches to
   // the UI thread to call RequestFilesAccessForSystem from there and switch
   // back to IO thread handing the ScopedFileAccess to another (given) callback.
-  static RequestFilesAccessForSystemIOCallback*
+  static RequestFilesAccessCheckDefaultCallback*
       request_files_access_for_system_io_callback_;
 };
+
+// Calls ScopedFilesAccessDelegate::RequestFilesAccess if
+// ScopedFilesAccessDelegate::HasInstance returns true, immediately calls the
+// callback with a ScopedFileAccess::Allowed object otherwise.
+COMPONENT_EXPORT(FILE_ACCESS)
+void RequestFilesAccess(
+    const std::vector<base::FilePath>& files,
+    const GURL& destination_url,
+    base::OnceCallback<void(file_access::ScopedFileAccess)> callback);
+
+// Calls ScopedFilesAccessDelegate::RequestFilesAccessForSystem if
+// ScopedFilesAccessDelegate::HasInstance returns true, immediately calls the
+// callback with a ScopedFileAccess::Allowed object otherwise.
+COMPONENT_EXPORT(FILE_ACCESS)
+void RequestFilesAccessForSystem(
+    const std::vector<base::FilePath>& files,
+    base::OnceCallback<void(file_access::ScopedFileAccess)> callback);
+
+// Calls ScopedFilesAccessDelegate::CreateFileAccessCallback if
+// ScopedFilesAccessDelegate::HasInstance returns true, returns a callback with
+// a ScopedFileAccess::Allowed object otherwise.
+COMPONENT_EXPORT(FILE_ACCESS)
+ScopedFileAccessDelegate::RequestFilesAccessIOCallback CreateFileAccessCallback(
+    const GURL& destination);
 
 }  // namespace file_access
 

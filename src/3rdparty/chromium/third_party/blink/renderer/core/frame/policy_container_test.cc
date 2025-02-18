@@ -10,10 +10,12 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/core/testing/mock_policy_container_host.h"
 #include "third_party/blink/renderer/platform/network/http_parsers.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 
 namespace blink {
 
 TEST(PolicyContainerTest, MembersAreSetDuringConstruction) {
+  test::TaskEnvironment task_environment;
   MockPolicyContainerHost host;
   auto policies = mojom::blink::PolicyContainerPolicies::New(
       network::CrossOriginEmbedderPolicy(
@@ -22,7 +24,8 @@ TEST(PolicyContainerTest, MembersAreSetDuringConstruction) {
       Vector<network::mojom::blink::ContentSecurityPolicyPtr>(),
       /*anonymous=*/false, network::mojom::WebSandboxFlags::kNone,
       network::mojom::blink::IPAddressSpace::kUnknown,
-      /*can_navigate_top_without_user_gesture=*/true);
+      /*can_navigate_top_without_user_gesture=*/true,
+      /*allow_cross_origin_isolation_under_initial_empty_document=*/false);
   PolicyContainer policy_container(host.BindNewEndpointAndPassDedicatedRemote(),
                                    std::move(policies));
 
@@ -31,6 +34,7 @@ TEST(PolicyContainerTest, MembersAreSetDuringConstruction) {
 }
 
 TEST(PolicyContainerTest, UpdateReferrerPolicyIsPropagated) {
+  test::TaskEnvironment task_environment;
   MockPolicyContainerHost host;
   auto policies = mojom::blink::PolicyContainerPolicies::New(
       network::CrossOriginEmbedderPolicy(
@@ -39,7 +43,8 @@ TEST(PolicyContainerTest, UpdateReferrerPolicyIsPropagated) {
       Vector<network::mojom::blink::ContentSecurityPolicyPtr>(),
       /*anonymous=*/false, network::mojom::WebSandboxFlags::kNone,
       network::mojom::blink::IPAddressSpace::kUnknown,
-      /*can_navigate_top_without_user_gesture=*/true);
+      /*can_navigate_top_without_user_gesture=*/true,
+      /*allow_cross_origin_isolation_under_initial_empty_document=*/false);
   PolicyContainer policy_container(host.BindNewEndpointAndPassDedicatedRemote(),
                                    std::move(policies));
 
@@ -55,6 +60,7 @@ TEST(PolicyContainerTest, UpdateReferrerPolicyIsPropagated) {
 }
 
 TEST(PolicyContainerTest, AddContentSecurityPolicies) {
+  test::TaskEnvironment task_environment;
   MockPolicyContainerHost host;
   auto policies = mojom::blink::PolicyContainerPolicies::New();
   PolicyContainer policy_container(host.BindNewEndpointAndPassDedicatedRemote(),

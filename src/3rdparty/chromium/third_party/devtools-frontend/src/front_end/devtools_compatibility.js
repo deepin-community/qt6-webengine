@@ -319,6 +319,10 @@ const DevToolsAPIImpl = class {
     this._dispatchOnInspectorFrontendAPI('searchCompleted', [requestId, fileSystemPath, files]);
   }
 
+  colorThemeChanged() {
+    this._dispatchOnInspectorFrontendAPI('colorThemeChanged', []);
+  }
+
   /**
    * @param {string} tabId
    */
@@ -406,7 +410,9 @@ const EnumeratedHistogram = {
   CSSHintShown: 'DevTools.CSSHintShown',
   DeveloperResourceLoaded: 'DevTools.DeveloperResourceLoaded',
   DeveloperResourceScheme: 'DevTools.DeveloperResourceScheme',
+  ElementsSidebarTabShown: 'DevTools.Elements.SidebarTabShown',
   ExperimentDisabled: 'DevTools.ExperimentDisabled',
+  ExperimentDisabledAtLaunch: 'DevTools.ExperimentDisabledAtLaunch',
   ExperimentEnabled: 'DevTools.ExperimentEnabled',
   ExperimentEnabledAtLaunch: 'DevTools.ExperimentEnabledAtLaunch',
   IssueCreated: 'DevTools.IssueCreated',
@@ -417,11 +423,14 @@ const EnumeratedHistogram = {
   KeyboardShortcutFired: 'DevTools.KeyboardShortcutFired',
   Language: 'DevTools.Language',
   LighthouseModeRun: 'DevTools.LighthouseModeRun',
+  LighthouseCategoryUsed: 'DevTools.LighthouseCategoryUsed',
   LinearMemoryInspectorRevealedFrom: 'DevTools.LinearMemoryInspector.RevealedFrom',
   LinearMemoryInspectorTarget: 'DevTools.LinearMemoryInspector.Target',
   ManifestSectionSelected: 'DevTools.ManifestSectionSelected',
   PanelClosed: 'DevTools.PanelClosed',
   PanelShown: 'DevTools.PanelShown',
+  PanelShownInLocation: 'DevTools.PanelShownInLocation',
+  RecordingAssertion: 'DevTools.RecordingAssertion',
   RecordingCodeToggled: 'DevTools.RecordingCodeToggled',
   RecordingCopiedToClipboard: 'DevTools.RecordingCopiedToClipboard',
   RecordingEdited: 'DevTools.RecordingEdited',
@@ -431,10 +440,28 @@ const EnumeratedHistogram = {
   RecordingReplayStarted: 'DevTools.RecordingReplayStarted',
   RecordingToggled: 'DevTools.RecordingToggled',
   SidebarPaneShown: 'DevTools.SidebarPaneShown',
+  SourcesSidebarTabShown: 'DevTools.Sources.SidebarTabShown',
+  SourcesPanelFileDebugged: 'DevTools.SourcesPanelFileDebugged',
   SourcesPanelFileOpened: 'DevTools.SourcesPanelFileOpened',
   NetworkPanelResponsePreviewOpened: 'DevTools.NetworkPanelResponsePreviewOpened',
   StyleTextCopied: 'DevTools.StyleTextCopied',
   SyncSetting: 'DevTools.SyncSetting',
+  ColorConvertedFrom: 'DevTools.ColorConvertedFrom',
+  ColorPickerOpenedFrom: 'DevTools.ColorPickerOpenedFrom',
+  CSSPropertyDocumentation: 'DevTools.CSSPropertyDocumentation',
+  InlineScriptParsed: 'DevTools.InlineScriptParsed',
+  VMInlineScriptTypeShown: 'DevTools.VMInlineScriptShown',
+  BreakpointsRestoredFromStorageCount: 'DevTools.BreakpointsRestoredFromStorageCount',
+  SwatchActivated: 'DevTools.SwatchActivated',
+  BadgeActivated: 'DevTools.BadgeActivated',
+  AnimationPlaybackRateChanged: 'DevTools.AnimationPlaybackRateChanged',
+  AnimationPointDragged: 'DevTools.AnimationPointDragged',
+  LegacyResourceTypeFilterNumberOfSelectedChanged: 'DevTools.LegacyResourceTypeFilterNumberOfSelectedChanged',
+  LegacyResourceTypeFilterItemSelected: 'DevTools.LegacyResourceTypeFilterItemSelected',
+  ResourceTypeFilterNumberOfSelectedChanged: 'DevTools.ResourceTypeFilterNumberOfSelectedChanged',
+  ResourceTypeFilterItemSelected: 'DevTools.ResourceTypeFilterItemSelected',
+  NetworkPanelMoreFiltersNumberOfSelectedChanged: 'DevTools.NetworkPanelMoreFiltersNumberOfSelectedChanged',
+  NetworkPanelMoreFiltersItemSelected: 'DevTools.NetworkPanelMoreFiltersItemSelected',
 };
 
 /**
@@ -691,6 +718,19 @@ const InspectorFrontendHostImpl = class {
    */
   sendMessageToBackend(message) {
     DevToolsAPI.sendMessageToEmbedder('dispatchProtocolMessage', [message], null);
+  }
+
+  /**
+   * @override
+   * @param {string} histogramName
+   * @param {number} sample
+   * @param {number} min
+   * @param {number} exclusiveMax
+   * @param {number} bucketSize
+   */
+  recordCountHistogram(histogramName, sample, min, exclusiveMax, bucketSize) {
+    DevToolsAPI.sendMessageToEmbedder(
+        'recordCountHistogram', [histogramName, sample, min, exclusiveMax, bucketSize], null);
   }
 
   /**
@@ -953,6 +993,54 @@ const InspectorFrontendHostImpl = class {
     DevToolsAPI.setAddExtensionCallback(callback);
   }
 
+  /**
+   * @override
+   * @param {InspectorFrontendHostAPI.ImpressionEvent} impressionEvent
+   */
+  recordImpression(impressionEvent) {
+    DevToolsAPI.sendMessageToEmbedder('recordImpression', [impressionEvent], null);
+  }
+
+  /**
+   * @override
+   * @param {InspectorFrontendHostAPI.ClickEvent} clickEvent
+   */
+  recordClick(clickEvent) {
+    DevToolsAPI.sendMessageToEmbedder('recordClick', [clickEvent], null);
+  }
+
+  /**
+   * @override
+   * @param {InspectorFrontendHostAPI.HoverEvent} hoverEvent
+   */
+  recordHover(hoverEvent) {
+    DevToolsAPI.sendMessageToEmbedder('recordHover', [hoverEvent], null);
+  }
+
+  /**
+   * @override
+   * @param {InspectorFrontendHostAPI.DragEvent} dragEvent
+   */
+  recordDrag(dragEvent) {
+    DevToolsAPI.sendMessageToEmbedder('recordDrag', [dragEvent], null);
+  }
+
+  /**
+   * @override
+   * @param {InspectorFrontendHostAPI.ChangeEvent} changeEvent
+   */
+  recordChange(changeEvent) {
+    DevToolsAPI.sendMessageToEmbedder('recordChange', [changeEvent], null);
+  }
+
+  /**
+   * @override
+   * @param {InspectorFrontendHostAPI.KeyDownEvent} keyDownEvent
+   */
+  recordKeyDown(keyDownEvent) {
+    DevToolsAPI.sendMessageToEmbedder('recordKeyDown', [keyDownEvent], null);
+  }
+
   // Backward-compatible methods below this line --------------------------------------------
 
   /**
@@ -1028,6 +1116,14 @@ const InspectorFrontendHostImpl = class {
    */
   initialTargetId() {
     return DevToolsAPI._initialTargetIdPromise;
+  }
+
+  /**
+   * @param {string} request
+   * @param {function(!InspectorFrontendHostAPI.DoAidaConversationResult): void} cb
+   */
+  doAidaConversation(request, cb) {
+    DevToolsAPI.sendMessageToEmbedder('doAidaConversation', [request], cb);
   }
 };
 
@@ -1165,7 +1261,6 @@ function installObjectObserve() {
     'showHeaSnapshotObjectsHiddenProperties',
     'showInheritedComputedStyleProperties',
     'showMediaQueryInspector',
-    'showNativeFunctionsInJSProfile',
     'showUAShadowDOM',
     'showWhitespacesInEditor',
     'sidebarPosition',
@@ -1173,6 +1268,7 @@ function installObjectObserve() {
     'automaticallyIgnoreListKnownThirdPartyScripts',
     'skipStackFramesPattern',
     'sourceMapInfobarDisabled',
+    'sourceMapSkippedInfobarDisabled',
     'sourcesPanelDebuggerSidebarSplitViewState',
     'sourcesPanelNavigatorSplitViewState',
     'sourcesPanelSplitSidebarRatio',

@@ -79,7 +79,7 @@ namespace {
 void DidGetTPMInfoForUserOnUIThread(
     std::unique_ptr<ash::TPMTokenInfoGetter> getter,
     const std::string& username_hash,
-    absl::optional<user_data_auth::TpmTokenInfo> token_info) {
+    std::optional<user_data_auth::TpmTokenInfo> token_info) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (token_info.has_value() && token_info->slot() != -1) {
     DVLOG(1) << "Got TPM slot for " << username_hash << ": "
@@ -146,12 +146,13 @@ void StartNSSInitOnIOThread(const AccountId& account_id,
       &StartTPMSlotInitializationOnIOThread, account_id, username_hash));
 }
 
-void NotifyCertsChangedInAshOnUIThread() {
+void NotifyCertsChangedInAshOnUIThread(
+    crosapi::mojom::CertDatabaseChangeType change_type) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   crosapi::CrosapiManager::Get()
       ->crosapi_ash()
       ->cert_database_ash()
-      ->NotifyCertsChangedInAsh();
+      ->NotifyCertsChangedInAsh(change_type);
 }
 
 }  // namespace
@@ -205,9 +206,18 @@ class NssService::NSSCertDatabaseChromeOSManager
   }
 
   // net::NSSCertDatabase::Observer
-  void OnCertDBChanged() override {
+  void OnTrustStoreChanged() override {
     content::GetUIThreadTaskRunner({})->PostTask(
-        FROM_HERE, base::BindOnce(&NotifyCertsChangedInAshOnUIThread));
+        FROM_HERE,
+        base::BindOnce(&NotifyCertsChangedInAshOnUIThread,
+                       crosapi::mojom::CertDatabaseChangeType::kTrustStore));
+  }
+  void OnClientCertStoreChanged() override {
+    content::GetUIThreadTaskRunner({})->PostTask(
+        FROM_HERE,
+        base::BindOnce(
+            &NotifyCertsChangedInAshOnUIThread,
+            crosapi::mojom::CertDatabaseChangeType::kClientCertStore));
   }
 
  private:

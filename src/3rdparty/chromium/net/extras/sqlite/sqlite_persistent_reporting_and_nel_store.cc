@@ -87,14 +87,13 @@ base::TaskPriority GetReportingAndNelStoreBackgroundSequencePriority() {
                                           out_network_anonymization_key))
     return false;
 
-  // If NetworkAnonymizationKeys are disabled for reporting and NEL, but the
+  // If network state partitionining is disabled, but the
   // NetworkAnonymizationKeys is non-empty, ignore the entry. The entry will
   // still be in the on-disk database, in case NAKs are re-enabled, it just
   // won't be loaded into memory. The entry could still be loaded with an empty
   // NetworkAnonymizationKey, but that would require logic to resolve conflicts.
   if (!out_network_anonymization_key->IsEmpty() &&
-      !base::FeatureList::IsEnabled(
-          features::kPartitionNelAndReportingByNetworkIsolationKey)) {
+      !NetworkAnonymizationKey::IsPartitioningEnabled()) {
     *out_network_anonymization_key = NetworkAnonymizationKey();
     return false;
   }
@@ -115,7 +114,8 @@ class SQLitePersistentReportingAndNelStore::Backend
             kCurrentVersionNumber,
             kCompatibleVersionNumber,
             background_task_runner,
-            client_task_runner) {}
+            client_task_runner,
+            /*enable_exclusive_access=*/false) {}
 
   Backend(const Backend&) = delete;
   Backend& operator=(const Backend&) = delete;
@@ -702,8 +702,8 @@ SQLitePersistentReportingAndNelStore::Backend::DoMigrateDatabaseSchema() {
   //
   // For migration purposes, the NetworkAnonymizationKey field of the stored
   // policies will be populated with an empty list, which corresponds to an
-  // empty NIK. This matches the behavior when NIKs are disabled. This will
-  // result in effectively clearing all policies once NIKs are enabled, at
+  // empty NAK. This matches the behavior when NAKs are disabled. This will
+  // result in effectively clearing all policies once NAKs are enabled, at
   // which point the the migration code should just be switched to deleting
   // the old tables instead.
   if (cur_version == 1) {

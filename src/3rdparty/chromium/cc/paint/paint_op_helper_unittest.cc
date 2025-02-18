@@ -9,13 +9,13 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkTextBlob.h"
 #include "third_party/skia/include/effects/SkLumaColorFilter.h"
-#include "third_party/skia/include/private/chromium/GrSlug.h"
+#include "third_party/skia/include/private/chromium/Slug.h"
 
 namespace cc {
 namespace {
 
 TEST(PaintOpHelper, AnnotateToString) {
-  AnnotateOp op(PaintCanvas::AnnotationType::URL, SkRect::MakeXYWH(1, 2, 3, 4),
+  AnnotateOp op(PaintCanvas::AnnotationType::kUrl, SkRect::MakeXYWH(1, 2, 3, 4),
                 nullptr);
   std::string str = PaintOpHelper::ToString(op);
   EXPECT_EQ(str,
@@ -245,6 +245,27 @@ TEST(PaintOpHelper, DrawTextBlobToString) {
       "isValid=true, hasDiscardableImages=false])");
 }
 
+TEST(PaintOpHelper, DrawVerticesToString) {
+  auto verts = base::MakeRefCounted<RefCountedBuffer<SkPoint>>(
+      std::vector<SkPoint>{{100, 100}});
+  auto uvs = base::MakeRefCounted<RefCountedBuffer<SkPoint>>(
+      std::vector<SkPoint>{{1, 1}});
+  auto indices = base::MakeRefCounted<RefCountedBuffer<uint16_t>>(
+      std::vector<uint16_t>{0, 0, 0});
+
+  DrawVerticesOp op(verts, uvs, indices, PaintFlags());
+  EXPECT_EQ(
+      PaintOpHelper::ToString(op),
+      "DrawVerticesOp(flags=[color=rgba(0, 0, 0, 255), blendMode=kSrcOver, "
+      "isAntiAlias=false, isDither=false, "
+      "filterQuality=kNone_SkFilterQuality, strokeWidth=0.000, "
+      "strokeMiter=4.000, strokeCap=kButt_Cap, strokeJoin=kMiter_Join, "
+      "colorFilter=(nil), maskFilter=(nil), shader=(nil), hasShader=false, "
+      "shaderIsOpaque=false, pathEffect=(nil), imageFilter=(nil), "
+      "drawLooper=(nil), supportsFoldingAlpha=true, isValid=true, "
+      "hasDiscardableImages=false])");
+}
+
 TEST(PaintOpHelper, NoopToString) {
   NoopOp op;
   std::string str = PaintOpHelper::ToString(op);
@@ -336,10 +357,10 @@ TEST(PaintOpHelper, TranslateToString) {
 
 TEST(PaintOpHelperFilters, ColorFilterPaintFilter) {
   PaintFilter::CropRect crop_rect(SkRect::MakeWH(100.f, 100.f));
-  ColorFilterPaintFilter filter(SkLumaColorFilter::Make(),
+  ColorFilterPaintFilter filter(ColorFilter::MakeLuma(),
                                 /*input=*/nullptr, &crop_rect);
   EXPECT_EQ(PaintOpHelper::ToString(filter),
-            "ColorFilterPaintFilter(color_filter=SkColorFilter, input=(nil), "
+            "ColorFilterPaintFilter(color_filter=ColorFilter, input=(nil), "
             "crop_rect=[0.000,0.000 100.000x100.000])");
 }
 
@@ -367,11 +388,11 @@ TEST(PaintOpHelperFilters, DropShadowPaintFilter) {
 
 TEST(PaintOpHelperFilters, MagnifierPaintFilter) {
   PaintFilter::CropRect crop_rect(SkRect::MakeWH(100.f, 100.f));
-  MagnifierPaintFilter filter(SkRect::MakeWH(100.f, 100.f), /*inset=*/0.1f,
-                              /*input=*/nullptr, &crop_rect);
+  MagnifierPaintFilter filter(SkRect::MakeWH(100.f, 100.f), /*zoom_amount=*/2.f,
+                              /*inset=*/0.1f, /*input=*/nullptr, &crop_rect);
   EXPECT_EQ(PaintOpHelper::ToString(filter),
-            "MagnifierPaintFilter(src_rect=[0.000,0.000 100.000x100.000], "
-            "inset=0.100, input=(nil), "
+            "MagnifierPaintFilter(lens_bounds=[0.000,0.000 100.000x100.000], "
+            "zoom_amount=2.000, inset=0.100, input=(nil), "
             "crop_rect=[0.000,0.000 100.000x100.000])");
 }
 
@@ -387,12 +408,10 @@ TEST(PaintOpHelperFilters, ComposePaintFilter) {
 TEST(PaintOpHelperFilters, AlphaThresholdPaintFilter) {
   PaintFilter::CropRect crop_rect(SkRect::MakeWH(100.f, 100.f));
   AlphaThresholdPaintFilter filter(SkRegion(SkIRect::MakeWH(100, 100)),
-                                   /*inner_min=*/0.1f, /*outer_max=*/0.2f,
                                    /*input=*/nullptr, &crop_rect);
   EXPECT_EQ(PaintOpHelper::ToString(filter),
             "AlphaThresholdPaintFilter(region=[0,0 100x100], "
-            "inner_min=0.100, outer_max=0.200, input=(nil), "
-            "crop_rect=[0.000,0.000 100.000x100.000])");
+            "input=(nil), crop_rect=[0.000,0.000 100.000x100.000])");
 }
 
 TEST(PaintOpHelperFilters, XfermodePaintFilter) {

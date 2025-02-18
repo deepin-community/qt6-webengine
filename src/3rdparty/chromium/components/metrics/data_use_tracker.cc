@@ -7,8 +7,7 @@
 #include <memory>
 #include <string>
 
-#include "base/strings/string_number_conversions.h"
-#include "base/strings/stringprintf.h"
+#include "base/i18n/time_formatting.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "components/metrics/metrics_pref_names.h"
@@ -123,14 +122,15 @@ void DataUseTracker::RemoveExpiredEntriesForPref(const std::string& pref_name) {
   const base::Time current_date = GetCurrentMeasurementDate();
   const base::Time week_ago = current_date - base::Days(7);
 
-  base::Value user_pref_new_dict{base::Value::Type::DICT};
+  base::Value::Dict user_pref_new_dict;
   for (const auto it : user_pref_dict) {
     base::Time key_date;
     if (base::Time::FromUTCString(it.first.c_str(), &key_date) &&
-        key_date > week_ago)
-      user_pref_new_dict.SetPath(it.first, it.second.Clone());
+        key_date > week_ago) {
+      user_pref_new_dict.Set(it.first, it.second.Clone());
+    }
   }
-  local_state_->Set(pref_name, user_pref_new_dict);
+  local_state_->SetDict(pref_name, std::move(user_pref_new_dict));
 }
 
 // Note: We compute total data use regardless of what is the current date. In
@@ -154,11 +154,8 @@ base::Time DataUseTracker::GetCurrentMeasurementDate() const {
 
 std::string DataUseTracker::GetCurrentMeasurementDateAsString() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-
-  base::Time::Exploded today_exploded;
-  GetCurrentMeasurementDate().LocalExplode(&today_exploded);
-  return base::StringPrintf("%04d-%02d-%02d", today_exploded.year,
-                            today_exploded.month, today_exploded.day_of_month);
+  return base::UnlocalizedTimeFormatWithPattern(GetCurrentMeasurementDate(),
+                                                "yyyy-MM-dd");
 }
 
 }  // namespace metrics

@@ -4,6 +4,7 @@
 
 #include "third_party/blink/renderer/core/testing/fake_local_frame_host.h"
 
+#include "services/network/public/cpp/attribution_reporting_runtime_features.h"
 #include "skia/public/mojom/skcolor.mojom-blink.h"
 #include "third_party/blink/public/mojom/choosers/popup_menu.mojom-blink.h"
 #include "third_party/blink/public/mojom/frame/frame_owner_properties.mojom-blink.h"
@@ -59,8 +60,9 @@ void FakeLocalFrameHost::VisibilityChanged(
 void FakeLocalFrameHost::DidChangeThemeColor(
     absl::optional<::SkColor> theme_color) {}
 
-void FakeLocalFrameHost::DidChangeBackgroundColor(SkColor background_color,
-                                                  bool color_adjust) {}
+void FakeLocalFrameHost::DidChangeBackgroundColor(
+    const SkColor4f& background_color,
+    bool color_adjust) {}
 
 void FakeLocalFrameHost::DidFailLoadWithError(const ::blink::KURL& url,
                                               int32_t error_code) {}
@@ -109,6 +111,8 @@ void FakeLocalFrameHost::GoToEntryAtOffset(
 void FakeLocalFrameHost::UpdateTitle(
     const WTF::String& title,
     base::i18n::TextDirection title_direction) {}
+
+void FakeLocalFrameHost::UpdateAppTitle(const WTF::String& app_title) {}
 
 void FakeLocalFrameHost::UpdateUserActivationState(
     mojom::blink::UserActivationUpdateType update_type,
@@ -162,6 +166,7 @@ void FakeLocalFrameHost::DownloadURL(
 
 void FakeLocalFrameHost::FocusedElementChanged(
     bool is_editable_element,
+    bool is_richly_editable_element,
     const gfx::Rect& bounds_in_frame_widget,
     blink::mojom::FocusType focus_type) {}
 
@@ -252,41 +257,49 @@ void FakeLocalFrameHost::ReceivedDelegatedCapability(
 void FakeLocalFrameHost::SendFencedFrameReportingBeacon(
     const WTF::String& event_data,
     const WTF::String& event_type,
-    blink::FencedFrame::ReportingDestination destination) {}
+    const WTF::Vector<blink::FencedFrame::ReportingDestination>& destinations) {
+}
+
+void FakeLocalFrameHost::SendFencedFrameReportingBeaconToCustomURL(
+    const blink::KURL& destination_url) {}
 
 void FakeLocalFrameHost::SetFencedFrameAutomaticBeaconReportEventData(
+    blink::mojom::AutomaticBeaconType event_type,
     const WTF::String& event_data,
-    const WTF::Vector<blink::FencedFrame::ReportingDestination>& destination) {}
+    const WTF::Vector<blink::FencedFrame::ReportingDestination>& destinations,
+    bool once,
+    bool cross_origin_exposed) {}
+
+void FakeLocalFrameHost::DisableUntrustedNetworkInFencedFrame(
+    DisableUntrustedNetworkInFencedFrameCallback callback) {
+  std::move(callback).Run();
+}
+
+void FakeLocalFrameHost::SendLegacyTechEvent(
+    const WTF::String& type,
+    mojom::blink::LegacyTechEventCodeLocationPtr code_location) {}
 
 void FakeLocalFrameHost::SendPrivateAggregationRequestsForFencedFrameEvent(
     const WTF::String& event_type) {}
 
-void FakeLocalFrameHost::CreatePortal(
-    mojo::PendingAssociatedReceiver<mojom::blink::Portal> portal,
-    mojo::PendingAssociatedRemote<mojom::blink::PortalClient> client,
-    mojom::blink::RemoteFrameInterfacesFromRendererPtr remote_frame_interfaces,
-    CreatePortalCallback callback) {
-  std::move(callback).Run(mojom::blink::FrameReplicationState::New(),
-                          PortalToken(), RemoteFrameToken(),
-                          base::UnguessableToken());
-}
-
-void FakeLocalFrameHost::AdoptPortal(
-    const PortalToken& portal_token,
-    mojom::blink::RemoteFrameInterfacesFromRendererPtr remote_frame_interfaces,
-    AdoptPortalCallback callback) {
-  std::move(callback).Run(mojom::blink::FrameReplicationState::New(),
-                          RemoteFrameToken(), base::UnguessableToken());
-}
+void FakeLocalFrameHost::SetAttributionReportingRuntimeFeatures(
+    network::AttributionReportingRuntimeFeatures features) {}
 
 void FakeLocalFrameHost::CreateFencedFrame(
     mojo::PendingAssociatedReceiver<mojom::blink::FencedFrameOwnerHost>,
-    mojom::blink::FencedFrameMode,
     mojom::blink::RemoteFrameInterfacesFromRendererPtr remote_frame_interfaces,
     const RemoteFrameToken& frame_token,
     const base::UnguessableToken& devtools_frame_token) {
   NOTREACHED() << "At the moment, FencedFrame is not used in any "
                   "unit tests, so this path should not be hit";
 }
+
+void FakeLocalFrameHost::StartDragging(
+    const blink::WebDragData& drag_data,
+    blink::DragOperationsMask operations_allowed,
+    const SkBitmap& bitmap,
+    const gfx::Vector2d& cursor_offset_in_dip,
+    const gfx::Rect& drag_obj_rect_in_dip,
+    mojom::blink::DragEventSourceInfoPtr event_info) {}
 
 }  // namespace blink

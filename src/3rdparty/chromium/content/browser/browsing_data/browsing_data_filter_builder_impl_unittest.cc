@@ -6,11 +6,16 @@
 
 #include <algorithm>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "base/functional/callback.h"
+#include "base/strings/stringprintf.h"
 #include "base/test/scoped_feature_list.h"
+#include "content/public/browser/storage_partition_config.h"
+#include "content/public/test/browser_task_environment.h"
+#include "content/public/test/test_browser_context.h"
 #include "net/cookies/canonical_cookie.h"
 #include "net/cookies/cookie_deletion_info.h"
 #include "services/network/cookie_manager.h"
@@ -18,7 +23,6 @@
 #include "services/network/public/mojom/network_context.mojom.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
@@ -68,59 +72,55 @@ void RunTestCase(TestCase test_case,
   GURL test_url(test_case.url);
   EXPECT_TRUE(test_url.is_valid()) << test_case.url;
   std::unique_ptr<net::CanonicalCookie> cookie = net::CanonicalCookie::Create(
-      test_url, cookie_line, base::Time::Now(), absl::nullopt /* server_time */,
-      absl::nullopt /* cookie_partition_key */);
+      test_url, cookie_line, base::Time::Now(), std::nullopt /* server_time */,
+      std::nullopt /* cookie_partition_key */);
   EXPECT_TRUE(cookie) << cookie_line << " from " << test_case.url
                       << " is not a valid cookie";
   if (cookie) {
-    EXPECT_EQ(test_case.should_match,
-              delete_info.Matches(
-                  *cookie,
-                  net::CookieAccessParams{
-                      net::CookieAccessSemantics::NONLEGACY, false,
-                      net::CookieSamePartyStatus::kNoSamePartyEnforcement}))
+    EXPECT_EQ(
+        test_case.should_match,
+        delete_info.Matches(*cookie,
+                            net::CookieAccessParams{
+                                net::CookieAccessSemantics::NONLEGACY, false}))
         << cookie->DebugString();
   }
 
   cookie_line = std::string("A=2;domain=") + test_url.host();
   cookie = net::CanonicalCookie::Create(
-      test_url, cookie_line, base::Time::Now(), absl::nullopt /* server_time */,
-      absl::nullopt /* cookie_partition_key */);
+      test_url, cookie_line, base::Time::Now(), std::nullopt /* server_time */,
+      std::nullopt /* cookie_partition_key */);
   if (cookie) {
-    EXPECT_EQ(test_case.should_match,
-              delete_info.Matches(
-                  *cookie,
-                  net::CookieAccessParams{
-                      net::CookieAccessSemantics::NONLEGACY, false,
-                      net::CookieSamePartyStatus::kNoSamePartyEnforcement}))
+    EXPECT_EQ(
+        test_case.should_match,
+        delete_info.Matches(*cookie,
+                            net::CookieAccessParams{
+                                net::CookieAccessSemantics::NONLEGACY, false}))
         << cookie->DebugString();
   }
 
   cookie_line = std::string("A=2; HttpOnly;") + test_url.host();
   cookie = net::CanonicalCookie::Create(
-      test_url, cookie_line, base::Time::Now(), absl::nullopt /* server_time */,
-      absl::nullopt /* cookie_partition_key */);
+      test_url, cookie_line, base::Time::Now(), std::nullopt /* server_time */,
+      std::nullopt /* cookie_partition_key */);
   if (cookie) {
-    EXPECT_EQ(test_case.should_match,
-              delete_info.Matches(
-                  *cookie,
-                  net::CookieAccessParams{
-                      net::CookieAccessSemantics::NONLEGACY, false,
-                      net::CookieSamePartyStatus::kNoSamePartyEnforcement}))
+    EXPECT_EQ(
+        test_case.should_match,
+        delete_info.Matches(*cookie,
+                            net::CookieAccessParams{
+                                net::CookieAccessSemantics::NONLEGACY, false}))
         << cookie->DebugString();
   }
 
   cookie_line = std::string("A=2; HttpOnly; Secure;") + test_url.host();
   cookie = net::CanonicalCookie::Create(
-      test_url, cookie_line, base::Time::Now(), absl::nullopt /* server_time */,
-      absl::nullopt /* cookie_partition_key */);
+      test_url, cookie_line, base::Time::Now(), std::nullopt /* server_time */,
+      std::nullopt /* cookie_partition_key */);
   if (cookie) {
-    EXPECT_EQ(test_case.should_match,
-              delete_info.Matches(
-                  *cookie,
-                  net::CookieAccessParams{
-                      net::CookieAccessSemantics::NONLEGACY, false,
-                      net::CookieSamePartyStatus::kNoSamePartyEnforcement}))
+    EXPECT_EQ(
+        test_case.should_match,
+        delete_info.Matches(*cookie,
+                            net::CookieAccessParams{
+                                net::CookieAccessSemantics::NONLEGACY, false}))
         << cookie->DebugString();
   }
 }
@@ -168,8 +168,43 @@ TEST(BrowsingDataFilterBuilderImplTest, Noop) {
       {"https://website.sp.nom.br", true},
   };
 
-  for (TestCase test_case : test_cases)
-    RunTestCase(test_case, filter);
+  for (size_t i = 0; i < std::size(test_cases); i++) {
+    SCOPED_TRACE(base::StringPrintf("Test case %zu", i));
+    RunTestCase(test_cases[i], filter);
+  }
+}
+
+TEST(BrowsingDataFilterBuilderImplTest, EmptyDelete) {
+  BrowsingDataFilterBuilderImpl builder(
+      BrowsingDataFilterBuilderImpl::Mode::kDelete);
+  // An empty kDelete filter matches nothing.
+  ASSERT_TRUE(builder.MatchesNothing());
+  base::RepeatingCallback<bool(const GURL&)> filter = builder.BuildUrlFilter();
+
+  TestCase test_cases[] = {
+      {"https://www.google.com", false},
+      {"https://www.chrome.com", false},
+      {"http://www.google.com/foo/bar", false},
+      {"https://website.sp.nom.br", false},
+      {"http://192.168.1.1", false},
+      {"http://192.168.1.1:80", false},
+  };
+
+  for (size_t i = 0; i < std::size(test_cases); i++) {
+    SCOPED_TRACE(base::StringPrintf("Test case %zu", i));
+    RunTestCase(test_cases[i], filter);
+  }
+}
+
+TEST(BrowsingDataFilterBuilderImplTest, MatchesNothing) {
+  BrowsingDataFilterBuilderImpl builder(
+      BrowsingDataFilterBuilderImpl::Mode::kDelete);
+  // An empty kDelete filter matches nothing.
+  ASSERT_TRUE(builder.MatchesNothing());
+
+  // With a domain added to the builder, it should no longer match nothing.
+  builder.AddRegisterableDomain(std::string(kGoogleDomain));
+  ASSERT_FALSE(builder.MatchesNothing());
 }
 
 TEST(BrowsingDataFilterBuilderImplTest, RegistrableDomainGURLDeleteList) {
@@ -212,8 +247,10 @@ TEST(BrowsingDataFilterBuilderImplTest, RegistrableDomainGURLDeleteList) {
       {"https://sp.nom.br", false},
   };
 
-  for (TestCase test_case : test_cases)
-    RunTestCase(test_case, filter);
+  for (size_t i = 0; i < std::size(test_cases); i++) {
+    SCOPED_TRACE(base::StringPrintf("Test case %zu", i));
+    RunTestCase(test_cases[i], filter);
+  }
 }
 
 TEST(BrowsingDataFilterBuilderImplTest, RegistrableDomainGURLPreserveList) {
@@ -256,8 +293,10 @@ TEST(BrowsingDataFilterBuilderImplTest, RegistrableDomainGURLPreserveList) {
       {"https://sp.nom.br", true},
   };
 
-  for (TestCase test_case : test_cases)
-    RunTestCase(test_case, filter);
+  for (size_t i = 0; i < std::size(test_cases); i++) {
+    SCOPED_TRACE(base::StringPrintf("Test case %zu", i));
+    RunTestCase(test_cases[i], filter);
+  }
 }
 
 TEST(BrowsingDataFilterBuilderImplTest,
@@ -306,8 +345,18 @@ TEST(BrowsingDataFilterBuilderImplTest,
       {"https://subdomain.second-level-domain.fileserver", true},
   };
 
-  for (TestCase test_case : test_cases)
-    RunTestCase(test_case, builder.BuildCookieDeletionFilter());
+  for (size_t i = 0; i < std::size(test_cases); i++) {
+    SCOPED_TRACE(base::StringPrintf("Test case %zu", i));
+    RunTestCase(test_cases[i], builder.BuildCookieDeletionFilter());
+  }
+}
+
+TEST(BrowsingDataFilterBuilderImplTest, EmptyCookieDeletionFilter) {
+  BrowsingDataFilterBuilderImpl builder(
+      BrowsingDataFilterBuilderImpl::Mode::kDelete);
+  auto cookie_filter = builder.BuildCookieDeletionFilter();
+  EXPECT_TRUE(cookie_filter->including_domains.has_value());
+  EXPECT_FALSE(cookie_filter->excluding_domains.has_value());
 }
 
 TEST(BrowsingDataFilterBuilderImplTest,
@@ -356,24 +405,26 @@ TEST(BrowsingDataFilterBuilderImplTest,
       {"https://subdomain.second-level-domain.fileserver", false},
   };
 
-  for (TestCase test_case : test_cases)
-    RunTestCase(test_case, builder.BuildCookieDeletionFilter());
+  for (size_t i = 0; i < std::size(test_cases); i++) {
+    SCOPED_TRACE(base::StringPrintf("Test case %zu", i));
+    RunTestCase(test_cases[i], builder.BuildCookieDeletionFilter());
+  }
 }
 
 TEST(BrowsingDataFilterBuilderImplTest, PartitionedCookies) {
   struct PartitionedCookiesTestCase {
     net::CookiePartitionKeyCollection filter_cookie_partition_key_collection;
-    absl::optional<net::CookiePartitionKey> cookie_partition_key;
+    std::optional<net::CookiePartitionKey> cookie_partition_key;
     bool should_match;
   } test_cases[] = {
       // Unpartitioned cookies should remain unaffected by the filter's
       // keychain.
-      {net::CookiePartitionKeyCollection(), absl::nullopt, true},
-      {net::CookiePartitionKeyCollection::ContainsAll(), absl::nullopt, true},
+      {net::CookiePartitionKeyCollection(), std::nullopt, true},
+      {net::CookiePartitionKeyCollection::ContainsAll(), std::nullopt, true},
       {net::CookiePartitionKeyCollection(
            net::CookiePartitionKey::FromURLForTesting(
                GURL("https://www.foo.com"))),
-       absl::nullopt, true},
+       std::nullopt, true},
       // Partitioned cookies should not match with an empty keychain.
       {net::CookiePartitionKeyCollection(),
        net::CookiePartitionKey::FromURLForTesting(GURL("https://www.foo.com")),
@@ -410,14 +461,12 @@ TEST(BrowsingDataFilterBuilderImplTest, PartitionedCookies) {
     std::unique_ptr<net::CanonicalCookie> cookie = net::CanonicalCookie::Create(
         GURL("https://www.cookie.com/"),
         "__Host-A=B; Secure; SameSite=None; Path=/; Partitioned;",
-        base::Time::Now(), absl::nullopt, test_case.cookie_partition_key);
+        base::Time::Now(), std::nullopt, test_case.cookie_partition_key);
     EXPECT_TRUE(cookie);
-    EXPECT_EQ(
-        test_case.should_match,
-        delete_info.Matches(
-            *cookie, net::CookieAccessParams{
-                         net::CookieAccessSemantics::NONLEGACY, false,
-                         net::CookieSamePartyStatus::kNoSamePartyEnforcement}));
+    EXPECT_EQ(test_case.should_match,
+              delete_info.Matches(
+                  *cookie, net::CookieAccessParams{
+                               net::CookieAccessSemantics::NONLEGACY, false}));
   }
 }
 
@@ -485,9 +534,9 @@ TEST(BrowsingDataFilterBuilderImplTest, StorageKey) {
       net::features::kThirdPartyStoragePartitioning);
   auto origin1 = url::Origin::Create(GURL("https://foo.com"));
   auto origin2 = url::Origin::Create(GURL("https://bar.com"));
-  absl::optional<blink::StorageKey> keys[] = {
+  std::optional<blink::StorageKey> keys[] = {
       // No storage key provided.
-      absl::nullopt,
+      std::nullopt,
       // Top-level (Foo).
       blink::StorageKey::CreateFromStringForTesting("https://foo.com"),
       // Foo -> Bar.
@@ -629,8 +678,10 @@ TEST(BrowsingDataFilterBuilderImplTest,
       {"website.fileserver", false},
   };
 
-  for (TestCase test_case : test_cases)
-    RunTestCase(test_case, filter);
+  for (size_t i = 0; i < std::size(test_cases); i++) {
+    SCOPED_TRACE(base::StringPrintf("Test case %zu", i));
+    RunTestCase(test_cases[i], filter);
+  }
 }
 
 TEST(BrowsingDataFilterBuilderImplTest,
@@ -664,8 +715,10 @@ TEST(BrowsingDataFilterBuilderImplTest,
       {"website.fileserver", true},
   };
 
-  for (TestCase test_case : test_cases)
-    RunTestCase(test_case, filter);
+  for (size_t i = 0; i < std::size(test_cases); i++) {
+    SCOPED_TRACE(base::StringPrintf("Test case %zu", i));
+    RunTestCase(test_cases[i], filter);
+  }
 }
 
 TEST(BrowsingDataFilterBuilderImplTest, OriginDeleteList) {
@@ -695,8 +748,10 @@ TEST(BrowsingDataFilterBuilderImplTest, OriginDeleteList) {
       {"https://www.chromium.org", false},
   };
 
-  for (TestCase test_case : test_cases)
-    RunTestCase(test_case, filter);
+  for (size_t i = 0; i < std::size(test_cases); i++) {
+    SCOPED_TRACE(base::StringPrintf("Test case %zu", i));
+    RunTestCase(test_cases[i], filter);
+  }
 }
 
 TEST(BrowsingDataFilterBuilderImplTest, OriginPreserveList) {
@@ -726,8 +781,10 @@ TEST(BrowsingDataFilterBuilderImplTest, OriginPreserveList) {
       {"https://www.youtube.com", true},
   };
 
-  for (TestCase test_case : test_cases)
-    RunTestCase(test_case, filter);
+  for (size_t i = 0; i < std::size(test_cases); i++) {
+    SCOPED_TRACE(base::StringPrintf("Test case %zu", i));
+    RunTestCase(test_cases[i], filter);
+  }
 }
 
 TEST(BrowsingDataFilterBuilderImplTest, CombinedDeleteList) {
@@ -749,8 +806,10 @@ TEST(BrowsingDataFilterBuilderImplTest, CombinedDeleteList) {
       {"https://www.example.com/?q=test", true},
   };
 
-  for (TestCase test_case : test_cases)
-    RunTestCase(test_case, filter);
+  for (size_t i = 0; i < std::size(test_cases); i++) {
+    SCOPED_TRACE(base::StringPrintf("Test case %zu", i));
+    RunTestCase(test_cases[i], filter);
+  }
 }
 
 TEST(BrowsingDataFilterBuilderImplTest, CombinedPreserveList) {
@@ -772,8 +831,10 @@ TEST(BrowsingDataFilterBuilderImplTest, CombinedPreserveList) {
       {"https://www.example.com/?q=test", false},
   };
 
-  for (TestCase test_case : test_cases)
-    RunTestCase(test_case, filter);
+  for (size_t i = 0; i < std::size(test_cases); i++) {
+    SCOPED_TRACE(base::StringPrintf("Test case %zu", i));
+    RunTestCase(test_cases[i], filter);
+  }
 }
 
 TEST(BrowsingDataFilterBuilderImplTest, PartitionedDeleteList) {
@@ -805,8 +866,10 @@ TEST(BrowsingDataFilterBuilderImplTest, PartitionedDeleteList) {
       {origin3, origin3, blink::mojom::AncestorChainBit::kCrossSite, true},
   };
 
-  for (auto test_case : test_cases)
-    RunTestCase(test_case, filter);
+  for (size_t i = 0; i < std::size(test_cases); i++) {
+    SCOPED_TRACE(base::StringPrintf("Test case %zu", i));
+    RunTestCase(test_cases[i], filter);
+  }
 }
 
 TEST(BrowsingDataFilterBuilderImplTest, PartitionedPreserveList) {
@@ -838,8 +901,10 @@ TEST(BrowsingDataFilterBuilderImplTest, PartitionedPreserveList) {
       {origin3, origin3, blink::mojom::AncestorChainBit::kCrossSite, false},
   };
 
-  for (auto test_case : test_cases)
-    RunTestCase(test_case, filter);
+  for (size_t i = 0; i < std::size(test_cases); i++) {
+    SCOPED_TRACE(base::StringPrintf("Test case %zu", i));
+    RunTestCase(test_cases[i], filter);
+  }
 }
 
 TEST(BrowsingDataFilterBuilderImplTest, GetOrigins) {
@@ -867,6 +932,68 @@ TEST(BrowsingDataFilterBuilderImplTest, GetRegisterableDomains) {
   builder.AddRegisterableDomain(std::string(kLongETLDDomain));
   EXPECT_THAT(builder.GetRegisterableDomains(),
               UnorderedElementsAre(kGoogleDomain, kLongETLDDomain));
+}
+
+TEST(BrowsingDataFilterBuilderImplTest, ExcludeUnpartitionedCookies) {
+  BrowsingDataFilterBuilderImpl builder(
+      BrowsingDataFilterBuilderImpl::Mode::kPreserve);
+
+  builder.SetPartitionedStateAllowedOnly(true);
+
+  CookieDeletionInfo delete_info =
+      network::DeletionFilterToInfo(builder.BuildCookieDeletionFilter());
+
+  // Unpartitioned cookie should NOT match.
+  std::unique_ptr<net::CanonicalCookie> cookie = net::CanonicalCookie::Create(
+      GURL("https://www.cookie.com/"),
+      "__Host-A=B; Secure; SameSite=None; Path=/;", base::Time::Now(),
+      std::nullopt, std::nullopt);
+  EXPECT_TRUE(cookie);
+  EXPECT_FALSE(delete_info.Matches(
+      *cookie,
+      net::CookieAccessParams{net::CookieAccessSemantics::NONLEGACY, false}));
+
+  // Partitioned cookie should match.
+  cookie = net::CanonicalCookie::Create(
+      GURL("https://www.cookie.com/"),
+      "__Host-A=B; Secure; SameSite=None; Path=/; Partitioned;",
+      base::Time::Now(), std::nullopt,
+      net::CookiePartitionKey::FromURLForTesting(
+          GURL("https://toplevelsite.com")));
+  EXPECT_TRUE(cookie);
+  EXPECT_TRUE(delete_info.Matches(
+      *cookie,
+      net::CookieAccessParams{net::CookieAccessSemantics::NONLEGACY, false}));
+
+  // Nonced partitioned cookie should match.
+  cookie = net::CanonicalCookie::Create(
+      GURL("https://www.cookie.com/"),
+      "__Host-A=B; Secure; SameSite=None; Path=/;", base::Time::Now(),
+      std::nullopt,
+      net::CookiePartitionKey::FromURLForTesting(
+          GURL("https://toplevelsite.com"), base::UnguessableToken::Create()));
+  EXPECT_TRUE(cookie);
+  EXPECT_TRUE(delete_info.Matches(
+      *cookie,
+      net::CookieAccessParams{net::CookieAccessSemantics::NONLEGACY, false}));
+}
+
+TEST(BrowsingDataFilterBuilderImplTest, CopyAndEquality) {
+  BrowserTaskEnvironment task_environment;
+  TestBrowserContext browser_context;
+
+  BrowsingDataFilterBuilderImpl builder(
+      BrowsingDataFilterBuilderImpl::Mode::kPreserve);
+  builder.AddOrigin(url::Origin::Create(GURL("https://example.com")));
+  builder.AddRegisterableDomain(kGoogleDomain);
+  builder.SetStorageKey(
+      blink::StorageKey::CreateFromStringForTesting("https://foo.com"));
+  builder.SetCookiePartitionKeyCollection(net::CookiePartitionKeyCollection(
+      net::CookiePartitionKey::FromURLForTesting(GURL("https://www.foo.com"))));
+  builder.SetStoragePartitionConfig(StoragePartitionConfig::Create(
+      &browser_context, "domain", "name", /*in_memory=*/false));
+
+  EXPECT_EQ(builder, *builder.Copy());
 }
 
 }  // namespace content

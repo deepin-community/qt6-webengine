@@ -15,7 +15,7 @@
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/i18n/time_formatting.h"
-#include "base/metrics/histogram_macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
@@ -46,10 +46,10 @@ namespace {
 const size_t kMaxSessionsToShow = 10;
 
 // Helper method to create JSON compatible objects from Session objects.
-absl::optional<base::Value::Dict> SessionTabToValue(
+std::optional<base::Value::Dict> SessionTabToValue(
     const ::sessions::SessionTab& tab) {
   if (tab.navigations.empty())
-    return absl::nullopt;
+    return std::nullopt;
 
   int selected_index = std::min(tab.current_navigation_index,
                                 static_cast<int>(tab.navigations.size() - 1));
@@ -57,7 +57,7 @@ absl::optional<base::Value::Dict> SessionTabToValue(
       tab.navigations.at(selected_index);
   GURL tab_url = current_navigation.virtual_url();
   if (!tab_url.is_valid() || tab_url.spec() == chrome::kChromeUINewTabURL)
-    return absl::nullopt;
+    return std::nullopt;
 
   base::Value::Dict dictionary;
   NewTabUI::SetUrlTitleAndDirection(&dictionary, current_navigation.title(),
@@ -78,9 +78,6 @@ absl::optional<base::Value::Dict> SessionTabToValue(
 base::Value::Dict BuildWindowData(base::Time modification_time,
                                   SessionID window_id) {
   base::Value::Dict dictionary;
-  // The items which are to be written into |dictionary| are also described in
-  // chrome/browser/resources/ntp4/other_sessions.js in @typedef for WindowData.
-  // Please update it whenever you add or remove any keys here.
   dictionary.Set("type", "window");
   dictionary.Set("timestamp",
                  static_cast<double>(modification_time.ToInternalValue()));
@@ -90,10 +87,10 @@ base::Value::Dict BuildWindowData(base::Time modification_time,
 }
 
 // Helper method to create JSON compatible objects from SessionWindow objects.
-absl::optional<base::Value::Dict> SessionWindowToValue(
+std::optional<base::Value::Dict> SessionWindowToValue(
     const ::sessions::SessionWindow& window) {
   if (window.tabs.empty())
-    return absl::nullopt;
+    return std::nullopt;
 
   base::Value::List tab_values;
   // Calculate the last |modification_time| for all entries within a window.
@@ -106,7 +103,7 @@ absl::optional<base::Value::Dict> SessionWindowToValue(
     }
   }
   if (tab_values.empty())
-    return absl::nullopt;
+    return std::nullopt;
 
   base::Value::Dict dictionary =
       BuildWindowData(window.timestamp, window.window_id);
@@ -152,40 +149,22 @@ void ForeignSessionHandler::OpenForeignSessionTab(
 // static
 void ForeignSessionHandler::OpenForeignSessionWindows(
     content::WebUI* web_ui,
-    const std::string& session_string_value,
-    size_t window_num) {
+    const std::string& session_string_value) {
   sync_sessions::OpenTabsUIDelegate* open_tabs = GetOpenTabsUIDelegate(web_ui);
   if (!open_tabs)
     return;
 
-  std::vector<const ::sessions::SessionWindow*> windows;
   // Note: we don't own the ForeignSessions themselves.
-  if (!open_tabs->GetForeignSession(session_string_value, &windows)) {
+  std::vector<const ::sessions::SessionWindow*> windows =
+      open_tabs->GetForeignSession(session_string_value);
+  if (windows.empty()) {
     LOG(ERROR) << "ForeignSessionHandler failed to get session data from"
                   "OpenTabsUIDelegate.";
     return;
   }
 
-  // Bounds check `window_num` before using it anywhere. crbug.com/1408120
-  CHECK_LT(window_num, windows.size());
-  auto iter_begin = windows.begin() + window_num;
-  DCHECK(iter_begin != windows.end())
-      << "Because we CHECKed that windows_num is less than the size.";
-  auto iter_end = iter_begin + 1;
   SessionRestore::RestoreForeignSessionWindows(Profile::FromWebUI(web_ui),
-                                               iter_begin, iter_end);
-
-  size_t total_tabs_opened = 0;
-  for (const ::sessions::SessionWindow* window : windows) {
-    UMA_HISTOGRAM_COUNTS_1000(
-        "HistoryPage.OtherDevicesMenu.OpenAll.TabsPerWindow",
-        window->tabs.size());
-    total_tabs_opened += window->tabs.size();
-  }
-  UMA_HISTOGRAM_COUNTS_1000("HistoryPage.OtherDevicesMenu.OpenAll.TotalTabs",
-                            total_tabs_opened);
-  UMA_HISTOGRAM_COUNTS_100("HistoryPage.OtherDevicesMenu.OpenAll.TotalWindows",
-                           windows.size());
+                                               windows.begin(), windows.end());
 }
 
 // static
@@ -207,8 +186,13 @@ void ForeignSessionHandler::RegisterMessages() {
       base::BindRepeating(&ForeignSessionHandler::HandleGetForeignSessions,
                           base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
-      "openForeignSession",
-      base::BindRepeating(&ForeignSessionHandler::HandleOpenForeignSession,
+      "openForeignSessionAllTabs",
+      base::BindRepeating(
+          &ForeignSessionHandler::HandleOpenForeignSessionAllTabs,
+          base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "openForeignSessionTab",
+      base::BindRepeating(&ForeignSessionHandler::HandleOpenForeignSessionTab,
                           base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "setForeignSessionCollapsed",
@@ -273,13 +257,14 @@ void ForeignSessionHandler::HandleGetForeignSessions(
 
   // Clear the initial list so that it will be reset in AllowJavascript if the
   // page is refreshed.
-  initial_session_list_ = absl::nullopt;
+  initial_session_list_ = std::nullopt;
 }
 
 base::Value::List ForeignSessionHandler::GetForeignSessions() {
   sync_sessions::OpenTabsUIDelegate* open_tabs =
       GetOpenTabsUIDelegate(web_ui());
-  std::vector<const sync_sessions::SyncedSession*> sessions;
+  std::vector<raw_ptr<const sync_sessions::SyncedSession, VectorExperimental>>
+      sessions;
 
   base::Value::List session_list;
   if (open_tabs && open_tabs->GetAllForeignSessions(&sessions)) {
@@ -305,7 +290,9 @@ base::Value::List ForeignSessionHandler::GetForeignSessions() {
       session_data.Set("name", session->GetSessionName());
       session_data.Set("modifiedTime",
                        FormatSessionTime(session->GetModifiedTime()));
-      session_data.Set("timestamp", session->GetModifiedTime().ToJsTime());
+      session_data.Set(
+          "timestamp",
+          session->GetModifiedTime().InMillisecondsFSinceUnixEpoch());
 
       bool is_collapsed = collapsed_sessions.Find(session_tag);
       session_data.Set("collapsed", is_collapsed);
@@ -330,19 +317,22 @@ base::Value::List ForeignSessionHandler::GetForeignSessions() {
   return session_list;
 }
 
-void ForeignSessionHandler::HandleOpenForeignSession(
+void ForeignSessionHandler::HandleOpenForeignSessionAllTabs(
     const base::Value::List& args) {
-  size_t num_args = args.size();
-  // Expect either 1 or 8 args. For restoring an entire session, only
-  // one argument is required -- the session tag. To restore a tab,
-  // the additional args required are the window id, the tab id,
-  // and 4 properties of the event object (button, altKey, ctrlKey,
-  // metaKey, shiftKey) for determining how to open the tab.
-  if (num_args != 8U && num_args != 1U) {
-    LOG(ERROR) << "openForeignSession called with " << args.size()
-               << " arguments.";
+  CHECK_EQ(args.size(), 1U);
+
+  // Extract the session tag (always provided).
+  if (!args[0].is_string()) {
+    LOG(ERROR) << "Failed to extract session tag.";
     return;
   }
+  const std::string& session_string_value = args[0].GetString();
+  OpenForeignSessionWindows(web_ui(), session_string_value);
+}
+
+void ForeignSessionHandler::HandleOpenForeignSessionTab(
+    const base::Value::List& args) {
+  CHECK_EQ(args.size(), 7U);
 
   // Extract the session tag (always provided).
   if (!args[0].is_string()) {
@@ -351,31 +341,22 @@ void ForeignSessionHandler::HandleOpenForeignSession(
   }
   const std::string& session_string_value = args[0].GetString();
 
-  // Extract window number.
-  size_t window_num = 0;
-  if (num_args >= 2 &&
-      (!args[1].is_string() ||
-       !base::StringToSizeT(args[1].GetString(), &window_num))) {
-    LOG(ERROR) << "Failed to extract window number.";
-    return;
-  }
-
   // Extract tab id.
   SessionID::id_type tab_id_value = 0;
-  if (num_args >= 3 &&
-      (!args[2].is_string() ||
-       !base::StringToInt(args[2].GetString(), &tab_id_value))) {
+  if (!args[1].is_string() ||
+      !base::StringToInt(args[1].GetString(), &tab_id_value)) {
     LOG(ERROR) << "Failed to extract tab SessionID.";
     return;
   }
 
   SessionID tab_id = SessionID::FromSerializedValue(tab_id_value);
-  if (tab_id.is_valid()) {
-    WindowOpenDisposition disposition = webui::GetDispositionFromClick(args, 3);
-    OpenForeignSessionTab(web_ui(), session_string_value, tab_id, disposition);
-  } else {
-    OpenForeignSessionWindows(web_ui(), session_string_value, window_num);
+  if (!tab_id.is_valid()) {
+    LOG(ERROR) << "Failed to deserialize tab ID.";
+    return;
   }
+
+  WindowOpenDisposition disposition = webui::GetDispositionFromClick(args, 2);
+  OpenForeignSessionTab(web_ui(), session_string_value, tab_id, disposition);
 }
 
 void ForeignSessionHandler::HandleDeleteForeignSession(

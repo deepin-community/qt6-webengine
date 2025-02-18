@@ -4,6 +4,7 @@
 
 #include "third_party/blink/public/common/fenced_frame/redacted_fenced_frame_config_mojom_traits.h"
 
+#include "third_party/blink/common/permissions_policy/permissions_policy_mojom_traits.h"
 #include "third_party/blink/public/common/fenced_frame/fenced_frame_utils.h"
 #include "third_party/blink/public/common/fenced_frame/redacted_fenced_frame_config.h"
 #include "third_party/blink/public/mojom/fenced_frame/fenced_frame_config.mojom.h"
@@ -140,11 +141,11 @@ bool StructTraits<blink::mojom::AdAuctionDataDataView,
 }
 
 // static
-const url::Origin&
+const net::SchemefulSite&
 StructTraits<blink::mojom::SharedStorageBudgetMetadataDataView,
              blink::FencedFrame::SharedStorageBudgetMetadata>::
-    origin(const blink::FencedFrame::SharedStorageBudgetMetadata& input) {
-  return input.origin;
+    site(const blink::FencedFrame::SharedStorageBudgetMetadata& input) {
+  return input.site;
 }
 // static
 double StructTraits<blink::mojom::SharedStorageBudgetMetadataDataView,
@@ -160,25 +161,44 @@ bool StructTraits<blink::mojom::SharedStorageBudgetMetadataDataView,
         const blink::FencedFrame::SharedStorageBudgetMetadata& input) {
   return input.top_navigated;
 }
-// static
-bool StructTraits<blink::mojom::SharedStorageBudgetMetadataDataView,
-                  blink::FencedFrame::SharedStorageBudgetMetadata>::
-    report_event_called(
-        const blink::FencedFrame::SharedStorageBudgetMetadata& input) {
-  return input.report_event_called;
-}
 
 // static
 bool StructTraits<blink::mojom::SharedStorageBudgetMetadataDataView,
                   blink::FencedFrame::SharedStorageBudgetMetadata>::
     Read(blink::mojom::SharedStorageBudgetMetadataDataView data,
          blink::FencedFrame::SharedStorageBudgetMetadata* out_data) {
-  if (!data.ReadOrigin(&out_data->origin)) {
+  if (!data.ReadSite(&out_data->site)) {
     return false;
   }
   out_data->budget_to_charge = data.budget_to_charge();
   out_data->top_navigated = data.top_navigated();
-  out_data->report_event_called = data.report_event_called();
+  return true;
+}
+
+// static
+const std::vector<blink::ParsedPermissionsPolicyDeclaration>&
+StructTraits<blink::mojom::ParentPermissionsInfoDataView,
+             blink::FencedFrame::ParentPermissionsInfo>::
+    parsed_permissions_policy(
+        const blink::FencedFrame::ParentPermissionsInfo& input) {
+  return input.parsed_permissions_policy;
+}
+// static
+const url::Origin& StructTraits<blink::mojom::ParentPermissionsInfoDataView,
+                                blink::FencedFrame::ParentPermissionsInfo>::
+    origin(const blink::FencedFrame::ParentPermissionsInfo& input) {
+  return input.origin;
+}
+
+// static
+bool StructTraits<blink::mojom::ParentPermissionsInfoDataView,
+                  blink::FencedFrame::ParentPermissionsInfo>::
+    Read(blink::mojom::ParentPermissionsInfoDataView data,
+         blink::FencedFrame::ParentPermissionsInfo* out_data) {
+  if (!data.ReadOrigin(&out_data->origin) ||
+      !data.ReadParsedPermissionsPolicy(&out_data->parsed_permissions_policy)) {
+    return false;
+  }
   return true;
 }
 
@@ -420,7 +440,10 @@ bool StructTraits<blink::mojom::FencedFrameConfigDataView,
       !data.ReadAdAuctionData(&out_config->ad_auction_data_) ||
       !data.ReadNestedConfigs(&out_config->nested_configs_) ||
       !data.ReadSharedStorageBudgetMetadata(
-          &out_config->shared_storage_budget_metadata_)) {
+          &out_config->shared_storage_budget_metadata_) ||
+      !data.ReadEffectiveEnabledPermissions(
+          &out_config->effective_enabled_permissions_) ||
+      !data.ReadParentPermissionsInfo(&out_config->parent_permissions_info_)) {
     return false;
   }
 
@@ -470,7 +493,11 @@ bool StructTraits<blink::mojom::FencedFramePropertiesDataView,
       !data.ReadAdAuctionData(&out_properties->ad_auction_data_) ||
       !data.ReadNestedUrnConfigPairs(&nested_urn_config_pairs) ||
       !data.ReadSharedStorageBudgetMetadata(
-          &out_properties->shared_storage_budget_metadata_)) {
+          &out_properties->shared_storage_budget_metadata_) ||
+      !data.ReadEffectiveEnabledPermissions(
+          &out_properties->effective_enabled_permissions_) ||
+      !data.ReadParentPermissionsInfo(
+          &out_properties->parent_permissions_info_)) {
     return false;
   }
 
@@ -492,6 +519,9 @@ bool StructTraits<blink::mojom::FencedFramePropertiesDataView,
 
   out_properties->has_fenced_frame_reporting_ =
       data.has_fenced_frame_reporting();
+
+  out_properties->can_disable_untrusted_network_ =
+      data.can_disable_untrusted_network();
   return true;
 }
 

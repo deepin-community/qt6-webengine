@@ -7,8 +7,8 @@
 #include <iostream>
 
 #include "ash/constants/ash_features.h"
-#include "ash/public/cpp/tablet_mode.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/views/bubble/bubble_contents_wrapper.h"
 #include "chrome/browser/ui/views/bubble/bubble_contents_wrapper_service.h"
 #include "chrome/browser/ui/views/bubble/bubble_contents_wrapper_service_factory.h"
@@ -19,29 +19,39 @@
 #include "chrome/grit/emoji_picker_resources.h"
 #include "chrome/grit/emoji_picker_resources_map.h"
 #include "chrome/grit/generated_resources.h"
+#include "chromeos/ash/components/emoji/grit/emoji_map.h"
 #include "content/public/browser/url_data_source.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_data_source.h"
 #include "ui/base/emoji/emoji_panel_helper.h"
 #include "ui/base/ime/ash/ime_bridge.h"
+#include "ui/base/metadata/metadata_header_macros.h"
+#include "ui/base/metadata/metadata_impl_macros.h"
+#include "ui/display/screen.h"
 #include "ui/resources/grit/webui_resources.h"
+#include "ui/webui/color_change_listener/color_change_handler.h"
 
 namespace {
 constexpr gfx::Size kExtensionWindowSize(420, 480);
 constexpr int kPaddingAroundCursor = 8;
 
-class EmojiiBubbleDialogView : public WebUIBubbleDialogView {
+class EmojiBubbleDialogView : public WebUIBubbleDialogView {
  public:
-  EmojiiBubbleDialogView(
+  METADATA_HEADER(EmojiBubbleDialogView);
+  explicit EmojiBubbleDialogView(
       std::unique_ptr<BubbleContentsWrapper> contents_wrapper)
-      : WebUIBubbleDialogView(nullptr, contents_wrapper.get()),
+      : WebUIBubbleDialogView(nullptr, contents_wrapper->GetWeakPtr()),
         contents_wrapper_(std::move(contents_wrapper)) {
     set_has_parent(false);
+    set_corner_radius(20);
   }
 
  private:
   std::unique_ptr<BubbleContentsWrapper> contents_wrapper_;
 };
+
+BEGIN_METADATA(EmojiBubbleDialogView, WebUIBubbleDialogView)
+END_METADATA
 
 }  // namespace
 
@@ -58,7 +68,7 @@ EmojiUI::EmojiUI(content::WebUI* web_ui)
   webui::SetupWebUIDataSource(
       source, base::make_span(kEmojiPickerResources, kEmojiPickerResourcesSize),
       IDR_EMOJI_PICKER_INDEX_HTML);
-  source->DisableTrustedTypesCSP();
+  source->AddResourcePaths(base::make_span(kEmoji, kEmojiSize));
 
   Profile* profile = Profile::FromWebUI(web_ui);
   content::URLDataSource::Add(profile,
@@ -67,8 +77,12 @@ EmojiUI::EmojiUI(content::WebUI* web_ui)
 
 EmojiUI::~EmojiUI() = default;
 
-void EmojiUI::Show(Profile* profile) {
-  if (TabletMode::Get()->InTabletMode()) {
+bool EmojiUI::ShouldShow(const ui::TextInputClient* input_client) {
+  return input_client != nullptr;
+}
+
+void EmojiUI::Show() {
+  if (display::Screen::GetScreen()->InTabletMode()) {
     ui::ShowTabletModeEmojiPanel();
     return;
   }
@@ -77,6 +91,18 @@ void EmojiUI::Show(Profile* profile) {
       IMEBridge::Get()->GetInputContextHandler()->GetInputMethod();
   ui::TextInputClient* input_client =
       input_method ? input_method->GetTextInputClient() : nullptr;
+
+  // Does not show emoji picker if there is no input client.
+  if (!ShouldShow(input_client)) {
+    return;
+  }
+
+  auto* profile = ProfileManager::GetActiveUserProfile();
+
+  if (!profile) {
+    return;
+  }
+
   const bool incognito_mode =
       input_client ? !input_client->ShouldDoLearning() : false;
   gfx::Rect caret_bounds =
@@ -117,7 +143,7 @@ void EmojiUI::Show(Profile* profile) {
       input_client == nullptr;
 
   auto bubble_view =
-      std::make_unique<EmojiiBubbleDialogView>(std::move(contents_wrapper));
+      std::make_unique<EmojiBubbleDialogView>(std::move(contents_wrapper));
   auto weak_ptr = bubble_view->GetWeakPtr();
   views::BubbleDialogDelegateView::CreateBubble(std::move(bubble_view));
   weak_ptr->SetAnchorRect(anchor_rect);
@@ -129,9 +155,21 @@ void EmojiUI::Show(Profile* profile) {
 WEB_UI_CONTROLLER_TYPE_IMPL(EmojiUI)
 
 void EmojiUI::BindInterface(
+    mojo::PendingReceiver<color_change_listener::mojom::PageHandler> receiver) {
+  color_provider_handler_ = std::make_unique<ui::ColorChangeHandler>(
+      web_ui()->GetWebContents(), std::move(receiver));
+}
+
+void EmojiUI::BindInterface(
     mojo::PendingReceiver<emoji_picker::mojom::PageHandlerFactory> receiver) {
   page_factory_receiver_.reset();
   page_factory_receiver_.Bind(std::move(receiver));
+}
+
+void EmojiUI::BindInterface(
+    mojo::PendingReceiver<new_window_proxy::mojom::NewWindowProxy> receiver) {
+  new_window_proxy_ =
+      std::make_unique<ash::NewWindowProxy>(std::move(receiver));
 }
 
 void EmojiUI::CreatePageHandler(

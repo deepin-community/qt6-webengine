@@ -11,6 +11,7 @@
 
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
+#include "base/memory/raw_ptr.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/task/bind_post_task.h"
 #include "base/trace_event/trace_event.h"
@@ -105,11 +106,6 @@ void ChunkDemuxerStream::Shutdown() {
 
 bool ChunkDemuxerStream::IsSeekWaitingForData() const {
   base::AutoLock auto_lock(lock_);
-
-  // This method should not be called for text tracks. See the note in
-  // SourceBufferState::IsSeekWaitingForData().
-  DCHECK_NE(type_, DemuxerStream::TEXT);
-
   return stream_->IsSeekPending();
 }
 
@@ -189,16 +185,6 @@ Ranges<base::TimeDelta> ChunkDemuxerStream::GetBufferedRanges(
     base::TimeDelta duration) const {
   base::AutoLock auto_lock(lock_);
 
-  if (type_ == TEXT) {
-    // Since text tracks are discontinuous and the lack of cues should not block
-    // playback, report the buffered range for text tracks as [0, |duration|) so
-    // that intesections with audio & video tracks are computed correctly when
-    // no cues are present.
-    Ranges<base::TimeDelta> text_range;
-    text_range.Add(base::TimeDelta(), duration);
-    return text_range;
-  }
-
   Ranges<base::TimeDelta> range = stream_->GetBufferedTime();
 
   if (range.size() == 0u)
@@ -276,15 +262,6 @@ bool ChunkDemuxerStream::UpdateVideoConfig(const VideoDecoderConfig& config,
   return stream_->UpdateVideoConfig(config, allow_codec_change);
 }
 
-void ChunkDemuxerStream::UpdateTextConfig(const TextTrackConfig& config,
-                                          MediaLog* media_log) {
-  DCHECK_EQ(type_, TEXT);
-  base::AutoLock auto_lock(lock_);
-  DCHECK(!stream_);
-  DCHECK_EQ(state_, UNINITIALIZED);
-  stream_ = std::make_unique<SourceBufferStream>(config, media_log);
-}
-
 void ChunkDemuxerStream::MarkEndOfStream() {
   base::AutoLock auto_lock(lock_);
   stream_->MarkEndOfStream();
@@ -360,12 +337,6 @@ void ChunkDemuxerStream::SetEnabled(bool enabled, base::TimeDelta timestamp) {
   }
 }
 
-TextTrackConfig ChunkDemuxerStream::text_track_config() {
-  CHECK_EQ(type_, TEXT);
-  base::AutoLock auto_lock(lock_);
-  return stream_->GetCurrentTextTrackConfig();
-}
-
 void ChunkDemuxerStream::SetStreamMemoryLimit(size_t memory_limit) {
   base::AutoLock auto_lock(lock_);
   stream_->set_memory_limit(memory_limit);
@@ -392,9 +363,7 @@ void ChunkDemuxerStream::CompletePendingReadIfPossible_Locked() {
 
   switch (state_) {
     case UNINITIALIZED:
-      requested_buffer_count_ = 0;
-      NOTREACHED();
-      return;
+      NOTREACHED_NORETURN();
     case RETURNING_ABORT_FOR_READS:
       // Null buffers should be returned in this state since we are waiting
       // for a seek. Any buffers in the SourceBuffer should NOT be returned
@@ -589,9 +558,10 @@ base::Time ChunkDemuxer::GetTimelineOffset() const {
   return timeline_offset_;
 }
 
-std::vector<DemuxerStream*> ChunkDemuxer::GetAllStreams() {
+std::vector<raw_ptr<DemuxerStream, VectorExperimental>>
+ChunkDemuxer::GetAllStreams() {
   base::AutoLock auto_lock(lock_);
-  std::vector<DemuxerStream*> result;
+  std::vector<raw_ptr<DemuxerStream, VectorExperimental>> result;
   // Put enabled streams at the beginning of the list so that
   // MediaResource::GetFirstStream returns the enabled stream if there is one.
   // TODO(servolk): Revisit this after media track switching is supported.
@@ -799,8 +769,7 @@ ChunkDemuxer::Status ChunkDemuxer::AddIdInternal(
 
   source_state->Init(base::BindOnce(&ChunkDemuxer::OnSourceInitDone,
                                     base::Unretained(this), id),
-                     expected_codecs, encrypted_media_init_data_cb_,
-                     base::NullCallback());
+                     expected_codecs, encrypted_media_init_data_cb_);
 
   // TODO(wolenetz): Change to DCHECKs once less verification in release build
   // is needed. See https://crbug.com/786975.
@@ -944,6 +913,10 @@ void ChunkDemuxer::OnSelectedVideoTrackChanged(
     TrackChangeCB change_completed_cb) {
   FindAndEnableProperTracks(track_ids, curr_time, DemuxerStream::VIDEO,
                             std::move(change_completed_cb));
+}
+
+void ChunkDemuxer::DisableCanChangeType() {
+  supports_change_type_ = false;
 }
 
 void ChunkDemuxer::OnMemoryPressure(
@@ -1215,6 +1188,10 @@ bool ChunkDemuxer::CanChangeType(const std::string& id,
   base::AutoLock auto_lock(lock_);
 
   DCHECK(IsValidId_Locked(id));
+
+  if (!supports_change_type_) {
+    return false;
+  }
 
   // CanChangeType() doesn't care if there has or hasn't been received a first
   // initialization segment for the source buffer corresponding to |id|.
@@ -1568,13 +1545,8 @@ ChunkDemuxerStream* ChunkDemuxer::CreateDemuxerStream(
       owning_vector = &video_streams_;
       break;
 
-    case DemuxerStream::TEXT:
-      owning_vector = &text_streams_;
-      break;
-
     case DemuxerStream::UNKNOWN:
-      NOTREACHED();
-      return nullptr;
+      NOTREACHED_NORETURN();
   }
 
   std::unique_ptr<ChunkDemuxerStream> stream =

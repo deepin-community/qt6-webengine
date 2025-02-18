@@ -7,10 +7,10 @@
 #include "ash/drag_drop/drag_drop_controller.h"
 #include "base/barrier_closure.h"
 #include "base/check.h"
+#include "base/memory/raw_ptr.h"
 #include "base/pickle.h"
 #include "base/strings/string_split.h"
 #include "base/task/sequenced_task_runner.h"
-#include "chromeos/ui/base/window_properties.h"
 #include "components/exo/data_exchange_delegate.h"
 #include "components/exo/data_offer.h"
 #include "components/exo/data_source.h"
@@ -150,7 +150,7 @@ class DragDropOperation::IconSurface final : public SurfaceTreeHost,
     operation_->OnDragIconCaptured(scoped_bitmap.GetOutScopedBitmap());
   }
 
-  DragDropOperation* const operation_;
+  const raw_ptr<DragDropOperation> operation_;
   base::WeakPtrFactory<IconSurface> weak_ptr_factory_{this};
 };
 
@@ -204,23 +204,35 @@ DragDropOperation::DragDropOperation(
 
   int num_additional_callbacks = 0;
 
+  // TODO(crbug.com/1371493): Remove this once the issue is fixed.
+  std::string callbacks;
+
   // TODO(crbug.com/1298033): Move DTE retrieval into
   // DataSource::GetDataForPreferredMimeTypes()
   // Lacros sends additional metadata, in a custom MIME type, to sync drag
   // source metadata. Hence, the number of callbacks is incremented by one.
-  if (endpoint_type == ui::EndpointType::kLacros)
+  if (endpoint_type == ui::EndpointType::kLacros) {
+    callbacks += "lacros,";
     ++num_additional_callbacks;
+  }
 
   // When the icon is present, we increment the number of callbacks so we can
   // wait for the icon to be captured as well.
   if (icon) {
     icon_ = std::make_unique<IconSurface>(icon, this);
     ++num_additional_callbacks;
+    callbacks += "icon,";
   }
 
   auto start_op_callback =
       base::BindOnce(&DragDropOperation::ScheduleStartDragDropOperation,
                      weak_ptr_factory_.GetWeakPtr());
+
+  // TODO(crbug.com/1371493): Remove these when the issue is fixed.
+  start_drag_drop_timer_.Start(FROM_HERE, base::Seconds(2), this,
+                               &DragDropOperation::DragDataReadTimeout);
+  LOG(ERROR) << "Starting data read for drag operation: additonal callbacks:"
+             << callbacks;
 
   counter_ =
       base::BarrierClosure(DataSource::kMaxDataTypes + num_additional_callbacks,
@@ -258,16 +270,18 @@ DragDropOperation::~DragDropOperation() {
   if (source_)
     source_->get()->Cancelled();
 
-  if (drag_drop_controller_->IsDragDropInProgress() && started_by_this_object_)
+  if (drag_drop_controller_->IsDragDropInProgress() && started_) {
     drag_drop_controller_->DragCancel();
+  }
 
   if (extended_drag_source_)
     ResetExtendedDragSource();
 }
 
 void DragDropOperation::AbortIfPending() {
-  if (!started_by_this_object_)
+  if (!started_) {
     delete this;
+  }
 }
 
 void DragDropOperation::OnDataTransferEndpointRead(const std::string& mime_type,
@@ -354,6 +368,8 @@ void DragDropOperation::OnDragIconCaptured(const SkBitmap& icon_bitmap) {
 }
 
 void DragDropOperation::ScheduleStartDragDropOperation() {
+  start_drag_drop_timer_.Stop();
+
   // StartDragAndDrop uses a nested run loop. When restarting, we a) don't want
   // to interrupt the callers task for an arbitrary period of time and b) want
   // to let any nested run loops that are currently running to have a chance to
@@ -377,7 +393,7 @@ void DragDropOperation::StartDragDropOperation() {
 
   base::WeakPtr<DragDropOperation> weak_ptr = weak_ptr_factory_.GetWeakPtr();
 
-  started_by_this_object_ = true;
+  started_ = true;
   gfx::Point drag_start_point = gfx::ToFlooredPoint(drag_start_point_);
 
   // This triggers a nested run loop that terminates when the drag and drop
@@ -407,31 +423,17 @@ void DragDropOperation::StartDragDropOperation() {
     return;
 
   if (op != DragOperation::kNone) {
-    // It is possible that Ash flags the dragged tab to snap its origin, and
-    // it uses the `chromeos::kIsDeferredTabDraggingTargetWindowKey` property to
-    // control that. The snap back behavior works as if the drag was cancelled.
-    bool force_tab_swallow = false;
-    aura::Window* source_window = origin_->get()->window()->GetToplevelWindow();
-    force_tab_swallow =
-        (source_window && source_window->GetProperty(
-                              chromeos::kIsDeferredTabDraggingTargetWindowKey));
-    source_window->ClearProperty(
-        chromeos::kIsDeferredTabDraggingTargetWindowKey);
-    if (force_tab_swallow) {
-      source_->get()->Cancelled();
-    } else {
-      // Success
+    // Success
 
-      // TODO(crbug.com/994065) This is currently not the actual mime type
-      // used by the recipient, just an arbitrary one we pick out of the
-      // offered types so we can report back whether or not the drop can
-      // succeed. This may need to change in the future.
-      source_->get()->Target(mime_type_);
+    // TODO(crbug.com/994065) This is currently not the actual mime type
+    // used by the recipient, just an arbitrary one we pick out of the
+    // offered types so we can report back whether or not the drop can
+    // succeed. This may need to change in the future.
+    source_->get()->Target(mime_type_);
 
-      source_->get()->Action(DragOperationToDndAction(op));
-      source_->get()->DndDropPerformed();
-      source_->get()->DndFinished();
-    }
+    source_->get()->Action(DragOperationToDndAction(op));
+    source_->get()->DndDropPerformed();
+    source_->get()->DndFinished();
 
     // Reset |source_| so it the destructor doesn't try to cancel it.
     source_.reset();
@@ -442,13 +444,15 @@ void DragDropOperation::StartDragDropOperation() {
 }
 
 void DragDropOperation::OnDragStarted() {
-  if (!started_by_this_object_)
+  if (!started_) {
     delete this;
+  }
 }
 
 void DragDropOperation::OnDragActionsChanged(int actions) {
-  if (!started_by_this_object_)
+  if (!started_) {
     return;
+  }
 
   DndAction dnd_action = DragOperationsToPreferredDndAction(actions);
   // We send a mime type along with the action to indicate to the application
@@ -483,7 +487,12 @@ void DragDropOperation::OnSurfaceDestroying(Surface* surface) {
 void DragDropOperation::OnDataSourceDestroying(DataSource* source) {
   DCHECK_EQ(source, source_->get());
   source_.reset();
+  LOG(ERROR) << "DataSource was destroyed by client";
   delete this;
+}
+
+void DragDropOperation::DragDataReadTimeout() {
+  LOG(ERROR) << "DragDataReadTimeout";
 }
 
 }  // namespace exo

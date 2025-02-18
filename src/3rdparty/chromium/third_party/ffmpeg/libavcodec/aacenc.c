@@ -854,7 +854,7 @@ static int aac_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
     if (s->psypp)
         ff_psy_preprocess(s->psypp, s->planar_samples, s->channels);
 
-    if (!avctx->frame_number)
+    if (!avctx->frame_num)
         return 0;
 
     start_ch = 0;
@@ -958,7 +958,7 @@ static int aac_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
     do {
         init_put_bits(&s->pb, avpkt->data, avpkt->size);
 
-        if ((avctx->frame_number & 0xFF)==1 && !(avctx->flags & AV_CODEC_FLAG_BITEXACT))
+        if ((avctx->frame_num & 0xFF)==1 && !(avctx->flags & AV_CODEC_FLAG_BITEXACT))
             put_bitstream_info(s, LIBAVCODEC_IDENT);
         start_ch = 0;
         target_bits = 0;
@@ -1106,6 +1106,18 @@ static int aac_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
         too_many_bits = FFMIN(too_many_bits, 6144 * s->channels - 3);
         too_few_bits = FFMIN(FFMAX(rate_bits - rate_bits/4, target_bits), too_many_bits);
 
+        /* When strict bit-rate control is demanded */
+        if (avctx->bit_rate_tolerance == 0) {
+            if (rate_bits < frame_bits) {
+                float ratio = ((float)rate_bits) / frame_bits;
+                s->lambda *= FFMIN(0.9f, ratio);
+                continue;
+            }
+            /* reset lambda when solution is found */
+            s->lambda = avctx->global_quality > 0 ? avctx->global_quality : 120;
+            break;
+        }
+
         /* When using ABR, be strict (but only for increasing) */
         too_few_bits = too_few_bits - too_few_bits/8;
         too_many_bits = too_many_bits + too_many_bits/2;
@@ -1197,9 +1209,6 @@ static av_cold int dsp_init(AVCodecContext *avctx, AACEncContext *s)
     s->fdsp = avpriv_float_dsp_alloc(avctx->flags & AV_CODEC_FLAG_BITEXACT);
     if (!s->fdsp)
         return AVERROR(ENOMEM);
-
-    // window init
-    ff_aac_float_common_init();
 
     if ((ret = av_tx_init(&s->mdct1024, &s->mdct1024_fn, AV_TX_FLOAT_MDCT, 0,
                           1024, &scale, 0)) < 0)
@@ -1295,13 +1304,13 @@ static av_cold int aac_encode_init(AVCodecContext *avctx)
                                      avctx->bit_rate);
 
     /* Profile and option setting */
-    avctx->profile = avctx->profile == FF_PROFILE_UNKNOWN ? FF_PROFILE_AAC_LOW :
+    avctx->profile = avctx->profile == AV_PROFILE_UNKNOWN ? AV_PROFILE_AAC_LOW :
                      avctx->profile;
     for (i = 0; i < FF_ARRAY_ELEMS(aacenc_profiles); i++)
         if (avctx->profile == aacenc_profiles[i])
             break;
-    if (avctx->profile == FF_PROFILE_MPEG2_AAC_LOW) {
-        avctx->profile = FF_PROFILE_AAC_LOW;
+    if (avctx->profile == AV_PROFILE_MPEG2_AAC_LOW) {
+        avctx->profile = AV_PROFILE_AAC_LOW;
         ERROR_IF(s->options.pred,
                  "Main prediction unavailable in the \"mpeg2_aac_low\" profile\n");
         ERROR_IF(s->options.ltp,
@@ -1309,22 +1318,22 @@ static av_cold int aac_encode_init(AVCodecContext *avctx)
         WARN_IF(s->options.pns,
                 "PNS unavailable in the \"mpeg2_aac_low\" profile, turning off\n");
         s->options.pns = 0;
-    } else if (avctx->profile == FF_PROFILE_AAC_LTP) {
+    } else if (avctx->profile == AV_PROFILE_AAC_LTP) {
         s->options.ltp = 1;
         ERROR_IF(s->options.pred,
                  "Main prediction unavailable in the \"aac_ltp\" profile\n");
-    } else if (avctx->profile == FF_PROFILE_AAC_MAIN) {
+    } else if (avctx->profile == AV_PROFILE_AAC_MAIN) {
         s->options.pred = 1;
         ERROR_IF(s->options.ltp,
                  "LTP prediction unavailable in the \"aac_main\" profile\n");
     } else if (s->options.ltp) {
-        avctx->profile = FF_PROFILE_AAC_LTP;
+        avctx->profile = AV_PROFILE_AAC_LTP;
         WARN_IF(1,
                 "Chainging profile to \"aac_ltp\"\n");
         ERROR_IF(s->options.pred,
                  "Main prediction unavailable in the \"aac_ltp\" profile\n");
     } else if (s->options.pred) {
-        avctx->profile = FF_PROFILE_AAC_MAIN;
+        avctx->profile = AV_PROFILE_AAC_MAIN;
         WARN_IF(1,
                 "Chainging profile to \"aac_main\"\n");
         ERROR_IF(s->options.ltp,
@@ -1346,6 +1355,9 @@ static av_cold int aac_encode_init(AVCodecContext *avctx)
     /* M/S introduces horrible artifacts with multichannel files, this is temporary */
     if (s->channels > 3)
         s->options.mid_side = 0;
+
+    // Initialize static tables
+    ff_aac_float_common_init();
 
     if ((ret = dsp_init(avctx, s)) < 0)
         return ret;
@@ -1381,7 +1393,6 @@ static av_cold int aac_encode_init(AVCodecContext *avctx)
 #endif
 
     ff_af_queue_init(avctx, &s->afq);
-    ff_aac_tableinit();
 
     return 0;
 }

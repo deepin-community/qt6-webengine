@@ -26,19 +26,24 @@ class VpxEncoder final : public VideoTrackRecorder::Encoder {
   typedef std::unique_ptr<vpx_codec_ctx_t, VpxCodecDeleter>
       ScopedVpxCodecCtxPtr;
 
-  VpxEncoder(bool use_vp9,
+  VpxEncoder(scoped_refptr<base::SequencedTaskRunner> encoding_task_runner,
+             bool use_vp9,
              const VideoTrackRecorder::OnEncodedVideoCB& on_encoded_video_cb,
-             uint32_t bits_per_second);
-
+             uint32_t bits_per_second,
+             bool is_screencast,
+             const VideoTrackRecorder::OnErrorCB on_error_cb);
   VpxEncoder(const VpxEncoder&) = delete;
   VpxEncoder& operator=(const VpxEncoder&) = delete;
 
-  base::WeakPtr<Encoder> GetWeakPtr() { return weak_factory_.GetWeakPtr(); }
+  base::WeakPtr<Encoder> GetWeakPtr() override {
+    return weak_factory_.GetWeakPtr();
+  }
 
  private:
   // VideoTrackRecorder::Encoder implementation.
   void EncodeFrame(scoped_refptr<media::VideoFrame> frame,
-                   base::TimeTicks capture_timestamp) override;
+                   base::TimeTicks capture_timestamp,
+                   bool request_keyframe) override;
   bool CanEncodeAlphaChannel() const override;
 
   [[nodiscard]] bool ConfigureEncoder(const gfx::Size& size,
@@ -68,6 +73,9 @@ class VpxEncoder final : public VideoTrackRecorder::Encoder {
 
   // Force usage of VP9 for encoding, instead of VP8 which is the default.
   const bool use_vp9_;
+  const bool is_screencast_;
+
+  const VideoTrackRecorder::OnErrorCB on_error_cb_;
 
   // VPx internal objects: configuration and encoder. |encoder_| is a special
   // scoped pointer to guarantee proper destruction, particularly when

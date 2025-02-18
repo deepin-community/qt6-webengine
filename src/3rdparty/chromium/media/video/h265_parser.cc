@@ -16,6 +16,7 @@
 #include "base/numerics/safe_conversions.h"
 #include "media/base/decrypt_config.h"
 #include "media/base/video_codecs.h"
+#include "media/video/bit_reader_macros.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/hdr_metadata.h"
@@ -25,13 +26,13 @@ namespace media {
 namespace {
 
 // From Table 7-6.
-constexpr int kDefaultScalingListSize1To3Matrix0To2[] = {
+constexpr uint8_t kDefaultScalingListSize1To3Matrix0To2[] = {
     16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 17, 16, 17, 16, 17, 18,
     17, 18, 18, 17, 18, 21, 19, 20, 21, 20, 19, 21, 24, 22, 22, 24,
     24, 22, 22, 24, 25, 25, 27, 30, 27, 25, 25, 29, 31, 35, 35, 31,
     29, 36, 41, 44, 41, 36, 47, 54, 54, 47, 65, 70, 65, 88, 88, 115,
 };
-constexpr int kDefaultScalingListSize1To3Matrix3To5[] = {
+constexpr uint8_t kDefaultScalingListSize1To3Matrix3To5[] = {
     16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 17, 17, 17, 17, 17, 18,
     18, 18, 18, 18, 18, 20, 20, 20, 20, 20, 20, 20, 24, 24, 24, 24,
     24, 24, 24, 24, 25, 25, 25, 25, 25, 25, 25, 28, 28, 28, 28, 28,
@@ -56,7 +57,7 @@ void FillInDefaultScalingListData(H265ScalingListData* scaling_list_data,
     return;
   }
 
-  int* dst;
+  uint8_t* dst;
   switch (size_id) {
     case 1:
       dst = scaling_list_data->scaling_list_8x8[matrix_id];
@@ -68,7 +69,7 @@ void FillInDefaultScalingListData(H265ScalingListData* scaling_list_data,
       dst = scaling_list_data->scaling_list_32x32[matrix_id];
       break;
   }
-  const int* src;
+  const uint8_t* src;
   if (matrix_id < 3)
     src = kDefaultScalingListSize1To3Matrix0To2;
   else
@@ -84,109 +85,6 @@ void FillInDefaultScalingListData(H265ScalingListData* scaling_list_data,
 }
 
 }  // namespace
-
-#define READ_BITS_OR_RETURN(num_bits, out)                                 \
-  do {                                                                     \
-    int _out;                                                              \
-    if (!br_.ReadBits(num_bits, &_out)) {                                  \
-      DVLOG(1)                                                             \
-          << "Error in stream: unexpected EOS while trying to read " #out; \
-      return kInvalidStream;                                               \
-    }                                                                      \
-    *out = _out;                                                           \
-  } while (0)
-
-#define READ_BITS_AND_MINUS_BITS_READ_OR_RETURN(num_bits, out,             \
-                                                num_bits_remain)           \
-  do {                                                                     \
-    int _out;                                                              \
-    if (!br_.ReadBits(num_bits, &_out)) {                                  \
-      DVLOG(1)                                                             \
-          << "Error in stream: unexpected EOS while trying to read " #out; \
-      return kInvalidStream;                                               \
-    }                                                                      \
-    *num_bits_remain -= num_bits;                                          \
-    *out = _out;                                                           \
-  } while (0)
-
-#define SKIP_BITS_OR_RETURN(num_bits)                                       \
-  do {                                                                      \
-    int bits_left = num_bits;                                               \
-    int discard;                                                            \
-    while (bits_left > 0) {                                                 \
-      if (!br_.ReadBits(bits_left > 16 ? 16 : bits_left, &discard)) {       \
-        DVLOG(1) << "Error in stream: unexpected EOS while trying to skip"; \
-        return kInvalidStream;                                              \
-      }                                                                     \
-      bits_left -= 16;                                                      \
-    }                                                                       \
-  } while (0)
-
-#define READ_BOOL_OR_RETURN(out)                                           \
-  do {                                                                     \
-    int _out;                                                              \
-    if (!br_.ReadBits(1, &_out)) {                                         \
-      DVLOG(1)                                                             \
-          << "Error in stream: unexpected EOS while trying to read " #out; \
-      return kInvalidStream;                                               \
-    }                                                                      \
-    *out = _out != 0;                                                      \
-  } while (0)
-
-#define READ_BOOL_AND_MINUS_BITS_READ_OR_RETURN(out, num_bits_remain)      \
-  do {                                                                     \
-    int _out;                                                              \
-    if (!br_.ReadBits(1, &_out)) {                                         \
-      DVLOG(1)                                                             \
-          << "Error in stream: unexpected EOS while trying to read " #out; \
-      return kInvalidStream;                                               \
-    }                                                                      \
-    *num_bits_remain -= 1;                                                 \
-    *out = _out != 0;                                                      \
-  } while (0)
-
-#define READ_UE_OR_RETURN(out)                                                 \
-  do {                                                                         \
-    if (ReadUE(out, nullptr) != kOk) {                                         \
-      DVLOG(1) << "Error in stream: invalid value while trying to read " #out; \
-      return kInvalidStream;                                                   \
-    }                                                                          \
-  } while (0)
-
-#define READ_SE_OR_RETURN(out)                                                 \
-  do {                                                                         \
-    if (ReadSE(out, nullptr) != kOk) {                                         \
-      DVLOG(1) << "Error in stream: invalid value while trying to read " #out; \
-      return kInvalidStream;                                                   \
-    }                                                                          \
-  } while (0)
-
-#define IN_RANGE_OR_RETURN(val, min, max)                                   \
-  do {                                                                      \
-    if ((val) < (min) || (val) > (max)) {                                   \
-      DVLOG(1) << "Error in stream: invalid value, expected " #val " to be" \
-               << " in range [" << (min) << ":" << (max) << "]"             \
-               << " found " << (val) << " instead";                         \
-      return kInvalidStream;                                                \
-    }                                                                       \
-  } while (0)
-
-#define TRUE_OR_RETURN(a)                                            \
-  do {                                                               \
-    if (!(a)) {                                                      \
-      DVLOG(1) << "Error in stream: invalid value, expected " << #a; \
-      return kInvalidStream;                                         \
-    }                                                                \
-  } while (0)
-
-#define EQ_OR_RETURN(shdr1, shdr2, field)                                 \
-  do {                                                                    \
-    if ((shdr1->field) != (shdr2->field)) {                               \
-      DVLOG(1) << "Error in stream, slice header fields must match for: " \
-               << #field;                                                 \
-      return kInvalidStream;                                              \
-    }                                                                     \
-  } while (0)
 
 H265ScalingListData::H265ScalingListData() {
   memset(reinterpret_cast<void*>(this), 0, sizeof(*this));
@@ -315,8 +213,7 @@ VideoChromaSampling H265SPS::GetChromaSampling() const {
     case 3:
       return VideoChromaSampling::k444;
     default:
-      NOTREACHED();
-      return VideoChromaSampling::kUnknown;
+      NOTREACHED_NORETURN();
   }
 }
 
@@ -330,58 +227,6 @@ bool H265SliceHeader::IsPSlice() const {
 
 bool H265SliceHeader::IsBSlice() const {
   return slice_type == kSliceTypeB;
-}
-
-H265Parser::Result H265Parser::ReadUE(int* val, int* num_bits_read) {
-  // Count the number of contiguous zero bits.
-  int bit;
-  int num_bits = -1;
-  do {
-    READ_BITS_OR_RETURN(1, &bit);
-    num_bits++;
-  } while (bit == 0);
-
-  if (num_bits > 31)
-    return kInvalidStream;
-
-  // Calculate exp-Golomb code value of size num_bits.
-  // Special case for |num_bits| == 31 to avoid integer overflow. The only
-  // valid representation as an int is 2^31 - 1, so the remaining bits must
-  // be 0 or else the number is too large.
-  *val = (1u << num_bits) - 1u;
-
-  // Calculate the total read bits count.
-  if (num_bits_read)
-    *num_bits_read = 1 + num_bits * 2;
-
-  int rest;
-  if (num_bits == 31) {
-    READ_BITS_OR_RETURN(num_bits, &rest);
-    return (rest == 0) ? kOk : kInvalidStream;
-  }
-
-  if (num_bits > 0) {
-    READ_BITS_OR_RETURN(num_bits, &rest);
-    *val += rest;
-  }
-
-  return kOk;
-}
-
-H265Parser::Result H265Parser::ReadSE(int* val, int* num_bits_read) {
-  // See Chapter 9 in the spec.
-  int ue;
-  Result res;
-  res = ReadUE(&ue, num_bits_read);
-  if (res != kOk)
-    return res;
-
-  if (ue % 2 == 0)
-    *val = -(ue / 2);
-  else
-    *val = ue / 2 + 1;
-
-  return kOk;
 }
 
 H265Parser::Result H265Parser::ParseVPS(int* vps_id) {
@@ -398,7 +243,7 @@ H265Parser::Result H265Parser::ParseVPS(int* vps_id) {
   READ_BOOL_OR_RETURN(&vps->vps_base_layer_internal_flag);
   READ_BOOL_OR_RETURN(&vps->vps_base_layer_available_flag);
   READ_BITS_OR_RETURN(6, &vps->vps_max_layers_minus1);
-  IN_RANGE_OR_RETURN(vps->vps_max_layers_minus1, 0, 62);
+  IN_RANGE_OR_RETURN(vps->vps_max_layers_minus1, 0, 63);
   READ_BITS_OR_RETURN(3, &vps->vps_max_sub_layers_minus1);
   IN_RANGE_OR_RETURN(vps->vps_max_sub_layers_minus1, 0, 7);
   READ_BOOL_OR_RETURN(&vps->vps_temporal_id_nesting_flag);
@@ -441,9 +286,208 @@ H265Parser::Result H265Parser::ParseVPS(int* vps_id) {
   }
 
   READ_BITS_OR_RETURN(6, &vps->vps_max_layer_id);
-  IN_RANGE_OR_RETURN(vps->vps_max_layer_id, 0, 62);
+  IN_RANGE_OR_RETURN(vps->vps_max_layer_id, 0, 63);
   READ_UE_OR_RETURN(&vps->vps_num_layer_sets_minus1);
   IN_RANGE_OR_RETURN(vps->vps_num_layer_sets_minus1, 0, 1023);
+  for (int i = 1; i <= vps->vps_num_layer_sets_minus1; ++i) {
+    for (int j = 0; j <= vps->vps_max_layer_id; ++j) {
+      SKIP_BITS_OR_RETURN(1);  // layer_id_included_flag[i][j]
+    }
+  }
+
+  bool vps_timing_info_present_flag;
+  READ_BOOL_OR_RETURN(&vps_timing_info_present_flag);
+  if (vps_timing_info_present_flag) {
+    SKIP_BITS_OR_RETURN(32);  // vps_num_units_in_tick (!= 0)
+    SKIP_BITS_OR_RETURN(32);  // vps_time_scale (!= 0)
+    bool vps_poc_proportional_to_timing_flag;
+    READ_BOOL_OR_RETURN(&vps_poc_proportional_to_timing_flag);
+    if (vps_poc_proportional_to_timing_flag) {
+      int vps_num_ticks_poc_diff_one_minus1;
+      // Valid range is 0 to 2^32 - 2, which doesn't actually fit in an int.
+      READ_UE_OR_RETURN(&vps_num_ticks_poc_diff_one_minus1);
+    }
+    int vps_num_hrd_parameters;
+    READ_UE_OR_RETURN(&vps_num_hrd_parameters);
+    IN_RANGE_OR_RETURN(vps_num_hrd_parameters, 0,
+                       vps->vps_num_layer_sets_minus1 + 1);
+    for (int i = 0; i < vps_num_hrd_parameters; ++i) {
+      int hrd_layer_set_idx_i;
+      READ_UE_OR_RETURN(&hrd_layer_set_idx_i);
+      IN_RANGE_OR_RETURN(hrd_layer_set_idx_i,
+                         vps->vps_base_layer_internal_flag ? 0 : 1,
+                         vps->vps_num_layer_sets_minus1 + 1);
+      bool cprms_present_flag = true;
+      if (i > 0) {
+        READ_BOOL_OR_RETURN(&cprms_present_flag);
+      }
+
+      // E.2.2 hrd_parameters()
+      bool nal_hrd_parameters_present_flag = false;
+      bool vcl_hrd_parameters_present_flag = false;
+      bool sub_pic_hrd_params_present_flag = false;
+      if (cprms_present_flag) {
+        READ_BOOL_OR_RETURN(&nal_hrd_parameters_present_flag);
+        READ_BOOL_OR_RETURN(&vcl_hrd_parameters_present_flag);
+        if (nal_hrd_parameters_present_flag ||
+            vcl_hrd_parameters_present_flag) {
+          READ_BOOL_OR_RETURN(&sub_pic_hrd_params_present_flag);
+          if (sub_pic_hrd_params_present_flag) {
+            SKIP_BITS_OR_RETURN(8);  // tick_divisor_minus2
+            SKIP_BITS_OR_RETURN(
+                5);  // du_cpb_removal_delay_increment_length_minus1
+            SKIP_BITS_OR_RETURN(
+                1);  // sub_pic_cpb_params_in_pic_timing_sei_flag
+            SKIP_BITS_OR_RETURN(5);  // dpb_output_delay_du_length_minus1
+          }
+          SKIP_BITS_OR_RETURN(4);  // bit_rate_scale
+          SKIP_BITS_OR_RETURN(4);  // cpb_size_scale
+          if (sub_pic_hrd_params_present_flag) {
+            SKIP_BITS_OR_RETURN(4);  // cpb_size_du_scale
+          }
+          SKIP_BITS_OR_RETURN(5);  // initial_cpb_removal_delay_length_minus1
+          SKIP_BITS_OR_RETURN(5);  // au_cpb_removal_delay_length_minus1
+          SKIP_BITS_OR_RETURN(5);  // dpb_output_delay_length_minus1
+        }
+      }
+      for (int j = 0; j <= vps->vps_max_sub_layers_minus1; ++j) {
+        bool fixed_pic_rate_general_flag_j;
+        READ_BOOL_OR_RETURN(&fixed_pic_rate_general_flag_j);
+        bool fixed_pic_rate_within_cvs_flag_j = true;
+        if (!fixed_pic_rate_general_flag_j) {
+          READ_BOOL_OR_RETURN(&fixed_pic_rate_within_cvs_flag_j);
+        }
+        bool low_delay_hrd_flag_j = false;
+        if (fixed_pic_rate_within_cvs_flag_j) {
+          int elemental_duration_in_tc_minus1;
+          READ_UE_OR_RETURN(&elemental_duration_in_tc_minus1);
+        } else {
+          READ_BOOL_OR_RETURN(&low_delay_hrd_flag_j);
+        }
+        int cpb_cnt_minus1_j = 0;
+        if (!low_delay_hrd_flag_j) {
+          READ_UE_OR_RETURN(&cpb_cnt_minus1_j);
+          IN_RANGE_OR_RETURN(cpb_cnt_minus1_j, 0, 31);
+        }
+        if (nal_hrd_parameters_present_flag) {
+          // E.2.3 sub_layer_hrd_parameters()
+          for (int k = 0; k < cpb_cnt_minus1_j + 1; ++k) {
+            int bit_rate_value_minus1_k;
+            READ_UE_OR_RETURN(&bit_rate_value_minus1_k);
+            int cpb_size_value_minus1_k;
+            READ_UE_OR_RETURN(&cpb_size_value_minus1_k);
+            if (sub_pic_hrd_params_present_flag) {
+              int cpb_size_du_value_minus1_k;
+              READ_UE_OR_RETURN(&cpb_size_du_value_minus1_k);
+              int bit_rate_du_value_minus1_k;
+              READ_UE_OR_RETURN(&bit_rate_du_value_minus1_k);
+            }
+            SKIP_BITS_OR_RETURN(1);  // cbr_flag
+          }
+        }
+        if (vcl_hrd_parameters_present_flag) {
+          // E.2.3 sub_layer_hrd_parameters()
+          for (int k = 0; k < cpb_cnt_minus1_j + 1; ++k) {
+            int bit_rate_value_minus1_k;
+            READ_UE_OR_RETURN(&bit_rate_value_minus1_k);
+            int cpb_size_value_minus1_k;
+            READ_UE_OR_RETURN(&cpb_size_value_minus1_k);
+            if (sub_pic_hrd_params_present_flag) {
+              int cpb_size_du_value_minus1_k;
+              READ_UE_OR_RETURN(&cpb_size_du_value_minus1_k);
+              int bit_rate_du_value_minus1_k;
+              READ_UE_OR_RETURN(&bit_rate_du_value_minus1_k);
+            }
+            SKIP_BITS_OR_RETURN(1);  // cbr_flag
+          }
+        }
+      }
+    }
+  }
+
+  // F.7.3.2.1 multi-layer video_parameter_set_rbsp()
+  bool vps_extension_flag;
+  READ_BOOL_OR_RETURN(&vps_extension_flag);
+  if (vps_extension_flag) {
+    BYTE_ALIGNMENT();
+    // F.7.3.2.1.1 vps_extension()
+    if (vps->vps_max_layers_minus1 > 0 && vps->vps_base_layer_internal_flag) {
+      H265ProfileTierLevel profile_tier_level;
+      res = ParseProfileTierLevel(false, vps->vps_max_sub_layers_minus1,
+                                  &profile_tier_level);
+      if (res != kOk) {
+        return res;
+      }
+    }
+    bool splitting_flag;
+    READ_BOOL_OR_RETURN(&splitting_flag);
+    bool scalability_mask_flag[16] = {false};
+    int num_scalability_types = 0;
+    for (int i = 0; i < 16; ++i) {
+      READ_BOOL_OR_RETURN(&scalability_mask_flag[i]);
+      num_scalability_types += scalability_mask_flag[i];
+    }
+    int dimension_id_len_minus1[16] = {0};
+    for (int j = 0; j < (num_scalability_types - splitting_flag); ++j) {
+      READ_BITS_OR_RETURN(3, &dimension_id_len_minus1[j]);
+    }
+
+    int dim_bit_offset[17] = {0};
+    if (splitting_flag) {
+      // Equation F-2
+      for (int j = 1; j <= num_scalability_types - 1; ++j) {
+        dim_bit_offset[j] =
+            dim_bit_offset[j - 1] + dimension_id_len_minus1[j - 1] + 1;
+      }
+      // F.7.4.3.1.1 dimension_id_len_minus1
+      // Note: this value is specified to be inferred regardless of the value of
+      // NumScalabilityTypes, but the indices would be negative if it were zero.
+      if (num_scalability_types) {
+        dimension_id_len_minus1[num_scalability_types - 1] =
+            5 - dim_bit_offset[num_scalability_types - 1];
+      }
+      dim_bit_offset[num_scalability_types] = 6;
+      if (num_scalability_types) {
+        LE_OR_RETURN(dim_bit_offset[num_scalability_types - 1], 5);
+      }
+    }
+
+    bool vps_nuh_layer_id_present_flag;
+    READ_BOOL_OR_RETURN(&vps_nuh_layer_id_present_flag);
+    for (int i = 1; i <= std::min(62, vps->vps_max_layers_minus1); ++i) {
+      int layer_id_in_nuh_i = i;
+      if (vps_nuh_layer_id_present_flag) {
+        READ_BITS_OR_RETURN(6, &layer_id_in_nuh_i);
+      }
+      int dimension_id_i[16] = {0};
+      if (!splitting_flag) {
+        for (int j = 0; j < num_scalability_types; ++j) {
+          READ_BITS_OR_RETURN(dimension_id_len_minus1[j] + 1,
+                              &dimension_id_i[j]);
+        }
+      } else {
+        // F.7.4.3.1.1 dimension_id
+        for (int j = 0; j < num_scalability_types; ++j) {
+          dimension_id_i[j] =
+              (layer_id_in_nuh_i & ((1 << dim_bit_offset[j + 1]) - 1)) >>
+              dim_bit_offset[j];
+        }
+      }
+
+      // F.7.4.3.1.1 dimension_id
+      // We can skip layer zero because all dimension_id[0][j] == 0.
+      int scalability_id_i[16] = {0};
+      for (int sm_idx = 0, j = 0; sm_idx < 16; ++sm_idx) {
+        if (scalability_mask_flag[sm_idx]) {
+          scalability_id_i[sm_idx] = dimension_id_i[j++];
+        }
+      }
+
+      if (scalability_id_i[3] == 1) {
+        vps->aux_alpha_layer_id = layer_id_in_nuh_i;
+      }
+    }
+  }
 
   // If an VPS with the same id already exists, replace it.
   *vps_id = vps->vps_video_parameter_set_id;
@@ -562,8 +606,8 @@ H265Parser::Result H265Parser::ParseSPS(int* sps_id) {
       TRUE_OR_RETURN(sps->sps_max_num_reorder_pics[i] >=
                      sps->sps_max_num_reorder_pics[i - 1]);
     }
-    int sps_max_latency_increase_plus1;
-    READ_UE_OR_RETURN(&sps_max_latency_increase_plus1);
+    READ_UE_OR_RETURN(&sps->sps_max_latency_increase_plus1[i]);
+    IN_RANGE_OR_RETURN(sps->sps_max_latency_increase_plus1[i], 0, 0xFFFFFFFE);
   }
   if (!sps_sub_layer_ordering_info_present_flag) {
     // Fill in the default values for the other sublayers.
@@ -576,6 +620,18 @@ H265Parser::Result H265Parser::ParseSPS(int* sps_id) {
           sps->sps_max_latency_increase_plus1[sps->sps_max_sub_layers_minus1];
     }
   }
+
+  // Equation 7-9: Calculate SpsMaxLatencyPictures.
+  for (int i = 0; i <= sps->sps_max_sub_layers_minus1; ++i) {
+    if (sps->sps_max_latency_increase_plus1[i] != 0) {
+      sps->sps_max_latency_pictures[i] =
+          static_cast<uint32_t>(sps->sps_max_num_reorder_pics[i]) +
+          sps->sps_max_latency_increase_plus1[i] - 1;
+    } else {
+      sps->sps_max_latency_pictures[i] = 0;
+    }
+  }
+
   READ_UE_OR_RETURN(&sps->log2_min_luma_coding_block_size_minus3);
   // This enforces that min_cb_log2_size_y below will be <= 30 and prevents
   // integer overflow math there.
@@ -724,10 +780,6 @@ H265Parser::Result H265Parser::ParseSPS(int* sps_id) {
     READ_BOOL_OR_RETURN(&sps->persistent_rice_adaptation_enabled_flag);
     READ_BOOL_OR_RETURN(&sps->cabac_bypass_alignment_enabled_flag);
   }
-  if (sps->sps_multilayer_extension_flag) {
-    DVLOG(1) << "HEVC multilayer extension not supported";
-    return kInvalidStream;
-  }
   if (sps->sps_3d_extension_flag) {
     DVLOG(1) << "HEVC 3D extension not supported";
     return kInvalidStream;
@@ -763,7 +815,8 @@ H265Parser::Result H265Parser::ParsePPS(const H265NALU& nalu, int* pps_id) {
   pps->temporal_id = nalu.nuh_temporal_id_plus1 - 1;
 
   // Set these defaults if they are not present here.
-  pps->loop_filter_across_tiles_enabled_flag = 1;
+  pps->uniform_spacing_flag = true;
+  pps->loop_filter_across_tiles_enabled_flag = true;
 
   // 7.4.3.3.1
   READ_UE_OR_RETURN(&pps->pps_pic_parameter_set_id);
@@ -844,9 +897,8 @@ H265Parser::Result H265Parser::ParsePPS(const H265NALU& nalu, int* pps_id) {
     READ_BOOL_OR_RETURN(&pps->loop_filter_across_tiles_enabled_flag);
   }
   READ_BOOL_OR_RETURN(&pps->pps_loop_filter_across_slices_enabled_flag);
-  bool deblocking_filter_control_present_flag;
-  READ_BOOL_OR_RETURN(&deblocking_filter_control_present_flag);
-  if (deblocking_filter_control_present_flag) {
+  READ_BOOL_OR_RETURN(&pps->deblocking_filter_control_present_flag);
+  if (pps->deblocking_filter_control_present_flag) {
     READ_BOOL_OR_RETURN(&pps->deblocking_filter_override_enabled_flag);
     READ_BOOL_OR_RETURN(&pps->pps_deblocking_filter_disabled_flag);
     if (!pps->pps_deblocking_filter_disabled_flag) {
@@ -902,10 +954,6 @@ H265Parser::Result H265Parser::ParsePPS(const H265NALU& nalu, int* pps_id) {
     READ_UE_OR_RETURN(&pps->log2_sao_offset_scale_chroma);
     IN_RANGE_OR_RETURN(pps->log2_sao_offset_scale_chroma, 0,
                        std::max(sps->bit_depth_chroma_minus8 - 2, 0));
-  }
-  if (pps->pps_multilayer_extension_flag) {
-    DVLOG(1) << "HEVC multilayer extension not supported";
-    return kInvalidStream;
   }
   if (pps->pps_3d_extension_flag) {
     DVLOG(1) << "HEVC 3D extension not supported";
@@ -1090,6 +1138,8 @@ H265Parser::Result H265Parser::ParseSliceHeader(const H265NALU& nalu,
         shdr->curr_rps_idx = shdr->short_term_ref_pic_set_idx;
 
       if (sps->long_term_ref_pics_present_flag) {
+        off_t bits_left_prior = br_.NumBitsLeft();
+        size_t num_epb_prior = br_.NumEmulationPreventionBytesRead();
         if (sps->num_long_term_ref_pics_sps > 0) {
           READ_UE_OR_RETURN(&shdr->num_long_term_sps);
           IN_RANGE_OR_RETURN(shdr->num_long_term_sps, 0,
@@ -1139,6 +1189,9 @@ H265Parser::Result H265Parser::ParseSliceHeader(const H265NALU& nalu,
             }
           }
         }
+        shdr->lt_rps_bits =
+            (bits_left_prior - br_.NumBitsLeft()) -
+            8 * (br_.NumEmulationPreventionBytesRead() - num_epb_prior);
       }
       if (sps->sps_temporal_mvp_enabled_flag)
         READ_BOOL_OR_RETURN(&shdr->slice_temporal_mvp_enabled_flag);
@@ -1350,28 +1403,26 @@ VideoCodecProfile H265Parser::ProfileIDCToVideoCodecProfile(int profile_idc) {
   }
 }
 
-void H265SEIContentLightLevelInfo::PopulateHDRMetadata(
-    gfx::HDRMetadata& hdr_metadata) const {
-  hdr_metadata.max_content_light_level = max_content_light_level;
-  hdr_metadata.max_frame_average_light_level = max_picture_average_light_level;
+gfx::HdrMetadataCta861_3 H265SEIContentLightLevelInfo::ToGfx() const {
+  return gfx::HdrMetadataCta861_3(max_content_light_level,
+                                  max_picture_average_light_level);
 }
 
-void H265SEIMasteringDisplayInfo::PopulateColorVolumeMetadata(
-    gfx::ColorVolumeMetadata& color_volume_metadata) const {
+gfx::HdrMetadataSmpteSt2086 H265SEIMasteringDisplayInfo::ToGfx() const {
   constexpr auto kChromaDenominator = 50000.0f;
   constexpr auto kLumaDenoninator = 10000.0f;
   // display primaries are in G/B/R order in MDCV SEI.
-  color_volume_metadata.primaries = {
-      display_primaries[2][0] / kChromaDenominator,
-      display_primaries[2][1] / kChromaDenominator,
-      display_primaries[0][0] / kChromaDenominator,
-      display_primaries[0][1] / kChromaDenominator,
-      display_primaries[1][0] / kChromaDenominator,
-      display_primaries[1][1] / kChromaDenominator,
-      white_points[0] / kChromaDenominator,
-      white_points[1] / kChromaDenominator};
-  color_volume_metadata.luminance_max = max_luminance / kLumaDenoninator;
-  color_volume_metadata.luminance_min = min_luminance / kLumaDenoninator;
+  return gfx::HdrMetadataSmpteSt2086(
+      {display_primaries[2][0] / kChromaDenominator,
+       display_primaries[2][1] / kChromaDenominator,
+       display_primaries[0][0] / kChromaDenominator,
+       display_primaries[0][1] / kChromaDenominator,
+       display_primaries[1][0] / kChromaDenominator,
+       display_primaries[1][1] / kChromaDenominator,
+       white_points[0] / kChromaDenominator,
+       white_points[1] / kChromaDenominator},
+      /*luminance_max=*/max_luminance / kLumaDenoninator,
+      /*luminance_min=*/min_luminance / kLumaDenoninator);
 }
 
 H265Parser::Result H265Parser::ParseProfileTierLevel(
@@ -1466,8 +1517,8 @@ H265Parser::Result H265Parser::ParseScalingListData(
         } else {
           int ref_matrix_id = matrix_id - scaling_list_pred_matrix_id_delta *
                                               (size_id == 3 ? 3 : 1);
-          int* dst;
-          int* src;
+          uint8_t* dst;
+          uint8_t* src;
           int count = H265ScalingListData::kScalingListSizeId1To3Count;
           switch (size_id) {
             case 0:
@@ -1503,23 +1554,21 @@ H265Parser::Result H265Parser::ParseScalingListData(
         int coef_num = std::min(64, (1 << (4 + (size_id << 1))));
         if (size_id > 1) {
           if (size_id == 2) {
-            READ_SE_OR_RETURN(
-                &scaling_list_data->scaling_list_dc_coef_16x16[matrix_id]);
-            IN_RANGE_OR_RETURN(
-                scaling_list_data->scaling_list_dc_coef_16x16[matrix_id], -7,
-                247);
+            int scaling_list_dc_coef_16x16_minus_8;
+            READ_SE_OR_RETURN(&scaling_list_dc_coef_16x16_minus_8);
+            IN_RANGE_OR_RETURN(scaling_list_dc_coef_16x16_minus_8, -7, 247);
             // This is parsed as minus8;
-            scaling_list_data->scaling_list_dc_coef_16x16[matrix_id] += 8;
+            scaling_list_data->scaling_list_dc_coef_16x16[matrix_id] =
+                scaling_list_dc_coef_16x16_minus_8 + 8;
             next_coef =
                 scaling_list_data->scaling_list_dc_coef_16x16[matrix_id];
           } else {  // size_id == 3
-            READ_SE_OR_RETURN(
-                &scaling_list_data->scaling_list_dc_coef_32x32[matrix_id]);
-            IN_RANGE_OR_RETURN(
-                scaling_list_data->scaling_list_dc_coef_32x32[matrix_id], -7,
-                247);
+            int scaling_list_dc_coef_32x32_minus_8;
+            READ_SE_OR_RETURN(&scaling_list_dc_coef_32x32_minus_8);
+            IN_RANGE_OR_RETURN(scaling_list_dc_coef_32x32_minus_8, -7, 247);
             // This is parsed as minus8;
-            scaling_list_data->scaling_list_dc_coef_32x32[matrix_id] += 8;
+            scaling_list_data->scaling_list_dc_coef_32x32[matrix_id] =
+                scaling_list_dc_coef_32x32_minus_8 + 8;
             next_coef =
                 scaling_list_data->scaling_list_dc_coef_32x32[matrix_id];
           }

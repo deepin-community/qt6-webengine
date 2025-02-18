@@ -18,8 +18,6 @@ if(NOT QT_CONFIGURE_RUNNING)
             pkg_check_modules(GIO gio-2.0)
         endif()
     endif()
-    find_package(Cups)
-
     find_package(Qt6 ${PROJECT_VERSION} CONFIG QUIET
         OPTIONAL_COMPONENTS Positioning WebChannel PrintSupport)
 endif()
@@ -77,12 +75,17 @@ qt_feature("webengine-system-pulseaudio" PRIVATE
     AUTODETECT UNIX
     CONDITION PULSEAUDIO_FOUND
 )
+qt_feature("webengine-system-gbm" PRIVATE
+    SECTION "WebEngine"
+    LABEL "Use system GBM"
+    AUTODETECT UNIX
+    CONDITION GBM_FOUND
+)
 qt_feature("webengine-printing-and-pdf" PRIVATE
     LABEL "Printing and PDF"
     PURPOSE "Provides printing and output to PDF."
     AUTODETECT NOT QT_FEATURE_webengine_embedded_build
-    CONDITION TARGET Qt::PrintSupport AND QT_FEATURE_printer AND
-    (CUPS_FOUND OR WIN32)
+    CONDITION TARGET Qt::PrintSupport AND QT_FEATURE_printer
 )
 qt_feature("webengine-pepper-plugins" PRIVATE
     LABEL "Pepper Plugins"
@@ -157,6 +160,7 @@ qt_feature("webengine-vulkan" PRIVATE
     LABEL "Vulkan support"
     PURPOSE "Enables support for Vulkan rendering"
     CONDITION QT_FEATURE_vulkan
+    DISABLE MACOS
 )
 qt_feature("webengine-vaapi" PRIVATE
     SECTION "WebEngine"
@@ -165,6 +169,15 @@ qt_feature("webengine-vaapi" PRIVATE
     AUTODETECT GBM_FOUND AND LIBVA_FOUND AND QT_FEATURE_vulkan
     # hardware accelerated encoding requires bundled libvpx
     CONDITION LINUX AND NOT QT_FEATURE_webengine_system_libvpx
+)
+list(LENGTH CMAKE_OSX_ARCHITECTURES osx_arch_count)
+qt_feature("webenginedriver" PUBLIC
+    SECTION "WebEngine"
+    LABEL "Build WebEngineDriver"
+    PURPOSE "Enables WebEngineDriver build"
+    CONDITION NOT CMAKE_CROSSCOMPILING
+              AND NOT (CMAKE_OSX_ARCHITECTURES AND osx_arch_count GREATER 1)
+    DISABLE CMAKE_BUILD_TYPE STREQUAL Debug
 )
 # internal testing feature
 qt_feature("webengine-system-poppler" PRIVATE
@@ -210,6 +223,7 @@ qt_configure_add_summary_entry(
     CONDITION LINUX
 )
 qt_configure_add_summary_entry(ARGS "webengine-v8-context-snapshot")
+qt_configure_add_summary_entry(ARGS "webenginedriver")
 qt_configure_end_summary_section() # end of "Qt WebEngineCore" section
 if(CMAKE_CROSSCOMPILING)
     check_thumb(armThumb)
@@ -231,4 +245,9 @@ qt_configure_add_report_entry(
     TYPE WARNING
     MESSAGE "VA-API is incompatible with system libvpx."
     CONDITION QT_FEATURE_webengine_system_libvpx AND QT_FEATURE_webengine_vaapi
+)
+qt_configure_add_report_entry(
+    TYPE WARNING
+    MESSAGE "System GBM is disabled. The bundled minigbm supports Intel only, you might need to install libgbm to avoid rendering issues."
+    CONDITION LINUX AND NOT QT_FEATURE_webengine_system_gbm
 )

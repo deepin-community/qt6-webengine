@@ -17,6 +17,7 @@
 #include "base/functional/callback_helpers.h"
 #include "base/i18n/rtl.h"
 #include "base/logging.h"
+#include "base/memory/raw_ptr.h"
 #include "base/notreached.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/observer_list.h"
@@ -29,11 +30,14 @@
 #include "third_party/skia/include/core/SkRect.h"
 #include "ui/accessibility/ax_action_data.h"
 #include "ui/accessibility/ax_enums.mojom.h"
+#include "ui/accessibility/ax_node_id_forward.h"
+#include "ui/actions/actions.h"
 #include "ui/base/cursor/cursor.h"
 #include "ui/base/dragdrop/drag_drop_types.h"
 #include "ui/base/dragdrop/mojom/drag_drop_types.mojom.h"
 #include "ui/base/ime/input_method.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
+#include "ui/base/ui_base_features.h"
 #include "ui/color/color_provider_manager.h"
 #include "ui/compositor/clip_recorder.h"
 #include "ui/compositor/compositor.h"
@@ -58,6 +62,7 @@
 #include "ui/views/accessibility/accessibility_paint_checks.h"
 #include "ui/views/accessibility/ax_event_manager.h"
 #include "ui/views/accessibility/view_accessibility.h"
+#include "ui/views/action_view_interface.h"
 #include "ui/views/background.h"
 #include "ui/views/border.h"
 #include "ui/views/buildflags.h"
@@ -227,9 +232,15 @@ View::View() {
     SetProperty(kViewStackTraceKey,
                 std::make_unique<base::debug::StackTrace>());
   }
+
+  ax_node_data_ = std::make_unique<ui::AXNodeData>();
 }
 
 View::~View() {
+  for (ViewObserver& observer : observers_) {
+    observer.OnViewHierarchyWillBeDeleted(this);
+  }
+
   life_cycle_state_ = LifeCycleState::kDestroying;
 
   if (parent_)
@@ -248,7 +259,7 @@ View::~View() {
 
   {
     internal::ScopedChildrenLock lock(this);
-    for (auto* child : children_) {
+    for (views::View* child : children_) {
       child->parent_ = nullptr;
 
       // Remove any references to |child| to avoid holding a dangling ptr.
@@ -438,7 +449,7 @@ void View::SetBoundsRect(const gfx::Rect& bounds) {
   // Notify interested Views that visible bounds within the root view may have
   // changed.
   if (descendants_to_notify_) {
-    for (auto* i : *descendants_to_notify_) {
+    for (views::View* i : *descendants_to_notify_) {
       i->OnVisibleBoundsChanged();
     }
   }
@@ -648,6 +659,9 @@ void View::SetEnabled(bool enabled) {
 
   enabled_ = enabled;
   AdvanceFocusIfNecessary();
+  // TODO(crbug.com/1421682): We need a specific enabled-changed event for this.
+  // Some platforms have specific state-changed events and this generic event
+  // does not suggest what changed.
   NotifyAccessibilityEvent(ax::mojom::Event::kStateChanged, true);
   OnPropertyChanged(&enabled_, kPropertyEffectsPaint);
 }
@@ -750,15 +764,17 @@ void View::RemoveLayerFromRegions(ui::Layer* old_layer) {
 }
 
 void View::RemoveLayerFromRegionsKeepInLayerTree(ui::Layer* old_layer) {
-  auto remove_layer = [old_layer, this](std::vector<ui::Layer*>& layer_vector) {
-    auto layer_pos = base::ranges::find(layer_vector, old_layer);
-    if (layer_pos == layer_vector.end()) {
-      return false;
-    }
-    layer_vector.erase(layer_pos);
-    old_layer->RemoveObserver(this);
-    return true;
-  };
+  auto remove_layer =
+      [old_layer, this](
+          std::vector<raw_ptr<ui::Layer, VectorExperimental>>& layer_vector) {
+        auto layer_pos = base::ranges::find(layer_vector, old_layer);
+        if (layer_pos == layer_vector.end()) {
+          return false;
+        }
+        layer_vector.erase(layer_pos);
+        old_layer->RemoveObserver(this);
+        return true;
+      };
   const bool layer_removed =
       remove_layer(layers_below_) || remove_layer(layers_above_);
   DCHECK(layer_removed) << "Attempted to remove a layer that was never added.";
@@ -780,7 +796,7 @@ std::vector<ui::Layer*> View::GetLayersInOrder(ViewLayer view_layer) {
   if (view_layer == ViewLayer::kInclude) {
     result.push_back(layer());
   }
-  for (auto* layer_above : layers_above_) {
+  for (ui::Layer* layer_above : layers_above_) {
     result.push_back(layer_above);
   }
 
@@ -858,7 +874,7 @@ void View::Layout() {
   // just propagate the Layout() call down the hierarchy, so whoever receives
   // the call can take appropriate action.
   internal::ScopedChildrenLock lock(this);
-  for (auto* child : children_) {
+  for (views::View* child : children_) {
     if (child->needs_layout_ || !HasLayoutManager()) {
       TRACE_EVENT1("views", "View::LayoutChildren", "class",
                    child->GetClassName());
@@ -923,7 +939,7 @@ const View* View::GetViewByID(int id) const {
     return const_cast<View*>(this);
 
   internal::ScopedChildrenLock lock(this);
-  for (auto* child : children_) {
+  for (views::View* child : children_) {
     const View* view = child->GetViewByID(id);
     if (view)
       return view;
@@ -976,14 +992,19 @@ void View::GetViewsInGroup(int group, Views* views) {
     views->push_back(this);
 
   internal::ScopedChildrenLock lock(this);
-  for (auto* child : children_)
+  for (views::View* child : children_) {
     child->GetViewsInGroup(group, views);
+  }
 }
 
 View* View::GetSelectedViewForGroup(int group) {
   Views views;
   GetWidget()->GetRootView()->GetViewsInGroup(group, &views);
   return views.empty() ? nullptr : views[0];
+}
+
+std::string View::GetObjectName() const {
+  return GetClassName();
 }
 
 // Coordinate conversion -------------------------------------------------------
@@ -1059,6 +1080,16 @@ gfx::RectF View::ConvertRectToTarget(const View* source,
 }
 
 // static
+gfx::Rect View::ConvertRectToTarget(const View* source,
+                                    const View* target,
+                                    const gfx::Rect& rect) {
+  constexpr float kDefaultAllowedConversionError = 0.00001f;
+  return gfx::ToEnclosedRectIgnoringError(
+      ConvertRectToTarget(source, target, gfx::RectF(rect)),
+      kDefaultAllowedConversionError);
+}
+
+// static
 void View::ConvertPointToWidget(const View* src, gfx::Point* p) {
   DCHECK(src);
   DCHECK(p);
@@ -1088,6 +1119,13 @@ void View::ConvertPointToScreen(const View* src, gfx::Point* p) {
 }
 
 // static
+gfx::Point View::ConvertPointToScreen(const View* src, const gfx::Point& p) {
+  gfx::Point screen_pt = p;
+  ConvertPointToScreen(src, &screen_pt);
+  return screen_pt;
+}
+
+// static
 void View::ConvertPointFromScreen(const View* dst, gfx::Point* p) {
   DCHECK(dst);
   DCHECK(p);
@@ -1097,6 +1135,13 @@ void View::ConvertPointFromScreen(const View* dst, gfx::Point* p) {
     return;
   *p -= widget->GetClientAreaBoundsInScreen().OffsetFromOrigin();
   ConvertPointFromWidget(dst, p);
+}
+
+// static
+gfx::Point View::ConvertPointFromScreen(const View* src, const gfx::Point& p) {
+  gfx::Point local_pt = p;
+  ConvertPointFromScreen(src, &local_pt);
+  return local_pt;
 }
 
 // static
@@ -1300,9 +1345,6 @@ const ui::ColorProvider* View::GetColorProvider() const {
 }
 
 const ui::NativeTheme* View::GetNativeTheme() const {
-  if (native_theme_)
-    return native_theme_;
-
   if (parent())
     return parent()->GetNativeTheme();
 
@@ -1321,13 +1363,6 @@ const ui::NativeTheme* View::GetNativeTheme() const {
   }
 
   return ui::NativeTheme::GetInstanceForNativeUi();
-}
-
-void View::SetNativeThemeForTesting(ui::NativeTheme* theme) {
-  ui::NativeTheme* original_native_theme = GetNativeTheme();
-  native_theme_ = theme;
-  if (native_theme_ != original_native_theme)
-    PropagateThemeChanged();
 }
 
 // RTL painting ----------------------------------------------------------------
@@ -1393,7 +1428,7 @@ View* View::GetTooltipHandlerForPoint(const gfx::Point& point) {
   // tightly encloses the specified point.
   View::Views children = GetChildrenInZOrder();
   DCHECK_EQ(children_.size(), children.size());
-  for (auto* child : base::Reversed(children)) {
+  for (views::View* child : base::Reversed(children)) {
     if (!child->GetVisible())
       continue;
 
@@ -1891,18 +1926,211 @@ ViewAccessibility& View::GetViewAccessibility() const {
   return *view_accessibility_;
 }
 
+void View::GetAccessibleNodeData(ui::AXNodeData* node_data) {
+  // `ViewAccessibility::GetAccessibleNodeData` populates the id and classname
+  // values prior to asking the View for its data. We don't want to stomp on
+  // those values.
+  ax_node_data_->id = node_data->id;
+  ax_node_data_->AddStringAttribute(
+      ax::mojom::StringAttribute::kClassName,
+      node_data->GetStringAttribute(ax::mojom::StringAttribute::kClassName));
+
+  // Copy everything set by the property setters.
+  *node_data = *ax_node_data_;
+}
+
+void View::SetAccessibilityProperties(
+    absl::optional<ax::mojom::Role> role,
+    absl::optional<std::u16string> name,
+    absl::optional<std::u16string> description,
+    absl::optional<std::u16string> role_description,
+    absl::optional<ax::mojom::NameFrom> name_from,
+    absl::optional<ax::mojom::DescriptionFrom> description_from) {
+  base::AutoReset<bool> initializing(&pause_accessibility_events_, true);
+  if (role.has_value()) {
+    if (role_description.has_value()) {
+      SetAccessibleRole(role.value(), role_description.value());
+    } else {
+      SetAccessibleRole(role.value());
+    }
+  }
+
+  // Defining the NameFrom value without specifying the name doesn't make much
+  // sense. The only exception might be if the NameFrom is setting the name to
+  // explicitly empty. In order to prevent surprising/confusing behavior, we
+  // only use the NameFrom value if we have an explicit name. As a result, any
+  // caller setting the name to explicitly empty must set the name to an empty
+  // string.
+  if (name.has_value()) {
+    if (name_from.has_value()) {
+      SetAccessibleName(name.value(), name_from.value());
+    } else {
+      SetAccessibleName(name.value());
+    }
+  }
+
+  // See the comment above regarding the NameFrom value.
+  if (description.has_value()) {
+    if (description_from.has_value()) {
+      SetAccessibleDescription(description.value(), description_from.value());
+    } else {
+      SetAccessibleDescription(description.value());
+    }
+  }
+}
+
 void View::SetAccessibleName(const std::u16string& name) {
+  SetAccessibleName(
+      name, static_cast<ax::mojom::NameFrom>(ax_node_data_->GetIntAttribute(
+                ax::mojom::IntAttribute::kNameFrom)));
+}
+
+void View::SetAccessibleName(std::u16string name,
+                             ax::mojom::NameFrom name_from) {
+  // Allow subclasses to adjust the name.
+  AdjustAccessibleName(name, name_from);
+
+  // Ensure we have a current `name_from` value. For instance, the name might
+  // still be an empty string, but a view is now indicating that this is by
+  // design by setting `NameFrom::kAttributeExplicitlyEmpty`.
+  ax_node_data_->SetNameFrom(name_from);
+
   if (name == accessible_name_) {
     return;
   }
+
+  if (name.empty()) {
+    ax_node_data_->RemoveStringAttribute(ax::mojom::StringAttribute::kName);
+  } else if (ax_node_data_->role != ax::mojom::Role::kUnknown &&
+             ax_node_data_->role != ax::mojom::Role::kNone) {
+    // TODO(accessibility): This is to temporarily work around the DCHECK
+    // in `AXNodeData` that wants to have a role to calculate a name-from.
+    // If we don't have a role yet, don't add it to the data until we do.
+    // See `SetAccessibleRole` where we check for and handle this condition.
+    // Also note that the `SetAccessibilityProperties` function allows view
+    // authors to set the role and name at once, if all views use it, we can
+    // remove this workaround.
+    ax_node_data_->SetName(name);
+  }
+
   accessible_name_ = name;
   OnPropertyChanged(&accessible_name_, kPropertyEffectsNone);
-  NotifyAccessibilityEvent(ax::mojom::Event::kTextChanged, true);
   OnAccessibleNameChanged(name);
+  NotifyAccessibilityEvent(ax::mojom::Event::kTextChanged, true);
+}
+
+void View::SetAccessibleName(View* naming_view) {
+  DCHECK(naming_view);
+  DCHECK_NE(this, naming_view);
+
+  const std::u16string& name = naming_view->GetAccessibleName();
+  DCHECK(!name.empty());
+
+  SetAccessibleName(name, ax::mojom::NameFrom::kRelatedElement);
+  ax_node_data_->AddIntListAttribute(
+      ax::mojom::IntListAttribute::kLabelledbyIds,
+      {naming_view->GetViewAccessibility().GetUniqueId().Get()});
 }
 
 const std::u16string& View::GetAccessibleName() const {
   return accessible_name_;
+}
+
+void View::SetAccessibleRole(const ax::mojom::Role role) {
+  if (role == accessible_role_) {
+    return;
+  }
+
+  ax_node_data_->role = role;
+  if (role != ax::mojom::Role::kUnknown && role != ax::mojom::Role::kNone) {
+    if (ax_node_data_->GetStringAttribute(ax::mojom::StringAttribute::kName)
+            .empty() &&
+        !accessible_name_.empty()) {
+      // TODO(accessibility): This is to temporarily work around the DCHECK
+      // that wants to have a role to calculate a name-from. If we have a
+      // name in our properties but not in our `AXNodeData`, the name was
+      // set prior to the role. Now that we have a valid role, we can set
+      // the name. See `SetAccessibleName` for where we delayed setting it.
+      ax_node_data_->SetName(accessible_name_);
+    }
+  }
+
+  accessible_role_ = role;
+  OnPropertyChanged(&accessible_role_, kPropertyEffectsNone);
+}
+
+void View::SetAccessibleRole(const ax::mojom::Role role,
+                             const std::u16string& role_description) {
+  if (!role_description.empty()) {
+    ax_node_data_->AddStringAttribute(
+        ax::mojom::StringAttribute::kRoleDescription,
+        base::UTF16ToUTF8(role_description));
+  } else {
+    ax_node_data_->RemoveStringAttribute(
+        ax::mojom::StringAttribute::kRoleDescription);
+  }
+
+  SetAccessibleRole(role);
+}
+
+ax::mojom::Role View::GetAccessibleRole() const {
+  return accessible_role_;
+}
+
+void View::SetAccessibleDescription(const std::u16string& description) {
+  if (description.empty()) {
+    ax_node_data_->RemoveStringAttribute(
+        ax::mojom::StringAttribute::kDescription);
+    ax_node_data_->RemoveIntAttribute(
+        ax::mojom::IntAttribute::kDescriptionFrom);
+    accessible_description_ = description;
+    return;
+  }
+
+  SetAccessibleDescription(description,
+                           ax::mojom::DescriptionFrom::kAriaDescription);
+}
+
+void View::SetAccessibleDescription(
+    const std::u16string& description,
+    ax::mojom::DescriptionFrom description_from) {
+  // Ensure we have a current `description_from` value. For instance, the
+  // description might still be an empty string, but a view is now indicating
+  // that this is by design by setting
+  // `DescriptionFrom::kAttributeExplicitlyEmpty`.
+  ax_node_data_->SetDescriptionFrom(description_from);
+
+  if (description == accessible_description_) {
+    return;
+  }
+
+  // `AXNodeData::SetDescription` DCHECKs that the description is not empty
+  // unless it has `DescriptionFrom::kAttributeExplicitlyEmpty`.
+  if (!description.empty() ||
+      ax_node_data_->GetDescriptionFrom() ==
+          ax::mojom::DescriptionFrom::kAttributeExplicitlyEmpty) {
+    ax_node_data_->SetDescription(description);
+  }
+
+  accessible_description_ = description;
+  OnPropertyChanged(&accessible_description_, kPropertyEffectsNone);
+}
+
+void View::SetAccessibleDescription(View* describing_view) {
+  DCHECK(describing_view);
+  DCHECK_NE(this, describing_view);
+
+  const std::u16string& name = describing_view->GetAccessibleName();
+  DCHECK(!name.empty());
+
+  SetAccessibleDescription(name, ax::mojom::DescriptionFrom::kRelatedElement);
+  ax_node_data_->AddIntListAttribute(
+      ax::mojom::IntListAttribute::kDescribedbyIds,
+      {describing_view->GetViewAccessibility().GetUniqueId().Get()});
+}
+
+const std::u16string& View::GetAccessibleDescription() const {
+  return accessible_description_;
 }
 
 bool View::HandleAccessibleAction(const ui::AXActionData& action_data) {
@@ -1957,6 +2185,13 @@ void View::NotifyAccessibilityEvent(ax::mojom::Event event_type,
   // during destruction, and is likely to lead to crashes/problems.
   if (GetWidget() && !GetWidget()->GetNativeView())
     return;
+
+  // If `pause_accessibility_events_` is true, it means we are initializing
+  // property values. In this specific case, we do not want to notify platform
+  // assistive technologies that a property has changed.
+  if (pause_accessibility_events_) {
+    return;
+  }
 
   AXEventManager::Get()->NotifyViewEvent(this, event_type);
 
@@ -2116,8 +2351,9 @@ void View::MoveLayerToParent(ui::Layer* parent_layer,
     SetLayerBounds(size(), local_offset_data);
   } else {
     internal::ScopedChildrenLock lock(this);
-    for (auto* child : GetChildrenInZOrder())
+    for (views::View* child : GetChildrenInZOrder()) {
       child->MoveLayerToParent(parent_layer, local_offset_data);
+    }
   }
 }
 
@@ -2138,8 +2374,9 @@ void View::UpdateChildLayerVisibility(bool ancestor_visible) {
   }
   {
     internal::ScopedChildrenLock lock(this);
-    for (auto* child : children_)
+    for (views::View* child : children_) {
       child->UpdateChildLayerVisibility(layers_visible);
+    }
   }
 }
 
@@ -2154,9 +2391,10 @@ void View::DestroyLayerImpl(LayerChangeNotifyBehavior notify_parents) {
     return;
 
   // Copy children(), since the loop below will mutate its result.
-  std::vector<ui::Layer*> children = layer()->children();
+  std::vector<raw_ptr<ui::Layer, VectorExperimental>> children =
+      layer()->children();
   ui::Layer* new_parent = layer()->parent();
-  for (auto* child : children) {
+  for (ui::Layer* child : children) {
     layer()->Remove(child);
     if (new_parent)
       new_parent->Add(child);
@@ -2196,7 +2434,7 @@ void View::UpdateChildLayerBounds(const LayerOffsetData& offset_data) {
     SetLayerBounds(size(), offset_data);
   } else {
     internal::ScopedChildrenLock lock(this);
-    for (auto* child : children_) {
+    for (views::View* child : children_) {
       child->UpdateChildLayerBounds(
           offset_data + child->GetMirroredPosition().OffsetFromOrigin());
     }
@@ -2282,8 +2520,9 @@ void View::ReorderLayers() {
   }
 }
 
-void View::AddLayerToRegionImpl(ui::Layer* new_layer,
-                                std::vector<ui::Layer*>& layer_vector) {
+void View::AddLayerToRegionImpl(
+    ui::Layer* new_layer,
+    std::vector<raw_ptr<ui::Layer, VectorExperimental>>& layer_vector) {
   DCHECK(new_layer);
   DCHECK(!base::Contains(layer_vector, new_layer)) << "Layer already added.";
 
@@ -2346,8 +2585,9 @@ void View::ReorderChildLayers(ui::Layer* parent_layer) {
     // the front.
     View::Views children = GetChildrenInZOrder();
     DCHECK_EQ(children_.size(), children.size());
-    for (auto* child : base::Reversed(children))
+    for (views::View* child : base::Reversed(children)) {
       child->ReorderChildLayers(parent_layer);
+    }
   }
 }
 
@@ -2367,6 +2607,11 @@ void View::OnBlur() {}
 
 void View::Focus() {
   OnFocus();
+
+#if !BUILDFLAG(IS_CHROMEOS_LACROS)
+  // TODO(crbug.com/1492220) - Get this working on Lacros as well.
+  UpdateTooltipForFocus();
+#endif
 
   // TODO(pbos): Investigate if parts of this can run unconditionally.
   if (!suppress_default_focus_handling_) {
@@ -2427,6 +2672,17 @@ void View::TooltipTextChanged() {
     widget->GetTooltipManager()->TooltipTextChanged(this);
 }
 
+void View::UpdateTooltipForFocus() {
+  if (base::FeatureList::IsEnabled(
+          ::views::features::kKeyboardAccessibleTooltipInViews) &&
+      !kShouldDisableKeyboardTooltipsForTesting) {
+    Widget* widget = GetWidget();
+    if (widget && widget->GetTooltipManager()) {
+      widget->GetTooltipManager()->UpdateTooltipForFocus(this);
+    }
+  }
+}
+
 // Drag and drop ---------------------------------------------------------------
 
 int View::GetDragOperations(const gfx::Point& press_pt) {
@@ -2485,6 +2741,9 @@ void View::AfterPropertyChange(const void* key, int64_t old_value) {
       views::ElementTrackerViews::GetInstance()->RegisterView(new_element_id,
                                                               this);
     }
+  }
+  for (auto& observer : observers_) {
+    observer.OnViewPropertyChanged(this, key, old_value);
   }
 }
 
@@ -2605,7 +2864,7 @@ void View::RecursivePaintHelper(void (View::*func)(const PaintInfo&),
                                 const PaintInfo& info) {
   View::Views children = GetChildrenInZOrder();
   DCHECK_EQ(children_.size(), children.size());
-  for (auto* child : children) {
+  for (views::View* child : children) {
     if (!child->layer())
       (child->*func)(info);
   }
@@ -2794,7 +3053,7 @@ void View::PropagateRemoveNotifications(View* old_parent,
                                         bool is_removed_from_widget) {
   {
     internal::ScopedChildrenLock lock(this);
-    for (auto* child : children_) {
+    for (views::View* child : children_) {
       child->PropagateRemoveNotifications(old_parent, new_parent,
                                           is_removed_from_widget);
     }
@@ -2828,8 +3087,9 @@ void View::PropagateAddNotifications(const ViewHierarchyChangedDetails& details,
 
   {
     internal::ScopedChildrenLock lock(this);
-    for (auto* child : children_)
+    for (views::View* child : children_) {
       child->PropagateAddNotifications(details, is_added_to_widget);
+    }
   }
 
   ViewHierarchyChangedImpl(details);
@@ -2843,8 +3103,9 @@ void View::PropagateAddNotifications(const ViewHierarchyChangedDetails& details,
 void View::PropagateNativeViewHierarchyChanged() {
   {
     internal::ScopedChildrenLock lock(this);
-    for (auto* child : children_)
+    for (views::View* child : children_) {
       child->PropagateNativeViewHierarchyChanged();
+    }
   }
   NativeViewHierarchyChanged();
 }
@@ -2864,8 +3125,9 @@ void View::ViewHierarchyChangedImpl(
 void View::PropagateVisibilityNotifications(View* start, bool is_visible) {
   {
     internal::ScopedChildrenLock lock(this);
-    for (auto* child : children_)
+    for (views::View* child : children_) {
       child->PropagateVisibilityNotifications(start, is_visible);
+    }
   }
   VisibilityChangedImpl(start, is_visible);
 }
@@ -2970,15 +3232,16 @@ void View::SetLayoutManagerImpl(std::unique_ptr<LayoutManager> layout_manager) {
 void View::SetLayerBounds(const gfx::Size& size,
                           const LayerOffsetData& offset_data) {
   const gfx::Rect bounds = gfx::Rect(size) + offset_data.offset();
-  const bool bounds_changed = (bounds != layer()->GetTargetBounds());
   layer()->SetBounds(bounds);
   for (ui::Layer* layer : GetLayersInOrder(ViewLayer::kExclude)) {
     layer->SetBounds(gfx::Rect(layer->size()) + bounds.OffsetFromOrigin());
   }
   SnapLayerToPixelBoundary(offset_data);
-  if (bounds_changed) {
-    for (ViewObserver& observer : observers_)
-      observer.OnLayerTargetBoundsChanged(this);
+
+  // Observers may need to adjust the bounds of layers in regions, so always
+  // notify observers even if the bounds of `layer()` didn't change.
+  for (ViewObserver& observer : observers_) {
+    observer.OnViewLayerBoundsSet(this);
   }
 }
 
@@ -3047,8 +3310,9 @@ void View::CreateLayer(ui::LayerType layer_type) {
   // sub-tree can inherit the visibility of the corresponding view.
   {
     internal::ScopedChildrenLock lock(this);
-    for (auto* child : children_)
+    for (views::View* child : children_) {
       child->UpdateChildLayerVisibility(true);
+    }
   }
 
   SetLayer(std::make_unique<ui::Layer>(layer_type));
@@ -3076,6 +3340,8 @@ void View::CreateLayer(ui::LayerType layer_type) {
 }
 
 bool View::UpdateParentLayers() {
+  TRACE_EVENT1("views", "View::UpdateParentLayers", "class", GetClassName());
+
   // Attach all top-level un-parented layers.
   if (layer()) {
     if (!layer()->parent()) {
@@ -3088,7 +3354,7 @@ bool View::UpdateParentLayers() {
   }
   bool result = false;
   internal::ScopedChildrenLock lock(this);
-  for (auto* child : children_) {
+  for (views::View* child : children_) {
     if (child->UpdateParentLayers())
       result = true;
   }
@@ -3109,8 +3375,9 @@ void View::OrphanLayers() {
     return;
   }
   internal::ScopedChildrenLock lock(this);
-  for (auto* child : children_)
+  for (views::View* child : children_) {
     child->OrphanLayers();
+  }
 }
 
 void View::ReparentLayer(ui::Layer* parent_layer) {
@@ -3309,8 +3576,9 @@ void View::AdvanceFocusIfNecessary() {
 void View::PropagateThemeChanged() {
   {
     internal::ScopedChildrenLock lock(this);
-    for (auto* child : base::Reversed(children_))
+    for (views::View* child : base::Reversed(children_)) {
       child->PropagateThemeChanged();
+    }
   }
   OnThemeChanged();
   if (border_)
@@ -3334,7 +3602,7 @@ void View::PropagateDeviceScaleFactorChanged(float old_device_scale_factor,
                                              float new_device_scale_factor) {
   {
     internal::ScopedChildrenLock lock(this);
-    for (auto* child : base::Reversed(children_)) {
+    for (views::View* child : base::Reversed(children_)) {
       child->PropagateDeviceScaleFactorChanged(old_device_scale_factor,
                                                new_device_scale_factor);
     }
@@ -3356,6 +3624,16 @@ void View::UpdateTooltip() {
   //             Widgets that it uses.
   if (widget && widget->GetTooltipManager())
     widget->GetTooltipManager()->UpdateTooltip();
+}
+
+bool View::kShouldDisableKeyboardTooltipsForTesting = false;
+
+void View::DisableKeyboardTooltipsForTesting() {
+  View::kShouldDisableKeyboardTooltipsForTesting = true;
+}
+
+void View::EnableKeyboardTooltipsForTesting() {
+  View::kShouldDisableKeyboardTooltipsForTesting = false;
 }
 
 // Drag and drop ---------------------------------------------------------------
@@ -3396,7 +3674,7 @@ View::DefaultFillLayout::~DefaultFillLayout() = default;
 
 void View::DefaultFillLayout::Layout(View* host) {
   const gfx::Rect contents_bounds = host->GetContentsBounds();
-  for (auto* child : host->children()) {
+  for (views::View* child : host->children()) {
     if (!child->GetProperty(kViewIgnoredByLayoutKey))
       child->SetBoundsRect(contents_bounds);
   }
@@ -3404,7 +3682,7 @@ void View::DefaultFillLayout::Layout(View* host) {
 
 gfx::Size View::DefaultFillLayout::GetPreferredSize(const View* host) const {
   gfx::Size preferred_size;
-  for (auto* child : host->children()) {
+  for (views::View* child : host->children()) {
     if (!child->GetProperty(kViewIgnoredByLayoutKey))
       preferred_size.SetToMax(child->GetPreferredSize());
   }
@@ -3415,7 +3693,7 @@ int View::DefaultFillLayout::GetPreferredHeightForWidth(const View* host,
                                                         int width) const {
   const gfx::Insets insets = host->GetInsets();
   int preferred_height = 0;
-  for (auto* child : host->children()) {
+  for (views::View* child : host->children()) {
     if (!child->GetProperty(kViewIgnoredByLayoutKey)) {
       preferred_height = std::max(
           preferred_height,
@@ -3425,7 +3703,20 @@ int View::DefaultFillLayout::GetPreferredHeightForWidth(const View* host,
   return preferred_height;
 }
 
-// This block requires the existence of METADATA_HEADER(View) in the class
+std::unique_ptr<ActionViewInterface> View::GetActionViewInterface() {
+  return std::make_unique<BaseActionViewInterface>(this);
+}
+
+BaseActionViewInterface::BaseActionViewInterface(View* action_view)
+    : action_view_(action_view) {}
+
+void BaseActionViewInterface::ActionItemChangedImpl(
+    actions::ActionItem* action_item) {
+  action_view_->SetEnabled(action_item->GetEnabled());
+  action_view_->SetVisible(action_item->GetVisible());
+}
+
+// This block requires the existence of METADATA_HEADER_BASE(View) in the class
 // declaration for View.
 BEGIN_METADATA_BASE(View)
 ADD_PROPERTY_METADATA(std::unique_ptr<Background>, Background)
@@ -3442,6 +3733,7 @@ ADD_READONLY_PROPERTY_METADATA(gfx::Size, MaximumSize)
 ADD_READONLY_PROPERTY_METADATA(gfx::Size, MinimumSize)
 ADD_PROPERTY_METADATA(bool, Mirrored)
 ADD_PROPERTY_METADATA(bool, NotifyEnterExitOnChild)
+ADD_READONLY_PROPERTY_METADATA(std::string, ObjectName)
 ADD_READONLY_PROPERTY_METADATA(std::u16string, Tooltip)
 ADD_PROPERTY_METADATA(bool, Visible)
 ADD_PROPERTY_METADATA(bool, CanProcessEventsWithinSubtree)

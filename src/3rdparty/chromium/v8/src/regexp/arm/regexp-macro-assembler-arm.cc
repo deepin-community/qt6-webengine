@@ -1016,10 +1016,9 @@ Handle<HeapObject> RegExpMacroAssemblerARM::GetCode(Handle<String> source) {
       Factory::CodeBuilder(isolate(), code_desc, CodeKind::REGEXP)
           .set_self_reference(masm_->CodeObject())
           .Build();
-  Handle<InstructionStream> istream(code->instruction_stream(), isolate());
   PROFILE(masm_->isolate(),
           RegExpCodeCreateEvent(Handle<AbstractCode>::cast(code), source));
-  return Handle<HeapObject>::cast(istream);
+  return Handle<HeapObject>::cast(code);
 }
 
 
@@ -1167,11 +1166,11 @@ void RegExpMacroAssemblerARM::CallCheckStackGuardState(Operand extra_space) {
   __ PrepareCallCFunction(4);
 
   // Extra space for variables to consider in stack check.
-  __ mov(arg_reg_4, extra_space);
+  __ mov(kCArgRegs[3], extra_space);
   // RegExp code frame pointer.
-  __ mov(arg_reg_3, frame_pointer());
+  __ mov(kCArgRegs[2], frame_pointer());
   // InstructionStream of self.
-  __ mov(arg_reg_2, Operand(masm_->CodeObject()));
+  __ mov(kCArgRegs[1], Operand(masm_->CodeObject()));
 
   // We need to make room for the return address on the stack.
   int stack_alignment = base::OS::ActivationFrameAlignment();
@@ -1186,7 +1185,7 @@ void RegExpMacroAssemblerARM::CallCheckStackGuardState(Operand extra_space) {
   __ mov(ip, Operand(stack_guard_check));
 
   EmbeddedData d = EmbeddedData::FromBlob();
-  Address entry = d.InstructionStartOfBuiltin(Builtin::kDirectCEntry);
+  Address entry = d.InstructionStartOf(Builtin::kDirectCEntry);
   __ mov(lr, Operand(entry, RelocInfo::OFF_HEAP_TARGET));
   __ Call(lr);
 
@@ -1215,7 +1214,8 @@ int RegExpMacroAssemblerARM::CheckStackGuardState(Address* return_address,
                                                   Address raw_code,
                                                   Address re_frame,
                                                   uintptr_t extra_space) {
-  InstructionStream re_code = InstructionStream::cast(Object(raw_code));
+  Tagged<InstructionStream> re_code =
+      InstructionStream::cast(Tagged<Object>(raw_code));
   return NativeRegExpMacroAssembler::CheckStackGuardState(
       frame_entry<Isolate*>(re_frame, kIsolateOffset),
       frame_entry<int>(re_frame, kStartIndexOffset),
@@ -1223,11 +1223,10 @@ int RegExpMacroAssemblerARM::CheckStackGuardState(Address* return_address,
           frame_entry<int>(re_frame, kDirectCallOffset)),
       return_address, re_code,
       frame_entry_address<Address>(re_frame, kInputStringOffset),
-      frame_entry_address<const byte*>(re_frame, kInputStartOffset),
-      frame_entry_address<const byte*>(re_frame, kInputEndOffset),
+      frame_entry_address<const uint8_t*>(re_frame, kInputStartOffset),
+      frame_entry_address<const uint8_t*>(re_frame, kInputEndOffset),
       extra_space);
 }
-
 
 MemOperand RegExpMacroAssemblerARM::register_location(int register_index) {
   DCHECK(register_index < (1<<30));

@@ -180,8 +180,9 @@ bool MenuButtonController::OnKeyReleased(const ui::KeyEvent& event) {
 void MenuButtonController::UpdateAccessibleNodeData(ui::AXNodeData* node_data) {
   node_data->role = ax::mojom::Role::kPopUpButton;
   node_data->SetHasPopup(ax::mojom::HasPopup::kMenu);
-  if (button()->GetEnabled())
+  if (button()->GetEnabled()) {
     node_data->SetDefaultActionVerb(ax::mojom::DefaultActionVerb::kOpen);
+  }
 }
 
 bool MenuButtonController::IsTriggerableEvent(const ui::Event& event) {
@@ -299,6 +300,11 @@ bool MenuButtonController::IsTriggerableEventType(const ui::Event& event) {
     return event.type() == active_on;
   }
   return event.type() == ui::ET_GESTURE_TAP;
+}
+
+void MenuButtonController::NotifyClick() {
+  ButtonController::NotifyClick();
+  Activate(nullptr);
 }
 
 void MenuButtonController::IncrementPressedLocked(

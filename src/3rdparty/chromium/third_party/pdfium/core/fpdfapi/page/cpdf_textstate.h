@@ -10,7 +10,7 @@
 #include "core/fxcrt/retain_ptr.h"
 #include "core/fxcrt/shared_copy_on_write.h"
 #include "core/fxcrt/unowned_ptr.h"
-#include "third_party/base/span.h"
+#include "third_party/base/containers/span.h"
 
 class CPDF_Document;
 class CPDF_Font;
@@ -32,6 +32,8 @@ enum class TextRenderingMode {
 class CPDF_TextState {
  public:
   CPDF_TextState();
+  CPDF_TextState(const CPDF_TextState& that);
+  CPDF_TextState& operator=(const CPDF_TextState& that);
   ~CPDF_TextState();
 
   void Emplace();

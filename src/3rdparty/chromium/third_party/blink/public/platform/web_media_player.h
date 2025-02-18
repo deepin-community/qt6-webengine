@@ -39,11 +39,11 @@
 #include "media/base/video_frame_metadata.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/common/media/display_type.h"
+#include "third_party/blink/public/platform/web_audio_source_provider_impl.h"
 #include "third_party/blink/public/platform/web_content_decryption_module.h"
 #include "third_party/blink/public/platform/web_media_source.h"
 #include "third_party/blink/public/platform/web_set_sink_id_callbacks.h"
 #include "third_party/blink/public/platform/web_string.h"
-#include "third_party/blink/public/platform/webaudiosourceprovider_impl.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
 #include "url/gurl.h"
@@ -129,7 +129,6 @@ class WebMediaPlayer {
     int height;
     base::TimeDelta media_time;
     media::VideoFrameMetadata metadata;
-    scoped_refptr<media::VideoFrame> frame;
     base::TimeDelta rendering_interval;
     base::TimeDelta average_frame_duration;
   };
@@ -265,6 +264,11 @@ class WebMediaPlayer {
   // Returns true if the player has a frame available for presentation. Usually
   // this just means the first frame has been delivered.
   virtual bool HasAvailableVideoFrame() const = 0;
+
+  // Returns true if the player has a frame available for presentation, and the
+  // frame is readable, i.e. it's not protected and can be read back into CPU
+  // memory.
+  virtual bool HasReadableVideoFrame() const = 0;
 
   // Renders the current frame into the provided cc::PaintCanvas.
   virtual void Paint(cc::PaintCanvas*, const gfx::Rect&, cc::PaintFlags&) = 0;

@@ -2,9 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "src/builtins/builtins-inl.h"
 #include "src/builtins/builtins-utils-gen.h"
-#include "src/builtins/builtins.h"
-#include "src/codegen/code-stub-assembler.h"
+#include "src/codegen/code-stub-assembler-inl.h"
+#include "src/objects/dictionary.h"
 
 namespace v8 {
 namespace internal {
@@ -190,7 +191,7 @@ TF_BUILTIN(DatePrototypeToPrimitive, CodeStubAssembler) {
   // Check if the {receiver} is actually a JSReceiver.
   Label receiver_is_invalid(this, Label::kDeferred);
   GotoIf(TaggedIsSmi(receiver), &receiver_is_invalid);
-  GotoIfNot(IsJSReceiver(CAST(receiver)), &receiver_is_invalid);
+  GotoIfNot(JSAnyIsNotPrimitive(CAST(receiver)), &receiver_is_invalid);
 
   // Dispatch to the appropriate OrdinaryToPrimitive builtin.
   Label hint_is_number(this), hint_is_string(this),
@@ -217,18 +218,18 @@ TF_BUILTIN(DatePrototypeToPrimitive, CodeStubAssembler) {
   // Use the OrdinaryToPrimitive builtin to convert to a Number.
   BIND(&hint_is_number);
   {
-    Callable callable = CodeFactory::OrdinaryToPrimitive(
-        isolate(), OrdinaryToPrimitiveHint::kNumber);
-    TNode<Object> result = CallStub(callable, context, receiver);
+    Builtin builtin =
+        Builtins::OrdinaryToPrimitive(OrdinaryToPrimitiveHint::kNumber);
+    TNode<Object> result = CallBuiltin(builtin, context, receiver);
     Return(result);
   }
 
   // Use the OrdinaryToPrimitive builtin to convert to a String.
   BIND(&hint_is_string);
   {
-    Callable callable = CodeFactory::OrdinaryToPrimitive(
-        isolate(), OrdinaryToPrimitiveHint::kString);
-    TNode<Object> result = CallStub(callable, context, receiver);
+    Builtin builtin =
+        Builtins::OrdinaryToPrimitive(OrdinaryToPrimitiveHint::kString);
+    TNode<Object> result = CallBuiltin(builtin, context, receiver);
     Return(result);
   }
 

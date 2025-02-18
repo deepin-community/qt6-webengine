@@ -17,9 +17,11 @@
 #include "base/test/task_environment.h"
 #include "content/browser/interest_group/auction_worklet_manager.h"
 #include "content/browser/interest_group/subresource_url_builder.h"
+#include "content/public/browser/render_frame_host.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "net/base/isolation_info.h"
+#include "net/base/load_flags.h"
 #include "net/base/network_anonymization_key.h"
 #include "net/base/schemeful_site.h"
 #include "net/cookies/site_for_cookies.h"
@@ -129,10 +131,13 @@ class AuctionUrlLoaderFactoryProxyTest : public testing::Test {
             &trusted_url_loader_factory_),
         base::BindOnce(&AuctionUrlLoaderFactoryProxyTest::PreconnectSocket,
                        base::Unretained(this)),
-        top_frame_origin_, frame_origin_,
+        base::BindRepeating(
+            []() -> std::optional<std::string> { return std::nullopt; }),
+        /*force_reload=*/force_reload_, top_frame_origin_, frame_origin_,
         /*renderer_process_id=*/kRenderProcessId, is_for_seller_,
         client_security_state_.Clone(), GURL(kScriptUrl), wasm_url_,
-        trusted_signals_base_url_);
+        trusted_signals_base_url_, needs_cors_for_additional_bid_,
+        /*frame_tree_node_id=*/RenderFrameHost::kNoFrameTreeNodeId);
 
     EXPECT_EQ(preconnect_url_, trusted_signals_base_url_);
     if (trusted_signals_base_url_) {
@@ -141,7 +146,7 @@ class AuctionUrlLoaderFactoryProxyTest : public testing::Test {
       } else {
         net::SchemefulSite buyer_site{GURL(kScriptUrl)};
         EXPECT_EQ(preconnect_network_anonymization_key_,
-                  net::NetworkAnonymizationKey(buyer_site, buyer_site));
+                  net::NetworkAnonymizationKey::CreateSameSite(buyer_site));
       }
     } else {
       // This check is not strictly needed, since `preconnect_url_` being equal
@@ -149,7 +154,7 @@ class AuctionUrlLoaderFactoryProxyTest : public testing::Test {
       // also be nullopt if `trusted_signals_base_url_` is nullopt.
       EXPECT_FALSE(preconnect_network_anonymization_key_);
     }
-    preconnect_url_ = absl::nullopt;
+    preconnect_url_ = std::nullopt;
   }
 
   void PreconnectSocket(
@@ -247,14 +252,16 @@ class AuctionUrlLoaderFactoryProxyTest : public testing::Test {
     // AuctionURLLoaderFactoryProxy.
     for (const auto& other_pending_request :
          *frame_url_loader_factory_.pending_requests()) {
-      if (&other_pending_request == pending_request)
+      if (&other_pending_request == pending_request) {
         continue;
+      }
       EXPECT_NE(other_pending_request.request_id, pending_request->request_id);
     }
     for (const auto& other_pending_request :
          *trusted_url_loader_factory_.pending_requests()) {
-      if (&other_pending_request == pending_request)
+      if (&other_pending_request == pending_request) {
         continue;
+      }
       EXPECT_NE(other_pending_request.request_id, pending_request->request_id);
     }
 
@@ -291,21 +298,26 @@ class AuctionUrlLoaderFactoryProxyTest : public testing::Test {
     EXPECT_EQ(network::mojom::RedirectMode::kError,
               observed_request.redirect_mode);
 
+    // Should bypass cache when in force-reload mode.
+    EXPECT_EQ(force_reload_ ? net::LOAD_BYPASS_CACHE : 0,
+              observed_request.load_flags);
+
     // The initiator should be set.
     EXPECT_EQ(frame_origin_, observed_request.request_initiator);
 
-    if (expect_bundle_request) {
+    if (expect_bundle_request || needs_cors_for_additional_bid_) {
       EXPECT_EQ(network::mojom::RequestMode::kCors, observed_request.mode);
     } else {
       EXPECT_EQ(network::mojom::RequestMode::kNoCors, observed_request.mode);
     }
 
-    if (is_for_seller_) {
+    if (is_for_seller_ || needs_cors_for_additional_bid_) {
       if (original_accept_header == kAcceptJavascript ||
-          original_accept_header == kAcceptWasm) {
+          original_accept_header == kAcceptWasm ||
+          needs_cors_for_additional_bid_) {
         // Seller worklet Javascript & WASM requests use the renderer's
         // untrusted URLLoaderFactory, so inherit security parameters from
-        // there.
+        // there. The same happens for CORS-requiring additional bid reporting.
         EXPECT_FALSE(trusted_factory_used);
         EXPECT_FALSE(observed_request.trusted_params);
       } else {
@@ -362,7 +374,7 @@ class AuctionUrlLoaderFactoryProxyTest : public testing::Test {
   }
 
   void TryMakeRequest(const std::string& url,
-                      absl::optional<std::string> accept_value,
+                      std::optional<std::string> accept_value,
                       ExpectedResponse expected_response,
                       bool expect_bundle_request = false) {
     SCOPED_TRACE(accept_value ? *accept_value : "No accept value");
@@ -394,17 +406,19 @@ class AuctionUrlLoaderFactoryProxyTest : public testing::Test {
   base::test::TaskEnvironment task_environment_;
 
   bool is_for_seller_ = false;
+  bool force_reload_ = false;
   const network::mojom::ClientSecurityStatePtr client_security_state_ =
       network::mojom::ClientSecurityState::New();
-  absl::optional<GURL> trusted_signals_base_url_ = GURL(kTrustedSignalsBaseUrl);
-  absl::optional<GURL> wasm_url_ = GURL(kWasmUrl);
+  std::optional<GURL> trusted_signals_base_url_ = GURL(kTrustedSignalsBaseUrl);
+  std::optional<GURL> wasm_url_ = GURL(kWasmUrl);
+  bool needs_cors_for_additional_bid_ = false;
 
   url::Origin top_frame_origin_ =
       url::Origin::Create(GURL("https://top.test/"));
   url::Origin frame_origin_ = url::Origin::Create(GURL("https://foo.test/"));
 
-  absl::optional<GURL> preconnect_url_;
-  absl::optional<net::NetworkAnonymizationKey>
+  std::optional<GURL> preconnect_url_;
+  std::optional<net::NetworkAnonymizationKey>
       preconnect_network_anonymization_key_;
 
   network::TestURLLoaderFactory frame_url_loader_factory_;
@@ -424,21 +438,20 @@ TEST_F(AuctionUrlLoaderFactoryProxyTest, Basic) {
     TryMakeRequest(kScriptUrl, kAcceptJson, ExpectedResponse::kReject);
     TryMakeRequest(kScriptUrl, kAcceptOther, ExpectedResponse::kReject);
     TryMakeRequest(kScriptUrl, kAcceptWasm, ExpectedResponse::kReject);
-    TryMakeRequest(kScriptUrl, absl::nullopt, ExpectedResponse::kReject);
+    TryMakeRequest(kScriptUrl, std::nullopt, ExpectedResponse::kReject);
 
     TryMakeRequest(kTrustedSignalsUrl, kAcceptJavascript,
                    ExpectedResponse::kReject);
     TryMakeRequest(kTrustedSignalsUrl, kAcceptJson, ExpectedResponse::kAllow);
     TryMakeRequest(kTrustedSignalsUrl, kAcceptOther, ExpectedResponse::kReject);
     TryMakeRequest(kTrustedSignalsUrl, kAcceptWasm, ExpectedResponse::kReject);
-    TryMakeRequest(kTrustedSignalsUrl, absl::nullopt,
-                   ExpectedResponse::kReject);
+    TryMakeRequest(kTrustedSignalsUrl, std::nullopt, ExpectedResponse::kReject);
 
     TryMakeRequest(kWasmUrl, kAcceptJavascript, ExpectedResponse::kReject);
     TryMakeRequest(kWasmUrl, kAcceptJson, ExpectedResponse::kReject);
     TryMakeRequest(kWasmUrl, kAcceptOther, ExpectedResponse::kReject);
     TryMakeRequest(kWasmUrl, kAcceptWasm, ExpectedResponse::kAllow);
-    TryMakeRequest(kWasmUrl, absl::nullopt, ExpectedResponse::kReject);
+    TryMakeRequest(kWasmUrl, std::nullopt, ExpectedResponse::kReject);
 
     TryMakeRequest("https://host.test/", kAcceptJavascript,
                    ExpectedResponse::kReject);
@@ -448,23 +461,32 @@ TEST_F(AuctionUrlLoaderFactoryProxyTest, Basic) {
                    ExpectedResponse::kReject);
     TryMakeRequest("https://host.test/", kAcceptWasm,
                    ExpectedResponse::kReject);
-    TryMakeRequest("https://host.test/", absl::nullopt,
+    TryMakeRequest("https://host.test/", std::nullopt,
                    ExpectedResponse::kReject);
   }
 }
 
+TEST_F(AuctionUrlLoaderFactoryProxyTest, ForceReload) {
+  force_reload_ = true;
+  // Force creation of a new proxy, with correct `force_reload` value.
+  remote_url_loader_factory_.reset();
+  CreateUrlLoaderFactoryProxy();
+
+  TryMakeRequest(kScriptUrl, kAcceptJavascript, ExpectedResponse::kAllow);
+}
+
 TEST_F(AuctionUrlLoaderFactoryProxyTest, NoWasmUrl) {
-  wasm_url_ = absl::nullopt;
+  wasm_url_ = std::nullopt;
   CreateUrlLoaderFactoryProxy();
   TryMakeRequest(kWasmUrl, kAcceptJavascript, ExpectedResponse::kReject);
   TryMakeRequest(kWasmUrl, kAcceptJson, ExpectedResponse::kReject);
   TryMakeRequest(kWasmUrl, kAcceptOther, ExpectedResponse::kReject);
   TryMakeRequest(kWasmUrl, kAcceptWasm, ExpectedResponse::kReject);
-  TryMakeRequest(kWasmUrl, absl::nullopt, ExpectedResponse::kReject);
+  TryMakeRequest(kWasmUrl, std::nullopt, ExpectedResponse::kReject);
 }
 
 TEST_F(AuctionUrlLoaderFactoryProxyTest, NoTrustedSignalsUrl) {
-  trusted_signals_base_url_ = absl::nullopt;
+  trusted_signals_base_url_ = std::nullopt;
 
   for (bool is_for_seller : {false, true}) {
     is_for_seller_ = is_for_seller;
@@ -475,14 +497,13 @@ TEST_F(AuctionUrlLoaderFactoryProxyTest, NoTrustedSignalsUrl) {
     TryMakeRequest(kScriptUrl, kAcceptJavascript, ExpectedResponse::kAllow);
     TryMakeRequest(kScriptUrl, kAcceptJson, ExpectedResponse::kReject);
     TryMakeRequest(kScriptUrl, kAcceptOther, ExpectedResponse::kReject);
-    TryMakeRequest(kScriptUrl, absl::nullopt, ExpectedResponse::kReject);
+    TryMakeRequest(kScriptUrl, std::nullopt, ExpectedResponse::kReject);
 
     TryMakeRequest(kTrustedSignalsUrl, kAcceptJavascript,
                    ExpectedResponse::kReject);
     TryMakeRequest(kTrustedSignalsUrl, kAcceptJson, ExpectedResponse::kReject);
     TryMakeRequest(kTrustedSignalsUrl, kAcceptOther, ExpectedResponse::kReject);
-    TryMakeRequest(kTrustedSignalsUrl, absl::nullopt,
-                   ExpectedResponse::kReject);
+    TryMakeRequest(kTrustedSignalsUrl, std::nullopt, ExpectedResponse::kReject);
 
     TryMakeRequest(top_frame_origin_.GetURL().spec(), kAcceptJavascript,
                    ExpectedResponse::kReject);
@@ -490,7 +511,7 @@ TEST_F(AuctionUrlLoaderFactoryProxyTest, NoTrustedSignalsUrl) {
                    ExpectedResponse::kReject);
     TryMakeRequest(top_frame_origin_.GetURL().spec(), kAcceptOther,
                    ExpectedResponse::kReject);
-    TryMakeRequest(top_frame_origin_.GetURL().spec(), absl::nullopt,
+    TryMakeRequest(top_frame_origin_.GetURL().spec(), std::nullopt,
                    ExpectedResponse::kReject);
 
     TryMakeRequest(frame_origin_.GetURL().spec(), kAcceptJavascript,
@@ -499,7 +520,7 @@ TEST_F(AuctionUrlLoaderFactoryProxyTest, NoTrustedSignalsUrl) {
                    ExpectedResponse::kReject);
     TryMakeRequest(frame_origin_.GetURL().spec(), kAcceptOther,
                    ExpectedResponse::kReject);
-    TryMakeRequest(frame_origin_.GetURL().spec(), absl::nullopt,
+    TryMakeRequest(frame_origin_.GetURL().spec(), std::nullopt,
                    ExpectedResponse::kReject);
   }
 }
@@ -633,7 +654,7 @@ TEST_F(AuctionUrlLoaderFactoryProxyTest, SameUrl) {
     TryMakeRequest(kScriptUrl, kAcceptJavascript, ExpectedResponse::kAllow);
     TryMakeRequest(kScriptUrl, kAcceptJson, ExpectedResponse::kReject);
     TryMakeRequest(kScriptUrl, kAcceptOther, ExpectedResponse::kReject);
-    TryMakeRequest(kScriptUrl, absl::nullopt, ExpectedResponse::kReject);
+    TryMakeRequest(kScriptUrl, std::nullopt, ExpectedResponse::kReject);
 
     std::string url_with_parameters =
         std::string(kScriptUrl) + "?hostname=top.test&keys=jabberwocky";
@@ -642,15 +663,14 @@ TEST_F(AuctionUrlLoaderFactoryProxyTest, SameUrl) {
     TryMakeRequest(url_with_parameters, kAcceptJson, ExpectedResponse::kAllow);
     TryMakeRequest(url_with_parameters, kAcceptOther,
                    ExpectedResponse::kReject);
-    TryMakeRequest(url_with_parameters, absl::nullopt,
+    TryMakeRequest(url_with_parameters, std::nullopt,
                    ExpectedResponse::kReject);
 
     TryMakeRequest(kTrustedSignalsUrl, kAcceptJavascript,
                    ExpectedResponse::kReject);
     TryMakeRequest(kTrustedSignalsUrl, kAcceptJson, ExpectedResponse::kReject);
     TryMakeRequest(kTrustedSignalsUrl, kAcceptOther, ExpectedResponse::kReject);
-    TryMakeRequest(kTrustedSignalsUrl, absl::nullopt,
-                   ExpectedResponse::kReject);
+    TryMakeRequest(kTrustedSignalsUrl, std::nullopt, ExpectedResponse::kReject);
   }
 }
 
@@ -737,6 +757,16 @@ TEST_F(AuctionUrlLoaderFactoryProxyTest, BasicSubresourceBundles2) {
 
     OnWorkletHandleDestruction(kWorkletHandle2);
   }
+}
+
+TEST_F(AuctionUrlLoaderFactoryProxyTest, AdditionalBidCors) {
+  is_for_seller_ = false;
+  needs_cors_for_additional_bid_ = true;
+
+  remote_url_loader_factory_.reset();
+  CreateUrlLoaderFactoryProxy();
+
+  TryMakeRequest(kScriptUrl, kAcceptJavascript, ExpectedResponse::kAllow);
 }
 
 }  // namespace content

@@ -6,48 +6,29 @@ default	rel
 %define XMMWORD
 %define YMMWORD
 %define ZMMWORD
+%define _CET_ENDBR
 
 %ifdef BORINGSSL_PREFIX
 %include "boringssl_prefix_symbols_nasm.inc"
 %endif
 section	.text code align=64
 
-EXTERN	OPENSSL_ia32cap_P
 
-global	sha1_block_data_order
+global	sha1_block_data_order_nohw
 
 ALIGN	16
-sha1_block_data_order:
+sha1_block_data_order_nohw:
 	mov	QWORD[8+rsp],rdi	;WIN64 prologue
 	mov	QWORD[16+rsp],rsi
 	mov	rax,rsp
-$L$SEH_begin_sha1_block_data_order:
+$L$SEH_begin_sha1_block_data_order_nohw:
 	mov	rdi,rcx
 	mov	rsi,rdx
 	mov	rdx,r8
 
 
 
-	lea	r10,[OPENSSL_ia32cap_P]
-	mov	r9d,DWORD[r10]
-	mov	r8d,DWORD[4+r10]
-	mov	r10d,DWORD[8+r10]
-	test	r8d,512
-	jz	NEAR $L$ialu
-	test	r10d,536870912
-	jnz	NEAR _shaext_shortcut
-	and	r10d,296
-	cmp	r10d,296
-	je	NEAR _avx2_shortcut
-	and	r8d,268435456
-	and	r9d,1073741824
-	or	r8d,r9d
-	cmp	r8d,1342177280
-	je	NEAR _avx_shortcut
-	jmp	NEAR _ssse3_shortcut
-
-ALIGN	16
-$L$ialu:
+_CET_ENDBR
 	mov	rax,rsp
 
 	push	rbx
@@ -1277,23 +1258,24 @@ $L$loop:
 $L$epilogue:
 	mov	rdi,QWORD[8+rsp]	;WIN64 epilogue
 	mov	rsi,QWORD[16+rsp]
-	DB	0F3h,0C3h		;repret
+	ret
 
-$L$SEH_end_sha1_block_data_order:
+$L$SEH_end_sha1_block_data_order_nohw:
+global	sha1_block_data_order_hw
 
 ALIGN	32
-sha1_block_data_order_shaext:
+sha1_block_data_order_hw:
 	mov	QWORD[8+rsp],rdi	;WIN64 prologue
 	mov	QWORD[16+rsp],rsi
 	mov	rax,rsp
-$L$SEH_begin_sha1_block_data_order_shaext:
+$L$SEH_begin_sha1_block_data_order_hw:
 	mov	rdi,rcx
 	mov	rsi,rdx
 	mov	rdx,r8
 
 
-_shaext_shortcut:
 
+_CET_ENDBR
 	lea	rsp,[((-72))+rsp]
 	movaps	XMMWORD[(-8-64)+rax],xmm6
 	movaps	XMMWORD[(-8-48)+rax],xmm7
@@ -1323,6 +1305,7 @@ $L$oop_shaext:
 	lea	r8,[64+rsi]
 	paddd	xmm1,xmm4
 	cmovne	rsi,r8
+	prefetcht0	[512+rsi]
 	movdqa	xmm8,xmm0
 	DB	15,56,201,229
 	movdqa	xmm2,xmm0
@@ -1469,9 +1452,10 @@ DB	102,15,56,0,251
 $L$epilogue_shaext:
 	mov	rdi,QWORD[8+rsp]	;WIN64 epilogue
 	mov	rsi,QWORD[16+rsp]
-	DB	0F3h,0C3h		;repret
+	ret
 
-$L$SEH_end_sha1_block_data_order_shaext:
+$L$SEH_end_sha1_block_data_order_hw:
+global	sha1_block_data_order_ssse3
 
 ALIGN	16
 sha1_block_data_order_ssse3:
@@ -1484,8 +1468,8 @@ $L$SEH_begin_sha1_block_data_order_ssse3:
 	mov	rdx,r8
 
 
-_ssse3_shortcut:
 
+_CET_ENDBR
 	mov	r11,rsp
 
 	push	rbx
@@ -2681,9 +2665,10 @@ $L$done_ssse3:
 $L$epilogue_ssse3:
 	mov	rdi,QWORD[8+rsp]	;WIN64 epilogue
 	mov	rsi,QWORD[16+rsp]
-	DB	0F3h,0C3h		;repret
+	ret
 
 $L$SEH_end_sha1_block_data_order_ssse3:
+global	sha1_block_data_order_avx
 
 ALIGN	16
 sha1_block_data_order_avx:
@@ -2696,8 +2681,8 @@ $L$SEH_begin_sha1_block_data_order_avx:
 	mov	rdx,r8
 
 
-_avx_shortcut:
 
+_CET_ENDBR
 	mov	r11,rsp
 
 	push	rbx
@@ -3833,9 +3818,10 @@ $L$done_avx:
 $L$epilogue_avx:
 	mov	rdi,QWORD[8+rsp]	;WIN64 epilogue
 	mov	rsi,QWORD[16+rsp]
-	DB	0F3h,0C3h		;repret
+	ret
 
 $L$SEH_end_sha1_block_data_order_avx:
+global	sha1_block_data_order_avx2
 
 ALIGN	16
 sha1_block_data_order_avx2:
@@ -3848,8 +3834,8 @@ $L$SEH_begin_sha1_block_data_order_avx2:
 	mov	rdx,r8
 
 
-_avx2_shortcut:
 
+_CET_ENDBR
 	mov	r11,rsp
 
 	push	rbx
@@ -5551,9 +5537,10 @@ $L$done_avx2:
 $L$epilogue_avx2:
 	mov	rdi,QWORD[8+rsp]	;WIN64 epilogue
 	mov	rsi,QWORD[16+rsp]
-	DB	0F3h,0C3h		;repret
+	ret
 
 $L$SEH_end_sha1_block_data_order_avx2:
+section	.rdata rdata align=8
 ALIGN	64
 K_XX_XX:
 	DD	0x5a827999,0x5a827999,0x5a827999,0x5a827999
@@ -5573,6 +5560,8 @@ K_XX_XX:
 	DB	97,112,112,114,111,64,111,112,101,110,115,115,108,46,111,114
 	DB	103,62,0
 ALIGN	64
+section	.text
+
 EXTERN	__imp_RtlVirtualUnwind
 
 ALIGN	16
@@ -5733,17 +5722,17 @@ $L$common_seh_tail:
 	pop	rbx
 	pop	rdi
 	pop	rsi
-	DB	0F3h,0C3h		;repret
+	ret
 
 
 section	.pdata rdata align=4
 ALIGN	4
-	DD	$L$SEH_begin_sha1_block_data_order wrt ..imagebase
-	DD	$L$SEH_end_sha1_block_data_order wrt ..imagebase
-	DD	$L$SEH_info_sha1_block_data_order wrt ..imagebase
-	DD	$L$SEH_begin_sha1_block_data_order_shaext wrt ..imagebase
-	DD	$L$SEH_end_sha1_block_data_order_shaext wrt ..imagebase
-	DD	$L$SEH_info_sha1_block_data_order_shaext wrt ..imagebase
+	DD	$L$SEH_begin_sha1_block_data_order_nohw wrt ..imagebase
+	DD	$L$SEH_end_sha1_block_data_order_nohw wrt ..imagebase
+	DD	$L$SEH_info_sha1_block_data_order_nohw wrt ..imagebase
+	DD	$L$SEH_begin_sha1_block_data_order_hw wrt ..imagebase
+	DD	$L$SEH_end_sha1_block_data_order_hw wrt ..imagebase
+	DD	$L$SEH_info_sha1_block_data_order_hw wrt ..imagebase
 	DD	$L$SEH_begin_sha1_block_data_order_ssse3 wrt ..imagebase
 	DD	$L$SEH_end_sha1_block_data_order_ssse3 wrt ..imagebase
 	DD	$L$SEH_info_sha1_block_data_order_ssse3 wrt ..imagebase
@@ -5755,10 +5744,10 @@ ALIGN	4
 	DD	$L$SEH_info_sha1_block_data_order_avx2 wrt ..imagebase
 section	.xdata rdata align=8
 ALIGN	8
-$L$SEH_info_sha1_block_data_order:
+$L$SEH_info_sha1_block_data_order_nohw:
 	DB	9,0,0,0
 	DD	se_handler wrt ..imagebase
-$L$SEH_info_sha1_block_data_order_shaext:
+$L$SEH_info_sha1_block_data_order_hw:
 	DB	9,0,0,0
 	DD	shaext_handler wrt ..imagebase
 $L$SEH_info_sha1_block_data_order_ssse3:

@@ -15,6 +15,10 @@ Input files:
 * ms-use/IndicPositionalCategory-Additional.txt
 """
 
+import logging
+logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
+
+
 import sys
 
 if len (sys.argv) != 10:
@@ -137,6 +141,10 @@ property_names = [
 	'Symbol_Modifier',
 	'Hieroglyph',
 	'Hieroglyph_Joiner',
+	'Hieroglyph_Mark_Begin',
+	'Hieroglyph_Mark_End',
+	'Hieroglyph_Mirror',
+	'Hieroglyph_Modifier',
 	'Hieroglyph_Segment_Begin',
 	'Hieroglyph_Segment_End',
 	# Indic_Positional_Category
@@ -231,10 +239,14 @@ def is_HIEROGLYPH(U, UISC, UDI, UGC, AJT):
 	return UISC == Hieroglyph
 def is_HIEROGLYPH_JOINER(U, UISC, UDI, UGC, AJT):
 	return UISC == Hieroglyph_Joiner
+def is_HIEROGLYPH_MIRROR(U, UISC, UDI, UGC, AJT):
+	return UISC == Hieroglyph_Mirror
+def is_HIEROGLYPH_MOD(U, UISC, UDI, UGC, AJT):
+	return UISC == Hieroglyph_Modifier
 def is_HIEROGLYPH_SEGMENT_BEGIN(U, UISC, UDI, UGC, AJT):
-	return UISC == Hieroglyph_Segment_Begin
+	return UISC in [Hieroglyph_Mark_Begin, Hieroglyph_Segment_Begin]
 def is_HIEROGLYPH_SEGMENT_END(U, UISC, UDI, UGC, AJT):
-	return UISC == Hieroglyph_Segment_End
+	return UISC in [Hieroglyph_Mark_End, Hieroglyph_Segment_End]
 def is_INVISIBLE_STACKER(U, UISC, UDI, UGC, AJT):
 	# Split off of HALANT
 	return (UISC == Invisible_Stacker
@@ -287,6 +299,8 @@ use_mapping = {
 	'HN':	is_HALANT_NUM,
 	'IS':	is_INVISIBLE_STACKER,
 	'G':	is_HIEROGLYPH,
+	'HM':	is_HIEROGLYPH_MOD,
+	'HR':	is_HIEROGLYPH_MIRROR,
 	'J':	is_HIEROGLYPH_JOINER,
 	'SB':	is_HIEROGLYPH_SEGMENT_BEGIN,
 	'SE':	is_HIEROGLYPH_SEGMENT_END,
@@ -333,6 +347,8 @@ use_positions = {
 		'Blw': [Bottom],
 	},
 	'H': None,
+	'HM': None,
+	'HR': None,
 	'HVM': None,
 	'IS': None,
 	'B': None,
@@ -465,10 +481,29 @@ print ("")
 
 import packTab
 data = {u:v[0] for u,v in use_data.items()}
-code = packTab.Code('hb_use')
-sol = packTab.pack_table(data, compression=5, default='O')
-sol.genCode(code, f'get_category')
-code.print_c(linkage='static inline')
+
+DEFAULT = 5
+COMPACT = 9
+for compression in (DEFAULT, COMPACT):
+
+    logging.info('  Compression=%d:' % compression)
+    print()
+    if compression == DEFAULT:
+        print('#ifndef HB_OPTIMIZE_SIZE')
+    elif compression == COMPACT:
+        print('#else')
+    else:
+        assert False
+    print()
+
+    code = packTab.Code('hb_use')
+    sol = packTab.pack_table(data, compression=compression, default='O')
+    logging.info('      FullCost=%d' % (sol.fullCost))
+    sol.genCode(code, f'get_category')
+    code.print_c(linkage='static inline')
+    print ()
+
+print('#endif')
 
 print ()
 for k in sorted(use_mapping.keys()):

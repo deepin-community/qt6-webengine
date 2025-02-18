@@ -8,36 +8,13 @@ Returns a unit vector in the same direction as e.
 
 import { makeTestGroup } from '../../../../../../common/framework/test_group.js';
 import { GPUTest } from '../../../../../gpu_test.js';
-import { TypeF32, TypeVec } from '../../../../../util/conversion.js';
-import { normalizeInterval } from '../../../../../util/f32_interval.js';
-import { vectorF32Range } from '../../../../../util/math.js';
-import { makeCaseCache } from '../../case_cache.js';
-import { allInputSources, generateVectorToVectorCases, run } from '../../expression.js';
+import { TypeF16, TypeF32, TypeVec } from '../../../../../util/conversion.js';
+import { allInputSources, run } from '../../expression.js';
 
 import { builtin } from './builtin.js';
+import { d } from './normalize.cache.js';
 
 export const g = makeTestGroup(GPUTest);
-
-export const d = makeCaseCache('normalize', {
-  f32_vec2_const: () => {
-    return generateVectorToVectorCases(vectorF32Range(2), 'f32-only', normalizeInterval);
-  },
-  f32_vec2_non_const: () => {
-    return generateVectorToVectorCases(vectorF32Range(2), 'unfiltered', normalizeInterval);
-  },
-  f32_vec3_const: () => {
-    return generateVectorToVectorCases(vectorF32Range(3), 'f32-only', normalizeInterval);
-  },
-  f32_vec3_non_const: () => {
-    return generateVectorToVectorCases(vectorF32Range(3), 'unfiltered', normalizeInterval);
-  },
-  f32_vec4_const: () => {
-    return generateVectorToVectorCases(vectorF32Range(4), 'f32-only', normalizeInterval);
-  },
-  f32_vec4_non_const: () => {
-    return generateVectorToVectorCases(vectorF32Range(4), 'unfiltered', normalizeInterval);
-  },
-});
 
 g.test('abstract_float')
   .specURL('https://www.w3.org/TR/WGSL/#float-builtin-functions')
@@ -80,10 +57,44 @@ g.test('f32_vec4')
     await run(t, builtin('normalize'), [TypeVec(4, TypeF32)], TypeVec(4, TypeF32), t.params, cases);
   });
 
-g.test('f16')
-  .specURL('https://www.w3.org/TR/WGSL/#float-builtin-functions')
-  .desc(`f16 tests`)
-  .params(u =>
-    u.combine('inputSource', allInputSources).combine('vectorize', [undefined, 2, 3, 4] as const)
-  )
-  .unimplemented();
+g.test('f16_vec2')
+  .specURL('https://www.w3.org/TR/WGSL/#numeric-builtin-functions')
+  .desc(`f16 tests using vec2s`)
+  .params(u => u.combine('inputSource', allInputSources))
+  .beforeAllSubcases(t => {
+    t.selectDeviceOrSkipTestCase('shader-f16');
+  })
+  .fn(async t => {
+    const cases = await d.get(
+      t.params.inputSource === 'const' ? 'f16_vec2_const' : 'f16_vec2_non_const'
+    );
+    await run(t, builtin('normalize'), [TypeVec(2, TypeF16)], TypeVec(2, TypeF16), t.params, cases);
+  });
+
+g.test('f16_vec3')
+  .specURL('https://www.w3.org/TR/WGSL/#numeric-builtin-functions')
+  .desc(`f16 tests using vec3s`)
+  .params(u => u.combine('inputSource', allInputSources))
+  .beforeAllSubcases(t => {
+    t.selectDeviceOrSkipTestCase('shader-f16');
+  })
+  .fn(async t => {
+    const cases = await d.get(
+      t.params.inputSource === 'const' ? 'f16_vec3_const' : 'f16_vec3_non_const'
+    );
+    await run(t, builtin('normalize'), [TypeVec(3, TypeF16)], TypeVec(3, TypeF16), t.params, cases);
+  });
+
+g.test('f16_vec4')
+  .specURL('https://www.w3.org/TR/WGSL/#numeric-builtin-functions')
+  .desc(`f16 tests using vec4s`)
+  .params(u => u.combine('inputSource', allInputSources))
+  .beforeAllSubcases(t => {
+    t.selectDeviceOrSkipTestCase('shader-f16');
+  })
+  .fn(async t => {
+    const cases = await d.get(
+      t.params.inputSource === 'const' ? 'f16_vec4_const' : 'f16_vec4_non_const'
+    );
+    await run(t, builtin('normalize'), [TypeVec(4, TypeF16)], TypeVec(4, TypeF16), t.params, cases);
+  });

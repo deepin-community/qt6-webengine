@@ -1,5 +1,5 @@
 // Copyright (C) 2018 The Qt Company Ltd.
-// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
 #include <QtWebEngineCore/private/qtwebenginecoreglobal_p.h>
 #include <QtWebEngineCore/qtwebenginecore-config.h>
@@ -159,7 +159,7 @@ void tst_Printing::printFromPdfViewer()
         rectf rect;
         return pdfPage->search(ustring::from_latin1("Hello Paper World"), rect, page::search_from_top,
                             case_sensitive);
-    }, 10000);
+    }, 15000);
     QVERIFY(ok);
 }
 #endif

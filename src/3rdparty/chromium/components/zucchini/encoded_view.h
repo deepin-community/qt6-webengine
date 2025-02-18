@@ -11,6 +11,7 @@
 #include <iterator>
 #include <vector>
 
+#include "base/memory/raw_ptr.h"
 #include "base/memory/raw_ref.h"
 #include "components/zucchini/image_index.h"
 #include "components/zucchini/image_utils.h"
@@ -124,7 +125,7 @@ class EncodedView {
     }
 
    private:
-    const EncodedView* encoded_view_;
+    raw_ptr<const EncodedView> encoded_view_;
     difference_type pos_;
   };
 

@@ -33,6 +33,7 @@
 #include <stdbool.h>
 #include <assert.h>
 #include <signal.h>
+#include <errno.h>
 #if defined(VK_USE_PLATFORM_XLIB_KHR) || defined(VK_USE_PLATFORM_XCB_KHR)
 #include <X11/Xutil.h>
 #elif defined(VK_USE_PLATFORM_WAYLAND_KHR)
@@ -48,11 +49,9 @@
 #define APP_NAME_STR_LEN 80
 #endif  // _WIN32
 
-#ifdef ANDROID
-#include "vulkan_wrapper.h"
-#else
 #include <vulkan/vulkan.h>
-#endif
+#define VOLK_IMPLEMENTATION
+#include "volk.h"
 
 #include "linmath.h"
 #include "object_type_string_helper.h"
@@ -133,25 +132,6 @@ void DbgMsg(char *fmt, ...) {
     fflush(stdout);
 }
 #endif
-
-#define GET_INSTANCE_PROC_ADDR(inst, entrypoint)                                                              \
-    {                                                                                                         \
-        demo->fp##entrypoint = (PFN_vk##entrypoint)vkGetInstanceProcAddr(inst, "vk" #entrypoint);             \
-        if (demo->fp##entrypoint == NULL) {                                                                   \
-            ERR_EXIT("vkGetInstanceProcAddr failed to find vk" #entrypoint, "vkGetInstanceProcAddr Failure"); \
-        }                                                                                                     \
-    }
-
-static PFN_vkGetDeviceProcAddr g_gdpa = NULL;
-
-#define GET_DEVICE_PROC_ADDR(dev, entrypoint)                                                                    \
-    {                                                                                                            \
-        if (!g_gdpa) g_gdpa = (PFN_vkGetDeviceProcAddr)vkGetInstanceProcAddr(demo->inst, "vkGetDeviceProcAddr"); \
-        demo->fp##entrypoint = (PFN_vk##entrypoint)g_gdpa(dev, "vk" #entrypoint);                                \
-        if (demo->fp##entrypoint == NULL) {                                                                      \
-            ERR_EXIT("vkGetDeviceProcAddr failed to find vk" #entrypoint, "vkGetDeviceProcAddr Failure");        \
-        }                                                                                                        \
-    }
 
 /*
  * structure to track all objects related to a texture.
@@ -359,7 +339,12 @@ struct demo {
     struct ANativeWindow *window;
 #elif defined(VK_USE_PLATFORM_METAL_EXT)
     void *caMetalLayer;
+#elif defined(VK_USE_PLATFORM_SCREEN_QNX)
+    screen_context_t screen_context;
+    screen_window_t screen_window;
+    screen_event_t screen_event;
 #endif
+
     VkSurfaceKHR surface;
     bool prepared;
     bool use_staging_buffer;
@@ -403,17 +388,6 @@ struct demo {
     VkFormat format;
     VkColorSpaceKHR color_space;
 
-    PFN_vkGetPhysicalDeviceSurfaceSupportKHR fpGetPhysicalDeviceSurfaceSupportKHR;
-    PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR fpGetPhysicalDeviceSurfaceCapabilitiesKHR;
-    PFN_vkGetPhysicalDeviceSurfaceFormatsKHR fpGetPhysicalDeviceSurfaceFormatsKHR;
-    PFN_vkGetPhysicalDeviceSurfacePresentModesKHR fpGetPhysicalDeviceSurfacePresentModesKHR;
-    PFN_vkCreateSwapchainKHR fpCreateSwapchainKHR;
-    PFN_vkDestroySwapchainKHR fpDestroySwapchainKHR;
-    PFN_vkGetSwapchainImagesKHR fpGetSwapchainImagesKHR;
-    PFN_vkAcquireNextImageKHR fpAcquireNextImageKHR;
-    PFN_vkQueuePresentKHR fpQueuePresentKHR;
-    PFN_vkGetRefreshCycleDurationGOOGLE fpGetRefreshCycleDurationGOOGLE;
-    PFN_vkGetPastPresentationTimingGOOGLE fpGetPastPresentationTimingGOOGLE;
     uint32_t swapchainImageCount;
     VkSwapchainKHR swapchain;
     SwapchainImageResources *swapchain_image_resources;
@@ -465,13 +439,6 @@ struct demo {
     bool suppress_popups;
     bool force_errors;
 
-    PFN_vkCreateDebugUtilsMessengerEXT CreateDebugUtilsMessengerEXT;
-    PFN_vkDestroyDebugUtilsMessengerEXT DestroyDebugUtilsMessengerEXT;
-    PFN_vkSubmitDebugUtilsMessageEXT SubmitDebugUtilsMessageEXT;
-    PFN_vkCmdBeginDebugUtilsLabelEXT CmdBeginDebugUtilsLabelEXT;
-    PFN_vkCmdEndDebugUtilsLabelEXT CmdEndDebugUtilsLabelEXT;
-    PFN_vkCmdInsertDebugUtilsLabelEXT CmdInsertDebugUtilsLabelEXT;
-    PFN_vkSetDebugUtilsObjectNameEXT SetDebugUtilsObjectNameEXT;
     VkDebugUtilsMessengerEXT dbg_messenger;
 
     uint32_t current_buffer;
@@ -521,7 +488,7 @@ VKAPI_ATTR VkBool32 VKAPI_CALL debug_messenger_callback(VkDebugUtilsMessageSever
     }
 
     sprintf(message, "%s - Message Id Number: %d | Message Id Name: %s\n\t%s\n", prefix, pCallbackData->messageIdNumber,
-            pCallbackData->pMessageIdName, pCallbackData->pMessage);
+            pCallbackData->pMessageIdName == NULL ? "" : pCallbackData->pMessageIdName, pCallbackData->pMessage);
     if (pCallbackData->objectCount > 0) {
         char tmp_message[500];
         sprintf(tmp_message, "\n\tObjects - %d\n", pCallbackData->objectCount);
@@ -658,7 +625,7 @@ static void demo_name_object(struct demo *demo, VkObjectType object_type, uint64
         .objectHandle = vulkan_handle,
         .pObjectName = name,
     };
-    err = demo->SetDebugUtilsObjectNameEXT(demo->device, &obj_name);
+    err = vkSetDebugUtilsObjectNameEXT(demo->device, &obj_name);
     assert(!err);
 }
 
@@ -683,14 +650,14 @@ static void demo_push_cb_label(struct demo *demo, VkCommandBuffer cb, const floa
         memcpy(label.color, color, sizeof(label.color));
     }
 
-    demo->CmdBeginDebugUtilsLabelEXT(cb, &label);
+    vkCmdBeginDebugUtilsLabelEXT(cb, &label);
 }
 
 static void demo_pop_cb_label(struct demo *demo, VkCommandBuffer cb) {
     if (!demo->validate) {
         return;
     }
-    demo->CmdEndDebugUtilsLabelEXT(cb);
+    vkCmdEndDebugUtilsLabelEXT(cb);
 }
 
 static bool memory_type_from_properties(struct demo *demo, uint32_t typeBits, VkFlags requirements_mask, uint32_t *typeIndex) {
@@ -954,12 +921,12 @@ void DemoUpdateTargetIPD(struct demo *demo) {
     VkPastPresentationTimingGOOGLE *past = NULL;
     uint32_t count = 0;
 
-    err = demo->fpGetPastPresentationTimingGOOGLE(demo->device, demo->swapchain, &count, NULL);
+    err = vkGetPastPresentationTimingGOOGLE(demo->device, demo->swapchain, &count, NULL);
     assert(!err);
     if (count) {
         past = (VkPastPresentationTimingGOOGLE *)malloc(sizeof(VkPastPresentationTimingGOOGLE) * count);
         assert(past);
-        err = demo->fpGetPastPresentationTimingGOOGLE(demo->device, demo->swapchain, &count, past);
+        err = vkGetPastPresentationTimingGOOGLE(demo->device, demo->swapchain, &count, past);
         assert(!err);
 
         bool early = false;
@@ -1072,9 +1039,8 @@ static void demo_draw(struct demo *demo) {
 
     do {
         // Get the index of the next available swapchain image:
-        err =
-            demo->fpAcquireNextImageKHR(demo->device, demo->swapchain, UINT64_MAX,
-                                        demo->image_acquired_semaphores[demo->frame_index], VK_NULL_HANDLE, &demo->current_buffer);
+        err = vkAcquireNextImageKHR(demo->device, demo->swapchain, UINT64_MAX, demo->image_acquired_semaphores[demo->frame_index],
+                                    VK_NULL_HANDLE, &demo->current_buffer);
 
         if (err == VK_ERROR_OUT_OF_DATE_KHR) {
             // demo->swapchain is out of date (e.g. the window was resized) and
@@ -1219,7 +1185,7 @@ static void demo_draw(struct demo *demo) {
         }
     }
 
-    err = demo->fpQueuePresentKHR(demo->present_queue, &present);
+    err = vkQueuePresentKHR(demo->present_queue, &present);
     demo->frame_index += 1;
     demo->frame_index %= FRAME_LAG;
 
@@ -1230,7 +1196,7 @@ static void demo_draw(struct demo *demo) {
     } else if (err == VK_SUBOPTIMAL_KHR) {
         // SUBOPTIMAL could be due to a resize
         VkSurfaceCapabilitiesKHR surfCapabilities;
-        err = demo->fpGetPhysicalDeviceSurfaceCapabilitiesKHR(demo->gpu, demo->surface, &surfCapabilities);
+        err = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(demo->gpu, demo->surface, &surfCapabilities);
         assert(!err);
         if (surfCapabilities.currentExtent.width != (uint32_t)demo->width ||
             surfCapabilities.currentExtent.height != (uint32_t)demo->height) {
@@ -1251,15 +1217,15 @@ static void demo_prepare_buffers(struct demo *demo) {
 
     // Check the surface capabilities and formats
     VkSurfaceCapabilitiesKHR surfCapabilities;
-    err = demo->fpGetPhysicalDeviceSurfaceCapabilitiesKHR(demo->gpu, demo->surface, &surfCapabilities);
+    err = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(demo->gpu, demo->surface, &surfCapabilities);
     assert(!err);
 
     uint32_t presentModeCount;
-    err = demo->fpGetPhysicalDeviceSurfacePresentModesKHR(demo->gpu, demo->surface, &presentModeCount, NULL);
+    err = vkGetPhysicalDeviceSurfacePresentModesKHR(demo->gpu, demo->surface, &presentModeCount, NULL);
     assert(!err);
     VkPresentModeKHR *presentModes = (VkPresentModeKHR *)malloc(presentModeCount * sizeof(VkPresentModeKHR));
     assert(presentModes);
-    err = demo->fpGetPhysicalDeviceSurfacePresentModesKHR(demo->gpu, demo->surface, &presentModeCount, presentModes);
+    err = vkGetPhysicalDeviceSurfacePresentModesKHR(demo->gpu, demo->surface, &presentModeCount, presentModes);
     assert(!err);
 
     VkExtent2D swapchainExtent;
@@ -1399,7 +1365,7 @@ static void demo_prepare_buffers(struct demo *demo) {
         .clipped = true,
     };
     uint32_t i;
-    err = demo->fpCreateSwapchainKHR(demo->device, &swapchain_ci, NULL, &demo->swapchain);
+    err = vkCreateSwapchainKHR(demo->device, &swapchain_ci, NULL, &demo->swapchain);
     assert(!err);
 
     // If we just re-created an existing swapchain, we should destroy the old
@@ -1407,15 +1373,15 @@ static void demo_prepare_buffers(struct demo *demo) {
     // Note: destroying the swapchain also cleans up all its associated
     // presentable images once the platform is done with them.
     if (oldSwapchain != VK_NULL_HANDLE) {
-        demo->fpDestroySwapchainKHR(demo->device, oldSwapchain, NULL);
+        vkDestroySwapchainKHR(demo->device, oldSwapchain, NULL);
     }
 
-    err = demo->fpGetSwapchainImagesKHR(demo->device, demo->swapchain, &demo->swapchainImageCount, NULL);
+    err = vkGetSwapchainImagesKHR(demo->device, demo->swapchain, &demo->swapchainImageCount, NULL);
     assert(!err);
 
     VkImage *swapchainImages = (VkImage *)malloc(demo->swapchainImageCount * sizeof(VkImage));
     assert(swapchainImages);
-    err = demo->fpGetSwapchainImagesKHR(demo->device, demo->swapchain, &demo->swapchainImageCount, swapchainImages);
+    err = vkGetSwapchainImagesKHR(demo->device, demo->swapchain, &demo->swapchainImageCount, swapchainImages);
     assert(!err);
 
     demo->swapchain_image_resources =
@@ -1455,7 +1421,7 @@ static void demo_prepare_buffers(struct demo *demo) {
 
     if (demo->VK_GOOGLE_display_timing_enabled) {
         VkRefreshCycleDurationGOOGLE rc_dur;
-        err = demo->fpGetRefreshCycleDurationGOOGLE(demo->device, demo->swapchain, &rc_dur);
+        err = vkGetRefreshCycleDurationGOOGLE(demo->device, demo->swapchain, &rc_dur);
         assert(!err);
         demo->refresh_duration = rc_dur.refreshDuration;
 
@@ -2431,7 +2397,7 @@ static void demo_cleanup(struct demo *demo) {
             vkFreeMemory(demo->device, demo->textures[i].mem, NULL);
             vkDestroySampler(demo->device, demo->textures[i].sampler, NULL);
         }
-        demo->fpDestroySwapchainKHR(demo->device, demo->swapchain, NULL);
+        vkDestroySwapchainKHR(demo->device, demo->swapchain, NULL);
 
         vkDestroyImageView(demo->device, demo->depth.view, NULL);
         vkDestroyImage(demo->device, demo->depth.image, NULL);
@@ -2455,7 +2421,7 @@ static void demo_cleanup(struct demo *demo) {
     vkDeviceWaitIdle(demo->device);
     vkDestroyDevice(demo->device, NULL);
     if (demo->validate) {
-        demo->DestroyDebugUtilsMessengerEXT(demo->inst, demo->dbg_messenger, NULL);
+        vkDestroyDebugUtilsMessengerEXT(demo->inst, demo->dbg_messenger, NULL);
     }
     vkDestroySurfaceKHR(demo->inst, demo->surface, NULL);
 
@@ -2485,6 +2451,10 @@ static void demo_cleanup(struct demo *demo) {
     demo->event_buffer->Release(demo->event_buffer);
     demo->window->Release(demo->window);
     demo->dfb->Release(demo->dfb);
+#elif defined(VK_USE_PLATFORM_SCREEN_QNX)
+    screen_destroy_event(demo->screen_event);
+    screen_destroy_window(demo->screen_window);
+    screen_destroy_context(demo->screen_context);
 #endif
 
     vkDestroyInstance(demo->inst, NULL);
@@ -3157,6 +3127,170 @@ static void demo_run_display(struct demo *demo) {
         }
     }
 }
+#elif defined(VK_USE_PLATFORM_SCREEN_QNX)
+
+#include <sys/keycodes.h>
+
+static void demo_run(struct demo *demo) {
+    int size[2] = {0, 0};
+    screen_window_t win;
+    int val;
+    int rc;
+
+    while (!demo->quit) {
+        while (!screen_get_event(demo->screen_context, demo->screen_event, demo->pause ? ~0 : 0)) {
+            rc = screen_get_event_property_iv(demo->screen_event, SCREEN_PROPERTY_TYPE, &val);
+            if (rc) {
+                printf("Cannot get SCREEN_PROPERTY_TYPE of the event! (%s)\n", strerror(errno));
+                fflush(stdout);
+                demo->quit = true;
+                break;
+            }
+            if (val == SCREEN_EVENT_NONE) {
+                break;
+            }
+            switch (val) {
+                case SCREEN_EVENT_KEYBOARD:
+                    rc = screen_get_event_property_iv(demo->screen_event, SCREEN_PROPERTY_FLAGS, &val);
+                    if (rc) {
+                        printf("Cannot get SCREEN_PROPERTY_FLAGS of the event! (%s)\n", strerror(errno));
+                        fflush(stdout);
+                        demo->quit = true;
+                        break;
+                    }
+                    if (val & KEY_DOWN) {
+                        rc = screen_get_event_property_iv(demo->screen_event, SCREEN_PROPERTY_SYM, &val);
+                        if (rc) {
+                            printf("Cannot get SCREEN_PROPERTY_SYM of the event! (%s)\n", strerror(errno));
+                            fflush(stdout);
+                            demo->quit = true;
+                            break;
+                        }
+                        switch (val) {
+                            case KEYCODE_ESCAPE:
+                                demo->quit = true;
+                                break;
+                            case KEYCODE_SPACE:
+                                demo->pause = !demo->pause;
+                                break;
+                            case KEYCODE_LEFT:
+                                demo->spin_angle -= demo->spin_increment;
+                                break;
+                            case KEYCODE_RIGHT:
+                                demo->spin_angle += demo->spin_increment;
+                                break;
+                            default:
+                                break;
+                        }
+                    }
+                    break;
+                case SCREEN_EVENT_PROPERTY:
+                    rc = screen_get_event_property_pv(demo->screen_event, SCREEN_PROPERTY_WINDOW, (void **)&win);
+                    if (rc) {
+                        printf("Cannot get SCREEN_PROPERTY_WINDOW of the event! (%s)\n", strerror(errno));
+                        fflush(stdout);
+                        demo->quit = true;
+                        break;
+                    }
+                    rc = screen_get_event_property_iv(demo->screen_event, SCREEN_PROPERTY_NAME, &val);
+                    if (rc) {
+                        printf("Cannot get SCREEN_PROPERTY_NAME of the event! (%s)\n", strerror(errno));
+                        fflush(stdout);
+                        demo->quit = true;
+                        break;
+                    }
+                    if (win == demo->screen_window) {
+                        switch (val) {
+                            case SCREEN_PROPERTY_SIZE:
+                                rc = screen_get_window_property_iv(win, SCREEN_PROPERTY_SIZE, size);
+                                if (rc) {
+                                    printf("Cannot get SCREEN_PROPERTY_SIZE of the window in the event! (%s)\n", strerror(errno));
+                                    fflush(stdout);
+                                    demo->quit = true;
+                                    break;
+                                }
+                                demo->width = size[0];
+                                demo->height = size[1];
+                                demo_resize(demo);
+                                break;
+                            default:
+                                /* We are not interested in any other events for now */
+                                break;
+                        }
+                    }
+                    break;
+            }
+        }
+
+        if (demo->pause) {
+        } else {
+            demo_draw(demo);
+            demo->curFrame++;
+            if (demo->frameCount != INT32_MAX && demo->curFrame == demo->frameCount) {
+                demo->quit = true;
+            }
+        }
+    }
+}
+
+static void demo_create_window(struct demo *demo) {
+    const char *idstr = APP_SHORT_NAME;
+    int size[2];
+    int usage = SCREEN_USAGE_VULKAN;
+    int rc;
+
+    rc = screen_create_context(&demo->screen_context, 0);
+    if (rc) {
+        printf("Cannot create QNX Screen context!\n");
+        fflush(stdout);
+        exit(EXIT_FAILURE);
+    }
+    rc = screen_create_window(&demo->screen_window, demo->screen_context);
+    if (rc) {
+        printf("Cannot create QNX Screen window!\n");
+        fflush(stdout);
+        exit(EXIT_FAILURE);
+    }
+    rc = screen_create_event(&demo->screen_event);
+    if (rc) {
+        printf("Cannot create QNX Screen event!\n");
+        fflush(stdout);
+        exit(EXIT_FAILURE);
+    }
+
+    /* Set window caption */
+    screen_set_window_property_cv(demo->screen_window, SCREEN_PROPERTY_ID_STRING, strlen(idstr), idstr);
+
+    /* Setup VULKAN usage flags */
+    rc = screen_set_window_property_iv(demo->screen_window, SCREEN_PROPERTY_USAGE, &usage);
+    if (rc) {
+        printf("Cannot set SCREEN_USAGE_VULKAN flag!\n");
+        fflush(stdout);
+        exit(EXIT_FAILURE);
+    }
+
+    /* Setup window size */
+    if ((demo->width == 0) || (demo->height == 0)) {
+        /* Obtain automatically set window size provided by WM */
+        rc = screen_get_window_property_iv(demo->screen_window, SCREEN_PROPERTY_SIZE, size);
+        if (rc) {
+            printf("Cannot obtain current window size!\n");
+            fflush(stdout);
+            exit(EXIT_FAILURE);
+        }
+        demo->width = size[0];
+        demo->height = size[1];
+    } else {
+        size[0] = demo->width;
+        size[1] = demo->height;
+        rc = screen_set_window_property_iv(demo->screen_window, SCREEN_PROPERTY_SIZE, size);
+        if (rc) {
+            printf("Cannot set window size!\n");
+            fflush(stdout);
+            exit(EXIT_FAILURE);
+        }
+    }
+}
 #endif
 
 /*
@@ -3213,6 +3347,13 @@ static void demo_init_vk(struct demo *demo) {
     demo->is_minimized = false;
     demo->cmd_pool = VK_NULL_HANDLE;
 
+    err = volkInitialize();
+    if (err != VK_SUCCESS) {
+        ERR_EXIT(
+            "Unable to find the Vulkan runtime on the system.\n\n"
+            "This likely indicates that no Vulkan capable drivers are installed.",
+            "Installation Failure");
+    }
     // Look for validation layers
     VkBool32 validation_found = 0;
     if (demo->validate) {
@@ -3299,6 +3440,11 @@ static void demo_init_vk(struct demo *demo) {
                 platformSurfaceExtFound = 1;
                 demo->extension_names[demo->enabled_extension_count++] = VK_EXT_METAL_SURFACE_EXTENSION_NAME;
             }
+#elif defined(VK_USE_PLATFORM_SCREEN_QNX)
+            if (!strcmp(VK_QNX_SCREEN_SURFACE_EXTENSION_NAME, instance_extensions[i].extensionName)) {
+                platformSurfaceExtFound = 1;
+                demo->extension_names[demo->enabled_extension_count++] = VK_QNX_SCREEN_SURFACE_EXTENSION_NAME;
+            }
 #endif
             if (!strcmp(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME, instance_extensions[i].extensionName)) {
                 demo->extension_names[demo->enabled_extension_count++] = VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME;
@@ -3376,6 +3522,12 @@ static void demo_init_vk(struct demo *demo) {
                  "Do you have a compatible Vulkan installable client driver (ICD) installed?\n"
                  "Please look at the Getting Started guide for additional information.\n",
                  "vkCreateInstance Failure");
+#elif defined(VK_USE_PLATFORM_SCREEN_QNX)
+        ERR_EXIT("vkEnumerateInstanceExtensionProperties failed to find the " VK_QNX_SCREEN_SURFACE_EXTENSION_NAME
+                 " extension.\n\n"
+                 "Do you have a compatible Vulkan installable client driver (ICD) installed?\n"
+                 "Please look at the Getting Started guide for additional information.\n",
+                 "vkCreateInstance Failure");
 #endif
     }
     const VkApplicationInfo app = {
@@ -3437,6 +3589,8 @@ static void demo_init_vk(struct demo *demo) {
             "Please look at the Getting Started guide for additional information.\n",
             "vkCreateInstance Failure");
     }
+
+    volkLoadInstance(demo->inst);
 
     /* Make initial call to query gpu_count, then second call for gpu info */
     uint32_t gpu_count = 0;
@@ -3585,30 +3739,7 @@ static void demo_init_vk(struct demo *demo) {
     }
 
     if (demo->validate) {
-        // Setup VK_EXT_debug_utils function pointers always (we use them for
-        // debug labels and names).
-        demo->CreateDebugUtilsMessengerEXT =
-            (PFN_vkCreateDebugUtilsMessengerEXT)vkGetInstanceProcAddr(demo->inst, "vkCreateDebugUtilsMessengerEXT");
-        demo->DestroyDebugUtilsMessengerEXT =
-            (PFN_vkDestroyDebugUtilsMessengerEXT)vkGetInstanceProcAddr(demo->inst, "vkDestroyDebugUtilsMessengerEXT");
-        demo->SubmitDebugUtilsMessageEXT =
-            (PFN_vkSubmitDebugUtilsMessageEXT)vkGetInstanceProcAddr(demo->inst, "vkSubmitDebugUtilsMessageEXT");
-        demo->CmdBeginDebugUtilsLabelEXT =
-            (PFN_vkCmdBeginDebugUtilsLabelEXT)vkGetInstanceProcAddr(demo->inst, "vkCmdBeginDebugUtilsLabelEXT");
-        demo->CmdEndDebugUtilsLabelEXT =
-            (PFN_vkCmdEndDebugUtilsLabelEXT)vkGetInstanceProcAddr(demo->inst, "vkCmdEndDebugUtilsLabelEXT");
-        demo->CmdInsertDebugUtilsLabelEXT =
-            (PFN_vkCmdInsertDebugUtilsLabelEXT)vkGetInstanceProcAddr(demo->inst, "vkCmdInsertDebugUtilsLabelEXT");
-        demo->SetDebugUtilsObjectNameEXT =
-            (PFN_vkSetDebugUtilsObjectNameEXT)vkGetInstanceProcAddr(demo->inst, "vkSetDebugUtilsObjectNameEXT");
-        if (NULL == demo->CreateDebugUtilsMessengerEXT || NULL == demo->DestroyDebugUtilsMessengerEXT ||
-            NULL == demo->SubmitDebugUtilsMessageEXT || NULL == demo->CmdBeginDebugUtilsLabelEXT ||
-            NULL == demo->CmdEndDebugUtilsLabelEXT || NULL == demo->CmdInsertDebugUtilsLabelEXT ||
-            NULL == demo->SetDebugUtilsObjectNameEXT) {
-            ERR_EXIT("GetProcAddr: Failed to init VK_EXT_debug_utils\n", "GetProcAddr: Failure");
-        }
-
-        err = demo->CreateDebugUtilsMessengerEXT(demo->inst, &dbg_messenger_create_info, NULL, &demo->dbg_messenger);
+        err = vkCreateDebugUtilsMessengerEXT(demo->inst, &dbg_messenger_create_info, NULL, &demo->dbg_messenger);
         switch (err) {
             case VK_SUCCESS:
                 break;
@@ -3634,12 +3765,6 @@ static void demo_init_vk(struct demo *demo) {
     //  features based on this query
     VkPhysicalDeviceFeatures physDevFeatures;
     vkGetPhysicalDeviceFeatures(demo->gpu, &physDevFeatures);
-
-    GET_INSTANCE_PROC_ADDR(demo->inst, GetPhysicalDeviceSurfaceSupportKHR);
-    GET_INSTANCE_PROC_ADDR(demo->inst, GetPhysicalDeviceSurfaceCapabilitiesKHR);
-    GET_INSTANCE_PROC_ADDR(demo->inst, GetPhysicalDeviceSurfaceFormatsKHR);
-    GET_INSTANCE_PROC_ADDR(demo->inst, GetPhysicalDeviceSurfacePresentModesKHR);
-    GET_INSTANCE_PROC_ADDR(demo->inst, GetSwapchainImagesKHR);
 }
 
 static void demo_create_device(struct demo *demo) {
@@ -3675,6 +3800,8 @@ static void demo_create_device(struct demo *demo) {
     }
     err = vkCreateDevice(demo->gpu, &device, NULL, &demo->device);
     assert(!err);
+
+    volkLoadDevice(demo->device);
 }
 
 static void demo_create_surface(struct demo *demo) {
@@ -3744,6 +3871,15 @@ static void demo_create_surface(struct demo *demo) {
     surface.pLayer = demo->caMetalLayer;
 
     err = vkCreateMetalSurfaceEXT(demo->inst, &surface, NULL, &demo->surface);
+#elif defined(VK_USE_PLATFORM_SCREEN_QNX)
+    VkScreenSurfaceCreateInfoQNX createInfo;
+    createInfo.sType = VK_STRUCTURE_TYPE_SCREEN_SURFACE_CREATE_INFO_QNX;
+    createInfo.pNext = NULL;
+    createInfo.flags = 0;
+    createInfo.context = demo->screen_context;
+    createInfo.window = demo->screen_window;
+
+    err = vkCreateScreenSurfaceQNX(demo->inst, &createInfo, NULL, &demo->surface);
 #endif
     assert(!err);
 }
@@ -3755,6 +3891,7 @@ static VkSurfaceFormatKHR pick_surface_format(const VkSurfaceFormatKHR *surfaceF
 
         if (format == VK_FORMAT_R8G8B8A8_UNORM || format == VK_FORMAT_B8G8R8A8_UNORM ||
             format == VK_FORMAT_A2B10G10R10_UNORM_PACK32 || format == VK_FORMAT_A2R10G10B10_UNORM_PACK32 ||
+            format == VK_FORMAT_A1R5G5B5_UNORM_PACK16 || format == VK_FORMAT_R5G6B5_UNORM_PACK16 ||
             format == VK_FORMAT_R16G16B16A16_SFLOAT) {
             return surfaceFormats[i];
         }
@@ -3774,7 +3911,7 @@ static void demo_init_vk_swapchain(struct demo *demo) {
     // Iterate over each queue to learn whether it supports presenting:
     VkBool32 *supportsPresent = (VkBool32 *)malloc(demo->queue_family_count * sizeof(VkBool32));
     for (uint32_t i = 0; i < demo->queue_family_count; i++) {
-        demo->fpGetPhysicalDeviceSurfaceSupportKHR(demo->gpu, i, demo->surface, &supportsPresent[i]);
+        vkGetPhysicalDeviceSurfaceSupportKHR(demo->gpu, i, demo->surface, &supportsPresent[i]);
     }
 
     // Search for a graphics and a present queue in the array of queue
@@ -3818,16 +3955,6 @@ static void demo_init_vk_swapchain(struct demo *demo) {
 
     demo_create_device(demo);
 
-    GET_DEVICE_PROC_ADDR(demo->device, CreateSwapchainKHR);
-    GET_DEVICE_PROC_ADDR(demo->device, DestroySwapchainKHR);
-    GET_DEVICE_PROC_ADDR(demo->device, GetSwapchainImagesKHR);
-    GET_DEVICE_PROC_ADDR(demo->device, AcquireNextImageKHR);
-    GET_DEVICE_PROC_ADDR(demo->device, QueuePresentKHR);
-    if (demo->VK_GOOGLE_display_timing_enabled) {
-        GET_DEVICE_PROC_ADDR(demo->device, GetRefreshCycleDurationGOOGLE);
-        GET_DEVICE_PROC_ADDR(demo->device, GetPastPresentationTimingGOOGLE);
-    }
-
     vkGetDeviceQueue(demo->device, demo->graphics_queue_family_index, 0, &demo->graphics_queue);
 
     if (!demo->separate_present_queue) {
@@ -3838,10 +3965,10 @@ static void demo_init_vk_swapchain(struct demo *demo) {
 
     // Get the list of VkFormat's that are supported:
     uint32_t formatCount;
-    err = demo->fpGetPhysicalDeviceSurfaceFormatsKHR(demo->gpu, demo->surface, &formatCount, NULL);
+    err = vkGetPhysicalDeviceSurfaceFormatsKHR(demo->gpu, demo->surface, &formatCount, NULL);
     assert(!err);
     VkSurfaceFormatKHR *surfFormats = (VkSurfaceFormatKHR *)malloc(formatCount * sizeof(VkSurfaceFormatKHR));
-    err = demo->fpGetPhysicalDeviceSurfaceFormatsKHR(demo->gpu, demo->surface, &formatCount, surfFormats);
+    err = vkGetPhysicalDeviceSurfaceFormatsKHR(demo->gpu, demo->surface, &formatCount, surfFormats);
     assert(!err);
     VkSurfaceFormatKHR surfaceFormat = pick_surface_format(surfFormats, formatCount);
     demo->format = surfaceFormat.format;
@@ -4345,11 +4472,6 @@ static void processCommand(struct android_app *app, int32_t cmd) {
 }
 
 void android_main(struct android_app *app) {
-#ifdef ANDROID
-    int vulkanSupport = InitVulkan();
-    if (vulkanSupport == 0) return;
-#endif
-
     demo.prepared = false;
 
     app->onAppCmd = processCommand;
@@ -4386,6 +4508,8 @@ int main(int argc, char **argv) {
     demo_create_window(&demo);
 #elif defined(VK_USE_PLATFORM_DIRECTFB_EXT)
     demo_create_directfb_window(&demo);
+#elif defined(VK_USE_PLATFORM_SCREEN_QNX)
+    demo_create_window(&demo);
 #endif
 
     demo_init_vk_swapchain(&demo);
@@ -4402,6 +4526,8 @@ int main(int argc, char **argv) {
     demo_run_directfb(&demo);
 #elif defined(VK_USE_PLATFORM_DISPLAY_KHR)
     demo_run_display(&demo);
+#elif defined(VK_USE_PLATFORM_SCREEN_QNX)
+    demo_run(&demo);
 #endif
 
     demo_cleanup(&demo);

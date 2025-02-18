@@ -13,6 +13,7 @@
 #include "components/web_package/web_bundle_parser_factory.h"
 #include "mojo/public/cpp/bindings/generic_pending_receiver.h"
 #include "mojo/public/cpp/bindings/self_owned_receiver.h"
+#include "services/data_decoder/cbor_parser_impl.h"
 #include "services/data_decoder/gzipper.h"
 #include "services/data_decoder/json_parser_impl.h"
 #include "services/data_decoder/public/mojom/image_decoder.mojom.h"
@@ -48,8 +49,6 @@ void DataDecoderService::BindImageDecoder(
 #if BUILDFLAG(IS_IOS)
   LOG(FATAL) << "ImageDecoder not supported on iOS.";
 #else
-  if (drop_image_decoders_)
-    return;
   mojo::MakeSelfOwnedReceiver(std::make_unique<ImageDecoderImpl>(),
                               std::move(receiver));
 #endif
@@ -57,8 +56,6 @@ void DataDecoderService::BindImageDecoder(
 
 void DataDecoderService::BindJsonParser(
     mojo::PendingReceiver<mojom::JsonParser> receiver) {
-  if (drop_json_parsers_)
-    return;
   mojo::MakeSelfOwnedReceiver(std::make_unique<JsonParserImpl>(),
                               std::move(receiver));
 }
@@ -78,18 +75,20 @@ void DataDecoderService::BindXmlParser(
 void DataDecoderService::BindWebBundleParserFactory(
     mojo::PendingReceiver<web_package::mojom::WebBundleParserFactory>
         receiver) {
-  if (web_bundle_parser_factory_binder_) {
-    web_bundle_parser_factory_binder_.Run(std::move(receiver));
-  } else {
-    mojo::MakeSelfOwnedReceiver(
-        std::make_unique<web_package::WebBundleParserFactory>(),
-        std::move(receiver));
-  }
+  mojo::MakeSelfOwnedReceiver(
+      std::make_unique<web_package::WebBundleParserFactory>(),
+      std::move(receiver));
 }
 
 void DataDecoderService::BindGzipper(
     mojo::PendingReceiver<mojom::Gzipper> receiver) {
   mojo::MakeSelfOwnedReceiver(std::make_unique<Gzipper>(), std::move(receiver));
+}
+
+void DataDecoderService::BindCborParser(
+    mojo::PendingReceiver<mojom::CborParser> receiver) {
+  mojo::MakeSelfOwnedReceiver(std::make_unique<CborParserImpl>(),
+                              std::move(receiver));
 }
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)

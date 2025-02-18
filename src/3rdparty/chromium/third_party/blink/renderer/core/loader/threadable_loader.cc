@@ -33,11 +33,14 @@
 
 #include <memory>
 
+#include "base/metrics/histogram_functions.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/task/single_thread_task_runner.h"
+#include "base/time/time.h"
 #include "services/network/public/cpp/cors/cors_error_status.h"
 #include "services/network/public/mojom/cors.mojom-blink.h"
 #include "services/network/public/mojom/fetch_api.mojom-blink.h"
+#include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom-blink.h"
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/renderer/core/frame/frame_console.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
@@ -68,16 +71,20 @@ namespace {
 class DetachedClient final : public GarbageCollected<DetachedClient>,
                              public ThreadableLoaderClient {
  public:
-  explicit DetachedClient(ThreadableLoader* loader) : loader_(loader) {}
+  explicit DetachedClient(ThreadableLoader* loader)
+      : loader_(loader), detached_time_(base::TimeTicks::Now()) {}
   ~DetachedClient() override = default;
 
   void DidFinishLoading(uint64_t identifier) override {
+    LogKeepAliveDuration("Succeeded");
     self_keep_alive_.Clear();
   }
   void DidFail(uint64_t identifier, const ResourceError&) override {
+    LogKeepAliveDuration("Failed");
     self_keep_alive_.Clear();
   }
   void DidFailRedirectCheck(uint64_t identifier) override {
+    LogKeepAliveDuration("Failed");
     self_keep_alive_.Clear();
   }
   void Trace(Visitor* visitor) const override {
@@ -86,9 +93,22 @@ class DetachedClient final : public GarbageCollected<DetachedClient>,
   }
 
  private:
+  void LogKeepAliveDuration(const std::string& name) {
+    CHECK(name == "Succeeded" || name == "Failed");
+    base::TimeDelta duration_after_detached =
+        base::TimeTicks::Now() - detached_time_;
+    base::UmaHistogramMediumTimes(
+        "FetchKeepAlive.Renderer.DurationAfterDetached",
+        duration_after_detached);
+    base::UmaHistogramMediumTimes(
+        "FetchKeepAlive.Renderer.DurationAfterDetached." + name,
+        duration_after_detached);
+  }
+
   SelfKeepAlive<DetachedClient> self_keep_alive_{this};
   // Keep it alive.
   const Member<ThreadableLoader> loader_;
+  base::TimeTicks detached_time_;
 };
 
 }  // namespace
@@ -113,13 +133,6 @@ ThreadableLoader::ThreadableLoader(
 }
 
 void ThreadableLoader::Start(ResourceRequest request) {
-  // Back/forward-cache is interested in use of the "Authorization" header.
-  if (request.HttpHeaderField("Authorization")) {
-    execution_context_->GetScheduler()->RegisterStickyFeature(
-        SchedulingPolicy::Feature::kAuthorizationHeader,
-        {SchedulingPolicy::DisableBackForwardCache()});
-  }
-
   const auto request_context = request.GetRequestContext();
   if (request.GetMode() == network::mojom::RequestMode::kNoCors) {
     SECURITY_CHECK(cors::IsNoCorsAllowedContext(request_context));
@@ -298,6 +311,16 @@ void ThreadableLoader::ResponseReceived(Resource* resource,
   DCHECK_EQ(resource, GetResource());
 
   checker_.ResponseReceived();
+
+  // If "Cache-Control: no-store" header exists in the XHR response,
+  // Back/Forward cache will be disabled for the page if the main resource has
+  // "Cache-Control: no-store" as well.
+  if (response.CacheControlContainsNoStore()) {
+    execution_context_->GetScheduler()->RegisterStickyFeature(
+        SchedulingPolicy::Feature::
+            kJsNetworkRequestReceivedCacheControlNoStoreResource,
+        {SchedulingPolicy::DisableBackForwardCache()});
+  }
 
   client_->DidReceiveResponse(resource->InspectorId(), response);
 }

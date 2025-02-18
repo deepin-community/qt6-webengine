@@ -2,8 +2,9 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-load("//lib/builders.star", "cpu", "goma", "os", "xcode")
+load("//lib/builders.star", "cpu", "os", "reclient", "xcode")
 load("//lib/builder_config.star", "builder_config")
+load("//lib/gn_args.star", "gn_args")
 load("//lib/try.star", "try_")
 
 try_.defaults.set(
@@ -20,7 +21,8 @@ try_.defaults.set(
     # Max. pending time for builds. CQ considers builds pending >2h as timed
     # out: http://shortn/_8PaHsdYmlq. Keep this in sync.
     expiration_timeout = 2 * time.hour,
-    goma_backend = goma.backend.RBE_PROD,
+    reclient_instance = reclient.instance.DEFAULT_UNTRUSTED,
+    reclient_jobs = reclient.jobs.LOW_JOBS_FOR_CQ,
     service_account = "chromium-try-gpu-builder@chops-service-accounts.iam.gserviceaccount.com",
     subproject_list_view = "luci.chromium.try",
     task_template_canary_percentage = 5,
@@ -45,6 +47,12 @@ angle_ios_builder(
     ],
     try_settings = builder_config.try_settings(
         retry_failed_shards = False,
+    ),
+    gn_args = gn_args.config(
+        configs = [
+            "ci/ios-angle-builder",
+            "no_symbols",
+        ],
     ),
     pool = "luci.chromium.gpu.mac.mini.intel.try",
 )

@@ -36,11 +36,6 @@ std::string SourceToString(SourceForRefreshTokenOperation source) {
       return "InlineLoginHandler::Signin";
     case SourceForRefreshTokenOperation::kPrimaryAccountManager_ClearAccount:
       return "PrimaryAccountManager::ClearAccount";
-    case SourceForRefreshTokenOperation::
-        kPrimaryAccountManager_LegacyPreDiceSigninFlow:
-      return "PrimaryAccountManager::LegacyPreDiceSigninFlow";
-    case SourceForRefreshTokenOperation::kUserMenu_RemoveAccount:
-      return "UserMenu::RemoveAccount";
     case SourceForRefreshTokenOperation::kUserMenu_SignOutAllAccounts:
       return "UserMenu::SignOutAllAccounts";
     case SourceForRefreshTokenOperation::kSettings_Signout:
@@ -66,6 +61,8 @@ std::string SourceToString(SourceForRefreshTokenOperation source) {
       return "TokenService::ExtractCredentials";
     case SourceForRefreshTokenOperation::kLogoutTabHelper_PrimaryPageChanged:
       return "LogoutTabHelper::PrimaryPageChanged";
+    case SourceForRefreshTokenOperation::kForceSigninReauthWithDifferentAccount:
+      return "ForceSigninReauthWithDifferentAccount";
   }
 }
 }  // namespace
@@ -96,9 +93,10 @@ std::unique_ptr<OAuth2AccessTokenFetcher>
 ProfileOAuth2TokenService::CreateAccessTokenFetcher(
     const CoreAccountId& account_id,
     scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
-    OAuth2AccessTokenConsumer* consumer) {
+    OAuth2AccessTokenConsumer* consumer,
+    const std::string& token_binding_challenge) {
   return delegate_->CreateAccessTokenFetcher(account_id, url_loader_factory,
-                                             consumer);
+                                             consumer, token_binding_challenge);
 }
 
 bool ProfileOAuth2TokenService::FixRequestErrorIfPossible() {
@@ -270,10 +268,20 @@ void ProfileOAuth2TokenService::LoadCredentials(
 void ProfileOAuth2TokenService::UpdateCredentials(
     const CoreAccountId& account_id,
     const std::string& refresh_token,
-    SourceForRefreshTokenOperation source) {
+    SourceForRefreshTokenOperation source
+#if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
+    ,
+    const std::vector<uint8_t>& wrapped_binding_key
+#endif  // BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
+) {
   base::AutoReset<SourceForRefreshTokenOperation> auto_reset(
       &update_refresh_token_source_, source);
-  GetDelegate()->UpdateCredentials(account_id, refresh_token);
+  GetDelegate()->UpdateCredentials(account_id, refresh_token
+#if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
+                                   ,
+                                   wrapped_binding_key
+#endif  // BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
+  );
 }
 
 void ProfileOAuth2TokenService::RevokeCredentials(

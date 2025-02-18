@@ -94,7 +94,8 @@ class MEDIA_EXPORT VideoColorSpace {
 
   bool operator==(const VideoColorSpace& other) const;
   bool operator!=(const VideoColorSpace& other) const;
-  // Returns true if any of the fields have a value other
+
+  // Returns true if all of the fields have a value other
   // than INVALID or UNSPECIFIED.
   bool IsSpecified() const;
 
@@ -109,6 +110,12 @@ class MEDIA_EXPORT VideoColorSpace {
   static VideoColorSpace JPEG();
 
   gfx::ColorSpace ToGfxColorSpace() const;
+
+  // Similar to ToGfxColorSpace(), but attempts to guess a gfx::ColorSpace from
+  // a fully or partially specified VideoColorSpace. E.g., a completely invalid
+  // VideoColorSpace will return a BT.709 gfx::ColorSpace.
+  gfx::ColorSpace GuessGfxColorSpace() const;
+
   std::string ToString() const;
 
   static VideoColorSpace FromGfxColorSpace(const gfx::ColorSpace& color_space);
@@ -118,6 +125,9 @@ class MEDIA_EXPORT VideoColorSpace {
   TransferID transfer = TransferID::INVALID;
   MatrixID matrix = MatrixID::INVALID;
   gfx::ColorSpace::RangeID range = gfx::ColorSpace::RangeID::INVALID;
+
+ private:
+  gfx::ColorSpace ToGfxColorSpaceInternal(bool allow_guessing) const;
 };
 
 }  // namespace media

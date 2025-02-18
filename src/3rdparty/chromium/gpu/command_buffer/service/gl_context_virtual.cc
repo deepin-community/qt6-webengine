@@ -23,13 +23,14 @@ GLContextVirtual::GLContextVirtual(
       shared_context_(shared_context),
       delegate_(delegate) {}
 
-bool GLContextVirtual::Initialize(gl::GLSurface* compatible_surface,
-                                  const gl::GLContextAttribs& attribs) {
+bool GLContextVirtual::InitializeImpl(gl::GLSurface* compatible_surface,
+                                      const gl::GLContextAttribs& attribs) {
   SetGLStateRestorer(new GLStateRestorerImpl(delegate_));
   return shared_context_->MakeVirtuallyCurrent(this, compatible_surface);
 }
 
 void GLContextVirtual::Destroy() {
+  OnContextWillDestroy();
   shared_context_->OnReleaseVirtuallyCurrent(this);
   shared_context_ = nullptr;
 }
@@ -103,6 +104,11 @@ void GLContextVirtual::ForceReleaseVirtuallyCurrent() {
 }
 
 #if BUILDFLAG(IS_APPLE)
+void GLContextVirtual::AddMetalSharedEventsForBackpressure(
+    std::vector<std::unique_ptr<BackpressureMetalSharedEvent>> events) {
+  shared_context_->AddMetalSharedEventsForBackpressure(std::move(events));
+}
+
 uint64_t GLContextVirtual::BackpressureFenceCreate() {
   return shared_context_->BackpressureFenceCreate();
 }

@@ -32,15 +32,16 @@ import * as Host from '../../core/host/host.js';
 import * as i18n from '../../core/i18n/i18n.js';
 import * as Platform from '../../core/platform/platform.js';
 import * as SDK from '../../core/sdk/sdk.js';
+import type * as Protocol from '../../generated/protocol.js';
 import * as Bindings from '../../models/bindings/bindings.js';
 import * as Persistence from '../../models/persistence/persistence.js';
 import * as SourceMapScopes from '../../models/source_map_scopes/source_map_scopes.js';
 import type * as Workspace from '../../models/workspace/workspace.js';
+import * as IconButton from '../../ui/components/icon_button/icon_button.js';
 import * as UI from '../../ui/legacy/legacy.js';
+import * as VisualLogging from '../../ui/visual_logging/visual_logging.js';
 
 import callStackSidebarPaneStyles from './callStackSidebarPane.css.js';
-
-import type * as Protocol from '../../generated/protocol.js';
 
 const UIStrings = {
   /**
@@ -109,6 +110,7 @@ export class CallStackSidebarPane extends UI.View.SimpleView implements UI.Conte
   private constructor() {
     super(i18nString(UIStrings.callStack), true);
 
+    this.contentElement.setAttribute('jslog', `${VisualLogging.pane().context('debugger-callstack')}`);
     ({element: this.ignoreListMessageElement, checkbox: this.ignoreListCheckboxElement} =
          this.createIgnoreListMessageElementAndCheckbox());
     this.contentElement.appendChild(this.ignoreListMessageElement);
@@ -118,7 +120,14 @@ export class CallStackSidebarPane extends UI.View.SimpleView implements UI.Conte
     this.notPausedMessageElement.tabIndex = -1;
 
     this.callFrameWarningsElement = this.contentElement.createChild('div', 'call-frame-warnings-message');
-    const icon = UI.Icon.Icon.create('smallicon-warning', 'call-frame-warning-icon');
+    const icon = new IconButton.Icon.Icon();
+    icon.data = {
+      iconName: 'warning-filled',
+      color: 'var(--icon-warning)',
+      width: '14px',
+      height: '14px',
+    };
+    icon.classList.add('call-frame-warning-icon');
     this.callFrameWarningsElement.appendChild(icon);
     this.callFrameWarningsElement.appendChild(document.createTextNode(i18nString(UIStrings.callFrameWarnings)));
     this.callFrameWarningsElement.tabIndex = -1;
@@ -337,11 +346,26 @@ export class CallStackSidebarPane extends UI.View.SimpleView implements UI.Conte
     element.classList.toggle('selected', isSelected);
     UI.ARIAUtils.setSelected(element, isSelected);
     element.classList.toggle('hidden', !this.showIgnoreListed && item.isIgnoreListed);
-    element.appendChild(UI.Icon.Icon.create('smallicon-thick-right-arrow', 'selected-call-frame-icon'));
+    const icon = new IconButton.Icon.Icon();
+    icon.data = {
+      iconName: 'large-arrow-right-filled',
+      color: 'var(--icon-arrow-main-thread)',
+      width: '14px',
+      height: '14px',
+    };
+    icon.classList.add('selected-call-frame-icon');
+    element.appendChild(icon);
     element.tabIndex = item === this.list.selectedItem() ? 0 : -1;
 
     if (callframe && callframe.missingDebugInfoDetails) {
-      const icon = UI.Icon.Icon.create('smallicon-warning', 'call-frame-warning-icon');
+      const icon = new IconButton.Icon.Icon();
+      icon.data = {
+        iconName: 'warning-filled',
+        color: 'var(--icon-warning)',
+        width: '14px',
+        height: '14px',
+      };
+      icon.classList.add('call-frame-warning-icon');
       const messages =
           callframe.missingDebugInfoDetails.resources.map(r => i18nString(UIStrings.debugFileNotFound, {PH1: r}));
       UI.Tooltip.Tooltip.install(icon, [callframe.missingDebugInfoDetails.details, ...messages].join('\n'));
@@ -415,15 +439,16 @@ export class CallStackSidebarPane extends UI.View.SimpleView implements UI.Conte
     if (!item) {
       return;
     }
-    const contextMenu = new UI.ContextMenu.ContextMenu(event);
+    const contextMenu = new UI.ContextMenu.ContextMenu(event, {jsLogContext: 'call-stack-frame'});
     const debuggerCallFrame = itemToCallFrame.get(item);
     if (debuggerCallFrame) {
       contextMenu.defaultSection().appendItem(i18nString(UIStrings.restartFrame), () => {
         Host.userMetrics.actionTaken(Host.UserMetrics.Action.StackFrameRestarted);
         void debuggerCallFrame.restart();
-      }, !debuggerCallFrame.canBeRestarted);
+      }, {disabled: !debuggerCallFrame.canBeRestarted, jslogContext: 'restart-frame'});
     }
-    contextMenu.defaultSection().appendItem(i18nString(UIStrings.copyStackTrace), this.copyStackTrace.bind(this));
+    contextMenu.defaultSection().appendItem(
+        i18nString(UIStrings.copyStackTrace), this.copyStackTrace.bind(this), {jslogContext: 'copy-stack-trace'});
     if (item.uiLocation) {
       this.appendIgnoreListURLContextMenuItems(contextMenu, item.uiLocation.uiSourceCode);
     }
@@ -478,9 +503,9 @@ export class CallStackSidebarPane extends UI.View.SimpleView implements UI.Conte
       return;
     }
 
-    for (const {text, callback} of Bindings.IgnoreListManager.IgnoreListManager.instance()
+    for (const {text, callback, jslogContext} of Bindings.IgnoreListManager.IgnoreListManager.instance()
              .getIgnoreListURLContextMenuItems(uiSourceCode)) {
-      menuSection.appendItem(text, callback);
+      menuSection.appendItem(text, callback, {jslogContext});
     }
   }
 
@@ -519,7 +544,7 @@ export class CallStackSidebarPane extends UI.View.SimpleView implements UI.Conte
     }
     Host.InspectorFrontendHost.InspectorFrontendHostInstance.copyText(text.join('\n'));
   }
-  wasShown(): void {
+  override wasShown(): void {
     super.wasShown();
     this.registerCSSFiles([callStackSidebarPaneStyles]);
   }
@@ -530,19 +555,7 @@ const itemToCallFrame = new WeakMap<Item, SDK.DebuggerModel.CallFrame>();
 export const elementSymbol = Symbol('element');
 export const defaultMaxAsyncStackChainDepth = 32;
 
-let actionDelegateInstance: ActionDelegate;
-
 export class ActionDelegate implements UI.ActionRegistration.ActionDelegate {
-  static instance(opts: {
-    forceNew: boolean|null,
-  } = {forceNew: null}): ActionDelegate {
-    const {forceNew} = opts;
-    if (!actionDelegateInstance || forceNew) {
-      actionDelegateInstance = new ActionDelegate();
-    }
-
-    return actionDelegateInstance;
-  }
   handleAction(context: UI.Context.Context, actionId: string): boolean {
     switch (actionId) {
       case 'debugger.next-call-frame':

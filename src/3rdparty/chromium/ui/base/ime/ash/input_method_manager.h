@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "base/component_export.h"
+#include "base/containers/span.h"
 #include "base/memory/ref_counted.h"
 #include "chromeos/ash/services/ime/public/mojom/ime_service.mojom.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
@@ -207,7 +208,7 @@ class COMPONENT_EXPORT(UI_BASE_IME_ASH) InputMethodManager {
         const std::string& input_method_id) const = 0;
 
     // Sets the list of extension IME ids which should be enabled.
-    virtual void SetEnabledExtensionImes(std::vector<std::string>* ids) = 0;
+    virtual void SetEnabledExtensionImes(base::span<const std::string> ids) = 0;
 
     // Sets current input method to login default (first owners, then hardware).
     virtual void SetInputMethodLoginDefault() = 0;
@@ -337,8 +338,15 @@ class COMPONENT_EXPORT(UI_BASE_IME_ASH) InputMethodManager {
   // If keyboard layout can be uset at login screen
   virtual bool IsLoginKeyboard(const std::string& layout) const = 0;
 
-  // Migrates the input method id to extension-based input method id.
-  virtual bool MigrateInputMethods(
+  // Returns an extension-based input method id if |input_method_id| is a valid
+  // engine id. Otherwise, returns |input_method_id|.
+  virtual std::string GetMigratedInputMethodID(
+      const std::string& input_method_id) = 0;
+
+  // Replaces the input list with the extension-based input method ids for valid
+  // engine ids in the input list. Returns true if the given input method id
+  // list is modified, returns false otherwise.
+  virtual bool GetMigratedInputMethodIDs(
       std::vector<std::string>* input_method_ids) = 0;
 
   // Returns new empty state for the |profile|.

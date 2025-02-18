@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "base/files/file_path.h"
+#include "base/memory/raw_ptr_exclusion.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/time/time.h"
 #include "build/chromeos_buildflags.h"
@@ -158,13 +159,18 @@ class MESSAGE_CENTER_PUBLIC_EXPORT RichNotificationData {
   // and only pass globally defined constants.
   // TODO(tetsui): Remove the pointer, after fixing VectorIconSource not to
   // retain VectorIcon reference.  https://crbug.com/760866
-  const gfx::VectorIcon* vector_small_image = &gfx::kNoneIcon;
+  // RAW_PTR_EXCLUSION: Never allocated by PartitionAlloc (always points to a
+  // global), so there is no benefit to using a raw_ptr, only cost.
+  RAW_PTR_EXCLUSION const gfx::VectorIcon* vector_small_image = &gfx::kNoneIcon;
 
   // Vector image to display on the parent notification of this notification,
   // illustrating the source of the group notification that this notification
   // belongs to. Optional. Note that all notification belongs to the same group
   // should have the same `parent_vector_small_image`.
-  const gfx::VectorIcon* parent_vector_small_image = &gfx::kNoneIcon;
+  // RAW_PTR_EXCLUSION: Never allocated by PartitionAlloc (always points to a
+  // global), so there is no benefit to using a raw_ptr, only cost.
+  RAW_PTR_EXCLUSION const gfx::VectorIcon* parent_vector_small_image =
+      &gfx::kNoneIcon;
 
   // Items to display on the notification. Only applicable for notifications
   // that have type NOTIFICATION_TYPE_MULTIPLE.
@@ -328,6 +334,9 @@ class MESSAGE_CENTER_PUBLIC_EXPORT Notification {
 
   // A display string for the source of the notification.
   const std::u16string& display_source() const { return display_source_; }
+  void set_display_source(const std::u16string display_source) {
+    display_source_ = display_source;
+  }
 
   bool allow_group() const { return allow_group_; }
   void set_allow_group(bool allow_group) { allow_group_ = allow_group; }
@@ -406,6 +415,12 @@ class MESSAGE_CENTER_PUBLIC_EXPORT Notification {
 
   const gfx::Image& image() const { return optional_fields_.image; }
   void set_image(const gfx::Image& image) { optional_fields_.image = image; }
+
+#if BUILDFLAG(IS_CHROMEOS)
+  void set_image_path(const base::FilePath& image_path) {
+    optional_fields_.image_path = image_path;
+  }
+#endif
 
   const gfx::Image& small_image() const { return optional_fields_.small_image; }
   void set_small_image(const gfx::Image& image) {

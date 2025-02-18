@@ -29,10 +29,8 @@ namespace connections {
 class WifiHotspot {
  public:
   // Callback that is invoked when a new connection is accepted.
-  struct AcceptedConnectionCallback {
-    std::function<void(const std::string& service_id, WifiHotspotSocket socket)>
-        accepted_cb = [](const std::string&, WifiHotspotSocket) {};
-  };
+  using AcceptedConnectionCallback = absl::AnyInvocable<void(
+      const std::string& service_id, WifiHotspotSocket socket)>;
 
   WifiHotspot() : is_hotspot_started_(false), is_connected_to_hotspot_(false) {}
   ~WifiHotspot();
@@ -51,8 +49,8 @@ class WifiHotspot {
   bool StopWifiHotspot() ABSL_LOCKS_EXCLUDED(mutex_);
 
   bool IsConnectedToHotspot() ABSL_LOCKS_EXCLUDED(mutex_);
-  bool ConnectWifiHotspot(const std::string& ssid, const std::string& password)
-      ABSL_LOCKS_EXCLUDED(mutex_);
+  bool ConnectWifiHotspot(const std::string& ssid, const std::string& password,
+                          int frequency) ABSL_LOCKS_EXCLUDED(mutex_);
   bool DisconnectWifiHotspot() ABSL_LOCKS_EXCLUDED(mutex_);
 
   // Starts a worker thread, creates a WifiHotspot socket, associates it with a

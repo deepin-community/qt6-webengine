@@ -5,6 +5,7 @@
 #include "content/browser/preloading/preloading_config.h"
 
 #include "base/test/scoped_feature_list.h"
+#include "content/common/features.h"
 #include "content/public/browser/preloading.h"
 #include "testing/gtest/include/gtest/gtest.h"
 

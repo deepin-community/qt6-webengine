@@ -2,14 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "services/device/public/cpp/geolocation/system_geolocation_source_mac.h"
+
 #import <CoreLocation/CoreLocation.h>
 
 #include <memory>
 
 #include "base/functional/callback_helpers.h"
-#include "base/mac/scoped_nsobject.h"
+#include "base/mac/mac_util.h"
 #include "base/sequence_checker.h"
-#include "services/device/public/cpp/geolocation/system_geolocation_source_mac.h"
+#include "build/build_config.h"
 
 @interface GeolocationManagerDelegate : NSObject <CLLocationManagerDelegate> {
   BOOL _permissionInitialized;
@@ -36,9 +38,9 @@ SystemGeolocationSourceMac::SystemGeolocationSourceMac()
     : location_manager_([[CLLocationManager alloc] init]),
       permission_update_callback_(base::DoNothing()),
       position_update_callback_(base::DoNothing()) {
-  delegate_.reset([[GeolocationManagerDelegate alloc]
-      initWithManager:weak_ptr_factory_.GetWeakPtr()]);
-  location_manager_.get().delegate = delegate_;
+  delegate_ = [[GeolocationManagerDelegate alloc]
+      initWithManager:weak_ptr_factory_.GetWeakPtr()];
+  location_manager_.delegate = delegate_;
 }
 
 SystemGeolocationSourceMac::~SystemGeolocationSourceMac() = default;
@@ -67,15 +69,22 @@ void SystemGeolocationSourceMac::PermissionUpdated() {
 
 void SystemGeolocationSourceMac::PositionUpdated(
     const mojom::Geoposition& position) {
-  position_update_callback_.Run(position);
+  position_update_callback_.Run(
+      mojom::GeopositionResult::NewPosition(position.Clone()));
+}
+
+void SystemGeolocationSourceMac::PositionError(
+    const mojom::GeopositionError& error) {
+  position_update_callback_.Run(
+      mojom::GeopositionResult::NewError(error.Clone()));
 }
 
 void SystemGeolocationSourceMac::StartWatchingPosition(bool high_accuracy) {
   if (high_accuracy) {
-    location_manager_.get().desiredAccuracy = kCLLocationAccuracyBest;
+    location_manager_.desiredAccuracy = kCLLocationAccuracyBest;
   } else {
     // Using kCLLocationAccuracyHundredMeters for consistency with Android.
-    location_manager_.get().desiredAccuracy = kCLLocationAccuracyHundredMeters;
+    location_manager_.desiredAccuracy = kCLLocationAccuracyHundredMeters;
   }
   [location_manager_ startUpdatingLocation];
 }
@@ -98,6 +107,17 @@ LocationSystemPermissionStatus SystemGeolocationSourceMac::GetSystemPermission()
   return LocationSystemPermissionStatus::kDenied;
 }
 
+void SystemGeolocationSourceMac::OpenSystemPermissionSetting() {
+#if BUILDFLAG(IS_MAC)
+  base::mac::OpenSystemSettingsPane(
+      base::mac::SystemSettingsPane::kPrivacySecurity_LocationServices);
+#endif
+}
+
+void SystemGeolocationSourceMac::RequestPermission() {
+  [location_manager_ requestWhenInUseAuthorization];
+}
+
 }  // namespace device
 
 @implementation GeolocationManagerDelegate
@@ -114,12 +134,23 @@ LocationSystemPermissionStatus SystemGeolocationSourceMac::GetSystemPermission()
 
 - (void)locationManager:(CLLocationManager*)manager
     didChangeAuthorizationStatus:(CLAuthorizationStatus)status {
+  if (status == kCLAuthorizationStatusNotDetermined) {
+    _permissionInitialized = NO;
+    return;
+  }
   _permissionInitialized = YES;
   if (status == kCLAuthorizationStatusAuthorizedAlways) {
     _hasPermission = YES;
   } else {
     _hasPermission = NO;
   }
+
+#if BUILDFLAG(IS_IOS)
+  if (status == kCLAuthorizationStatusAuthorizedWhenInUse) {
+    _hasPermission = YES;
+  }
+#endif
+
   _manager->PermissionUpdated();
 }
 
@@ -137,8 +168,8 @@ LocationSystemPermissionStatus SystemGeolocationSourceMac::GetSystemPermission()
   device::mojom::Geoposition position;
   position.latitude = location.coordinate.latitude;
   position.longitude = location.coordinate.longitude;
-  position.timestamp =
-      base::Time::FromDoubleT(location.timestamp.timeIntervalSince1970);
+  position.timestamp = base::Time::FromSecondsSinceUnixEpoch(
+      location.timestamp.timeIntervalSince1970);
   position.altitude = location.altitude;
   position.accuracy = location.horizontalAccuracy;
   position.altitude_accuracy = location.verticalAccuracy;

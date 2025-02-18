@@ -20,8 +20,8 @@
 #include "net/cert/cert_verify_proc.h"
 #include "net/cert/cert_verify_proc_builtin.h"
 #include "net/cert/crl_set.h"
+#include "net/cert/do_nothing_ct_verifier.h"
 #include "net/cert/internal/system_trust_store.h"
-#include "net/cert/pki/trust_store.h"
 #include "net/cert/x509_util.h"
 #include "net/cert_net/cert_net_fetcher_url_request.h"
 #include "net/tools/cert_verify_tool/cert_verify_tool_util.h"
@@ -30,6 +30,8 @@
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_context_builder.h"
 #include "net/url_request/url_request_context_getter.h"
+#include "third_party/boringssl/src/pki/trust_store.h"
+#include "third_party/boringssl/src/pki/trust_store_collection.h"
 
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
 #include "net/proxy_resolution/proxy_config.h"
@@ -45,8 +47,10 @@ namespace {
 enum class RootStoreType {
   // No roots other than those explicitly passed in on the command line.
   kEmpty,
+#if !BUILDFLAG(CHROME_ROOT_STORE_ONLY)
   // Use the system root store.
   kSystem,
+#endif
   // Use the Chrome Root Store.
   kChrome
 };
@@ -143,9 +147,9 @@ class CertVerifyImplUsingProc : public CertVerifyImpl {
                       .InsertBeforeExtensionASCII("." + GetName());
     }
 
-    return VerifyUsingCertVerifyProc(
-        proc_.get(), target_der_cert, hostname, intermediate_der_certs,
-        der_certs_with_trust_settings, crl_set, dump_path);
+    return VerifyUsingCertVerifyProc(proc_.get(), target_der_cert, hostname,
+                                     intermediate_der_certs,
+                                     der_certs_with_trust_settings, dump_path);
   }
 
  private:
@@ -153,7 +157,7 @@ class CertVerifyImplUsingProc : public CertVerifyImpl {
   scoped_refptr<net::CertVerifyProc> proc_;
 };
 
-// Runs certificate verification using CertPathBuilder.
+// Runs certificate verification using bssl::CertPathBuilder.
 class CertVerifyImplUsingPathBuilder : public CertVerifyImpl {
  public:
   explicit CertVerifyImplUsingPathBuilder(
@@ -191,14 +195,32 @@ class CertVerifyImplUsingPathBuilder : public CertVerifyImpl {
   std::unique_ptr<net::SystemTrustStore> system_trust_store_;
 };
 
+class DummySystemTrustStore : public net::SystemTrustStore {
+ public:
+  bssl::TrustStore* GetTrustStore() override { return &trust_store_; }
+
+  bool IsKnownRoot(const bssl::ParsedCertificate* trust_anchor) const override {
+    return false;
+  }
+
+#if BUILDFLAG(CHROME_ROOT_STORE_SUPPORTED)
+  int64_t chrome_root_store_version() const override { return 0; }
+#endif
+
+ private:
+  bssl::TrustStoreCollection trust_store_;
+};
+
 std::unique_ptr<net::SystemTrustStore> CreateSystemTrustStore(
     base::StringPiece impl_name,
     RootStoreType root_store_type) {
   switch (root_store_type) {
+#if BUILDFLAG(IS_FUCHSIA)
     case RootStoreType::kSystem:
       std::cerr << impl_name
                 << ": using system roots (--roots are in addition).\n";
       return net::CreateSslSystemTrustStore();
+#endif
     case RootStoreType::kChrome:
 #if BUILDFLAG(CHROME_ROOT_STORE_SUPPORTED)
       std::cerr << impl_name
@@ -213,7 +235,7 @@ std::unique_ptr<net::SystemTrustStore> CreateSystemTrustStore(
     case RootStoreType::kEmpty:
     default:
       std::cerr << impl_name << ": only using --roots specified.\n";
-      return net::CreateEmptySystemTrustStore();
+      return std::make_unique<DummySystemTrustStore>();
   }
 }
 
@@ -221,8 +243,9 @@ std::unique_ptr<net::SystemTrustStore> CreateSystemTrustStore(
 std::unique_ptr<CertVerifyImpl> CreateCertVerifyImplFromName(
     base::StringPiece impl_name,
     scoped_refptr<net::CertNetFetcher> cert_net_fetcher,
+    scoped_refptr<net::CRLSet> crl_set,
     RootStoreType root_store_type) {
-#if !(BUILDFLAG(IS_FUCHSIA) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS))
+#if !(BUILDFLAG(IS_FUCHSIA) || BUILDFLAG(CHROME_ROOT_STORE_ONLY))
   if (impl_name == "platform") {
     if (root_store_type != RootStoreType::kSystem) {
       std::cerr << "WARNING: platform verifier not supported with "
@@ -231,8 +254,9 @@ std::unique_ptr<CertVerifyImpl> CreateCertVerifyImplFromName(
     }
 
     return std::make_unique<CertVerifyImplUsingProc>(
-        "CertVerifyProc (system)", net::CertVerifyProc::CreateSystemVerifyProc(
-                                       std::move(cert_net_fetcher)));
+        "CertVerifyProc (system)",
+        net::CertVerifyProc::CreateSystemVerifyProc(std::move(cert_net_fetcher),
+                                                    std::move(crl_set)));
   }
 #endif
 
@@ -240,8 +264,11 @@ std::unique_ptr<CertVerifyImpl> CreateCertVerifyImplFromName(
     return std::make_unique<CertVerifyImplUsingProc>(
         "CertVerifyProcBuiltin",
         net::CreateCertVerifyProcBuiltin(
-            std::move(cert_net_fetcher),
-            CreateSystemTrustStore(impl_name, root_store_type)));
+            std::move(cert_net_fetcher), std::move(crl_set),
+            // TODO(https://crbug.com/848277): support CT.
+            std::make_unique<net::DoNothingCTVerifier>(),
+            base::MakeRefCounted<net::DefaultCTPolicyEnforcer>(),
+            CreateSystemTrustStore(impl_name, root_store_type), {}));
   }
 
   if (impl_name == "pathbuilder") {
@@ -410,7 +437,12 @@ int main(int argc, char** argv) {
     }
   }
 
+#if BUILDFLAG(CHROME_ROOT_STORE_ONLY)
+  RootStoreType root_store_type = RootStoreType::kChrome;
+#else
   RootStoreType root_store_type = RootStoreType::kSystem;
+#endif
+
   if (command_line.HasSwitch("no-system-roots")) {
     root_store_type = RootStoreType::kEmpty;
   }
@@ -471,11 +503,11 @@ int main(int argc, char** argv) {
   }
 
   if (command_line.HasSwitch("trust-leaf-cert")) {
-    net::CertificateTrust trust = net::CertificateTrust::ForTrustedLeaf();
+    bssl::CertificateTrust trust = bssl::CertificateTrust::ForTrustedLeaf();
     std::string trust_str = command_line.GetSwitchValueASCII("trust-leaf-cert");
     if (!trust_str.empty()) {
-      absl::optional<net::CertificateTrust> parsed_trust =
-          net::CertificateTrust::FromDebugString(trust_str);
+      absl::optional<bssl::CertificateTrust> parsed_trust =
+          bssl::CertificateTrust::FromDebugString(trust_str);
       if (!parsed_trust) {
         std::cerr << "ERROR: invalid leaf trust string " << trust_str << "\n";
         return 1;
@@ -487,12 +519,12 @@ int main(int argc, char** argv) {
 
   // TODO(https://crbug.com/1408473): Maybe default to the trust setting that
   // would be used for locally added anchors on the current platform?
-  net::CertificateTrust root_trust = net::CertificateTrust::ForTrustAnchor();
+  bssl::CertificateTrust root_trust = bssl::CertificateTrust::ForTrustAnchor();
 
   if (command_line.HasSwitch("root-trust")) {
     std::string trust_str = command_line.GetSwitchValueASCII("root-trust");
-    absl::optional<net::CertificateTrust> parsed_trust =
-        net::CertificateTrust::FromDebugString(trust_str);
+    absl::optional<bssl::CertificateTrust> parsed_trust =
+        bssl::CertificateTrust::FromDebugString(trust_str);
     if (!parsed_trust) {
       std::cerr << "ERROR: invalid root trust string " << trust_str << "\n";
       return 1;
@@ -534,7 +566,8 @@ int main(int argc, char** argv) {
   std::string impls_str = command_line.GetSwitchValueASCII("impls");
   if (impls_str.empty()) {
     // Default value.
-#if !(BUILDFLAG(IS_FUCHSIA) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS))
+#if !(BUILDFLAG(IS_FUCHSIA) || BUILDFLAG(IS_LINUX) || \
+      BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(CHROME_ROOT_STORE_ONLY))
     impls_str = "platform,";
 #endif
     impls_str += "builtin,pathbuilder";
@@ -545,7 +578,7 @@ int main(int argc, char** argv) {
 
   for (const std::string& impl_name : impl_names) {
     auto verify_impl = CreateCertVerifyImplFromName(impl_name, cert_net_fetcher,
-                                                    root_store_type);
+                                                    crl_set, root_store_type);
     if (verify_impl)
       impls.push_back(std::move(verify_impl));
   }

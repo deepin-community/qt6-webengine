@@ -39,7 +39,6 @@
 #include "extensions/renderer/script_context.h"
 #include "media/media_buildflags.h"
 #include "printing/buildflags/buildflags.h"
-#include "third_party/blink/public/platform/web_string.h"
 #include "third_party/blink/public/platform/web_url.h"
 #include "third_party/blink/public/web/web_security_policy.h"
 
@@ -94,8 +93,8 @@ void ChromeExtensionsDispatcherDelegate::RegisterNativeHandlers(
       std::unique_ptr<NativeHandler>(
           new extensions::MediaGalleriesCustomBindings(context)));
   module_system->RegisterNativeHandler(
-      "page_capture", std::unique_ptr<NativeHandler>(
-                          new extensions::PageCaptureCustomBindings(context)));
+      "page_capture", std::make_unique<extensions::PageCaptureCustomBindings>(
+                          context, bindings_system->GetIPCMessageSender()));
 
   // The following are native handlers that are defined in //extensions, but
   // are only used for APIs defined in Chrome.
@@ -211,6 +210,8 @@ void ChromeExtensionsDispatcherDelegate::PopulateSourceMap(
                              IDR_WEBRTC_LOGGING_PRIVATE_CUSTOM_BINDINGS_JS);
 
   // Platform app sources that are not API-specific..
+  source_map->RegisterSource("chromeWebViewElement",
+                             IDR_CHROME_WEB_VIEW_ELEMENT_JS);
   source_map->RegisterSource("chromeWebViewInternal",
                              IDR_CHROME_WEB_VIEW_INTERNAL_CUSTOM_BINDINGS_JS);
   source_map->RegisterSource("chromeWebView", IDR_CHROME_WEB_VIEW_JS);
@@ -219,7 +220,7 @@ void ChromeExtensionsDispatcherDelegate::PopulateSourceMap(
 void ChromeExtensionsDispatcherDelegate::RequireWebViewModules(
     extensions::ScriptContext* context) {
   DCHECK(context->GetAvailability("webViewInternal").is_available());
-  context->module_system()->Require("chromeWebView");
+  context->module_system()->Require("chromeWebViewElement");
 }
 
 void ChromeExtensionsDispatcherDelegate::OnActiveExtensionsUpdated(

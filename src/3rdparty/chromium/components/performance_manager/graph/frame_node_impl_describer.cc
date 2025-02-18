@@ -8,6 +8,7 @@
 #include <string>
 #include <utility>
 
+#include "base/strings/string_number_conversions.h"
 #include "base/values.h"
 #include "components/performance_manager/graph/frame_node_impl.h"
 #include "components/performance_manager/public/graph/node_data_describer_registry.h"
@@ -17,12 +18,13 @@ namespace performance_manager {
 
 namespace {
 
-std::string ViewportIntersectionToString(
-    const absl::optional<gfx::Rect>& viewport_intersection) {
-  if (!viewport_intersection.has_value())
+std::string IntersectsViewportToString(
+    absl::optional<bool> intersects_viewport) {
+  if (!intersects_viewport.has_value()) {
     return "Nullopt";
+  }
 
-  return viewport_intersection->ToString();
+  return intersects_viewport.value() ? "true" : "false";
 }
 
 std::string FrameNodeVisibilityToString(FrameNode::Visibility visibility) {
@@ -78,12 +80,21 @@ base::Value::Dict FrameNodeImplDescriber::DescribeFrameNodeData(
   ret.Set("is_holding_indexeddb_lock",
           impl->is_holding_indexeddb_lock_.value());
   ret.Set("is_current", impl->is_current_.value());
-  ret.Set("priority",
-          PriorityAndReasonToValue(impl->priority_and_reason_.value()));
+  ret.Set("priority", PriorityAndReasonToValue(impl->GetPriorityAndReason()));
   ret.Set("is_audible", impl->is_audible_.value());
+  ret.Set("is_capturing_media_stream",
+          impl->is_capturing_media_stream_.value());
   ret.Set("viewport_intersection",
-          ViewportIntersectionToString(impl->viewport_intersection_.value()));
+          IntersectsViewportToString(impl->intersects_viewport_.value()));
   ret.Set("visibility", FrameNodeVisibilityToString(impl->visibility_.value()));
+  ret.Set("resource_context", impl->GetResourceContext().ToString());
+
+  base::Value::Dict metrics;
+  metrics.Set("resident_set",
+              base::NumberToString(impl->GetResidentSetKbEstimate()));
+  metrics.Set("private_footprint",
+              base::NumberToString(impl->GetPrivateFootprintKbEstimate()));
+  ret.Set("metrics_estimates", std::move(metrics));
 
   return ret;
 }

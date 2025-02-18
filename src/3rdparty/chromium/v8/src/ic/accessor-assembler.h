@@ -8,6 +8,7 @@
 #include "src/base/optional.h"
 #include "src/codegen/code-stub-assembler.h"
 #include "src/compiler/code-assembler.h"
+#include "src/objects/dictionary.h"
 
 namespace v8 {
 namespace internal {
@@ -67,6 +68,7 @@ class V8_EXPORT_PRIVATE AccessorAssembler : public CodeStubAssembler {
 
   void GenerateKeyedStoreIC();
   void GenerateKeyedStoreICTrampoline();
+  void GenerateKeyedStoreICTrampoline_Megamorphic();
   void GenerateKeyedStoreICBaseline();
 
   void GenerateDefineKeyedOwnIC();
@@ -77,9 +79,18 @@ class V8_EXPORT_PRIVATE AccessorAssembler : public CodeStubAssembler {
   void GenerateStoreInArrayLiteralICBaseline();
 
   void TryProbeStubCache(StubCache* stub_cache,
-                         TNode<Object> lookup_start_object, TNode<Name> name,
+                         TNode<Object> lookup_start_object,
+                         TNode<Map> lookup_start_object_map, TNode<Name> name,
                          Label* if_handler, TVariable<MaybeObject>* var_handler,
                          Label* if_miss);
+  void TryProbeStubCache(StubCache* stub_cache,
+                         TNode<Object> lookup_start_object, TNode<Name> name,
+                         Label* if_handler, TVariable<MaybeObject>* var_handler,
+                         Label* if_miss) {
+    return TryProbeStubCache(stub_cache, lookup_start_object,
+                             LoadReceiverMap(lookup_start_object), name,
+                             if_handler, var_handler, if_miss);
+  }
 
   TNode<IntPtrT> StubCachePrimaryOffsetForTesting(TNode<Name> name,
                                                   TNode<Map> map) {
@@ -273,9 +284,9 @@ class V8_EXPORT_PRIVATE AccessorAssembler : public CodeStubAssembler {
                                              Label* miss,
                                              StoreTransitionMapFlags flags);
 
-  // Updates flags on |dict| if |name| is an interesting symbol.
-  void UpdateMayHaveInterestingSymbol(TNode<PropertyDictionary> dict,
-                                      TNode<Name> name);
+  // Updates flags on |dict| if |name| is an interesting property.
+  void UpdateMayHaveInterestingProperty(TNode<PropertyDictionary> dict,
+                                        TNode<Name> name);
 
   void JumpIfDataProperty(TNode<Uint32T> details, Label* writable,
                           Label* readonly);
@@ -360,12 +371,12 @@ class V8_EXPORT_PRIVATE AccessorAssembler : public CodeStubAssembler {
   // Checks monomorphic case. Returns {feedback} entry of the vector.
   TNode<HeapObjectReference> TryMonomorphicCase(
       TNode<TaggedIndex> slot, TNode<FeedbackVector> vector,
-      TNode<Map> lookup_start_object_map, Label* if_handler,
+      TNode<HeapObjectReference> weak_lookup_start_object_map,
+      Label* if_handler, TVariable<MaybeObject>* var_handler, Label* if_miss);
+  void HandlePolymorphicCase(
+      TNode<HeapObjectReference> weak_lookup_start_object_map,
+      TNode<WeakFixedArray> feedback, Label* if_handler,
       TVariable<MaybeObject>* var_handler, Label* if_miss);
-  void HandlePolymorphicCase(TNode<Map> lookup_start_object_map,
-                             TNode<WeakFixedArray> feedback, Label* if_handler,
-                             TVariable<MaybeObject>* var_handler,
-                             Label* if_miss);
 
   void TryMegaDOMCase(TNode<Object> lookup_start_object,
                       TNode<Map> lookup_start_object_map,
@@ -466,8 +477,8 @@ class V8_EXPORT_PRIVATE AccessorAssembler : public CodeStubAssembler {
   // StoreIC implementation.
 
   void HandleStoreICProtoHandler(const StoreICParameters* p,
-                                 TNode<StoreHandler> handler, Label* miss,
-                                 ICMode ic_mode,
+                                 TNode<StoreHandler> handler, Label* slow,
+                                 Label* miss, ICMode ic_mode,
                                  ElementSupport support_elements);
   void HandleStoreICSmiHandlerCase(TNode<Word32T> handler_word,
                                    TNode<JSObject> holder, TNode<Object> value,
@@ -604,12 +615,12 @@ class ExitPoint {
   }
 
   template <class... TArgs>
-  void ReturnCallStub(Callable const& callable, TNode<Context> context,
-                      TArgs... args) {
+  void ReturnCallBuiltin(Builtin builtin, TNode<Context> context,
+                         TArgs... args) {
     if (IsDirect()) {
-      asm_->TailCallStub(callable, context, args...);
+      asm_->TailCallBuiltin(builtin, context, args...);
     } else {
-      indirect_return_handler_(asm_->CallStub(callable, context, args...));
+      indirect_return_handler_(asm_->CallBuiltin(builtin, context, args...));
     }
   }
 

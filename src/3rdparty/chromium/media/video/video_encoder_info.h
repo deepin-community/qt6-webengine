@@ -6,6 +6,7 @@
 #define MEDIA_VIDEO_VIDEO_ENCODER_INFO_H_
 
 #include <stdint.h>
+
 #include <array>
 #include <string>
 #include <vector>
@@ -28,14 +29,14 @@ struct MEDIA_EXPORT ResolutionBitrateLimit {
                          int max_bitrate_bps);
   ~ResolutionBitrateLimit();
 
-  friend bool operator==(const ResolutionBitrateLimit&,
-                         const ResolutionBitrateLimit&) = default;
-
   gfx::Size frame_size;
   int min_start_bitrate_bps = 0;
   int min_bitrate_bps = 0;
   int max_bitrate_bps = 0;
 };
+
+MEDIA_EXPORT bool operator==(const ResolutionBitrateLimit& lhs,
+                             const ResolutionBitrateLimit& rhs);
 
 struct MEDIA_EXPORT VideoEncoderInfo {
   static constexpr size_t kMaxSpatialLayers = 5;
@@ -43,9 +44,6 @@ struct MEDIA_EXPORT VideoEncoderInfo {
   VideoEncoderInfo();
   VideoEncoderInfo(const VideoEncoderInfo&);
   ~VideoEncoderInfo();
-
-  friend bool operator==(const VideoEncoderInfo&,
-                         const VideoEncoderInfo&) = default;
 
   std::string implementation_name;
 
@@ -72,10 +70,15 @@ struct MEDIA_EXPORT VideoEncoderInfo {
   bool reports_average_qp = true;
   uint32_t requested_resolution_alignment = 1;
   bool apply_alignment_to_all_simulcast_layers = false;
+  // True if encoder supports frame size change without re-initialization.
+  bool supports_frame_size_change = false;
 
   std::array<std::vector<uint8_t>, kMaxSpatialLayers> fps_allocation;
   std::vector<ResolutionBitrateLimit> resolution_bitrate_limits;
 };
+
+MEDIA_EXPORT bool operator==(const VideoEncoderInfo& lhs,
+                             const VideoEncoderInfo& rhs);
 
 }  // namespace media
 

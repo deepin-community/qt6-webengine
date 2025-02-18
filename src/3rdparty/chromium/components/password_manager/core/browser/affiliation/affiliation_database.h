@@ -9,7 +9,6 @@
 #include <vector>
 
 #include "components/password_manager/core/browser/affiliation/affiliation_utils.h"
-#include "components/password_manager/core/browser/sql_table_builder.h"
 
 namespace base {
 class FilePath;
@@ -58,19 +57,16 @@ class AffiliationDatabase {
   // Retrieves all stored groups.
   std::vector<GroupedFacets> GetAllGroups() const;
 
+  // Retrieves a group for |facet_uri| or empty group with only |facet_uri| if
+  // there are no matches in the database.
+  GroupedFacets GetGroup(const FacetURI& facet_uri) const;
+
   // Retrieves psl extension list.
   std::vector<std::string> GetPSLExtensions() const;
 
   // Removes the stored equivalence class and branding information, if any,
   // containing |facet_uri|.
   void DeleteAffiliationsAndBrandingForFacetURI(const FacetURI& facet_uri);
-
-  // Stores the equivalence class and branding information defined by
-  // |affiliated_facets| to the DB and returns true unless it has a non-empty
-  // subset with a preexisting class, in which case no changes are made and the
-  // function returns false.
-  bool Store(const AffiliatedFacetsWithUpdateTime& affiliated_facets,
-             const GroupedFacets& group);
 
   // Stores the equivalence class and branding information defined by
   // |affiliated_facets| to the database, and removes any other equivalence
@@ -98,6 +94,29 @@ class AffiliationDatabase {
   void UpdatePslExtensions(const std::vector<std::string>& domains);
 
  private:
+  // Represents possible results of AffiliationDatabase::Store call.
+  // These values are persisted to logs. Entries should not be renumbered and
+  // numeric values should never be reused. Always keep this enum in sync with
+  // the corresponding PasswordCheckInteraction in enums.xml
+  enum class StoreAffiliationResult {
+    kSuccess = 0,
+    kFailedToStartTransaction = 1,
+    kFailedToCloseTransaction = 2,
+    kFailedToAddSet = 3,
+    kFailedToAddAffiliation = 4,
+    kFailedToAddGroup = 5,
+    // Must be last.
+    kMaxValue = kFailedToAddGroup,
+  };
+
+  // Stores the equivalence class and branding information defined by
+  // |affiliated_facets| to the DB and returns true unless it has a non-empty
+  // subset with a preexisting class, in which case no changes are made and the
+  // function returns false.
+  StoreAffiliationResult Store(
+      const AffiliatedFacetsWithUpdateTime& affiliated_facets,
+      const GroupedFacets& group);
+
   // Called when SQLite encounters an error.
   void SQLErrorCallback(int error_number, sql::Statement* statement);
 

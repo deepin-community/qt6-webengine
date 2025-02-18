@@ -107,6 +107,14 @@ int MockCertVerifier::Verify(const RequestParams& params,
   return ERR_IO_PENDING;
 }
 
+void MockCertVerifier::AddObserver(Observer* observer) {
+  observers_.AddObserver(observer);
+}
+
+void MockCertVerifier::RemoveObserver(Observer* observer) {
+  observers_.RemoveObserver(observer);
+}
+
 void MockCertVerifier::AddResultForCert(scoped_refptr<X509Certificate> cert,
                                         const CertVerifyResult& verify_result,
                                         int rv) {
@@ -125,6 +133,12 @@ void MockCertVerifier::ClearRules() {
   rules_.clear();
 }
 
+void MockCertVerifier::SimulateOnCertVerifierChanged() {
+  for (Observer& observer : observers_) {
+    observer.OnCertVerifierChanged();
+  }
+}
+
 int MockCertVerifier::VerifyImpl(const RequestParams& params,
                                  CertVerifyResult* verify_result) {
   for (const Rule& rule : rules_) {
@@ -141,6 +155,30 @@ int MockCertVerifier::VerifyImpl(const RequestParams& params,
   verify_result->verified_cert = params.certificate();
   verify_result->cert_status = MapNetErrorToCertStatus(default_result_);
   return default_result_;
+}
+
+ParamRecordingMockCertVerifier::ParamRecordingMockCertVerifier() = default;
+ParamRecordingMockCertVerifier::~ParamRecordingMockCertVerifier() = default;
+
+int ParamRecordingMockCertVerifier::Verify(const RequestParams& params,
+                                           CertVerifyResult* verify_result,
+                                           CompletionOnceCallback callback,
+                                           std::unique_ptr<Request>* out_req,
+                                           const NetLogWithSource& net_log) {
+  params_.push_back(params);
+  return MockCertVerifier::Verify(params, verify_result, std::move(callback),
+                                  out_req, net_log);
+}
+
+CertVerifierObserverCounter::CertVerifierObserverCounter(
+    CertVerifier* verifier) {
+  obs_.Observe(verifier);
+}
+
+CertVerifierObserverCounter::~CertVerifierObserverCounter() = default;
+
+void CertVerifierObserverCounter::OnCertVerifierChanged() {
+  change_count_++;
 }
 
 }  // namespace net

@@ -18,6 +18,8 @@
 #include <utility>
 
 #include "base/command_line.h"
+#include "base/containers/contains.h"
+#include "base/containers/span.h"
 #include "base/files/file_util.h"
 #include "base/files/platform_file.h"
 #include "base/linux_util.h"
@@ -133,7 +135,7 @@ bool Zygote::ProcessRequests() {
     if (!r)
       _exit(RESULT_CODE_NORMAL_EXIT);
 #else
-    CHECK(r) << "Sending zygote magic failed";
+    PCHECK(r) << "Sending zygote magic failed";
 #endif
   }
 
@@ -458,8 +460,9 @@ int Zygote::ForkWithRealPid(const std::string& process_type,
 
     // Now read back our real PID from the zygote.
     base::ProcessId real_pid;
-    if (!base::ReadFromFD(read_pipe.get(), reinterpret_cast<char*>(&real_pid),
-                          sizeof(real_pid))) {
+    if (!base::ReadFromFD(
+            read_pipe.get(),
+            base::as_writable_chars(base::make_span(&real_pid, 1u)))) {
       LOG(FATAL) << "Failed to synchronise with parent zygote process";
     }
     if (real_pid <= 0) {
@@ -528,7 +531,7 @@ int Zygote::ForkWithRealPid(const std::string& process_type,
   }
 
   // Now set-up this process to be tracked by the Zygote.
-  if (process_info_map_.find(real_pid) != process_info_map_.end()) {
+  if (base::Contains(process_info_map_, real_pid)) {
     LOG(ERROR) << "Already tracking PID " << real_pid;
     NOTREACHED();
   }

@@ -13,6 +13,7 @@
 #include "base/types/pass_key.h"
 #include "components/services/storage/public/cpp/buckets/bucket_locator.h"
 #include "components/services/storage/public/mojom/quota_client.mojom.h"
+#include "content/browser/media/cdm_storage_common.h"
 #include "content/browser/media/media_license_manager.h"
 #include "content/common/content_export.h"
 #include "media/mojo/mojom/cdm_storage.mojom.h"
@@ -30,9 +31,8 @@ class MediaLicenseDatabase;
 // storage key.
 class CONTENT_EXPORT MediaLicenseStorageHost : public media::mojom::CdmStorage {
  public:
-  using BindingContext = MediaLicenseManager::BindingContext;
   using ReadFileCallback =
-      base::OnceCallback<void(absl::optional<std::vector<uint8_t>>)>;
+      base::OnceCallback<void(std::optional<std::vector<uint8_t>>)>;
   using WriteFileCallback = base::OnceCallback<void(bool)>;
   using DeleteFileCallback = base::OnceCallback<void(bool)>;
 
@@ -68,7 +68,7 @@ class CONTENT_EXPORT MediaLicenseStorageHost : public media::mojom::CdmStorage {
   // media::mojom::CdmStorage implementation.
   void Open(const std::string& file_name, OpenCallback callback) final;
 
-  void BindReceiver(const BindingContext& binding_context,
+  void BindReceiver(const CdmStorageBindingContext& binding_context,
                     mojo::PendingReceiver<media::mojom::CdmStorage> receiver);
 
   // CDM file operations.
@@ -109,12 +109,20 @@ class CONTENT_EXPORT MediaLicenseStorageHost : public media::mojom::CdmStorage {
   void OnReceiverDisconnect();
 
   void DidOpenFile(const std::string& file_name,
-                   BindingContext binding_context,
+                   CdmStorageBindingContext binding_context,
                    OpenCallback callback,
                    MediaLicenseStorageHostOpenError error);
+  void DidGetDatabaseSize(const uint64_t size);
+  void DidReadFile(const media::CdmType& cdm_type,
+                   const std::string& file_name,
+                   ReadFileCallback callback,
+                   std::optional<std::vector<uint8_t>> data);
   void DidWriteFile(WriteFileCallback callback, bool success);
 
   SEQUENCE_CHECKER(sequence_checker_);
+
+  // Track MediaLicenseDatabaseSize
+  bool database_size_reported_ = false;
 
   // MediaLicenseManager instance which owns this object.
   const raw_ptr<MediaLicenseManager> manager_
@@ -125,19 +133,28 @@ class CONTENT_EXPORT MediaLicenseStorageHost : public media::mojom::CdmStorage {
   // host represents.
   const storage::BucketLocator bucket_locator_;
 
+  // This keeps track of the 'CdmFileIdTwo' values that have been migrated to
+  // the CdmStorageDatabase after the first read, so that when the Cdm goes to
+  // read during the migration, the second time and onwards, we read from the
+  // CdmStorageDatabase instead of the MediaLicenseDatabase. Note that this is
+  // not a permanent storage, so it has to be repopulated when user restarts
+  // Chrome.
+  std::vector<CdmFileIdTwo> files_migrated_
+      GUARDED_BY_CONTEXT(sequence_checker_);
+
   // All file operations are run through this member.
   base::SequenceBound<MediaLicenseDatabase> db_
       GUARDED_BY_CONTEXT(sequence_checker_);
 
   // All receivers for frames and workers whose storage key is `storage_key()`.
-  mojo::ReceiverSet<media::mojom::CdmStorage, BindingContext> receivers_
-      GUARDED_BY_CONTEXT(sequence_checker_);
+  mojo::ReceiverSet<media::mojom::CdmStorage, CdmStorageBindingContext>
+      receivers_ GUARDED_BY_CONTEXT(sequence_checker_);
 
   // Keep track of all media::mojom::CdmFile receivers, as each CdmFileImpl
   // object keeps a reference to |this|. If |this| goes away unexpectedly,
   // all remaining CdmFile receivers will be closed.
-  std::map<MediaLicenseManager::CdmFileId, std::unique_ptr<CdmFileImpl>>
-      cdm_files_ GUARDED_BY_CONTEXT(sequence_checker_);
+  std::map<CdmFileId, std::unique_ptr<CdmFileImpl>> cdm_files_
+      GUARDED_BY_CONTEXT(sequence_checker_);
 
   base::WeakPtrFactory<MediaLicenseStorageHost> weak_factory_
       GUARDED_BY_CONTEXT(sequence_checker_){this};

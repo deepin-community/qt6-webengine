@@ -4,8 +4,13 @@
 
 #include "quiche/common/capsule.h"
 
+#include <cstddef>
+#include <cstdint>
 #include <limits>
+#include <ostream>
+#include <string>
 #include <type_traits>
+#include <utility>
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -15,6 +20,7 @@
 #include "absl/types/span.h"
 #include "absl/types/variant.h"
 #include "quiche/common/platform/api/quiche_bug_tracker.h"
+#include "quiche/common/platform/api/quiche_export.h"
 #include "quiche/common/platform/api/quiche_logging.h"
 #include "quiche/common/quiche_buffer_allocator.h"
 #include "quiche/common/quiche_data_reader.h"
@@ -36,6 +42,8 @@ std::string CapsuleTypeToString(CapsuleType capsule_type) {
       return "LEGACY_DATAGRAM_WITHOUT_CONTEXT";
     case CapsuleType::CLOSE_WEBTRANSPORT_SESSION:
       return "CLOSE_WEBTRANSPORT_SESSION";
+    case CapsuleType::DRAIN_WEBTRANSPORT_SESSION:
+      return "DRAIN_WEBTRANSPORT_SESSION";
     case CapsuleType::ADDRESS_REQUEST:
       return "ADDRESS_REQUEST";
     case CapsuleType::ADDRESS_ASSIGN:
@@ -127,6 +135,10 @@ std::string LegacyDatagramWithoutContextCapsule::ToString() const {
 std::string CloseWebTransportSessionCapsule::ToString() const {
   return absl::StrCat("CLOSE_WEBTRANSPORT_SESSION(error_code=", error_code,
                       ",error_message=\"", error_message, "\")");
+}
+
+std::string DrainWebTransportSessionCapsule::ToString() const {
+  return "DRAIN_WEBTRANSPORT_SESSION()";
 }
 
 std::string AddressRequestCapsule::ToString() const {
@@ -293,6 +305,8 @@ absl::StatusOr<quiche::QuicheBuffer> SerializeCapsuleWithStatus(
           WireUint32(capsule.close_web_transport_session_capsule().error_code),
           WireBytes(
               capsule.close_web_transport_session_capsule().error_message));
+    case CapsuleType::DRAIN_WEBTRANSPORT_SESSION:
+      return SerializeCapsuleFields(capsule.capsule_type(), allocator);
     case CapsuleType::ADDRESS_REQUEST:
       return SerializeCapsuleFields(
           capsule.capsule_type(), allocator,
@@ -340,6 +354,32 @@ absl::StatusOr<quiche::QuicheBuffer> SerializeCapsuleWithStatus(
           capsule.capsule_type(), allocator,
           WireBytes(capsule.unknown_capsule().payload));
   }
+}
+
+QuicheBuffer SerializeDatagramCapsuleHeader(uint64_t datagram_size,
+                                            QuicheBufferAllocator* allocator) {
+  absl::StatusOr<QuicheBuffer> buffer =
+      SerializeIntoBuffer(allocator, WireVarInt62(CapsuleType::DATAGRAM),
+                          WireVarInt62(datagram_size));
+  if (!buffer.ok()) {
+    return QuicheBuffer();
+  }
+  return *std::move(buffer);
+}
+
+QUICHE_EXPORT QuicheBuffer SerializeWebTransportStreamCapsuleHeader(
+    webtransport::StreamId stream_id, bool fin, uint64_t write_size,
+    QuicheBufferAllocator* allocator) {
+  absl::StatusOr<QuicheBuffer> buffer = SerializeIntoBuffer(
+      allocator,
+      WireVarInt62(fin ? CapsuleType::WT_STREAM_WITH_FIN
+                       : CapsuleType::WT_STREAM),
+      WireVarInt62(write_size + QuicheDataWriter::GetVarInt62Len(stream_id)),
+      WireVarInt62(stream_id));
+  if (!buffer.ok()) {
+    return QuicheBuffer();
+  }
+  return *std::move(buffer);
 }
 
 QuicheBuffer SerializeCapsule(const Capsule& capsule,
@@ -414,6 +454,8 @@ absl::StatusOr<Capsule> ParseCapsulePayload(QuicheDataReader& reader,
       capsule.error_message = reader.ReadRemainingPayload();
       return Capsule(std::move(capsule));
     }
+    case CapsuleType::DRAIN_WEBTRANSPORT_SESSION:
+      return Capsule(DrainWebTransportSessionCapsule());
     case CapsuleType::ADDRESS_REQUEST: {
       AddressRequestCapsule capsule;
       while (!reader.IsDoneReading()) {

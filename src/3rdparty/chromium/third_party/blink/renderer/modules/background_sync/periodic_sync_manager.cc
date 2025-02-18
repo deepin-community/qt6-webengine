@@ -47,7 +47,8 @@ ScriptPromise PeriodicSyncManager::registerPeriodicSync(
     return ScriptPromise();
   }
 
-  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
+  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(
+      script_state, exception_state.GetContext());
   ScriptPromise promise = resolver->Promise();
 
   mojom::blink::SyncRegistrationOptionsPtr sync_registration =
@@ -176,7 +177,7 @@ void PeriodicSyncManager::GetRegistrationsCallback(
       Vector<String> tags;
       for (const auto& registration : registrations)
         tags.push_back(registration->tag);
-      resolver->Resolve(tags);
+      resolver->Resolve<IDLSequence<IDLString>>(tags);
       break;
     }
     case mojom::blink::BackgroundSyncError::NOT_FOUND:

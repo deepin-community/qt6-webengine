@@ -124,19 +124,16 @@ DownloadPathReservationTrackerTest::CreateDownloadItem(int32_t id) {
       .WillRepeatedly(Return(DownloadItem::IN_PROGRESS));
   EXPECT_CALL(*item, GetURL()).WillRepeatedly(ReturnRefOfCopy(GURL()));
 
-  base::Time::Exploded exploded_reference_time;
-  exploded_reference_time.year = 2019;
-  exploded_reference_time.month = 1;
-  exploded_reference_time.day_of_month = 23;
-  exploded_reference_time.day_of_week = 3;
-  exploded_reference_time.hour = 16;
-  exploded_reference_time.minute = 35;
-  exploded_reference_time.second = 30;
-  exploded_reference_time.millisecond = 20;
-
+  static constexpr base::Time::Exploded kReferenceTime = {.year = 2019,
+                                                          .month = 1,
+                                                          .day_of_week = 3,
+                                                          .day_of_month = 23,
+                                                          .hour = 16,
+                                                          .minute = 35,
+                                                          .second = 30,
+                                                          .millisecond = 20};
   base::Time test_time;
-  EXPECT_TRUE(
-      base::Time::FromLocalExploded(exploded_reference_time, &test_time));
+  EXPECT_TRUE(base::Time::FromLocalExploded(kReferenceTime, &test_time));
 
   EXPECT_CALL(*item, GetStartTime()).WillRepeatedly(Return(test_time));
   return item;
@@ -288,11 +285,9 @@ TEST_F(DownloadPathReservationTrackerTest, ConflictingFiles) {
 #endif  // BUILDFLAG(IS_ANDROID)
   if (!use_download_collection) {
     // Create a file at |path|, and a .crdownload file at |path1|.
-    ASSERT_EQ(0, base::WriteFile(path, "", 0));
-    ASSERT_EQ(
-        0, base::WriteFile(
-               base::FilePath(path1.value() + FILE_PATH_LITERAL(".crdownload")),
-               "", 0));
+    ASSERT_TRUE(base::WriteFile(path, ""));
+    ASSERT_TRUE(base::WriteFile(
+        base::FilePath(path1.value() + FILE_PATH_LITERAL(".crdownload")), ""));
   }
 
   ASSERT_TRUE(IsPathInUse(path));
@@ -322,7 +317,7 @@ TEST_F(DownloadPathReservationTrackerTest, ConflictingFiles_Overwrite) {
 #endif  // BUILDFLAG(IS_ANDROID)
   if (!use_download_collection) {
     // Create a file at |path|.
-    ASSERT_EQ(0, base::WriteFile(path, "", 0));
+    ASSERT_TRUE(base::WriteFile(path, ""));
   }
   ASSERT_TRUE(IsPathInUse(path));
 
@@ -348,7 +343,7 @@ TEST_F(DownloadPathReservationTrackerTest, ConflictWithSource) {
   }
 #endif  // BUILDFLAG(IS_ANDROID)
   if (!use_download_collection) {
-    ASSERT_EQ(0, base::WriteFile(path, "", 0));
+    ASSERT_TRUE(base::WriteFile(path, ""));
   }
   ASSERT_TRUE(IsPathInUse(path));
   EXPECT_CALL(*item, GetURL())
@@ -684,8 +679,8 @@ TEST_F(DownloadPathReservationTrackerTest, TruncationConflict) {
   // "aaa...aaaaaaa.txt" (truncated path) and
   // "aaa...aaa (1).txt" (truncated and first uniquification try) exists.
   // "aaa...aaa (2).txt" should be used.
-  ASSERT_EQ(0, base::WriteFile(path0, "", 0));
-  ASSERT_EQ(0, base::WriteFile(path1, "", 0));
+  ASSERT_TRUE(base::WriteFile(path0, ""));
+  ASSERT_TRUE(base::WriteFile(path1, ""));
 
   base::FilePath reserved_path;
   PathValidationResult result = PathValidationResult::NAME_TOO_LONG;

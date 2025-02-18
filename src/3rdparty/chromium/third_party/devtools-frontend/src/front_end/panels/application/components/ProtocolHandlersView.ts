@@ -107,22 +107,21 @@ export class ProtocolHandlersView extends HTMLElement {
   }
 
   #renderStatusMessage(): LitHtml.TemplateResult {
-    const manifestInTextLink = UI.XLink.XLink.create(this.#manifestLink, i18nString(UIStrings.manifest));
+    const manifestInTextLink =
+        UI.XLink.XLink.create(this.#manifestLink, i18nString(UIStrings.manifest), undefined, undefined, 'manifest');
     const statusString = this.#protocolHandlers.length > 0 ? UIStrings.protocolDetected : UIStrings.protocolNotDetected;
-    const iconData: IconButton.Icon.IconData = {
-      iconName: this.#protocolHandlers.length > 0 ? 'ic_checkmark_16x16' : 'ic_info_black_18dp',
-      color: this.#protocolHandlers.length > 0 ? 'var( --color-ic-file-image)' : 'var(--color-link)',
-      width: '16px',
-    };
+    // clang-format off
     return LitHtml.html`
     <div class="protocol-handlers-row status">
-            <${IconButton.Icon.Icon.litTagName} class="inline-icon" .data=${iconData as IconButton.Icon.IconData}>
+            <${IconButton.Icon.Icon.litTagName} class="inline-icon"
+                                                name=${this.#protocolHandlers.length > 0 ? 'check-circle' : 'info'}>
             </${IconButton.Icon.Icon.litTagName}>
             ${i18n.i18n.getFormatLocalizedString(str_, statusString, {
       PH1: manifestInTextLink,
     })}
     </div>
     `;
+    // clang-format on
   }
 
   #renderProtocolTest(): LitHtml.LitTemplate {
@@ -172,8 +171,8 @@ export class ProtocolHandlersView extends HTMLElement {
   }
 
   #render(): void {
-    const protocolDocLink =
-        UI.XLink.XLink.create(PROTOCOL_DOCUMENT_URL, i18nString(UIStrings.protocolHandlerRegistrations));
+    const protocolDocLink = UI.XLink.XLink.create(
+        PROTOCOL_DOCUMENT_URL, i18nString(UIStrings.protocolHandlerRegistrations), undefined, undefined, 'learn-more');
     // clang-format off
     LitHtml.render(LitHtml.html`
       ${this.#renderStatusMessage()}

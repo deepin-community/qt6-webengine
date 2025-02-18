@@ -66,7 +66,7 @@ bool ShellExtensionsBrowserClient::AreExtensionsDisabled(
   return false;
 }
 
-bool ShellExtensionsBrowserClient::IsValidContext(BrowserContext* context) {
+bool ShellExtensionsBrowserClient::IsValidContext(void* context) {
   DCHECK(browser_context_);
   return context == browser_context_;
 }
@@ -93,26 +93,28 @@ BrowserContext* ShellExtensionsBrowserClient::GetOriginalContext(
 }
 
 content::BrowserContext*
-ShellExtensionsBrowserClient::GetRedirectedContextInIncognito(
+ShellExtensionsBrowserClient::GetContextRedirectedToOriginal(
     content::BrowserContext* context,
-    bool force_guest_profile,
-    bool force_system_profile) {
+    bool force_guest_profile) {
+  return context;
+}
+
+content::BrowserContext* ShellExtensionsBrowserClient::GetContextOwnInstance(
+    content::BrowserContext* context,
+    bool force_guest_profile) {
   return context;
 }
 
 content::BrowserContext*
-ShellExtensionsBrowserClient::GetContextForRegularAndIncognito(
+ShellExtensionsBrowserClient::GetContextForOriginalOnly(
     content::BrowserContext* context,
-    bool force_guest_profile,
-    bool force_system_profile) {
+    bool force_guest_profile) {
   return context;
 }
 
-content::BrowserContext* ShellExtensionsBrowserClient::GetRegularProfile(
-    content::BrowserContext* context,
-    bool force_guest_profile,
-    bool force_system_profile) {
-  return context;
+bool ShellExtensionsBrowserClient::AreExtensionsDisabledForContext(
+    content::BrowserContext* context) {
+  return false;
 }
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
@@ -200,6 +202,13 @@ void ShellExtensionsBrowserClient::GetEarlyExtensionPrefsObservers(
 ProcessManagerDelegate*
 ShellExtensionsBrowserClient::GetProcessManagerDelegate() const {
   return nullptr;
+}
+
+mojo::PendingRemote<network::mojom::URLLoaderFactory>
+ShellExtensionsBrowserClient::GetControlledFrameEmbedderURLLoader(
+    int frame_tree_node_id,
+    content::BrowserContext* browser_context) {
+  return mojo::PendingRemote<network::mojom::URLLoaderFactory>();
 }
 
 std::unique_ptr<ExtensionHostDelegate>
@@ -321,7 +330,7 @@ std::string ShellExtensionsBrowserClient::GetApplicationLocale() {
 
 std::string ShellExtensionsBrowserClient::GetUserAgent() const {
   return content::BuildUserAgentFromProduct(
-      version_info::GetProductNameAndVersionForUserAgent());
+      std::string(version_info::GetProductNameAndVersionForUserAgent()));
 }
 
 void ShellExtensionsBrowserClient::InitWithBrowserContext(

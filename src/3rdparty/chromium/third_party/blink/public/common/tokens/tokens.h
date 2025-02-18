@@ -79,11 +79,16 @@ using LayoutWorkletToken = base::TokenType<class LayoutWorkletTokenTypeMarker>;
 // Identifies a paint worklet.
 using PaintWorkletToken = base::TokenType<class PaintWorkletTokenTypeMarker>;
 
+// Identifies a shared storage worklet.
+using SharedStorageWorkletToken =
+    base::TokenType<class SharedStorageWorkletTokenTypeMarker>;
+
 // Can represent any type of WorkletToken.
 using WorkletToken = MultiToken<AnimationWorkletToken,
                                 AudioWorkletToken,
                                 LayoutWorkletToken,
-                                PaintWorkletToken>;
+                                PaintWorkletToken,
+                                SharedStorageWorkletToken>;
 
 ////////////////////////////////////////////////////////////////////////////////
 // SHADOW REALM TOKENS
@@ -115,11 +120,8 @@ using ExecutionContextToken = MultiToken<LocalFrameToken,
                                          AudioWorkletToken,
                                          LayoutWorkletToken,
                                          PaintWorkletToken,
+                                         SharedStorageWorkletToken,
                                          ShadowRealmToken>;
-
-// Identifies a blink::PortalContents / blink::HTMLPortalElement in the
-// renderer process, and a content::Portal in the browser process.
-using PortalToken = base::TokenType<class PortalTokenTypeMarker>;
 
 // Identifies a v8::Context / blink::ScriptState.
 using V8ContextToken = base::TokenType<class V8ContextTokenTypeMarker>;

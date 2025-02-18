@@ -8,9 +8,9 @@
 #include <map>
 #include <string>
 
-#include "base/allocator/partition_allocator/partition_alloc_buildflags.h"
-#include "base/allocator/partition_allocator/partition_alloc_config.h"
-#include "base/allocator/partition_allocator/thread_cache.h"
+#include "base/allocator/partition_allocator/src/partition_alloc/partition_alloc_buildflags.h"
+#include "base/allocator/partition_allocator/src/partition_alloc/partition_alloc_config.h"
+#include "base/allocator/partition_allocator/src/partition_alloc/thread_cache.h"
 #include "base/base_export.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/synchronization/lock.h"
@@ -43,6 +43,12 @@ BASE_EXPORT void InstallUnretainedDanglingRawPtrChecks();
 // Allows to re-configure PartitionAlloc at run-time.
 class BASE_EXPORT PartitionAllocSupport {
  public:
+  struct BrpConfiguration {
+    bool enable_brp = false;
+    bool ref_count_in_same_slot = false;
+    bool process_affected_by_brp_flag = false;
+  };
+
   // Reconfigure* functions re-configure PartitionAlloc. It is impossible to
   // configure PartitionAlloc before/at its initialization using information not
   // known at compile-time (e.g. process type, Finch), because by the time this
@@ -66,9 +72,12 @@ class BASE_EXPORT PartitionAllocSupport {
   // re-configuration steps exactly once.
   //
   // *AfterTaskRunnerInit() may be called more than once.
+  void ReconfigureForTests();
   void ReconfigureEarlyish(const std::string& process_type);
   void ReconfigureAfterZygoteFork(const std::string& process_type);
-  void ReconfigureAfterFeatureListInit(const std::string& process_type);
+  void ReconfigureAfterFeatureListInit(
+      const std::string& process_type,
+      bool configure_dangling_pointer_detector = true);
   void ReconfigureAfterTaskRunnerInit(const std::string& process_type);
 
   // |has_main_frame| tells us if the renderer contains a main frame.
@@ -80,15 +89,22 @@ class BASE_EXPORT PartitionAllocSupport {
       std::string stacktrace);
 #endif
 
-  static PartitionAllocSupport* Get() {
-    static auto* singleton = new PartitionAllocSupport();
-    return singleton;
-  }
+  static PartitionAllocSupport* Get();
+
+  static BrpConfiguration GetBrpConfiguration(const std::string& process_type);
+
+  // Returns true if memory tagging should be enabled if available for the given
+  // process type. May be called multiple times per process.
+  static bool ShouldEnableMemoryTagging(const std::string& process_type);
+
+  // For calling from within third_party/blink/.
+  static bool ShouldEnableMemoryTaggingInRendererProcess();
 
  private:
   PartitionAllocSupport();
 
   base::Lock lock_;
+  bool called_for_tests_ GUARDED_BY(lock_) = false;
   bool called_earlyish_ GUARDED_BY(lock_) = false;
   bool called_after_zygote_fork_ GUARDED_BY(lock_) = false;
   bool called_after_feature_list_init_ GUARDED_BY(lock_) = false;

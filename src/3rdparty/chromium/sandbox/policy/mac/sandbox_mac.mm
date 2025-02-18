@@ -24,6 +24,7 @@
 #include "sandbox/policy/mac/mirroring.sb.h"
 #include "sandbox/policy/mac/nacl_loader.sb.h"
 #include "sandbox/policy/mac/network.sb.h"
+#include "sandbox/policy/mac/on_device_model_execution.sb.h"
 #include "sandbox/policy/mac/ppapi.sb.h"
 #if BUILDFLAG(ENABLE_OOP_PRINTING)
 #include "sandbox/policy/mac/print_backend.sb.h"
@@ -37,8 +38,7 @@
 #include "sandbox/policy/mac/utility.sb.h"
 #include "sandbox/policy/mojom/sandbox.mojom.h"
 
-namespace sandbox {
-namespace policy {
+namespace sandbox::policy {
 
 base::FilePath GetCanonicalPath(const base::FilePath& path) {
   base::ScopedFD fd(HANDLE_EINTR(open(path.value().c_str(), O_RDONLY)));
@@ -99,6 +99,9 @@ std::string GetSandboxProfile(sandbox::mojom::Sandbox sandbox_type) {
     case sandbox::mojom::Sandbox::kSpeechRecognition:
       profile += kSeatbeltPolicyString_speech_recognition;
       break;
+    case sandbox::mojom::Sandbox::kOnDeviceModelExecution:
+      profile += kSeatbeltPolicyString_on_device_model_execution;
+      break;
     // kService and kUtility are the same on OS_MAC, so fallthrough.
     case sandbox::mojom::Sandbox::kService:
     case sandbox::mojom::Sandbox::kServiceWithJit:
@@ -132,5 +135,4 @@ bool CanCacheSandboxPolicy(sandbox::mojom::Sandbox sandbox_type) {
   }
 }
 
-}  // namespace policy
-}  // namespace sandbox
+}  // namespace sandbox::policy

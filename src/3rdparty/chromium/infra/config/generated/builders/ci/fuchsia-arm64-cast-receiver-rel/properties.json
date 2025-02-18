@@ -1,13 +1,16 @@
 {
   "$build/chromium_tests_builder_config": {
     "builder_config": {
+      "additional_exclusions": [
+        "infra/config/generated/builders/ci/fuchsia-arm64-cast-receiver-rel/gn-args.json"
+      ],
       "builder_db": {
         "entries": [
           {
             "builder_id": {
               "bucket": "ci",
               "builder": "fuchsia-arm64-cast-receiver-rel",
-              "project": "chromium-m112"
+              "project": "chromium-m122"
             },
             "builder_spec": {
               "build_gs_bucket": "chromium-linux-archive",
@@ -38,7 +41,7 @@
         {
           "bucket": "ci",
           "builder": "fuchsia-arm64-cast-receiver-rel",
-          "project": "chromium-m112"
+          "project": "chromium-m122"
         }
       ],
       "mirroring_builder_group_and_names": [
@@ -52,7 +55,8 @@
   "$build/reclient": {
     "instance": "rbe-chromium-trusted",
     "jobs": 500,
-    "metrics_project": "chromium-reclient-metrics"
+    "metrics_project": "chromium-reclient-metrics",
+    "scandeps_server": true
   },
   "$recipe_engine/resultdb/test_presentation": {
     "column_keys": [],
@@ -64,6 +68,6 @@
   "builder_group": "chromium.fuchsia",
   "recipe": "chromium",
   "sheriff_rotations": [
-    "fuchsia"
+    "chrome_browser_release"
   ]
 }

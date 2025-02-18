@@ -14,7 +14,10 @@
 namespace content {
 
 class WebContents;
+class NavigationHandle;
 using PreloadingURLMatchCallback = base::RepeatingCallback<bool(const GURL&)>;
+using PredictorDomainCallback =
+    base::RepeatingCallback<bool(NavigationHandle*)>;
 
 // PreloadingPrediction and PreloadingAttempt are the preloading logging APIs
 // which allows us to set various metrics and log the values.
@@ -101,10 +104,18 @@ class CONTENT_EXPORT PreloadingData {
   // Creates a new PreloadingAttempt and returns a pointer associated with the
   // PreloadingAttempt class. Here callers pass the `url_predicate_callback` to
   // verify if the navigated and triggered URLs match based on callers logic.
+  //
+  // `triggering_primary_page_source_id` is a UKM source ID of the page that
+  // triggered preloading. This is used for recording the metrics for user
+  // visible primary pages (Preloading_Attempt_PreviousPrimaryPage) to measure
+  // the impact of PreloadingAttempt on the page user is viewing.
+  // TODO(crbug.com/1330783): Extend this for non-primary page and inner
+  // WebContents preloading attempts.
   virtual PreloadingAttempt* AddPreloadingAttempt(
       PreloadingPredictor predictor,
       PreloadingType preloading_type,
-      PreloadingURLMatchCallback url_match_predicate) = 0;
+      PreloadingURLMatchCallback url_match_predicate,
+      ukm::SourceId triggering_primary_page_source_id) = 0;
 
   // Creates a new PreloadingPrediction. Same as above `url_predicate_callback`
   // is passed by the caller to verify that both predicted and navigated URLs
@@ -114,6 +125,20 @@ class CONTENT_EXPORT PreloadingData {
       PreloadingPredictor predictor,
       int64_t confidence,
       PreloadingURLMatchCallback url_match_predicate) = 0;
+
+  // To calculate the recall score of the `predictor`, we need to know if the
+  // `predictor` is potentially responsible for predicting the next navigation
+  // or not. Here, if caller provided `is_navigation_in_domain_callback`
+  // callback returns true for the navigation, it will be considered in the
+  // predictor's domain. The predictor's domain is the set of navigations a
+  // predictor is meant to handle (predict). For example, for Omnibox DUI, this
+  // is the set of navigations to history URLs started from the Omnibox
+  // (navigations where the user ends up choosing a Search query or where the
+  // user closes the Omnibox and clicks on a link in the page are not part of
+  // the domain of the Omnibox DUI predictor).
+  virtual void SetIsNavigationInDomainCallback(
+      PreloadingPredictor predictor,
+      PredictorDomainCallback is_navigation_in_domain_callback) = 0;
 
  protected:
   virtual ~PreloadingData() = default;

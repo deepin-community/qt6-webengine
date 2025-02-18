@@ -12,7 +12,8 @@
 #include "base/callback_list.h"
 #include "base/functional/callback.h"
 #include "base/memory/ref_counted.h"
-#include "base/strings/string_piece_forward.h"
+#include "base/memory/weak_ptr.h"
+#include "base/strings/string_piece.h"
 #include "base/values.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "components/prefs/pref_store.h"
@@ -92,7 +93,7 @@ class SupervisedUserSettingsService : public KeyedService,
   // |sequenced_task_runner|. If |load_synchronously| is true, the settings will
   // be loaded synchronously, otherwise asynchronously.
   void Init(base::FilePath profile_path,
-            base::SequencedTaskRunner* sequenced_task_runner,
+            scoped_refptr<base::SequencedTaskRunner> sequenced_task_runner,
             bool load_synchronously);
 
   // Initializes the service by loading its settings from the |pref_store|.
@@ -143,7 +144,7 @@ class SupervisedUserSettingsService : public KeyedService,
   // This may be called regardless of whether the sync server has completed
   // initialization; in either case the local changes will be handled
   // immediately.
-  void SaveItem(const std::string& key, std::unique_ptr<base::Value> value);
+  void SaveItem(const std::string& key, base::Value value);
 
   // Sets the setting with the given `key` to `value`.
   void SetLocalSetting(base::StringPiece key, base::Value value);
@@ -170,10 +171,13 @@ class SupervisedUserSettingsService : public KeyedService,
   absl::optional<syncer::ModelError> ProcessSyncChanges(
       const base::Location& from_here,
       const syncer::SyncChangeList& change_list) override;
+  base::WeakPtr<SyncableService> AsWeakPtr() override;
 
   // PrefStore::Observer implementation:
   void OnPrefValueChanged(const std::string& key) override;
   void OnInitializationCompleted(bool success) override;
+
+  bool IsCustomPassphraseAllowed() const;
 
   const base::Value::Dict& LocalSettingsForTest() const;
 
@@ -218,6 +222,8 @@ class SupervisedUserSettingsService : public KeyedService,
   ShutdownCallbackList shutdown_callback_list_;
 
   std::unique_ptr<syncer::SyncChangeProcessor> sync_processor_;
+
+  base::WeakPtrFactory<SupervisedUserSettingsService> weak_ptr_factory_{this};
 };
 
 }  // namespace supervised_user

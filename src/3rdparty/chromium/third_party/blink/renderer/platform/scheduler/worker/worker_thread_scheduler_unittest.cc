@@ -6,6 +6,7 @@
 
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
+#include "base/memory/raw_ptr.h"
 #include "base/task/sequence_manager/test/fake_task.h"
 #include "base/task/sequence_manager/test/sequence_manager_for_test.h"
 #include "base/task/single_thread_task_runner.h"
@@ -132,8 +133,8 @@ class WorkerThreadSchedulerForTest : public WorkerThreadScheduler {
       std::move(on_microtask_checkpoint_).Run();
   }
 
-  const base::TickClock* clock_;        // Not owned.
-  Vector<String>* timeline_;            // Not owned.
+  raw_ptr<const base::TickClock, ExperimentalRenderer> clock_;  // Not owned.
+  raw_ptr<Vector<String>, ExperimentalRenderer> timeline_;      // Not owned.
   base::OnceClosure on_microtask_checkpoint_;
 };
 
@@ -466,15 +467,12 @@ class FrameSchedulerDelegateWithUkmSourceId : public FrameScheduler::Delegate {
   ukm::UkmRecorder* GetUkmRecorder() override { return nullptr; }
 
   ukm::SourceId GetUkmSourceId() override { return source_id_; }
+  void OnTaskCompleted(base::TimeTicks,
+                       base::TimeTicks) override {}
 
   void UpdateTaskTime(base::TimeDelta time) override {}
 
-  void UpdateBackForwardCacheDisablingFeatures(
-      uint64_t features_mask,
-      const BFCacheBlockingFeatureAndLocations&
-          non_sticky_features_and_js_locations,
-      const BFCacheBlockingFeatureAndLocations&
-          sticky_features_and_js_locations) override {}
+  void UpdateBackForwardCacheDisablingFeatures(BlockingDetails) override {}
 
   const base::UnguessableToken& GetAgentClusterId() const override {
     return base::UnguessableToken::Null();

@@ -85,7 +85,10 @@ class XboxHidControllerTest : public testing::Test {
   XboxHidControllerTest(const XboxHidControllerTest&) = delete;
   XboxHidControllerTest& operator=(const XboxHidControllerTest&) = delete;
 
-  void TearDown() override { gamepad_->Shutdown(); }
+  void TearDown() override {
+    fake_hid_writer_ = nullptr;
+    gamepad_->Shutdown();
+  }
 
   void PostPlayEffect(
       double start_delay,

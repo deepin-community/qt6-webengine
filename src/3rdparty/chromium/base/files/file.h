@@ -17,6 +17,7 @@
 #include "base/time/time.h"
 #include "base/trace_event/base_tracing_forward.h"
 #include "build/build_config.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 struct stat;
 
@@ -34,6 +35,9 @@ using stat_wrapper_t = struct stat;
 // obvious non-modifying way are marked as const. Any method that forward calls
 // to the OS is not considered const, even if there is no apparent change to
 // member variables.
+//
+// On POSIX, if the given file is a symbolic link, most of the methods apply to
+// the file that the symbolic link resolves to.
 class BASE_EXPORT File {
  public:
   // FLAG_(OPEN|CREATE).* are mutually exclusive. You should specify exactly one
@@ -217,9 +221,11 @@ class BASE_EXPORT File {
   // normal expectation is that actually |size| bytes are read unless there is
   // an error.
   int Read(int64_t offset, char* data, int size);
+  absl::optional<size_t> Read(int64_t offset, base::span<uint8_t> data);
 
   // Same as above but without seek.
   int ReadAtCurrentPos(char* data, int size);
+  absl::optional<size_t> ReadAtCurrentPos(base::span<uint8_t> data);
 
   // Reads the given number of bytes (or until EOF is reached) starting with the
   // given offset, but does not make any effort to read all data on all
@@ -236,9 +242,11 @@ class BASE_EXPORT File {
   // Ignores the offset and writes to the end of the file if the file was opened
   // with FLAG_APPEND.
   int Write(int64_t offset, const char* data, int size);
+  absl::optional<size_t> Write(int64_t offset, base::span<const uint8_t> data);
 
   // Save as above but without seek.
   int WriteAtCurrentPos(const char* data, int size);
+  absl::optional<size_t> WriteAtCurrentPos(base::span<const uint8_t> data);
 
   // Save as above but does not make any effort to write all data on all
   // platforms. Returns the number of bytes written, or -1 on error.
@@ -369,9 +377,11 @@ class BASE_EXPORT File {
   static std::string ErrorToString(Error error);
 
 #if BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
-  // Wrapper for stat() or stat64().
+  // Wrapper for stat().
   static int Stat(const char* path, stat_wrapper_t* sb);
+  // Wrapper for fstat().
   static int Fstat(int fd, stat_wrapper_t* sb);
+  // Wrapper for lstat().
   static int Lstat(const char* path, stat_wrapper_t* sb);
 #endif
 

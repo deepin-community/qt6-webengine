@@ -23,12 +23,8 @@ void Binary::AppendSerialized(std::vector<uint8_t>* out) const {
 }
 
 std::string Binary::toBase64() const {
-  std::string encoded;
-  base::Base64Encode(
-      base::StringPiece(reinterpret_cast<const char*>(bytes_->front()),
-                        bytes_->size()),
-      &encoded);
-  return encoded;
+  return base::Base64Encode(base::StringPiece(
+      reinterpret_cast<const char*>(bytes_->front()), bytes_->size()));
 }
 
 // static
@@ -262,7 +258,7 @@ void ProtocolTypeTraits<base::Value>::Serialize(const base::Value& value,
       NOTREACHED();
       return;
     case base::Value::Type::DICT:
-      SerializeDict(value.DictItems(), bytes);
+      SerializeDict(value.GetDict(), bytes);
       return;
     case base::Value::Type::LIST: {
       ContainerSerializer serializer(bytes,

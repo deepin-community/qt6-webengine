@@ -106,7 +106,7 @@ void PowerBookmarkService::CreatePower(std::unique_ptr<Power> power,
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   // Accept existing guids if they're explicitly set.
   if (!power->guid().is_valid())
-    power->set_guid(base::GUID::GenerateRandomV4());
+    power->set_guid(base::Uuid::GenerateRandomV4());
   base::Time now = base::Time::Now();
   if (power->time_added().is_null())
     power->set_time_added(now);
@@ -130,7 +130,7 @@ void PowerBookmarkService::UpdatePower(std::unique_ptr<Power> power,
       std::move(callback));
 }
 
-void PowerBookmarkService::DeletePower(const base::GUID& guid,
+void PowerBookmarkService::DeletePower(const base::Uuid& guid,
                                        SuccessCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   backend_task_runner_->PostTaskAndReplyWithResult(
@@ -189,7 +189,8 @@ void PowerBookmarkService::BookmarkNodeAdded(BookmarkModel* model,
   std::unique_ptr<PowerBookmarkMeta> meta =
       std::make_unique<PowerBookmarkMeta>();
 
-  for (auto* data_provider : data_providers_) {
+  for (power_bookmarks::PowerBookmarkDataProvider* data_provider :
+       data_providers_) {
     data_provider->AttachMetadataForNewBookmark(node, meta.get());
   }
 

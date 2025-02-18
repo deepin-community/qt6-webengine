@@ -41,7 +41,7 @@ void xnn_qs8_gemm_xw_minmax_fp32_ukernel_2x4c8__xop(
   assert(w != NULL);
   assert(c != NULL);
 
-  kc = round_up_po2(kc, 8);
+  kc = round_up_po2(kc, 8 * sizeof(int8_t));
   const int8_t* a0 = a;
   int8_t* c0 = c;
   const int8_t* a1 = (const int8_t*) ((uintptr_t) a0 + a_stride);
@@ -62,8 +62,10 @@ void xnn_qs8_gemm_xw_minmax_fp32_ukernel_2x4c8__xop(
     __m128i vacc1x3 = vacc0x3;
     w = (const int32_t*) w + 4;
 
-    size_t k = 0;
-    while (k < kc) {
+    size_t k = kc;
+
+
+    while (k >= 8 * sizeof(int8_t)) {
       const __m128i va0 = _mm_loadl_epi64((const __m128i*) a0);
       const __m128i vxa0 = _mm_cvtepi8_epi16(va0);
       a0 += 8;
@@ -88,8 +90,8 @@ void xnn_qs8_gemm_xw_minmax_fp32_ukernel_2x4c8__xop(
       vacc0x3 = _mm_maddd_epi16(vxa0, vxb3, vacc0x3);
       vacc1x3 = _mm_maddd_epi16(vxa1, vxb3, vacc1x3);
 
-      w = (const void*) ((const int16_t*) w + 32);
-      k += 8 * sizeof(int8_t);
+      w = (const int16_t*) w + 32;
+      k -= 8 * sizeof(int8_t);
     }
 
     const __m128i vacc0x01 = _mm_hadd_epi32(vacc0x0, vacc0x1);

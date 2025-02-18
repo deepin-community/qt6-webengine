@@ -36,7 +36,7 @@ namespace ui {
 WaylandTestBase::WaylandTestBase(wl::ServerConfig config)
     : task_environment_(base::test::TaskEnvironment::MainThreadType::UI,
                         base::test::TaskEnvironment::TimeSource::MOCK_TIME),
-      config_(config) {
+      server_(config) {
 #if BUILDFLAG(USE_XKBCOMMON)
   auto keyboard_layout_engine =
       std::make_unique<XkbKeyboardLayoutEngine>(xkb_evdev_code_converter_);
@@ -55,7 +55,6 @@ WaylandTestBase::~WaylandTestBase() = default;
 
 void WaylandTestBase::SetUp() {
   disabled_features_.push_back(ui::kWaylandSurfaceSubmissionInPixelCoordinates);
-  disabled_features_.push_back(features::kWaylandScreenCoordinatesEnabled);
 
   feature_list_.InitWithFeatures(enabled_features_, disabled_features_);
 
@@ -66,7 +65,7 @@ void WaylandTestBase::SetUp() {
     DeviceDataManager::CreateInstance();
   }
 
-  ASSERT_TRUE(server_.Start(config_));
+  ASSERT_TRUE(server_.Start());
   ASSERT_TRUE(connection_->Initialize());
   screen_ = connection_->wayland_output_manager()->CreateWaylandScreen();
   connection_->wayland_output_manager()->InitWaylandScreen(screen_.get());
@@ -269,7 +268,11 @@ bool WaylandTest::IsAuraShellEnabled() {
   return GetParam().enable_aura_shell == wl::EnableAuraShellProtocol::kEnabled;
 }
 
-WaylandTestSimple::WaylandTestSimple() : WaylandTestBase({}) {}
+WaylandTestSimple::WaylandTestSimple()
+    : WaylandTestSimple(wl::ServerConfig{}) {}
+
+WaylandTestSimple::WaylandTestSimple(wl::ServerConfig config)
+    : WaylandTestBase(config) {}
 
 WaylandTestSimple::~WaylandTestSimple() = default;
 

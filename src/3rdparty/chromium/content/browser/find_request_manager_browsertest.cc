@@ -10,11 +10,10 @@
 #include "content/browser/find_in_page_client.h"
 #include "content/browser/find_request_manager.h"
 #include "content/browser/web_contents/web_contents_impl.h"
-#include "content/public/browser/browser_message_filter.h"
 #include "content/public/browser/content_browser_client.h"
-#include "content/public/browser/notification_types.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/content_switches.h"
+#include "content/public/test/back_forward_cache_util.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
@@ -78,6 +77,7 @@ class FindRequestManagerTestBase : public ContentBrowserTest {
   void TearDownOnMainThread() override {
     // Swap the WebContents's delegate back to its usual delegate.
     contents()->SetDelegate(normal_delegate_);
+    normal_delegate_ = nullptr;
   }
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
@@ -161,7 +161,7 @@ class FindRequestManagerTestBase : public ContentBrowserTest {
   }
 
   FindTestWebContentsDelegate test_delegate_;
-  raw_ptr<WebContentsDelegate, DanglingUntriaged> normal_delegate_;
+  raw_ptr<WebContentsDelegate> normal_delegate_;
 
   // The ID of the last find request requested.
   int last_request_id_;
@@ -493,6 +493,41 @@ IN_PROC_BROWSER_TEST_P(FindRequestManagerTest, DISABLED_AddFrame) {
   results = delegate()->GetFindResults();
   EXPECT_EQ(26, results.number_of_matches);
   EXPECT_EQ(5, results.active_match_ordinal);
+}
+
+// Tests adding an in-process hidden iframe during a find session.
+IN_PROC_BROWSER_TEST_P(FindRequestManagerTest,
+                       AddInprocessHiddenFrameDuringFind) {
+  LoadAndWait("/find_in_page.html");
+
+  auto options = blink::mojom::FindOptions::New();
+  options->run_synchronously_for_testing = true;
+  Find("result", options.Clone());
+  delegate()->WaitForFinalReply();
+
+  FindResults results = delegate()->GetFindResults();
+  EXPECT_EQ(19, results.number_of_matches);
+
+  // Add a frame. It contains 5 new matches.
+  std::string url = embedded_test_server()
+                        ->GetURL("a.com", "/find_in_simple_page.html")
+                        .spec();
+  std::string script = JsReplace(R"JS(
+      var frame = document.createElement('iframe');
+      frame.src = '$1';
+      frame.style.visibility = 'hidden';
+      document.body.appendChild(frame);
+      )JS",
+                                 url);
+
+  delegate()->MarkNextReply();
+  ASSERT_TRUE(ExecJs(shell(), script));
+  delegate()->WaitForNextReply();
+
+  // The number of matches should not be effected by the
+  // the newly added hidden frame.
+  results = delegate()->GetFindResults();
+  EXPECT_EQ(19, results.number_of_matches);
 }
 
 // Tests adding a frame during a find session where there were previously no
@@ -1175,36 +1210,6 @@ IN_PROC_BROWSER_TEST_P(FindRequestManagerTest, FindInPageDisabledForOrigin) {
   EXPECT_EQ(7, results.number_of_matches);
 }
 
-class FindRequestManagerPortalTest : public FindRequestManagerTest {
- public:
-  FindRequestManagerPortalTest() {
-    scoped_feature_list_.InitAndEnableFeature(blink::features::kPortals);
-  }
-  ~FindRequestManagerPortalTest() override = default;
-
- private:
-  base::test::ScopedFeatureList scoped_feature_list_;
-};
-
-// Tests that find-in-page won't show results inside a portal.
-IN_PROC_BROWSER_TEST_F(FindRequestManagerPortalTest, Portal) {
-  TestNavigationObserver navigation_observer(contents());
-  EXPECT_TRUE(
-      NavigateToURL(shell(), embedded_test_server()->GetURL(
-                                 "a.com", "/find_in_page_with_portal.html")));
-  ASSERT_TRUE(navigation_observer.last_navigation_succeeded());
-
-  auto options = blink::mojom::FindOptions::New();
-  options->run_synchronously_for_testing = true;
-  Find("result", options->Clone());
-  delegate()->WaitForFinalReply();
-
-  FindResults results = delegate()->GetFindResults();
-  EXPECT_EQ(last_request_id(), results.request_id);
-  EXPECT_EQ(2, results.number_of_matches);
-  EXPECT_EQ(1, results.active_match_ordinal);
-}
-
 class FindTestWebContentsPrerenderingDelegate
     : public FindTestWebContentsDelegate {
  public:
@@ -1280,11 +1285,9 @@ class FindRequestManagerTestWithBFCache : public FindRequestManagerTest {
  public:
   FindRequestManagerTestWithBFCache() {
     scoped_feature_list_.InitWithFeaturesAndParameters(
-        {{features::kBackForwardCache, {{}}},
-         {features::kBackForwardCacheTimeToLiveControl,
-          {{"time_to_live_seconds", "3600"}}}},
-        // Allow BackForwardCache for all devices regardless of their memory.
-        {features::kBackForwardCacheMemoryControls});
+        GetDefaultEnabledBackForwardCacheFeaturesForTesting(
+            /*ignore_outstanding_network_request=*/false),
+        GetDefaultDisabledBackForwardCacheFeaturesForTesting());
   }
   ~FindRequestManagerTestWithBFCache() override = default;
 
@@ -1492,8 +1495,8 @@ IN_PROC_BROWSER_TEST_F(FindRequestManagerFencedFrameTest,
 
   // Navigate the fenced frame, this won't cause the find request queue to be
   // cleared, since it's not a primary main frame.
-  fenced_frame_test_helper().NavigateFrameInFencedFrameTree(fenced_frame_host,
-                                                            find_test_url);
+  fenced_frame_host = fenced_frame_test_helper().NavigateFrameInFencedFrameTree(
+      fenced_frame_host, find_test_url);
   EXPECT_TRUE(CheckFrame(fenced_frame_host));
   EXPECT_EQ(find_request_queue_size(), 1);
   EXPECT_EQ(last_request_id(), delegate.GetFindResults().request_id);
@@ -1626,7 +1629,8 @@ INSTANTIATE_TEST_SUITE_P(
 // new results from the new document when we navigate the subframe that
 // hasn't finished the find-in-page session to the new document.
 // TODO(crbug.com/1311444): Fix flakiness and reenable the test.
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN) || \
+    BUILDFLAG(IS_ANDROID)
 #define MAYBE_NavigateFrameDuringFind DISABLED_NavigateFrameDuringFind
 #else
 #define MAYBE_NavigateFrameDuringFind NavigateFrameDuringFind

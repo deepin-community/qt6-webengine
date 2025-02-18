@@ -4,6 +4,7 @@
 
 #include "cc/paint/record_paint_canvas.h"
 
+#include <limits>
 #include <utility>
 
 #include "cc/paint/paint_image_builder.h"
@@ -217,7 +218,17 @@ void RecordPaintCanvas::drawLine(SkScalar x0,
                                  SkScalar x1,
                                  SkScalar y1,
                                  const PaintFlags& flags) {
-  push<DrawLineOp>(x0, y0, x1, y1, flags);
+  if (draw_line_count_ != std::numeric_limits<uint32_t>::max()) {
+    ++draw_line_count_;
+    // If a bunch of paths have been drawn, only switch to drawing lines
+    // after a number of lines have been drawn.
+    if (draw_line_count_ > 4) {
+      draw_path_count_ = 0;
+    }
+  }
+  // Render lines as paths if there have been a number of drawPaths() recently.
+  // See description in header for more details.
+  push<DrawLineOp>(x0, y0, x1, y1, flags, draw_path_count_ > 4);
 }
 
 void RecordPaintCanvas::drawRect(const SkRect& rect, const PaintFlags& flags) {
@@ -267,6 +278,12 @@ void RecordPaintCanvas::drawRoundRect(const SkRect& rect,
 void RecordPaintCanvas::drawPath(const SkPath& path,
                                  const PaintFlags& flags,
                                  UsePaintCache use_paint_cache) {
+  if (draw_path_count_ != std::numeric_limits<uint32_t>::max()) {
+    ++draw_path_count_;
+    if (draw_path_count_ > 4) {
+      draw_line_count_ = 0;
+    }
+  }
   push<DrawPathOp>(path, flags, use_paint_cache);
 }
 
@@ -286,6 +303,15 @@ void RecordPaintCanvas::drawImageRect(const PaintImage& image,
                                       const PaintFlags* flags,
                                       SkCanvas::SrcRectConstraint constraint) {
   push<DrawImageRectOp>(image, src, dst, sampling, flags, constraint);
+}
+
+void RecordPaintCanvas::drawVertices(
+    scoped_refptr<RefCountedBuffer<SkPoint>> vertices,
+    scoped_refptr<RefCountedBuffer<SkPoint>> uvs,
+    scoped_refptr<RefCountedBuffer<uint16_t>> indices,
+    const PaintFlags& flags) {
+  push<DrawVerticesOp>(std::move(vertices), std::move(uvs), std::move(indices),
+                       flags);
 }
 
 void RecordPaintCanvas::drawSkottie(scoped_refptr<SkottieWrapper> skottie,

@@ -215,13 +215,19 @@ export class UISourceCode extends Common.ObjectWrapper.ObjectWrapper<EventTypes>
     return this.projectInternal;
   }
 
-  requestContent(): Promise<TextUtils.ContentProvider.DeferredContent> {
+  requestContent({cachedWasmOnly}: {cachedWasmOnly?: boolean} = {}):
+      Promise<TextUtils.ContentProvider.DeferredContent> {
     if (this.requestContentPromise) {
       return this.requestContentPromise;
     }
 
     if (this.contentLoadedInternal) {
       return Promise.resolve(this.contentInternal as TextUtils.ContentProvider.DeferredContent);
+    }
+
+    if (cachedWasmOnly && this.mimeType() === 'application/wasm') {
+      return Promise.resolve(
+          {content: '', isEncoded: false, wasmDisassemblyInfo: new Common.WasmDisassembly.WasmDisassembly([], [], [])});
     }
 
     this.requestContentPromise = this.requestContentImpl();
@@ -336,14 +342,21 @@ export class UISourceCode extends Common.ObjectWrapper.ObjectWrapper<EventTypes>
   }
 
   workingCopy(): string {
+    return this.workingCopyContent().content || '';
+  }
+
+  workingCopyContent(): TextUtils.ContentProvider.DeferredContent {
     if (this.workingCopyGetter) {
       this.workingCopyInternal = this.workingCopyGetter();
       this.workingCopyGetter = null;
     }
     if (this.isDirty()) {
-      return this.workingCopyInternal as string;
+      return {content: this.workingCopyInternal as string, isEncoded: false};
     }
-    return this.contentInternal?.content || '';
+    if (this.contentInternal) {
+      return this.contentInternal;
+    }
+    return {content: '', isEncoded: false};
   }
 
   resetWorkingCopy(): void {
@@ -413,6 +426,11 @@ export class UISourceCode extends Common.ObjectWrapper.ObjectWrapper<EventTypes>
    */
   isUnconditionallyIgnoreListed(): boolean {
     return this.isUnconditionallyIgnoreListedInternal;
+  }
+
+  isFetchXHR(): boolean {
+    return [Common.ResourceType.resourceTypes.XHR, Common.ResourceType.resourceTypes.Fetch].includes(
+        this.contentType());
   }
 
   /**
@@ -509,8 +527,6 @@ export class UISourceCode extends Common.ObjectWrapper.ObjectWrapper<EventTypes>
   }
 }
 
-// TODO(crbug.com/1167717): Make this a const enum again
-// eslint-disable-next-line rulesdir/const_enum
 export enum Events {
   WorkingCopyChanged = 'WorkingCopyChanged',
   WorkingCopyCommitted = 'WorkingCopyCommitted',
@@ -611,6 +627,21 @@ export class UILocation {
 }
 
 /**
+ * A text range inside a specific {@link UISourceCode}.
+ *
+ * We use a class instead of an interface so we can implement a revealer for it.
+ */
+export class UILocationRange {
+  readonly uiSourceCode: UISourceCode;
+  readonly range: TextUtils.TextRange.TextRange;
+
+  constructor(uiSourceCode: UISourceCode, range: TextUtils.TextRange.TextRange) {
+    this.uiSourceCode = uiSourceCode;
+    this.range = range;
+  }
+}
+
+/**
  * A message associated with a range in a `UISourceCode`. The range will be
  * underlined starting at the range's start and ending at the line end (the
  * end of the range is currently disregarded).
@@ -657,9 +688,7 @@ export class Message {
 }
 
 export namespace Message {
-  // TODO(crbug.com/1167717): Make this a const enum again
-  // eslint-disable-next-line rulesdir/const_enum
-  export enum Level {
+  export const enum Level {
     Error = 'Error',
     Issue = 'Issue',
     Warning = 'Warning',

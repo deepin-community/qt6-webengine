@@ -27,6 +27,7 @@
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/base/models/image_model.h"
 #include "ui/base/resource/resource_bundle.h"
+#include "ui/color/color_provider_manager.h"
 #include "ui/compositor/compositor.h"
 #include "ui/compositor/layer.h"
 #include "ui/display/screen.h"
@@ -34,6 +35,7 @@
 #include "ui/events/event_utils.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/views/controls/menu/menu_controller.h"
+#include "ui/views/drag_controller.h"
 #include "ui/views/event_monitor.h"
 #include "ui/views/focus/focus_manager.h"
 #include "ui/views/focus/focus_manager_factory.h"
@@ -54,6 +56,10 @@
 
 #if BUILDFLAG(IS_LINUX)
 #include "ui/linux/linux_ui.h"
+#endif
+
+#if BUILDFLAG(IS_OZONE)
+#include "ui/ozone/public/ozone_platform.h"
 #endif
 
 namespace views {
@@ -112,14 +118,18 @@ class DefaultWidgetDelegate : public WidgetDelegate {
     // In most situations where a Widget is used without a delegate the Widget
     // is used as a container, so that we want focus to advance to the top-level
     // widget. A good example of this is the find bar.
-    SetOwnedByWidget(true);
     SetFocusTraversesOut(true);
+    RegisterDeleteDelegateCallback(base::BindOnce(
+        &DefaultWidgetDelegate::Destroy, base::Unretained(this)));
   }
 
   DefaultWidgetDelegate(const DefaultWidgetDelegate&) = delete;
   DefaultWidgetDelegate& operator=(const DefaultWidgetDelegate&) = delete;
 
   ~DefaultWidgetDelegate() override = default;
+
+ private:
+  void Destroy() { delete this; }
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -177,6 +187,18 @@ ui::ZOrderLevel Widget::InitParams::EffectiveZOrderLevel() const {
     default:
       return ui::ZOrderLevel::kNormal;
   }
+}
+
+bool Widget::InitParams::ShouldInitAsHeadless() const {
+  if (headless_mode) {
+    return true;
+  }
+
+  if (Widget* top_level_widget = GetTopLevelWidgetForNativeView(parent)) {
+    return top_level_widget->is_headless();
+  }
+
+  return false;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -340,6 +362,17 @@ bool Widget::RequiresNonClientView(InitParams::Type type) {
   return type == InitParams::TYPE_WINDOW || type == InitParams::TYPE_BUBBLE;
 }
 
+// static
+bool Widget::IsWindowCompositingSupported() {
+#if BUILDFLAG(IS_WIN)
+  return true;
+#elif BUILDFLAG(IS_OZONE)
+  return ui::OzonePlatform::GetInstance()->IsWindowCompositingSupported();
+#else
+  return false;
+#endif
+}
+
 void Widget::Init(InitParams params) {
   TRACE_EVENT0("views", "Widget::Init");
 
@@ -367,34 +400,23 @@ void Widget::Init(InitParams params) {
 
   params.child |= (params.type == InitParams::TYPE_CONTROL);
   is_top_level_ = !params.child;
+  is_headless_ = params.ShouldInitAsHeadless();
 
   if (params.opacity == views::Widget::InitParams::WindowOpacity::kInferred &&
       params.type != views::Widget::InitParams::TYPE_WINDOW) {
     params.opacity = views::Widget::InitParams::WindowOpacity::kOpaque;
   }
 
-  {
-    // ViewsDelegate::OnBeforeWidgetInit() may change `params.delegate` either
-    // by setting it to null or assigning a different value to it, so handle
-    // both cases.
-    // TODO(kylixrd): Rework this to avoid always creating the default delegate
-    // once the widget never owns a provided delegate.
-    owned_widget_delegate_ = std::make_unique<DefaultWidgetDelegate>();
-    widget_delegate_ = params.delegate ? params.delegate->AsWeakPtr()
-                                       : owned_widget_delegate_->AsWeakPtr();
+  // ViewsDelegate::OnBeforeWidgetInit() may change `params.delegate` either by
+  // setting it to null or assigning a different value to it, so handle both
+  // cases.
+  ViewsDelegate::GetInstance()->OnBeforeWidgetInit(&params, this);
 
-    ViewsDelegate::GetInstance()->OnBeforeWidgetInit(&params, this);
-
-    widget_delegate_ = params.delegate ? params.delegate->AsWeakPtr()
-                                       : owned_widget_delegate_->AsWeakPtr();
-    if (widget_delegate_.get() != owned_widget_delegate_.get()) {
-      // TODO(kylixrd): This will be unnecessary once the Widget can no longer
-      // "own" the delegate.
-      if (widget_delegate_->owned_by_widget())
-        owned_widget_delegate_ = base::WrapUnique(widget_delegate_.get());
-      else
-        owned_widget_delegate_.reset();
-    }
+  if (params.delegate) {
+    widget_delegate_ = params.delegate->AsWeakPtr();
+  } else {
+    auto default_delegate = std::make_unique<DefaultWidgetDelegate>();
+    widget_delegate_ = default_delegate.release()->AsWeakPtr();
   }
   DCHECK(widget_delegate_);
 
@@ -407,9 +429,6 @@ void Widget::Init(InitParams params) {
 
   widget_delegate_->SetCanActivate(can_activate);
 
-  // Henceforth, ensure the delegate outlives the Widget.
-  widget_delegate_->can_delete_this_ = false;
-
   widget_delegate_->WidgetInitializing(this);
 
   ownership_ = params.ownership;
@@ -421,6 +440,10 @@ void Widget::Init(InitParams params) {
   if (base::FeatureList::IsEnabled(features::kWidgetLayering)) {
     sublevel_manager_ =
         std::make_unique<SublevelManager>(this, params.sublevel);
+  }
+
+  if (params.native_theme) {
+    native_theme_ = params.native_theme;
   }
 
   internal::NativeWidgetPrivate* native_widget_raw_ptr =
@@ -436,6 +459,12 @@ void Widget::Init(InitParams params) {
   const gfx::Rect bounds = params.bounds;
   const ui::WindowShowState show_state = params.show_state;
   WidgetDelegate* delegate = params.delegate;
+  bool should_set_initial_bounds = true;
+#if BUILDFLAG(IS_CHROMEOS)
+  // If the target display is specified on ChromeOS, the initial bounds will be
+  // set based on the display.
+  should_set_initial_bounds = !params.display_id.has_value();
+#endif
 
   native_widget_->InitNativeWidget(std::move(params));
   if (type == InitParams::TYPE_MENU)
@@ -457,7 +486,9 @@ void Widget::Init(InitParams params) {
     UpdateWindowIcon();
     UpdateWindowTitle();
     non_client_view_->ResetWindowControls();
-    SetInitialBounds(bounds);
+    if (should_set_initial_bounds) {
+      SetInitialBounds(bounds);
+    }
 
     // Perform the initial layout. This handles the case where the size might
     // not actually change when setting the initial bounds. If it did, child
@@ -472,7 +503,9 @@ void Widget::Init(InitParams params) {
     }
   } else if (delegate) {
     SetContentsView(delegate->TransferOwnershipOfContentsView());
-    SetInitialBoundsForFramelessWindow(bounds);
+    if (should_set_initial_bounds) {
+      SetInitialBoundsForFramelessWindow(bounds);
+    }
   }
 
   if (base::FeatureList::IsEnabled(features::kWidgetLayering)) {
@@ -499,13 +532,12 @@ void Widget::ShowEmojiPanel() {
 // Unconverted methods (see header) --------------------------------------------
 
 gfx::NativeView Widget::GetNativeView() const {
-  return native_widget_ ? native_widget_->GetNativeView()
-                        : gfx::kNullNativeView;
+  return native_widget_ ? native_widget_->GetNativeView() : gfx::NativeView();
 }
 
 gfx::NativeWindow Widget::GetNativeWindow() const {
   return native_widget_ ? native_widget_->GetNativeWindow()
-                        : gfx::kNullNativeWindow;
+                        : gfx::NativeWindow();
 }
 
 void Widget::AddObserver(WidgetObserver* observer) {
@@ -651,6 +683,10 @@ void Widget::SetBounds(const gfx::Rect& bounds) {
 void Widget::SetSize(const gfx::Size& size) {
   if (native_widget_)
     native_widget_->SetSize(size);
+}
+
+gfx::Size Widget::GetSize() const {
+  return GetRestoredBounds().size();
 }
 
 void Widget::CenterWindow(const gfx::Size& size) {
@@ -807,9 +843,7 @@ void Widget::Show() {
         !initial_restored_bounds_.IsEmpty() && !IsFullscreen()) {
       native_widget_->Show(ui::SHOW_STATE_MAXIMIZED, initial_restored_bounds_);
     } else {
-      native_widget_->Show(
-          IsFullscreen() ? ui::SHOW_STATE_FULLSCREEN : saved_show_state_,
-          gfx::Rect());
+      native_widget_->Show(saved_show_state_, gfx::Rect());
     }
     // |saved_show_state_| only applies the first time the window is shown.
     // If we don't reset the value the window may be shown maximized every time
@@ -934,7 +968,15 @@ void Widget::SetFullscreen(bool fullscreen, int64_t target_display_id) {
 }
 
 bool Widget::IsFullscreen() const {
-  return native_widget_ ? native_widget_->IsFullscreen() : false;
+  if (native_widget_ && native_widget_->IsFullscreen()) {
+    return true;
+  }
+  // Some widgets are logically the same window as their parent, and thus their
+  // parent must also be checked for fullscreen.
+  if (parent() && check_parent_for_fullscreen_) {
+    return parent()->IsFullscreen();
+  }
+  return false;
 }
 
 void Widget::SetCanAppearInExistingFullscreenSpaces(
@@ -953,8 +995,19 @@ void Widget::SetOpacity(float opacity) {
 }
 
 void Widget::SetAspectRatio(const gfx::SizeF& aspect_ratio) {
-  if (native_widget_)
-    native_widget_->SetAspectRatio(aspect_ratio);
+  if (!native_widget_) {
+    return;
+  }
+
+  // The aspect ratio affects the client view only, so figure out how much of
+  // the widget isn't taken up by the client view.
+  gfx::Size excluded_margin;
+  if (non_client_view() && non_client_view()->frame_view()) {
+    excluded_margin =
+        non_client_view()->bounds().size() -
+        non_client_view()->frame_view()->GetBoundsForClientView().size();
+  }
+  native_widget_->SetAspectRatio(aspect_ratio, excluded_margin);
 }
 
 void Widget::FlashFrame(bool flash) {
@@ -984,8 +1037,7 @@ const ui::ThemeProvider* Widget::GetThemeProvider() const {
                                               : nullptr;
 }
 
-ui::ColorProviderManager::ThemeInitializerSupplier* Widget::GetCustomTheme()
-    const {
+ui::ColorProviderKey::ThemeInitializerSupplier* Widget::GetCustomTheme() const {
   return nullptr;
 }
 
@@ -1031,6 +1083,10 @@ void Widget::RunShellDrag(View* view,
 
   for (WidgetObserver& observer : observers_)
     observer.OnWidgetDragWillStart(this);
+
+  if (view && view->drag_controller()) {
+    view->drag_controller()->OnWillStartDragForView(view);
+  }
 
   WidgetDeletionObserver widget_deletion_observer(this);
   native_widget_->RunShellDrag(view, std::move(data), location, operation,
@@ -1194,21 +1250,6 @@ bool Widget::ShouldWindowContentsBeTransparent() const {
                         : false;
 }
 
-void Widget::DebugToggleFrameType() {
-  if (!native_widget_)
-    return;
-
-  if (frame_type_ == FrameType::kDefault) {
-    frame_type_ = ShouldUseNativeFrame() ? FrameType::kForceCustom
-                                         : FrameType::kForceNative;
-  } else {
-    frame_type_ = frame_type_ == FrameType::kForceCustom
-                      ? FrameType::kForceNative
-                      : FrameType::kForceCustom;
-  }
-  FrameTypeChanged();
-}
-
 void Widget::FrameTypeChanged() {
   if (native_widget_)
     native_widget_->FrameTypeChanged();
@@ -1296,11 +1337,6 @@ void Widget::SynthesizeMouseMoveEvent() {
   root_view_->OnMouseMoved(mouse_event);
 }
 
-bool Widget::IsTranslucentWindowOpacitySupported() const {
-  return native_widget_ ? native_widget_->IsTranslucentWindowOpacitySupported()
-                        : false;
-}
-
 ui::GestureRecognizer* Widget::GetGestureRecognizer() {
   return native_widget_ ? native_widget_->GetGestureRecognizer() : nullptr;
 }
@@ -1310,10 +1346,17 @@ ui::GestureConsumer* Widget::GetGestureConsumer() {
 }
 
 void Widget::OnSizeConstraintsChanged() {
-  if (native_widget_)
+  if (native_widget_) {
     native_widget_->OnSizeConstraintsChanged();
-  if (non_client_view_)
+  }
+
+  if (non_client_view_) {
     non_client_view_->SizeConstraintsChanged();
+  }
+
+  for (WidgetObserver& observer : observers_) {
+    observer.OnWidgetSizeConstraintsChanged(this);
+  }
 }
 
 void Widget::OnOwnerClosing() {}
@@ -1331,7 +1374,7 @@ std::unique_ptr<Widget::PaintAsActiveLock> Widget::LockPaintAsActive() {
   const bool was_paint_as_active = ShouldPaintAsActive();
   ++paint_as_active_refcount_;
   if (ShouldPaintAsActive() != was_paint_as_active) {
-    paint_as_active_callbacks_.Notify();
+    NotifyPaintAsActiveChanged();
     if (parent() && !parent_paint_as_active_lock_)
       parent_paint_as_active_lock_ = parent()->LockPaintAsActive();
   }
@@ -1368,15 +1411,34 @@ void Widget::OnParentShouldPaintAsActiveChanged() {
   // this->ShouldPaintAsActive() changes iff the native widget is
   // inactive and there's no lock on this widget.
   if (!(native_widget_active_ || paint_as_active_refcount_))
-    paint_as_active_callbacks_.Notify();
+    NotifyPaintAsActiveChanged();
+}
+
+void Widget::NotifyPaintAsActiveChanged() {
+  paint_as_active_callbacks_.Notify();
+  if (native_widget_) {
+    native_widget_->PaintAsActiveChanged();
+  }
 }
 
 void Widget::SetNativeTheme(ui::NativeTheme* native_theme) {
+  // If `native_theme_` has been set for testing ensure the theme instance is
+  // not reset.
+  if (native_theme_set_for_testing_) {
+    return;
+  }
+
+  const bool is_update = native_theme_ && (native_theme_ != native_theme);
   native_theme_ = native_theme;
   native_theme_observation_.Reset();
   if (native_theme)
     native_theme_observation_.Observe(native_theme);
-  ThemeChanged();
+
+  if (is_update) {
+    OnNativeThemeUpdated(native_theme);
+  } else {
+    ThemeChanged();
+  }
 }
 
 int Widget::GetX() const {
@@ -1506,7 +1568,7 @@ bool Widget::OnNativeWidgetActivationChanged(bool active) {
   // Notify controls (e.g. LabelButton) and children widgets about the
   // paint-as-active change.
   if (ShouldPaintAsActive() != was_paint_as_active)
-    paint_as_active_callbacks_.Notify();
+    NotifyPaintAsActiveChanged();
 
   return true;
 }
@@ -1565,17 +1627,9 @@ void Widget::OnNativeWidgetDestroying() {
 void Widget::OnNativeWidgetDestroyed() {
   for (WidgetObserver& observer : observers_)
     observer.OnWidgetDestroyed(this);
-  // TODO(kylixrd): Remove the references to owned_by_widget once widgets cease
-  // being able to "own" the delegate.
+
   if (widget_delegate_) {
-    if (widget_delegate_->owned_by_widget()) {
-      widget_delegate_->DeleteDelegate();
-      widget_delegate_->can_delete_this_ = true;
-      owned_widget_delegate_.reset();
-    } else {
-      widget_delegate_->can_delete_this_ = true;
-      widget_delegate_->DeleteDelegate();
-    }
+    widget_delegate_->DeleteDelegate();
   }
   // Immediately reset the weak ptr. If NATIVE_WIDGET_OWNS_WIDGET destruction of
   // the NativeWidget can destroy the Widget. We don't want to touch the
@@ -1628,6 +1682,10 @@ void Widget::OnNativeWidgetWorkspaceChanged() {}
 
 void Widget::OnNativeWidgetWindowShowStateChanged() {
   SaveWindowPlacementIfInitialized();
+
+  for (WidgetObserver& observer : observers_) {
+    observer.OnWidgetShowStateChanged(this);
+  }
 }
 
 void Widget::OnNativeWidgetBeginUserBoundsChange() {
@@ -1734,8 +1792,9 @@ void Widget::OnMouseEvent(ui::MouseEvent* event) {
           // process it.
           (event->flags() &
            (ui::EF_LEFT_MOUSE_BUTTON | ui::EF_MIDDLE_MOUSE_BUTTON |
-            ui::EF_RIGHT_MOUSE_BUTTON)) != 0)
+            ui::EF_RIGHT_MOUSE_BUTTON)) != 0) {
         event->SetHandled();
+      }
       return;
 
     case ui::ET_MOUSE_MOVED:
@@ -1750,6 +1809,13 @@ void Widget::OnMouseEvent(ui::MouseEvent* event) {
         last_mouse_event_was_move_ = true;
         if (root_view)
           root_view->OnMouseMoved(*event);
+      }
+      return;
+
+    case ui::ET_MOUSE_ENTERED:
+      last_mouse_event_was_move_ = false;
+      if (root_view) {
+        root_view->OnMouseEntered(*event);
       }
       return;
 
@@ -1943,21 +2009,59 @@ void Widget::OnNativeThemeUpdated(ui::NativeTheme* observed_theme) {
   ThemeChanged();
 }
 
+void Widget::SetColorModeOverride(
+    absl::optional<ui::ColorProviderKey::ColorMode> color_mode) {
+  color_mode_override_ = color_mode;
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // Widget, ui::ColorProviderSource:
 
-ui::ColorProviderManager::Key Widget::GetColorProviderKey() const {
-  ui::ColorProviderManager::Key key =
-      GetNativeTheme()->GetColorProviderKey(GetCustomTheme());
+ui::ColorProviderKey Widget::GetColorProviderKey() const {
+  // Generally all Widgets should inherit the key of their parent, falling back
+  // to the key set by the NativeTheme otherwise.
+  // TODO(crbug.com/1455535): `parent_` does not always resolve to the logical
+  // parent as expected here (e.g. bubbles). This should be addressed and the
+  // use of parent_ below replaced with something like GetLogicalParent().
+  ui::ColorProviderKey key =
+      parent_ ? parent_->GetColorProviderKey()
+              : GetNativeTheme()->GetColorProviderKey(GetCustomTheme());
+
+  // Widgets may have specific overrides set on the Widget itself that should
+  // apply specifically to themselves and their children, apply these here.
 #if BUILDFLAG(IS_CHROMEOS_ASH)
   key.elevation_mode = background_elevation_;
 #endif
+  if (color_mode_override_.has_value()) {
+    key.color_mode = color_mode_override_.value();
+  }
+
   return key;
 }
 
 const ui::ColorProvider* Widget::GetColorProvider() const {
   return ui::ColorProviderManager::Get().GetColorProviderFor(
       GetColorProviderKey());
+}
+
+const ui::RendererColorMap Widget::GetRendererColorMap(
+    ui::ColorProviderKey::ColorMode color_mode,
+    ui::ColorProviderKey::ForcedColors forced_colors) const {
+  auto key = GetColorProviderKey();
+  key.color_mode = color_mode;
+  key.forced_colors = forced_colors;
+  ui::ColorProvider* color_provider =
+      ui::ColorProviderManager::Get().GetColorProviderFor(key);
+  CHECK(color_provider);
+  return ui::CreateRendererColorMap(*color_provider);
+}
+
+ui::ColorProviderKey Widget::GetColorProviderKeyForTesting() const {
+  return GetColorProviderKey();
+}
+
+void Widget::SetCheckParentForFullscreen() {
+  check_parent_for_fullscreen_ = true;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -2137,7 +2241,7 @@ void Widget::UnlockPaintAsActive() {
     parent_paint_as_active_lock_.reset();
 
   if (ShouldPaintAsActive() != was_paint_as_active)
-    paint_as_active_callbacks_.Notify();
+    NotifyPaintAsActiveChanged();
 }
 
 void Widget::ClearFocusFromWidget() {
@@ -2167,6 +2271,7 @@ ADD_PROPERTY_METADATA(int, Width)
 ADD_PROPERTY_METADATA(int, Height)
 ADD_PROPERTY_METADATA(bool, Visible)
 ADD_PROPERTY_METADATA(ui::ZOrderLevel, ZOrderLevel)
+ADD_PROPERTY_METADATA(gfx::Size, Size)
 END_METADATA
 
 namespace internal {

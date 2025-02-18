@@ -27,7 +27,7 @@ class WebContentsAdapterClient;
 class WebEngineSettings;
 class UserNotificationController;
 
-class Q_WEBENGINECORE_PRIVATE_EXPORT ProfileAdapterClient
+class Q_WEBENGINECORE_EXPORT ProfileAdapterClient
 {
 public:
     // Keep in sync with content::DownloadItem::DownloadState
@@ -110,6 +110,8 @@ public:
     virtual void addWebContentsAdapterClient(WebContentsAdapterClient *adapter) = 0;
     virtual void removeWebContentsAdapterClient(WebContentsAdapterClient *adapter) = 0;
     virtual WebEngineSettings *coreSettings() const = 0;
+    virtual void clearHttpCacheCompleted() = 0;
+
     static QString downloadInterruptReasonToString(DownloadInterruptReason reason);
 };
 

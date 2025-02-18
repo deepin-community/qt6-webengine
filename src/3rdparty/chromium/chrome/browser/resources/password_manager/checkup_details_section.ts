@@ -8,17 +8,19 @@ import 'chrome://resources/polymer/v3_0/iron-collapse/iron-collapse.js';
 import './shared_style.css.js';
 import './checkup_list_item.js';
 
-import {CrActionMenuElement} from 'chrome://resources/cr_elements/cr_action_menu/cr_action_menu.js';
+import {PrefsMixin} from 'chrome://resources/cr_components/settings_prefs/prefs_mixin.js';
+import type {CrActionMenuElement} from 'chrome://resources/cr_elements/cr_action_menu/cr_action_menu.js';
 import {I18nMixin} from 'chrome://resources/cr_elements/i18n_mixin.js';
-import {assert} from 'chrome://resources/js/assert_ts.js';
+import {assert} from 'chrome://resources/js/assert.js';
 import {PluralStringProxyImpl} from 'chrome://resources/js/plural_string_proxy.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {getTemplate} from './checkup_details_section.html.js';
-import {CheckupListItemElement} from './checkup_list_item.js';
-import {CredentialsChangedListener, PasswordCheckInteraction, PasswordManagerImpl} from './password_manager_proxy.js';
-import {PrefMixin} from './prefs/pref_mixin.js';
-import {CheckupSubpage, Page, Route, RouteObserverMixin, Router} from './router.js';
+import type {CheckupListItemElement} from './checkup_list_item.js';
+import type {CredentialsChangedListener} from './password_manager_proxy.js';
+import {PasswordCheckInteraction, PasswordManagerImpl} from './password_manager_proxy.js';
+import type {Route} from './router.js';
+import {CheckupSubpage, Page, RouteObserverMixin, Router} from './router.js';
 
 export class ReusedPasswordInfo {
   constructor(credentials: chrome.passwordsPrivate.PasswordUiEntry[]) {
@@ -36,6 +38,7 @@ export class ReusedPasswordInfo {
 
 export interface CheckupDetailsSectionElement {
   $: {
+    backButton: HTMLElement,
     description: HTMLElement,
     moreActionsMenu: CrActionMenuElement,
     menuShowPassword: HTMLButtonElement,
@@ -46,7 +49,7 @@ export interface CheckupDetailsSectionElement {
 }
 
 const CheckupDetailsSectionElementBase =
-    PrefMixin(I18nMixin(RouteObserverMixin(PolymerElement)));
+    PrefsMixin(I18nMixin(RouteObserverMixin(PolymerElement)));
 
 export class CheckupDetailsSectionElement extends
     CheckupDetailsSectionElementBase {
@@ -89,6 +92,12 @@ export class CheckupDetailsSectionElement extends
         type: Object,
         value: new Set(),
       },
+
+      isMutingDisabled_: {
+        type: Boolean,
+        computed: 'computeIsMutingDisabled_(' +
+            'prefs.profile.password_dismiss_compromised_alert.value)',
+      },
     };
   }
 
@@ -102,14 +111,10 @@ export class CheckupDetailsSectionElement extends
       chrome.passwordsPrivate.PasswordUiEntry[];
   private activeListItem_: CheckupListItemElement|null;
   private clickedChangePasswordIds_: Set<number>;
+  private isMutingDisabled_: boolean;
   private activeCredential_: chrome.passwordsPrivate.PasswordUiEntry|undefined;
   private insecureCredentialsChangedListener_: CredentialsChangedListener|null =
       null;
-
-  constructor() {
-    super();
-    this.prefKey = 'profile.password_dismiss_compromised_alert';
-  }
 
   override connectedCallback() {
     super.connectedCallback();
@@ -131,11 +136,15 @@ export class CheckupDetailsSectionElement extends
         this.insecureCredentialsChangedListener_);
   }
 
-  override currentRouteChanged(route: Route, _: Route): void {
+  override currentRouteChanged(route: Route, oldRoute: Route): void {
     if (route.page !== Page.CHECKUP_DETAILS) {
       return;
     }
     this.insecurityType_ = route.details as unknown as CheckupSubpage;
+    // Focus back button when it's not direct navigation.
+    if (oldRoute !== undefined) {
+      this.$.backButton.focus();
+    }
   }
 
   private navigateBack_() {
@@ -150,6 +159,16 @@ export class CheckupDetailsSectionElement extends
         cred => cred.compromisedInfo!.compromiseTypes.some(type => {
           return this.getInsecurityType_().includes(type);
         }));
+    const insuecureCredentialsSorter =
+        (lhs: chrome.passwordsPrivate.PasswordUiEntry,
+         rhs: chrome.passwordsPrivate.PasswordUiEntry) => {
+          if ((this.getCurrentGroup_(lhs.id)?.name || '') >
+              (this.getCurrentGroup_(rhs.id)?.name || '')) {
+            return 1;
+          }
+          return -1;
+        };
+
     if (this.isCompromisedType()) {
       // Compromised credentials can be muted. Show muted credentials
       // separately.
@@ -158,6 +177,7 @@ export class CheckupDetailsSectionElement extends
       this.shownInsecureCredentials_ = insecureCredentialsForThisType.filter(
           cred => !cred.compromisedInfo!.isMuted);
     } else {
+      insecureCredentialsForThisType.sort(insuecureCredentialsSorter);
       this.shownInsecureCredentials_ = insecureCredentialsForThisType;
     }
 
@@ -167,7 +187,8 @@ export class CheckupDetailsSectionElement extends
       this.credentialsWithReusedPassword_ =
           await Promise.all(allReusedCredentials.map(
               async(credentials): Promise<ReusedPasswordInfo> => {
-                const reuseInfo = new ReusedPasswordInfo(credentials.entries);
+                const reuseInfo = new ReusedPasswordInfo(
+                    credentials.entries.sort(insuecureCredentialsSorter));
                 await reuseInfo.init();
                 return reuseInfo;
               }));
@@ -250,8 +271,8 @@ export class CheckupDetailsSectionElement extends
     return this.activeListItem_?.getShowHideButtonLabel() || '';
   }
 
-  private isMutingDisabledByPrefs_(): boolean {
-    return !!this.pref && this.pref.value === false;
+  private computeIsMutingDisabled_(): boolean {
+    return !this.getPref('profile.password_dismiss_compromised_alert').value;
   }
 
   private getMuteUnmuteLabel_(): string {
@@ -285,6 +306,8 @@ export class CheckupDetailsSectionElement extends
   private onChangePasswordClick_(event: CustomEvent<number>) {
     this.clickedChangePasswordIds_.add(event.detail);
     this.notifyPath('clickedChangePasswordIds_.size');
+    PasswordManagerImpl.getInstance().recordPasswordCheckInteraction(
+        PasswordCheckInteraction.CHANGE_PASSWORD);
   }
 
   private clickedChangePassword_(item: chrome.passwordsPrivate.PasswordUiEntry):

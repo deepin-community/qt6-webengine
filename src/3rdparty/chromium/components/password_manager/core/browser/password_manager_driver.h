@@ -32,12 +32,11 @@ class PasswordManagerInterface;
 
 // Interface that allows PasswordManager core code to interact with its driver
 // (i.e., obtain information from it and give information to it).
-class PasswordManagerDriver
-    : public base::SupportsWeakPtr<PasswordManagerDriver> {
+class PasswordManagerDriver {
  public:
 #if BUILDFLAG(IS_ANDROID)
-  using ShowVirtualKeyboard =
-      base::StrongAlias<class ShowVirtualKeyboardTag, bool>;
+  using ToShowVirtualKeyboard =
+      base::StrongAlias<class ToShowVirtualKeyboardTag, bool>;
 #endif
 
   PasswordManagerDriver() = default;
@@ -53,11 +52,6 @@ class PasswordManagerDriver
   // Fills forms matching |form_data|.
   virtual void SetPasswordFillData(
       const autofill::PasswordFormFillData& form_data) = 0;
-
-  // Notifies the driver that a password field that has no associated username.
-  // This is used as an instrumentation for DevTools.
-  virtual void PasswordFieldHasNoAssociatedUsername(
-      autofill::FieldRendererId password_element_renderer_id) = 0;
 
   // Informs the driver that there are no saved credentials in the password
   // store for the current page.
@@ -86,6 +80,11 @@ class PasswordManagerDriver
       autofill::FieldRendererId generation_element_id,
       const std::u16string& password) {}
 
+  // Notifies the driver that the focus should be advanced to the next input
+  // field after password fields (assuming that password fields are adjacent
+  // in account creation).
+  virtual void FocusNextFieldAfterPasswords() {}
+
   // Tells the driver to fill the form with the |username| and |password|.
   virtual void FillSuggestion(const std::u16string& username,
                               const std::u16string& password) = 0;
@@ -97,9 +96,11 @@ class PasswordManagerDriver
       const std::u16string& user_provided_credential) {}
 
 #if BUILDFLAG(IS_ANDROID)
-  // Informs the renderer that the Touch To Fill sheet has been closed.
-  // Indicates whether the virtual keyboard should be shown instead.
-  virtual void TouchToFillClosed(ShowVirtualKeyboard show_virtual_keyboard) {}
+  // Informs the renderer that the keyboard replacing surface (e.g. Touch To
+  // Fill sheet) has been closed. Indicates whether the virtual keyboard should
+  // be shown instead.
+  virtual void KeyboardReplacingSurfaceClosed(
+      ToShowVirtualKeyboard show_virtual_keyboard) {}
 
   // Triggers form submission on the last interacted web input element.
   virtual void TriggerFormSubmission() {}
@@ -116,12 +117,13 @@ class PasswordManagerDriver
   // Tells the driver to clear previewed password and username fields.
   virtual void ClearPreviewedForm() = 0;
 
-  // Updates the autofill availability state of the DOM node with
+  // Updates the autofill suggestion availability of the DOM node with
   // |generation_element_id|. It is critical for a11y to keep it updated
   // to make proper announcements.
   virtual void SetSuggestionAvailability(
-      autofill::FieldRendererId generation_element_id,
-      const autofill::mojom::AutofillState state) = 0;
+      autofill::FieldRendererId element_id,
+      autofill::mojom::AutofillSuggestionAvailability
+          suggestion_availability) = 0;
 
   // Returns the PasswordGenerationFrameHelper associated with this instance.
   virtual PasswordGenerationFrameHelper* GetPasswordGenerationHelper() = 0;
@@ -143,8 +145,8 @@ class PasswordManagerDriver
   // frame.
   virtual bool CanShowAutofillUi() const = 0;
 
-  // Returns the ax tree id associated with this driver.
-  virtual ::ui::AXTreeID GetAxTreeId() const = 0;
+  // Returns the frame ID of the frame associated with this driver.
+  virtual int GetFrameId() const = 0;
 
   // Returns the last committed URL of the frame.
   virtual const GURL& GetLastCommittedURL() const = 0;
@@ -153,6 +155,9 @@ class PasswordManagerDriver
   // corresponding HTML attributes. It is used only for debugging.
   virtual void AnnotateFieldsWithParsingResult(
       const autofill::ParsingResult& parsing_result) {}
+
+  // Get a WeakPtr to the instance.
+  virtual base::WeakPtr<PasswordManagerDriver> AsWeakPtr() = 0;
 };
 
 }  // namespace password_manager

@@ -449,7 +449,7 @@ void av1_count_overlappable_neighbors(const AV1_COMMON *cm, MACROBLOCKD *xd);
 #define MASK_MASTER_SIZE ((MAX_WEDGE_SIZE) << 1)
 #define MASK_MASTER_STRIDE (MASK_MASTER_SIZE)
 
-void av1_init_wedge_masks();
+void av1_init_wedge_masks(void);
 
 static INLINE const uint8_t *av1_get_contiguous_soft_mask(int8_t wedge_index,
                                                           int8_t wedge_sign,
@@ -481,12 +481,6 @@ void av1_build_intra_predictors_for_interintra(const AV1_COMMON *cm,
 void av1_combine_interintra(MACROBLOCKD *xd, BLOCK_SIZE bsize, int plane,
                             const uint8_t *inter_pred, int inter_stride,
                             const uint8_t *intra_pred, int intra_stride);
-
-int av1_allow_warp(const MB_MODE_INFO *const mbmi,
-                   const WarpTypesAllowed *const warp_types,
-                   const WarpedMotionParams *const gm_params,
-                   int build_for_obmc, const struct scale_factors *const sf,
-                   WarpedMotionParams *final_warp_params);
 
 #ifdef __cplusplus
 }  // extern "C"

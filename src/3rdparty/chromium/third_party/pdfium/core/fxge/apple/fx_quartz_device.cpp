@@ -13,7 +13,6 @@
 #include "core/fxge/cfx_path.h"
 #include "core/fxge/cfx_renderdevice.h"
 #include "core/fxge/dib/cfx_dibitmap.h"
-#include "core/fxge/freetype/fx_freetype.h"
 
 #ifndef CGFLOAT_IS_DOUBLE
 #error Expected CGFLOAT_IS_DOUBLE to be defined by CoreGraphics headers
@@ -33,8 +32,8 @@ void* CQuartz2D::CreateGraphics(const RetainPtr<CFX_DIBitmap>& pBitmap) {
   }
   CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
   CGContextRef context = CGBitmapContextCreate(
-      pBitmap->GetBuffer().data(), pBitmap->GetWidth(), pBitmap->GetHeight(), 8,
-      pBitmap->GetPitch(), colorSpace, bmpInfo);
+      pBitmap->GetWritableBuffer().data(), pBitmap->GetWidth(),
+      pBitmap->GetHeight(), 8, pBitmap->GetPitch(), colorSpace, bmpInfo);
   CGColorSpaceRelease(colorSpace);
   return context;
 }

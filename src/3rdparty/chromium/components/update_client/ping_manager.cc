@@ -11,7 +11,7 @@
 #include <utility>
 #include <vector>
 
-#include "base/check_op.h"
+#include "base/check.h"
 #include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/task/sequenced_task_runner.h"
@@ -78,11 +78,12 @@ void PingSender::SendPing(const Component& component,
     return;
   }
 
-  DCHECK(component.crx_component());
+  CHECK(component.crx_component());
 
   auto urls(config_->PingUrl());
-  if (component.crx_component()->requires_network_encryption)
+  if (component.crx_component()->requires_network_encryption) {
     RemoveUnsecureUrls(&urls);
+  }
 
   if (urls.empty()) {
     base::SequencedTaskRunner::GetCurrentDefault()->PostTask(

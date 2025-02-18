@@ -80,19 +80,11 @@
   "automationInternal": {
     "internal": true,
     "dependencies": ["manifest:automation"],
-    "contexts": ["blessed_extension"],
-    "disallow_for_service_workers": true
+    "contexts": ["blessed_extension"]
   },
   "automation": {
     "dependencies": ["manifest:automation"],
-    "contexts": ["blessed_extension"],
-    "disallow_for_service_workers": true
-  },
-  "automation.languageAnnotationForStringAttribute": {
-    "command_line_switch": "enable-experimental-accessibility-chromevox-sub-node-language-switching",
-    "channel": "dev",
-    "contexts": ["blessed_extension"],
-    "disallow_for_service_workers": true
+    "contexts": ["blessed_extension"]
   },
   "bluetooth": [{
     "dependencies": ["manifest:bluetooth"],
@@ -108,7 +100,7 @@
   "bluetoothLowEnergy": {
     "dependencies": ["manifest:bluetooth"],
     "contexts": ["blessed_extension"],
-    "platforms": ["chromeos", "linux"]
+    "platforms": ["chromeos", "lacros", "linux"]
   },
   "bluetoothPrivate": [{
     "dependencies": ["permission:bluetoothPrivate"],
@@ -215,7 +207,7 @@
   },
   "feedbackPrivate.readLogSource": [
     {
-      "platforms": ["chromeos"],
+      "platforms": ["chromeos", "lacros"],
       "session_types": ["kiosk"]
     },
     {
@@ -254,6 +246,15 @@
         "chrome://password-change/*",
         "chrome://lock-reauth/*"
       ]
+    }, {
+      // This feature is used by the Controlled Frame API and is specifically
+      // enabled by //chrome.
+      "internal": true,
+      "channel": "dev",
+      "contexts": ["web_page"],
+      // This feature is only enabled if the embedder's delegated check returns
+      // true.
+      "requires_delegated_availability_check": true
     }
   ],
   "hid": {
@@ -308,17 +309,6 @@
     "channel": "stable",
     "extension_types": ["extension", "legacy_packaged_app", "platform_app"]
   },
-  "management.canInstallReplacementAndroidApp": {
-    "dependencies": ["manifest:replacement_android_app"],
-    // TODO(jshikaram): add test coverage before trunk promotion.
-    "channel": "trunk",
-    "extension_types": ["platform_app"]
-  },
-  "management.installReplacementAndroidApp": {
-    "dependencies": ["manifest:replacement_android_app"],
-    "channel": "trunk",
-    "extension_types": ["platform_app"]
-  },
   "management.installReplacementWebApp": {
     "dependencies": ["manifest:replacement_web_app"],
     "channel": "stable",
@@ -342,10 +332,11 @@
     "channel": "stable",
     "contexts": ["webui"],
     "matches": [
-      "chrome://apps/",
+      "chrome://apps/*",
       "chrome://bookmarks/*",
       "chrome://bookmarks-side-panel.top-chrome/*",
       "chrome://customize-chrome-side-panel.top-chrome/*",
+      "chrome://shopping-insights-side-panel.top-chrome/*",
       "chrome://download-shelf.top-chrome/*",
       "chrome://eche-app/*",
       "chrome://extensions/*",
@@ -363,7 +354,10 @@
       "chrome://tab-search.top-chrome/*",
       "chrome://tab-strip.top-chrome/*",
       "chrome://welcome/*",
-      "chrome://app-settings/*"
+      "chrome://vc-background/*",
+      "chrome://app-settings/*",
+      "chrome://compose/*",
+      "chrome://search-engine-choice/*"
     ]
   }, {
     "channel": "stable",
@@ -371,7 +365,9 @@
     "matches": [
       "chrome-untrusted://help-app/*",
       "chrome-untrusted://media-app/*",
-      "chrome-untrusted://projector/*"
+      "chrome-untrusted://mako/*",
+      "chrome-untrusted://projector/*",
+      "chrome-untrusted://read-anything-side-panel.top-chrome/*"
     ]
   }],
   "metricsPrivateIndividualApis": {
@@ -416,6 +412,7 @@
     "channel": "stable",
     "contexts": ["webui_untrusted"],
     "matches": [
+      "chrome://apps/*",
       "chrome-untrusted://demo-mode-app/*"
     ]
   },
@@ -471,6 +468,11 @@
       "chrome://os-settings/*"
     ]
   }],
+  "odfsConfigPrivate": {
+    "dependencies": ["permission:odfsConfigPrivate"],
+    "contexts": ["blessed_extension"],
+    "feature_flag": "ApiOdfsConfigPrivate"
+  },
   "offscreen": {
     "dependencies": ["permission:offscreen"],
     "contexts": ["blessed_extension"]
@@ -478,6 +480,9 @@
   "power": {
     "dependencies": ["permission:power"],
     "contexts": ["blessed_extension"]
+  },
+  "power.reportActivity": {
+    "platforms": ["chromeos", "lacros"]
   },
   "printerProvider": {
     "dependencies": ["permission:printerProvider"],
@@ -525,6 +530,7 @@
       "lock_screen_extension",
       "offscreen_extension",
       "unblessed_extension",
+      "user_script",
       "web_page"
     ],
     "matches": ["<all_urls>"]
@@ -538,6 +544,10 @@
   }],
   "runtime.connectNative": {
     "dependencies": ["permission:nativeMessaging"],
+    "contexts": ["blessed_extension"]
+  },
+  "runtime.getContexts": {
+    "min_manifest_version": 3,
     "contexts": ["blessed_extension"]
   },
   "runtime.getURL": {
@@ -569,6 +579,7 @@
       "lock_screen_extension",
       "offscreen_extension",
       "unblessed_extension",
+      "user_script",
       "content_script"
     ]
   },
@@ -583,12 +594,19 @@
     "dependencies": ["permission:nativeMessaging"],
     "contexts": ["blessed_extension"]
   },
+  "runtime.onUserScriptConnect": {
+    // NOTE: We can readily open this up to offscreen extensions and
+    // lockscreen extensions, if there's desire. For now, limit it.
+    "contexts": ["blessed_extension"],
+    "min_manifest_version": 3
+  },
   "runtime.onMessage": {
     "contexts": [
       "blessed_extension",
       "lock_screen_extension",
       "offscreen_extension",
       "unblessed_extension",
+      "user_script",
       "content_script"
     ]
   },
@@ -599,6 +617,12 @@
       "offscreen_extension"
     ]
   },
+  "runtime.onUserScriptMessage": {
+    // NOTE: We can readily open this up to offscreen extensions and
+    // lockscreen extensions, if there's desire. For now, limit it.
+    "contexts": ["blessed_extension"],
+    "min_manifest_version": 3
+  },
   "runtime.sendMessage": [{
     // Everything except WebUI.
     "contexts": [
@@ -608,6 +632,7 @@
       "lock_screen_extension",
       "offscreen_extension",
       "unblessed_extension",
+      "user_script",
       "web_page"
     ],
     "matches": ["<all_urls>"]
@@ -713,7 +738,8 @@
       "content_script",
       "lock_screen_extension",
       "offscreen_extension",
-      "unblessed_extension"
+      "unblessed_extension",
+      "user_script"
     ]
   }, {
     "channel": "stable",
@@ -722,7 +748,7 @@
       "chrome://extensions/*",
       // System Web App version of File Manager.
       "chrome://file-manager/*",
-      "chrome://test/*"
+      "chrome://webui-test/*"
     ]
   }, {
     "channel": "stable",
@@ -738,6 +764,12 @@
   "usb": {
     "dependencies": ["permission:usb"],
     "contexts": ["blessed_extension"]
+  },
+  "userScripts": {
+    "dependencies": [ "permission:userScripts" ],
+    "contexts": [ "blessed_extension" ],
+    "developer_mode_only": true,
+    "feature_flag": "ApiUserScripts"
   },
   "virtualKeyboard": {
     "dependencies": ["permission:virtualKeyboard"],
@@ -773,6 +805,15 @@
       "chrome://password-change/*",
       "chrome://lock-reauth/*"
     ]
+  }, {
+    // This feature is used by the Controlled Frame API and is specifically
+    // enabled by //chrome.
+    "internal": true,
+    "channel": "dev",
+    "contexts": ["web_page"],
+    // This feature is only enabled if the embedder's delegated check returns
+    // true.
+    "requires_delegated_availability_check": true
   }],
   "webViewInternal": [{
     "internal": true,
@@ -795,6 +836,15 @@
       "chrome://password-change/*",
       "chrome://lock-reauth/*"
     ]
+  }, {
+    // This feature is used by the Controlled Frame API and is specifically
+    // enabled by //chrome.
+    "internal": true,
+    "channel": "dev",
+    "contexts": ["web_page"],
+    // This feature is only enabled if the embedder's delegated check returns
+    // true.
+    "requires_delegated_availability_check": true
   }],
   "webViewRequest": [{
     "dependencies": ["permission:webview"],

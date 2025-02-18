@@ -6,16 +6,17 @@
 #define CONTENT_BROWSER_RENDERER_HOST_CROSS_ORIGIN_OPENER_POLICY_STATUS_H_
 
 #include <memory>
+#include <optional>
 
 #include "base/memory/raw_ptr.h"
 #include "base/scoped_observation.h"
+#include "content/browser/renderer_host/coop_swap_result.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_process_host_observer.h"
 #include "services/network/public/cpp/cross_origin_opener_policy.h"
 #include "services/network/public/mojom/blocked_by_response_reason.mojom.h"
 #include "services/network/public/mojom/content_security_policy.mojom.h"
 #include "services/network/public/mojom/url_response_head.mojom.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace net {
 class IsolationInfo;
@@ -28,19 +29,6 @@ class FrameTreeNode;
 class NavigationRequest;
 class StoragePartition;
 struct ChildProcessTerminationInfo;
-
-enum class CoopSwapResult {
-  // Indicates that no BrowsingContext group swap is required, based on COOP
-  // values.
-  kNoSwap,
-  // Indicates that a BrowsingContext group swap is required, but that we should
-  // use a BrowsingContext group that is "related", preserving restricted
-  // openers.
-  kSwapRelated,
-  // Indicates that a BrowsingContext group swap is required, and that should
-  // sever all links between the two BrowsingContext groups, opener, names, etc.
-  kSwap
-};
 
 // Helper function that returns whether the BrowsingInstance should change
 // following COOP rules defined in:
@@ -65,7 +53,7 @@ class CrossOriginOpenerPolicyStatus : public RenderProcessHostObserver {
   // Sanitize the COOP header from the `response`.
   // Return an error, and swap browsing context group when COOP is used on
   // sandboxed popups.
-  absl::optional<network::mojom::BlockedByResponseReason> SanitizeResponse(
+  std::optional<network::mojom::BlockedByResponseReason> SanitizeResponse(
       network::mojom::URLResponseHead* response);
 
   // Called when receiving a redirect or the final response.

@@ -7,6 +7,8 @@ load("//lib/builder_config.star", "builder_config")
 load("//lib/builders.star", "os", "reclient")
 load("//lib/ci.star", "ci")
 load("//lib/consoles.star", "consoles")
+load("//lib/gn_args.star", "gn_args")
+load("//lib/builder_health_indicators.star", "health_spec")
 
 ci.defaults.set(
     executable = ci.DEFAULT_EXECUTABLE,
@@ -15,10 +17,12 @@ ci.defaults.set(
     cores = 8,
     os = os.LINUX_DEFAULT,
     execution_timeout = ci.DEFAULT_EXECUTION_TIMEOUT,
+    health_spec = health_spec.DEFAULT,
     priority = ci.DEFAULT_FYI_PRIORITY,
     reclient_instance = reclient.instance.DEFAULT_TRUSTED,
     reclient_jobs = reclient.jobs.DEFAULT,
     service_account = ci.DEFAULT_SERVICE_ACCOUNT,
+    shadow_service_account = ci.DEFAULT_SHADOW_SERVICE_ACCOUNT,
 )
 
 consoles.console_view(
@@ -26,56 +30,6 @@ consoles.console_view(
     ordering = {
         None: ["android", "memory", "weblayer", "webview"],
     },
-)
-
-ci.builder(
-    name = "Android ASAN (dbg) (reclient)",
-    schedule = "triggered",  # triggered manually via Scheduler UI
-    builder_spec = builder_config.builder_spec(
-        gclient_config = builder_config.gclient_config(
-            config = "chromium",
-            apply_configs = ["android"],
-        ),
-        chromium_config = builder_config.chromium_config(
-            config = "android_clang",
-            apply_configs = ["errorprone"],
-            build_config = builder_config.build_config.DEBUG,
-            target_bits = 32,
-            target_platform = builder_config.target_platform.ANDROID,
-        ),
-        android_config = builder_config.android_config(config = "clang_builder_mb"),
-        build_gs_bucket = "chromium-android-archive",
-    ),
-    console_view_entry = consoles.console_view_entry(
-        category = "builder|arm",
-        short_name = "san",
-    ),
-    # Higher build timeout since dbg ASAN builds can take a while on a clobber
-    # build.
-    execution_timeout = 4 * time.hour,
-)
-
-ci.builder(
-    name = "android-pie-arm64-wpt-rel-non-cq",
-    builder_spec = builder_config.builder_spec(
-        gclient_config = builder_config.gclient_config(
-            config = "chromium",
-            apply_configs = ["android"],
-        ),
-        chromium_config = builder_config.chromium_config(
-            config = "android",
-            apply_configs = ["mb"],
-            build_config = builder_config.build_config.RELEASE,
-            target_bits = 64,
-            target_platform = builder_config.target_platform.ANDROID,
-        ),
-        android_config = builder_config.android_config(config = "main_builder"),
-        build_gs_bucket = "chromium-android-archive",
-    ),
-    console_view_entry = consoles.console_view_entry(
-        category = "wpt|webview",
-        short_name = "p-arm64",
-    ),
 )
 
 ci.builder(
@@ -95,10 +49,60 @@ ci.builder(
         android_config = builder_config.android_config(config = "x86_builder"),
         build_gs_bucket = "chromium-android-archive",
     ),
+    gn_args = gn_args.config(
+        configs = [
+            "android_builder",
+            "release_builder",
+            "reclient",
+            "minimal_symbols",
+            "x86",
+            "strip_debug_info",
+            "android_fastbuild",
+            "webview_monochrome",
+            "webview_shell",
+        ],
+    ),
     console_view_entry = consoles.console_view_entry(
         category = "wpt|chrome",
         short_name = "p-x86",
     ),
+)
+
+ci.builder(
+    name = "android-chrome-pie-x86-wpt-android-specific",
+    builder_spec = builder_config.builder_spec(
+        gclient_config = builder_config.gclient_config(
+            config = "chromium",
+            apply_configs = ["android"],
+        ),
+        chromium_config = builder_config.chromium_config(
+            config = "android",
+            apply_configs = ["mb"],
+            build_config = builder_config.build_config.RELEASE,
+            target_bits = 32,
+            target_platform = builder_config.target_platform.ANDROID,
+        ),
+        android_config = builder_config.android_config(config = "x86_builder"),
+        build_gs_bucket = "chromium-android-archive",
+    ),
+    gn_args = gn_args.config(
+        configs = [
+            "android_builder",
+            "release_builder",
+            "reclient",
+            "minimal_symbols",
+            "x86",
+            "strip_debug_info",
+            "android_fastbuild",
+            "webview_monochrome",
+            "webview_shell",
+        ],
+    ),
+    console_view_entry = consoles.console_view_entry(
+        category = "wpt|chrome",
+        short_name = "p-x86",
+    ),
+    experimental = True,
 )
 
 ci.builder(
@@ -117,6 +121,19 @@ ci.builder(
         ),
         android_config = builder_config.android_config(config = "x86_builder"),
         build_gs_bucket = "chromium-android-archive",
+    ),
+    gn_args = gn_args.config(
+        configs = [
+            "android_builder",
+            "release_builder",
+            "reclient",
+            "minimal_symbols",
+            "x86",
+            "strip_debug_info",
+            "android_fastbuild",
+            "webview_monochrome",
+            "webview_shell",
+        ],
     ),
     console_view_entry = consoles.console_view_entry(
         category = "wpt|webview",
@@ -218,6 +235,95 @@ ci.builder(
     execution_timeout = 4 * time.hour,
 )
 
+# TODO(https://crbug.com/1431581): Remove after experimental is done.
+ci.builder(
+    name = "android-12l-x64-fyi-dbg",
+    builder_spec = builder_config.builder_spec(
+        gclient_config = builder_config.gclient_config(
+            config = "chromium",
+            apply_configs = [
+                "android",
+            ],
+        ),
+        chromium_config = builder_config.chromium_config(
+            config = "android",
+            apply_configs = [
+                "download_xr_test_apks",
+            ],
+            build_config = builder_config.build_config.DEBUG,
+            target_bits = 64,
+            target_platform = builder_config.target_platform.ANDROID,
+        ),
+        android_config = builder_config.android_config(
+            config = "x64_builder_mb",
+        ),
+        build_gs_bucket = "chromium-android-archive",
+    ),
+    gn_args = gn_args.config(
+        configs = [
+            "android_builder",
+            "debug_static_builder",
+            "reclient",
+            "x64",
+            "webview_trichrome",
+            "webview_shell",
+        ],
+    ),
+    console_view_entry = consoles.console_view_entry(
+        category = "emulator|x64|dbg",
+        short_name = "12L",
+    ),
+    # Android x64 builds take longer than x86 builds to compile
+    # So they need longer timeouts
+    # Matching the execution time out of the android-12-x64-rel
+    execution_timeout = 4 * time.hour,
+)
+
+# TODO(https://crbug.com/1431581): Remove after experimental is done.
+ci.builder(
+    name = "android-13-x64-fyi-rel",
+    builder_spec = builder_config.builder_spec(
+        gclient_config = builder_config.gclient_config(
+            config = "chromium",
+            apply_configs = [
+                "android",
+            ],
+        ),
+        chromium_config = builder_config.chromium_config(
+            config = "android",
+            build_config = builder_config.build_config.RELEASE,
+            target_bits = 64,
+            target_platform = builder_config.target_platform.ANDROID,
+        ),
+        android_config = builder_config.android_config(
+            config = "x64_builder_mb",
+        ),
+        build_gs_bucket = "chromium-android-archive",
+    ),
+    gn_args = gn_args.config(
+        configs = [
+            "android_builder",
+            "release_builder",
+            "reclient",
+            "minimal_symbols",
+            "x64",
+            "strip_debug_info",
+            "android_fastbuild",
+            "webview_trichrome",
+            "no_secondary_abi",
+            "webview_shell",
+        ],
+    ),
+    console_view_entry = consoles.console_view_entry(
+        category = "emulator|x64|rel",
+        short_name = "13",
+    ),
+    # Android x64 builds take longer than x86 builds to compile
+    # So they need longer timeouts
+    # Matching the execution time out of the android-12-x64-rel
+    execution_timeout = 4 * time.hour,
+)
+
 ci.builder(
     name = "android-annotator-rel",
     builder_spec = builder_config.builder_spec(
@@ -234,6 +340,17 @@ ci.builder(
         ),
         android_config = builder_config.android_config(config = "main_builder"),
         build_gs_bucket = "chromium-android-archive",
+    ),
+    gn_args = gn_args.config(
+        configs = [
+            "android_builder",
+            "release_builder",
+            "reclient",
+            "minimal_symbols",
+            "arm64",
+            "strip_debug_info",
+            "webview_google",
+        ],
     ),
     console_view_entry = consoles.console_view_entry(
         category = "network|traffic|annotations",
@@ -348,7 +465,47 @@ ci.builder(
             config = "x86_builder",
         ),
     ),
+    gn_args = gn_args.config(
+        configs = [
+            "android_builder",
+            "cronet_android",
+            "release_builder",
+            "reclient",
+            "minimal_symbols",
+            "x86",
+            "clang",
+            "asan",
+            "strip_debug_info",
+        ],
+    ),
     console_view_entry = consoles.console_view_entry(
         category = "cronet|asan",
     ),
+    contact_team_email = "cronet-team@google.com",
+)
+
+ci.builder(
+    name = "android-webview-13-x64-dbg-hostside",
+    description_html = (
+        "This temporary builder/tester runs WebView host-driven CTS.<br/>" +
+        "This builder should be removed after adding the test suite to" +
+        "android-12-x64-rel required CQ builder. b/267730567."
+    ),
+    builder_spec = builder_config.copy_from("ci/Android x64 Builder All Targets (dbg)"),
+    gn_args = gn_args.config(
+        configs = [
+            "android_builder",
+            "debug_static_builder",
+            "reclient",
+            "x64",
+            "webview_trichrome",
+            "webview_shell",
+        ],
+    ),
+    console_view_entry = consoles.console_view_entry(
+        category = "builder|x86",
+        short_name = "64",
+    ),
+    contact_team_email = "woa-engprod@google.com",
+    execution_timeout = 7 * time.hour,
 )

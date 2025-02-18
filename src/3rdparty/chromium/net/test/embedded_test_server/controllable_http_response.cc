@@ -8,7 +8,7 @@
 #include "base/functional/bind.h"
 #include "base/strings/stringprintf.h"
 #include "base/task/single_thread_task_runner.h"
-#include "base/trace_event/typed_macros.h"
+#include "net/base/tracing.h"
 #include "net/test/embedded_test_server/http_response.h"
 
 namespace net::test_server {
@@ -146,8 +146,7 @@ std::unique_ptr<HttpResponse> ControllableHttpResponse::RequestHandler(
 
   if (request.relative_url == relative_url ||
       (relative_url_is_prefix &&
-       base::StartsWith(request.relative_url, relative_url,
-                        base::CompareCase::SENSITIVE))) {
+       request.relative_url.starts_with(relative_url))) {
     *available = false;
     return std::make_unique<ControllableHttpResponse::Interceptor>(
         controller, controller_task_runner, request);

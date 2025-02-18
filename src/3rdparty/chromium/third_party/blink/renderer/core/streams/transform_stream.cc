@@ -19,7 +19,6 @@
 #include "third_party/blink/renderer/core/streams/writable_stream_default_controller.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
-#include "third_party/blink/renderer/platform/bindings/to_v8.h"
 #include "third_party/blink/renderer/platform/bindings/v8_binding.h"
 #include "third_party/blink/renderer/platform/bindings/v8_throw_exception.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
@@ -46,7 +45,7 @@ class TransformStream::FlushAlgorithm final : public StreamAlgorithm {
                                script_state->GetIsolate(), "invalid realm"));
     }
     ExceptionState exception_state(script_state->GetIsolate(),
-                                   ExceptionState::kUnknownContext, "", "");
+                                   ExceptionContextType::kUnknown, "", "");
     ScriptPromise promise;
     {
       // This is needed because the realm of the transformer can be different
@@ -98,14 +97,9 @@ class TransformStream::TransformAlgorithm final : public StreamAlgorithm {
                                script_state->GetIsolate(), "invalid realm"));
     }
     ExceptionState exception_state(script_state->GetIsolate(),
-                                   ExceptionState::kUnknownContext, "", "");
-    ScriptPromise promise;
-    {
-      // This is needed because the realm of the transformer can be different
-      // from the realm of the transform stream.
-      ScriptState::Scope scope(transformer_script_state);
-      promise = transformer_->Transform(argv[0], controller_, exception_state);
-    }
+                                   ExceptionContextType::kUnknown, "", "");
+    ScriptPromise promise =
+        transformer_->Transform(argv[0], controller_, exception_state);
     if (exception_state.HadException()) {
       auto exception = exception_state.GetException();
       exception_state.ClearException();
@@ -229,15 +223,15 @@ TransformStream* TransformStream::Create(
   auto* stream = MakeGarbageCollected<TransformStream>();
 
   // 8. Let startPromise be a new promise.
-  auto* start_promise =
-      MakeGarbageCollected<StreamPromiseResolver>(script_state);
+  auto* start_promise = MakeGarbageCollected<StreamPromiseResolver>(
+      script_state, exception_state);
 
   // 9. Perform ! InitializeTransformStream(stream, startPromise,
   //    writableHighWaterMark, writableSizeAlgorithm, readableHighWaterMark,
   //    readableSizeAlgorithm).
   Initialize(script_state, stream, start_promise, writable_high_water_mark,
              writable_size_algorithm, readable_high_water_mark,
-             readable_size_algorithm);
+             readable_size_algorithm, exception_state);
 
   // 10. Let controller be ObjectCreate(the original value of
   //     TransformStreamDefaultController's prototype property).
@@ -245,7 +239,7 @@ TransformStream* TransformStream::Create(
 
   // 11. Perform ! SetUpTransformStreamDefaultController(stream, controller,
   //     transformAlgorithm, flushAlgorithm).
-  TransformStreamDefaultController::SetUp(stream, controller,
+  TransformStreamDefaultController::SetUp(script_state, stream, controller,
                                           transform_algorithm, flush_algorithm);
 
   // 12. Let startResult be the result of performing startAlgorithm. (This may
@@ -729,15 +723,15 @@ void TransformStream::InitInternal(ScriptState* script_state,
   }
 
   // 15. Let startPromise be a new promise.
-  auto* start_promise =
-      MakeGarbageCollected<StreamPromiseResolver>(script_state);
+  auto* start_promise = MakeGarbageCollected<StreamPromiseResolver>(
+      script_state, exception_state);
 
   // 16. Perform ! InitializeTransformStream(this, startPromise,
   //     writableHighWaterMark, writableSizeAlgorithm, readableHighWaterMark,
   //     readableSizeAlgorithm).
   Initialize(script_state, this, start_promise, writable_high_water_mark,
              writable_size_algorithm, readable_high_water_mark,
-             readable_size_algorithm);
+             readable_size_algorithm, exception_state);
 
   // 17. Perform ? SetUpTransformStreamDefaultControllerFromTransformer(this,
   //     transformer).
@@ -764,17 +758,14 @@ void TransformStream::InitInternal(ScriptState* script_state,
   start_promise->Resolve(script_state, start_result);
 }
 
-void TransformStream::Initialize(
-    ScriptState* script_state,
-    TransformStream* stream,
-    StreamPromiseResolver* start_promise,
-    double writable_high_water_mark,
-    StrategySizeAlgorithm* writable_size_algorithm,
-    double readable_high_water_mark,
-    StrategySizeAlgorithm* readable_size_algorithm) {
-  ExceptionState exception_state(script_state->GetIsolate(),
-                                 ExceptionState::kUnknownContext, "", "");
-
+void TransformStream::Initialize(ScriptState* script_state,
+                                 TransformStream* stream,
+                                 StreamPromiseResolver* start_promise,
+                                 double writable_high_water_mark,
+                                 StrategySizeAlgorithm* writable_size_algorithm,
+                                 double readable_high_water_mark,
+                                 StrategySizeAlgorithm* readable_size_algorithm,
+                                 ExceptionState& exception_state) {
   // https://streams.spec.whatwg.org/#initialize-transform-stream
   // 1. Let startAlgorithm be an algorithm that returns startPromise.
   auto* start_algorithm =
@@ -832,7 +823,8 @@ void TransformStream::Initialize(
   DCHECK(stream->had_backpressure_);
   DCHECK(!stream->backpressure_change_promise_);
   stream->backpressure_change_promise_ =
-      MakeGarbageCollected<StreamPromiseResolver>(script_state);
+      MakeGarbageCollected<StreamPromiseResolver>(script_state,
+                                                  exception_state);
 
   // 11. Set stream.[[transformStreamController]] to undefined.
   // (This is set by the constructor; just verify the value here).

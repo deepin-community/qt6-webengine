@@ -16,6 +16,8 @@
 #include "base/timer/elapsed_timer.h"
 #include "base/trace_event/trace_event.h"
 #include "ui/gfx/linux/drm_util_linux.h"
+// For standard Linux/system libgbm
+#include "ui/gfx/linux/gbm_defines.h"
 #include "ui/gfx/linux/gbm_device.h"
 #include "ui/gfx/linux/gbm_util.h"
 #include "ui/gfx/presentation_feedback.h"
@@ -258,6 +260,11 @@ void DrmThread::IsDeviceAtomic(gfx::AcceleratedWidget widget, bool* is_atomic) {
   *is_atomic = drm_device && drm_device->is_atomic();
 }
 
+void DrmThread::SetDrmModifiersFilter(
+    std::unique_ptr<DrmModifiersFilter> filter) {
+  screen_manager_->SetDrmModifiersFilter(std::move(filter));
+}
+
 void DrmThread::CreateWindow(gfx::AcceleratedWidget widget,
                              const gfx::Rect& initial_bounds) {
   TRACE_EVENT0("drm", "DrmThread::CreateWindow");
@@ -288,7 +295,7 @@ void DrmThread::SetWindowBounds(gfx::AcceleratedWidget widget,
 
 void DrmThread::SetCursor(gfx::AcceleratedWidget widget,
                           const std::vector<SkBitmap>& bitmaps,
-                          const gfx::Point& location,
+                          const absl::optional<gfx::Point>& location,
                           base::TimeDelta frame_delay) {
   TRACE_EVENT0("drm", "DrmThread::SetCursor");
   screen_manager_->GetWindow(widget)->SetCursor(bitmaps, location, frame_delay);
@@ -458,18 +465,34 @@ void DrmThread::SetHDCPState(int64_t display_id,
       display_manager_->SetHDCPState(display_id, state, protection_method));
 }
 
+void DrmThread::SetColorTemperatureAdjustment(
+    int64_t display_id,
+    const display::ColorTemperatureAdjustment& cta) {
+  display_manager_->SetColorTemperatureAdjustment(display_id, cta);
+}
+
+void DrmThread::SetColorCalibration(
+    int64_t display_id,
+    const display::ColorCalibration& calibration) {
+  display_manager_->SetColorCalibration(display_id, calibration);
+}
+
+void DrmThread::SetGammaAdjustment(int64_t display_id,
+                                   const display::GammaAdjustment& adjustment) {
+  display_manager_->SetGammaAdjustment(display_id, adjustment);
+}
+
 void DrmThread::SetColorMatrix(int64_t display_id,
                                const std::vector<float>& color_matrix) {
   TRACE_EVENT0("drm", "DrmThread::SetColorMatrix");
   display_manager_->SetColorMatrix(display_id, color_matrix);
 }
 
-void DrmThread::SetGammaCorrection(
-    int64_t display_id,
-    const std::vector<display::GammaRampRGBEntry>& degamma_lut,
-    const std::vector<display::GammaRampRGBEntry>& gamma_lut) {
+void DrmThread::SetGammaCorrection(int64_t display_id,
+                                   const display::GammaCurve& degamma,
+                                   const display::GammaCurve& gamma) {
   TRACE_EVENT0("drm", "DrmThread::SetGammaCorrection");
-  display_manager_->SetGammaCorrection(display_id, degamma_lut, gamma_lut);
+  display_manager_->SetGammaCorrection(display_id, degamma, gamma);
 }
 
 void DrmThread::SetPrivacyScreen(int64_t display_id,

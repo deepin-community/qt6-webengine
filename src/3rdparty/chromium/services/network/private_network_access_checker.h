@@ -16,6 +16,7 @@
 #include "services/network/public/mojom/ip_address_space.mojom-forward.h"
 #include "services/network/public/mojom/network_context.mojom-forward.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
+#include "url/origin.h"
 
 class GURL;
 
@@ -115,6 +116,10 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) PrivateNetworkAccessChecker {
   // Returns `kUnknown` if `client_security_state()` is nullptr.
   mojom::IPAddressSpace ClientAddressSpace() const;
 
+  static bool NeedPermission(const GURL& url,
+                             bool is_web_secure_context,
+                             mojom::IPAddressSpace target_address_space);
+
  private:
   // Returns whether this instance has a client security state containing a
   // policy set to `kPreflightWarn`.
@@ -173,7 +178,11 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) PrivateNetworkAccessChecker {
   // Set by `Check()`, reset by `ResetForRedirect()`.
   absl::optional<mojom::IPAddressSpace> response_address_space_;
 
-  const bool is_same_origin_;
+  // The request initiator origin.
+  absl::optional<url::Origin> request_initiator_;
+
+  // The request is from/to a potentially trustworthy and same origin.
+  bool is_potentially_trustworthy_same_origin_;
 };
 
 }  // namespace network

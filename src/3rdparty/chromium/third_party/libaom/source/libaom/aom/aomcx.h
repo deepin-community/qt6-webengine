@@ -208,14 +208,14 @@ enum aome_enc_control_id {
    * encoding process, values greater than 0 will increase encoder speed at
    * the expense of quality.
    *
-   * Valid range: 0..10. 0 runs the slowest, and 10 runs the fastest;
+   * Valid range: 0..11. 0 runs the slowest, and 11 runs the fastest;
    * quality improves as speed decreases (since more compression
    * possibilities are explored).
    *
-   * NOTE: 10 is only allowed in AOM_USAGE_REALTIME. In AOM_USAGE_GOOD_QUALITY
-   * and AOM_USAGE_ALL_INTRA, 9 is the highest allowed value. However,
-   * AOM_USAGE_GOOD_QUALITY treats 7..9 the same as 6. Also, AOM_USAGE_REALTIME
-   * treats 0..4 the same as 5.
+   * NOTE: 10 and 11 are only allowed in AOM_USAGE_REALTIME. In
+   * AOM_USAGE_GOOD_QUALITY and AOM_USAGE_ALL_INTRA, 9 is the highest allowed
+   * value. However, AOM_USAGE_GOOD_QUALITY treats 7..9 the same as 6. Also,
+   * AOM_USAGE_REALTIME treats 0..4 the same as 5.
    */
   AOME_SET_CPUUSED = 13,
 
@@ -616,11 +616,14 @@ enum aome_enc_control_id {
    * point (OP), int parameter
    * Possible values are in the form of "ABxy".
    *  - AB: OP index.
-   *  - xy: Target level index for the OP. Can be values 0~27 (corresponding to
-   *    level 2.0 ~ 8.3, note levels 2.2, 2.3, 3.2, 3.3, 4.2 & 4.3 are
-   *    undefined, and that levels 7.x and 8.x are in draft status), 31
-   *    (maximum parameters level, no level-based constraints) or 32 (keep
-   *    level stats only for level monitoring).
+   *  - xy: Target level index for the OP. Possible values are:
+   *    + 0~27: corresponding to level 2.0 ~ 8.3. Note:
+   *      > Levels 2.2 (2), 2.3 (3), 3.2 (6), 3.3 (7), 4.2 (10) & 4.3 (11) are
+   *        undefined.
+   *      > Levels 7.x and 8.x (20~27) are in draft status, available under the
+   *        config flag CONFIG_CWG_C013.
+   *    + 31: maximum parameters level, no level-based constraints.
+   *    + 32: keep level stats only for level monitoring.
    *
    * E.g.:
    * - "0" means target level index 0 (2.0) for the 0th OP;
@@ -1478,23 +1481,63 @@ enum aome_enc_control_id {
    */
   AV1E_ENABLE_SB_QP_SWEEP = 158,
 
-  /*!\brief Codec control to set quantizer for the next frame.
+  /*!\brief Codec control to set quantizer for the next frame, int parameter.
+   *
+   * - Valid range [0, 63]
    *
    * This will turn off cyclic refresh. Only applicable to 1-pass.
    */
   AV1E_SET_QUANTIZER_ONE_PASS = 159,
 
   /*!\brief Codec control to enable the rate distribution guided delta
-   * quantization in all intra mode. It requires --deltaq-mode=3, also
-   * an input file which contains rate distribution for each 16x16 block,
-   * passed in by --rate-distribution-info=rate_distribution.csv.
+   * quantization in all intra mode, unsigned int parameter
+   *
+   * - 0 = disable (default)
+   * - 1 = enable
+   *
+   * \attention This feature requires --deltaq-mode=3, also an input file
+   *            which contains rate distribution for each 16x16 block,
+   *            passed in by --rate-distribution-info=rate_distribution.txt.
    */
   AV1E_ENABLE_RATE_GUIDE_DELTAQ = 160,
 
   /*!\brief Codec control to set the input file for rate distribution used
-   * in all intra mode. It requires --enable-rate-guide-deltaq=1.
+   * in all intra mode, const char * parameter
+   * The input should be the name of a text file, which
+   * contains (rows x cols) float values separated by space.
+   * Each float value represent the number of bits for each 16x16 block.
+   * rows = (frame_height + 15) / 16
+   * cols = (frame_width + 15) / 16
+   *
+   * \attention This feature requires --enable-rate-guide-deltaq=1.
    */
   AV1E_SET_RATE_DISTRIBUTION_INFO = 161,
+
+  /*!\brief Codec control to get the CDEF strength for Y / luma plane,
+   * int * parameter.
+   * Returns an integer array of CDEF_MAX_STRENGTHS elements.
+   */
+  AV1E_GET_LUMA_CDEF_STRENGTH = 162,
+
+  /*!\brief Codec control to set the target bitrate in kilobits per second,
+   * unsigned int parameter. For 1 pass CBR mode, single layer encoding.
+   * This controls replaces the call aom_codec_enc_config_set(&codec, &cfg)
+   * when only target bitrate is changed, and so is much cheaper as it
+   * bypasses a lot of unneeded code checks.
+   */
+  AV1E_SET_BITRATE_ONE_PASS_CBR = 163,
+
+  /*!\brief Codec control to set the maximum number of consecutive frame drops
+   * allowed for the frame dropper in 1 pass CBR mode, int parameter. Value of
+   * zero has no effect.
+   */
+  AV1E_SET_MAX_CONSEC_FRAME_DROP_CBR = 164,
+
+  /*!\brief Codec control to set the frame drop mode for SVC,
+   * unsigned int parameter. The valid values are constants of the
+   * AOM_SVC_FRAME_DROP_MODE enum: AOM_LAYER_DROP or AOM_FULL_SUPERFRAME_DROP.
+   */
+  AV1E_SET_SVC_FRAME_DROP_MODE = 165,
 
   // Any new encoder control IDs should be added above.
   // Maximum allowed encoder control ID is 229.
@@ -1596,6 +1639,7 @@ typedef enum {
   AOM_TUNE_VMAF_MAX_GAIN = 6,
   AOM_TUNE_VMAF_NEG_MAX_GAIN = 7,
   AOM_TUNE_BUTTERAUGLI = 8,
+  AOM_TUNE_VMAF_SALIENCY_MAP = 9,
 } aom_tune_metric;
 
 /*!\brief Distortion metric to use for RD optimization.
@@ -1625,7 +1669,12 @@ typedef struct aom_svc_layer_id {
   int temporal_layer_id; /**< Temporal layer ID */
 } aom_svc_layer_id_t;
 
-/*!brief Parameter type for SVC */
+/*!brief Parameter type for SVC
+ *
+ * In the arrays of size AOM_MAX_LAYERS, the index for spatial layer `sl` and
+ * temporal layer `tl` is sl * number_temporal_layers + tl.
+ *
+ */
 typedef struct aom_svc_params {
   int number_spatial_layers;                 /**< Number of spatial layers */
   int number_temporal_layers;                /**< Number of temporal layers */
@@ -1633,7 +1682,7 @@ typedef struct aom_svc_params {
   int min_quantizers[AOM_MAX_LAYERS];        /**< Min Q for each layer */
   int scaling_factor_num[AOM_MAX_SS_LAYERS]; /**< Scaling factor-numerator */
   int scaling_factor_den[AOM_MAX_SS_LAYERS]; /**< Scaling factor-denominator */
-  /*! Target bitrate for each layer */
+  /*! Target bitrate for each layer, in kilobits per second */
   int layer_target_bitrate[AOM_MAX_LAYERS];
   /*! Frame rate factor for each temporal layer */
   int framerate_factor[AOM_MAX_TS_LAYERS];
@@ -1641,10 +1690,10 @@ typedef struct aom_svc_params {
 
 /*!brief Parameters for setting ref frame config */
 typedef struct aom_svc_ref_frame_config {
-  // 7 references: LAST_FRAME (0), LAST2_FRAME(1), LAST3_FRAME(2),
-  // GOLDEN_FRAME(3), BWDREF_FRAME(4), ALTREF2_FRAME(5), ALTREF_FRAME(6).
+  // 7 references: The index 0 - 6 refers to the references:
+  // last(0), last2(1), last3(2), golden(3), bwdref(4), altref2(5), altref(6).
   int reference[7]; /**< Reference flag for each of the 7 references. */
-  /*! Buffer slot index for each of 7 references. */
+  /*! Buffer slot index for each of 7 references indexed above. */
   int ref_idx[7];
   int refresh[8]; /**< Refresh flag for each of the 8 slots. */
 } aom_svc_ref_frame_config_t;
@@ -1655,6 +1704,12 @@ typedef struct aom_svc_ref_frame_comp_pred {
   // LAST2_LAST (1), and ALTREF_LAST (2).
   int use_comp_pred[3]; /**<Compound reference flag. */
 } aom_svc_ref_frame_comp_pred_t;
+
+/*!brief Frame drop modes for spatial/quality layer SVC */
+typedef enum {
+  AOM_LAYER_DROP,           /**< Any spatial layer can drop. */
+  AOM_FULL_SUPERFRAME_DROP, /**< Only full superframe can drop. */
+} AOM_SVC_FRAME_DROP_MODE;
 
 /*!\cond */
 /*!\brief Encoder control function parameter type
@@ -2072,12 +2127,6 @@ AOM_CTRL_USE_TYPE(AV1E_SET_DV_COST_UPD_FREQ, unsigned int)
 AOM_CTRL_USE_TYPE(AV1E_SET_PARTITION_INFO_PATH, const char *)
 #define AOM_CTRL_AV1E_SET_PARTITION_INFO_PATH
 
-AOM_CTRL_USE_TYPE(AV1E_ENABLE_RATE_GUIDE_DELTAQ, unsigned int)
-#define AOM_CTRL_AV1E_ENABLE_RATE_GUIDE_DELTAQ
-
-AOM_CTRL_USE_TYPE(AV1E_SET_RATE_DISTRIBUTION_INFO, const char *)
-#define AOM_CTRL_AV1E_SET_RATE_DISTRIBUTION_INFO
-
 AOM_CTRL_USE_TYPE(AV1E_SET_EXTERNAL_PARTITION, aom_ext_part_funcs_t *)
 #define AOM_CTRL_AV1E_SET_EXTERNAL_PARTITION
 
@@ -2128,6 +2177,24 @@ AOM_CTRL_USE_TYPE(AV1E_ENABLE_SB_QP_SWEEP, unsigned int)
 
 AOM_CTRL_USE_TYPE(AV1E_SET_QUANTIZER_ONE_PASS, int)
 #define AOM_CTRL_AV1E_SET_QUANTIZER_ONE_PASS
+
+AOM_CTRL_USE_TYPE(AV1E_ENABLE_RATE_GUIDE_DELTAQ, unsigned int)
+#define AOM_CTRL_AV1E_ENABLE_RATE_GUIDE_DELTAQ
+
+AOM_CTRL_USE_TYPE(AV1E_SET_RATE_DISTRIBUTION_INFO, const char *)
+#define AOM_CTRL_AV1E_SET_RATE_DISTRIBUTION_INFO
+
+AOM_CTRL_USE_TYPE(AV1E_GET_LUMA_CDEF_STRENGTH, int *)
+#define AOM_CTRL_AV1E_GET_LUMA_CDEF_STRENGTH
+
+AOM_CTRL_USE_TYPE(AV1E_SET_BITRATE_ONE_PASS_CBR, unsigned int)
+#define AOM_CTRL_AV1E_SET_BITRATE_ONE_PASS_CBR
+
+AOM_CTRL_USE_TYPE(AV1E_SET_SVC_FRAME_DROP_MODE, unsigned int)
+#define AOM_CTRL_AV1E_SET_SVC_FRAME_DROP_MODE
+
+AOM_CTRL_USE_TYPE(AV1E_SET_MAX_CONSEC_FRAME_DROP_CBR, int)
+#define AOM_CTRL_AV1E_SET_MAX_CONSEC_FRAME_DROP_CBR
 
 /*!\endcond */
 /*! @} - end defgroup aom_encoder */

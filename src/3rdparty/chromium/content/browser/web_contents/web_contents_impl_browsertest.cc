@@ -2,12 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "content/browser/web_contents/web_contents_impl.h"
+
 #include <array>
+#include <optional>
 #include <tuple>
 #include <utility>
 #include <vector>
 
-#include "base/allocator/partition_allocator/partition_alloc_buildflags.h"
+#include "base/allocator/partition_alloc_features.h"
+#include "base/allocator/partition_allocator/src/partition_alloc/partition_alloc_buildflags.h"
 #include "base/command_line.h"
 #include "base/containers/contains.h"
 #include "base/feature_list.h"
@@ -43,7 +47,6 @@
 #include "content/browser/renderer_host/render_widget_host_impl.h"
 #include "content/browser/renderer_host/render_widget_host_input_event_router.h"
 #include "content/browser/renderer_host/text_input_manager.h"
-#include "content/browser/web_contents/web_contents_impl.h"
 #include "content/browser/web_contents/web_contents_view.h"
 #include "content/common/content_navigation_policy.h"
 #include "content/common/frame.mojom-test-utils.h"
@@ -51,16 +54,13 @@
 #include "content/public/browser/back_forward_cache.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/file_select_listener.h"
+#include "content/public/browser/global_routing_id.h"
 #include "content/public/browser/host_zoom_map.h"
 #include "content/public/browser/invalidate_type.h"
 #include "content/public/browser/javascript_dialog_manager.h"
-#include "content/public/browser/load_notification_details.h"
 #include "content/public/browser/media_player_id.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_handle.h"
-#include "content/public/browser/notification_details.h"
-#include "content/public/browser/notification_observer.h"
-#include "content/public/browser/notification_types.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/render_widget_host_view.h"
@@ -73,6 +73,7 @@
 #include "content/public/common/content_paths.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/url_constants.h"
+#include "content/public/test/back_forward_cache_util.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
@@ -80,8 +81,10 @@
 #include "content/public/test/fenced_frame_test_util.h"
 #include "content/public/test/mock_client_hints_controller_delegate.h"
 #include "content/public/test/mock_web_contents_observer.h"
+#include "content/public/test/navigation_handle_observer.h"
 #include "content/public/test/no_renderer_crashes_assertion.h"
 #include "content/public/test/prerender_test_util.h"
+#include "content/public/test/resource_load_observer.h"
 #include "content/public/test/test_navigation_observer.h"
 #include "content/public/test/test_utils.h"
 #include "content/public/test/url_loader_interceptor.h"
@@ -90,7 +93,6 @@
 #include "content/shell/browser/shell_content_browser_client.h"
 #include "content/test/content_browser_test_utils_internal.h"
 #include "content/test/mock_reduce_accept_language_controller_delegate.h"
-#include "content/test/resource_load_observer.h"
 #include "content/test/test_content_browser_client.h"
 #include "mojo/public/cpp/test_support/test_utils.h"
 #include "net/base/features.h"
@@ -104,18 +106,20 @@
 #include "services/network/public/cpp/features.h"
 #include "services/network/public/mojom/web_client_hints_types.mojom.h"
 #include "testing/gmock/include/gmock/gmock.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/common/client_hints/client_hints.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/page/page_zoom.h"
 #include "third_party/blink/public/common/user_agent/user_agent_metadata.h"
 #include "third_party/blink/public/mojom/frame/fullscreen.mojom.h"
 #include "ui/base/clipboard/clipboard_format_type.h"
+#include "ui/base/data_transfer_policy/data_transfer_endpoint.h"
+#include "ui/color/color_provider_manager.h"
+#include "ui/color/color_provider_utils.h"
 #include "ui/display/screen.h"
 #include "url/gurl.h"
 
 #if BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC) && BUILDFLAG(USE_STARSCAN)
-#include "base/allocator/partition_allocator/starscan/pcscan.h"
+#include "base/allocator/partition_allocator/src/partition_alloc/starscan/pcscan.h"
 #endif
 
 namespace content {
@@ -159,7 +163,7 @@ class WebContentsImplBrowserTest : public ContentBrowserTest {
   bool IsInFullscreen() {
     WebContentsImpl* web_contents =
         static_cast<WebContentsImpl*>(shell()->web_contents());
-    return web_contents->current_fullscreen_frame_;
+    return !!web_contents->current_fullscreen_frame_id_;
   }
 
  protected:
@@ -172,32 +176,6 @@ WebContentsImplBrowserTest::WebContentsImplBrowserTest() {
   scoped_feature_list_.InitAndDisableFeature(
       features::kSurfaceSyncFullscreenKillswitch);
 }
-
-// Keeps track of data from LoadNotificationDetails so we can later verify that
-// they are correct, after the LoadNotificationDetails object is deleted.
-class LoadStopNotificationObserver : public WindowedNotificationObserver {
- public:
-  explicit LoadStopNotificationObserver(NavigationController* controller)
-      : WindowedNotificationObserver(NOTIFICATION_LOAD_STOP,
-                                     Source<NavigationController>(controller)),
-        session_index_(-1),
-        controller_(nullptr) {}
-  void Observe(int type,
-               const NotificationSource& source,
-               const NotificationDetails& details) override {
-    if (type == NOTIFICATION_LOAD_STOP) {
-      const Details<LoadNotificationDetails> load_details(details);
-      url_ = load_details->url;
-      session_index_ = load_details->session_index;
-      controller_ = load_details->controller;
-    }
-    WindowedNotificationObserver::Observe(type, source, details);
-  }
-
-  GURL url_;
-  int session_index_;
-  raw_ptr<NavigationController> controller_;
-};
 
 // Starts a new navigation as soon as the current one commits, but does not
 // wait for it to complete.  This allows us to observe DidStopLoading while
@@ -294,22 +272,6 @@ class LoadingStateChangedDelegate : public WebContentsDelegate {
   int loadingStateShowLoadingUICount_ = 0;
 };
 
-// Test that DidStopLoading includes the correct URL in the details.
-IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest, DidStopLoadingDetails) {
-  ASSERT_TRUE(embedded_test_server()->Start());
-
-  LoadStopNotificationObserver load_observer(
-      &shell()->web_contents()->GetController());
-  EXPECT_TRUE(
-      NavigateToURL(shell(), embedded_test_server()->GetURL("/title1.html")));
-  load_observer.Wait();
-
-  EXPECT_EQ("/title1.html", load_observer.url_.path());
-  EXPECT_EQ(0, load_observer.session_index_);
-  EXPECT_EQ(&shell()->web_contents()->GetController(),
-            load_observer.controller_);
-}
-
 // Regression test for https://crbug.com/1405036
 // Dumping the accessibility tree should not crash, even if it has not received
 // an ID through a renderer tree yet.
@@ -317,8 +279,7 @@ IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest,
                        DumpAccessibilityTreeWithoutTreeID) {
   ASSERT_TRUE(embedded_test_server()->Start());
 
-  LoadStopNotificationObserver load_observer(
-      &shell()->web_contents()->GetController());
+  TestNavigationObserver load_observer(shell()->web_contents());
   EXPECT_TRUE(
       NavigateToURL(shell(), embedded_test_server()->GetURL("/title1.html")));
   load_observer.Wait();
@@ -328,32 +289,6 @@ IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest,
   EXPECT_EQ(
       shell()->web_contents()->DumpAccessibilityTree(false, property_filters),
       expected);
-}
-
-// Test that DidStopLoading includes the correct URL in the details when a
-// pending entry is present.
-IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest,
-                       DidStopLoadingDetailsWithPending) {
-  ASSERT_TRUE(embedded_test_server()->Start());
-  // TODO(clamy): Add a cross-process navigation case as well once
-  // crbug.com/581024 is fixed.
-  GURL url1 = embedded_test_server()->GetURL("/title1.html");
-  GURL url2 = embedded_test_server()->GetURL("/title2.html");
-
-  // Listen for the first load to stop.
-  LoadStopNotificationObserver load_observer(
-      &shell()->web_contents()->GetController());
-  // Start a new pending navigation as soon as the first load commits.
-  // We will hear a DidStopLoading from the first load as the new load
-  // is started.
-  NavigateOnCommitObserver commit_observer(shell(), url2);
-  EXPECT_TRUE(NavigateToURL(shell(), url1));
-  load_observer.Wait();
-
-  EXPECT_EQ(url1, load_observer.url_);
-  EXPECT_EQ(0, load_observer.session_index_);
-  EXPECT_EQ(&shell()->web_contents()->GetController(),
-            load_observer.controller_);
 }
 
 namespace {
@@ -459,14 +394,12 @@ IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest,
       NavigateToURL(shell(), embedded_test_server()->GetURL("/title1.html")));
 
   // Navigate to an invalid URL and make sure it doesn't leave a pending entry.
-  LoadStopNotificationObserver load_observer1(
-      &shell()->web_contents()->GetController());
+  LoadStopObserver load_observer1(shell()->web_contents());
   ASSERT_TRUE(ExecJs(shell(), "window.location.href=\"nonexistent:12121\";"));
   load_observer1.Wait();
   EXPECT_FALSE(shell()->web_contents()->GetController().GetPendingEntry());
 
-  LoadStopNotificationObserver load_observer2(
-      &shell()->web_contents()->GetController());
+  LoadStopObserver load_observer2(shell()->web_contents());
   ASSERT_TRUE(ExecJs(shell(), "window.location.href=\"#foo\";"));
   load_observer2.Wait();
   EXPECT_EQ(embedded_test_server()->GetURL("/title1.html#foo"),
@@ -559,12 +492,14 @@ IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest,
   EXPECT_EQ(new_size, shell()->web_contents()->GetContainerBounds().size());
 }
 
-IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest, SetTitleOnUnload) {
+IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest, SetTitleOnPagehide) {
+  DisableBackForwardCacheForTesting(shell()->web_contents(),
+                                    BackForwardCache::TEST_REQUIRES_NO_CACHING);
   GURL url(
       "data:text/html,"
       "<title>A</title>"
-      "<body onunload=\"document.title = 'B'\"></body>");
-  EXPECT_TRUE(NavigateToURL(shell(), url));
+      "<body onpagehide=\"document.title = 'B'\"></body>");
+  ASSERT_TRUE(NavigateToURL(shell(), url));
   ASSERT_EQ(1, shell()->web_contents()->GetController().GetEntryCount());
   NavigationEntryImpl* entry1 = NavigationEntryImpl::FromNavigationEntry(
       shell()->web_contents()->GetController().GetLastCommittedEntry());
@@ -574,12 +509,22 @@ IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest, SetTitleOnUnload) {
   // Force a process switch by going to a privileged page.
   GURL web_ui_page(std::string(kChromeUIScheme) + "://" +
                    std::string(kChromeUIGpuHost));
-  EXPECT_TRUE(NavigateToURL(shell(), web_ui_page));
+
+  RenderFrameHostImplWrapper rfh(
+      shell()->web_contents()->GetPrimaryMainFrame());
+  rfh->DisableUnloadTimerForTesting();
+  ASSERT_TRUE(NavigateToURL(shell(), web_ui_page));
+
+  // Wait for the page with unload to be deleted.
+  ASSERT_TRUE(rfh.WaitUntilRenderFrameDeleted());
+
+  // Verify that the site instance changed.
   NavigationEntryImpl* entry2 = NavigationEntryImpl::FromNavigationEntry(
       shell()->web_contents()->GetController().GetLastCommittedEntry());
   SiteInstance* site_instance2 = entry2->site_instance();
   EXPECT_NE(site_instance1, site_instance2);
 
+  // Verify that the title changed.
   EXPECT_EQ(2, shell()->web_contents()->GetController().GetEntryCount());
   EXPECT_EQ(u"B", entry1->GetTitle());
 }
@@ -644,7 +589,7 @@ IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest,
 
   EXPECT_TRUE(NavigateToURL(shell(), kWebUIUrl));
 
-  EXPECT_TRUE(content::ExecuteScript(shell(), kJSCodeForAppendingFrame));
+  EXPECT_TRUE(content::ExecJs(shell(), kJSCodeForAppendingFrame));
 }
 
 // Test that creation of new RenderFrameHost objects sends the correct object
@@ -690,8 +635,7 @@ IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest,
       new LoadingStateChangedDelegate());
   shell()->web_contents()->SetDelegate(delegate.get());
 
-  LoadStopNotificationObserver load_observer(
-      &shell()->web_contents()->GetController());
+  LoadStopObserver load_observer(shell()->web_contents());
   TitleWatcher title_watcher(shell()->web_contents(), u"pushState");
   EXPECT_TRUE(NavigateToURL(
       shell(), embedded_test_server()->GetURL("/push_state.html")));
@@ -703,10 +647,10 @@ IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest,
   // initial load of push_state.html, and start and stop for
   // the "navigation" triggered by history.pushState(). However, the start
   // notification for the history.pushState() navigation should set
-  // should_show_loading_ui to false.
+  // should_show_loading_ui to false, as should all stop notifications.
   EXPECT_EQ("pushState", shell()->web_contents()->GetLastCommittedURL().ref());
   EXPECT_EQ(4, delegate->loadingStateChangedCount());
-  EXPECT_EQ(3, delegate->loadingStateShowLoadingUICount());
+  EXPECT_EQ(1, delegate->loadingStateShowLoadingUICount());
 }
 
 IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest, ResourceLoadComplete) {
@@ -1475,7 +1419,7 @@ IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest,
   // present when the cross-site navigation later commits.
   // Note: the javascript function executed will not do the link click but
   // schedule it for afterwards. Since the BeforeUnload event is synchronous,
-  // clicking on the link right away would cause the ExecuteScript to never
+  // clicking on the link right away would cause the ExecJs to never
   // return.
   SetShouldProceedOnBeforeUnload(shell(), false, false);
   AppModalDialogWaiter dialog_waiter(shell());
@@ -1892,10 +1836,13 @@ class MockFileSelectListener : public FileChooserImpl::FileSelectListenerImpl {
   void FileSelected(std::vector<blink::mojom::FileChooserFileInfoPtr> files,
                     const base::FilePath& base_dir,
                     blink::mojom::FileChooserParams::Mode mode) override {}
-  void FileSelectionCanceled() override {}
+  void FileSelectionCanceled() override { cancelled_ = true; }
+
+  bool cancelled() const { return cancelled_; }
 
  private:
   ~MockFileSelectListener() override = default;
+  bool cancelled_ = false;
 };
 
 IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest,
@@ -2201,7 +2148,7 @@ IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest,
 }
 
 IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest,
-                       NavigatingToWebUIDoesNotUsePreWarmedProcess) {
+                       NavigatingToWebUIUsesPreWarmedProcess) {
   GURL web_ui_url(std::string(kChromeUIScheme) + "://" +
                   std::string(kChromeUIGpuHost));
   ASSERT_TRUE(embedded_test_server()->Start());
@@ -2230,8 +2177,11 @@ IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest,
   web_contents->GetController().LoadURLWithParams(params);
   same_tab_observer.Wait();
 
-  // Check that pre-warmed process isn't used.
-  EXPECT_NE(renderer_id,
+  // Check that pre-warmed process was used.  This is possible because the
+  // initial RenderFrameHost is allowed to be reused for WebUI, even if it has a
+  // live RenderFrame, as long as its SiteInstance is unassigned and its process
+  // is unused.
+  EXPECT_EQ(renderer_id,
             web_contents->GetPrimaryMainFrame()->GetProcess()->GetID());
   EXPECT_EQ(1, web_contents->GetController().GetEntryCount());
   NavigationEntry* entry =
@@ -2685,8 +2635,6 @@ class WebContentsImplBrowserTestClientHintsEnabled
  public:
   void SetUp() override {
     scoped_feature_list_.Reset();
-    scoped_feature_list_.InitAndEnableFeature(
-        blink::features::kUserAgentClientHint);
     WebContentsImplBrowserTest::SetUp();
   }
 };
@@ -2769,7 +2717,7 @@ IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTestClientHintsEnabled,
   blink::UserAgentOverride ua_override;
   ua_override.ua_string_override = "x";
   // Do NOT set `ua_metadata_override`, so the UA-CH headers are *removed*
-  ua_override.ua_metadata_override = absl::nullopt;
+  ua_override.ua_metadata_override = std::nullopt;
   UserAgentInjector injector(shell()->web_contents(), ua_override);
   EXPECT_TRUE(NavigateToURL(shell(), http2_server.GetURL("/empty.html")));
 
@@ -2823,7 +2771,7 @@ class WebContentsImplBrowserTestReduceAcceptLanguageOn
   void VerifyPersistAndGetReduceAcceptLanguage(
       const GURL& url,
       const std::string& persist_lang,
-      const absl::optional<std::string>& expect_lang) {
+      const std::optional<std::string>& expect_lang) {
     ReduceAcceptLanguageControllerDelegate* delegate =
         ShellContentBrowserClient::Get()
             ->browser_context()
@@ -2831,7 +2779,7 @@ class WebContentsImplBrowserTestReduceAcceptLanguageOn
 
     url::Origin origin = url::Origin::Create(url);
     delegate->PersistReducedLanguage(origin, persist_lang);
-    const absl::optional<std::string>& language =
+    const std::optional<std::string>& language =
         delegate->GetReducedLanguage(origin);
     EXPECT_EQ(expect_lang, language);
 
@@ -2866,7 +2814,7 @@ IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTestReduceAcceptLanguageOn,
                                           /*expect_lang=*/test_lang);
   VerifyPersistAndGetReduceAcceptLanguage(/*url=*/GURL("ws://example.com/"),
                                           /*persist_lang=*/test_lang,
-                                          /*expect_lang=*/absl::nullopt);
+                                          /*expect_lang=*/std::nullopt);
 }
 
 IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest,
@@ -2967,7 +2915,10 @@ IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest, FileChooserEndsFullscreen) {
 
   wc->EnterFullscreenMode(wc->GetPrimaryMainFrame(), {});
   EXPECT_TRUE(wc->IsFullscreen());
-  wc->RunFileChooser(wc->GetPrimaryMainFrame(),
+
+  auto [chooser, remote] =
+      FileChooserImpl::CreateForTesting(wc->GetPrimaryMainFrame());
+  wc->RunFileChooser(chooser->GetWeakPtr(), wc->GetPrimaryMainFrame(),
                      base::MakeRefCounted<MockFileSelectListener>(),
                      blink::mojom::FileChooserParams());
   EXPECT_FALSE(wc->IsFullscreen());
@@ -3110,6 +3061,72 @@ IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest,
 }
 
 IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest,
+                       FileChooserBlockedFromHiddenWebContents) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+  shell()->set_hold_file_chooser();
+
+  EXPECT_TRUE(NavigateToURL(shell(), GURL("about:blank")));
+
+  WebContentsImpl* wc = static_cast<WebContentsImpl*>(shell()->web_contents());
+  wc->WasHidden();
+  EXPECT_EQ(shell()->web_contents()->GetVisibility(), Visibility::HIDDEN);
+
+  auto [chooser, remote] =
+      FileChooserImpl::CreateForTesting(wc->GetPrimaryMainFrame());
+  auto file_select_listener = base::MakeRefCounted<MockFileSelectListener>();
+  wc->RunFileChooser(chooser->GetWeakPtr(), wc->GetPrimaryMainFrame(),
+                     file_select_listener, blink::mojom::FileChooserParams());
+  EXPECT_TRUE(file_select_listener->cancelled());
+  EXPECT_EQ(shell()->run_file_chooser_count(), 0u);
+}
+
+IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest,
+                       EnumerateDirectoryBlockedFromHiddenWebContents) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+  shell()->set_hold_file_chooser();
+
+  EXPECT_TRUE(NavigateToURL(shell(), GURL("about:blank")));
+
+  WebContentsImpl* wc = static_cast<WebContentsImpl*>(shell()->web_contents());
+  wc->WasHidden();
+  EXPECT_EQ(shell()->web_contents()->GetVisibility(), Visibility::HIDDEN);
+
+  auto [chooser, remote] =
+      FileChooserImpl::CreateForTesting(wc->GetPrimaryMainFrame());
+  auto file_select_listener = base::MakeRefCounted<MockFileSelectListener>();
+  wc->EnumerateDirectory(chooser->GetWeakPtr(), wc->GetPrimaryMainFrame(),
+                         file_select_listener, base::FilePath());
+  EXPECT_TRUE(file_select_listener->cancelled());
+  EXPECT_EQ(shell()->run_file_chooser_count(), 0u);
+}
+
+IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest,
+                       NewWindowBlockedForActiveFileChooser) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+  shell()->set_hold_file_chooser();
+
+  GURL url = embedded_test_server()->GetURL("/click-noreferrer-links.html");
+  EXPECT_TRUE(NavigateToURL(shell(), url));
+
+  WebContentsImpl* wc = static_cast<WebContentsImpl*>(shell()->web_contents());
+  auto [chooser, remote] =
+      FileChooserImpl::CreateForTesting(wc->GetPrimaryMainFrame());
+  auto file_select_listener = base::MakeRefCounted<MockFileSelectListener>();
+  wc->RunFileChooser(chooser->GetWeakPtr(), wc->GetPrimaryMainFrame(),
+                     file_select_listener, blink::mojom::FileChooserParams());
+  EXPECT_FALSE(file_select_listener->cancelled());
+
+  // Open a new, named window.
+  WebContentsConsoleObserver console_observer(shell()->web_contents());
+  console_observer.SetPattern(
+      "window.open blocked due to active file chooser.");
+  EXPECT_TRUE(ExecJs(shell(), "window.open('about:blank','new_window');"));
+  ASSERT_TRUE(console_observer.Wait());
+  EXPECT_EQ(url, shell()->web_contents()->GetLastCommittedURL());
+  EXPECT_EQ(1u, Shell::windows().size());
+}
+
+IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest,
                        FrameDetachInCopyDoesNotCrash) {
   ASSERT_TRUE(embedded_test_server()->Start());
   EXPECT_TRUE(NavigateToURL(
@@ -3156,7 +3173,7 @@ class UpdateTargetURLWaiter : public WebContentsDelegate {
       runner_->QuitClosure().Run();
   }
 
-  absl::optional<GURL> updated_target_url_;
+  std::optional<GURL> updated_target_url_;
   scoped_refptr<MessageLoopRunner> runner_;
 };
 
@@ -3417,15 +3434,14 @@ IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest, TitleUpdateOnRestore) {
   std::unique_ptr<NavigationEntryImpl> restored_entry =
       NavigationEntryImpl::FromNavigationEntry(
           NavigationController::CreateNavigationEntry(
-              main_url, Referrer(), /* initiator_origin= */ absl::nullopt,
-              /* initiator_base_url= */ absl::nullopt,
+              main_url, Referrer(), /* initiator_origin= */ std::nullopt,
+              /* initiator_base_url= */ std::nullopt,
               ui::PAGE_TRANSITION_RELOAD, false, std::string(),
               controller.GetBrowserContext(),
               nullptr /* blob_url_loader_factory */));
-  std::unique_ptr<NavigationEntryRestoreContextImpl> context =
-      std::make_unique<NavigationEntryRestoreContextImpl>();
+  NavigationEntryRestoreContextImpl context;
   restored_entry->SetPageState(
-      controller.GetLastCommittedEntry()->GetPageState(), context.get());
+      controller.GetLastCommittedEntry()->GetPageState(), &context);
   restored_entry->SetTitle(controller.GetLastCommittedEntry()->GetTitle());
 
   // Create a new tab.
@@ -3683,7 +3699,7 @@ IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest,
   // This test verifies a suppressed pop up that requires navigation from
   // browser side works with a delegate that delays navigations of pop ups.
   base::FilePath test_data_dir;
-  CHECK(base::PathService::Get(base::DIR_SOURCE_ROOT, &test_data_dir));
+  CHECK(base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &test_data_dir));
   base::FilePath simple_links_path =
       test_data_dir.Append(GetTestDataFilePath())
           .Append(FILE_PATH_LITERAL("simple_links.html"));
@@ -3696,11 +3712,7 @@ IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest,
   WebContents* new_contents = nullptr;
   {
     ShellAddedObserver new_shell_observer;
-    bool success = false;
-    EXPECT_TRUE(ExecuteScriptAndExtractBool(
-        shell(),
-        "window.domAutomationController.send(clickLinkToSelfNoOpener());",
-        &success));
+    EXPECT_TRUE(ExecJs(shell(), "clickLinkToSelfNoOpener();"));
     new_shell = new_shell_observer.GetShell();
     new_contents = new_shell->web_contents();
     // Delaying popup holds the initial load of |url|.
@@ -3727,7 +3739,7 @@ IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest,
   // Create a file: scheme non-suppressed pop up from a file: scheme page will
   // be blocked and wait for the renderer to signal.
   base::FilePath test_data_dir;
-  CHECK(base::PathService::Get(base::DIR_SOURCE_ROOT, &test_data_dir));
+  CHECK(base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &test_data_dir));
   base::FilePath simple_links_path =
       test_data_dir.Append(GetTestDataFilePath())
           .Append(FILE_PATH_LITERAL("simple_links.html"));
@@ -3740,10 +3752,7 @@ IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest,
   WebContents* new_contents = nullptr;
   {
     ShellAddedObserver new_shell_observer;
-    bool success = false;
-    EXPECT_TRUE(ExecuteScriptAndExtractBool(
-        shell(), "window.domAutomationController.send(clickLinkToSelf());",
-        &success));
+    EXPECT_TRUE(ExecJs(shell(), "clickLinkToSelf();"));
     new_shell = new_shell_observer.GetShell();
     new_contents = new_shell->web_contents();
     // Delaying popup holds the initial load of |url|.
@@ -3797,7 +3806,7 @@ class FullscreenWebContentsObserver : public WebContentsObserver {
  private:
   base::RunLoop run_loop_;
   bool found_value_ = false;
-  raw_ptr<RenderFrameHost, DanglingUntriaged> wanted_rfh_;
+  raw_ptr<RenderFrameHost, AcrossTasksDanglingUntriaged> wanted_rfh_;
 };
 
 }  // namespace
@@ -3828,7 +3837,8 @@ IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest, NotifyFullscreenAcquired) {
 
   fullscreen_frames.insert(main_frame);
   EXPECT_EQ(fullscreen_frames, web_contents->fullscreen_frames_);
-  EXPECT_EQ(main_frame, web_contents->current_fullscreen_frame_);
+  EXPECT_EQ(main_frame->GetGlobalId(),
+            web_contents->current_fullscreen_frame_id_);
 
   // Make the child frame fullscreen.
   {
@@ -3840,7 +3850,8 @@ IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest, NotifyFullscreenAcquired) {
 
   fullscreen_frames.insert(child_frame);
   EXPECT_EQ(fullscreen_frames, web_contents->fullscreen_frames_);
-  EXPECT_EQ(child_frame, web_contents->current_fullscreen_frame_);
+  EXPECT_EQ(child_frame->GetGlobalId(),
+            web_contents->current_fullscreen_frame_id_);
 
   // Exit fullscreen on the child frame.
   // This will not work with --site-per-process until crbug.com/617369
@@ -3854,7 +3865,8 @@ IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest, NotifyFullscreenAcquired) {
 
     fullscreen_frames.erase(child_frame);
     EXPECT_EQ(fullscreen_frames, web_contents->fullscreen_frames_);
-    EXPECT_EQ(main_frame, web_contents->current_fullscreen_frame_);
+    EXPECT_EQ(main_frame->GetGlobalId(),
+              web_contents->current_fullscreen_frame_id_);
   }
 }
 
@@ -3884,7 +3896,8 @@ IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest, RejectFullscreenIfBlocked) {
   base::ScopedClosureRunner fullscreen_block =
       web_contents->ForSecurityDropFullscreen();
 
-  EXPECT_TRUE(ExecuteScript(main_frame, "document.body.requestFullscreen();"));
+  EXPECT_TRUE(ExecJs(main_frame, "document.body.requestFullscreen();",
+                     EXECUTE_SCRIPT_NO_RESOLVE_PROMISES));
 
   std::u16string title = title_watcher.WaitAndGetTitle();
   ASSERT_EQ(title, u"onfullscreenerror");
@@ -3951,7 +3964,8 @@ IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest,
 
   nodes.insert(main_frame);
   EXPECT_EQ(nodes, web_contents->fullscreen_frames_);
-  EXPECT_EQ(main_frame, web_contents->current_fullscreen_frame_);
+  EXPECT_EQ(main_frame->GetGlobalId(),
+            web_contents->current_fullscreen_frame_id_);
 
   // Make the child frame fullscreen.
   {
@@ -3963,7 +3977,8 @@ IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest,
 
   nodes.insert(child_frame);
   EXPECT_EQ(nodes, web_contents->fullscreen_frames_);
-  EXPECT_EQ(child_frame, web_contents->current_fullscreen_frame_);
+  EXPECT_EQ(child_frame->GetGlobalId(),
+            web_contents->current_fullscreen_frame_id_);
 
   // Perform a cross origin navigation on the main frame.
   EXPECT_TRUE(
@@ -4000,7 +4015,8 @@ IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest,
 
   fullscreen_frames.insert(main_frame);
   EXPECT_EQ(fullscreen_frames, web_contents->fullscreen_frames_);
-  EXPECT_EQ(main_frame, web_contents->current_fullscreen_frame_);
+  EXPECT_EQ(main_frame->GetGlobalId(),
+            web_contents->current_fullscreen_frame_id_);
 
   // Make the child frame fullscreen.
   {
@@ -4012,7 +4028,8 @@ IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest,
 
   fullscreen_frames.insert(child_frame);
   EXPECT_EQ(fullscreen_frames, web_contents->fullscreen_frames_);
-  EXPECT_EQ(child_frame, web_contents->current_fullscreen_frame_);
+  EXPECT_EQ(child_frame->GetGlobalId(),
+            web_contents->current_fullscreen_frame_id_);
 
   // Exit fullscreen on the child frame.
   {
@@ -4023,7 +4040,8 @@ IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest,
 
   fullscreen_frames.erase(child_frame);
   EXPECT_EQ(fullscreen_frames, web_contents->fullscreen_frames_);
-  EXPECT_EQ(main_frame, web_contents->current_fullscreen_frame_);
+  EXPECT_EQ(main_frame->GetGlobalId(),
+            web_contents->current_fullscreen_frame_id_);
 }
 
 IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest, PropagateFullscreenOptions) {
@@ -4090,6 +4108,84 @@ IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest, PropagateFullscreenOptions) {
   }
 
   EXPECT_TRUE(test_delegate.fullscreen_options().prefers_navigation_bar);
+}
+
+// Tests that when toggling EnterFullscreen/ExitFullscreen that each state
+// properly synchronizes with the Renderer, fulfilling the Promises. Even when
+// there has been no layout changes, such as when the Renderer is already
+// embedded in a fullscreen context, with no OS nor Browser control insets.
+//
+// Also confirms that each state change does not block the subsequent one.
+// Finally on Android, which supports full browser ScreenOrientation locks, that
+// we can successfully apply the lock.
+IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest, ToggleFullscreen) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+  WebContentsImpl* web_contents =
+      static_cast<WebContentsImpl*>(shell()->web_contents());
+
+  TestWCDelegateForDialogsAndFullscreen test_delegate(web_contents);
+
+  GURL url = embedded_test_server()->GetURL("a.com", "/page_with_iframe.html");
+  EXPECT_TRUE(NavigateToURL(web_contents, url));
+  RenderFrameHostImpl* main_frame = web_contents->GetPrimaryMainFrame();
+
+  EXPECT_FALSE(IsInFullscreen());
+
+  // Make the top page fullscreen with system navigation ui.
+  {
+    test_delegate.WillWaitForFullscreenEnter();
+    TitleWatcher title_watcher(web_contents, u"main_fullscreen_fulfilled");
+    EXPECT_TRUE(ExecJs(
+        main_frame,
+        "document.body.requestFullscreen({ navigationUI: 'show' }).then(() => "
+        "{document.title = 'main_fullscreen_fulfilled'});"));
+    test_delegate.Wait();
+
+    std::u16string title = title_watcher.WaitAndGetTitle();
+    ASSERT_EQ(title, u"main_fullscreen_fulfilled");
+  }
+  EXPECT_TRUE(IsInFullscreen());
+
+  // Full document orientation lock is only available on Android.
+#if BUILDFLAG(IS_ANDROID)
+  {
+    TitleWatcher title_watcher(web_contents, u"portrait_lock_fulfilled");
+    EXPECT_TRUE(ExecJs(main_frame,
+                       "screen.orientation.lock('portrait').then(() => "
+                       "{document.title = 'portrait_lock_fulfilled'});"));
+    std::u16string title = title_watcher.WaitAndGetTitle();
+    ASSERT_EQ(title, u"portrait_lock_fulfilled");
+  }
+#endif
+
+  // Exiting fullscreen should update the title. This should not block
+  // subsequent request to re-enter fullscreen.
+  {
+    test_delegate.WillWaitForFullscreenExit();
+    TitleWatcher title_watcher(web_contents, u"main_exit_fullscreen_fulfilled");
+    EXPECT_TRUE(
+        ExecJs(main_frame,
+               "document.exitFullscreen().then(() => "
+               "{document.title = 'main_exit_fullscreen_fulfilled'});"));
+    test_delegate.Wait();
+
+    std::u16string title = title_watcher.WaitAndGetTitle();
+    ASSERT_EQ(title, u"main_exit_fullscreen_fulfilled");
+  }
+
+  // Make the top page fullscreen with system navigation ui.
+  {
+    test_delegate.WillWaitForFullscreenEnter();
+    TitleWatcher title_watcher(web_contents, u"main_fullscreen_fulfilled");
+    EXPECT_TRUE(ExecJs(
+        main_frame,
+        "document.body.requestFullscreen({ navigationUI: 'show' }).then(() => "
+        "{document.title = 'main_fullscreen_fulfilled'});"));
+    test_delegate.Wait();
+
+    std::u16string title = title_watcher.WaitAndGetTitle();
+    ASSERT_EQ(title, u"main_fullscreen_fulfilled");
+  }
 }
 
 class MockDidOpenRequestedURLObserver : public WebContentsObserver {
@@ -4415,6 +4511,150 @@ IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest,
   }
   ASSERT_EQ(url_a, web_contents->GetLastCommittedURL());
 }
+
+#if !BUILDFLAG(IS_ANDROID)
+// https://crbug.com/1402816. This test verifies that when mouse down is on main
+// frame and mouse up is on OOF iframe, the mouse up event is delivered to the
+// main frame as well to clear cached mouse states including autoscroll
+// selection state.
+// TODO(crbug.com/1517238): Disabled due to too many timeouts.
+IN_PROC_BROWSER_TEST_F(
+    WebContentsImplBrowserTest,
+    DISABLED_MouseUpInOOPIframeShouldCancelMainFrameAutoscrollSelection) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+  WebContentsImpl* web_contents =
+      static_cast<WebContentsImpl*>(shell()->web_contents());
+
+  GURL data_url(R"HTML(
+    data:text/html,
+    <!DOCTYPE html>
+    <html lang='en'>
+    <head>
+    <style>
+      %23parentDiv {
+        display: flex;
+      }
+      %23input1 {
+        border: 1px solid black;
+        margin: 20px;
+      }
+      %23iframe1 {
+        height: 200vh;
+      }
+    </style>
+    </head>
+    <body>
+      <div id='parentDiv'>
+        <iframe src='https://b.com/title1.html' id='iframe1'></iframe>
+        <div>
+          <input type='text' id='input1'>
+        </div>
+      </div>
+      </body>
+      </html>)HTML");
+
+  EXPECT_TRUE(NavigateToURL(shell(), data_url));
+  WaitForLoadStop(web_contents);
+
+  const double input_center_y =
+      EvalJs(web_contents,
+             "document.getElementById('input1').offsetTop + "
+             "document.getElementById('input1').offsetHeight / 2")
+          .ExtractDouble();
+  const double input_center_x =
+      EvalJs(web_contents,
+             "document.getElementById('input1').offsetLeft + "
+             "document.getElementById('input1').offsetWidth / 2")
+          .ExtractDouble();
+
+  // Click the input element and start typing.
+  SimulateMouseClickAt(web_contents, 0, blink::WebMouseEvent::Button::kLeft,
+                       gfx::Point(input_center_x, input_center_y));
+  SimulateKeyPress(web_contents, ui::DomKey::FromCharacter('A'),
+                   ui::DomCode::US_A, ui::VKEY_A, false, false, false, false);
+  SimulateKeyPress(web_contents, ui::DomKey::FromCharacter('B'),
+                   ui::DomCode::US_B, ui::VKEY_B, false, false, false, false);
+  EXPECT_TRUE(ExecJs(web_contents,
+                     "var inputElement = document.getElementById('input1');"
+                     "new Promise(function(resolve) {"
+                     "  if (inputElement.value == 'AB')"
+                     "    resolve(true);"
+                     "  inputElement.addEventListener('change', () => {"
+                     "    if (inputElement.value == 'AB')"
+                     "      resolve(true);"
+                     "  });"
+                     "});"));
+  EXPECT_EQ("AB",
+            EvalJs(web_contents, "document.getElementById('input1').value")
+                .ExtractString());
+
+  EXPECT_TRUE(ExecJs(web_contents,
+                     "document.addEventListener('mousedown', () => { "
+                     "window.receivedMouseDown = true; });"));
+  EXPECT_TRUE(ExecJs(web_contents,
+                     "document.addEventListener('mouseup', () => { "
+                     "window.receivedMouseUp = true; });"));
+
+  // Now, start the drag from input element to the OOP iframe.
+  SimulateMouseEvent(web_contents, blink::WebMouseEvent::Type::kMouseDown,
+                     blink::WebMouseEvent::Button::kLeft,
+                     gfx::Point(input_center_x, input_center_y));
+  SimulateMouseEvent(web_contents, blink::WebMouseEvent::Type::kMouseMove,
+                     blink::WebMouseEvent::Button::kLeft,
+                     gfx::Point(input_center_x - 5, input_center_y));
+  SimulateMouseEvent(web_contents, blink::WebMouseEvent::Type::kMouseMove,
+                     blink::WebMouseEvent::Button::kLeft,
+                     gfx::Point(input_center_x - 10, input_center_y));
+
+  const double iframe_center_x =
+      EvalJs(web_contents,
+             "document.getElementById('iframe1').offsetLeft + "
+             "document.getElementById('iframe1').offsetWidth / 2")
+          .ExtractDouble();
+
+  SimulateMouseEvent(web_contents, blink::WebMouseEvent::Type::kMouseMove,
+                     blink::WebMouseEvent::Button::kLeft,
+                     gfx::Point(iframe_center_x, input_center_y));
+  RunUntilInputProcessed(web_contents->GetRenderWidgetHostWithPageFocus());
+  EXPECT_TRUE(ExecJs(web_contents,
+                     "new Promise(resolve => setTimeout(() => {"
+                     "  resolve(window.receivedMouseDown);"
+                     "}));"));
+  EXPECT_TRUE(web_contents->GetInputEventRouter()
+                  ->root_view_receive_additional_mouse_up_);
+
+  SimulateMouseEvent(web_contents, blink::WebMouseEvent::Type::kMouseUp,
+                     blink::WebMouseEvent::Button::kLeft,
+                     gfx::Point(iframe_center_x, input_center_y));
+  RunUntilInputProcessed(web_contents->GetRenderWidgetHostWithPageFocus());
+  // Main frame should receive mouse up event.
+  EXPECT_TRUE(ExecJs(web_contents,
+                     "new Promise(resolve => setTimeout(() => {"
+                     "  resolve(window.receivedMouseUp);"
+                     "}));"));
+  EXPECT_FALSE(web_contents->GetInputEventRouter()
+                   ->root_view_receive_additional_mouse_up_);
+
+  // Type again in input element, insert text should be left to right.
+  SimulateKeyPress(web_contents, ui::DomKey::FromCharacter('E'),
+                   ui::DomCode::US_E, ui::VKEY_E, false, false, false, false);
+  SimulateKeyPress(web_contents, ui::DomKey::FromCharacter('F'),
+                   ui::DomCode::US_F, ui::VKEY_F, false, false, false, false);
+  EXPECT_TRUE(ExecJs(web_contents,
+                     "var inputElement = document.getElementById('input1');"
+                     "new Promise(function(resolve) {"
+                     "  if (inputElement.value == 'EF')"
+                     "    resolve(true);"
+                     "  inputElement.addEventListener('change', () => {"
+                     "    if (inputElement.value == 'EF')"
+                     "      resolve(true);"
+                     "  });"
+                     "});"));
+  EXPECT_EQ("EF",
+            EvalJs(web_contents, "document.getElementById('input1').value")
+                .ExtractString());
+}
+#endif  // !BUILDFLAG(IS_ANDROID)
 
 IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest, FrameCount) {
   ASSERT_TRUE(embedded_test_server()->Start());
@@ -4826,7 +5066,7 @@ IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest,
   EXPECT_EQ(shell()->web_contents()->GetThemeColor(), 0xFFFF0000u);
 
   EXPECT_TRUE(NavigateToURL(shell(), url_b));
-  EXPECT_EQ(shell()->web_contents()->GetThemeColor(), absl::nullopt);
+  EXPECT_EQ(shell()->web_contents()->GetThemeColor(), std::nullopt);
 
   shell()->web_contents()->GetController().GoBack();
   EXPECT_TRUE(WaitForLoadStop(shell()->web_contents()));
@@ -5111,14 +5351,23 @@ IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest,
                        IgnoreUnresponsiveRendererDuringPaste) {
   WebContentsImpl* web_contents =
       static_cast<WebContentsImpl*>(shell()->web_contents());
+  ClipboardPasteData clipboard_paste_data =
+      ClipboardPasteData("random pasted text", std::string(), {});
 
   EXPECT_FALSE(web_contents->ShouldIgnoreUnresponsiveRenderer());
-  web_contents->IsClipboardPasteContentAllowed(
-      GURL("https://google.com"), ui::ClipboardFormatType::PlainTextType(),
-      "random pasted text",
+  web_contents->IsClipboardPasteAllowedByPolicy(
+      ClipboardEndpoint(ui::DataTransferEndpoint(GURL("google.com"))),
+      ClipboardEndpoint(ui::DataTransferEndpoint(GURL("google.com")),
+                        base::BindLambdaForTesting([web_contents] {
+                          return web_contents->GetBrowserContext();
+                        }),
+                        *web_contents->GetPrimaryMainFrame()),
+      {.format_type = ui::ClipboardFormatType::PlainTextType()},
+      clipboard_paste_data,
       base::BindLambdaForTesting(
-          [&web_contents](const absl::optional<std::string>& data) {
-            EXPECT_TRUE(data);
+          [&web_contents](
+              std::optional<ClipboardPasteData> clipboard_paste_data) {
+            EXPECT_TRUE(clipboard_paste_data.has_value());
             EXPECT_TRUE(web_contents->ShouldIgnoreUnresponsiveRenderer());
           }));
   EXPECT_FALSE(web_contents->ShouldIgnoreUnresponsiveRenderer());
@@ -5481,8 +5730,7 @@ IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest,
                        ReinitializeMainFrameForCrashedTab) {
   ASSERT_TRUE(embedded_test_server()->Start());
 
-  LoadStopNotificationObserver load_observer(
-      &shell()->web_contents()->GetController());
+  TestNavigationObserver load_observer(shell()->web_contents());
   EXPECT_TRUE(
       NavigateToURL(shell(), embedded_test_server()->GetURL("/title1.html")));
   load_observer.Wait();
@@ -5498,6 +5746,63 @@ IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest,
       ->InitializeMainRenderFrameForImmediateUse();
   frame_created_obs.WaitForRenderFrameCreated();
   EXPECT_FALSE(shell()->web_contents()->IsCrashed());
+}
+
+// Check that there's no crash if a new window is set to defer navigations (for
+// example, this is done on Android Webview and for <webview> guests), then the
+// renderer process crashes while there's a deferred new window navigation in
+// place, and then navigations are resumed. Prior to fixing
+// https://crbug.com/1487110, the deferred navigation was allowed to proceed,
+// performing an early RenderFrameHost swap and hitting a bug while clearing
+// the deferred navigation state. Now, the deferred navigation should be
+// canceled when the renderer process dies.
+IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest,
+                       DeferredWindowOpenNavigationIsResumedWithEarlySwap) {
+  // Force WebContents in a new Shell to defer new navigations until the
+  // delegate is set.
+  shell()->set_delay_popup_contents_delegate_for_testing(true);
+
+  // Load an initial page.
+  ASSERT_TRUE(embedded_test_server()->Start());
+  GURL url(embedded_test_server()->GetURL("/title1.html"));
+  EXPECT_TRUE(NavigateToURL(shell(), url));
+
+  // Open a popup to a same-site URL via window.open.
+  ShellAddedObserver new_shell_observer;
+  EXPECT_TRUE(ExecJs(shell(), JsReplace("window.open($1);", url)));
+  Shell* new_shell = new_shell_observer.GetShell();
+  WebContents* new_contents = new_shell->web_contents();
+
+  // The navigation in the new popup should be deferred.
+  EXPECT_TRUE(WaitForLoadStop(new_contents));
+  EXPECT_TRUE(new_contents->GetController().IsInitialBlankNavigation());
+  EXPECT_TRUE(new_contents->GetLastCommittedURL().is_empty());
+
+  // Set the new shell's delegate now.  This doesn't resume the navigation just
+  // yet.
+  EXPECT_FALSE(new_contents->GetDelegate());
+  new_contents->SetDelegate(new_shell);
+
+  // Crash the renderer process.  This should clear the deferred navigation
+  // state.  If this wasn't done due to a bug, it would also force the resumed
+  // navigation to use the early RenderFrameHost swap.
+  {
+    RenderProcessHost* popup_process =
+        new_contents->GetPrimaryMainFrame()->GetProcess();
+    RenderProcessHostWatcher crash_observer(
+        popup_process, RenderProcessHostWatcher::WATCH_FOR_PROCESS_EXIT);
+    EXPECT_TRUE(popup_process->Shutdown(0));
+    crash_observer.Wait();
+  }
+
+  // Resume the navigation and verify that it gets canceled.  Ensure this
+  // doesn't crash.
+  NavigationHandleObserver handle_observer(new_contents, url);
+  new_contents->ResumeLoadingCreatedWebContents();
+  EXPECT_TRUE(WaitForLoadStop(new_contents));
+  EXPECT_FALSE(handle_observer.has_committed());
+  EXPECT_TRUE(new_contents->GetController().IsInitialBlankNavigation());
+  EXPECT_TRUE(new_contents->GetLastCommittedURL().is_empty());
 }
 
 namespace {
@@ -5522,7 +5827,7 @@ class MediaWaiter : public WebContentsObserver {
   void WaitForMediaDestroyed() { media_destroyed_loop_.Run(); }
 
  private:
-  absl::optional<MediaPlayerId> started_media_id_;
+  std::optional<MediaPlayerId> started_media_id_;
   base::RunLoop media_started_playing_loop_;
   base::RunLoop media_destroyed_loop_;
 };
@@ -5616,6 +5921,10 @@ class WebContentsPrerenderBrowserTest : public WebContentsImplBrowserTest {
     return static_cast<WebContentsImpl*>(web_contents());
   }
 
+  content::test::PrerenderTestHelper& prerender_helper() {
+    return prerender_helper_;
+  }
+
  private:
   content::test::PrerenderTestHelper prerender_helper_;
 };
@@ -5654,6 +5963,30 @@ IN_PROC_BROWSER_TEST_F(WebContentsPrerenderBrowserTest,
   WebContentsDestroyedWatcher close_observer(web_contents_impl());
   web_contents_impl()->DispatchBeforeUnload(false /* auto_cancel */);
   close_observer.Wait();
+}
+
+IN_PROC_BROWSER_TEST_F(WebContentsPrerenderBrowserTest,
+                       GetContentsMimeTypeForEachPage) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+
+  const GURL initial_url = embedded_test_server()->GetURL("/title1.html");
+  // Navigate to an initial page.
+  ASSERT_TRUE(NavigateToURL(shell(), initial_url));
+
+  // Prerender a page that has a MIME type, text/plain.
+  const GURL prerendering_url = embedded_test_server()->GetURL("/plain.txt");
+  int host_id = prerender_helper().AddPrerender(prerendering_url);
+
+  // Check MIME type for each page.
+  EXPECT_EQ("text/html",
+            web_contents()->GetPrimaryPage().GetContentsMimeType());
+  EXPECT_EQ("text/plain", prerender_helper()
+                              .GetPrerenderedMainFrameHost(host_id)
+                              ->GetPage()
+                              .GetContentsMimeType());
+
+  // WebContents API should return the MIME type of the primary page.
+  EXPECT_EQ("text/html", shell()->web_contents()->GetContentsMimeType());
 }
 
 class WebContentsFencedFrameBrowserTest : public WebContentsImplBrowserTest {
@@ -5784,7 +6117,7 @@ class MediaWatchTimeChangedDelegate : public WebContentsDelegate {
 IN_PROC_BROWSER_TEST_F(WebContentsFencedFrameBrowserTest,
                        MediaWatchTimeCallback) {
   using UkmEntry = ukm::builders::Media_WebMediaPlayerState;
-  ukm::TestAutoSetUkmRecorder test_recorder_;
+  ukm::TestAutoSetUkmRecorder test_recorder;
 
   MediaWatchTimeChangedDelegate delegate(web_contents());
   net::test_server::EmbeddedTestServerHandle test_server_handle;
@@ -5807,27 +6140,21 @@ IN_PROC_BROWSER_TEST_F(WebContentsFencedFrameBrowserTest,
     video.play();
   )"));
 
-  // Get a watch time callback from `fenced_frame`.
-  media::MediaMetricsProvider::RecordAggregateWatchTimeCallback
-      record_playback_cb = static_cast<RenderFrameHostImpl*>(fenced_frame)
-                               ->GetRecordAggregateWatchTimeCallback();
-  std::move(record_playback_cb)
-      .Run(base::TimeDelta(), base::TimeDelta(), true, true);
-  // Check if the URL is from the top level frame.
-  DCHECK_EQ(top_url, delegate.watch_time().url);
-
+  base::RunLoop run_loop;
+  test_recorder.SetOnAddEntryCallback(UkmEntry::kEntryName,
+                                      run_loop.QuitClosure());
   // Leave the current page to check the UKM records.
-  RenderFrameDeletedObserver delete_observer(fenced_frame);
   fenced_frame_test_helper().NavigateFrameInFencedFrameTree(
       fenced_frame,
       embedded_test_server()->GetURL("a.com", "/fenced_frames/title1.html"));
   ASSERT_TRUE(NavigateToURL(shell(), GURL(url::kAboutBlankURL)));
-  delete_observer.WaitUntilDeleted();
+  run_loop.Run();
 
-  const auto& entries = test_recorder_.GetEntriesByName(UkmEntry::kEntryName);
+  const auto& entries = test_recorder.GetEntriesByName(UkmEntry::kEntryName);
   EXPECT_EQ(1u, entries.size());
-  for (const auto* entry : entries)
-    test_recorder_.ExpectEntryMetric(entry, UkmEntry::kIsTopFrameName, false);
+  for (const ukm::mojom::UkmEntry* entry : entries) {
+    test_recorder.ExpectEntryMetric(entry, UkmEntry::kIsTopFrameName, false);
+  }
 }
 
 #if BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC) && BUILDFLAG(USE_STARSCAN)
@@ -5848,7 +6175,24 @@ class PCScanFeature {
 // Initialize PCScanFeature before WebContentsImplBrowserTest to make sure that
 // the feature is enabled within the entire lifetime of the test.
 class WebContentsImplStarScanBrowserTest : private PCScanFeature,
-                                           public WebContentsImplBrowserTest {};
+                                           public WebContentsImplBrowserTest {
+ public:
+  void SetUp() override {
+    // Since ReconfigureAfterFeatureListInit() has been already invoked at
+    // FeatureListScopedToEachTest::OnTestStart(), we cannot enable PCScan
+    // and cannot re-reconfigure partition roots here. This causes DCHECK()
+    // failure at PerfromcScan().
+    if (!base::FeatureList::IsEnabled(base::features::kPartitionAllocPCScan) &&
+        !base::FeatureList::IsEnabled(
+            base::features::kPartitionAllocPCScanBrowserOnly) &&
+        !base::FeatureList::IsEnabled(
+            base::features::kPartitionAllocPCScanRendererOnly)) {
+      GTEST_SKIP() << "PCScanFeature is not enabled. Need --enable-features"
+                   << "=PartitionAllocPCScan";
+    }
+    WebContentsImplBrowserTest::SetUp();
+  }
+};
 
 }  // namespace
 
@@ -5953,6 +6297,117 @@ IN_PROC_BROWSER_TEST_F(WebContentsImplStarScanPrerenderBrowserTest,
   // Complete load and check that PCScan is enabled again.
   WaitForLoadStop(shell()->web_contents());
   EXPECT_TRUE(partition_alloc::internal::PCScan::IsEnabled());
+}
+
+class MockColorProviderSource : public ui::ColorProviderSource {
+ public:
+  MockColorProviderSource() { provider_.GenerateColorMap(); }
+  MockColorProviderSource(const MockColorProviderSource&) = delete;
+  MockColorProviderSource& operator=(const MockColorProviderSource&) = delete;
+  ~MockColorProviderSource() override = default;
+
+  // ui::ColorProviderSource:
+  const ui::ColorProvider* GetColorProvider() const override {
+    return &provider_;
+  }
+  const ui::RendererColorMap GetRendererColorMap(
+      ui::ColorProviderKey::ColorMode color_mode,
+      ui::ColorProviderKey::ForcedColors forced_colors) const override {
+    auto key = GetColorProviderKey();
+    key.color_mode = color_mode;
+    key.forced_colors = forced_colors;
+    ui::ColorProvider* color_provider =
+        ui::ColorProviderManager::Get().GetColorProviderFor(key);
+    CHECK(color_provider);
+    return ui::CreateRendererColorMap(*color_provider);
+  }
+
+  ui::ColorProviderKey GetColorProviderKey() const override { return key_; }
+
+ private:
+  ui::ColorProvider provider_;
+  ui::ColorProviderKey key_;
+};
+
+class OutgoingSetWebPreferencesMojoWatcher {
+ public:
+  explicit OutgoingSetWebPreferencesMojoWatcher(RenderViewHostImpl* rvh)
+      : rvh_(rvh), outgoing_message_seen_(false) {
+    rvh_->SetWillSendWebPreferencesCallbackForTesting(base::BindRepeating(
+        &OutgoingSetWebPreferencesMojoWatcher::OnWebPreferencesSent,
+        base::Unretained(this)));
+  }
+  ~OutgoingSetWebPreferencesMojoWatcher() {
+    rvh_->SetWillSendWebPreferencesCallbackForTesting(base::RepeatingClosure());
+  }
+
+  void WaitForIpc() {
+    if (outgoing_message_seen_) {
+      return;
+    }
+    run_loop_ = std::make_unique<base::RunLoop>();
+    run_loop_->Run();
+    run_loop_.reset();
+  }
+
+  bool outgoing_message_seen() const { return outgoing_message_seen_; }
+
+ private:
+  void OnWebPreferencesSent() {
+    outgoing_message_seen_ = true;
+    if (run_loop_) {
+      run_loop_->Quit();
+    }
+  }
+
+  raw_ptr<RenderViewHostImpl> rvh_ = nullptr;
+  bool outgoing_message_seen_ = false;
+  std::unique_ptr<base::RunLoop> run_loop_;
+};
+
+IN_PROC_BROWSER_TEST_F(WebContentsImplBrowserTest,
+                       UpdatesWebPreferencesOnColorProviderChanges) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+  WebContentsImpl* web_contents =
+      static_cast<WebContentsImpl*>(shell()->web_contents());
+
+  // Navigate to a site with two iframes in different origins.
+  const GURL url = embedded_test_server()->GetURL(
+      "a.com", "/cross_site_iframe_factory.html?a(b,c)");
+  EXPECT_TRUE(NavigateToURL(shell(), url));
+
+  // Retrieve all unique render view hosts. Multiple frame hosts can be
+  // associated to the same RenderViewHost, so use a set to avoid duplication.
+  std::unordered_set<RenderViewHostImpl*> render_view_hosts;
+  for (FrameTreeNode* frame_tree_node :
+       web_contents->GetPrimaryFrameTree().Nodes()) {
+    RenderViewHostImpl* render_view_host = static_cast<RenderViewHostImpl*>(
+        frame_tree_node->current_frame_host()->GetRenderViewHost());
+    ASSERT_NE(nullptr, render_view_host);
+    render_view_hosts.insert(render_view_host);
+  }
+
+  // Set up watchers for SetWebPreferences message being sent from render view
+  // hosts.
+  std::vector<std::unique_ptr<OutgoingSetWebPreferencesMojoWatcher>>
+      mojo_watchers;
+  for (auto* render_view_host : render_view_hosts) {
+    mojo_watchers.push_back(
+        std::make_unique<OutgoingSetWebPreferencesMojoWatcher>(
+            render_view_host));
+  }
+
+  // Create a mock source, set it as the source for the contents and propagate
+  // color provider change notifications.
+  MockColorProviderSource color_provider_source;
+  web_contents->SetColorProviderSource(&color_provider_source);
+  color_provider_source.NotifyColorProviderChanged();
+
+  // Ensure Mojo messages are sent to each frame.
+  for (auto& mojo_watcher : mojo_watchers) {
+    mojo_watcher->WaitForIpc();
+    EXPECT_TRUE(mojo_watcher->outgoing_message_seen());
+  }
 }
 
 #endif  // BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC) && BUILDFLAG(USE_STARSCAN)

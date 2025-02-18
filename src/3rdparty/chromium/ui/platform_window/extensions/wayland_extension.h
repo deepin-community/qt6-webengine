@@ -9,6 +9,10 @@
 #include "build/chromeos_buildflags.h"
 #include "ui/base/dragdrop/mojom/drag_drop_types.mojom-shared.h"
 
+namespace gfx {
+class RoundedCornersF;
+}  // namespace gfx
+
 namespace ui {
 
 class PlatformWindow;
@@ -17,6 +21,11 @@ enum class WaylandWindowSnapDirection {
   kNone,
   kPrimary,
   kSecondary,
+};
+
+enum class WaylandFloatStartLocation {
+  kBottomRight,
+  kBottomLeft,
 };
 
 enum class WaylandOrientationLockType {
@@ -48,7 +57,20 @@ class COMPONENT_EXPORT(PLATFORM_WINDOW) WaylandExtension {
   // Under lacros, it controls for instance interaction with the system shelf
   // widget, when browser goes in fullscreen.
   virtual void SetImmersiveFullscreenStatus(bool status) = 0;
-#endif
+
+  // Sets the top inset (header) height which is reserved or occupied by the top
+  // window frame.
+  virtual void SetTopInset(int height) = 0;
+
+  // Gets the radius of each corner of the browser window in dps. The radii is
+  // specified by the platform.
+  virtual gfx::RoundedCornersF GetWindowCornersRadii() = 0;
+
+  // Signals the underlying platform to round the browser window's drop shadow.
+  // The radius of each corner of the shadow is specified in dps.
+  virtual void SetShadowCornersRadii(const gfx::RoundedCornersF& radii) = 0;
+
+#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
 
   // Signals the underneath platform to shows a preview for the given window
   // snap direction. `allow_haptic_feedback` indicates if it should send haptic
@@ -85,7 +107,9 @@ class COMPONENT_EXPORT(PLATFORM_WINDOW) WaylandExtension {
 
   // Signals the underneath platform to float the browser window on top other
   // windows.
-  virtual void SetFloat(bool value) = 0;
+  virtual void SetFloatToLocation(
+      WaylandFloatStartLocation float_start_location) = 0;
+  virtual void UnSetFloat() = 0;
 
  protected:
   virtual ~WaylandExtension();

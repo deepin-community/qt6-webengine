@@ -4,7 +4,6 @@
 
 #include "fuchsia_web/webengine/browser/web_engine_browser_main_parts.h"
 
-#include <fuchsia/ui/scenic/cpp/fidl.h>
 #include <fuchsia/web/cpp/fidl.h>
 #include <lib/sys/cpp/component_context.h>
 #include <lib/sys/cpp/outgoing_directory.h>
@@ -140,7 +139,7 @@ std::unique_ptr<media::FuchsiaCdmManager> CreateCdmManager() {
   std::string cdm_data_directory =
       command_line->GetSwitchValueASCII(switches::kCdmDataDirectory);
 
-  absl::optional<uint64_t> cdm_data_quota_bytes;
+  std::optional<uint64_t> cdm_data_quota_bytes;
   if (command_line->HasSwitch(switches::kCdmDataQuotaBytes)) {
     uint64_t value = 0;
     CHECK(base::StringToUint64(
@@ -152,24 +151,6 @@ std::unique_ptr<media::FuchsiaCdmManager> CreateCdmManager() {
   return std::make_unique<media::FuchsiaCdmManager>(
       std::move(create_key_system_callbacks),
       base::FilePath(cdm_data_directory), cdm_data_quota_bytes);
-}
-
-// Checks the supported ozone platform with Scenic if no arg is specified
-// already.
-void MaybeSetOzonePlatformArg(base::CommandLine* launch_args) {
-  if (launch_args->HasSwitch(switches::kOzonePlatform))
-    return;
-
-  fuchsia::ui::scenic::ScenicSyncPtr scenic;
-  zx_status_t status =
-      base::ComponentContextForProcess()->svc()->Connect(scenic.NewRequest());
-  ZX_CHECK(status == ZX_OK, status) << "Couldn't connect to Scenic.";
-
-  bool scenic_uses_flatland = false;
-  status = scenic->UsesFlatland(&scenic_uses_flatland);
-  ZX_CHECK(status == ZX_OK, status) << "UsesFlatland()";
-  launch_args->AppendSwitchNative(switches::kOzonePlatform,
-                                  scenic_uses_flatland ? "flatland" : "scenic");
 }
 
 }  // namespace
@@ -193,11 +174,6 @@ WebEngineBrowserMainParts::browser_contexts() const {
   for (auto& binding : context_bindings_.bindings())
     contexts.push_back(binding->impl()->browser_context());
   return contexts;
-}
-
-int WebEngineBrowserMainParts::PreEarlyInitialization() {
-  MaybeSetOzonePlatformArg(base::CommandLine::ForCurrentProcess());
-  return content::BrowserMainParts::PreEarlyInitialization();
 }
 
 void WebEngineBrowserMainParts::PostEarlyInitialization() {
@@ -268,7 +244,7 @@ int WebEngineBrowserMainParts::PreMainMessageLoopRun() {
                           base::Unretained(this)));
 
   // Configure Ozone with an Aura implementation of the Screen abstraction.
-  screen_ = std::make_unique<aura::ScopedScreenOzone>();
+  screen_ = std::make_unique<aura::ScreenOzone>();
 
   // Create the FuchsiaCdmManager at startup rather than on-demand, to allow it
   // to perform potentially expensive startup work in the background.

@@ -14,6 +14,7 @@
 #include "net/http/http_response_headers.h"
 #include "services/metrics/public/cpp/metrics_utils.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
+#include "services/network/public/mojom/fetch_api.mojom.h"
 
 namespace internal {
 
@@ -38,15 +39,8 @@ const char
         [] = "PageLoad.Clients.Prerender.LayoutInstability."
              "MaxCumulativeShiftScore.SessionWindow."
              "Gap1000ms.Max5000ms2";
-const char kHistogramPrerenderPageEndReason[] =
-    "PageLoad.Clients.Prerender.PageEndReason";
 
 // Responsiveness metrics.
-const char
-    kHistogramPrerenderAverageUserInteractionLatencyOverBudgetMaxEventDuration
-        [] = "PageLoad.InteractiveTiming."
-             "AverageUserInteractionLatencyOverBudget."
-             "MaxEventDuration.Prerender";
 const char kHistogramPrerenderNumInteractions[] =
     "PageLoad.InteractiveTiming.NumInteractions.Prerender";
 const char
@@ -57,6 +51,10 @@ const char kHistogramPrerenderWorstUserInteractionLatencyMaxEventDuration[] =
     "PageLoad.InteractiveTiming.WorstUserInteractionLatency.MaxEventDuration."
     "Prerender";
 
+// Monitors serving preload cache to prerender.
+const char kPageLoadPrerenderActivatedPageLoaderStatus[] =
+    "PageLoad.Internal.Prerender2.ActivatedPageLoaderStatus";
+
 // This metric is used for debugging https://crbug.com/1379491.
 // Intentionally this metric doesn't record observer events per trigger type
 // (e.g., SpeculationRules) because some functions can be called before
@@ -65,56 +63,6 @@ const char kHistogramPrerenderWorstUserInteractionLatencyMaxEventDuration[] =
 // prerender activation).
 const char kPageLoadPrerenderObserverEvent[] =
     "PageLoad.Internal.Prerender2.ObserverEvent";
-
-// This metric is used for debugging https://crbug.com/1379491.
-const char kPageLoadPrerenderForegroundCheckResult[] =
-    "PageLoad.Internal.Prerender2.ForegroundCheckResult";
-
-namespace {
-
-// This is a copy of WasActivatedInForegroundOptionalEventInForeground() in
-// page_load_metrics_util.h but with recording diagnose metrics for
-// https://crbug.com/1379491. Please keep this consistent with the function.
-bool WasActivatedInForegroundOptionalEventInForeground(
-    const absl::optional<base::TimeDelta>& event,
-    const page_load_metrics::PageLoadMetricsObserverDelegate& delegate,
-    PageLoadPrerenderForegroundCheckEvent event_type) {
-  auto result = PageLoadPrerenderForegroundCheckResult::kPassed;
-  if (!delegate.WasPrerenderedThenActivatedInForeground()) {
-    result = PageLoadPrerenderForegroundCheckResult::kActivatedInBackground;
-  } else if (!event) {
-    result = PageLoadPrerenderForegroundCheckResult::kNoEventTime;
-  } else if (delegate.GetTimeToFirstBackground() &&
-             delegate.GetTimeToFirstBackground().value() < event.value()) {
-    result = PageLoadPrerenderForegroundCheckResult::kBackgroundedBeforeEvent;
-  }
-
-  // Make sure that this function is consistent with the original function.
-  CHECK_EQ(result == PageLoadPrerenderForegroundCheckResult::kPassed,
-           page_load_metrics::WasActivatedInForegroundOptionalEventInForeground(
-               event, delegate));
-
-  std::string histogram_name = kPageLoadPrerenderForegroundCheckResult;
-  switch (event_type) {
-    case PageLoadPrerenderForegroundCheckEvent::kFirstPaint:
-      histogram_name += ".FirstPaint";
-      break;
-    case PageLoadPrerenderForegroundCheckEvent::kFirstContentfulPaint:
-      histogram_name += ".FirstContentfulPaint";
-      break;
-    case PageLoadPrerenderForegroundCheckEvent::kFirstInputDelay:
-      histogram_name += ".FirstInputDelay";
-      break;
-    case PageLoadPrerenderForegroundCheckEvent::kLargestContentfulPaint:
-      histogram_name += ".LargestContentfulPaint";
-      break;
-  }
-  base::UmaHistogramEnumeration(histogram_name, result);
-
-  return result == PageLoadPrerenderForegroundCheckResult::kPassed;
-}
-
-}  // namespace
 
 }  // namespace internal
 
@@ -189,8 +137,10 @@ void PrerenderPageLoadMetricsObserver::DidActivatePrerenderedPage(
         main_frame_resource_has_no_store_.value() ? 1 : 0);
   }
 
-  builder.SetWasPrerendered(true).SetTiming_NavigationToActivation(
-      navigation_to_activation.InMilliseconds());
+  builder.SetWasPrerendered(true)
+      .SetTiming_NavigationToActivation(
+          navigation_to_activation.InMilliseconds())
+      .SetNavigation_PageTransition(navigation_handle->GetPageTransition());
   builder.Record(ukm::UkmRecorder::Get());
 }
 
@@ -200,9 +150,8 @@ void PrerenderPageLoadMetricsObserver::OnFirstPaintInPage(
       internal::kPageLoadPrerenderObserverEvent,
       internal::PageLoadPrerenderObserverEvent::kOnFirstPaintInPage);
 
-  if (!internal::WasActivatedInForegroundOptionalEventInForeground(
-          timing.paint_timing->first_paint, GetDelegate(),
-          internal::PageLoadPrerenderForegroundCheckEvent::kFirstPaint)) {
+  if (!WasActivatedInForegroundOptionalEventInForeground(
+          timing.paint_timing->first_paint, GetDelegate())) {
     return;
   }
   base::TimeDelta activation_to_fp =
@@ -219,10 +168,8 @@ void PrerenderPageLoadMetricsObserver::OnFirstContentfulPaintInPage(
       internal::kPageLoadPrerenderObserverEvent,
       internal::PageLoadPrerenderObserverEvent::kOnFirstContentfulPaintInPage);
 
-  if (!internal::WasActivatedInForegroundOptionalEventInForeground(
-          timing.paint_timing->first_contentful_paint, GetDelegate(),
-          internal::PageLoadPrerenderForegroundCheckEvent::
-              kFirstContentfulPaint)) {
+  if (!WasActivatedInForegroundOptionalEventInForeground(
+          timing.paint_timing->first_contentful_paint, GetDelegate())) {
     return;
   }
   base::TimeDelta activation_to_fcp =
@@ -244,9 +191,8 @@ void PrerenderPageLoadMetricsObserver::OnFirstInputInPage(
       internal::kPageLoadPrerenderObserverEvent,
       internal::PageLoadPrerenderObserverEvent::kOnFirstInputInPage);
 
-  if (!internal::WasActivatedInForegroundOptionalEventInForeground(
-          timing.interactive_timing->first_input_timestamp, GetDelegate(),
-          internal::PageLoadPrerenderForegroundCheckEvent::kFirstInputDelay)) {
+  if (!WasActivatedInForegroundOptionalEventInForeground(
+          timing.interactive_timing->first_input_timestamp, GetDelegate())) {
     return;
   }
 
@@ -265,7 +211,35 @@ void PrerenderPageLoadMetricsObserver::OnComplete(
   base::UmaHistogramEnumeration(
       internal::kPageLoadPrerenderObserverEvent,
       internal::PageLoadPrerenderObserverEvent::kOnComplete);
-  RecordSessionEndHistograms(timing, /*app_entering_background=*/false);
+  RecordSessionEndHistograms(timing);
+}
+
+void PrerenderPageLoadMetricsObserver::OnLoadedResource(
+    const page_load_metrics::ExtraRequestCompleteInfo&
+        extra_request_complete_info) {
+  // Return early if this load is not for the main resource of the main frame of
+  // the prerendered page.
+  if (extra_request_complete_info.request_destination !=
+      network::mojom::RequestDestination::kDocument) {
+    return;
+  }
+
+  CHECK(!main_resource_load_status_);
+  main_resource_load_status_ =
+      static_cast<net::Error>(extra_request_complete_info.net_error);
+}
+
+void PrerenderPageLoadMetricsObserver::MaybeRecordMainResourceLoadStatus() {
+  // Only record UMA for the activated prerendered page that has started
+  // loading. If the trigger type is not set, the page is not activated since it
+  // is set at `DidActivatePrerenderedPage`.  If the main_resource_load_status_
+  // is not set, the page is not loaded.
+  if (!trigger_type_ || !main_resource_load_status_.has_value()) {
+    return;
+  }
+  base::UmaHistogramSparse(
+      AppendSuffix(internal::kPageLoadPrerenderActivatedPageLoaderStatus),
+      std::abs(*main_resource_load_status_));
 }
 
 page_load_metrics::PageLoadMetricsObserver::ObservePolicy
@@ -274,16 +248,16 @@ PrerenderPageLoadMetricsObserver::FlushMetricsOnAppEnterBackground(
   base::UmaHistogramEnumeration(internal::kPageLoadPrerenderObserverEvent,
                                 internal::PageLoadPrerenderObserverEvent::
                                     kFlushMetricsOnAppEnterBackground);
-  RecordSessionEndHistograms(timing, /*app_entering_background=*/true);
+  RecordSessionEndHistograms(timing);
   return STOP_OBSERVING;
 }
 
 void PrerenderPageLoadMetricsObserver::RecordSessionEndHistograms(
-    const page_load_metrics::mojom::PageLoadTiming& main_frame_timing,
-    bool app_entering_background) {
+    const page_load_metrics::mojom::PageLoadTiming& main_frame_timing) {
   base::UmaHistogramEnumeration(
       internal::kPageLoadPrerenderObserverEvent,
       internal::PageLoadPrerenderObserverEvent::kRecordSessionEndHistograms);
+  MaybeRecordMainResourceLoadStatus();
 
   if (!GetDelegate().WasPrerenderedThenActivatedInForeground() ||
       !main_frame_timing.activation_start) {
@@ -292,30 +266,14 @@ void PrerenderPageLoadMetricsObserver::RecordSessionEndHistograms(
     return;
   }
 
-  // Records the reason how a page load ends.
-  auto page_end_reason = GetDelegate().GetPageEndReason();
-  if (page_end_reason == page_load_metrics::PageEndReason::END_NONE &&
-      app_entering_background) {
-    page_end_reason =
-        page_load_metrics::PageEndReason::END_APP_ENTER_BACKGROUND;
-  }
-  ukm::builders::PrerenderPageLoad(GetDelegate().GetPageUkmSourceId())
-      .SetPageEndReason(page_end_reason)
-      .Record(ukm::UkmRecorder::Get());
-  base::UmaHistogramEnumeration(
-      AppendSuffix(internal::kHistogramPrerenderPageEndReason), page_end_reason,
-      page_load_metrics::PAGE_END_REASON_COUNT);
-
   // Records Largest Contentful Paint (LCP) to UMA and UKM.
   const page_load_metrics::ContentfulPaintTimingInfo& largest_contentful_paint =
       GetDelegate()
           .GetLargestContentfulPaintHandler()
           .MergeMainFrameAndSubframes();
   if (largest_contentful_paint.ContainsValidTime() &&
-      internal::WasActivatedInForegroundOptionalEventInForeground(
-          largest_contentful_paint.Time(), GetDelegate(),
-          internal::PageLoadPrerenderForegroundCheckEvent::
-              kLargestContentfulPaint)) {
+      WasActivatedInForegroundOptionalEventInForeground(
+          largest_contentful_paint.Time(), GetDelegate())) {
     base::TimeDelta activation_to_lcp =
         largest_contentful_paint.Time().value() -
         main_frame_timing.activation_start.value();
@@ -361,8 +319,9 @@ void PrerenderPageLoadMetricsObserver::RecordLayoutShiftScoreMetrics(
       GetDelegate().GetNormalizedCLSData(
           page_load_metrics::PageLoadMetricsObserverDelegate::BfcacheStrategy::
               ACCUMULATE);
-  if (normalized_cls_data.data_tainted)
+  if (normalized_cls_data.data_tainted) {
     return;
+  }
 
   page_load_metrics::UmaMaxCumulativeShiftScoreHistogram10000x(
       AppendSuffix(
@@ -384,29 +343,23 @@ void PrerenderPageLoadMetricsObserver::RecordNormalizedResponsivenessMetrics() {
 
   DCHECK(GetDelegate().WasPrerenderedThenActivatedInForeground());
 
-  const page_load_metrics::NormalizedResponsivenessMetrics&
-      normalized_responsiveness_metrics =
-          GetDelegate().GetNormalizedResponsivenessMetrics();
-  if (!normalized_responsiveness_metrics.num_user_interactions)
+  const page_load_metrics::ResponsivenessMetricsNormalization&
+      responsiveness_metrics_normalization =
+          GetDelegate().GetResponsivenessMetricsNormalization();
+  if (!responsiveness_metrics_normalization.num_user_interactions()) {
     return;
+  }
 
-  const page_load_metrics::NormalizedInteractionLatencies& max_event_durations =
-      normalized_responsiveness_metrics.normalized_max_event_durations;
-
-  base::TimeDelta high_percentile2_max_event_duration = page_load_metrics::
-      ResponsivenessMetricsNormalization::ApproximateHighPercentile(
-          normalized_responsiveness_metrics.num_user_interactions,
-          max_event_durations.worst_ten_latencies);
+  base::TimeDelta high_percentile2_max_event_duration =
+      responsiveness_metrics_normalization.ApproximateHighPercentile()
+          .value()
+          .interaction_latency;
 
   UmaHistogramCustomTimes(
       internal::kHistogramPrerenderWorstUserInteractionLatencyMaxEventDuration,
-      max_event_durations.worst_latency, base::Milliseconds(1),
-      base::Seconds(60), 50);
-  UmaHistogramCustomTimes(
-      internal::
-          kHistogramPrerenderAverageUserInteractionLatencyOverBudgetMaxEventDuration,
-      max_event_durations.sum_of_latency_over_budget /
-          normalized_responsiveness_metrics.num_user_interactions,
+      responsiveness_metrics_normalization.worst_latency()
+          .value()
+          .interaction_latency,
       base::Milliseconds(1), base::Seconds(60), 50);
   UmaHistogramCustomTimes(
       internal::
@@ -415,22 +368,20 @@ void PrerenderPageLoadMetricsObserver::RecordNormalizedResponsivenessMetrics() {
       base::Seconds(60), 50);
   base::UmaHistogramCounts1000(
       internal::kHistogramPrerenderNumInteractions,
-      normalized_responsiveness_metrics.num_user_interactions);
+      responsiveness_metrics_normalization.num_user_interactions());
 
   ukm::builders::PrerenderPageLoad builder(GetDelegate().GetPageUkmSourceId());
   builder.SetInteractiveTiming_WorstUserInteractionLatency_MaxEventDuration(
-      max_event_durations.worst_latency.InMilliseconds());
-  builder
-      .SetInteractiveTiming_AverageUserInteractionLatencyOverBudget_MaxEventDuration(
-          max_event_durations.sum_of_latency_over_budget.InMilliseconds() /
-          normalized_responsiveness_metrics.num_user_interactions);
+      responsiveness_metrics_normalization.worst_latency()
+          .value()
+          .interaction_latency.InMilliseconds());
 
   builder
       .SetInteractiveTiming_UserInteractionLatency_HighPercentile2_MaxEventDuration(
           high_percentile2_max_event_duration.InMilliseconds());
   builder.SetInteractiveTiming_NumInteractions(
       ukm::GetExponentialBucketMinForCounts1000(
-          normalized_responsiveness_metrics.num_user_interactions));
+          responsiveness_metrics_normalization.num_user_interactions()));
 
   builder.Record(ukm::UkmRecorder::Get());
 }
@@ -439,10 +390,17 @@ std::string PrerenderPageLoadMetricsObserver::AppendSuffix(
     const std::string& histogram_name) const {
   DCHECK(trigger_type_.has_value());
   switch (trigger_type_.value()) {
-    case content::PrerenderTriggerType::kSpeculationRule:
+    case content::PreloadingTriggerType::kSpeculationRule:
       DCHECK(embedder_histogram_suffix_.empty());
       return histogram_name + ".SpeculationRule";
-    case content::PrerenderTriggerType::kEmbedder:
+    case content::PreloadingTriggerType::kSpeculationRuleFromIsolatedWorld:
+      DCHECK(embedder_histogram_suffix_.empty());
+      return histogram_name + ".SpeculationRuleFromIsolatedWorld";
+    case content::PreloadingTriggerType::
+        kSpeculationRuleFromAutoSpeculationRules:
+      DCHECK(embedder_histogram_suffix_.empty());
+      return histogram_name + ".SpeculationRuleFromAutoSpeculationRules";
+    case content::PreloadingTriggerType::kEmbedder:
       DCHECK(!embedder_histogram_suffix_.empty());
       return histogram_name + ".Embedder_" + embedder_histogram_suffix_;
   }

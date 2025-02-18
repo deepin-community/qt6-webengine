@@ -61,6 +61,7 @@ public:
         PdfViewerEnabled,
         NavigateOnDropEnabled,
         ReadingFromCanvasEnabled,
+        ForceDarkMode,
     };
 
     enum FontSize {
@@ -75,6 +76,13 @@ public:
         DisallowUnknownUrlSchemes = 1,
         AllowUnknownUrlSchemesFromUserInteraction,
         AllowAllUnknownUrlSchemes
+    };
+
+    enum class ImageAnimationPolicy : uint8_t {
+        Inherited = 0,
+        Allow,
+        AnimateOnce,
+        Disallow,
     };
 
 public:
@@ -97,6 +105,10 @@ public:
     UnknownUrlSchemePolicy unknownUrlSchemePolicy() const;
     void setUnknownUrlSchemePolicy(UnknownUrlSchemePolicy policy);
     void resetUnknownUrlSchemePolicy();
+
+    void setImageAnimationPolicy(ImageAnimationPolicy policy);
+    ImageAnimationPolicy imageAnimationPolicy() const;
+    void resetImageAnimationPolicy();
 
 private:
     explicit QWebEngineSettings(QWebEngineSettings *parentSettings = nullptr);

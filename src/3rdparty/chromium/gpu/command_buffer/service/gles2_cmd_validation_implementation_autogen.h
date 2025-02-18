@@ -304,7 +304,6 @@ static const GLenum valid_g_l_state_table[] = {
     GL_STENCIL_BITS,
     GL_TEXTURE_BINDING_2D,
     GL_TEXTURE_BINDING_CUBE_MAP,
-    GL_TEXTURE_FILTERING_HINT_CHROMIUM,
     GL_UNPACK_ALIGNMENT,
     GL_BIND_GENERATES_RESOURCE_CHROMIUM,
     GL_VERTEX_ARRAY_BINDING_OES,
@@ -471,7 +470,6 @@ bool Validators::HintModeValidator::IsValid(const GLenum value) const {
 
 static const GLenum valid_hint_target_table[] = {
     GL_GENERATE_MIPMAP_HINT,
-    GL_TEXTURE_FILTERING_HINT_CHROMIUM,
 };
 
 static const GLenum valid_hint_target_table_es3[] = {
@@ -481,7 +479,6 @@ static const GLenum valid_hint_target_table_es3[] = {
 static const GLenum valid_image_internal_format_table[] = {
     GL_RGB,
     GL_RGB_YCRCB_420_CHROMIUM,
-    GL_RGB_YCBCR_422_CHROMIUM,
     GL_RGB_YCBCR_420V_CHROMIUM,
     GL_RGB_YCBCR_P010_CHROMIUM,
     GL_RGBA,
@@ -628,7 +625,6 @@ bool Validators::QueryTargetValidator::IsValid(const GLenum value) const {
     case GL_ANY_SAMPLES_PASSED_CONSERVATIVE_EXT:
     case GL_COMMANDS_ISSUED_CHROMIUM:
     case GL_COMMANDS_ISSUED_TIMESTAMP_CHROMIUM:
-    case GL_LATENCY_QUERY_CHROMIUM:
     case GL_ASYNC_PIXEL_PACK_COMPLETED_CHROMIUM:
     case GL_COMMANDS_COMPLETED_CHROMIUM:
     case GL_READBACK_SHADOW_COPIES_UPDATED_CHROMIUM:
@@ -1129,7 +1125,6 @@ static const GLenum
         GL_RGB10_A2,
         GL_RGBA16F,
         GL_RGB_YCRCB_420_CHROMIUM,
-        GL_RGB_YCBCR_422_CHROMIUM,
         GL_RGB_YCBCR_420V_CHROMIUM,
         GL_RGB_YCBCR_P010_CHROMIUM,
         GL_R16_EXT,

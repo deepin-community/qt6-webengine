@@ -11,7 +11,7 @@ namespace feedbackPrivate {
     [instanceOf=Blob] object? data;
   };
 
-  dictionary SystemInformation {
+  dictionary LogsMapEntry {
     DOMString key;
     DOMString value;
   };
@@ -30,7 +30,10 @@ namespace feedbackPrivate {
     sadTabCrash,
 
     // Flow for internal Google users.
-    googleInternal
+    googleInternal,
+
+    // Flow for AI features.
+    ai
   };
 
   dictionary FeedbackInfo {
@@ -66,7 +69,7 @@ namespace feedbackPrivate {
 
     // An array of key/value pairs providing system information for this
     // feedback report.
-    SystemInformation[]? systemInformation;
+    LogsMapEntry[]? systemInformation;
 
     // True if we have permission to add histograms to this feedback report.
     boolean? sendHistograms;
@@ -111,6 +114,12 @@ namespace feedbackPrivate {
     // Whether or not |autofillMetadata| should be included in the feedback
     // report.
     boolean? sendAutofillMetadata;
+
+    // Whether or not the content is offensive or unsafe.
+    boolean? isOffensiveOrUnsafe;
+
+    // A JSON formatted string containing ai metadata.
+    DOMString? aiMetadata;
   };
 
   // Possible statuses that can result from sending feedback.
@@ -211,7 +220,7 @@ namespace feedbackPrivate {
 
   callback GetUserEmailCallback = void(DOMString email);
   callback GetSystemInformationCallback =
-      void(SystemInformation[] systemInformation);
+      void(LogsMapEntry[] systemInformation);
   callback SendFeedbackCallback = void(SendFeedbackResult result);
   callback ReadLogSourceCallback = void (ReadLogSourceResult result);
 

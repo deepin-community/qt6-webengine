@@ -12,11 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import * as m from 'mithril';
+import m from 'mithril';
+
 import {
   RecordingPageController,
 } from '../../common/recordingV2/recording_page_controller';
-import {EXTENSION_URL} from '../../common/recordingV2/recording_utils';
+import {
+  EXTENSION_URL,
+  RECORDING_MODAL_DIALOG_KEY,
+} from '../../common/recordingV2/recording_utils';
 import {
   CHROME_TARGET_FACTORY,
   ChromeTargetFactory,
@@ -27,7 +31,7 @@ import {
 import {
   WebsocketMenuController,
 } from '../../common/recordingV2/websocket_menu_controller';
-import {fullscreenModalContainer, ModalDefinition} from '../modal';
+import {closeModal, showModal} from '../../widgets/modal';
 import {CodeSnippet} from '../record_widgets';
 
 import {RecordingMultipleChoice} from './recording_multiple_choice';
@@ -43,23 +47,20 @@ const RUN_WEBSOCKET_CMD = '# Get tracebox\n' +
     '# Start the websocket server\n' +
     './tracebox websocket_bridge\n';
 
-export function addNewTarget(recordingPageController: RecordingPageController):
-    ModalDefinition {
-  const components = [];
-  components.push(m('text', 'Select platform:'));
-
-  components.push(assembleWebusbSection(recordingPageController));
-
-  components.push(m('.line'));
-  components.push(assembleWebsocketSection(recordingPageController));
-
-  components.push(m('.line'));
-  components.push(assembleChromeSection(recordingPageController));
-
-  return {
+export function showAddNewTargetModal(controller: RecordingPageController) {
+  showModal({
     title: 'Add new recording target',
-    content: m('.record-modal', components),
-  };
+    key: RECORDING_MODAL_DIALOG_KEY,
+    content: () => m(
+        '.record-modal',
+        m('text', 'Select platform:'),
+        assembleWebusbSection(controller),
+        m('.line'),
+        assembleWebsocketSection(controller),
+        m('.line'),
+        assembleChromeSection(controller),
+        ),
+  });
 }
 
 function assembleWebusbSection(
@@ -69,7 +70,6 @@ function assembleWebusbSection(
       m('.logo-wrapping', m('i.material-icons', 'usb')),
       m('.record-modal-description',
         m('h3', 'Android device over WebUSB'),
-        m('h4', 'JustWorks from the browser with one click'),
         m('text',
           'Android developers: this option cannot co-operate ' +
               'with the adb host on your machine. Only one entity between ' +
@@ -80,7 +80,7 @@ function assembleWebusbSection(
         m('.record-modal-button',
           {
             onclick: () => {
-              fullscreenModalContainer.close();
+              closeModal(RECORDING_MODAL_DIALOG_KEY);
               recordingPageController.addAndroidDevice();
             },
           },

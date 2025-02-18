@@ -18,14 +18,12 @@
 #include "base/files/memory_mapped_file.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
-#include "base/guid.h"
 #include "base/hash/sha1.h"
 #include "base/location.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_refptr.h"
-#include "base/metrics/histogram_macros.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -33,6 +31,7 @@
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
 #include "base/trace_event/traced_value.h"
+#include "base/uuid.h"
 #include "build/build_config.h"
 #include "components/services/storage/public/cpp/buckets/bucket_locator.h"
 #include "content/browser/cache_storage/cache_storage.pb.h"
@@ -287,7 +286,7 @@ class CacheStorage::SimpleCacheLoader : public CacheStorage::CacheLoader {
     std::string cache_dir;
     base::FilePath cache_path;
     do {
-      cache_dir = base::GenerateGUID();
+      cache_dir = base::Uuid::GenerateRandomV4().AsLowercaseString();
       cache_path = directory_path.AppendASCII(cache_dir);
     } while (base::PathExists(cache_path));
 
@@ -399,10 +398,9 @@ class CacheStorage::SimpleCacheLoader : public CacheStorage::CacheLoader {
       const std::string& data,
       scoped_refptr<storage::QuotaManagerProxy> quota_manager_proxy,
       const storage::BucketLocator& bucket_locator) {
-    int bytes_written = base::WriteFile(tmp_path, data.c_str(), data.size());
-    if (bytes_written != base::checked_cast<int>(data.size())) {
+    if (!base::WriteFile(tmp_path, data)) {
       base::DeleteFile(tmp_path);
-      quota_manager_proxy->NotifyWriteFailed(bucket_locator.storage_key);
+      quota_manager_proxy->OnClientWriteFailed(bucket_locator.storage_key);
       return false;
     }
 
@@ -542,7 +540,7 @@ class CacheStorage::SimpleCacheLoader : public CacheStorage::CacheLoader {
         std::string cache_dir;
         base::FilePath cache_path;
         do {
-          cache_dir = base::GenerateGUID();
+          cache_dir = base::Uuid::GenerateRandomV4().AsLowercaseString();
           cache_path = directory_path.AppendASCII(cache_dir);
         } while (base::PathExists(cache_path));
 
@@ -1059,9 +1057,6 @@ void CacheStorage::CreateCacheDidCreateCache(
                          "CacheStorage::CreateCacheDidCreateCache",
                          TRACE_ID_GLOBAL(trace_id),
                          TRACE_EVENT_FLAG_FLOW_IN | TRACE_EVENT_FLAG_FLOW_OUT);
-
-  UMA_HISTOGRAM_BOOLEAN("ServiceWorkerCache.CreateCacheStorageResult",
-                        static_cast<bool>(cache));
 
   if (status != CacheStorageError::kSuccess) {
     std::move(callback).Run(CacheStorageCacheHandle(), status);

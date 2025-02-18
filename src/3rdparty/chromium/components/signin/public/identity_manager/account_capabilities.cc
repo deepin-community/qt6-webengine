@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "base/notreached.h"
 #include "components/signin/public/identity_manager/account_capabilities.h"
 
 #include "base/no_destructor.h"
@@ -38,6 +39,16 @@ AccountCapabilities::GetSupportedAccountCapabilityNames() {
 #undef ACCOUNT_CAPABILITY
   }};
   return *kCapabilityNames;
+}
+
+bool AccountCapabilities::AreAnyCapabilitiesKnown() const {
+  for (const std::string& capability_name :
+       GetSupportedAccountCapabilityNames()) {
+    if (GetCapabilityByName(capability_name) != signin::Tribool::kUnknown) {
+      return true;
+    }
+  }
+  return false;
 }
 
 bool AccountCapabilities::AreAllCapabilitiesKnown() const {
@@ -73,16 +84,31 @@ signin::Tribool AccountCapabilities::can_run_chrome_privacy_sandbox_trials()
   return GetCapabilityByName(kCanRunChromePrivacySandboxTrialsCapabilityName);
 }
 
-signin::Tribool AccountCapabilities::can_stop_parental_supervision() const {
-  return GetCapabilityByName(kCanStopParentalSupervisionCapabilityName);
+signin::Tribool AccountCapabilities::is_opted_in_to_parental_supervision()
+    const {
+  return GetCapabilityByName(kIsOptedInToParentalSupervisionCapabilityName);
 }
 
 signin::Tribool AccountCapabilities::can_toggle_auto_updates() const {
   return GetCapabilityByName(kCanToggleAutoUpdatesName);
 }
 
+signin::Tribool AccountCapabilities::can_use_chrome_ip_protection() const {
+  return GetCapabilityByName(kCanUseChromeIpProtectionName);
+}
+
+signin::Tribool AccountCapabilities::can_use_model_execution_features() const {
+  return GetCapabilityByName(kCanUseModelExecutionFeaturesName);
+}
+
 signin::Tribool AccountCapabilities::is_allowed_for_machine_learning() const {
   return GetCapabilityByName(kIsAllowedForMachineLearningCapabilityName);
+}
+
+signin::Tribool AccountCapabilities::
+    is_subject_to_chrome_privacy_sandbox_restricted_measurement_notice() const {
+  return GetCapabilityByName(
+      kIsSubjectToChromePrivacySandboxRestrictedMeasurementNotice);
 }
 
 signin::Tribool AccountCapabilities::is_subject_to_enterprise_policies() const {
@@ -162,4 +188,9 @@ AccountCapabilities::ConvertToJavaAccountCapabilities(JNIEnv* env) const {
 AccountCapabilities::AccountCapabilities(
     base::flat_map<std::string, bool> capabilities)
     : capabilities_map_(std::move(capabilities)) {}
+
+const base::flat_map<std::string, bool>&
+AccountCapabilities::ConvertToAccountCapabilitiesIOS() {
+  return capabilities_map_;
+}
 #endif

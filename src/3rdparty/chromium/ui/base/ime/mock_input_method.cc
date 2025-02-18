@@ -20,8 +20,7 @@ namespace ui {
 
 MockInputMethod::MockInputMethod(
     ImeKeyEventDispatcher* ime_key_event_dispatcher)
-    : text_input_client_(nullptr),
-      ime_key_event_dispatcher_(ime_key_event_dispatcher) {}
+    : ime_key_event_dispatcher_(ime_key_event_dispatcher) {}
 
 MockInputMethod::~MockInputMethod() {
   for (InputMethodObserver& observer : observer_list_)
@@ -65,8 +64,6 @@ void MockInputMethod::OnFocus() {
   for (InputMethodObserver& observer : observer_list_)
     observer.OnFocus();
 }
-
-void MockInputMethod::OnTouch(ui::EventPointerType pointerType) {}
 
 void MockInputMethod::OnBlur() {
   for (InputMethodObserver& observer : observer_list_)

@@ -1,16 +1,29 @@
-# Copyright 2022 The Tint Authors.
+# Copyright 2022 The Dawn & Tint Authors
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+# 1. Redistributions of source code must retain the above copyright notice, this
+#    list of conditions and the following disclaimer.
 #
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# 2. Redistributions in binary form must reproduce the above copyright notice,
+#    this list of conditions and the following disclaimer in the documentation
+#    and/or other materials provided with the distribution.
+#
+# 3. Neither the name of the copyright holder nor the names of its
+#    contributors may be used to endorse or promote products derived from
+#    this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+# SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+# OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 # Pretty printers for the Tint project.
 # Add a line to your ~/.gdbinit to source this file, e.g.:
@@ -60,7 +73,7 @@ class Printer(object):
 
 
 class UtilsSlicePrinter(Printer):
-    '''Printer for tint::utils::Slice<T>'''
+    '''Printer for tint::Slice<T>'''
 
     def __init__(self, val):
         super(UtilsSlicePrinter, self).__init__(val)
@@ -98,12 +111,11 @@ class UtilsSlicePrinter(Printer):
         return 'array'
 
 
-pp_set.add_printer('UtilsSlicePrinter',
-                   '^tint::utils::Slice<.*>$', UtilsSlicePrinter)
+pp_set.add_printer('UtilsSlicePrinter', '^tint::Slice<.*>$', UtilsSlicePrinter)
 
 
 class UtilsVectorPrinter(Printer):
-    '''Printer for tint::utils::Vector<T, N>'''
+    '''Printer for tint::Vector<T, N>'''
 
     def __init__(self, val):
         super(UtilsVectorPrinter, self).__init__(val)
@@ -131,12 +143,11 @@ class UtilsVectorPrinter(Printer):
         return 'array'
 
 
-pp_set.add_printer(
-    'UtilsVector', '^tint::utils::Vector<.*>$', UtilsVectorPrinter)
+pp_set.add_printer('UtilsVector', '^tint::Vector<.*>$', UtilsVectorPrinter)
 
 
 class UtilsVectorRefPrinter(Printer):
-    '''Printer for tint::utils::VectorRef<T>'''
+    '''Printer for tint::VectorRef<T>'''
 
     def __init__(self, val):
         super(UtilsVectorRefPrinter, self).__init__(val)
@@ -161,8 +172,8 @@ class UtilsVectorRefPrinter(Printer):
         return 'array'
 
 
-pp_set.add_printer(
-    'UtilsVector', '^tint::utils::VectorRef<.*>$', UtilsVectorRefPrinter)
+pp_set.add_printer('UtilsVector', '^tint::VectorRef<.*>$',
+                   UtilsVectorRefPrinter)
 
 
 class UtilsHashmapBasePrinter(Printer):
@@ -215,8 +226,7 @@ class UtilsHashsetPrinter(UtilsHashmapBasePrinter):
             return None
 
 
-pp_set.add_printer(
-    'UtilsHashset', '^tint::utils::Hashset<.*>$', UtilsHashsetPrinter)
+pp_set.add_printer('UtilsHashset', '^tint::Hashset<.*>$', UtilsHashsetPrinter)
 
 
 class UtilsHashmapPrinter(UtilsHashmapBasePrinter):
@@ -231,8 +241,7 @@ class UtilsHashmapPrinter(UtilsHashmapBasePrinter):
             return None
 
 
-pp_set.add_printer(
-    'UtilsHashmap', '^tint::utils::Hashmap<.*>$', UtilsHashmapPrinter)
+pp_set.add_printer('UtilsHashmap', '^tint::Hashmap<.*>$', UtilsHashmapPrinter)
 
 
 gdb.printing.register_pretty_printer(gdb, pp_set, replace=_DEBUGGING)

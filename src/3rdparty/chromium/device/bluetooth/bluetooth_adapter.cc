@@ -31,8 +31,8 @@ namespace device {
 BluetoothAdapter::ServiceOptions::ServiceOptions() = default;
 BluetoothAdapter::ServiceOptions::~ServiceOptions() = default;
 
-#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_CHROMEOS) && !BUILDFLAG(IS_MAC) && \
-    !BUILDFLAG(IS_WIN) && !BUILDFLAG(IS_LINUX)
+#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_CHROMEOS) && \
+    !BUILDFLAG(IS_APPLE) && !BUILDFLAG(IS_WIN) && !BUILDFLAG(IS_LINUX)
 // static
 scoped_refptr<BluetoothAdapter> BluetoothAdapter::CreateAdapter() {
   return nullptr;
@@ -225,7 +225,7 @@ BluetoothAdapter::DeviceList BluetoothAdapter::GetDevices() {
   DeviceList devices;
   for (ConstDeviceList::const_iterator i = const_devices.begin();
        i != const_devices.end(); ++i)
-    devices.push_back(const_cast<BluetoothDevice*>(*i));
+    devices.push_back(const_cast<BluetoothDevice*>(i->get()));
 
   return devices;
 }
@@ -360,6 +360,12 @@ void BluetoothAdapter::NotifyDeviceIsBlockedByPolicyChanged(
 
   for (auto& observer : observers_)
     observer.DeviceBlockedByPolicyChanged(this, device, new_blocked_status);
+}
+
+void BluetoothAdapter::NotifyGattNeedsDiscovery(BluetoothDevice* device) {
+  for (auto& observer : observers_) {
+    observer.GattNeedsDiscovery(device);
+  }
 }
 #endif
 

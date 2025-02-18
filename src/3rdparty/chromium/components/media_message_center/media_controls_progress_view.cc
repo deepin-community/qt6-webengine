@@ -44,9 +44,10 @@ MediaControlsProgressView::MediaControlsProgressView(
       is_modern_notification_ ? kModernProgressViewInsets : kProgressViewInsets,
       kProgressBarAndTimeSpacing));
 
-  progress_bar_ = AddChildView(std::make_unique<views::ProgressBar>(
-      is_modern_notification_ ? kModernProgressBarHeight : kProgressBarHeight,
-      false));
+  progress_bar_ = AddChildView(std::make_unique<views::ProgressBar>());
+  progress_bar_->SetPreferredHeight(
+      is_modern_notification_ ? kModernProgressBarHeight : kProgressBarHeight);
+  progress_bar_->SetPreferredCornerRadii(absl::nullopt);
 
   // Font list for text views.
   gfx::Font default_font;
@@ -149,13 +150,26 @@ void MediaControlsProgressView::SetForegroundColor(SkColor color) {
   progress_bar_->SetForegroundColor(color);
 }
 
+void MediaControlsProgressView::SetForegroundColorId(ui::ColorId color_id) {
+  progress_bar_->SetForegroundColorId(color_id);
+}
+
 void MediaControlsProgressView::SetBackgroundColor(SkColor color) {
   progress_bar_->SetBackgroundColor(color);
+}
+
+void MediaControlsProgressView::SetBackgroundColorId(ui::ColorId color_id) {
+  progress_bar_->SetBackgroundColorId(color_id);
 }
 
 void MediaControlsProgressView::SetTextColor(SkColor color) {
   progress_time_->SetEnabledColor(color);
   duration_->SetEnabledColor(color);
+}
+
+void MediaControlsProgressView::SetTextColorId(ui::ColorId color_id) {
+  progress_time_->SetEnabledColorId(color_id);
+  duration_->SetEnabledColorId(color_id);
 }
 
 bool MediaControlsProgressView::OnMousePressed(const ui::MouseEvent& event) {

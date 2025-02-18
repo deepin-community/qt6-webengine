@@ -30,7 +30,8 @@
 #include "third_party/blink/renderer/bindings/modules/v8/v8_video_decoder_support.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
 #include "third_party/blink/renderer/core/typed_arrays/dom_array_buffer.h"
-#include "third_party/blink/renderer/modules/webcodecs/allow_shared_buffer_source_util.h"
+#include "third_party/blink/renderer/modules/webcodecs/array_buffer_util.h"
+#include "third_party/blink/renderer/modules/webcodecs/decrypt_config_util.h"
 #include "third_party/blink/renderer/modules/webcodecs/encoded_video_chunk.h"
 #include "third_party/blink/renderer/modules/webcodecs/gpu_factories_retriever.h"
 #include "third_party/blink/renderer/modules/webcodecs/video_color_space.h"
@@ -93,26 +94,24 @@ void DecoderSupport_OnKnown(
 bool ParseCodecString(const String& codec_string,
                       media::VideoType& out_video_type,
                       String& js_error_message) {
-  bool is_codec_ambiguous = true;
-  media::VideoCodec codec = media::VideoCodec::kUnknown;
-  media::VideoCodecProfile profile = media::VIDEO_CODEC_PROFILE_UNKNOWN;
-  media::VideoColorSpace color_space = media::VideoColorSpace::REC709();
-  uint8_t level = 0;
-  bool parse_succeeded =
-      media::ParseVideoCodecString("", codec_string.Utf8(), &is_codec_ambiguous,
-                                   &codec, &profile, &level, &color_space);
-
-  if (!parse_succeeded) {
-    js_error_message = "Failed to parse codec string.";
+  if (codec_string.LengthWithStrippedWhiteSpace() == 0) {
+    js_error_message = "Invalid codec; codec is required.";
     return false;
   }
 
-  if (is_codec_ambiguous) {
-    js_error_message = "Codec string is ambiguous.";
-    return false;
+  auto result = media::ParseVideoCodecString("", codec_string.Utf8(),
+                                             /*allow_ambiguous_matches=*/false);
+
+  if (!result) {
+    js_error_message = "Unknown or ambiguous codec name.";
+    out_video_type = {media::VideoCodec::kUnknown,
+                      media::VIDEO_CODEC_PROFILE_UNKNOWN,
+                      media::kNoVideoCodecLevel, media::VideoColorSpace()};
+    return true;
   }
 
-  out_video_type = {codec, profile, level, color_space};
+  out_video_type = {result->codec, result->profile, result->level,
+                    result->color_space};
   return true;
 }
 
@@ -285,15 +284,17 @@ ScriptPromise VideoDecoder::isConfigSupported(ScriptState* script_state,
   auto* config_copy = CopyConfig(*config);
 
   // Run the "Check Configuration Support" algorithm.
+  HardwarePreference hw_pref = GetHardwareAccelerationPreference(*config_copy);
   VideoDecoderSupport* support = VideoDecoderSupport::Create();
   support->setConfig(config_copy);
 
-  if (!media::IsSupportedVideoType(*video_type)) {
+  if ((hw_pref == HardwarePreference::kPreferSoftware &&
+       !media::IsBuiltInVideoCodec(video_type->codec)) ||
+      !media::IsSupportedVideoType(*video_type)) {
     support->setSupported(false);
     return ScriptPromise::Cast(
         script_state,
-        ToV8Traits<VideoDecoderSupport>::ToV8(script_state, support)
-            .ToLocalChecked());
+        ToV8Traits<VideoDecoderSupport>::ToV8(script_state, support));
   }
 
   // Check that we can make a media::VideoDecoderConfig. The |js_error_message|
@@ -304,14 +305,13 @@ ScriptPromise VideoDecoder::isConfigSupported(ScriptState* script_state,
     support->setSupported(false);
     return ScriptPromise::Cast(
         script_state,
-        ToV8Traits<VideoDecoderSupport>::ToV8(script_state, support)
-            .ToLocalChecked());
+        ToV8Traits<VideoDecoderSupport>::ToV8(script_state, support));
   }
 
   // If hardware is preferred, asynchronously check for a hardware decoder.
-  HardwarePreference hw_pref = GetHardwareAccelerationPreference(*config_copy);
   if (hw_pref == HardwarePreference::kPreferHardware) {
-    auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
+    auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(
+        script_state, exception_state.GetContext());
     ScriptPromise promise = resolver->Promise();
     RetrieveGpuFactoriesWithKnownDecoderSupport(CrossThreadBindOnce(
         &DecoderSupport_OnKnown, MakeUnwrappingCrossThreadHandle(support),
@@ -323,8 +323,8 @@ ScriptPromise VideoDecoder::isConfigSupported(ScriptState* script_state,
   // Otherwise, the config is supported.
   support->setSupported(true);
   return ScriptPromise::Cast(
-      script_state, ToV8Traits<VideoDecoderSupport>::ToV8(script_state, support)
-                        .ToLocalChecked());
+      script_state,
+      ToV8Traits<VideoDecoderSupport>::ToV8(script_state, support));
 }
 
 HardwarePreference VideoDecoder::GetHardwarePreference(
@@ -429,6 +429,9 @@ VideoDecoder::MakeMediaVideoDecoderConfigInternal(
     NOTREACHED();
     return absl::nullopt;
   }
+  if (video_type.codec == media::VideoCodec::kUnknown) {
+    return absl::nullopt;
+  }
 
   std::vector<uint8_t> extra_data;
   if (config.hasDescription()) {
@@ -502,14 +505,25 @@ VideoDecoder::MakeMediaVideoDecoderConfigInternal(
     media_color_space = color_space->ToMediaColorSpace();
   }
 
+  auto encryption_scheme = media::EncryptionScheme::kUnencrypted;
+  if (config.hasEncryptionScheme()) {
+    auto scheme = ToMediaEncryptionScheme(config.encryptionScheme());
+    if (!scheme) {
+      *js_error_message = "Unsupported encryption scheme";
+      return absl::nullopt;
+    }
+    encryption_scheme = scheme.value();
+  }
+
   media::VideoDecoderConfig media_config;
   media_config.Initialize(video_type.codec, video_type.profile,
                           media::VideoDecoderConfig::AlphaMode::kIsOpaque,
                           media_color_space, media::kNoTransformation,
                           coded_size, visible_rect, natural_size, extra_data,
-                          media::EncryptionScheme::kUnencrypted);
+                          encryption_scheme);
   media_config.set_aspect_ratio(aspect_ratio);
   if (!media_config.IsValidConfig()) {
+    *js_error_message = "Unsupported config.";
     return absl::nullopt;
   }
 

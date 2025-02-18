@@ -5,6 +5,7 @@
 
 import mojom.generate.generator as generator
 import mojom.generate.module as mojom
+import mojom.generate.pack as pack
 import itertools
 import os
 import sys
@@ -51,6 +52,17 @@ _kind_to_ts_type = {
     mojom.INT64: "bigint",
     mojom.UINT64: "bigint",
     mojom.DOUBLE: "number",
+    mojom.NULLABLE_BOOL: "boolean",
+    mojom.NULLABLE_INT8: "number",
+    mojom.NULLABLE_UINT8: "number",
+    mojom.NULLABLE_INT16: "number",
+    mojom.NULLABLE_UINT16: "number",
+    mojom.NULLABLE_INT32: "number",
+    mojom.NULLABLE_UINT32: "number",
+    mojom.NULLABLE_FLOAT: "number",
+    mojom.NULLABLE_INT64: "bigint",
+    mojom.NULLABLE_UINT64: "bigint",
+    mojom.NULLABLE_DOUBLE: "number",
     mojom.STRING: "string",
     mojom.NULLABLE_STRING: "string",
     mojom.HANDLE: "MojoHandle",
@@ -142,11 +154,18 @@ _js_reserved_keywords = [
     'yield',
 ]
 
-_SHARED_MODULE_PREFIX = 'chrome://resources/mojo'
+_CHROME_SCHEME_PREFIX = 'chrome:'
+_SHARED_MODULE_PREFIX = '//resources/mojo'
+
+
+def _IsSharedModulePath(path):
+  return path.startswith(_SHARED_MODULE_PREFIX) or \
+      path.startswith(_CHROME_SCHEME_PREFIX + _SHARED_MODULE_PREFIX)
 
 
 def _IsAbsoluteChromeResourcesPath(path):
-  return path.startswith('chrome://resources/')
+  return path.startswith('chrome://resources/') or \
+      path.startswith('//resources/')
 
 
 def _GetWebUiModulePath(module):
@@ -156,8 +175,10 @@ def _GetWebUiModulePath(module):
   path. Otherwise, returned paths always end in a '/' and begin with either
   `chrome://resources/` or a '/'."""
   path = module.metadata.get('webui_module_path')
-  if path is None or path == '/':
-    return path
+  if path is None:
+    return None
+  if path == '' or path == '/':
+    return '/'
   if _IsAbsoluteChromeResourcesPath(path):
     return path.rstrip('/') + '/'
   return '/{}/'.format(path.strip('/'))
@@ -227,6 +248,10 @@ class Generator(generator.Generator):
 
   def GetFilters(self):
     ts_filters = {
+        "is_nullable_value_kind_packed_field":
+        pack.IsNullableValueKindPackedField,
+        "is_primary_nullable_value_kind_packed_field":
+        pack.IsPrimaryNullableValueKindPackedField,
         "constant_value": self._GetConstantValue,
         "default_ts_value": self._GetDefaultValue,
         "imports_for_kind": self._GetImportsForKind,
@@ -314,8 +339,7 @@ class Generator(generator.Generator):
         return "Map<%s, %s>" % (recurse_nullable(
             kind.key_kind), recurse_nullable(kind.value_kind))
 
-      if (mojom.IsAssociatedKind(kind) or mojom.IsInterfaceRequestKind(kind)
-          or mojom.IsPendingRemoteKind(kind)
+      if (mojom.IsAssociatedKind(kind) or mojom.IsPendingRemoteKind(kind)
           or mojom.IsPendingReceiverKind(kind)
           or mojom.IsPendingAssociatedRemoteKind(kind)
           or mojom.IsPendingAssociatedReceiverKind(kind)):
@@ -343,16 +367,13 @@ class Generator(generator.Generator):
         return name
       if mojom.IsInterfaceKind(kind) or mojom.IsPendingRemoteKind(kind):
         return name + "Remote"
-      if mojom.IsInterfaceRequestKind(kind) or mojom.IsPendingReceiverKind(
-          kind):
+      if mojom.IsPendingReceiverKind(kind):
         return name + "PendingReceiver"
       # TODO(calamity): Support associated interfaces properly.
-      if (mojom.IsAssociatedInterfaceKind(kind)
-          or mojom.IsPendingAssociatedRemoteKind(kind)):
+      if mojom.IsPendingAssociatedRemoteKind(kind):
         return "object"
       # TODO(calamity): Support associated interface requests properly.
-      if (mojom.IsAssociatedInterfaceRequestKind(kind)
-          or mojom.IsPendingAssociatedReceiverKind(kind)):
+      if mojom.IsPendingAssociatedReceiverKind(kind):
         return "object"
 
       raise Exception("Type is not supported yet.")
@@ -395,10 +416,6 @@ class Generator(generator.Generator):
         for method in interface.methods:
           referenced_kinds.extend(method.parameters or [])
           referenced_kinds.extend(method.response_parameters or [])
-      for struct in self.module.structs:
-        referenced_kinds.extend(struct.fields)
-      for union in self.module.unions:
-        referenced_kinds.extend(union.fields)
 
       # Determine whether Remote and/or PendingReceiver are referenced.
       imports = []
@@ -412,7 +429,6 @@ class Generator(generator.Generator):
         if (not imported_remote
             and (mojom.IsInterfaceKind(referenced_kind.kind)
                  or mojom.IsPendingRemoteKind(referenced_kind.kind)
-                 or mojom.IsAssociatedInterfaceKind(referenced_kind.kind)
                  or mojom.IsPendingAssociatedRemoteKind(referenced_kind.kind))
             and referenced_kind.kind.kind == kind):
           imported_remote = True
@@ -420,8 +436,6 @@ class Generator(generator.Generator):
           continue
         if (not imported_receiver
             and (mojom.IsPendingReceiverKind(referenced_kind.kind)
-                 or mojom.IsInterfaceRequestKind(referenced_kind.kind)
-                 or mojom.IsAssociatedInterfaceRequestKind(referenced_kind.kind)
                  or mojom.IsPendingAssociatedReceiverKind(referenced_kind.kind))
             and referenced_kind.kind.kind == kind):
           imported_receiver = True
@@ -442,8 +456,7 @@ class Generator(generator.Generator):
             get_spec(kind.key_kind), get_spec(kind.value_kind),
             "true" if mojom.IsNullableKind(kind.value_kind) else "false")
 
-      if (mojom.IsAssociatedKind(kind) or mojom.IsInterfaceRequestKind(kind)
-          or mojom.IsPendingRemoteKind(kind)
+      if (mojom.IsAssociatedKind(kind) or mojom.IsPendingRemoteKind(kind)
           or mojom.IsPendingReceiverKind(kind)
           or mojom.IsPendingAssociatedRemoteKind(kind)
           or mojom.IsPendingAssociatedReceiverKind(kind)):
@@ -467,15 +480,12 @@ class Generator(generator.Generator):
         return "%sSpec.$" % name
       if mojom.IsInterfaceKind(kind) or mojom.IsPendingRemoteKind(kind):
         return "mojo.internal.InterfaceProxy(%sRemote)" % name
-      if mojom.IsInterfaceRequestKind(kind) or mojom.IsPendingReceiverKind(
-          kind):
+      if mojom.IsPendingReceiverKind(kind):
         return "mojo.internal.InterfaceRequest(%sPendingReceiver)" % name
-      if (mojom.IsAssociatedInterfaceKind(kind)
-          or mojom.IsPendingAssociatedRemoteKind(kind)):
+      if mojom.IsPendingAssociatedRemoteKind(kind):
         # TODO(rockot): Implement associated interfaces.
         return "mojo.internal.AssociatedInterfaceProxy(%sRemote)" % (name)
-      if (mojom.IsAssociatedInterfaceRequestKind(kind)
-          or mojom.IsPendingAssociatedReceiverKind(kind)):
+      if mojom.IsPendingAssociatedReceiverKind(kind):
         return "mojo.internal.AssociatedInterfaceRequest(%sPendingReceiver)" % (
             name)
 
@@ -569,17 +579,25 @@ class Generator(generator.Generator):
 
   def _GetJsModuleImports(self):
     this_module_path = _GetWebUiModulePath(self.module)
-    this_module_is_shared = bool(
-        this_module_path and this_module_path.startswith(_SHARED_MODULE_PREFIX))
+    this_module_is_shared = bool(this_module_path
+                                 and _IsSharedModulePath(this_module_path))
     imports = dict()
+
+    def strip_prefix(s, prefix):
+      if s.startswith(prefix):
+        return s[len(prefix):]
+      return s
+
     for spec, kind in self.module.imported_kinds.items():
       assert this_module_path is not None
       base_path = _GetWebUiModulePath(kind.module)
-      assert base_path is not None
+      assert base_path is not None, \
+          "No WebUI bindings found for dependency {0!r} imported by " \
+              "{1!r}".format(kind.module, self.module)
       import_path = '{}{}-webui.js'.format(base_path,
                                            os.path.basename(kind.module.path))
 
-      import_module_is_shared = import_path.startswith(_SHARED_MODULE_PREFIX)
+      import_module_is_shared = _IsSharedModulePath(import_path)
       if this_module_is_shared:
         assert import_module_is_shared, \
             'Shared WebUI module "{}" cannot depend on non-shared WebUI ' \
@@ -604,19 +622,19 @@ class Generator(generator.Generator):
               import_module_is_shared == this_module_is_shared
 
       if use_relative_path:
-
-        def strip_prefix(s, prefix):
-          if s.startswith(prefix):
-            return s[len(prefix):]
-          return s
-
         import_path = urllib.request.pathname2url(
             os.path.relpath(
-                strip_prefix(import_path, _SHARED_MODULE_PREFIX),
-                strip_prefix(this_module_path, _SHARED_MODULE_PREFIX)))
+                strip_prefix(strip_prefix(import_path, _CHROME_SCHEME_PREFIX),
+                             _SHARED_MODULE_PREFIX),
+                strip_prefix(
+                    strip_prefix(this_module_path, _CHROME_SCHEME_PREFIX),
+                    _SHARED_MODULE_PREFIX)))
         if (not import_path.startswith('.')
             and not import_path.startswith('/')):
           import_path = './' + import_path
+      else:
+        # Import absolute imports from scheme-relative paths.
+        import_path = strip_prefix(import_path, _CHROME_SCHEME_PREFIX)
 
       if import_path not in imports:
         imports[import_path] = []

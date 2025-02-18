@@ -12,14 +12,16 @@
 #include <string>
 #include <vector>
 
+#include "base/functional/callback_forward.h"
 #include "base/memory/weak_ptr.h"
-#include "base/task/single_thread_task_runner.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/time/time.h"
 #include "mojo/public/cpp/base/big_buffer.h"
 #include "mojo/public/cpp/system/data_pipe.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/net_errors.h"
 #include "net/base/request_priority.h"
+#include "net/http/http_request_headers.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/network/public/mojom/fetch_api.mojom-forward.h"
@@ -28,11 +30,13 @@
 #include "third_party/blink/public/mojom/blob/blob_registry.mojom-blink.h"
 #include "third_party/blink/public/mojom/loader/resource_load_info.mojom-shared.h"
 #include "third_party/blink/public/mojom/loader/resource_load_info.mojom.h"
+#include "third_party/blink/public/mojom/navigation/renderer_eviction_reason.mojom-blink-forward.h"
 #include "third_party/blink/public/platform/web_common.h"
 #include "third_party/blink/public/platform/web_url_request.h"
 #include "third_party/blink/public/platform/web_vector.h"
 #include "third_party/blink/renderer/platform/loader/fetch/loader_freeze_mode.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
+#include "third_party/blink/renderer/platform/wtf/vector.h"
 
 namespace base {
 class WaitableEvent;
@@ -48,12 +52,11 @@ struct URLLoaderCompletionStatus;
 }  // namespace network
 
 namespace blink {
-class BackForwardCacheLoaderHelper;
+class CodeCacheHost;
 class ResourceLoadInfoNotifierWrapper;
 class ThrottlingURLLoader;
 class MojoURLLoaderClient;
-class WebRequestPeer;
-class WebResourceRequestSenderDelegate;
+class ResourceRequestClient;
 struct SyncLoadResponse;
 
 // This class creates a PendingRequestInfo object and handles sending a resource
@@ -89,31 +92,35 @@ class BLINK_PLATFORM_EXPORT ResourceRequestSender {
       const Vector<String>& cors_exempt_header_list,
       base::WaitableEvent* terminate_sync_load_event,
       mojo::PendingRemote<mojom::blink::BlobRegistry> download_to_blob_registry,
-      scoped_refptr<WebRequestPeer> peer,
+      scoped_refptr<ResourceRequestClient> client,
       std::unique_ptr<ResourceLoadInfoNotifierWrapper>
           resource_load_info_notifier_wrapper);
 
   // Call this method to initiate the request. If this method succeeds, then
-  // the peer's methods will be called asynchronously to report various events.
-  // Returns the request id. |url_loader_factory| must be non-null.
+  // the client's methods will be called asynchronously to report various
+  // events. Returns the request id. |url_loader_factory| must be non-null.
   //
   // You need to pass a non-null |loading_task_runner| to specify task queue to
   // execute loading tasks on.
   virtual int SendAsync(
       std::unique_ptr<network::ResourceRequest> request,
-      scoped_refptr<base::SingleThreadTaskRunner> loading_task_runner,
+      scoped_refptr<base::SequencedTaskRunner> loading_task_runner,
       const net::NetworkTrafficAnnotationTag& traffic_annotation,
       uint32_t loader_options,
       const Vector<String>& cors_exempt_header_list,
-      scoped_refptr<WebRequestPeer> peer,
+      scoped_refptr<ResourceRequestClient> client,
       scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
       WebVector<std::unique_ptr<URLLoaderThrottle>> throttles,
       std::unique_ptr<ResourceLoadInfoNotifierWrapper>
           resource_load_info_notifier_wrapper,
-      BackForwardCacheLoaderHelper* back_forward_cache_loader_helper);
+      CodeCacheHost* code_cache_host,
+      base::OnceCallback<void(mojom::blink::RendererEvictionReason)>
+          evict_from_bfcache_callback,
+      base::RepeatingCallback<void(size_t)>
+          did_buffer_load_while_in_bfcache_callback);
 
   // Cancels the current request and `request_info_` will be released.
-  virtual void Cancel(scoped_refptr<base::SingleThreadTaskRunner> task_runner);
+  virtual void Cancel(scoped_refptr<base::SequencedTaskRunner> task_runner);
 
   // Freezes the loader. See blink/renderer/platform/loader/README.md for the
   // general concept of "freezing" in the loading module. See
@@ -125,7 +132,7 @@ class BLINK_PLATFORM_EXPORT ResourceRequestSender {
                          int intra_priority_value);
 
   virtual void DeletePendingRequest(
-      scoped_refptr<base::SingleThreadTaskRunner> task_runner);
+      scoped_refptr<base::SequencedTaskRunner> task_runner);
 
   // Called when the transfer size is updated.
   virtual void OnTransferSizeUpdated(int32_t transfer_size_diff);
@@ -135,33 +142,29 @@ class BLINK_PLATFORM_EXPORT ResourceRequestSender {
 
   // Called when response headers are available.
   virtual void OnReceivedResponse(
-      network::mojom::URLResponseHeadPtr,
-      base::TimeTicks response_arrival_timing_at_renderer);
-
-  // Called when metadata generated by the renderer is retrieved from the
-  // cache.
-  virtual void OnReceivedCachedMetadata(mojo_base::BigBuffer data);
+      network::mojom::URLResponseHeadPtr response_head,
+      mojo::ScopedDataPipeConsumerHandle body,
+      absl::optional<mojo_base::BigBuffer> cached_metadata,
+      base::TimeTicks response_ipc_arrival_time);
 
   // Called when a redirect occurs.
   virtual void OnReceivedRedirect(
       const net::RedirectInfo& redirect_info,
       network::mojom::URLResponseHeadPtr response_head,
-      scoped_refptr<base::SingleThreadTaskRunner> task_runner);
-
-  // Called when the response body becomes available.
-  virtual void OnStartLoadingResponseBody(
-      mojo::ScopedDataPipeConsumerHandle body);
+      base::TimeTicks redirect_ipc_arrival_time);
 
   // Called when the response is complete.
   virtual void OnRequestComplete(
-      const network::URLLoaderCompletionStatus& status);
+      const network::URLLoaderCompletionStatus& status,
+      base::TimeTicks complete_ipc_arrival_time);
 
  private:
   friend class URLLoaderClientImpl;
   friend class URLResponseBodyConsumer;
 
+  class CodeCacheFetcher;
   struct PendingRequestInfo {
-    PendingRequestInfo(scoped_refptr<WebRequestPeer> peer,
+    PendingRequestInfo(scoped_refptr<ResourceRequestClient> client,
                        network::mojom::RequestDestination request_destination,
                        const KURL& request_url,
                        std::unique_ptr<ResourceLoadInfoNotifierWrapper>
@@ -169,7 +172,7 @@ class BLINK_PLATFORM_EXPORT ResourceRequestSender {
 
     ~PendingRequestInfo();
 
-    scoped_refptr<WebRequestPeer> peer;
+    scoped_refptr<ResourceRequestClient> client;
     network::mojom::RequestDestination request_destination;
     LoaderFreezeMode freeze_mode = LoaderFreezeMode::kNone;
     // Original requested url.
@@ -182,7 +185,6 @@ class BLINK_PLATFORM_EXPORT ResourceRequestSender {
     base::TimeTicks local_response_start;
     base::TimeTicks remote_request_start;
     net::LoadTimingInfo load_timing_info;
-    bool should_follow_redirect = true;
     bool redirect_requires_loader_restart = false;
     // Network error code the request completed with, or net::ERR_IO_PENDING if
     // it's not completed. Used both to distinguish completion from
@@ -193,12 +195,33 @@ class BLINK_PLATFORM_EXPORT ResourceRequestSender {
     std::unique_ptr<MojoURLLoaderClient> url_loader_client;
 
     // The Client Hints headers that need to be removed from a redirect.
+    //
+    // May also include the `Shared-Storage-Writable` header in the case that
+    // permission has been revoked on a redirect.
     WebVector<WebString> removed_headers;
+
+    // Headers that need to be added or updated, e.g. the
+    // `Shared-Storage-Writable` header in the case that permission has been
+    // restored on a redirect.
+    net::HttpRequestHeaders modified_headers;
 
     // Used to notify the loading stats.
     std::unique_ptr<ResourceLoadInfoNotifierWrapper>
         resource_load_info_notifier_wrapper;
+
+    // Set to true when the request was frozen. This is used not to record
+    // histograms for frozen requests. Note: Even if the request was unfreezed,
+    // we don't resume recording histograms because tasks are deferred in
+    // MojoURLLoaderClient.
+    bool ignore_for_histogram = false;
   };
+
+  // Called as a callback for ResourceRequestClient::OnReceivedRedirect().
+  void OnFollowRedirectCallback(
+      const net::RedirectInfo& redirect_info,
+      network::mojom::URLResponseHeadPtr response_head,
+      std::vector<std::string> removed_headers,
+      net::HttpRequestHeaders modified_headers);
 
   // Follows redirect, if any, for the given request.
   void FollowPendingRedirect(PendingRequestInfo* request_info);
@@ -209,12 +232,26 @@ class BLINK_PLATFORM_EXPORT ResourceRequestSender {
       const PendingRequestInfo& request_info,
       network::mojom::URLResponseHead& response_head) const;
 
-  // `delegate_` is expected to live longer than `this`.
-  WebResourceRequestSenderDelegate* delegate_;
+  void DidReceiveCachedCode();
+
+  bool ShouldDeferTask() const;
+
+  void MaybeRunPendingTasks();
 
   // The instance is created on StartAsync() or StartSync(), and it's deleted
   // when the response has finished, or when the request is canceled.
   std::unique_ptr<PendingRequestInfo> request_info_;
+
+  scoped_refptr<base::SequencedTaskRunner> loading_task_runner_;
+
+  // `pending_tasks_` are queued while waiting for the response from the
+  // IsolatedCode Cache Host. Ideally for the code health, we should not have
+  // such deferring logic. However, it is difficult because the current code for
+  // ScriptCachedMetadataHandler is written with the assumption that metadata
+  // comes first.
+  WTF::Vector<base::OnceClosure> pending_tasks_;
+
+  scoped_refptr<CodeCacheFetcher> code_cache_fetcher_;
 
   base::WeakPtrFactory<ResourceRequestSender> weak_factory_{this};
 };

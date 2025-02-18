@@ -74,14 +74,15 @@
 */
 //#define SK_R32_SHIFT    16
 
-/* Determines whether to build code that supports the GPU backend. Some classes
+/* Determines whether to build code that supports the Ganesh GPU backend. Some classes
    that are not GPU-specific, such as SkShader subclasses, have optional code
-   that is used allows them to interact with the GPU backend. If you'd like to
-   omit this code set SK_SUPPORT_GPU to 0. This also allows you to omit the gpu
-   directories from your include search path when you're not building the GPU
-   backend. Defaults to 1 (build the GPU code).
+   that is used allows them to interact with this GPU backend. If you'd like to
+   include this code, include -DSK_GANESH in your cflags or uncomment below.
+   Defaults to not set (No Ganesh GPU backend).
+   This define affects the ABI of Skia, so make sure it matches the client which uses
+   the compiled version of Skia.
 */
-//#define SK_SUPPORT_GPU 1
+//#define SK_GANESH
 
 /* Skia makes use of histogram logging macros to trace the frequency of
    events. By default, Skia provides no-op versions of these macros.
@@ -93,13 +94,14 @@
 //#define SK_HISTOGRAM_EXACT_LINEAR(name, sample, value_max)
 //#define SK_HISTOGRAM_MEMORY_KB(name, sample)
 
+// To use smaller but slower mipmap builder
+//#define SK_USE_DRAWING_MIPMAP_DOWNSAMPLER
+
 /* Skia tries to make use of some non-standard C++ language extensions.
    By default, Skia provides msvc and clang/gcc versions of these macros.
    Skia consumers can provide their own definitions of these macros to
    integrate with their own compilers and build system.
 */
-//#define SK_UNUSED [[maybe_unused]]
-//#define SK_WARN_UNUSED_RESULT [[nodiscard]]
 //#define SK_ALWAYS_INLINE inline __attribute__((always_inline))
 //#define SK_NEVER_INLINE __attribute__((noinline))
 //#define SK_PRINTF_LIKE(A, B) __attribute__((format(printf, (A), (B))))
@@ -115,6 +117,5 @@
  * this file.
  */
 //#define SK_API __declspec(dllexport)
-
 
 #endif

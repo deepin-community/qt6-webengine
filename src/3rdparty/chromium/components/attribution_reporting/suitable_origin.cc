@@ -8,13 +8,12 @@
 #include <utility>
 
 #include "base/check.h"
-#include "base/strings/string_piece.h"
+#include "components/attribution_reporting/is_origin_suitable.h"
+#include "mojo/public/cpp/bindings/default_construct_tag.h"
 #include "net/base/schemeful_site.h"
-#include "services/network/public/cpp/is_potentially_trustworthy.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/gurl.h"
 #include "url/origin.h"
-#include "url/url_constants.h"
 
 namespace attribution_reporting {
 
@@ -25,9 +24,7 @@ bool IsSitePotentiallySuitable(const net::SchemefulSite& site) {
 
 // static
 bool SuitableOrigin::IsSuitable(const url::Origin& origin) {
-  const std::string& scheme = origin.scheme();
-  return (scheme == url::kHttpScheme || scheme == url::kHttpsScheme) &&
-         network::IsOriginPotentiallyTrustworthy(origin);
+  return IsOriginSuitable(origin);
 }
 
 // static
@@ -45,11 +42,11 @@ absl::optional<SuitableOrigin> SuitableOrigin::Create(const GURL& url) {
 
 // static
 absl::optional<SuitableOrigin> SuitableOrigin::Deserialize(
-    base::StringPiece str) {
+    std::string_view str) {
   return Create(GURL(str));
 }
 
-SuitableOrigin::SuitableOrigin() {
+SuitableOrigin::SuitableOrigin(mojo::DefaultConstruct::Tag) {
   DCHECK(!IsValid());
 }
 
@@ -67,12 +64,6 @@ SuitableOrigin& SuitableOrigin::operator=(const SuitableOrigin&) = default;
 SuitableOrigin::SuitableOrigin(SuitableOrigin&&) = default;
 
 SuitableOrigin& SuitableOrigin::operator=(SuitableOrigin&&) = default;
-
-bool SuitableOrigin::operator<(const SuitableOrigin& other) const {
-  DCHECK(IsValid());
-  DCHECK(other.IsValid());
-  return origin_ < other.origin_;
-}
 
 std::string SuitableOrigin::Serialize() const {
   DCHECK(IsValid());

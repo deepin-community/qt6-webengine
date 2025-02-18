@@ -9,13 +9,13 @@ assignees: ''
 
 **Environment:**
  - OS: 
- - GPU:
+ - GPU and driver version:
  - SDK or header version if building from repo:
  - Options enabled (synchronization, best practices, etc.):
 
 **Describe the Issue**
 
-A clear and concise description of what the bug is.
+A [clear and concise description](https://en.wikipedia.org/wiki/Minimal_reproducible_example) of what the bug is.
 
 **Expected behavior**
 

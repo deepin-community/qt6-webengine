@@ -6,6 +6,7 @@
 
 #include "base/functional/bind.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/color/color_id.h"
 #include "ui/color/color_provider.h"
 #include "ui/compositor/layer.h"
@@ -70,8 +71,10 @@ void NotificationInputContainer::Init() {
   SetSendButtonHighlightPath();
   button_->SetImageHorizontalAlignment(views::ImageButton::ALIGN_CENTER);
   button_->SetImageVerticalAlignment(views::ImageButton::ALIGN_MIDDLE);
+  button_->SetAccessibleName(
+      l10n_util::GetStringUTF16(GetDefaultAccessibleNameStringId()));
   button_->SetTooltipText(
-      l10n_util::GetStringUTF16(GetDefaultPlaceholderStringId()));
+      l10n_util::GetStringUTF16(GetDefaultAccessibleNameStringId()));
 
   OnAfterUserAction(textfield_);
   AddChildView(button_.get());
@@ -184,12 +187,8 @@ views::InkDropContainerView* NotificationInputContainer::InstallInkDrop() {
   views::InkDrop::Get(this)->SetMode(
       views::InkDropHost::InkDropMode::ON_NO_GESTURE_HANDLER);
   views::InkDrop::Get(this)->SetVisibleOpacity(1);
-  views::InkDrop::Get(this)->SetBaseColorCallback(base::BindRepeating(
-      [](views::View* host) {
-        return host->GetColorProvider()->GetColor(
-            ui::kColorNotificationInputBackground);
-      },
-      this));
+  views::InkDrop::Get(this)->SetBaseColorId(
+      ui::kColorNotificationInputBackground);
 
   return AddChildView(std::make_unique<views::InkDropContainerView>());
 }
@@ -210,6 +209,10 @@ int NotificationInputContainer::GetDefaultPlaceholderStringId() const {
   return IDS_MESSAGE_CENTER_NOTIFICATION_INLINE_REPLY_PLACEHOLDER;
 }
 
+int NotificationInputContainer::GetDefaultAccessibleNameStringId() const {
+  return IDS_MESSAGE_CENTER_NOTIFICATION_INLINE_REPLY_ACCESSIBLE_NAME;
+}
+
 void NotificationInputContainer::StyleTextfield() {
   // No background.
 }
@@ -227,5 +230,8 @@ void NotificationInputContainer::UpdateButtonImage() {
           kNotificationInlineReplyIcon,
           GetColorProvider()->GetColor(icon_color_id), kInputReplyButtonSize));
 }
+
+BEGIN_METADATA(NotificationInputContainer, views::View)
+END_METADATA
 
 }  // namespace message_center

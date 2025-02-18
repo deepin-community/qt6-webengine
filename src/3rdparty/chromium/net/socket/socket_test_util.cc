@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "net/socket/socket_test_util.h"
+#include "base/memory/raw_ptr.h"
 
 #include <inttypes.h>  // For SCNx64
 #include <stdint.h>
@@ -47,6 +48,7 @@
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/abseil-cpp/absl/strings/ascii.h"
 
 #if BUILDFLAG(IS_ANDROID)
 #include "base/android/build_info.h"
@@ -68,14 +70,13 @@ inline char AsciifyLow(char x) {
 }
 
 inline char Asciify(char x) {
-  if ((x < 0) || !isprint(x))
-    return '.';
-  return x;
+  return absl::ascii_isprint(static_cast<unsigned char>(x)) ? x : '.';
 }
 
 void DumpData(const char* data, int data_len) {
-  if (logging::LOG_INFO < logging::GetMinLogLevel())
+  if (logging::LOGGING_INFO < logging::GetMinLogLevel()) {
     return;
+  }
   DVLOG(1) << "Length:  " << data_len;
   const char* pfx = "Data:    ";
   if (!data || (data_len <= 0)) {
@@ -116,8 +117,9 @@ void DumpData(const char* data, int data_len) {
 
 template <MockReadWriteType type>
 void DumpMockReadWrite(const MockReadWrite<type>& r) {
-  if (logging::LOG_INFO < logging::GetMinLogLevel())
+  if (logging::LOGGING_INFO < logging::GetMinLogLevel()) {
     return;
+  }
   DVLOG(1) << "Async:   " << (r.mode == ASYNC) << "\nResult:  " << r.result;
   DumpData(r.data, r.data_len);
   const char* stop = (r.sequence_number & MockRead::STOPLOOP) ? " (STOP)" : "";
@@ -429,7 +431,6 @@ SequencedSocketData::SequencedSocketData(const MockConnect& connect,
     : SequencedSocketData(reads, writes) {
   set_connect_data(connect);
 }
-
 MockRead SequencedSocketData::OnRead() {
   CHECK_EQ(IoState::kIdle, read_state_);
   CHECK(!helper_.AllReadDataConsumed())
@@ -800,6 +801,10 @@ std::unique_ptr<SSLClientSocket> MockClientSocketFactory::CreateSSLClientSocket(
         next_ssl_data->next_protos_expected_in_ssl_config.value(),
         ssl_config.alpn_protos));
   }
+  if (next_ssl_data->expected_application_settings) {
+    EXPECT_EQ(*next_ssl_data->expected_application_settings,
+              ssl_config.application_settings);
+  }
 
   // The protocol version used is a combination of the per-socket SSLConfig and
   // the SSLConfigService.
@@ -809,6 +814,11 @@ std::unique_ptr<SSLClientSocket> MockClientSocketFactory::CreateSSLClientSocket(
   EXPECT_EQ(
       next_ssl_data->expected_ssl_version_max,
       ssl_config.version_max_override.value_or(context->config().version_max));
+
+  if (next_ssl_data->expected_early_data_enabled) {
+    EXPECT_EQ(*next_ssl_data->expected_early_data_enabled,
+              ssl_config.early_data_enabled);
+  }
 
   if (next_ssl_data->expected_send_client_cert) {
     // Client certificate preferences come from |context|.
@@ -829,6 +839,10 @@ std::unique_ptr<SSLClientSocket> MockClientSocketFactory::CreateSSLClientSocket(
   }
   if (next_ssl_data->expected_host_and_port) {
     EXPECT_EQ(*next_ssl_data->expected_host_and_port, host_and_port);
+  }
+  if (next_ssl_data->expected_ignore_certificate_errors) {
+    EXPECT_EQ(*next_ssl_data->expected_ignore_certificate_errors,
+              ssl_config.ignore_certificate_errors);
   }
   if (next_ssl_data->expected_network_anonymization_key) {
     EXPECT_EQ(*next_ssl_data->expected_network_anonymization_key,
@@ -899,10 +913,6 @@ int MockClientSocket::GetLocalAddress(IPEndPoint* address) const {
 
 const NetLogWithSource& MockClientSocket::NetLog() const {
   return net_log_;
-}
-
-bool MockClientSocket::WasAlpnNegotiated() const {
-  return false;
 }
 
 NextProto MockClientSocket::GetNegotiatedProtocol() const {
@@ -1391,10 +1401,6 @@ int MockSSLClientSocket::GetPeerAddress(IPEndPoint* address) const {
   return stream_socket_->GetPeerAddress(address);
 }
 
-bool MockSSLClientSocket::WasAlpnNegotiated() const {
-  return data_->next_proto != kProtoUnknown;
-}
-
 NextProto MockSSLClientSocket::GetNegotiatedProtocol() const {
   return data_->next_proto;
 }
@@ -1444,8 +1450,8 @@ void MockSSLClientSocket::GetSSLCertRequestInfo(
     cert_request_info->is_proxy = data_->cert_request_info->is_proxy;
     cert_request_info->cert_authorities =
         data_->cert_request_info->cert_authorities;
-    cert_request_info->cert_key_types =
-        data_->cert_request_info->cert_key_types;
+    cert_request_info->signature_algorithms =
+        data_->cert_request_info->signature_algorithms;
   } else {
     cert_request_info->Reset();
   }
@@ -1576,6 +1582,10 @@ int MockUDPClientSocket::SetSendBufferSize(int32_t size) {
 }
 
 int MockUDPClientSocket::SetDoNotFragment() {
+  return OK;
+}
+
+int MockUDPClientSocket::SetRecvEcn() {
   return OK;
 }
 
@@ -1793,7 +1803,7 @@ void MockUDPClientSocket::RunCallback(CompletionOnceCallback callback,
 }
 
 TestSocketRequest::TestSocketRequest(
-    std::vector<TestSocketRequest*>* request_order,
+    std::vector<raw_ptr<TestSocketRequest, VectorExperimental>>* request_order,
     size_t* completion_count)
     : request_order_(request_order), completion_count_(completion_count) {
   DCHECK(request_order);
@@ -1923,7 +1933,7 @@ MockTransportClientSocketPool::MockTransportClientSocketPool(
           max_sockets,
           max_sockets_per_group,
           base::Seconds(10) /* unused_idle_socket_timeout */,
-          ProxyServer::Direct(),
+          ProxyChain::Direct(),
           false /* is_for_websockets */,
           common_connect_job_params),
       client_socket_factory_(common_connect_job_params->client_socket_factory) {
@@ -2027,10 +2037,6 @@ const NetLogWithSource& WrappedStreamSocket::NetLog() const {
 
 bool WrappedStreamSocket::WasEverUsed() const {
   return transport_->WasEverUsed();
-}
-
-bool WrappedStreamSocket::WasAlpnNegotiated() const {
-  return transport_->WasAlpnNegotiated();
 }
 
 NextProto WrappedStreamSocket::GetNegotiatedProtocol() const {

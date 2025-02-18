@@ -25,6 +25,7 @@
 #include "components/download/public/common/download_interrupt_reasons.h"
 #include "components/download/public/common/download_item.h"
 #include "components/download/public/common/download_job.h"
+#include "components/download/public/common/download_target_info.h"
 #include "components/download/public/common/download_url_parameters.h"
 #include "components/download/public/common/resume_mode.h"
 #include "components/download/public/common/url_loader_factory_provider.h"
@@ -67,7 +68,7 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadItemImpl
                 int64_t range_request_from,
                 int64_t range_request_to);
     RequestInfo();
-    explicit RequestInfo(const RequestInfo& other);
+    RequestInfo(const RequestInfo& other);
     explicit RequestInfo(const GURL& url);
     ~RequestInfo();
 
@@ -101,7 +102,7 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadItemImpl
     // the target path.
     base::FilePath forced_file_path;
 
-    // Page transition that triggerred the download.
+    // Page transition that triggered the download.
     ui::PageTransition transition_type = ui::PAGE_TRANSITION_LINK;
 
     // Whether the download was triggered with a user gesture.
@@ -136,7 +137,7 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadItemImpl
                     base::Time end_time);
     DestinationInfo();
     explicit DestinationInfo(TargetDisposition target_disposition);
-    explicit DestinationInfo(const DestinationInfo& other);
+    DestinationInfo(const DestinationInfo& other);
     ~DestinationInfo();
 
     // Whether the target should be overwritten, uniquified or prompted for.
@@ -267,7 +268,6 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadItemImpl
   bool IsDone() const override;
   int64_t GetBytesWasted() const override;
   int32_t GetAutoResumeCount() const override;
-  bool IsOffTheRecord() const override;
   const GURL& GetURL() const override;
   const std::vector<GURL>& GetUrlChain() const override;
   const GURL& GetOriginalUrl() const override;
@@ -299,6 +299,9 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadItemImpl
   bool GetFileExternallyRemoved() const override;
   void DeleteFile(base::OnceCallback<void(bool)> callback) override;
   DownloadFile* GetDownloadFile() override;
+#if BUILDFLAG(IS_ANDROID)
+  bool IsFromExternalApp() override;
+#endif  // BUILDFLAG(IS_ANDROID)
   bool IsDangerous() const override;
   bool IsInsecure() const override;
   DownloadDangerType GetDangerType() const override;
@@ -396,6 +399,12 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadItemImpl
 
   void SetDownloadId(uint32_t download_id);
 
+#if BUILDFLAG(IS_ANDROID)
+  void set_is_from_external_app(bool is_from_external_app) {
+    is_from_external_app_ = is_from_external_app;
+  }
+#endif  // BUILDFLAG(IS_ANDROID)
+
   const DownloadUrlParameters::RequestHeadersType& request_headers() const {
     return request_headers_;
   }
@@ -405,9 +414,6 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadItemImpl
   uint64_t ukm_download_id() const { return ukm_download_id_; }
 
   void SetAutoResumeCountForTesting(int32_t auto_resume_count);
-
-  // Gets the approximate memory usage of this item.
-  size_t GetApproximateMemoryUsage() const;
 
   std::pair<int64_t, int64_t> GetRangeRequestOffset() const;
 
@@ -457,7 +463,7 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadItemImpl
 
     // Embedder is in the process of determining the target of the download, and
     // the download is in an interrupted state. The interrupted state is not
-    // exposed to the emedder until target determination is complete.
+    // exposed to the embedder until target determination is complete.
     //
     // Transitions to (regular):
     //   INTERRUPTED_INTERNAL:    Once the target is determined, the download
@@ -582,22 +588,8 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadItemImpl
   // to be called when the target information is available.
   void DetermineDownloadTarget();
 
-  // Called when the target path has been determined. |target_path| is the
-  // suggested target path. |disposition| indicates how the target path should
-  // be used (see TargetDisposition). |danger_type| is the danger level of
-  // |target_path| as determined by the caller. |intermediate_path| is the path
-  // to use to store the download until OnDownloadCompleting() is called.
-  // If |display_name| is empty, the download should keep its current display
-  // name. Otherwise, the new display name should be used.
-  virtual void OnDownloadTargetDetermined(
-      const base::FilePath& target_path,
-      TargetDisposition disposition,
-      DownloadDangerType danger_type,
-      InsecureDownloadStatus insecure_download_status,
-      const base::FilePath& intermediate_path,
-      const base::FilePath& display_name,
-      const std::string& mime_type,
-      DownloadInterruptReason interrupt_reason);
+  // Called when the target path has been determined.
+  virtual void OnDownloadTargetDetermined(DownloadTargetInfo target_info);
 
   void OnDownloadRenamedToIntermediateName(DownloadInterruptReason reason,
                                            const base::FilePath& full_path);
@@ -632,8 +624,8 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadItemImpl
   // be restarted.
   void InterruptAndDiscardPartialState(DownloadInterruptReason reason);
 
-  // Indiates that an error has occurred on the download. The |bytes_so_far| and
-  // |hash_state| should correspond to the state of the DownloadFile. If the
+  // Indicates that an error has occurred on the download. The |bytes_so_far|
+  // and |hash_state| should correspond to the state of the DownloadFile. If the
   // interrupt reason allows, this partial state may be allowed to continue the
   // interrupted download upon resumption.
   void InterruptWithPartialState(int64_t bytes_so_far,
@@ -717,12 +709,12 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadItemImpl
 
   RequestInfo request_info_;
 
-  // GUID to identify the download, generated by |base::GenerateGUID| in
-  // download item, or provided by |DownloadUrlParameters|.
-  // The format should follow UUID version 4 in RFC 4122.
-  // The string representation is case sensitive. Legacy download GUID hex
-  // digits may be upper case ASCII characters, and new GUID will be in lower
-  // case.
+  // GUID to identify the download, generated by
+  // |base::Uuid::GenerateRandomV4().AsLowercaseString| in download item, or
+  // provided by |DownloadUrlParameters|. The format should follow UUID version
+  // 4 in RFC 4122. The string representation is case sensitive. Legacy download
+  // GUID hex digits may be upper case ASCII characters, and new GUID will be in
+  // lower case.
   std::string guid_;
 
   uint32_t download_id_ = kInvalidId;
@@ -751,6 +743,12 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadItemImpl
   // which may look at the file extension and first few bytes of the file.
   std::string original_mime_type_;
 
+#if BUILDFLAG(IS_MAC)
+  // A list of tags specified by the user to be set on the file upon the
+  // completion of it being written to disk.
+  std::vector<std::string> file_tags_;
+#endif
+
   // Total bytes expected.
   int64_t total_bytes_ = 0;
 
@@ -767,7 +765,7 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadItemImpl
   DownloadDangerType danger_type_ = DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS;
 
   // The views of this item in the download shelf and download contents.
-  base::ObserverList<Observer>::Unchecked observers_;
+  base::ObserverList<Observer> observers_;
 
   // Our delegate.
   raw_ptr<DownloadItemImplDelegate> delegate_ = nullptr;
@@ -786,7 +784,7 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadItemImpl
   // True if the item was downloaded temporarily.
   bool is_temporary_ = false;
 
-  // True if the item was explicity paused by the user. This should be checked
+  // True if the item was explicitly paused by the user. This should be checked
   // in conjunction with the download state to determine whether the download
   // was truly paused.
   bool paused_ = false;
@@ -880,6 +878,10 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadItemImpl
   // The InsecureDownloadStatus if determined.
   InsecureDownloadStatus insecure_download_status_ =
       InsecureDownloadStatus::UNKNOWN;
+
+#if BUILDFLAG(IS_ANDROID)
+  bool is_from_external_app_ = false;
+#endif  // BUILDFLAG(IS_ANDROID)
 
   THREAD_CHECKER(thread_checker_);
 

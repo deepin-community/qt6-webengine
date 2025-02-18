@@ -14,11 +14,9 @@
 
 #include "base/barrier_closure.h"
 #include "base/containers/flat_map.h"
-#include "base/containers/stack_container.h"
 #include "base/files/file_path.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
-#include "base/guid.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
@@ -51,12 +49,14 @@
 #include "net/base/net_errors.h"
 #include "net/base/url_util.h"
 #include "net/disk_cache/disk_cache.h"
+#include "net/http/http_connection_info.h"
 #include "net/http/http_request_headers.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_status_code.h"
 #include "services/network/public/mojom/fetch_api.mojom.h"
 #include "storage/browser/quota/quota_manager_proxy.h"
 #include "storage/common/quota/padding_key.h"
+#include "third_party/abseil-cpp/absl/container/inlined_vector.h"
 #include "third_party/blink/public/common/cache_storage/cache_storage_utils.h"
 #include "third_party/blink/public/common/fetch/fetch_api_request_headers_map.h"
 #include "third_party/blink/public/mojom/loader/referrer.mojom.h"
@@ -133,96 +133,99 @@ proto::CacheResponse::ResponseType FetchResponseTypeToProtoResponseType(
 
 // Assert that ConnectionInfo does not change since we cast it to
 // an integer in order to serialize it to disk.
-static_assert(net::HttpResponseInfo::CONNECTION_INFO_UNKNOWN == 0,
+static_assert(static_cast<int>(net::HttpConnectionInfo::kUNKNOWN) == 0,
               "ConnectionInfo enum is stable");
-static_assert(net::HttpResponseInfo::CONNECTION_INFO_HTTP1_1 == 1,
+static_assert(static_cast<int>(net::HttpConnectionInfo::kHTTP1_1) == 1,
               "ConnectionInfo enum is stable");
-static_assert(net::HttpResponseInfo::CONNECTION_INFO_DEPRECATED_SPDY2 == 2,
+static_assert(static_cast<int>(net::HttpConnectionInfo::kDEPRECATED_SPDY2) == 2,
               "ConnectionInfo enum is stable");
-static_assert(net::HttpResponseInfo::CONNECTION_INFO_DEPRECATED_SPDY3 == 3,
+static_assert(static_cast<int>(net::HttpConnectionInfo::kDEPRECATED_SPDY3) == 3,
               "ConnectionInfo enum is stable");
-static_assert(net::HttpResponseInfo::CONNECTION_INFO_HTTP2 == 4,
-              "ConnectionInfo enum is stable");
-static_assert(net::HttpResponseInfo::CONNECTION_INFO_QUIC_UNKNOWN_VERSION == 5,
-              "ConnectionInfo enum is stable");
-static_assert(net::HttpResponseInfo::CONNECTION_INFO_DEPRECATED_HTTP2_14 == 6,
-              "ConnectionInfo enum is stable");
-static_assert(net::HttpResponseInfo::CONNECTION_INFO_DEPRECATED_HTTP2_15 == 7,
-              "ConnectionInfo enum is stable");
-static_assert(net::HttpResponseInfo::CONNECTION_INFO_HTTP0_9 == 8,
-              "ConnectionInfo enum is stable");
-static_assert(net::HttpResponseInfo::CONNECTION_INFO_HTTP1_0 == 9,
-              "ConnectionInfo enum is stable");
-static_assert(net::HttpResponseInfo::CONNECTION_INFO_QUIC_32 == 10,
-              "ConnectionInfo enum is stable");
-static_assert(net::HttpResponseInfo::CONNECTION_INFO_QUIC_33 == 11,
-              "ConnectionInfo enum is stable");
-static_assert(net::HttpResponseInfo::CONNECTION_INFO_QUIC_34 == 12,
-              "ConnectionInfo enum is stable");
-static_assert(net::HttpResponseInfo::CONNECTION_INFO_QUIC_35 == 13,
-              "ConnectionInfo enum is stable");
-static_assert(net::HttpResponseInfo::CONNECTION_INFO_QUIC_36 == 14,
-              "ConnectionInfo enum is stable");
-static_assert(net::HttpResponseInfo::CONNECTION_INFO_QUIC_37 == 15,
-              "ConnectionInfo enum is stable");
-static_assert(net::HttpResponseInfo::CONNECTION_INFO_QUIC_38 == 16,
-              "ConnectionInfo enum is stable");
-static_assert(net::HttpResponseInfo::CONNECTION_INFO_QUIC_39 == 17,
-              "ConnectionInfo enum is stable");
-static_assert(net::HttpResponseInfo::CONNECTION_INFO_QUIC_40 == 18,
-              "ConnectionInfo enum is stable");
-static_assert(net::HttpResponseInfo::CONNECTION_INFO_QUIC_41 == 19,
-              "ConnectionInfo enum is stable");
-static_assert(net::HttpResponseInfo::CONNECTION_INFO_QUIC_42 == 20,
-              "ConnectionInfo enum is stable");
-static_assert(net::HttpResponseInfo::CONNECTION_INFO_QUIC_43 == 21,
-              "ConnectionInfo enum is stable");
-static_assert(net::HttpResponseInfo::CONNECTION_INFO_QUIC_Q099 == 22,
-              "ConnectionInfo enum is stable");
-static_assert(net::HttpResponseInfo::CONNECTION_INFO_QUIC_44 == 23,
-              "ConnectionInfo enum is stable");
-static_assert(net::HttpResponseInfo::CONNECTION_INFO_QUIC_45 == 24,
-              "ConnectionInfo enum is stable");
-static_assert(net::HttpResponseInfo::CONNECTION_INFO_QUIC_46 == 25,
-              "ConnectionInfo enum is stable");
-static_assert(net::HttpResponseInfo::CONNECTION_INFO_QUIC_47 == 26,
-              "ConnectionInfo enum is stable");
-static_assert(net::HttpResponseInfo::CONNECTION_INFO_QUIC_999 == 27,
-              "ConnectionInfo enum is stable");
-static_assert(net::HttpResponseInfo::CONNECTION_INFO_QUIC_Q048 == 28,
-              "ConnectionInfo enum is stable");
-static_assert(net::HttpResponseInfo::CONNECTION_INFO_QUIC_Q049 == 29,
-              "ConnectionInfo enum is stable");
-static_assert(net::HttpResponseInfo::CONNECTION_INFO_QUIC_Q050 == 30,
-              "ConnectionInfo enum is stable");
-static_assert(net::HttpResponseInfo::CONNECTION_INFO_QUIC_T048 == 31,
-              "ConnectionInfo enum is stable");
-static_assert(net::HttpResponseInfo::CONNECTION_INFO_QUIC_T049 == 32,
-              "ConnectionInfo enum is stable");
-static_assert(net::HttpResponseInfo::CONNECTION_INFO_QUIC_T050 == 33,
-              "ConnectionInfo enum is stable");
-static_assert(net::HttpResponseInfo::CONNECTION_INFO_QUIC_T099 == 34,
-              "ConnectionInfo enum is stable");
-static_assert(net::HttpResponseInfo::CONNECTION_INFO_QUIC_DRAFT_25 == 35,
-              "ConnectionInfo enum is stable");
-static_assert(net::HttpResponseInfo::CONNECTION_INFO_QUIC_DRAFT_27 == 36,
-              "ConnectionInfo enum is stable");
-static_assert(net::HttpResponseInfo::CONNECTION_INFO_QUIC_DRAFT_28 == 37,
-              "ConnectionInfo enum is stable");
-static_assert(net::HttpResponseInfo::CONNECTION_INFO_QUIC_DRAFT_29 == 38,
-              "ConnectionInfo enum is stable");
-static_assert(net::HttpResponseInfo::CONNECTION_INFO_QUIC_T051 == 39,
-              "ConnectionInfo enum is stable");
-static_assert(net::HttpResponseInfo::CONNECTION_INFO_QUIC_RFC_V1 == 40,
+static_assert(static_cast<int>(net::HttpConnectionInfo::kHTTP2) == 4,
               "ConnectionInfo enum is stable");
 static_assert(
-    net::HttpResponseInfo::CONNECTION_INFO_DEPRECATED_QUIC_2_DRAFT_1 == 41,
+    static_cast<int>(net::HttpConnectionInfo::kQUIC_UNKNOWN_VERSION) == 5,
     "ConnectionInfo enum is stable");
-static_assert(net::HttpResponseInfo::CONNECTION_INFO_QUIC_2_DRAFT_8 == 42,
+static_assert(static_cast<int>(net::HttpConnectionInfo::kDEPRECATED_HTTP2_14) ==
+                  6,
+              "ConnectionInfo enum is stable");
+static_assert(static_cast<int>(net::HttpConnectionInfo::kDEPRECATED_HTTP2_15) ==
+                  7,
+              "ConnectionInfo enum is stable");
+static_assert(static_cast<int>(net::HttpConnectionInfo::kHTTP0_9) == 8,
+              "ConnectionInfo enum is stable");
+static_assert(static_cast<int>(net::HttpConnectionInfo::kHTTP1_0) == 9,
+              "ConnectionInfo enum is stable");
+static_assert(static_cast<int>(net::HttpConnectionInfo::kQUIC_32) == 10,
+              "ConnectionInfo enum is stable");
+static_assert(static_cast<int>(net::HttpConnectionInfo::kQUIC_33) == 11,
+              "ConnectionInfo enum is stable");
+static_assert(static_cast<int>(net::HttpConnectionInfo::kQUIC_34) == 12,
+              "ConnectionInfo enum is stable");
+static_assert(static_cast<int>(net::HttpConnectionInfo::kQUIC_35) == 13,
+              "ConnectionInfo enum is stable");
+static_assert(static_cast<int>(net::HttpConnectionInfo::kQUIC_36) == 14,
+              "ConnectionInfo enum is stable");
+static_assert(static_cast<int>(net::HttpConnectionInfo::kQUIC_37) == 15,
+              "ConnectionInfo enum is stable");
+static_assert(static_cast<int>(net::HttpConnectionInfo::kQUIC_38) == 16,
+              "ConnectionInfo enum is stable");
+static_assert(static_cast<int>(net::HttpConnectionInfo::kQUIC_39) == 17,
+              "ConnectionInfo enum is stable");
+static_assert(static_cast<int>(net::HttpConnectionInfo::kQUIC_40) == 18,
+              "ConnectionInfo enum is stable");
+static_assert(static_cast<int>(net::HttpConnectionInfo::kQUIC_41) == 19,
+              "ConnectionInfo enum is stable");
+static_assert(static_cast<int>(net::HttpConnectionInfo::kQUIC_42) == 20,
+              "ConnectionInfo enum is stable");
+static_assert(static_cast<int>(net::HttpConnectionInfo::kQUIC_43) == 21,
+              "ConnectionInfo enum is stable");
+static_assert(static_cast<int>(net::HttpConnectionInfo::kQUIC_Q099) == 22,
+              "ConnectionInfo enum is stable");
+static_assert(static_cast<int>(net::HttpConnectionInfo::kQUIC_44) == 23,
+              "ConnectionInfo enum is stable");
+static_assert(static_cast<int>(net::HttpConnectionInfo::kQUIC_45) == 24,
+              "ConnectionInfo enum is stable");
+static_assert(static_cast<int>(net::HttpConnectionInfo::kQUIC_46) == 25,
+              "ConnectionInfo enum is stable");
+static_assert(static_cast<int>(net::HttpConnectionInfo::kQUIC_47) == 26,
+              "ConnectionInfo enum is stable");
+static_assert(static_cast<int>(net::HttpConnectionInfo::kQUIC_999) == 27,
+              "ConnectionInfo enum is stable");
+static_assert(static_cast<int>(net::HttpConnectionInfo::kQUIC_Q048) == 28,
+              "ConnectionInfo enum is stable");
+static_assert(static_cast<int>(net::HttpConnectionInfo::kQUIC_Q049) == 29,
+              "ConnectionInfo enum is stable");
+static_assert(static_cast<int>(net::HttpConnectionInfo::kQUIC_Q050) == 30,
+              "ConnectionInfo enum is stable");
+static_assert(static_cast<int>(net::HttpConnectionInfo::kQUIC_T048) == 31,
+              "ConnectionInfo enum is stable");
+static_assert(static_cast<int>(net::HttpConnectionInfo::kQUIC_T049) == 32,
+              "ConnectionInfo enum is stable");
+static_assert(static_cast<int>(net::HttpConnectionInfo::kQUIC_T050) == 33,
+              "ConnectionInfo enum is stable");
+static_assert(static_cast<int>(net::HttpConnectionInfo::kQUIC_T099) == 34,
+              "ConnectionInfo enum is stable");
+static_assert(static_cast<int>(net::HttpConnectionInfo::kQUIC_DRAFT_25) == 35,
+              "ConnectionInfo enum is stable");
+static_assert(static_cast<int>(net::HttpConnectionInfo::kQUIC_DRAFT_27) == 36,
+              "ConnectionInfo enum is stable");
+static_assert(static_cast<int>(net::HttpConnectionInfo::kQUIC_DRAFT_28) == 37,
+              "ConnectionInfo enum is stable");
+static_assert(static_cast<int>(net::HttpConnectionInfo::kQUIC_DRAFT_29) == 38,
+              "ConnectionInfo enum is stable");
+static_assert(static_cast<int>(net::HttpConnectionInfo::kQUIC_T051) == 39,
+              "ConnectionInfo enum is stable");
+static_assert(static_cast<int>(net::HttpConnectionInfo::kQUIC_RFC_V1) == 40,
+              "ConnectionInfo enum is stable");
+static_assert(
+    static_cast<int>(net::HttpConnectionInfo::kDEPRECATED_QUIC_2_DRAFT_1) == 41,
+    "ConnectionInfo enum is stable");
+static_assert(static_cast<int>(net::HttpConnectionInfo::kQUIC_2_DRAFT_8) == 42,
               "ConnectionInfo enum is stable");
 // The following assert needs to be changed every time a new value is added.
 // It exists to prevent us from forgetting to add new values above.
-static_assert(net::HttpResponseInfo::NUM_OF_CONNECTION_INFOS == 43,
+static_assert(static_cast<int>(net::HttpConnectionInfo::kMaxValue) == 42,
               "Please add new values above and update this assert");
 
 // Copy headers out of a cache entry and into a protobuf. The callback is
@@ -281,17 +284,17 @@ bool VaryMatches(const blink::FetchAPIRequestHeadersMap& request,
   return true;
 }
 
-// Check a batch operation list for duplicate entries.  A StackVector
-// must be passed to store any resulting duplicate URL strings.  Returns
-// true if any duplicates were found.
-bool FindDuplicateOperations(
-    const std::vector<blink::mojom::BatchOperationPtr>& operations,
-    std::vector<std::string>* duplicate_url_list_out) {
+// Checks a batch operation list for duplicate entries. Returns any duplicate
+// URL strings that were found. If the return value is empty, then there were no
+// duplicates.
+std::vector<std::string> FindDuplicateOperations(
+    const std::vector<blink::mojom::BatchOperationPtr>& operations) {
   using blink::mojom::BatchOperation;
-  DCHECK(duplicate_url_list_out);
+
+  std::vector<std::string> duplicate_url_list;
 
   if (operations.size() < 2) {
-    return false;
+    return duplicate_url_list;
   }
 
   // Create a temporary sorted vector of the operations to support quickly
@@ -302,12 +305,12 @@ bool FindDuplicateOperations(
   // Note, this will use 512 bytes of stack space on 64-bit devices.  The
   // static size attempts to accommodate most typical Cache.addAll() uses in
   // service worker install events while not blowing up the stack too much.
-  base::StackVector<BatchOperation*, 64> sorted;
-  sorted->reserve(operations.size());
+  absl::InlinedVector<BatchOperation*, 64> sorted;
+  sorted.reserve(operations.size());
   for (const auto& op : operations) {
-    sorted->push_back(op.get());
+    sorted.push_back(op.get());
   }
-  std::sort(sorted->begin(), sorted->end(),
+  std::sort(sorted.begin(), sorted.end(),
             [](BatchOperation* left, BatchOperation* right) {
               return left->request->url < right->request->url;
             });
@@ -317,7 +320,8 @@ bool FindDuplicateOperations(
   // have the same URL.  This results in an average complexity of O(n log n).
   // If the entire list has entries with the same URL and different VARY
   // headers then this devolves into O(n^2).
-  for (auto outer = sorted->cbegin(); outer != sorted->cend(); ++outer) {
+  for (BatchOperation* const* outer = sorted.cbegin(); outer != sorted.cend();
+       ++outer) {
     const BatchOperation* outer_op = *outer;
 
     // Note, the spec checks CacheQueryOptions like ignoreSearch, etc, but
@@ -330,12 +334,13 @@ bool FindDuplicateOperations(
 
     // If this entry already matches a duplicate we found, then just skip
     // ahead to find any remaining duplicates.
-    if (!duplicate_url_list_out->empty() &&
-        outer_op->request->url.spec() == duplicate_url_list_out->back()) {
+    if (!duplicate_url_list.empty() &&
+        outer_op->request->url.spec() == duplicate_url_list.back()) {
       continue;
     }
 
-    for (auto inner = std::next(outer); inner != sorted->cend(); ++inner) {
+    for (BatchOperation* const* inner = std::next(outer);
+         inner != sorted.cend(); ++inner) {
       const BatchOperation* inner_op = *inner;
       // Since the list is sorted we can stop looking at neighbors after
       // the first different URL.
@@ -353,13 +358,13 @@ bool FindDuplicateOperations(
           VaryMatches(outer_op->request->headers, inner_op->request->headers,
                       outer_op->response->response_type,
                       outer_op->response->headers)) {
-        duplicate_url_list_out->push_back(inner_op->request->url.spec());
+        duplicate_url_list.push_back(inner_op->request->url.spec());
         break;
       }
     }
   }
 
-  return !duplicate_url_list_out->empty();
+  return duplicate_url_list;
 }
 
 GURL RemoveQueryParam(const GURL& url) {
@@ -462,11 +467,11 @@ blink::mojom::FetchAPIResponsePtr CreateResponse(
           ? metadata.response().alpn_negotiated_protocol()
           : "unknown";
 
-  absl::optional<std::string> mime_type;
+  std::optional<std::string> mime_type;
   if (metadata.response().has_mime_type())
     mime_type = metadata.response().mime_type();
 
-  absl::optional<std::string> request_method;
+  std::optional<std::string> request_method;
   if (metadata.response().has_request_method())
     request_method = metadata.response().request_method();
 
@@ -502,11 +507,11 @@ blink::mojom::FetchAPIResponsePtr CreateResponse(
           metadata.response().cors_exposed_header_names().end()),
       /*side_data_blob=*/nullptr, /*side_data_blob_for_cache_put=*/nullptr,
       network::mojom::ParsedHeaders::New(),
-      // Default proto value of 0 maps to CONNECTION_INFO_UNKNOWN.
-      static_cast<net::HttpResponseInfo::ConnectionInfo>(
+      // Default proto value of 0 maps to HttpConnectionInfo::kUNKNOWN.
+      static_cast<net::HttpConnectionInfo>(
           metadata.response().connection_info()),
       alpn_negotiated_protocol, metadata.response().was_fetched_via_spdy(),
-      has_range_requested, /*auth_challenge_info=*/absl::nullopt,
+      has_range_requested, /*auth_challenge_info=*/std::nullopt,
       request_include_credentials);
 }
 
@@ -591,7 +596,7 @@ struct CacheStorageCache::QueryCacheContext {
 struct CacheStorageCache::BatchInfo {
   size_t remaining_operations = 0;
   VerboseErrorCallback callback;
-  absl::optional<std::string> message;
+  std::optional<std::string> message;
   const int64_t trace_id = 0;
 };
 
@@ -731,14 +736,14 @@ void CacheStorageCache::WriteSideData(ErrorCallback callback,
     return;
   }
 
-  // GetUsageAndQuota is called before entering a scheduled operation since it
-  // can call Size, another scheduled operation.
-  quota_manager_proxy_->GetUsageAndQuota(
-      bucket_locator_.storage_key, blink::mojom::StorageType::kTemporary,
-      scheduler_task_runner_,
-      base::BindOnce(&CacheStorageCache::WriteSideDataDidGetQuota,
-                     weak_ptr_factory_.GetWeakPtr(), std::move(callback), url,
-                     expected_response_time, trace_id, buffer, buf_len));
+  // GetBucketSpaceRemaining is called before entering a scheduled operation
+  // since it can call Size, another scheduled operation.
+  quota_manager_proxy_->GetBucketSpaceRemaining(
+      bucket_locator_, scheduler_task_runner_,
+      base::BindOnce(
+          &CacheStorageCache::WriteSideDataDidGetBucketSpaceRemaining,
+          weak_ptr_factory_.GetWeakPtr(), std::move(callback), url,
+          expected_response_time, trace_id, buffer, buf_len));
 }
 
 void CacheStorageCache::BatchOperation(
@@ -749,7 +754,7 @@ void CacheStorageCache::BatchOperation(
   // This method may produce a warning message that should be returned in the
   // final VerboseErrorCallback.  A message may be present in both the failure
   // and success paths.
-  absl::optional<std::string> message;
+  std::optional<std::string> message;
 
   if (backend_state_ == BACKEND_CLOSED) {
     scheduler_task_runner_->PostTask(
@@ -769,11 +774,13 @@ void CacheStorageCache::BatchOperation(
   // "If the result of running Query Cache with operation’s request,
   //  operation’s options, and addedItems is not empty, throw an
   //  InvalidStateError DOMException."
-  std::vector<std::string> duplicate_url_list;
-  if (FindDuplicateOperations(operations, &duplicate_url_list)) {
+
+  if (const auto duplicate_url_list = FindDuplicateOperations(operations);
+      !duplicate_url_list.empty()) {
     // If we found any duplicates we need to at least warn the user.  Format
     // the URL list into a comma-separated list.
-    std::string url_list_string = base::JoinString(duplicate_url_list, ", ");
+    const std::string url_list_string =
+        base::JoinString(duplicate_url_list, ", ");
 
     // Place the duplicate list into an error message.
     message.emplace(
@@ -816,15 +823,9 @@ void CacheStorageCache::BatchOperation(
   uint64_t space_required = safe_space_required.ValueOrDie();
   uint64_t side_data_size = safe_side_data_size.ValueOrDie();
   if (space_required || side_data_size) {
-    // GetUsageAndQuota is called before entering a scheduled operation since it
-    // can call Size, another scheduled operation. This is racy. The decision
-    // to commit is made before the scheduled Put operation runs. By the time
-    // Put runs, the cache might already be full and the usage will be larger
-    // than it's supposed to be.
-    quota_manager_proxy_->GetUsageAndQuota(
-        bucket_locator_.storage_key, blink::mojom::StorageType::kTemporary,
-        scheduler_task_runner_,
-        base::BindOnce(&CacheStorageCache::BatchDidGetUsageAndQuota,
+    quota_manager_proxy_->GetBucketSpaceRemaining(
+        bucket_locator_, scheduler_task_runner_,
+        base::BindOnce(&CacheStorageCache::BatchDidGetBucketSpaceRemaining,
                        weak_ptr_factory_.GetWeakPtr(), std::move(operations),
                        trace_id, std::move(callback),
                        std::move(bad_message_callback), std::move(message),
@@ -832,32 +833,29 @@ void CacheStorageCache::BatchOperation(
     return;
   }
 
-  BatchDidGetUsageAndQuota(std::move(operations), trace_id, std::move(callback),
-                           std::move(bad_message_callback), std::move(message),
-                           0 /* space_required */, 0 /* side_data_size */,
-                           blink::mojom::QuotaStatusCode::kOk, 0 /* usage */,
-                           0 /* quota */);
+  BatchDidGetBucketSpaceRemaining(
+      std::move(operations), trace_id, std::move(callback),
+      std::move(bad_message_callback), std::move(message),
+      0 /* space_required */, 0 /* side_data_size */, 0 /* space_remaining */);
 }
 
-void CacheStorageCache::BatchDidGetUsageAndQuota(
+void CacheStorageCache::BatchDidGetBucketSpaceRemaining(
     std::vector<blink::mojom::BatchOperationPtr> operations,
     int64_t trace_id,
     VerboseErrorCallback callback,
     BadMessageCallback bad_message_callback,
-    absl::optional<std::string> message,
+    std::optional<std::string> message,
     uint64_t space_required,
     uint64_t side_data_size,
-    blink::mojom::QuotaStatusCode status_code,
-    int64_t usage,
-    int64_t quota) {
+    storage::QuotaErrorOr<int64_t> space_remaining) {
   TRACE_EVENT_WITH_FLOW1("CacheStorage",
-                         "CacheStorageCache::BatchDidGetUsageAndQuota",
+                         "CacheStorageCache::BatchDidGetBucketSpaceRemaining",
                          TRACE_ID_GLOBAL(trace_id),
                          TRACE_EVENT_FLAG_FLOW_IN | TRACE_EVENT_FLAG_FLOW_OUT,
                          "operations", CacheStorageTracedValue(operations));
+
   base::CheckedNumeric<uint64_t> safe_space_required = space_required;
   base::CheckedNumeric<uint64_t> safe_space_required_with_side_data;
-  safe_space_required += usage;
   safe_space_required_with_side_data = safe_space_required + side_data_size;
   if (!safe_space_required.IsValid() ||
       !safe_space_required_with_side_data.IsValid()) {
@@ -873,8 +871,8 @@ void CacheStorageCache::BatchDidGetUsageAndQuota(
                 std::move(message))));
     return;
   }
-  if (status_code != blink::mojom::QuotaStatusCode::kOk ||
-      safe_space_required.ValueOrDie() > quota) {
+  if (!space_remaining.has_value() ||
+      safe_space_required.ValueOrDie() > space_remaining.value()) {
     scheduler_task_runner_->PostTask(
         FROM_HERE, base::BindOnce(std::move(callback),
                                   CacheStorageVerboseError::New(
@@ -882,7 +880,8 @@ void CacheStorageCache::BatchDidGetUsageAndQuota(
                                       std::move(message))));
     return;
   }
-  bool skip_side_data = safe_space_required_with_side_data.ValueOrDie() > quota;
+  bool skip_side_data = safe_space_required_with_side_data.ValueOrDie() >
+                        static_cast<uint64_t>(space_remaining.value());
 
   auto completion_callback = base::BindRepeating(
       &CacheStorageCache::BatchDidOneOperation, weak_ptr_factory_.GetWeakPtr(),
@@ -1523,8 +1522,8 @@ void CacheStorageCache::MatchAllDidQueryCache(
 void CacheStorageCache::WriteMetadata(disk_cache::Entry* entry,
                                       const proto::CacheMetadata& metadata,
                                       WriteMetadataCallback callback) {
-  std::unique_ptr<std::string> serialized = std::make_unique<std::string>();
-  if (!metadata.SerializeToString(serialized.get())) {
+  std::string serialized;
+  if (!metadata.SerializeToString(&serialized)) {
     std::move(callback).Run(0, -1);
     return;
   }
@@ -1550,23 +1549,21 @@ void CacheStorageCache::WriteMetadata(disk_cache::Entry* entry,
     std::move(split_callback.second).Run(rv);
 }
 
-void CacheStorageCache::WriteSideDataDidGetQuota(
+void CacheStorageCache::WriteSideDataDidGetBucketSpaceRemaining(
     ErrorCallback callback,
     const GURL& url,
     base::Time expected_response_time,
     int64_t trace_id,
     scoped_refptr<net::IOBuffer> buffer,
     int buf_len,
-    blink::mojom::QuotaStatusCode status_code,
-    int64_t usage,
-    int64_t quota) {
-  TRACE_EVENT_WITH_FLOW0("CacheStorage",
-                         "CacheStorageCache::WriteSideDataDidGetQuota",
-                         TRACE_ID_GLOBAL(trace_id),
-                         TRACE_EVENT_FLAG_FLOW_IN | TRACE_EVENT_FLAG_FLOW_OUT);
+    storage::QuotaErrorOr<int64_t> space_remaining) {
+  TRACE_EVENT_WITH_FLOW0(
+      "CacheStorage",
+      "CacheStorageCache::WriteSideDataDidGetBucketSpaceRemaining",
+      TRACE_ID_GLOBAL(trace_id),
+      TRACE_EVENT_FLAG_FLOW_IN | TRACE_EVENT_FLAG_FLOW_OUT);
 
-  if (status_code != blink::mojom::QuotaStatusCode::kOk ||
-      (buf_len > quota - usage)) {
+  if (!space_remaining.has_value() || space_remaining.value() < buf_len) {
     scheduler_task_runner_->PostTask(
         FROM_HERE, base::BindOnce(std::move(callback),
                                   CacheStorageError::kErrorQuotaExceeded));
@@ -1894,7 +1891,7 @@ void CacheStorageCache::PutDidCreateEntry(
   put_context->cache_entry.reset(result.ReleaseEntry());
 
   if (rv != net::OK) {
-    quota_manager_proxy_->NotifyWriteFailed(bucket_locator_.storage_key);
+    quota_manager_proxy_->OnClientWriteFailed(bucket_locator_.storage_key);
     PutComplete(std::move(put_context), CacheStorageError::kErrorExists);
     return;
   }
@@ -1929,7 +1926,7 @@ void CacheStorageCache::PutDidCreateEntry(
   for (const auto& url : put_context->response->url_list)
     response_metadata->add_url_list(url.spec());
   response_metadata->set_connection_info(
-      put_context->response->connection_info);
+      static_cast<int32_t>(put_context->response->connection_info));
   response_metadata->set_alpn_negotiated_protocol(
       put_context->response->alpn_negotiated_protocol);
   response_metadata->set_was_fetched_via_spdy(
@@ -1991,7 +1988,7 @@ void CacheStorageCache::PutDidWriteHeaders(
                          TRACE_EVENT_FLAG_FLOW_IN | TRACE_EVENT_FLAG_FLOW_OUT);
 
   if (rv != expected_bytes) {
-    quota_manager_proxy_->NotifyWriteFailed(bucket_locator_.storage_key);
+    quota_manager_proxy_->OnClientWriteFailed(bucket_locator_.storage_key);
     PutComplete(
         std::move(put_context),
         MakeErrorStorage(ErrorStorageType::kPutDidWriteHeadersWrongBytes));

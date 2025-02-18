@@ -28,7 +28,6 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
-#include "base/guid.h"
 #include "base/logging.h"
 #include "base/path_service.h"
 #include "base/rand_util.h"
@@ -45,6 +44,7 @@
 #include "base/threading/platform_thread.h"
 #include "base/threading/thread.h"
 #include "base/time/time.h"
+#include "base/uuid.h"
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/multiprocess_func_list.h"
@@ -56,11 +56,9 @@
 #include <tchar.h>
 #include <windows.h>
 #include <winioctl.h>
-#include "base/features.h"
 #include "base/scoped_native_library.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/test/gtest_util.h"
-#include "base/test/scoped_feature_list.h"
 #include "base/win/scoped_handle.h"
 #include "base/win/win_util.h"
 #endif
@@ -384,6 +382,58 @@ void GetIsInheritable(FILE* stream, bool* is_inheritable) {
 #endif
 }
 
+#if BUILDFLAG(IS_POSIX)
+class ScopedWorkingDirectory {
+ public:
+  explicit ScopedWorkingDirectory(const FilePath& new_working_dir) {
+    CHECK(base::GetCurrentDirectory(&original_working_directory_));
+    CHECK(base::SetCurrentDirectory(new_working_dir));
+  }
+
+  ~ScopedWorkingDirectory() {
+    CHECK(base::SetCurrentDirectory(original_working_directory_));
+  }
+
+ private:
+  base::FilePath original_working_directory_;
+};
+
+TEST_F(FileUtilTest, MakeAbsoluteFilePathNoResolveSymbolicLinks) {
+  FilePath cwd;
+  ASSERT_TRUE(GetCurrentDirectory(&cwd));
+  const std::pair<FilePath, absl::optional<FilePath>> kExpectedResults[]{
+      {FilePath(), absl::nullopt},
+      {FilePath("."), cwd},
+      {FilePath(".."), cwd.DirName()},
+      {FilePath("a/.."), cwd},
+      {FilePath("a/b/.."), cwd.Append(FPL("a"))},
+      {FilePath("/tmp/../.."), FilePath("/")},
+      {FilePath("/tmp/../"), FilePath("/")},
+      {FilePath("/tmp/a/b/../c/../.."), FilePath("/tmp")},
+      {FilePath("/././tmp/./a/./b/../c/./../.."), FilePath("/tmp")},
+      {FilePath("/.././../tmp"), FilePath("/tmp")},
+      {FilePath("/..///.////..////tmp"), FilePath("/tmp")},
+      {FilePath("//..///.////..////tmp"), FilePath("//tmp")},
+      {FilePath("///..///.////..////tmp"), FilePath("/tmp")},
+  };
+
+  for (auto& expected_result : kExpectedResults) {
+    EXPECT_EQ(MakeAbsoluteFilePathNoResolveSymbolicLinks(expected_result.first),
+              expected_result.second);
+  }
+
+  // Test that MakeAbsoluteFilePathNoResolveSymbolicLinks() returns an empty
+  // path if GetCurrentDirectory() fails.
+  const FilePath temp_dir_path = temp_dir_.GetPath();
+  ScopedWorkingDirectory scoped_cwd(temp_dir_path);
+  // Delete the cwd so that GetCurrentDirectory() fails.
+  ASSERT_TRUE(temp_dir_.Delete());
+  ASSERT_FALSE(
+      MakeAbsoluteFilePathNoResolveSymbolicLinks(FilePath("relative_file_path"))
+          .has_value());
+}
+#endif  // BUILDFLAG(IS_POSIX)
+
 TEST_F(FileUtilTest, FileAndDirectorySize) {
   // Create three files of 20, 30 and 3 chars (utf8). ComputeDirectorySize
   // should return 53 bytes.
@@ -607,7 +657,7 @@ TEST_F(FileUtilTest, DevicePathToDriveLetter) {
   // Get a drive letter.
   std::wstring real_drive_letter = AsWString(
       ToUpperASCII(AsStringPiece16(temp_dir_.GetPath().value().substr(0, 2))));
-  if (!isalpha(real_drive_letter[0]) || ':' != real_drive_letter[1]) {
+  if (!IsAsciiAlpha(real_drive_letter[0]) || ':' != real_drive_letter[1]) {
     LOG(ERROR) << "Can't get a drive letter to test with.";
     return;
   }
@@ -998,6 +1048,58 @@ TEST_F(FileUtilTest, CreateAndReadSymlinks) {
   EXPECT_FALSE(ReadSymbolicLink(missing, &result));
 }
 
+TEST_F(FileUtilTest, CreateAndReadRelativeSymlinks) {
+  FilePath link_from = temp_dir_.GetPath().Append(FPL("from_file"));
+  FilePath filename_link_to("to_file");
+  FilePath link_to = temp_dir_.GetPath().Append(filename_link_to);
+  FilePath link_from_in_subdir =
+      temp_dir_.GetPath().Append(FPL("subdir")).Append(FPL("from_file"));
+  FilePath link_to_in_subdir = FilePath(FPL("..")).Append(filename_link_to);
+  CreateTextFile(link_to, bogus_content);
+
+  ASSERT_TRUE(CreateDirectory(link_from_in_subdir.DirName()));
+  ASSERT_TRUE(CreateSymbolicLink(link_to_in_subdir, link_from_in_subdir));
+
+  ASSERT_TRUE(CreateSymbolicLink(filename_link_to, link_from))
+      << "Failed to create file symlink.";
+
+  // If we created the link properly, we should be able to read the contents
+  // through it.
+  EXPECT_EQ(bogus_content, ReadTextFile(link_from));
+  EXPECT_EQ(bogus_content, ReadTextFile(link_from_in_subdir));
+
+  FilePath result;
+  ASSERT_TRUE(ReadSymbolicLink(link_from, &result));
+  EXPECT_EQ(filename_link_to.value(), result.value());
+
+  absl::optional<FilePath> absolute_link = ReadSymbolicLinkAbsolute(link_from);
+  ASSERT_TRUE(absolute_link);
+  EXPECT_EQ(link_to.value(), absolute_link->value());
+
+  absolute_link = ReadSymbolicLinkAbsolute(link_from_in_subdir);
+  ASSERT_TRUE(absolute_link);
+  EXPECT_EQ(link_to.value(), absolute_link->value());
+
+  // Link to a directory.
+  link_from = temp_dir_.GetPath().Append(FPL("from_dir"));
+  filename_link_to = FilePath("to_dir");
+  link_to = temp_dir_.GetPath().Append(filename_link_to);
+  ASSERT_TRUE(CreateDirectory(link_to));
+  ASSERT_TRUE(CreateSymbolicLink(filename_link_to, link_from))
+      << "Failed to create relative directory symlink.";
+
+  ASSERT_TRUE(ReadSymbolicLink(link_from, &result));
+  EXPECT_EQ(filename_link_to.value(), result.value());
+
+  absolute_link = ReadSymbolicLinkAbsolute(link_from);
+  ASSERT_TRUE(absolute_link);
+  EXPECT_EQ(link_to.value(), absolute_link->value());
+
+  // Test failures.
+  EXPECT_FALSE(CreateSymbolicLink(link_to, link_to));
+  EXPECT_FALSE(ReadSymbolicLink(link_to, &result));
+}
+
 // The following test of NormalizeFilePath() require that we create a symlink.
 // This can not be done on Windows before Vista.  On Vista, creating a symlink
 // requires privilege "SeCreateSymbolicLinkPrivilege".
@@ -1137,7 +1239,7 @@ TEST_F(FileUtilTest, ChangeFilePermissionsAndRead) {
   EXPECT_FALSE(mode & FILE_PERMISSION_READ_BY_USER);
   EXPECT_FALSE(PathIsReadable(file_name));
   // Make sure the file can't be read.
-  EXPECT_EQ(-1, ReadFile(file_name, buffer, kDataSize));
+  EXPECT_EQ(ReadFile(file_name, buffer), std::nullopt);
 
   // Give the read permission.
   EXPECT_TRUE(SetPosixFilePermissions(file_name, FILE_PERMISSION_READ_BY_USER));
@@ -1145,7 +1247,7 @@ TEST_F(FileUtilTest, ChangeFilePermissionsAndRead) {
   EXPECT_TRUE(mode & FILE_PERMISSION_READ_BY_USER);
   EXPECT_TRUE(PathIsReadable(file_name));
   // Make sure the file can be read.
-  EXPECT_EQ(kDataSize, ReadFile(file_name, buffer, kDataSize));
+  EXPECT_EQ(ReadFile(file_name, buffer), kDataSize);
 
   // Delete the file.
   EXPECT_TRUE(DeleteFile(file_name));
@@ -2905,21 +3007,48 @@ TEST_F(FileUtilTest, FILEToFile) {
   EXPECT_EQ(file.GetLength(), 5L);
 }
 
+#if BUILDFLAG(IS_WIN)
+TEST_F(FileUtilTest, GetSecureSystemTemp) {
+  FilePath secure_system_temp;
+  ASSERT_EQ(GetSecureSystemTemp(&secure_system_temp), !!::IsUserAnAdmin());
+  if (!::IsUserAnAdmin()) {
+    GTEST_SKIP() << "This test must be run by an admin user";
+  }
+
+  FilePath dir_windows;
+  ASSERT_TRUE(PathService::Get(DIR_WINDOWS, &dir_windows));
+  FilePath dir_program_files;
+  ASSERT_TRUE(PathService::Get(DIR_PROGRAM_FILES, &dir_program_files));
+
+  ASSERT_TRUE((dir_windows.AppendASCII("SystemTemp") == secure_system_temp) ||
+              (dir_program_files == secure_system_temp));
+}
+#endif  // BUILDFLAG(IS_WIN)
+
 TEST_F(FileUtilTest, CreateNewTempDirectoryTest) {
   FilePath temp_dir;
   ASSERT_TRUE(CreateNewTempDirectory(FilePath::StringType(), &temp_dir));
   EXPECT_TRUE(PathExists(temp_dir));
-
-#if BUILDFLAG(IS_WIN)
-  FilePath expected_parent_dir;
-  EXPECT_TRUE(PathService::Get(
-      ::IsUserAnAdmin() ? int{DIR_PROGRAM_FILES} : int{DIR_TEMP},
-      &expected_parent_dir));
-  EXPECT_TRUE(expected_parent_dir.IsParent(temp_dir));
-#endif  // BUILDFLAG(IS_WIN)
-
   EXPECT_TRUE(DeleteFile(temp_dir));
 }
+
+#if BUILDFLAG(IS_WIN)
+TEST_F(FileUtilTest, TempDirectoryParentTest) {
+  if (!::IsUserAnAdmin()) {
+    GTEST_SKIP() << "This test must be run by an admin user";
+  }
+  FilePath temp_dir;
+  ASSERT_TRUE(CreateNewTempDirectory(FilePath::StringType(), &temp_dir));
+  EXPECT_TRUE(PathExists(temp_dir));
+
+  FilePath expected_parent_dir;
+  if (!GetSecureSystemTemp(&expected_parent_dir)) {
+    EXPECT_TRUE(PathService::Get(DIR_TEMP, &expected_parent_dir));
+  }
+  EXPECT_TRUE(expected_parent_dir.IsParent(temp_dir));
+  EXPECT_TRUE(DeleteFile(temp_dir));
+}
+#endif  // BUILDFLAG(IS_WIN)
 
 TEST_F(FileUtilTest, CreateNewTemporaryDirInDirTest) {
   FilePath new_dir;
@@ -3281,33 +3410,24 @@ TEST_F(FileUtilTest, ReadFile) {
   std::vector<char> large_buffer(kTestData.size() * 2);
 
   // Read the file with smaller buffer.
-  int bytes_read_small = ReadFile(
-      file_path, &small_buffer[0], static_cast<int>(small_buffer.size()));
-  EXPECT_EQ(static_cast<int>(small_buffer.size()), bytes_read_small);
+  EXPECT_EQ(ReadFile(file_path, small_buffer), small_buffer.size());
   EXPECT_EQ(
       std::string(kTestData.begin(), kTestData.begin() + small_buffer.size()),
       std::string(small_buffer.begin(), small_buffer.end()));
 
   // Read the file with buffer which have exactly same size.
-  int bytes_read_exact = ReadFile(
-      file_path, &exact_buffer[0], static_cast<int>(exact_buffer.size()));
-  EXPECT_EQ(static_cast<int>(kTestData.size()), bytes_read_exact);
+  EXPECT_EQ(ReadFile(file_path, exact_buffer), kTestData.size());
   EXPECT_EQ(kTestData, std::string(exact_buffer.begin(), exact_buffer.end()));
 
   // Read the file with larger buffer.
-  int bytes_read_large = ReadFile(
-      file_path, &large_buffer[0], static_cast<int>(large_buffer.size()));
-  EXPECT_EQ(static_cast<int>(kTestData.size()), bytes_read_large);
+  EXPECT_EQ(ReadFile(file_path, large_buffer), kTestData.size());
   EXPECT_EQ(kTestData, std::string(large_buffer.begin(),
                                    large_buffer.begin() + kTestData.size()));
 
-  // Make sure the return value is -1 if the file doesn't exist.
+  // Make sure the read fails if the file doesn't exist.
   FilePath file_path_not_exist =
       temp_dir_.GetPath().Append(FILE_PATH_LITERAL("ReadFileNotExistTest"));
-  EXPECT_EQ(-1,
-            ReadFile(file_path_not_exist,
-                     &exact_buffer[0],
-                     static_cast<int>(exact_buffer.size())));
+  EXPECT_EQ(ReadFile(file_path_not_exist, exact_buffer), std::nullopt);
 }
 
 TEST_F(FileUtilTest, ReadFileToBytes) {
@@ -4463,7 +4583,7 @@ TEST(FileUtilMultiThreadedTest, MultiThreadedTempFiles) {
     ScopedFILE output_file(CreateAndOpenTemporaryStream(&output_filename));
     EXPECT_TRUE(output_file);
 
-    const std::string content = GenerateGUID();
+    const std::string content = Uuid::GenerateRandomV4().AsLowercaseString();
 #if BUILDFLAG(IS_WIN)
     HANDLE handle =
         reinterpret_cast<HANDLE>(_get_osfhandle(_fileno(output_file.get())));

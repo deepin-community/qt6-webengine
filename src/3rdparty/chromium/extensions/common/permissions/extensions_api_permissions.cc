@@ -30,6 +30,7 @@ std::unique_ptr<APIPermission> CreateAPIPermission(
 // add the corresponding permission message rule to
 // ChromePermissionMessageRule::GetAllRules as well.
 constexpr APIPermissionInfo::InitInfo permissions_to_register[] = {
+    {APIPermissionID::kActiveTab, "activeTab"},
     {APIPermissionID::kAlarms, "alarms",
      APIPermissionInfo::kFlagDoesNotRequireManagedSessionFullLoginWarning},
     {APIPermissionID::kAlphaEnabled, "app.window.alpha",
@@ -113,8 +114,11 @@ constexpr APIPermissionInfo::InitInfo permissions_to_register[] = {
     {APIPermissionID::kNetworkingPrivate, "networkingPrivate",
      APIPermissionInfo::kFlagCannotBeOptional},
     {APIPermissionID::kNewTabPageOverride, "newTabPageOverride",
-     APIPermissionInfo::kFlagCannotBeOptional |
+     APIPermissionInfo::kFlagInternal |
+         APIPermissionInfo::kFlagCannotBeOptional |
          APIPermissionInfo::kFlagRequiresManagementUIWarning},
+    {APIPermissionID::kOdfsConfigPrivate, "odfsConfigPrivate",
+     APIPermissionInfo::kFlagDoesNotRequireManagedSessionFullLoginWarning},
     {APIPermissionID::kOffscreen, "offscreen",
      APIPermissionInfo::kFlagDoesNotRequireManagedSessionFullLoginWarning},
     {APIPermissionID::kPower, "power",
@@ -152,6 +156,8 @@ constexpr APIPermissionInfo::InitInfo permissions_to_register[] = {
      APIPermissionInfo::kFlagCannotBeOptional |
          APIPermissionInfo::kFlagSupportsContentCapabilities |
          APIPermissionInfo::kFlagDoesNotRequireManagedSessionFullLoginWarning},
+    {APIPermissionID::kUserScripts, "userScripts",
+     APIPermissionInfo::kFlagDoesNotRequireManagedSessionFullLoginWarning},
     {APIPermissionID::kUsb, "usb", APIPermissionInfo::kFlagNone},
     {APIPermissionID::kUsbDevice, "usbDevices",
      extensions::APIPermissionInfo::kFlagNone,

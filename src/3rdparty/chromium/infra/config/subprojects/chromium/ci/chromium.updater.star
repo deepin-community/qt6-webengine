@@ -8,6 +8,8 @@ load("//lib/builder_config.star", "builder_config")
 load("//lib/builders.star", "builders", "cpu", "os", "reclient")
 load("//lib/ci.star", "ci")
 load("//lib/consoles.star", "consoles")
+load("//lib/gn_args.star", "gn_args")
+load("//lib/builder_health_indicators.star", "health_spec")
 
 ci.defaults.set(
     executable = ci.DEFAULT_EXECUTABLE,
@@ -16,9 +18,11 @@ ci.defaults.set(
     cores = 8,
     os = os.LINUX_DEFAULT,
     execution_timeout = ci.DEFAULT_EXECUTION_TIMEOUT,
+    health_spec = health_spec.DEFAULT,
     reclient_instance = reclient.instance.DEFAULT_TRUSTED,
     reclient_jobs = reclient.jobs.DEFAULT,
     service_account = ci.DEFAULT_SERVICE_ACCOUNT,
+    shadow_service_account = ci.DEFAULT_SHADOW_SERVICE_ACCOUNT,
 )
 
 consoles.console_view(
@@ -55,8 +59,14 @@ ci.builder(
             target_platform = builder_config.target_platform.LINUX,
         ),
     ),
+    gn_args = gn_args.config(
+        configs = [
+            "updater",
+            "debug_static_builder",
+            "reclient",
+        ],
+    ),
     builderless = True,
-    cores = None,
     os = os.LINUX_DEFAULT,
     console_view_entry = consoles.console_view_entry(
         category = "debug|linux",
@@ -80,8 +90,14 @@ ci.builder(
             target_platform = builder_config.target_platform.LINUX,
         ),
     ),
+    gn_args = gn_args.config(
+        configs = [
+            "updater",
+            "release_builder",
+            "reclient",
+        ],
+    ),
     builderless = True,
-    cores = None,
     os = os.LINUX_DEFAULT,
     console_view_entry = consoles.console_view_entry(
         category = "release|linux",
@@ -153,6 +169,13 @@ ci.builder(
             target_platform = builder_config.target_platform.MAC,
         ),
     ),
+    gn_args = gn_args.config(
+        configs = [
+            "updater",
+            "debug_static_builder",
+            "reclient",
+        ],
+    ),
     builderless = True,
     cores = None,
     os = os.MAC_ANY,
@@ -178,6 +201,13 @@ ci.builder(
             target_platform = builder_config.target_platform.MAC,
         ),
     ),
+    gn_args = gn_args.config(
+        configs = [
+            "updater",
+            "release_builder",
+            "reclient",
+        ],
+    ),
     builderless = True,
     cores = None,
     os = os.MAC_ANY,
@@ -202,6 +232,14 @@ ci.builder(
             target_bits = 64,
             target_platform = builder_config.target_platform.MAC,
         ),
+    ),
+    gn_args = gn_args.config(
+        configs = [
+            "arm64",
+            "updater",
+            "debug_static_builder",
+            "reclient",
+        ],
     ),
     builderless = True,
     cores = None,
@@ -229,6 +267,14 @@ ci.builder(
             target_platform = builder_config.target_platform.MAC,
         ),
     ),
+    gn_args = gn_args.config(
+        configs = [
+            "arm64",
+            "updater",
+            "release_builder",
+            "reclient",
+        ],
+    ),
     builderless = True,
     cores = None,
     os = os.MAC_ANY,
@@ -255,108 +301,20 @@ ci.builder(
             target_platform = builder_config.target_platform.MAC,
         ),
     ),
+    gn_args = gn_args.config(
+        configs = [
+            "updater",
+            "asan",
+            "debug_static_builder",
+            "reclient",
+        ],
+    ),
     builderless = True,
     cores = None,
     os = os.MAC_ANY,
     console_view_entry = consoles.console_view_entry(
         category = "debug|mac",
         short_name = "bld-asan",
-    ),
-)
-
-ci.thin_tester(
-    name = "mac10.13-updater-tester-dbg",
-    triggered_by = ["mac-updater-builder-dbg"],
-    builder_spec = builder_config.builder_spec(
-        execution_mode = builder_config.execution_mode.TEST,
-        gclient_config = builder_config.gclient_config(
-            config = "chromium",
-        ),
-        chromium_config = builder_config.chromium_config(
-            config = "chromium",
-            apply_configs = [
-                "mb",
-            ],
-            build_config = builder_config.build_config.DEBUG,
-            target_bits = 64,
-            target_platform = builder_config.target_platform.MAC,
-        ),
-    ),
-    console_view_entry = consoles.console_view_entry(
-        category = "debug|mac",
-        short_name = "10.13",
-    ),
-)
-
-ci.thin_tester(
-    name = "mac10.13-updater-tester-rel",
-    triggered_by = ["mac-updater-builder-rel"],
-    builder_spec = builder_config.builder_spec(
-        execution_mode = builder_config.execution_mode.TEST,
-        gclient_config = builder_config.gclient_config(
-            config = "chromium",
-        ),
-        chromium_config = builder_config.chromium_config(
-            config = "chromium",
-            apply_configs = [
-                "mb",
-            ],
-            build_config = builder_config.build_config.RELEASE,
-            target_bits = 64,
-            target_platform = builder_config.target_platform.MAC,
-        ),
-    ),
-    console_view_entry = consoles.console_view_entry(
-        category = "release|mac",
-        short_name = "10.13",
-    ),
-)
-
-ci.thin_tester(
-    name = "mac10.14-updater-tester-dbg",
-    triggered_by = ["mac-updater-builder-dbg"],
-    builder_spec = builder_config.builder_spec(
-        execution_mode = builder_config.execution_mode.TEST,
-        gclient_config = builder_config.gclient_config(
-            config = "chromium",
-        ),
-        chromium_config = builder_config.chromium_config(
-            config = "chromium",
-            apply_configs = [
-                "mb",
-            ],
-            build_config = builder_config.build_config.DEBUG,
-            target_bits = 64,
-            target_platform = builder_config.target_platform.MAC,
-        ),
-    ),
-    console_view_entry = consoles.console_view_entry(
-        category = "debug|mac",
-        short_name = "10.14",
-    ),
-)
-
-ci.thin_tester(
-    name = "mac10.14-updater-tester-rel",
-    triggered_by = ["mac-updater-builder-rel"],
-    builder_spec = builder_config.builder_spec(
-        execution_mode = builder_config.execution_mode.TEST,
-        gclient_config = builder_config.gclient_config(
-            config = "chromium",
-        ),
-        chromium_config = builder_config.chromium_config(
-            config = "chromium",
-            apply_configs = [
-                "mb",
-            ],
-            build_config = builder_config.build_config.RELEASE,
-            target_bits = 64,
-            target_platform = builder_config.target_platform.MAC,
-        ),
-    ),
-    console_view_entry = consoles.console_view_entry(
-        category = "release|mac",
-        short_name = "10.14",
     ),
 )
 
@@ -616,6 +574,13 @@ ci.builder(
             target_platform = builder_config.target_platform.WIN,
         ),
     ),
+    gn_args = gn_args.config(
+        configs = [
+            "updater",
+            "debug_static_builder",
+            "reclient",
+        ],
+    ),
     builderless = True,
     os = os.WINDOWS_DEFAULT,
     console_view_entry = consoles.console_view_entry(
@@ -640,6 +605,15 @@ ci.builder(
             target_bits = 64,
             target_platform = builder_config.target_platform.WIN,
         ),
+    ),
+    gn_args = gn_args.config(
+        configs = [
+            "updater",
+            "debug_static_builder",
+            "reclient",
+            "x86",
+            "no_symbols",
+        ],
     ),
     builderless = True,
     os = os.WINDOWS_DEFAULT,
@@ -668,6 +642,13 @@ ci.builder(
             target_platform = builder_config.target_platform.WIN,
         ),
     ),
+    gn_args = gn_args.config(
+        configs = [
+            "updater",
+            "release_builder",
+            "reclient",
+        ],
+    ),
     builderless = True,
     os = os.WINDOWS_DEFAULT,
     console_view_entry = consoles.console_view_entry(
@@ -692,6 +673,14 @@ ci.builder(
             target_bits = 64,
             target_platform = builder_config.target_platform.WIN,
         ),
+    ),
+    gn_args = gn_args.config(
+        configs = [
+            "updater",
+            "release_builder",
+            "reclient",
+            "x86",
+        ],
     ),
     builderless = True,
     os = os.WINDOWS_DEFAULT,

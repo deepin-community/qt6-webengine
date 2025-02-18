@@ -33,11 +33,10 @@ class AXTreeDistillerTestBase : public ChromeRenderViewTest {
     const ui::AXMode ax_mode = ui::AXMode::kWebContents | ui::AXMode::kHTML |
                                ui::AXMode::kScreenReader;
     render_frame->CreateAXTreeSnapshotter(ax_mode)->Snapshot(
-        /* exclude_offscreen= */ false, /* max_nodes= */ 0,
+        /* max_nodes= */ 0,
         /* timeout= */ {}, &snapshot);
     ui::AXTree tree(snapshot);
     distiller_ = std::make_unique<AXTreeDistiller>(
-        render_frame,
         base::BindRepeating(&AXTreeDistillerTestBase::OnAXTreeDistilled,
                             base::Unretained(this), &tree));
     distiller_->Distill(tree, snapshot, ukm::kInvalidSourceId);
@@ -190,6 +189,23 @@ const TestCase kDistillWebPageTestCases[] = {
         </div>
       <body>)HTML",
      {"Main", "Article 1", "Article 2", "Article 3"}},
+    /* ----------------------- */
+    {"simple_page_with_heading_outside_of_main",
+     R"HTML(<!doctype html>
+      <body>
+        <h1>Heading</h1>
+        <main>
+          <p>Main</p>
+        </main>
+      <body>)HTML",
+     {"Heading", "Main"}},
+    /* ----------------------- */
+    {"simple_page_with_heading_no_main",
+     R"HTML(<!doctype html>
+      <body>
+        <h1>Heading</h1>
+      <body>)HTML",
+     {}},
 };
 
 TEST_P(AXTreeDistillerTest, DistillsWebPage) {

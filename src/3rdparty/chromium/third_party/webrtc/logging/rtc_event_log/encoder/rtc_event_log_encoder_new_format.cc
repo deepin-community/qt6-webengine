@@ -13,6 +13,7 @@
 #include "absl/types/optional.h"
 #include "api/array_view.h"
 #include "api/network_state_predictor.h"
+#include "logging/rtc_event_log/dependency_descriptor_encoder_decoder.h"
 #include "logging/rtc_event_log/encoder/blob_encoding.h"
 #include "logging/rtc_event_log/encoder/delta_encoding.h"
 #include "logging/rtc_event_log/encoder/rtc_event_log_encoder_common.h"
@@ -56,21 +57,19 @@
 #include "modules/rtp_rtcp/source/rtcp_packet/rtpfb.h"
 #include "modules/rtp_rtcp/source/rtcp_packet/sdes.h"
 #include "modules/rtp_rtcp/source/rtcp_packet/sender_report.h"
+#include "modules/rtp_rtcp/source/rtp_dependency_descriptor_extension.h"
 #include "modules/rtp_rtcp/source/rtp_header_extensions.h"
 #include "modules/rtp_rtcp/source/rtp_packet.h"
 #include "rtc_base/checks.h"
-#include "rtc_base/ignore_wundef.h"
 #include "rtc_base/logging.h"
 #include "system_wrappers/include/field_trial.h"
 
 // *.pb.h files are generated at build-time by the protobuf compiler.
-RTC_PUSH_IGNORING_WUNDEF()
 #ifdef WEBRTC_ANDROID_PLATFORM_BUILD
 #include "external/webrtc/webrtc/logging/rtc_event_log/rtc_event_log2.pb.h"
 #else
 #include "logging/rtc_event_log/rtc_event_log2.pb.h"
 #endif
-RTC_POP_IGNORING_WUNDEF()
 
 using webrtc_event_logging::ToUnsigned;
 
@@ -108,6 +107,8 @@ rtclog2::FrameDecodedEvents::Codec ConvertToProtoFormat(VideoCodecType codec) {
     case VideoCodecType::kVideoCodecMultiplex:
       // This codec type is afaik not used.
       return rtclog2::FrameDecodedEvents::CODEC_UNKNOWN;
+    case VideoCodecType::kVideoCodecH265:
+      return rtclog2::FrameDecodedEvents::CODEC_H265;
   }
   RTC_DCHECK_NOTREACHED();
   return rtclog2::FrameDecodedEvents::CODEC_UNKNOWN;
@@ -147,6 +148,8 @@ bool ConvertToProtoFormat(const std::vector<RtpExtension>& extensions,
       proto_config->set_transport_sequence_number_id(extension.id);
     } else if (extension.uri == RtpExtension::kVideoRotationUri) {
       proto_config->set_video_rotation_id(extension.id);
+    } else if (extension.uri == RtpExtension::kDependencyDescriptorUri) {
+      proto_config->set_dependency_descriptor_id(extension.id);
     } else {
       ++unknown_extensions;
     }
@@ -454,6 +457,29 @@ void EncodeRtpPacket(const std::vector<const EventType*>& batch,
 
       base_voice_activity = voice_activity;
       proto_batch->set_voice_activity(voice_activity);
+    }
+  }
+
+  {
+    // TODO(webrtc:14975) Remove this kill switch after DD in RTC event log has
+    //                    been rolled out.
+    if (!webrtc::field_trial::IsDisabled(
+            "WebRTC-RtcEventLogEncodeDependencyDescriptor")) {
+      std::vector<rtc::ArrayView<const uint8_t>> raw_dds(batch.size());
+      bool has_dd = false;
+      for (size_t i = 0; i < batch.size(); ++i) {
+        raw_dds[i] =
+            batch[i]
+                ->template GetRawExtension<RtpDependencyDescriptorExtension>();
+        has_dd |= !raw_dds[i].empty();
+      }
+      if (has_dd) {
+        if (auto dd_encoded =
+                RtcEventLogDependencyDescriptorEncoderDecoder::Encode(
+                    raw_dds)) {
+          *proto_batch->mutable_dependency_descriptor() = *dd_encoded;
+        }
+      }
     }
   }
 

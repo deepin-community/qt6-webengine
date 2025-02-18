@@ -7,7 +7,7 @@
 #include <string>
 
 #include "base/containers/flat_set.h"
-#include "base/strings/string_util.h"
+#include "base/strings/to_string.h"
 #include "base/time/time.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/common/origin_trials/trial_token.h"
@@ -46,7 +46,7 @@ TEST(PersistedTrialTokenTest, Partitioning) {
   std::string signature = "signature";
 
   base::flat_set<std::string> partition_sites = {kTrialTopLevelSite};
-  PersistedTrialToken token(trial_name, expiry,
+  PersistedTrialToken token(/*match_subdomains=*/false, trial_name, expiry,
                             blink::TrialToken::UsageRestriction::kNone,
                             signature, partition_sites);
 
@@ -73,36 +73,47 @@ TEST(PersistedTrialTokenTest, TestLessThan) {
   blink::TrialToken::UsageRestriction restriction_subset =
       blink::TrialToken::UsageRestriction::kSubset;
 
+  // Tokens should be sorted by subdomain matching all else being equal
+  EXPECT_LT(PersistedTrialToken(/*match_subdomains=*/false, "a", expiry,
+                                restriction_none, signature, partition_sites),
+            PersistedTrialToken(/*match_subdomains=*/true, "a", expiry,
+                                restriction_none, signature, partition_sites));
   // Tokens should be sorted by name all else being equal
-  EXPECT_LT(PersistedTrialToken("a", expiry, restriction_none, signature,
-                                partition_sites),
-            PersistedTrialToken("b", expiry, restriction_none, signature,
-                                partition_sites));
+  EXPECT_LT(PersistedTrialToken(/*match_subdomains=*/false, "a", expiry,
+                                restriction_none, signature, partition_sites),
+            PersistedTrialToken(/*match_subdomains=*/false, "b", expiry,
+                                restriction_none, signature, partition_sites));
   // Tokens should be sorted by expiry all else being equal
-  EXPECT_LT(PersistedTrialToken("a", expiry, restriction_none, signature,
-                                partition_sites),
-            PersistedTrialToken("a", higher_expiry, restriction_none, signature,
-                                partition_sites));
+  EXPECT_LT(PersistedTrialToken(/*match_subdomains=*/false, "a", expiry,
+                                restriction_none, signature, partition_sites),
+            PersistedTrialToken(/*match_subdomains=*/false, "a", higher_expiry,
+                                restriction_none, signature, partition_sites));
   // Tokens should be sorted by usage restriction all else being equal
-  EXPECT_LT(PersistedTrialToken("a", expiry, restriction_none, signature,
-                                partition_sites),
-            PersistedTrialToken("a", expiry, restriction_subset, signature,
-                                partition_sites));
+  EXPECT_LT(
+      PersistedTrialToken(/*match_subdomains=*/false, "a", expiry,
+                          restriction_none, signature, partition_sites),
+      PersistedTrialToken(/*match_subdomains=*/false, "a", expiry,
+                          restriction_subset, signature, partition_sites));
   // Tokens should be sorted by signature all else being equal
-  EXPECT_LT(PersistedTrialToken("a", expiry, restriction_none, signature,
-                                partition_sites),
-            PersistedTrialToken("a", expiry, restriction_none, higher_signature,
-                                partition_sites));
+  EXPECT_LT(
+      PersistedTrialToken(/*match_subdomains=*/false, "a", expiry,
+                          restriction_none, signature, partition_sites),
+      PersistedTrialToken(/*match_subdomains=*/false, "a", expiry,
+                          restriction_none, higher_signature, partition_sites));
 
   // Partition set is not part of sort order / token identity (for sets)
-  EXPECT_FALSE(PersistedTrialToken("a", expiry, restriction_none, signature,
+  EXPECT_FALSE(PersistedTrialToken(/*match_subdomains=*/false, "a", expiry,
+                                   restriction_none, signature,
                                    base::flat_set<std::string>()) <
-               PersistedTrialToken("a", expiry, restriction_none, signature,
+               PersistedTrialToken(/*match_subdomains=*/false, "a", expiry,
+                                   restriction_none, signature,
                                    partition_sites));
 
-  EXPECT_FALSE(PersistedTrialToken("a", expiry, restriction_none, signature,
+  EXPECT_FALSE(PersistedTrialToken(/*match_subdomains=*/false, "a", expiry,
+                                   restriction_none, signature,
                                    partition_sites) <
-               PersistedTrialToken("a", expiry, restriction_none, signature,
+               PersistedTrialToken(/*match_subdomains=*/false, "a", expiry,
+                                   restriction_none, signature,
                                    base::flat_set<std::string>()));
 }
 
@@ -117,35 +128,43 @@ TEST(PersistedTrialTokenTest, TestEquals) {
       blink::TrialToken::UsageRestriction::kSubset;
   base::flat_set<std::string> partition_sites = {kTrialTopLevelSite};
   // Two tokens with equal objects should be equal
-  EXPECT_EQ(PersistedTrialToken("a", expiry, restriction_none, signature,
-                                partition_sites),
-            PersistedTrialToken("a", expiry, restriction_none, signature,
-                                partition_sites));
+  EXPECT_EQ(PersistedTrialToken(/*match_subdomains=*/false, "a", expiry,
+                                restriction_none, signature, partition_sites),
+            PersistedTrialToken(/*match_subdomains=*/false, "a", expiry,
+                                restriction_none, signature, partition_sites));
 
   // Tokens should not be equal if their fields differ
-  EXPECT_NE(PersistedTrialToken("a", expiry, restriction_none, signature,
-                                partition_sites),
-            PersistedTrialToken("b", expiry, restriction_none, signature,
-                                partition_sites));
+  EXPECT_NE(PersistedTrialToken(/*match_subdomains=*/true, "a", expiry,
+                                restriction_none, signature, partition_sites),
+            PersistedTrialToken(/*match_subdomains=*/false, "a", expiry,
+                                restriction_none, signature, partition_sites));
 
-  EXPECT_NE(PersistedTrialToken("a", expiry, restriction_none, signature,
-                                partition_sites),
-            PersistedTrialToken("a", higher_expiry, restriction_none, signature,
-                                partition_sites));
+  EXPECT_NE(PersistedTrialToken(/*match_subdomains=*/false, "a", expiry,
+                                restriction_none, signature, partition_sites),
+            PersistedTrialToken(/*match_subdomains=*/false, "b", expiry,
+                                restriction_none, signature, partition_sites));
 
-  EXPECT_NE(PersistedTrialToken("a", expiry, restriction_none, signature,
-                                partition_sites),
-            PersistedTrialToken("a", expiry, restriction_subset, signature,
-                                partition_sites));
+  EXPECT_NE(PersistedTrialToken(/*match_subdomains=*/false, "a", expiry,
+                                restriction_none, signature, partition_sites),
+            PersistedTrialToken(/*match_subdomains=*/false, "a", higher_expiry,
+                                restriction_none, signature, partition_sites));
 
-  EXPECT_NE(PersistedTrialToken("a", expiry, restriction_none, signature,
-                                partition_sites),
-            PersistedTrialToken("a", expiry, restriction_none, higher_signature,
-                                partition_sites));
+  EXPECT_NE(
+      PersistedTrialToken(/*match_subdomains=*/false, "a", expiry,
+                          restriction_none, signature, partition_sites),
+      PersistedTrialToken(/*match_subdomains=*/false, "a", expiry,
+                          restriction_subset, signature, partition_sites));
 
-  EXPECT_NE(PersistedTrialToken("a", expiry, restriction_none, signature,
-                                partition_sites),
-            PersistedTrialToken("a", expiry, restriction_none, signature,
+  EXPECT_NE(
+      PersistedTrialToken(/*match_subdomains=*/false, "a", expiry,
+                          restriction_none, signature, partition_sites),
+      PersistedTrialToken(/*match_subdomains=*/false, "a", expiry,
+                          restriction_none, higher_signature, partition_sites));
+
+  EXPECT_NE(PersistedTrialToken(/*match_subdomains=*/false, "a", expiry,
+                                restriction_none, signature, partition_sites),
+            PersistedTrialToken(/*match_subdomains=*/false, "a", expiry,
+                                restriction_none, signature,
                                 base::flat_set<std::string>()));
 }
 
@@ -154,10 +173,11 @@ TEST(PersistedTrialTokenTest, StreamOperatorTest) {
   // name of the token.
   base::flat_set<std::string> partition_sites = {kTrialTopLevelSite};
   std::string token_name = "TokenNameInExpectedOutput";
-  PersistedTrialToken token(token_name, base::Time::Now(),
+  PersistedTrialToken token(/*match_subdomains=*/false, token_name,
+                            base::Time::Now(),
                             blink::TrialToken::UsageRestriction::kSubset,
                             "signature", partition_sites);
-  std::string token_str = base::StreamableToString(token);
+  std::string token_str = base::ToString(token);
   EXPECT_NE("", token_str);
   EXPECT_NE(std::string::npos, token_str.find(token_name));
 }

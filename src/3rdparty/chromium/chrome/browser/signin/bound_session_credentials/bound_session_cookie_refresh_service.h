@@ -5,80 +5,94 @@
 #ifndef CHROME_BROWSER_SIGNIN_BOUND_SESSION_CREDENTIALS_BOUND_SESSION_COOKIE_REFRESH_SERVICE_H_
 #define CHROME_BROWSER_SIGNIN_BOUND_SESSION_CREDENTIALS_BOUND_SESSION_COOKIE_REFRESH_SERVICE_H_
 
-#include <memory>
-#include "chrome/browser/signin/bound_session_credentials/bound_session_cookie_controller.h"
+#include "base/containers/flat_set.h"
+#include "base/functional/callback_forward.h"
+#include "base/memory/weak_ptr.h"
+#include "base/observer_list_types.h"
+#include "chrome/browser/signin/bound_session_credentials/bound_session_params.pb.h"
+#include "chrome/browser/signin/bound_session_credentials/bound_session_registration_fetcher_param.h"
+#include "chrome/common/renderer_configuration.mojom.h"
 #include "components/keyed_service/core/keyed_service.h"
-#include "components/signin/public/identity_manager/identity_manager.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
 
-using signin::IdentityManager;
-
-class SigninClient;
-
-// This service is responsible for the following:
-// - Tracking bound session
-// - It owns `cookie_controller_` that fully manages a bound session cookie
-// - Monitors cookie changes and update the renderers
+// BoundSessionCookieRefreshService is responsible for maintaining cookies
+// associated with bound sessions. This class does the following:
+// - Tracks bound sessions
 // - Provides bound session params to renderers
-// This class is still work in progress.
-//
-//                                         BoundSessionCookieFetcher
-//                                                     ^
-//                                                     | 1
-//                                                     |
-// BoundSessionCookieRefreshService------> BoundSessionCookieController
-//                                                     | 1
-//                                                     |
-//                                                     V
-//                                         BoundSessionCookieObserver
+// - Monitors cookie changes and update renderers
+// - Preemptively refreshes bound session cookies
 class BoundSessionCookieRefreshService
     : public KeyedService,
-      public BoundSessionCookieController::Delegate {
+      public chrome::mojom::BoundSessionRequestThrottledHandler {
  public:
-  explicit BoundSessionCookieRefreshService(SigninClient* client,
-                                            IdentityManager* identity_manager);
-  ~BoundSessionCookieRefreshService() override;
+  using RendererBoundSessionThrottlerParamsUpdaterDelegate =
+      base::RepeatingClosure;
 
-  void Initialize();
+  class Observer : public base::CheckedObserver {
+   public:
+    // TODO(b/314280617): Consider passing
+    // `bound_session_credentials::BoundSessionParams` instead.
+    // - `site` is the top-most origin covered by the terminated session.
+    // - `bound_cookie_names` contains names of short lived cookies required for
+    //   the user to be authenticated.
+    virtual void OnBoundSessionTerminated(
+        const GURL& site,
+        const base::flat_set<std::string>& bound_cookie_names) = 0;
+  };
 
-  // Returns true if session is bound.
-  bool IsBoundSession() const;
+  BoundSessionCookieRefreshService() = default;
+
+  BoundSessionCookieRefreshService(const BoundSessionCookieRefreshService&) =
+      delete;
+  BoundSessionCookieRefreshService& operator=(
+      const BoundSessionCookieRefreshService&) = delete;
+
+  virtual void Initialize() = 0;
+
+  // Registers a new bound session and starts tracking it immediately. The
+  // session persists across browser startups.
+  virtual void RegisterNewBoundSession(
+      const bound_session_credentials::BoundSessionParams& params) = 0;
+
+  // Terminate the session if the session termination header is set and the
+  // `session_id` matches the current bound session's id. This header is
+  // expected to be set on signout.
+  virtual void MaybeTerminateSession(
+      const net::HttpResponseHeaders* headers) = 0;
+
+  // Returns bound session params.
+  virtual chrome::mojom::BoundSessionThrottlerParamsPtr
+  GetBoundSessionThrottlerParams() const = 0;
+
+  virtual void CreateRegistrationRequest(
+      BoundSessionRegistrationFetcherParam registration_params) = 0;
+
+  virtual base::WeakPtr<BoundSessionCookieRefreshService> GetWeakPtr() = 0;
+
+  virtual void AddObserver(Observer* observer) = 0;
+  virtual void RemoveObserver(Observer* observer) = 0;
 
  private:
-  class BoundSessionStateTracker;
-  friend class BoundSessionCookieRefreshServiceTest;
+  friend class RendererUpdater;
+  friend class BoundSessionCookieRefreshServiceImplBrowserTest;
 
-  // Used by tests to provide their own implementation of the
-  // `BoundSessionCookieController`.
-  using BoundSessionCookieControllerFactoryForTesting =
-      base::RepeatingCallback<std::unique_ptr<BoundSessionCookieController>(
-          const GURL& url,
-          const std::string& cookie_name,
-          Delegate* delegate)>;
+  // `RendererUpdater` class that is responsible for pushing updates to all
+  // renderers calls this setter to subscribe for bound session throttler params
+  // updates.
+  virtual void SetRendererBoundSessionThrottlerParamsUpdaterDelegate(
+      RendererBoundSessionThrottlerParamsUpdaterDelegate renderer_updater) = 0;
 
-  void set_controller_factory_for_testing(
-      const BoundSessionCookieControllerFactoryForTesting&
-          controller_factory_for_testing) {
-    controller_factory_for_testing_ = controller_factory_for_testing;
-  }
+  // Registers a callback for testing to be notified about session parameters
+  // updates.
+  // TODO(http://b/303375108): consider exposing an observer interface instead.
+  virtual void SetBoundSessionParamsUpdatedCallbackForTesting(
+      base::RepeatingClosure updated_callback) = 0;
 
-  // BoundSessionCookieController::Delegate
-  void OnCookieExpirationDateChanged() override;
-
-  std::unique_ptr<BoundSessionCookieController>
-  CreateBoundSessionCookieController(const GURL& url,
-                                     const std::string& cookie_name);
-  void StartManagingBoundSessionCookie();
-  void StopManagingBoundSessionCookie();
-  void OnBoundSessionUpdated();
-
-  void UpdateAllRenderers();
-
-  const raw_ptr<SigninClient> client_;
-  const raw_ptr<IdentityManager> identity_manager_;
-  BoundSessionCookieControllerFactoryForTesting controller_factory_for_testing_;
-
-  std::unique_ptr<BoundSessionStateTracker> bound_session_tracker_;
-  std::unique_ptr<BoundSessionCookieController> cookie_controller_;
+  // Adds a Receiver to `BoundSessionCookieRefreshService` to receive
+  // notification when a request is throttled and requires a fresh cookie.
+  virtual void AddBoundSessionRequestThrottledHandlerReceiver(
+      mojo::PendingReceiver<chrome::mojom::BoundSessionRequestThrottledHandler>
+          receiver) {}
 };
 
 #endif  // CHROME_BROWSER_SIGNIN_BOUND_SESSION_CREDENTIALS_BOUND_SESSION_COOKIE_REFRESH_SERVICE_H_

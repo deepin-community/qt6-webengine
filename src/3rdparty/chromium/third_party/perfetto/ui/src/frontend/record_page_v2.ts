@@ -13,7 +13,7 @@
 // limitations under the License.
 
 
-import * as m from 'mithril';
+import m from 'mithril';
 import {Attributes} from 'mithril';
 
 import {assertExists} from '../base/logging';
@@ -37,9 +37,9 @@ import {
 import {
   targetFactoryRegistry,
 } from '../common/recordingV2/target_factory_registry';
+import {raf} from '../core/raf_scheduler';
 
 import {globals} from './globals';
-import {fullscreenModalContainer} from './modal';
 import {createPage, PageAttrs} from './pages';
 import {recordConfigStore} from './record_config';
 import {
@@ -54,6 +54,7 @@ import {AndroidSettings} from './recording/android_settings';
 import {ChromeSettings} from './recording/chrome_settings';
 import {CpuSettings} from './recording/cpu_settings';
 import {GpuSettings} from './recording/gpu_settings';
+import {LinuxPerfSettings} from './recording/linux_perf_settings';
 import {MemorySettings} from './recording/memory_settings';
 import {PowerSettings} from './recording/power_settings';
 import {RecordingSectionAttrs} from './recording/recording_sections';
@@ -61,14 +62,12 @@ import {RecordingSettings} from './recording/recording_settings';
 import {
   FORCE_RESET_MESSAGE,
 } from './recording/recording_ui_utils';
-import {addNewTarget} from './recording/reset_target_modal';
+import {showAddNewTargetModal} from './recording/reset_target_modal';
 
 const START_RECORDING_MESSAGE = 'Start Recording';
 
 const controller = new RecordingPageController();
 const recordConfigUtils = new RecordingConfigUtils();
-// Whether the target selection modal is displayed.
-let shouldDisplayTargetModal: boolean = false;
 
 // Options for displaying a target selection menu.
 export interface TargetSelectionOptions {
@@ -108,23 +107,10 @@ function RecordingPlatformSelection() {
   return m(
       '.target',
       m('.chip',
-        {
-          onclick: () => {
-            shouldDisplayTargetModal = true;
-            fullscreenModalContainer.createNew(addNewTargetModal());
-            globals.rafScheduler.scheduleFullRedraw();
-          },
-        },
+        {onclick: () => showAddNewTargetModal(controller)},
         m('button', 'Add new recording target'),
         m('i.material-icons', 'add')),
       targetSelection());
-}
-
-function addNewTargetModal() {
-  return {
-    ...addNewTarget(controller),
-    onClose: () => shouldDisplayTargetModal = false,
-  };
 }
 
 export function targetSelection(): m.Vnode|undefined {
@@ -240,12 +226,12 @@ function RecordingNotes() {
 
   const msgFeatNotSupported =
       m('span', `Some probes are only supported in Perfetto versions running
-      on Android Q+. Therefore, Perfetto will sideload the latest version onto 
+      on Android Q+. Therefore, Perfetto will sideload the latest version onto
       the device.`);
 
   const msgPerfettoNotSupported = m(
       'span',
-      `Perfetto is not supported natively before Android P. Therefore, Perfetto 
+      `Perfetto is not supported natively before Android P. Therefore, Perfetto
        will sideload the latest version onto the device.`);
 
   const msgLinux =
@@ -291,7 +277,9 @@ function RecordingNotes() {
       const androidApiLevel = targetInfo.androidApiLevel;
       if (androidApiLevel === 28) {
         notes.push(m('.note', msgFeatNotSupported));
+        /* eslint-disable @typescript-eslint/strict-boolean-expressions */
       } else if (androidApiLevel && androidApiLevel <= 27) {
+        /* eslint-enable */
         notes.push(m('.note', msgPerfettoNotSupported));
       }
       break;
@@ -326,8 +314,8 @@ function getRecordCommand(targetInfo: TargetInfo): string {
   const recordCommand = recordConfigUtils.fetchLatestRecordCommand(
       globals.state.recordConfig, targetInfo);
 
-  const pbBase64 = recordCommand ? recordCommand.configProtoBase64 : '';
-  const pbtx = recordCommand ? recordCommand.configProtoText : '';
+  const pbBase64 = recordCommand?.configProtoBase64 ?? '';
+  const pbtx = recordCommand?.configProtoText ?? '';
   let cmd = '';
   if (targetInfo.targetType === 'ANDROID' &&
       targetInfo.androidApiLevel === 28) {
@@ -429,6 +417,12 @@ function recordMenu(routePage: string) {
           m('i.material-icons', 'settings'),
           m('.title', 'Advanced settings'),
           m('.sub', 'Complicated stuff for wizards')));
+  const tracePerfProbe =
+      m('a[href="#!/record/tracePerf"]',
+        m(`li${routePage === 'tracePerf' ? '.active' : ''}`,
+          m('i.material-icons', 'full_stacked_bar_chart'),
+          m('.title', 'Stack Samples'),
+          m('.sub', 'Lightweight stack polling')));
 
   // We only display the probes when we have a valid target, so it's not
   // possible for the target to be undefined here.
@@ -446,6 +440,7 @@ function recordMenu(routePage: string) {
         memoryProbe,
         androidProbe,
         chromeProbe,
+        tracePerfProbe,
         advancedProbe);
   }
 
@@ -455,7 +450,7 @@ function recordMenu(routePage: string) {
         class: controller.getState() > RecordingState.TARGET_INFO_DISPLAYED ?
             'disabled' :
             '',
-        onclick: () => globals.rafScheduler.scheduleFullRedraw(),
+        onclick: () => raf.scheduleFullRedraw(),
       },
       m('header', 'Trace config'),
       m('ul',
@@ -466,7 +461,7 @@ function recordMenu(routePage: string) {
             m('.sub', 'Buffer mode, size and duration'))),
         m('a[href="#!/record/instructions"]',
           m(`li${routePage === 'instructions' ? '.active' : ''}`,
-            m('i.material-icons.rec', 'fiber_manual_record'),
+            m('i.material-icons-filled.rec', 'fiber_manual_record'),
             m('.title', 'Recording command'),
             m('.sub', 'Manually record trace'))),
         PERSIST_CONFIG_FLAG.get() ?
@@ -485,6 +480,7 @@ function recordMenu(routePage: string) {
       m('ul', probes));
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function getRecordContainer(subpage?: string): m.Vnode<any, any> {
   const components: m.Children[] = [RecordHeader()];
   if (controller.getState() === RecordingState.NO_TARGET) {
@@ -530,6 +526,7 @@ function getRecordContainer(subpage?: string): m.Vnode<any, any> {
     ['memory', MemorySettings],
     ['android', AndroidSettings],
     ['chrome', ChromeSettings],
+    ['tracePerf', LinuxPerfSettings],
     ['advanced', AdvancedSettings],
   ]);
   for (const [section, component] of settingsSections.entries()) {
@@ -543,18 +540,14 @@ function getRecordContainer(subpage?: string): m.Vnode<any, any> {
   return m('.record-container', components);
 }
 
-export const RecordPageV2 = createPage({
+export const RecordPageV2 =
+    createPage({
 
-  oninit(): void {
-    controller.initFactories();
-  },
+      oninit(): void {
+        controller.initFactories();
+      },
 
-  view({attrs}: m.Vnode<PageAttrs>): void |
-      m.Children {
-        if (shouldDisplayTargetModal) {
-          fullscreenModalContainer.updateVdom(addNewTargetModal());
-        }
-
+      view({attrs}: m.Vnode<PageAttrs>) {
         return m(
             '.record-page',
             controller.getState() > RecordingState.TARGET_INFO_DISPLAYED ?
@@ -562,4 +555,4 @@ export const RecordPageV2 = createPage({
                 [],
             getRecordContainer(attrs.subpage));
       },
-});
+    });

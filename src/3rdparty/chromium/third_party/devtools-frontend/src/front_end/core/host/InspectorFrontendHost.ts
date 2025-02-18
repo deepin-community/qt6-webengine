@@ -37,19 +37,34 @@ import * as Platform from '../platform/platform.js';
 import * as Root from '../root/root.js';
 
 import {
+  type CanShowSurveyResult,
+  type ChangeEvent,
+  type ClickEvent,
+  type ContextMenuDescriptor,
+  type DoAidaConversationResult,
+  type DragEvent,
+  type EnumeratedHistogram,
   EventDescriptors,
   Events,
-  type CanShowSurveyResult,
-  type ContextMenuDescriptor,
-  type EnumeratedHistogram,
   type EventTypes,
   type ExtensionDescriptor,
+  type HoverEvent,
+  type ImpressionEvent,
   type InspectorFrontendHostAPI,
+  type KeyDownEvent,
   type LoadNetworkResourceResult,
   type ShowSurveyResult,
   type SyncInformation,
 } from './InspectorFrontendHostAPI.js';
 import {streamWrite as resourceLoaderStreamWrite} from './ResourceLoader.js';
+
+interface DecompressionStream extends GenericTransformStream {
+  readonly format: string;
+}
+declare const DecompressionStream: {
+  prototype: DecompressionStream,
+  new (format: string): DecompressionStream,
+};
 
 const UIStrings = {
   /**
@@ -64,11 +79,24 @@ const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
 const MAX_RECORDED_HISTOGRAMS_SIZE = 100;
 const OVERRIDES_FILE_SYSTEM_PATH = '/overrides' as Platform.DevToolsPath.RawPathString;
 
+/**
+ * The InspectorFrontendHostStub is a stub interface used the frontend is loaded like a webpage. Examples:
+ *   - devtools://devtools/bundled/devtools_app.html
+ *   - https://chrome-devtools-frontend.appspot.com/serve_rev/@030cc140435b0152645522b9864b75cac6c0a854/worker_app.html
+ *   - http://localhost:9222/devtools/inspector.html?ws=localhost:9222/devtools/page/xTARGET_IDx
+ *
+ * When the frontend runs within the native embedder, then the InspectorFrontendHostAPI methods are provided
+ * by devtools_compatibility.js. Those leverage `DevToolsAPI.sendMessageToEmbedder()` which match up with
+ * the embedder API defined here: https://source.chromium.org/search?q=f:devtools%20f:dispatcher%20f:cc%20symbol:CreateForDevToolsFrontend&sq=&ss=chromium%2Fchromium%2Fsrc
+ * The native implementations live in devtools_ui_bindings.cc: https://source.chromium.org/chromium/chromium/src/+/main:chrome/browser/devtools/devtools_ui_bindings.cc
+ */
 export class InspectorFrontendHostStub implements InspectorFrontendHostAPI {
   readonly #urlsBeingSaved: Map<Platform.DevToolsPath.RawPathString|Platform.DevToolsPath.UrlString, string[]>;
   events!: Common.EventTarget.EventTarget<EventTypes>;
   #fileSystem: FileSystem|null = null;
 
+  recordedCountHistograms:
+      {histogramName: string, sample: number, min: number, exclusiveMax: number, bucketSize: number}[] = [];
   recordedEnumeratedHistograms: {actionName: EnumeratedHistogram, actionCode: number}[] = [];
   recordedPerformanceHistograms: {histogramName: string, duration: number}[] = [];
 
@@ -210,6 +238,14 @@ export class InspectorFrontendHostStub implements InspectorFrontendHostAPI {
   sendMessageToBackend(message: string): void {
   }
 
+  recordCountHistogram(histogramName: string, sample: number, min: number, exclusiveMax: number, bucketSize: number):
+      void {
+    if (this.recordedCountHistograms.length >= MAX_RECORDED_HISTOGRAMS_SIZE) {
+      this.recordedCountHistograms.shift();
+    }
+    this.recordedCountHistograms.push({histogramName, sample, min, exclusiveMax, bucketSize});
+  }
+
   recordEnumeratedHistogram(actionName: EnumeratedHistogram, actionCode: number, bucketSize: number): void {
     if (this.recordedEnumeratedHistograms.length >= MAX_RECORDED_HISTOGRAMS_SIZE) {
       this.recordedEnumeratedHistograms.shift();
@@ -270,8 +306,30 @@ export class InspectorFrontendHostStub implements InspectorFrontendHostAPI {
 
   loadNetworkResource(
       url: string, headers: string, streamId: number, callback: (arg0: LoadNetworkResourceResult) => void): void {
+    // Read the first 3 bytes looking for the gzip signature in the file header
+    function isGzip(ab: ArrayBuffer): boolean {
+      const buf = new Uint8Array(ab);
+      if (!buf || buf.length < 3) {
+        return false;
+      }
+
+      // https://www.rfc-editor.org/rfc/rfc1952#page-6
+      return buf[0] === 0x1F && buf[1] === 0x8B && buf[2] === 0x08;
+    }
     fetch(url)
-        .then(result => result.text())
+        .then(async result => {
+          const resultArrayBuf = await result.arrayBuffer();
+          let decoded: ReadableStream|ArrayBuffer = resultArrayBuf;
+          if (isGzip(resultArrayBuf)) {
+            const ds = new DecompressionStream('gzip');
+            const writer = ds.writable.getWriter();
+            void writer.write(resultArrayBuf);
+            void writer.close();
+            decoded = ds.readable;
+          }
+          const text = await new Response(decoded).text();
+          return text;
+        })
         .then(function(text) {
           resourceLoaderStreamWrite(streamId, text);
           callback({
@@ -409,6 +467,25 @@ export class InspectorFrontendHostStub implements InspectorFrontendHostAPI {
   async initialTargetId(): Promise<string|null> {
     return null;
   }
+
+  doAidaConversation(request: string, callback: (result: DoAidaConversationResult) => void): void {
+    callback({
+      response: '{}',
+    });
+  }
+
+  recordImpression(event: ImpressionEvent): void {
+  }
+  recordClick(event: ClickEvent): void {
+  }
+  recordHover(event: HoverEvent): void {
+  }
+  recordDrag(event: DragEvent): void {
+  }
+  recordChange(event: ChangeEvent): void {
+  }
+  recordKeyDown(event: KeyDownEvent): void {
+  }
 }
 
 // @ts-ignore Global injected by devtools-compatibility.js
@@ -461,6 +538,12 @@ function initializeInspectorFrontendHost(): void {
     // Instantiate stub for web-hosted mode if necessary.
     // @ts-ignore Global injected by devtools-compatibility.js
     globalThis.InspectorFrontendHost = InspectorFrontendHostInstance = new InspectorFrontendHostStub();
+    if ('doAidaConversationForTesting' in globalThis) {
+      InspectorFrontendHostInstance['doAidaConversation'] =
+          (globalThis as unknown as {
+            doAidaConversationForTesting: typeof InspectorFrontendHostInstance['doAidaConversation'],
+          }).doAidaConversationForTesting;
+    }
   } else {
     // Otherwise add stubs for missing methods that are declared in the interface.
     proto = InspectorFrontendHostStub.prototype;

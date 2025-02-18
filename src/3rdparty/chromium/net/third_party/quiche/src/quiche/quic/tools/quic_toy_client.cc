@@ -100,6 +100,10 @@ DEFINE_QUICHE_COMMAND_LINE_FLAG(bool, quiet, false,
                                 "Set to true for a quieter output experience.");
 
 DEFINE_QUICHE_COMMAND_LINE_FLAG(
+    bool, output_resolved_server_address, false,
+    "Set to true to print the resolved IP of the server.");
+
+DEFINE_QUICHE_COMMAND_LINE_FLAG(
     std::string, quic_version, "",
     "QUIC version to speak, e.g. 21. If not set, then all available "
     "versions are offered in the handshake. Also supports wire versions "
@@ -114,10 +118,6 @@ DEFINE_QUICHE_COMMAND_LINE_FLAG(
     std::string, client_connection_options, "",
     "Client connection options as ASCII tags separated by commas, "
     "e.g. \"ABCD,EFGH\"");
-
-DEFINE_QUICHE_COMMAND_LINE_FLAG(bool, quic_ietf_draft, false,
-                                "Use the IETF draft version. This also enables "
-                                "required internal QUIC flags.");
 
 DEFINE_QUICHE_COMMAND_LINE_FLAG(
     bool, version_mismatch_ok, false,
@@ -146,6 +146,10 @@ DEFINE_QUICHE_COMMAND_LINE_FLAG(int32_t, initial_mtu, 0,
 DEFINE_QUICHE_COMMAND_LINE_FLAG(
     int32_t, num_requests, 1,
     "How many sequential requests to make on a single connection.");
+
+DEFINE_QUICHE_COMMAND_LINE_FLAG(bool, ignore_errors, false,
+                                "If true, ignore connection/response errors "
+                                "and send all num_requests anyway.");
 
 DEFINE_QUICHE_COMMAND_LINE_FLAG(
     bool, disable_certificate_verification, false,
@@ -257,17 +261,6 @@ int QuicToyClient::SendRequestsAndPrintResponses(
   }
 
   quic::ParsedQuicVersionVector versions = quic::CurrentSupportedVersions();
-
-  if (quiche::GetQuicheCommandLineFlag(FLAGS_quic_ietf_draft)) {
-    quic::QuicVersionInitializeSupportForIetfDraft();
-    versions = {};
-    for (const ParsedQuicVersion& version : AllSupportedVersions()) {
-      if (version.HasIetfQuicFrames() &&
-          version.handshake_protocol == quic::PROTOCOL_TLS1_3) {
-        versions.push_back(version);
-      }
-    }
-  }
 
   std::string quic_version_string =
       quiche::GetQuicheCommandLineFlag(FLAGS_quic_version);
@@ -423,7 +416,12 @@ int QuicToyClient::SendRequestsAndPrintResponses(
               << client->session()->error_details() << std::endl;
     return 1;
   }
-  std::cerr << "Connected to " << host << ":" << port << std::endl;
+
+  std::cout << "Connected to " << host << ":" << port;
+  if (quiche::GetQuicheCommandLineFlag(FLAGS_output_resolved_server_address)) {
+    std::cout << ", resolved IP " << client->server_address().host().ToString();
+  }
+  std::cout << std::endl;
 
   // Construct the string body from flags, if provided.
   std::string body = quiche::GetQuicheCommandLineFlag(FLAGS_body);
@@ -498,13 +496,18 @@ int QuicToyClient::SendRequestsAndPrintResponses(
                 << std::endl;
       std::cout << "early data accepted: " << client->EarlyDataAccepted()
                 << std::endl;
+      QUIC_LOG(INFO) << "Request completed with TTFB(us): "
+                     << client->latest_ttfb().ToMicroseconds() << ", TTLB(us): "
+                     << client->latest_ttlb().ToMicroseconds();
     }
 
     if (!client->connected()) {
       std::cerr << "Request caused connection failure. Error: "
                 << quic::QuicErrorCodeToString(client->session()->error())
                 << std::endl;
-      return 1;
+      if (!quiche::GetQuicheCommandLineFlag(FLAGS_ignore_errors)) {
+        return 1;
+      }
     }
 
     int response_code = client->latest_response_code();
@@ -517,11 +520,15 @@ int QuicToyClient::SendRequestsAndPrintResponses(
       } else {
         std::cout << "Request failed (redirect " << response_code << ")."
                   << std::endl;
-        return 1;
+        if (!quiche::GetQuicheCommandLineFlag(FLAGS_ignore_errors)) {
+          return 1;
+        }
       }
     } else {
       std::cout << "Request failed (" << response_code << ")." << std::endl;
-      return 1;
+      if (!quiche::GetQuicheCommandLineFlag(FLAGS_ignore_errors)) {
+        return 1;
+      }
     }
 
     if (i + 1 < num_requests) {  // There are more requests to perform.
@@ -536,7 +543,9 @@ int QuicToyClient::SendRequestsAndPrintResponses(
         if (!client->Connect()) {
           std::cerr << "Failed to reconnect client between requests."
                     << std::endl;
-          return 1;
+          if (!quiche::GetQuicheCommandLineFlag(FLAGS_ignore_errors)) {
+            return 1;
+          }
         }
       } else if (!quiche::GetQuicheCommandLineFlag(
                      FLAGS_disable_port_changes)) {

@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "base/base64.h"
+#include "base/check.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/location.h"
@@ -74,23 +75,24 @@ void RequestSender::Send(
 
   if (use_signing_) {
     public_key_ = GetKey(kKeyPubBytesBase64);
-    if (public_key_.empty())
+    if (public_key_.empty()) {
       return HandleSendError(
           static_cast<int>(ProtocolError::MISSING_PUBLIC_KEY), 0);
+    }
   }
 
   SendInternal();
 }
 
 void RequestSender::SendInternal() {
-  DCHECK(cur_url_ != urls_.end());
-  DCHECK(cur_url_->is_valid());
+  CHECK(cur_url_ != urls_.end());
+  CHECK(cur_url_->is_valid());
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   GURL url(*cur_url_);
 
   if (use_signing_) {
-    DCHECK(!public_key_.empty());
+    CHECK(!public_key_.empty());
     signer_ = client_update_protocol::Ecdsa::Create(kKeyVersion, public_key_);
     std::string request_query_string;
     signer_->SignRequest(request_body_, &request_query_string);
@@ -108,6 +110,7 @@ void RequestSender::SendInternal() {
                        base::Unretained(this),
                        static_cast<int>(ProtocolError::URL_FETCHER_FAILED),
                        std::string(), std::string(), std::string(), 0));
+    return;
   }
   network_fetcher_->PostRequest(
       url, request_body_, kContentType, request_extra_headers_,
@@ -124,6 +127,7 @@ void RequestSender::SendInternalComplete(
     const std::string& response_cup_server_proof,
     int retry_after_sec) {
   VLOG(2) << "Omaha response received: " << response_body;
+  VLOG_IF(2, error) << "Omaha send error: " << error;
 
   if (!error) {
     if (!use_signing_) {
@@ -133,8 +137,8 @@ void RequestSender::SendInternalComplete(
       return;
     }
 
-    DCHECK(use_signing_);
-    DCHECK(signer_);
+    CHECK(use_signing_);
+    CHECK(signer_);
     if (signer_->ValidateResponse(
             response_body,
             SelectCupServerProof(response_cup_server_proof, response_etag))) {
@@ -147,7 +151,7 @@ void RequestSender::SendInternalComplete(
     error = static_cast<int>(ProtocolError::RESPONSE_NOT_TRUSTED);
   }
 
-  DCHECK(error);
+  CHECK(error);
 
   // A positive |retry_after_sec| is a hint from the server that the client
   // should not send further request until the cooldown has expired.
@@ -158,12 +162,11 @@ void RequestSender::SendInternalComplete(
     return;
   }
 
-  VLOG(2) << "Omaha send error: " << response_body;
   HandleSendError(error, retry_after_sec);
 }
 
 void RequestSender::OnResponseStarted(int response_code,
-                                      int64_t content_length) {
+                                      int64_t /*content_length*/) {
   response_code_ = response_code;
 }
 
@@ -179,16 +182,18 @@ void RequestSender::OnNetworkFetcherComplete(
   VLOG(1) << "Request completed from url: " << original_url.spec();
 
   int error = -1;
-  if (!net_error && response_code_ == 200)
+  if (!net_error && response_code_ == 200) {
     error = 0;
-  else if (response_code_ != -1)
+  } else if (response_code_ != -1) {
     error = response_code_;
-  else
+  } else {
     error = net_error;
+  }
 
   int retry_after_sec = -1;
-  if (original_url.SchemeIsCryptographic() && error > 0)
+  if (original_url.SchemeIsCryptographic() && error > 0) {
     retry_after_sec = base::saturated_cast<int>(xheader_retry_after_sec);
+  }
 
   base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE,

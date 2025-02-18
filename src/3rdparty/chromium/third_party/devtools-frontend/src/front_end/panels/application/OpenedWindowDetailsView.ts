@@ -6,9 +6,10 @@ import * as Common from '../../core/common/common.js';
 import * as i18n from '../../core/i18n/i18n.js';
 import * as SDK from '../../core/sdk/sdk.js';
 import * as Protocol from '../../generated/protocol.js';
+import * as IconButton from '../../ui/components/icon_button/icon_button.js';
 import * as UI from '../../ui/legacy/legacy.js';
 
-import frameDetailsReportViewStyles from './frameDetailsReportView.css.js';
+import openedWindowDetailsViewStyles from './openedWindowDetailsView.css.js';
 
 const UIStrings = {
   /**
@@ -91,7 +92,7 @@ const booleanToYesNo = (b: boolean): Common.UIString.LocalizedString =>
     b ? i18nString(UIStrings.yes) : i18nString(UIStrings.no);
 
 function linkifyIcon(iconType: string, title: string, eventHandler: () => (void|Promise<void>)): Element {
-  const icon = UI.Icon.Icon.create(iconType, 'icon-link devtools-link');
+  const icon = IconButton.Icon.create(iconType, 'icon-link devtools-link');
   const span = document.createElement('span');
   UI.Tooltip.Tooltip.install(span, title);
   span.classList.add('devtools-link');
@@ -126,7 +127,7 @@ async function maybeCreateLinkToElementsPanel(opener: Protocol.Page.FrameId|SDK.
     return null;
   }
   const linkElement = linkifyIcon(
-      'mediumicon-elements-panel', i18nString(UIStrings.clickToRevealInElementsPanel),
+      'code-circle', i18nString(UIStrings.clickToRevealInElementsPanel),
       () => Common.Revealer.reveal(linkTargetDOMNode));
   const label = document.createElement('span');
   label.textContent = `<${linkTargetDOMNode.nodeName().toLocaleLowerCase()}>`;
@@ -167,7 +168,8 @@ export class OpenedWindowDetailsView extends UI.ThrottledWidget.ThrottledWidget 
     this.reportView.element.classList.add('frame-details-report-container');
 
     this.documentSection = this.reportView.appendSection(i18nString(UIStrings.document));
-    this.URLFieldValue = this.documentSection.appendField(i18nString(UIStrings.url));
+    this.URLFieldValue =
+        this.documentSection.appendField(i18nString(UIStrings.url)).createChild('div', 'text-ellipsis');
 
     this.securitySection = this.reportView.appendSection(i18nString(UIStrings.security));
     this.openerElementField = this.securitySection.appendField(i18nString(UIStrings.openerFrame));
@@ -177,9 +179,10 @@ export class OpenedWindowDetailsView extends UI.ThrottledWidget.ThrottledWidget 
     this.update();
   }
 
-  async doUpdate(): Promise<void> {
+  override async doUpdate(): Promise<void> {
     this.reportView.setTitle(this.buildTitle());
     this.URLFieldValue.textContent = this.targetInfo.url;
+    this.URLFieldValue.title = this.targetInfo.url;
     this.hasDOMAccessValue.textContent = booleanToYesNo(this.targetInfo.canAccessOpener);
     void this.maybeDisplayOpenerFrame();
   }
@@ -210,10 +213,10 @@ export class OpenedWindowDetailsView extends UI.ThrottledWidget.ThrottledWidget 
   setTargetInfo(targetInfo: Protocol.Target.TargetInfo): void {
     this.targetInfo = targetInfo;
   }
-  wasShown(): void {
+  override wasShown(): void {
     super.wasShown();
-    this.reportView.registerCSSFiles([frameDetailsReportViewStyles]);
-    this.registerCSSFiles([frameDetailsReportViewStyles]);
+    this.reportView.registerCSSFiles([openedWindowDetailsViewStyles]);
+    this.registerCSSFiles([openedWindowDetailsViewStyles]);
   }
 }
 
@@ -223,7 +226,6 @@ export class WorkerDetailsView extends UI.ThrottledWidget.ThrottledWidget {
   private readonly documentSection: UI.ReportView.Section;
   // TODO(crbug.com/1172300) Ignored during the jsdoc to ts migration)
   // eslint-disable-next-line @typescript-eslint/naming-convention
-  private readonly URLFieldValue: HTMLElement;
   private readonly isolationSection: UI.ReportView.Section;
   private readonly coepPolicy: HTMLElement;
 
@@ -240,8 +242,10 @@ export class WorkerDetailsView extends UI.ThrottledWidget.ThrottledWidget {
     this.reportView.element.classList.add('frame-details-report-container');
 
     this.documentSection = this.reportView.appendSection(i18nString(UIStrings.document));
-    this.URLFieldValue = this.documentSection.appendField(i18nString(UIStrings.url));
-    this.URLFieldValue.textContent = this.targetInfo.url;
+    const URLFieldValue =
+        this.documentSection.appendField(i18nString(UIStrings.url)).createChild('div', 'text-ellipsis');
+    URLFieldValue.textContent = this.targetInfo.url;
+    URLFieldValue.title = this.targetInfo.url;
     const workerType = this.documentSection.appendField(i18nString(UIStrings.type));
     workerType.textContent = this.workerTypeToString(this.targetInfo.type);
 
@@ -303,12 +307,12 @@ export class WorkerDetailsView extends UI.ThrottledWidget.ThrottledWidget {
     }
   }
 
-  async doUpdate(): Promise<void> {
+  override async doUpdate(): Promise<void> {
     await this.updateCoopCoepStatus();
   }
-  wasShown(): void {
+  override wasShown(): void {
     super.wasShown();
-    this.reportView.registerCSSFiles([frameDetailsReportViewStyles]);
-    this.registerCSSFiles([frameDetailsReportViewStyles]);
+    this.reportView.registerCSSFiles([openedWindowDetailsViewStyles]);
+    this.registerCSSFiles([openedWindowDetailsViewStyles]);
   }
 }

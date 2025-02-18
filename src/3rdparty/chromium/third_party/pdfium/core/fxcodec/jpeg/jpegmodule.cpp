@@ -23,13 +23,13 @@
 #include "core/fxge/dib/fx_dib.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/base/check.h"
-#include "third_party/base/notreached.h"
+#include "third_party/base/check_op.h"
 
 static pdfium::span<const uint8_t> JpegScanSOI(
     pdfium::span<const uint8_t> src_span) {
   DCHECK(!src_span.empty());
 
-  for (size_t offset = 0; offset < src_span.size() - 1; ++offset) {
+  for (size_t offset = 0; offset + 1 < src_span.size(); ++offset) {
     if (src_span[offset] == 0xff && src_span[offset + 1] == 0xd8)
       return src_span.subspan(offset);
   }
@@ -288,10 +288,7 @@ bool JpegDecoder::Rewind() {
     jpeg_destroy_decompress(&m_Cinfo);
     return false;
   }
-  if (static_cast<int>(m_Cinfo.output_width) > m_OrigWidth) {
-    NOTREACHED();
-    return false;
-  }
+  CHECK_LE(static_cast<int>(m_Cinfo.output_width), m_OrigWidth);
   m_bStarted = true;
   return true;
 }
@@ -406,7 +403,7 @@ absl::optional<JpegModule::ImageInfo> JpegModule::LoadInfo(
 }
 
 #if BUILDFLAG(IS_WIN)
-bool JpegModule::JpegEncode(const RetainPtr<CFX_DIBBase>& pSource,
+bool JpegModule::JpegEncode(const RetainPtr<const CFX_DIBBase>& pSource,
                             uint8_t** dest_buf,
                             size_t* dest_size) {
   jpeg_error_mgr jerr;

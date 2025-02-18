@@ -75,21 +75,27 @@ V8_EXPORT_PRIVATE void ClearBreakOnNextFunctionCall(Isolate* isolate);
  */
 MaybeLocal<Array> GetInternalProperties(Isolate* isolate, Local<Value> value);
 
+enum class PrivateMemberFilter {
+  kPrivateMethods = 1,
+  kPrivateFields = 1 << 1,
+  kPrivateAccessors = 1 << 2,
+};
+
 /**
+ * Retrieve both instance and static private members on an object.
+ * filter should be a combination of PrivateMemberFilter.
  * Returns through the out parameters names_out a vector of names
- * in v8::String for private members, including fields, methods,
- * accessors specific to the value type.
- * The values are returned through the out parameter values_out in the
- * corresponding indices. Private fields and methods are returned directly
- * while accessors are returned as v8::debug::AccessorPair. Missing components
- * in the accessor pairs are null.
+ * in v8::String and through values_out the corresponding values.
+ * Private fields and methods are returned directly while accessors are
+ * returned as v8::debug::AccessorPair. Missing components in the accessor
+ * pairs are null.
  * If an exception occurs, false is returned. Otherwise true is returned.
  * Results will be allocated in the current context and handle scope.
  */
 V8_EXPORT_PRIVATE bool GetPrivateMembers(Local<Context> context,
-                                         Local<Object> value,
-                                         std::vector<Local<Value>>* names_out,
-                                         std::vector<Local<Value>>* values_out);
+                                         Local<Object> value, int filter,
+                                         LocalVector<Value>* names_out,
+                                         LocalVector<Value>* values_out);
 
 /**
  * Forwards to v8::Object::CreationContext, but with special handling for
@@ -267,6 +273,13 @@ class WasmScript : public Script {
   int CodeOffset() const;
   int CodeLength() const;
 };
+
+// "Static" version of WasmScript::Disassemble, for use with cached scripts
+// where we only have raw wire bytes available.
+void Disassemble(base::Vector<const uint8_t> wire_bytes,
+                 DisassemblyCollector* collector,
+                 std::vector<int>* function_body_offsets);
+
 #endif  // V8_ENABLE_WEBASSEMBLY
 
 V8_EXPORT_PRIVATE void GetLoadedScripts(
@@ -508,6 +521,7 @@ class V8_EXPORT_PRIVATE StackTraceIterator {
   virtual v8::Local<v8::String> GetFunctionDebugName() const = 0;
   virtual v8::Local<v8::debug::Script> GetScript() const = 0;
   virtual debug::Location GetSourceLocation() const = 0;
+  virtual debug::Location GetFunctionLocation() const = 0;
   virtual v8::Local<v8::Function> GetFunction() const = 0;
   virtual std::unique_ptr<ScopeIterator> GetScopeIterator() const = 0;
   virtual bool CanBeRestarted() const = 0;
@@ -515,16 +529,6 @@ class V8_EXPORT_PRIVATE StackTraceIterator {
   virtual v8::MaybeLocal<v8::Value> Evaluate(v8::Local<v8::String> source,
                                              bool throw_on_side_effect) = 0;
 };
-
-class QueryObjectPredicate {
- public:
-  virtual ~QueryObjectPredicate() = default;
-  virtual bool Filter(v8::Local<v8::Object> object) = 0;
-};
-
-void QueryObjects(v8::Local<v8::Context> context,
-                  QueryObjectPredicate* predicate,
-                  std::vector<v8::Global<v8::Object>>* objects);
 
 void GlobalLexicalScopeNames(v8::Local<v8::Context> context,
                              std::vector<v8::Global<v8::String>>* names);
@@ -542,7 +546,7 @@ int64_t GetNextRandomInt64(v8::Isolate* isolate);
 
 MaybeLocal<Value> CallFunctionOn(Local<Context> context,
                                  Local<Function> function, Local<Value> recv,
-                                 int argc, Local<Value> argv[],
+                                 int argc, Global<Value> argv[],
                                  bool throw_on_side_effect);
 
 enum class EvaluateGlobalMode {
@@ -554,10 +558,6 @@ enum class EvaluateGlobalMode {
 V8_EXPORT_PRIVATE v8::MaybeLocal<v8::Value> EvaluateGlobal(
     v8::Isolate* isolate, v8::Local<v8::String> source, EvaluateGlobalMode mode,
     bool repl_mode = false);
-
-V8_EXPORT_PRIVATE v8::MaybeLocal<v8::Value> EvaluateGlobalForTesting(
-    v8::Isolate* isolate, v8::Local<v8::Script> function,
-    v8::debug::EvaluateGlobalMode mode, bool repl);
 
 int GetDebuggingId(v8::Local<v8::Function> function);
 

@@ -141,20 +141,6 @@ class CC_EXPORT FrameSequenceTracker {
     uint32_t previous_sequence_delta = 0;
   };
 
-  struct CheckerboardingData {
-    CheckerboardingData();
-    ~CheckerboardingData();
-
-    // Tracks whether the last presented frame had checkerboarding. This is used
-    // to track how many vsyncs showed frames with checkerboarding.
-    bool last_frame_had_checkerboarding = false;
-
-    base::TimeTicks last_frame_timestamp;
-
-    // A list of frame-tokens that had checkerboarding.
-    base::circular_deque<uint32_t> frames;
-  };
-
   void UpdateTrackedFrameData(TrackedFrameData* frame_data,
                               uint64_t source_id,
                               uint64_t sequence_number,
@@ -172,8 +158,6 @@ class CC_EXPORT FrameSequenceTracker {
   TrackedFrameData begin_main_frame_data_;
 
   std::unique_ptr<FrameSequenceMetrics> metrics_;
-
-  CheckerboardingData checkerboarding_;
 
   // Tracks the list of frame-tokens for compositor-frames that included new
   // updates from the main-thread, whose presentation-feedback have not been
@@ -217,9 +201,6 @@ class CC_EXPORT FrameSequenceTracker {
   // scheduled to report histogram.
   base::TimeTicks first_frame_timestamp_;
 
-  // Tracks the presentation timestamp of the previous frame.
-  base::TimeTicks last_frame_presentation_timestamp_;
-
   // Keeps track of whether the impl-frame being processed did not have any
   // damage from the compositor (i.e. 'impl damage').
   bool frame_had_no_compositor_damage_ = false;
@@ -257,6 +238,13 @@ class CC_EXPORT FrameSequenceTracker {
   // True when an impl-impl is not ended. A tracker is ready for termination
   // only when the last impl-frame is ended (ReportFrameEnd).
   bool is_inside_frame_ = false;
+
+  // Frame id of the last ended frame when the tracker is active.
+  viz::BeginFrameId last_ended_frame_id_;
+  // Frame id of the last sorted frame that the tracker was notified. If this is
+  // at least equal to `last_ended_frame_id_` then we are no longer awaiting
+  // frame feedback and can terminate immediately.
+  viz::BeginFrameId last_sorted_frame_id_;
 
 #if DCHECK_IS_ON()
   // This stringstream represents a sequence of frame reporting activities on

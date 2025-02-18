@@ -14,8 +14,8 @@
 
 #include "connections/implementation/mediums/wifi_hotspot.h"
 
-#include <utility>
 #include <string>
+#include <utility>
 
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
@@ -94,14 +94,16 @@ bool WifiHotspot::IsConnectedToHotspot() {
 }
 
 bool WifiHotspot::ConnectWifiHotspot(const std::string& ssid,
-                                     const std::string& password) {
+                                     const std::string& password,
+                                     int frequency) {
   MutexLock lock(&mutex_);
   if (is_connected_to_hotspot_) {
     NEARBY_LOGS(INFO)
         << "No need to connect to Hotspot because it is already connected.";
     return true;
   }
-  is_connected_to_hotspot_ = medium_.ConnectWifiHotspot(ssid, password);
+  is_connected_to_hotspot_ =
+      medium_.ConnectWifiHotspot(ssid, password, frequency);
   return is_connected_to_hotspot_;
 }
 
@@ -188,7 +190,9 @@ bool WifiHotspot::StartAcceptingConnections(
             server_socket.Close();
             break;
           }
-          callback.accepted_cb(service_id, std::move(client_socket));
+          if (callback) {
+            callback(service_id, std::move(client_socket));
+          }
         }
       });
 

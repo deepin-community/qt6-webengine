@@ -1,64 +1,186 @@
-qt6-webengine (6.6.3-0deepin7) unstable; urgency=medium
+qt6-webengine (6.8.2+dfsg-2) experimental; urgency=medium
 
-  * add update debian/*.install
+  [ Patrick Franz ]
+  * Update symbols from buildlogs.
+  * Add patch to fix build failure on arm64 due to incompatible pointers
+    in xnnpack.
 
- -- lichenggang <lichenggang@deepin.org>  Tue, 05 Nov 2024 23:12:15 +0800
+ -- Patrick Franz <deltaone@debian.org>  Thu, 13 Feb 2025 19:02:11 +0100
 
-qt6-webengine (6.6.3-0deepin6) unstable; urgency=medium
+qt6-webengine (6.8.2+dfsg-1) experimental; urgency=medium
 
- * soupport Qt6.8 rebuild.
+  [ Patrick Franz ]
+  * New upstream release (6.8.2).
+  * Modify d/watch to go back to the dfsg-suffix.
+  * Adjust files to be excluded from the tarball.
+  * Bump Qt B-Ds to 6.8.2.
+  * Update ABI to 6.8.2.
+  * Refresh patches.
+  * Update list of installed files.
+  * Update symbols from buildlogs.
+  * Add patch to fix builds with ccache.
 
- -- lichenggang <lichenggang@deepin.org>  Tue, 05 Nov 2024 17:47:13 +0800
+ -- Patrick Franz <deltaone@debian.org>  Wed, 12 Feb 2025 21:57:32 +0100
 
-qt6-webengine (6.6.3-0deepin5) unstable; urgency=medium
+qt6-webengine (6.7.2+dfsg2-2) unstable; urgency=medium
 
-  * Add missing dependencies to avoid compilation errors
+  [ Soren Stoutner ]
+  * Add hunspell-bdic.patch and remove90qt6webengine-dictionaries-path.conf (see
+    #1092726).
+  * Update copyright year for myself in debian/copyright.
 
- -- xiangzelong <xiangzelong@deepin.org>  Mon, 12 Aug 2024 15:04:47 +0800
+ -- Soren Stoutner <soren@debian.org>  Tue, 21 Jan 2025 17:25:46 -0700
 
-qt6-webengine (6.6.3-0deepin4) unstable; urgency=medium
+qt6-webengine (6.7.2+dfsg2-1) unstable; urgency=medium
 
-  * Fix up public header before build.
-  * Re-enable LTO on !riscv64. Previously, disabled LTO due to compiler flag
-    incompatibility (-ffat-lto-objects) on riscv64, as it uses Clang to
-    work around a bug in GCC. This change is not needed for other
-    architectures, so make this change specific to riscv64.
-  * Mark libqt6webengine6-data as any, as it contains architecture-specific
-    v8_context_snapshot.bin.
+  [ Soren Stoutner ]
+  * Build-depend on libasound2-dev (Closes: #1091342).
+  * Build using system rollup package (Closes: #1023333).
+  * Remove non-free WebKitSite.webarchive (Closes: #1091463).
+  * Modify debian/watch to create +dfsg2 suffixes.
+  * Add myself to uploaders.
+  * Update copyright year for myself in debian/copyright.
 
- -- Mingcong Bai <baimingcong@uniontech.com>  Mon, 27 May 2024 14:35:39 +0800
+ -- Soren Stoutner <soren@debian.org>  Fri, 27 Dec 2024 09:22:49 -0700
 
-qt6-webengine (6.6.3-0deepin3) unstable; urgency=medium
+qt6-webengine (6.7.2+dfsg-9) unstable; urgency=medium
 
-  * fix: add riscv64 support
+  [ Patrick Franz ]
+  * Remove comment in d/rules to fix CMake-arguments (Closes: #1087829).
 
- -- Chang Yang <yangchang@deepin.org>  Fri, 12 Apr 2024 17:02:16 +0800
+ -- Patrick Franz <deltaone@debian.org>  Wed, 18 Dec 2024 19:30:08 +0100
 
-qt6-webengine (6.6.3-0deepin2) unstable; urgency=medium
+qt6-webengine (6.7.2+dfsg-8) unstable; urgency=medium
 
-  * fix: add loong64 support
+  [ Patrick Franz ]
+  * Revert hardcoding QML dependencies in qmldeps.overrides.
 
- -- Chang Yang <yangchang@deepin.org>  Fri, 12 Apr 2024 11:39:59 +0800
+ -- Patrick Franz <deltaone@debian.org>  Tue, 19 Nov 2024 21:39:22 +0100
 
-qt6-webengine (6.6.3-0deepin1) unstable; urgency=medium
+qt6-webengine (6.7.2+dfsg-7) unstable; urgency=medium
 
-  * fix: disable lto to fix segfault
-  * fix: update symbols
+  [ Patrick Franz ]
+  * Fix build failure on arch:all (Closes: #1087605).
+  * Update lintian-overrides.
 
- -- Chang Yang <yangchang@deepin.org>  Thu, 11 Apr 2024 14:57:03 +0800
+ -- Patrick Franz <deltaone@debian.org>  Sat, 16 Nov 2024 16:13:54 +0100
 
-qt6-webengine (6.6.3-0deepin0) unstable; urgency=medium
+qt6-webengine (6.7.2+dfsg-6) unstable; urgency=medium
 
-  * upgrade version to 6.6.3
+  [ Sandro Knauß ]
+  * Use dh_qmldeps to detect QML dependencies.
+  * Add qml6-module packages to -dev package for QML dependency detection.
+  * Use dh-sequence-pkgkde-symbolshelper instead of --with.
+  * Enable QML detection for examples package.
+  * Correct wrong QML depdendecy on QtQuickControls2 with qml6-module-
+    qtquick-controls.
+  * Override examples own QML modules.
 
- -- Chang Yang <yangchang@deepin.org>  Wed, 10 Apr 2024 10:27:43 +0800
+  [ Patrick Franz ]
+  * Bump Standards-Version to 4.7.0 (no changes needed).
+  * Install cmake-files for QmlPlugins.
 
-qt6-webengine (6.6.1+dfsg-2deepin1) experimental; urgency=medium
+ -- Patrick Franz <deltaone@debian.org>  Wed, 13 Nov 2024 20:55:22 +0100
 
-  [ Dmitry Shachnev ]
-  * Add a patch from Gentoo to fix build with ICU 74.
+qt6-webengine (6.7.2+dfsg-5) unstable; urgency=medium
 
- -- Tianyu Chen <sweetyfish@deepin.org>  Fri, 08 Mar 2024 17:45:13 +0800
+  [ Patrick Franz ]
+  * Let qt6-webengine-dev-tools depend on libqt6webengine6-data as
+    convert-bdic depends on the data in libqt6webengine6-data (Closes:
+    #1084251).
+
+ -- Patrick Franz <deltaone@debian.org>  Mon, 07 Oct 2024 19:27:59 +0200
+
+qt6-webengine (6.7.2+dfsg-4) unstable; urgency=medium
+
+  * Upload to unstable.
+
+ -- Patrick Franz <deltaone@debian.org>  Sat, 05 Oct 2024 02:12:52 +0200
+
+qt6-webengine (6.7.2+dfsg-3) experimental; urgency=medium
+
+  [ Patrick Franz ]
+  * Fix handling of private symbols.
+
+ -- Patrick Franz <deltaone@debian.org>  Sun, 08 Sep 2024 16:08:26 +0200
+
+qt6-webengine (6.7.2+dfsg-2) experimental; urgency=medium
+
+  [ Patrick Franz ]
+  * Update symbols from buildlogs.
+
+ -- Patrick Franz <deltaone@debian.org>  Sun, 08 Sep 2024 00:17:45 +0200
+
+qt6-webengine (6.7.2+dfsg-1) experimental; urgency=medium
+
+  [ Patrick Franz ]
+  * New upstream release (6.7.2).
+  * Update list of files to be excluded from the tarball.
+  * Refresh patches.
+  * Bump Qt B-Ds to 6.7.2 and use the bundled ICU as the Debian version
+    is too old.
+  * Update list of installed files.
+  * Update symbols from buildlogs.
+
+ -- Patrick Franz <deltaone@debian.org>  Sat, 07 Sep 2024 10:44:04 +0200
+
+qt6-webengine (6.6.2+dfsg-7) unstable; urgency=medium
+
+  [ Patrick Franz ]
+  * Update symbols from buildlogs.
+
+ -- Patrick Franz <deltaone@debian.org>  Thu, 15 Aug 2024 08:56:16 +0200
+
+qt6-webengine (6.6.2+dfsg-6) unstable; urgency=medium
+
+  [ Patrick Franz ]
+  * Add patch to fix build failure with gcc-14 on armhf due to missing
+    <algorithm> include.
+
+ -- Patrick Franz <deltaone@debian.org>  Wed, 14 Aug 2024 10:16:09 +0200
+
+qt6-webengine (6.6.2+dfsg-5) unstable; urgency=medium
+
+  [ Patrick Franz ]
+  * Update symbols from buildlogs (Closes: #1075429).
+
+ -- Patrick Franz <deltaone@debian.org>  Wed, 31 Jul 2024 21:07:18 +0900
+
+qt6-webengine (6.6.2+dfsg-4) unstable; urgency=medium
+
+  [ Patrick Franz ]
+  * Upload to unstable.
+
+ -- Patrick Franz <deltaone@debian.org>  Thu, 06 Jun 2024 18:47:27 +0200
+
+qt6-webengine (6.6.2+dfsg-3) experimental; urgency=medium
+
+  [ Patrick Franz ]
+  * Add patch to fix build failure with ninja 1.12.
+  * Install v8_context_snapshot.bin.
+
+ -- Patrick Franz <deltaone@debian.org>  Sun, 26 May 2024 18:19:24 +0200
+
+qt6-webengine (6.6.2+dfsg-2) experimental; urgency=medium
+
+  [ Patrick Franz ]
+  * Update symbols from buildlogs.
+  * Refresh patches.
+
+ -- Patrick Franz <deltaone@debian.org>  Thu, 02 May 2024 08:31:55 +0200
+
+qt6-webengine (6.6.2+dfsg-1) experimental; urgency=medium
+
+  [ Patrick Franz ]
+  * New upstream release (6.6.2).
+  * Bump Qt B-Ds to 6.6.2.
+  * Update ABI to 6.6.2.
+  * Refresh patches.
+  * Update list of installed files.
+  * Build-depend on pkgconf instead of pkg-config as the latter has been
+    superseded by the former.
+
+ -- Patrick Franz <deltaone@debian.org>  Sat, 17 Feb 2024 19:45:10 +0100
 
 qt6-webengine (6.6.1+dfsg-2) experimental; urgency=medium
 
@@ -115,6 +237,20 @@ qt6-webengine (6.6.0+dfsg-1) experimental; urgency=medium
   * Fix convert-bdic typo in qt6-webengine-dev-tools package description.
 
  -- Patrick Franz <deltaone@debian.org>  Thu, 23 Nov 2023 18:26:15 +0100
+
+qt6-webengine (6.4.2-final+dfsg-14) unstable; urgency=medium
+
+  * Team upload.
+  * Update symbols files from buildds’ logs, to fix FTBFS on armhf.
+
+ -- Dmitry Shachnev <mitya57@debian.org>  Sat, 23 Mar 2024 21:35:07 +0300
+
+qt6-webengine (6.4.2-final+dfsg-13) unstable; urgency=medium
+
+  [ Patrick Franz ]
+  * Fix the zlib build for time_t 64, thx to Matthias Klose.
+
+ -- Patrick Franz <deltaone@debian.org>  Sat, 23 Mar 2024 08:52:50 +0100
 
 qt6-webengine (6.4.2-final+dfsg-12) unstable; urgency=medium
 

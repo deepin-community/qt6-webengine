@@ -26,6 +26,7 @@
 #include "base/task/single_thread_task_executor.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/gtest_util.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "base/threading/thread.h"
 #include "build/build_config.h"
@@ -53,6 +54,14 @@ class MessagePumpLibeventTest : public testing::Test,
   ~MessagePumpLibeventTest() override = default;
 
   void SetUp() override {
+#if BUILDFLAG(ENABLE_MESSAGE_PUMP_EPOLL)
+    // Select MessagePumpLibevent or MessagePumpEpoll based on the test
+    // parameter.
+    scoped_feature_list_.InitWithFeatureState(base::kMessagePumpEpoll,
+                                              GetParam() == kEpoll);
+    MessagePumpLibevent::InitializeFeatures();
+#endif  // BUILDFLAG(ENABLE_MESSAGE_PUMP_EPOLL)
+
     Thread::Options options(MessagePumpType::IO, 0);
     ASSERT_TRUE(io_thread_.StartWithOptions(std::move(options)));
     int ret = pipe(pipefds_);
@@ -69,6 +78,12 @@ class MessagePumpLibeventTest : public testing::Test,
       PLOG(ERROR) << "close";
     if (IGNORE_EINTR(close(pipefds_[1])) < 0)
       PLOG(ERROR) << "close";
+
+#if BUILDFLAG(ENABLE_MESSAGE_PUMP_EPOLL)
+    // Reset feature state for other tests running in this process.
+    scoped_feature_list_.Reset();
+    MessagePumpLibevent::InitializeFeatures();
+#endif  // BUILDFLAG(ENABLE_MESSAGE_PUMP_EPOLL)
   }
 
   std::unique_ptr<MessagePumpLibevent> CreateMessagePump() {
@@ -98,10 +113,16 @@ class MessagePumpLibeventTest : public testing::Test,
   }
 
   int pipefds_[2];
+  static constexpr char null_byte_ = 0;
   std::unique_ptr<test::SingleThreadTaskEnvironment> task_environment_;
 
  private:
   Thread io_thread_;
+
+#if BUILDFLAG(ENABLE_MESSAGE_PUMP_EPOLL)
+  // Features to override default feature settings.
+  base::test::ScopedFeatureList scoped_feature_list_;
+#endif  // BUILDFLAG(ENABLE_MESSAGE_PUMP_EPOLL)
 };
 
 namespace {
@@ -272,9 +293,8 @@ TEST_P(MessagePumpLibeventTest, QuitWatcher) {
                             &controller, &delegate);
 
   // Make the IO thread wait for |event| before writing to pipefds[1].
-  const char buf = 0;
   WaitableEventWatcher::EventCallback write_fd_task =
-      BindOnce(&WriteFDWrapper, pipefds_[1], &buf, 1);
+      BindOnce(&WriteFDWrapper, pipefds_[1], &null_byte_, 1);
   io_runner()->PostTask(
       FROM_HERE, BindOnce(IgnoreResult(&WaitableEventWatcher::StartWatching),
                           Unretained(watcher.get()), &event,

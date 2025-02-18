@@ -16,12 +16,12 @@
 
 #include "src/traced/probes/power/android_power_data_source.h"
 
+#include <optional>
 #include <vector>
 
 #include "perfetto/base/logging.h"
 #include "perfetto/base/task_runner.h"
 #include "perfetto/base/time.h"
-#include "perfetto/ext/base/optional.h"
 #include "perfetto/ext/base/scoped_file.h"
 #include "perfetto/ext/tracing/core/trace_packet.h"
 #include "perfetto/ext/tracing/core/trace_writer.h"
@@ -70,13 +70,13 @@ struct AndroidPowerDataSource::DynamicLibLoader {
   PERFETTO_LAZY_LOAD(android_internal::GetPowerEntityStateResidency,
                      get_power_entity_state_residency_);
 
-  base::Optional<int64_t> GetCounter(android_internal::BatteryCounter counter) {
+  std::optional<int64_t> GetCounter(android_internal::BatteryCounter counter) {
     if (!get_battery_counter_)
-      return base::nullopt;
+      return std::nullopt;
     int64_t value = 0;
     if (get_battery_counter_(counter, &value))
-      return base::make_optional(value);
-    return base::nullopt;
+      return std::make_optional(value);
+    return std::nullopt;
   }
 
   std::vector<android_internal::RailDescriptor> GetRailDescriptors() {
@@ -214,6 +214,9 @@ AndroidPowerDataSource::AndroidPowerDataSource(
       case AndroidPowerConfig::BATTERY_COUNTER_CURRENT_AVG:
         hal_id = android_internal::BatteryCounter::kCurrentAvg;
         break;
+      case AndroidPowerConfig::BATTERY_COUNTER_VOLTAGE:
+        hal_id = android_internal::BatteryCounter::kVoltage;
+        break;
     }
     PERFETTO_CHECK(static_cast<size_t>(hal_id) < counters_enabled_.size());
     counters_enabled_.set(static_cast<size_t>(hal_id));
@@ -289,6 +292,10 @@ void AndroidPowerDataSource::WriteBatteryCounters() {
 
       case android_internal::BatteryCounter::kCurrentAvg:
         counters_proto->set_current_avg_ua(*value);
+        break;
+
+      case android_internal::BatteryCounter::kVoltage:
+        counters_proto->set_voltage_uv(*value);
         break;
     }
   }

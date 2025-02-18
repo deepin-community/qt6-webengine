@@ -4,6 +4,8 @@
 
 #include "components/autofill/core/browser/payments/payments_requests/unmask_card_request.h"
 
+#include <string_view>
+
 #include "base/json/json_writer.h"
 #include "base/strings/escape.h"
 #include "base/strings/string_number_conversions.h"
@@ -37,30 +39,38 @@ const char kUnmaskCardRequestFormatWithOtp[] =
 constexpr size_t kDefaultOtpLength = 6U;
 constexpr size_t kDefaultCvcLength = 3U;
 
-// Parses the `defined_challenge_option` as an SMS OTP challenge option, and
-// sets the appropriate fields in `parsed_challenge_option`.
-void ParseAsSmsOtpChallengeOption(
+// Parses the `defined_challenge_option` as an  OTP challenge option, and sets
+// the appropriate fields in `parsed_challenge_option`.
+void ParseAsOtpChallengeOption(
     const base::Value::Dict* defined_challenge_option,
-    CardUnmaskChallengeOption* parsed_challenge_option) {
-  parsed_challenge_option->type = CardUnmaskChallengeOptionType::kSmsOtp;
+    CardUnmaskChallengeOption* parsed_challenge_option,
+    CardUnmaskChallengeOptionType otp_challenge_option_type) {
+  parsed_challenge_option->type = otp_challenge_option_type;
   const auto* challenge_id =
       defined_challenge_option->FindString("challenge_id");
   DCHECK(challenge_id);
   parsed_challenge_option->id =
       CardUnmaskChallengeOption::ChallengeOptionId(*challenge_id);
 
-  // For SMS OTP challenge, masked phone number is the challenge_info for
-  // display.
-  const auto* masked_phone_number =
-      defined_challenge_option->FindString("masked_phone_number");
-  DCHECK(masked_phone_number);
-  parsed_challenge_option->challenge_info =
-      base::UTF8ToUTF16(*masked_phone_number);
+  const std::string* challenge_info;
+  if (otp_challenge_option_type == CardUnmaskChallengeOptionType::kSmsOtp) {
+    // For SMS OTP challenge, masked phone number is the `challenge_info` for
+    // display.
+    challenge_info =
+        defined_challenge_option->FindString("masked_phone_number");
+  } else {
+    CHECK_EQ(otp_challenge_option_type,
+             CardUnmaskChallengeOptionType::kEmailOtp);
+    challenge_info =
+        defined_challenge_option->FindString("masked_email_address");
+  }
+  DCHECK(challenge_info);
+  parsed_challenge_option->challenge_info = base::UTF8ToUTF16(*challenge_info);
 
   // Get the OTP length for this challenge. This will be displayed to the user
   // in the OTP input dialog so that the user knows how many digits the OTP
   // should be.
-  absl::optional<int> otp_length =
+  std::optional<int> otp_length =
       defined_challenge_option->FindInt("otp_length");
   parsed_challenge_option->challenge_input_length =
       otp_length ? *otp_length : kDefaultOtpLength;
@@ -85,7 +95,7 @@ void ParseAsCvcChallengeOption(
   // Get the length of the CVC on the card. In most cases this is 3 digits,
   // but it is possible for this to be 4 digits, for example in the case of
   // the Card Identification Number on the front of an American Express card.
-  absl::optional<int> cvc_length =
+  std::optional<int> cvc_length =
       defined_challenge_option->FindInt("cvc_length");
   parsed_challenge_option->challenge_input_length =
       cvc_length ? *cvc_length : kDefaultCvcLength;
@@ -136,15 +146,25 @@ CardUnmaskChallengeOption ParseCardUnmaskChallengeOption(
   // challenge option, and return it.
   if ((defined_challenge_option =
            challenge_option.FindDict("sms_otp_challenge_option"))) {
-    ParseAsSmsOtpChallengeOption(defined_challenge_option,
-                                 &parsed_challenge_option);
+    ParseAsOtpChallengeOption(defined_challenge_option,
+                              &parsed_challenge_option,
+                              CardUnmaskChallengeOptionType::kSmsOtp);
+  }
+  // Check if it's an email OTP challenge option, and if it is, set
+  // `defined_challenge_option` to the defined challenge option found, parse the
+  // challenge option, and return it.
+  else if (base::FeatureList::IsEnabled(
+               features::kAutofillEnableEmailOtpForVcnYellowPath) &&
+           (defined_challenge_option =
+                challenge_option.FindDict("email_otp_challenge_option"))) {
+    ParseAsOtpChallengeOption(defined_challenge_option,
+                              &parsed_challenge_option,
+                              CardUnmaskChallengeOptionType::kEmailOtp);
   }
   // Check if it's a CVC challenge option, and if it is, set
   // `defined_challenge_option` to the defined challenge option found, parse the
   // challenge option, and return it.
-  else if (base::FeatureList::IsEnabled(
-               features::kAutofillEnableCvcForVcnYellowPath) &&
-           (defined_challenge_option =
+  else if ((defined_challenge_option =
                 challenge_option.FindDict("cvc_challenge_option"))) {
     ParseAsCvcChallengeOption(defined_challenge_option,
                               &parsed_challenge_option);
@@ -157,14 +177,16 @@ CardUnmaskChallengeOption ParseCardUnmaskChallengeOption(
 }  // namespace
 
 UnmaskCardRequest::UnmaskCardRequest(
-    const PaymentsClient::UnmaskRequestDetails& request_details,
+    const PaymentsNetworkInterface::UnmaskRequestDetails& request_details,
     const bool full_sync_enabled,
     base::OnceCallback<void(AutofillClient::PaymentsRpcResult,
-                            PaymentsClient::UnmaskResponseDetails&)> callback)
+                            PaymentsNetworkInterface::UnmaskResponseDetails&)>
+        callback)
     : request_details_(request_details),
       full_sync_enabled_(full_sync_enabled),
       callback_(std::move(callback)) {
-  DCHECK_NE(CreditCard::LOCAL_CARD, request_details.card.record_type());
+  DCHECK_NE(CreditCard::RecordType::kLocalCard,
+            request_details.card.record_type());
 }
 
 UnmaskCardRequest::~UnmaskCardRequest() = default;
@@ -190,15 +212,10 @@ std::string UnmaskCardRequest::GetRequestContent() {
         "instrument_id",
         base::NumberToString(request_details_.card.instrument_id()));
   }
-  if (base::FeatureList::IsEnabled(
-          features::kAutofillAlwaysReturnCloudTokenizedCard)) {
-    // See b/140727361.
-    request_dict.Set("instrument_token", "INSTRUMENT_TOKEN_FOR_TEST");
-  }
   request_dict.Set("risk_data_encoded",
                    BuildRiskDictionary(request_details_.risk_data));
   base::Value::Dict context;
-  context.Set("billable_service", kUnmaskCardBillableServiceNumber);
+  context.Set("billable_service", kUnmaskPaymentMethodBillableServiceNumber);
   if (request_details_.billing_customer_number != 0) {
     context.Set("customer_context",
                 BuildCustomerContextDictionary(
@@ -206,9 +223,10 @@ std::string UnmaskCardRequest::GetRequestContent() {
   }
   request_dict.Set("context", std::move(context));
 
-  base::Value::Dict chrome_user_context;
-  chrome_user_context.Set("full_sync_enabled", full_sync_enabled_);
-  request_dict.Set("chrome_user_context", std::move(chrome_user_context));
+  request_dict.Set(
+      "chrome_user_context",
+      BuildChromeUserContext(request_details_.client_behavior_signals,
+                             full_sync_enabled_));
 
   if (!request_details_.context_token.empty())
     request_dict.Set("context_token", request_details_.context_token);
@@ -234,7 +252,7 @@ std::string UnmaskCardRequest::GetRequestContent() {
           base::NumberToString(request_details_.selected_challenge_option
                                    ->challenge_input_length));
 
-      base::StringPiece cvc_position = "CVC_POSITION_UNKNOWN";
+      std::string_view cvc_position = "CVC_POSITION_UNKNOWN";
       switch (request_details_.selected_challenge_option->cvc_position) {
         case autofill::CvcPosition::kFrontOfCard:
           cvc_position = "CVC_POSITION_FRONT";
@@ -277,6 +295,14 @@ std::string UnmaskCardRequest::GetRequestContent() {
                      std::move(virtual_card_request_info));
   }
 
+  if (base::FeatureList::IsEnabled(
+          features::kAutofillEnableMerchantDomainInUnmaskCardRequest) &&
+      request_details_.merchant_domain_for_footprints.has_value()) {
+    request_dict.Set(
+        "merchant_domain",
+        request_details_.merchant_domain_for_footprints->Serialize());
+  }
+
   std::string json_request;
   base::JSONWriter::Write(request_dict, &json_request);
   std::string request_content;
@@ -314,11 +340,11 @@ void UnmaskCardRequest::ParseResponse(const base::Value::Dict& response) {
 
   const base::Value::Dict* expiration = response.FindDict("expiration");
   if (expiration) {
-    if (absl::optional<int> month = expiration->FindInt("month")) {
+    if (std::optional<int> month = expiration->FindInt("month")) {
       response_details_.expiration_month = base::NumberToString(month.value());
     }
 
-    if (absl::optional<int> year = expiration->FindInt("year")) {
+    if (std::optional<int> year = expiration->FindInt("year")) {
       response_details_.expiration_year = base::NumberToString(year.value());
     }
   }
@@ -357,11 +383,12 @@ void UnmaskCardRequest::ParseResponse(const base::Value::Dict& response) {
   const std::string* flow_status = response.FindString("flow_status");
   response_details_.flow_status = flow_status ? *flow_status : std::string();
 
-  if (request_details_.card.record_type() == CreditCard::VIRTUAL_CARD) {
+  if (request_details_.card.record_type() ==
+      CreditCard::RecordType::kVirtualCard) {
     response_details_.card_type =
         AutofillClient::PaymentsRpcCardType::kVirtualCard;
   } else if (request_details_.card.record_type() ==
-             CreditCard::MASKED_SERVER_CARD) {
+             CreditCard::RecordType::kMaskedServerCard) {
     response_details_.card_type =
         AutofillClient::PaymentsRpcCardType::kServerCard;
   } else {
@@ -401,11 +428,15 @@ bool UnmaskCardRequest::IsResponseComplete() {
     case AutofillClient::PaymentsRpcCardType::kUnknown:
       return false;
     case AutofillClient::PaymentsRpcCardType::kServerCard:
-      return !response_details_.real_pan.empty();
+      // When PAN is returned, the response is complete and no further
+      // authentication is needed. When PAN is not returned, the response has to
+      // contain context token in order to be considered a success.
+      return !response_details_.real_pan.empty() ||
+             !response_details_.context_token.empty();
     case AutofillClient::PaymentsRpcCardType::kVirtualCard:
-      // When pan is returned, it has to contain pan + expiry + cvv.
-      // When pan is not returned, it has to contain context token to indicate
-      // success.
+      // When the response contains a PAN, it must also contain expiration and
+      // CVV to be considered a success. When the response does not contain PAN,
+      // it must contain a context token instead.
       return IsAllCardInformationValidIncludingDcvv() ||
              CanPerformVirtualCardAuth();
   }
@@ -425,8 +456,10 @@ bool UnmaskCardRequest::IsRetryableFailure(const std::string& error_code) {
   // The additional case where this can be a retryable failure is only for
   // virtual cards, so if we are not in the virtual card unmasking case at this
   // point, return false.
-  if (request_details_.card.record_type() != CreditCard::VIRTUAL_CARD)
+  if (request_details_.card.record_type() !=
+      CreditCard::RecordType::kVirtualCard) {
     return false;
+  }
 
   // If a challenge option was not selected, we are not in the virtual card
   // unmasking case, so return false.

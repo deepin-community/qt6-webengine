@@ -4,12 +4,12 @@ Note: This code is currently WIP. There are a number of [known issues](#known-is
 
 ## Building
 
-## System requirements
+### System requirements
 
 - [CMake 3.10](https://cmake.org/download/) or greater
 - [Go 1.13](https://golang.org/dl/) or greater
 
-## Install `depot_tools`
+### Install `depot_tools`
 
 Dawn uses the Chromium build system and dependency management so you need to [install depot_tools] and add it to the PATH.
 
@@ -37,7 +37,7 @@ sudo apt-get install libx11-xcb-dev
 ```
 
 If you don't have those supporting libraries, then you must use the
-`-DDAWN_USE_X11=OFF` flag on Cmake.
+`-DDAWN_USE_X11=OFF` flag on CMake (see below).
 
 ### Build
 
@@ -50,30 +50,48 @@ cmake <dawn-root-path> -GNinja -DDAWN_BUILD_NODE_BINDINGS=1
 ninja dawn.node
 ```
 
+On Windows, the steps are similar:
+
+```sh
+mkdir <build-output-path>
+cd <build-output-path>
+cmake <dawn-root-path> -DDAWN_BUILD_NODE_BINDINGS=1
+cmake --build . --target dawn_node
+```
+
 ### Running WebGPU CTS
 
 1. [Build](#build) the `dawn.node` NodeJS module.
 2. Checkout the [WebGPU CTS repo](https://github.com/gpuweb/cts) or use the one in `third_party/webgpu-cts`.
 3. Run `npm install` from inside the CTS directory to install its dependencies.
 
-Now you can run CTS:
+Now you can run CTS using our `./tools/run` shell script. On Windows, it's recommended to use MSYS2 (e.g. Git Bash):
 
 ```sh
-./tools/run run-cts --dawn-node=<path-to-dawn.node> [WebGPU CTS query]
+./tools/run run-cts --bin=<path-build-dir> [WebGPU CTS query]
 ```
+
+Where `<path-build-dir>` is the output directory. \
+Note: `<path-build-dir>` can be omitted if your build directory sits at `<dawn>/out/active`, which is enforced if you use `<dawn>/tools/setup-build` (recommended).
 
 Or if you checked out your own CTS repo:
 
 ```sh
-./tools/run run-cts --dawn-node=<path-to-dawn.node> --cts=<path-to-cts> [WebGPU CTS query]
+./tools/run run-cts --bin=<path-build-dir> --cts=<path-to-cts> [WebGPU CTS query]
 ```
 
 If this fails with the error message `TypeError: expander is not a function or its return value is not iterable`, try appending `--build=false` to the start of the `run-cts` command line flags.
 
-To test against SwiftShader instead of the default Vulkan device, prefix `./tools/run run-cts` with `VK_ICD_FILENAMES=<swiftshader-cmake-build>/Linux/vk_swiftshader_icd.json`. For example:
+To test against SwiftShader (software implementation of Vulkan) instead of the default Vulkan device, prefix `./tools/run run-cts` with `VK_ICD_FILENAMES=<swiftshader-cmake-build>/Linux/vk_swiftshader_icd.json`. For example:
 
 ```sh
-VK_ICD_FILENAMES=<swiftshader-cmake-build>/Linux/vk_swiftshader_icd.json ./tools/run run-cts --dawn-node=<path-to-dawn.node> [WebGPU CTS query]
+VK_ICD_FILENAMES=<swiftshader-cmake-build>/Linux/vk_swiftshader_icd.json ./tools/run run-cts --bin=<path-build-dir> [WebGPU CTS query]
+```
+
+To test against Lavapipe (mesa's software implementation of Vulkan), similarly to SwiftShader, prefix `./tools/run run-cts` with `VK_ICD_FILENAMES=<lavapipe-install-dir>/share/vulkan/icd.d/lvp_icd.x86_64.json`. For example:
+
+```sh
+VK_ICD_FILENAMES=<lavapipe-install-dir>/share/vulkan/icd.d/lvp_icd.x86_64.json ./tools/run run-cts --bin=<path-build-dir> [WebGPU CTS query]
 ```
 
 The `--flag` parameter must be passed in multiple times, once for each flag begin set. Here are some common arguments:
@@ -87,10 +105,24 @@ The `--flag` parameter must be passed in multiple times, once for each flag begi
 For example, on Windows, to use the d3dcompiler_47.dll from a Chromium checkout, and to dump shader output, we could run the following using Git Bash:
 
 ```sh
-./tools/run run-cts --verbose --dawn-node=/c/src/dawn/build/Debug/dawn.node --cts=/c/src/webgpu-cts --flag=dlldir="C:\src\chromium\src\out\Release" --flag=enable-dawn-features=dump_shaders 'webgpu:shader,execution,builtin,abs:integer_builtin_functions,abs_unsigned:storageClass="storage";storageMode="read_write";containerType="vector";isAtomic=false;baseType="u32";type="vec2%3Cu32%3E"'
+./tools/run run-cts --verbose --bin=/c/src/dawn/out/active --cts=/c/src/webgpu-cts --flag=dlldir="C:\src\chromium\src\out\Release" --flag=enable-dawn-features=dump_shaders 'webgpu:shader,execution,builtin,abs:integer_builtin_functions,abs_unsigned:storageClass="storage";storageMode="read_write";containerType="vector";isAtomic=false;baseType="u32";type="vec2%3Cu32%3E"'
 ```
 
 Note that we pass `--verbose` above so that all test output, including the dumped shader, is written to stdout.
+
+### Testing with Chrome instead of dawn.node
+
+`run-cts` can also run CTS using a Chrome instance. Just add `chrome` after `run-cts`:
+
+```sh
+./tools/run run-cts chrome [WebGPU CTS query]
+```
+
+To see additional options, run:
+
+```sh
+./tools/run run-cts help chrome
+```
 
 ### Testing against a `run-cts` expectations file
 
@@ -157,7 +189,7 @@ Open or create the `.vscode/launch.json` file, and add:
         "--",
         "placeholder-arg",
         "--gpu-provider",
-        "[path-to-dawn.node]", // REPLACE: [path-to-dawn.node]
+        "[path-to-cts.js]", // REPLACE: [path-to-cts.js]
         "[test-query]" // REPLACE: [test-query]
       ],
       "cwd": "[cts-root]" // REPLACE: [cts-root]
@@ -169,12 +201,12 @@ Open or create the `.vscode/launch.json` file, and add:
 Replacing:
 
 - `[cts-root]` with the path to the CTS root directory. If you are editing the `.vscode/launch.json` from within the CTS workspace, then you may use `${workspaceFolder}`.
-- `[path-to-dawn.node]` this the path to the `dawn.node` module built by the [build step](#Build)
+- `[cts.js]` this is the path to the `cts.js` file that should be copied to the output directory by the [build step](#build)
 - `test-query` with the test query string. Example: `webgpu:shader,execution,builtin,abs:*`
 
-## Debugging dawn-node issues in gdb/lldb
+## Debugging C++
 
-It is possible to run the CTS with dawn-node directly similarly to Debugging TypeScript with VSCode:
+It is possible to run the CTS with dawn-node from the command line:
 
 ```sh
 cd <cts-root-dir>
@@ -182,19 +214,97 @@ cd <cts-root-dir>
     -e "require('./src/common/tools/setup-ts-in-node.js');require('./src/common/runtime/cmdline.ts');" \
     -- \
     placeholder-arg \
-    --gpu-provider [path to dawn.node] \
+    --gpu-provider [path to cts.js] \
     [test-query]
 ```
 
-This command is then possible to run in your debugger of choice.
+You can use this to configure a debugger (gdb, lldb, MSVC) to launch the CTS, and be able to debug Dawn's C++ source,
+including the dawn-node C++ bindings layer, dawn_native, Tint, etc.
+
+To make this easier, executing `run-cts` with the `--verbose` flag will output the command it runs, along with
+the working directory. It also conveniently outputs the JSON fields that you can copy directly into VS Code's
+launch.json. For example:
+
+```sh
+./tools/run run-cts --verbose --isolate --bin=./build-clang 'webgpu:shader,execution,flow_control,
+loop:nested_loops:preventValueOptimizations=false'
+<SNIP>
+Running:
+  Cmd: /home/user/src/dawn/third_party/node/node-linux-x64/bin/node -e "require('./out-node/common/runtime/cmdline.js');" -- placeholder-arg --gpu-provider /home/user/src/dawn/build-clang/cts.js --verbose --quiet --gpu-provider-flag verbose=1 --colors --unroll-const-eval-loops --gpu-provider-flag enable-dawn-features=allow_unsafe_apis "webgpu:shader,execution,flow_control,loop:nested_loops:preventValueOptimizations=false"
+  Dir: /home/user/src/dawn/third_party/webgpu-cts
+
+  For VS Code launch.json:
+    "program": "/home/user/src/dawn/third_party/node/node-linux-x64/bin/node",
+    "args": [
+        "-e",
+        "require('./out-node/common/runtime/cmdline.js');",
+        "--",
+        "placeholder-arg",
+        "--gpu-provider",
+        "/home/user/src/dawn/build-clang/cts.js",
+        "--verbose",
+        "--quiet",
+        "--gpu-provider-flag",
+        "verbose=1",
+        "--colors",
+        "--unroll-const-eval-loops",
+        "--gpu-provider-flag",
+        "enable-dawn-features=allow_unsafe_apis",
+        "webgpu:shader,execution,flow_control,loop:nested_loops:preventValueOptimizations=false"
+    ],
+    "cwd": "/home/user/src/dawn/third_party/webgpu-cts",
+
+webgpu:shader,execution,flow_control,loop:nested_loops:preventValueOptimizations=false - pass:
+<SNIP>
+```
+
+Note that as in the example above, we also pass in `--isolate`, otherwise the output command will be the one
+used to run CTS in server mode, requiring a client to send it the tests to run.
+
+Also note that the debugger must support debugging forked child processes. You may need to enable this
+feature depending on your debugger (see [here for gdb](https://ftp.gnu.org/old-gnu/Manuals/gdb/html_node/gdb_25.html)
+and [this extension for MSVC](https://marketplace.visualstudio.com/items?itemName=vsdbgplat.MicrosoftChildProcessDebuggingPowerTool)).
+
+## Recipes for building software GPUs
+
+### Building Lavapipe (LLVM Vulkan)
+
+### System requirements
+
+- Python 3.6 or newer
+- [Meson](https://mesonbuild.com/Quick-guide.html)
+- llvm-dev
+
+These can be pre-built versions from apt-get, etc.
+
+### Get source code
+
+You can either download a specific version of mesa from [here](https://docs.mesa3d.org/download.html)
+
+or use git to pull from the source tree ([details](https://docs.mesa3d.org/repository.html))
+
+```sh
+git clone https://gitlab.freedesktop.org/mesa/mesa.git
+```
+
+### Building
+
+In the source directory
+
+```sh
+mkdir <build-dir>
+meson setup <build-dir>/ -Dprefix=<lavapipe-install-dir> -Dvulkan-drivers=swrast
+meson compile -C <build-dir>
+meson install -C <build-dir>
+```
+
+This should result in Lavapipe being built and the artifacts copied to `<lavapipe-install-dir>`
+
+Further details can be found [here](https://docs.mesa3d.org/install.html)
 
 ## Known issues
 
-- Many WebGPU CTS tests are currently known to fail
-- Dawn uses special token values for some parameters / fields. These are currently passed straight through to dawn from the JavaScript. discussions: [1](https://dawn-review.googlesource.com/c/dawn/+/64907/5/src/dawn/node/binding/Converter.cpp#167), [2](https://dawn-review.googlesource.com/c/dawn/+/64907/5/src/dawn/node/binding/Converter.cpp#928), [3](https://dawn-review.googlesource.com/c/dawn/+/64909/4/src/dawn/node/binding/GPUTexture.cpp#42)
-- Backend validation is currently always set to 'full' to aid in debugging. This can be extremely slow. [discussion](https://dawn-review.googlesource.com/c/dawn/+/64916/4/src/dawn/node/binding/GPU.cpp#25)
-- Attempting to call `new T` in JavaScript, where `T` is an IDL interface type, should result in a TypeError "Illegal constructor". [discussion](https://dawn-review.googlesource.com/c/dawn/+/64902/9/src/dawn/node/interop/WebGPU.cpp.tmpl#293)
-- `GPUDevice` currently maintains a list of "lost promises". This should return the same promise. [discussion](https://dawn-review.googlesource.com/c/dawn/+/64906/6/src/dawn/node/binding/GPUDevice.h#107)
+See https://bugs.chromium.org/p/dawn/issues/list?q=component%3ADawnNode&can=2 for tracked bugs, and `TODO`s in the code.
 
 ## Remaining work
 
@@ -202,3 +312,4 @@ This command is then possible to run in your debugger of choice.
 - Generated includes live in `src/` for `dawn/node`, but outside for Dawn. [discussion](https://dawn-review.googlesource.com/c/dawn/+/64903/9/src/dawn/node/interop/CMakeLists.txt#56)
 - Hook up to presubmit bots (CQ / Kokoro)
 - `binding::GPU` will require significant rework [once Dawn implements the device / adapter creation path properly](https://dawn-review.googlesource.com/c/dawn/+/64916/4/src/dawn/node/binding/GPU.cpp).
+

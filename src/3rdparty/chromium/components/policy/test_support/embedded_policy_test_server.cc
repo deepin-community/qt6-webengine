@@ -10,6 +10,8 @@
 #include "base/functional/bind.h"
 #include "base/logging.h"
 #include "components/policy/core/common/cloud/cloud_policy_constants.h"
+#include "components/policy/test_support/remote_commands_state.h"
+#include "components/policy/test_support/request_handler_for_check_user_account.h"
 #if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
 #include "components/policy/proto/chrome_extension_policy.pb.h"
 #endif  // !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
@@ -29,12 +31,14 @@
 #if BUILDFLAG(IS_CHROMEOS)
 #include "components/policy/test_support/request_handler_for_psm_auto_enrollment.h"
 #endif  // BUILDFLAG(IS_CHROMEOS)
+#include "components/policy/test_support/remote_commands_state.h"
 #include "components/policy/test_support/request_handler_for_register_browser.h"
 #include "components/policy/test_support/request_handler_for_register_cert_based.h"
 #include "components/policy/test_support/request_handler_for_register_device_and_user.h"
 #include "components/policy/test_support/request_handler_for_remote_commands.h"
 #include "components/policy/test_support/request_handler_for_status_upload.h"
 #include "components/policy/test_support/request_handler_for_unregister.h"
+#include "components/policy/test_support/request_handler_for_upload_euicc_info.h"
 #include "components/policy/test_support/test_server_helpers.h"
 #include "crypto/sha2.h"
 #include "net/base/url_util.h"
@@ -96,14 +100,20 @@ PolicyStorage* EmbeddedPolicyTestServer::policy_storage() {
   return &server_state_->policy_storage_;
 }
 
+RemoteCommandsState* EmbeddedPolicyTestServer::remote_commands_state() {
+  return remote_commands_state_.get();
+}
+
 EmbeddedPolicyTestServer::EmbeddedPolicyTestServer()
     : http_server_(EmbeddedTestServer::TYPE_HTTP) {
+  remote_commands_state_ = std::make_unique<RemoteCommandsState>();
   ResetServerState();
   RegisterHandler(std::make_unique<RequestHandlerForApiAuthorization>(this));
   RegisterHandler(std::make_unique<RequestHandlerForAutoEnrollment>(this));
   RegisterHandler(std::make_unique<RequestHandlerForCertUpload>(this));
   RegisterHandler(
       std::make_unique<RequestHandlerForCheckAndroidManagement>(this));
+  RegisterHandler(std::make_unique<RequestHandlerForCheckUserAccount>(this));
   RegisterHandler(std::make_unique<RequestHandlerForChromeDesktopReport>(this));
   RegisterHandler(
       std::make_unique<RequestHandlerForClientCertProvisioning>(this));
@@ -126,6 +136,7 @@ EmbeddedPolicyTestServer::EmbeddedPolicyTestServer()
   RegisterHandler(std::make_unique<RequestHandlerForRemoteCommands>(this));
   RegisterHandler(std::make_unique<RequestHandlerForStatusUpload>(this));
   RegisterHandler(std::make_unique<RequestHandlerForUnregister>(this));
+  RegisterHandler(std::make_unique<RequestHandlerForUploadEuiccInfo>(this));
 
   http_server_.RegisterDefaultHandler(base::BindRepeating(
       &EmbeddedPolicyTestServer::HandleRequest, base::Unretained(this)));

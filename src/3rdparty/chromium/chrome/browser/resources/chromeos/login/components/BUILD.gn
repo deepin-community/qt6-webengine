@@ -2,17 +2,19 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//chrome/test/base/js2gtest.gni")
+import("//chrome/test/base/ash/js2gtest.gni")
 import("//third_party/closure_compiler/compile_js.gni")
 import("//tools/polymer/html_to_js.gni")
 import("//tools/polymer/html_to_wrapper.gni")
+import("../login.gni")
 
 group("web_components") {
   public_deps = [
+    ":copy_ts",
+    ":generate_web_component_html_wrapper_files",
     ":html_wrapper_files",
     ":web_components_local",
     "./behaviors:copy_js",
-    "./buttons:copy_js",
     "./buttons:web_components",
     "./common_styles:css_wrapper_files",
     "./dialogs:web_components",
@@ -20,20 +22,27 @@ group("web_components") {
   ]
 }
 
+html_to_wrapper("generate_web_component_html_wrapper_files") {
+  in_files = rebase_path(components_html_files, "./components", ".")
+}
+
+copy("copy_ts") {
+  sources = rebase_path(components_ts_files, "./components", ".")
+  outputs = [ "$target_gen_dir/{{source_file_part}}" ]
+}
+
 group("closure_compile") {
   deps = [
     "behaviors:closure_compile",
-    "buttons:closure_compile",
     "common_styles:closure_compile",
     "dialogs:closure_compile",
     "oobe_vars:closure_compile",
 
     # Local targets
+    ":api_keys_notice",
     ":display_manager_types",
     ":gaia_button",
     ":gaia_dialog",
-    ":gaia_header",
-    ":gaia_input_form",
     ":hd_iron_icon",
     ":keyboard_utils",
     ":keyboard_utils_oobe",
@@ -41,17 +50,21 @@ group("closure_compile") {
     ":network_select_login",
     ":notification_card",
     ":oobe_a11y_option",
-    ":oobe_apps_list",
     ":oobe_carousel",
     ":oobe_cr_lottie",
+    ":oobe_display_size_selector",
     ":oobe_i18n_dropdown",
     ":oobe_icons.html",
+    ":oobe_illo_icons.html",
     ":oobe_network_icons.html",
     ":oobe_screens_list",
     ":oobe_select",
     ":oobe_slide",
     ":oobe_types",
     ":progress_list_item",
+    ":qr_code_canvas",
+    ":quick_start_entry_point",
+    ":quick_start_pin",
     ":security_token_pin",
     ":throbber_notice",
     ":web_view_helper",
@@ -61,6 +74,14 @@ group("closure_compile") {
 
 ###############################
 # Closure compiler libraries below
+
+js_library("api_keys_notice") {
+  sources = [ "$root_gen_dir/chrome/browser/resources/chromeos/login/components/api_keys_notice.js" ]
+  deps = [
+    "//third_party/polymer/v3_0/components-chromium/polymer:polymer_bundled",
+  ]
+  extra_deps = [ ":web_components" ]
+}
 
 js_library("display_manager_types") {
   sources = [ "$root_gen_dir/chrome/browser/resources/chromeos/login/components/display_manager_types.js" ]
@@ -84,28 +105,10 @@ js_library("gaia_dialog") {
     ":oobe_types",
     "./behaviors:oobe_dialog_host_behavior",
     "./behaviors:oobe_i18n_behavior",
-    "./buttons:oobe_back_button",
-    "./buttons:oobe_text_button",
     "./dialogs:oobe_content_dialog",
     "//ash/webui/common/resources:cr.m",
     "//ash/webui/common/resources:load_time_data.m",
     "//chrome/browser/resources/gaia_auth_host:authenticator",
-  ]
-  extra_deps = [ ":web_components" ]
-}
-
-js_library("gaia_header") {
-  sources = [ "$root_gen_dir/chrome/browser/resources/chromeos/login/components/gaia_header.js" ]
-  deps = [
-    "//third_party/polymer/v3_0/components-chromium/polymer:polymer_bundled",
-  ]
-  extra_deps = [ ":web_components" ]
-}
-
-js_library("gaia_input_form") {
-  sources = [ "$root_gen_dir/chrome/browser/resources/chromeos/login/components/gaia_input_form.js" ]
-  deps = [
-    "//third_party/polymer/v3_0/components-chromium/polymer:polymer_bundled",
   ]
   extra_deps = [ ":web_components" ]
 }
@@ -155,13 +158,13 @@ js_library("oobe_a11y_option") {
   extra_deps = [ ":web_components" ]
 }
 
-js_library("oobe_apps_list") {
-  sources = [ "$root_gen_dir/chrome/browser/resources/chromeos/login/components/oobe_apps_list.js" ]
+js_library("oobe_icons.html") {
+  sources = [ "$root_gen_dir/chrome/browser/resources/chromeos/login/components/oobe_icons.html.js" ]
   deps = []
-  extra_deps = [ ":web_components" ]
+  extra_deps = [ ":html_wrapper_files" ]
 }
 
-js_library("oobe_icons.html") {
+js_library("oobe_illo_icons.html") {
   sources = [ "$root_gen_dir/chrome/browser/resources/chromeos/login/components/oobe_icons.html.js" ]
   deps = []
   extra_deps = [ ":html_wrapper_files" ]
@@ -191,8 +194,18 @@ js_library("oobe_cr_lottie") {
     "behaviors:oobe_i18n_behavior",
     "//third_party/polymer/v3_0/components-chromium/polymer:polymer_bundled",
   ]
-  externs_list =
-      [ "//ui/webui/resources/cr_elements/cr_lottie/cr_lottie_externs.js" ]
+  externs_list = [
+    "//third_party/cros-components/externs/cros_lottie_renderer_externs.js",
+  ]
+  extra_deps = [ ":web_components" ]
+}
+
+js_library("oobe_display_size_selector") {
+  sources = [ "$root_gen_dir/chrome/browser/resources/chromeos/login/components/oobe_display_size_selector.js" ]
+  deps = [
+    "./behaviors:oobe_i18n_behavior",
+    "//third_party/polymer/v3_0/components-chromium/polymer:polymer_bundled",
+  ]
   extra_deps = [ ":web_components" ]
 }
 
@@ -240,6 +253,30 @@ js_library("progress_list_item") {
   extra_deps = [ ":web_components" ]
 }
 
+js_library("qr_code_canvas") {
+  sources = [ "$root_gen_dir/chrome/browser/resources/chromeos/login/components/qr_code_canvas.js" ]
+  deps = []
+  extra_deps = [ ":copy_js" ]
+}
+
+js_library("quick_start_pin") {
+  sources = [ "$root_gen_dir/chrome/browser/resources/chromeos/login/components/quick_start_pin.js" ]
+  deps = [
+    "//third_party/polymer/v3_0/components-chromium/polymer:polymer_bundled",
+  ]
+  extra_deps = [ ":web_components" ]
+}
+
+js_library("quick_start_entry_point") {
+  sources = [ "$root_gen_dir/chrome/browser/resources/chromeos/login/components/quick_start_entry_point.js" ]
+  deps = [
+    "./behaviors:oobe_i18n_behavior",
+    "./dialogs:oobe_modal_dialog",
+    "//third_party/polymer/v3_0/components-chromium/polymer:polymer_bundled",
+  ]
+  extra_deps = [ ":web_components" ]
+}
+
 js_library("security_token_pin") {
   sources = [ "$root_gen_dir/chrome/browser/resources/chromeos/login/components/security_token_pin.js" ]
   deps = [
@@ -247,6 +284,13 @@ js_library("security_token_pin") {
     "./behaviors:oobe_i18n_behavior",
   ]
   extra_deps = [ ":web_components" ]
+  externs_list = [
+    # pin_keyboard_externs.js is a band-aid to let this closure-compiled JS
+    # library depend on the typescript file pin_keyboard.ts. If you remove this
+    # dependency, consider deleting the externs file if it's not used
+    # elsewhere.
+    "//ash/webui/common/resources/quick_unlock/pin_keyboard_externs.js",
+  ]
 }
 
 js_library("throbber_notice") {
@@ -275,6 +319,7 @@ copy("copy_js") {
     "long_touch_detector.js",
     "oobe_select.js",
     "oobe_types.js",
+    "qr_code_canvas.js",
     "web_view_helper.js",
     "web_view_loader.js",
   ]
@@ -284,6 +329,7 @@ copy("copy_js") {
 html_to_wrapper("html_wrapper_files") {
   in_files = [
     "oobe_icons.html",
+    "oobe_illo_icons.html",
     "oobe_network_icons.html",
   ]
   use_js = true
@@ -291,21 +337,22 @@ html_to_wrapper("html_wrapper_files") {
 
 html_to_js("web_components_local") {
   js_files = [
+    "api_keys_notice.js",
     "gaia_button.js",
     "gaia_dialog.js",
-    "gaia_header.js",
-    "gaia_input_form.js",
     "hd_iron_icon.js",
     "network_select_login.js",
     "notification_card.js",
     "oobe_a11y_option.js",
-    "oobe_apps_list.js",
     "oobe_carousel.js",
     "oobe_cr_lottie.js",
+    "oobe_display_size_selector.js",
     "oobe_i18n_dropdown.js",
     "oobe_screens_list.js",
     "oobe_slide.js",
     "progress_list_item.js",
+    "quick_start_pin.js",
+    "quick_start_entry_point.js",
     "security_token_pin.js",
     "throbber_notice.js",
   ]

@@ -55,6 +55,7 @@ using base::android::ConvertUTF16ToJavaString;
 using base::android::ConvertUTF8ToJavaString;
 using base::android::JavaParamRef;
 using base::android::JavaRef;
+using base::android::RunRunnableAndroid;
 using base::android::ScopedJavaGlobalRef;
 using base::android::ScopedJavaLocalRef;
 using base::android::ToJavaArrayOfStringArray;
@@ -120,7 +121,9 @@ void CreateJavaAXSnapshot(JNIEnv* env,
       env, j_view_structure_builder, j_view_structure_node, is_root,
       node->rect.x(), node->rect.y(), node->rect.width(), node->rect.height(),
       node->unclipped_rect.x(), node->unclipped_rect.y(),
-      node->unclipped_rect.width(), node->unclipped_rect.height());
+      node->unclipped_rect.width(), node->unclipped_rect.height(),
+      node->page_absolute_rect.x(), node->page_absolute_rect.y(),
+      node->page_absolute_rect.width(), node->page_absolute_rect.height());
 
   // HTML/CSS attributes.
   ScopedJavaLocalRef<jstring> j_html_tag =
@@ -314,6 +317,10 @@ ScopedJavaLocalRef<jobject> WebContentsAndroid::GetFocusedFrame(
   return rfh->GetJavaRenderFrameHost();
 }
 
+bool WebContentsAndroid::IsFocusedElementEditable(JNIEnv* env) {
+  return web_contents_->IsFocusedElementEditable();
+}
+
 ScopedJavaLocalRef<jobject> WebContentsAndroid::GetRenderFrameHostFromId(
     JNIEnv* env,
     jint render_process_id,
@@ -428,6 +435,12 @@ jint WebContentsAndroid::GetVisibility(JNIEnv* env) {
   return static_cast<jint>(web_contents_->GetVisibility());
 }
 
+void WebContentsAndroid::UpdateWebContentsVisibility(JNIEnv* env,
+                                                     jint visibiity) {
+  web_contents_->UpdateWebContentsVisibility(
+      static_cast<Visibility>(visibiity));
+}
+
 RenderWidgetHostViewAndroid*
     WebContentsAndroid::GetRenderWidgetHostViewAndroid() {
   RenderWidgetHostView* rwhv = NULL;
@@ -482,6 +495,10 @@ void WebContentsAndroid::SetAudioMuted(JNIEnv* env, jboolean mute) {
   web_contents_->SetAudioMuted(mute);
 }
 
+jboolean WebContentsAndroid::IsAudioMuted(JNIEnv* env) {
+  return web_contents_->IsAudioMuted();
+}
+
 jboolean WebContentsAndroid::FocusLocationBarByDefault(JNIEnv* env) {
   return web_contents_->FocusLocationBarByDefault();
 }
@@ -511,17 +528,24 @@ void WebContentsAndroid::ScrollFocusedEditableNodeIntoView(JNIEnv* env) {
 }
 
 void WebContentsAndroid::SelectAroundCaretAck(
+    int startOffset,
+    int endOffset,
+    int surroundingTextLength,
     blink::mojom::SelectAroundCaretResultPtr result) {
   RenderWidgetHostViewAndroid* rwhva = GetRenderWidgetHostViewAndroid();
   if (rwhva) {
-    rwhva->SelectAroundCaretAck(std::move(result));
+    rwhva->SelectAroundCaretAck(startOffset, endOffset, surroundingTextLength,
+                                std::move(result));
   }
 }
 
 void WebContentsAndroid::SelectAroundCaret(JNIEnv* env,
                                            jint granularity,
                                            jboolean should_show_handle,
-                                           jboolean should_show_context_menu) {
+                                           jboolean should_show_context_menu,
+                                           jint startOffset,
+                                           jint endOffset,
+                                           jint surroundingTextLength) {
   auto* input_handler = web_contents_->GetFocusedFrameWidgetInputHandler();
   if (!input_handler)
     return;
@@ -529,7 +553,8 @@ void WebContentsAndroid::SelectAroundCaret(JNIEnv* env,
       static_cast<blink::mojom::SelectionGranularity>(granularity),
       should_show_handle, should_show_context_menu,
       base::BindOnce(&WebContentsAndroid::SelectAroundCaretAck,
-                     weak_factory_.GetWeakPtr()));
+                     weak_factory_.GetWeakPtr(), startOffset, endOffset,
+                     surroundingTextLength));
 }
 
 void WebContentsAndroid::AdjustSelectionByCharacterOffset(
@@ -703,7 +728,6 @@ void WebContentsAndroid::RequestAccessibilitySnapshot(
               weak_factory_.GetWeakPtr(), std::move(j_view_structure_root),
               std::move(j_view_structure_builder), std::move(j_callback)),
           ui::AXMode(ui::kAXModeComplete.flags() | ui::AXMode::kHTMLMetadata),
-          /* exclude_offscreen= */ false,
           /* max_nodes= */ 5000,
           /* timeout= */ base::Seconds(2));
 }
@@ -844,7 +868,7 @@ void WebContentsAndroid::OnScaleFactorChanged(JNIEnv* env) {
     // |SendScreenRects()| indirectly calls GetViewSize() that asks Java layer.
     web_contents_->SendScreenRects();
     rwhva->SynchronizeVisualProperties(cc::DeadlinePolicy::UseDefaultDeadline(),
-                                       absl::nullopt);
+                                       std::nullopt);
   }
 }
 
@@ -873,6 +897,10 @@ void WebContentsAndroid::NotifyRendererPreferenceUpdate(JNIEnv* env) {
 
 void WebContentsAndroid::NotifyBrowserControlsHeightChanged(JNIEnv* env) {
   web_contents_->GetNativeView()->OnBrowserControlsHeightChanged();
+}
+
+bool WebContentsAndroid::NeedToFireBeforeUnloadOrUnloadEvents(JNIEnv* env) {
+  return web_contents_->NeedToFireBeforeUnloadOrUnloadEvents();
 }
 
 }  // namespace content

@@ -39,8 +39,14 @@ TestDatabaseOperationReceiver::DBOperation::DBOperation(Type type,
                                                         url::Origin origin)
     : type(type), origin(std::move(origin)) {
   DCHECK(type == Type::DB_LENGTH || type == Type::DB_CLEAR ||
-         type == Type::DB_GET_REMAINING_BUDGET ||
-         type == Type::DB_GET_NUM_BUDGET || type == Type::DB_GET_CREATION_TIME);
+         type == Type::DB_GET_CREATION_TIME);
+}
+
+TestDatabaseOperationReceiver::DBOperation::DBOperation(Type type,
+                                                        net::SchemefulSite site)
+    : type(type), origin(site.GetInternalOriginForTesting()) {  // IN-TEST
+  DCHECK(type == Type::DB_GET_REMAINING_BUDGET ||
+         type == Type::DB_GET_NUM_BUDGET);
 }
 
 TestDatabaseOperationReceiver::DBOperation::DBOperation(
@@ -51,9 +57,18 @@ TestDatabaseOperationReceiver::DBOperation::DBOperation(
   DCHECK(type == Type::DB_GET || type == Type::DB_SET ||
          type == Type::DB_APPEND || type == Type::DB_DELETE ||
          type == Type::DB_KEYS || type == Type::DB_ENTRIES ||
-         type == Type::DB_MAKE_BUDGET_WITHDRAWAL ||
          type == Type::DB_OVERRIDE_TIME_ORIGIN ||
          type == Type::DB_OVERRIDE_TIME_ENTRY);
+}
+
+TestDatabaseOperationReceiver::DBOperation::DBOperation(
+    Type type,
+    net::SchemefulSite site,
+    std::vector<std::u16string> params)
+    : type(type),
+      origin(site.GetInternalOriginForTesting()),  // IN-TEST
+      params(std::move(params)) {
+  DCHECK_EQ(type, Type::DB_MAKE_BUDGET_WITHDRAWAL);
 }
 
 TestDatabaseOperationReceiver::DBOperation::DBOperation(
@@ -398,8 +413,7 @@ TestSharedStorageEntriesListener::~TestSharedStorageEntriesListener() = default;
 void TestSharedStorageEntriesListener::DidReadEntries(
     bool success,
     const std::string& error_message,
-    std::vector<shared_storage_worklet::mojom::SharedStorageKeyAndOrValuePtr>
-        entries,
+    std::vector<blink::mojom::SharedStorageKeyAndOrValuePtr> entries,
     bool has_more_entries,
     int total_queued_to_send) {
   if (!success) {
@@ -407,15 +421,15 @@ void TestSharedStorageEntriesListener::DidReadEntries(
     return;
   }
 
-  using iter_type = std::vector<
-      shared_storage_worklet::mojom::SharedStorageKeyAndOrValuePtr>::iterator;
+  using iter_type =
+      std::vector<blink::mojom::SharedStorageKeyAndOrValuePtr>::iterator;
   entries_.insert(entries_.end(),
                   std::move_iterator<iter_type>(entries.begin()),
                   std::move_iterator<iter_type>(entries.end()));
   has_more_.push_back(has_more_entries);
 }
 
-mojo::PendingRemote<shared_storage_worklet::mojom::SharedStorageEntriesListener>
+mojo::PendingRemote<blink::mojom::SharedStorageEntriesListener>
 TestSharedStorageEntriesListener::BindNewPipeAndPassRemote() {
   return receiver_.BindNewPipeAndPassRemote(task_runner_);
 }
@@ -439,7 +453,7 @@ size_t TestSharedStorageEntriesListener::BatchCount() const {
 std::vector<std::u16string> TestSharedStorageEntriesListener::TakeKeys() {
   std::vector<std::u16string> keys;
   while (!entries_.empty()) {
-    shared_storage_worklet::mojom::SharedStorageKeyAndOrValuePtr entry =
+    blink::mojom::SharedStorageKeyAndOrValuePtr entry =
         std::move(entries_.front());
     entries_.pop_front();
     keys.emplace_back(std::move(entry->key));
@@ -451,7 +465,7 @@ std::vector<std::pair<std::u16string, std::u16string>>
 TestSharedStorageEntriesListener::TakeEntries() {
   std::vector<std::pair<std::u16string, std::u16string>> entries;
   while (!entries_.empty()) {
-    shared_storage_worklet::mojom::SharedStorageKeyAndOrValuePtr entry =
+    blink::mojom::SharedStorageKeyAndOrValuePtr entry =
         std::move(entries_.front());
     entries_.pop_front();
     entries.emplace_back(std::move(entry->key), std::move(entry->value));
@@ -472,7 +486,7 @@ size_t TestSharedStorageEntriesListenerUtility::RegisterListener() {
   return listener_table_.size() - 1;
 }
 
-mojo::PendingRemote<shared_storage_worklet::mojom::SharedStorageEntriesListener>
+mojo::PendingRemote<blink::mojom::SharedStorageEntriesListener>
 TestSharedStorageEntriesListenerUtility::BindNewPipeAndPassRemoteForId(
     size_t id) {
   return GetListenerForId(id)->BindNewPipeAndPassRemote();
@@ -536,7 +550,7 @@ void VerifySharedStorageTablesAndColumns(sql::Database& db) {
 
   // Implicit index on `meta`, `values_mapping_last_used_time_idx`,
   // `per_origin_mapping_creation_time_idx`, and
-  // budget_mapping_origin_time_stamp_idx.
+  // budget_mapping_site_time_stamp_idx.
   EXPECT_EQ(4u, sql::test::CountSQLIndices(&db));
 
   // `key` and `value`.
@@ -548,13 +562,14 @@ void VerifySharedStorageTablesAndColumns(sql::Database& db) {
   // `context_origin`, `creation_time`, and `length`.
   EXPECT_EQ(3u, sql::test::CountTableColumns(&db, "per_origin_mapping"));
 
-  // `id`, `context_origin`, `time_stamp`, and `bits_debit`.
+  // `id`, `context_site`, `time_stamp`, and `bits_debit`.
   EXPECT_EQ(4u, sql::test::CountTableColumns(&db, "budget_mapping"));
 }
 
 bool GetTestDataSharedStorageDir(base::FilePath* dir) {
-  if (!base::PathService::Get(base::DIR_SOURCE_ROOT, dir))
+  if (!base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, dir)) {
     return false;
+  }
   *dir = dir->AppendASCII("components");
   *dir = dir->AppendASCII("test");
   *dir = dir->AppendASCII("data");

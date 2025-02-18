@@ -137,8 +137,7 @@ TEST_F(SubresourceFilterRulesetPublisherImplTest, NoRuleset_NoIPCMessages) {
 TEST_F(SubresourceFilterRulesetPublisherImplTest,
        PublishedRuleset_IsDistributedToExistingAndNewRenderers) {
   const char kTestFileContents[] = "foobar";
-  base::WriteFile(scoped_temp_file(), kTestFileContents,
-                  strlen(kTestFileContents));
+  base::WriteFile(scoped_temp_file(), kTestFileContents);
 
   RulesetFilePtr file(
       new base::File(scoped_temp_file(),
@@ -199,8 +198,7 @@ TEST_F(SubresourceFilterRulesetPublisherImplTest,
   ASSERT_EQ(RulesetService::IndexAndWriteRulesetResult::SUCCESS,
             RulesetService::WriteRuleset(version_dir_path,
                                          /* license_path =*/base::FilePath(),
-                                         ruleset.indexed.contents.data(),
-                                         ruleset.indexed.contents.size()));
+                                         ruleset.indexed.contents));
 
   // Create a ruleset service and its harness.
   scoped_refptr<base::TestSimpleTaskRunner> blocking_task_runner =

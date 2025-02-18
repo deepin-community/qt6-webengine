@@ -94,7 +94,8 @@ class AffiliationBackend : public FacetManagerHost,
   void KeepPrefetchForFacets(std::vector<FacetURI> facet_uris);
   void TrimCacheForFacetURI(const FacetURI& facet_uri);
   void TrimUnusedCache(std::vector<FacetURI> facet_uris);
-  std::vector<GroupedFacets> GetAllGroups() const;
+  std::vector<GroupedFacets> GetGroupingInfo(
+      std::vector<FacetURI> facet_uris) const;
   std::vector<std::string> GetPSLExtensions() const;
   void UpdateAffiliationsAndBranding(const std::vector<FacetURI>& facets,
                                      base::OnceClosure callback);
@@ -114,6 +115,10 @@ class AffiliationBackend : public FacetManagerHost,
   FRIEND_TEST_ALL_PREFIXES(
       AffiliationBackendTest,
       DiscardCachedDataIfNoLongerNeededWithEmptyAffiliation);
+
+  // Retrieves the affiliation database. This should only be called after
+  // Initialize(...).
+  AffiliationDatabase& GetAffiliationDatabaseForTesting();
 
   // Retrieves the FacetManager corresponding to |facet_uri|, creating it and
   // storing it into |facet_managers_| if it did not exist.

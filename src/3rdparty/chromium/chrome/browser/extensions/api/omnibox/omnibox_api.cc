@@ -7,6 +7,7 @@
 #include <stddef.h>
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -46,25 +47,20 @@ const char kBackgroundTabDisposition[] = "newBackgroundTab";
 // Pref key for omnibox.setDefaultSuggestion.
 const char kOmniboxDefaultSuggestion[] = "omnibox_default_suggestion";
 
-std::unique_ptr<omnibox::SuggestResult> GetOmniboxDefaultSuggestion(
+std::optional<omnibox::SuggestResult> GetOmniboxDefaultSuggestion(
     Profile* profile,
     const std::string& extension_id) {
   ExtensionPrefs* prefs = ExtensionPrefs::Get(profile);
   if (!prefs) {
-    return nullptr;
+    return std::nullopt;
   }
 
   const base::Value::Dict* dict =
       prefs->ReadPrefAsDict(extension_id, kOmniboxDefaultSuggestion);
   if (!dict) {
-    return nullptr;
+    return std::nullopt;
   }
-
-  auto suggestion = std::make_unique<omnibox::SuggestResult>();
-  omnibox::SuggestResult::Populate(base::Value(dict->Clone()),
-                                   suggestion.get());
-
-  return suggestion;
+  return omnibox::SuggestResult::FromValue(*dict);
 }
 
 // Tries to set the omnibox default suggestion; returns true on success or
@@ -81,9 +77,8 @@ bool SetOmniboxDefaultSuggestion(
   // Add the content field so that the dictionary can be used to populate an
   // omnibox::SuggestResult.
   dict.Set(kSuggestionContent, base::Value(base::Value::Type::STRING));
-  prefs->UpdateExtensionPref(
-      extension_id, kOmniboxDefaultSuggestion,
-      base::Value::ToUniquePtrValue(base::Value(std::move(dict))));
+  prefs->UpdateExtensionPref(extension_id, kOmniboxDefaultSuggestion,
+                             base::Value(std::move(dict)));
 
   return true;
 }
@@ -341,12 +336,12 @@ void OmniboxSendSuggestionsFunction::NotifySuggestionsReady() {
   Profile* profile =
       Profile::FromBrowserContext(browser_context())->GetOriginalProfile();
   OmniboxSuggestionsWatcher::GetForBrowserContext(profile)
-      ->NotifySuggestionsReady(params_.get());
+      ->NotifySuggestionsReady(&*params_);
 }
 
 ExtensionFunction::ResponseAction OmniboxSetDefaultSuggestionFunction::Run() {
-  std::unique_ptr<SetDefaultSuggestion::Params> params(
-      SetDefaultSuggestion::Params::Create(args()));
+  std::optional<SetDefaultSuggestion::Params> params =
+      SetDefaultSuggestion::Params::Create(args());
   EXTENSION_FUNCTION_VALIDATE(params);
 
   if (!params->suggestion.description_styles) {
@@ -409,13 +404,13 @@ ACMatchClassifications StyleTypesToACMatchClassifications(
 
       int type_class;
       switch (style.type) {
-        case omnibox::DESCRIPTION_STYLE_TYPE_URL:
+        case omnibox::DescriptionStyleType::kUrl:
           type_class = AutocompleteMatch::ACMatchClassification::URL;
           break;
-        case omnibox::DESCRIPTION_STYLE_TYPE_MATCH:
+        case omnibox::DescriptionStyleType::kMatch:
           type_class = AutocompleteMatch::ACMatchClassification::MATCH;
           break;
-        case omnibox::DESCRIPTION_STYLE_TYPE_DIM:
+        case omnibox::DescriptionStyleType::kDim:
           type_class = AutocompleteMatch::ACMatchClassification::DIM;
           break;
         default:
@@ -447,7 +442,7 @@ void ApplyDefaultSuggestionForExtensionKeyword(
     AutocompleteMatch* match) {
   DCHECK(keyword->type() == TemplateURL::OMNIBOX_API_EXTENSION);
 
-  std::unique_ptr<omnibox::SuggestResult> suggestion(
+  std::optional<omnibox::SuggestResult> suggestion(
       GetOmniboxDefaultSuggestion(profile, keyword->GetExtensionId()));
   if (!suggestion || suggestion->description.empty())
     return;  // fall back to the universal default

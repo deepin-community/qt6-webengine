@@ -159,10 +159,10 @@ std::string AsCsvString(std::vector<uint64_t> vals) {
   return ret;
 }
 
-base::Optional<int64_t> GetStatsEntry(
+std::optional<int64_t> GetStatsEntry(
     trace_processor::TraceProcessor* tp,
     const std::string& name,
-    base::Optional<uint64_t> idx = base::nullopt) {
+    std::optional<uint64_t> idx = std::nullopt) {
   std::string query = "select value from stats where name == '" + name + "'";
   if (idx.has_value())
     query += " and idx == " + std::to_string(idx.value());
@@ -172,12 +172,12 @@ base::Optional<int64_t> GetStatsEntry(
     if (!it.Status().ok()) {
       PERFETTO_DFATAL_OR_ELOG("Invalid iterator: %s",
                               it.Status().message().c_str());
-      return base::nullopt;
+      return std::nullopt;
     }
     // some stats are not present unless non-zero
-    return base::make_optional(0);
+    return std::make_optional(0);
   }
-  return base::make_optional(it.Get(0).AsLong());
+  return std::make_optional(it.Get(0).AsLong());
 }
 
 // Interns Locations, Lines, and Functions. Interning is done by the entity's
@@ -340,9 +340,9 @@ LocationTracker PreprocessLocations(trace_processor::TraceProcessor* tp,
       int64_t mapping_id = c_it.Get(2).AsLong();
       auto func_sysname = c_it.Get(3).is_null() ? "" : c_it.Get(3).AsString();
       auto func_name = c_it.Get(4).is_null() ? "" : c_it.Get(4).AsString();
-      base::Optional<int64_t> symbol_set_id =
-          c_it.Get(5).is_null() ? base::nullopt
-                                : base::make_optional(c_it.Get(5).AsLong());
+      std::optional<int64_t> symbol_set_id =
+          c_it.Get(5).is_null() ? std::nullopt
+                                : std::make_optional(c_it.Get(5).AsLong());
 
       Location loc(mapping_id, /*single_function_id=*/-1, {});
 
@@ -559,7 +559,7 @@ class GProfileBuilder {
   bool WriteMappings(trace_processor::TraceProcessor* tp,
                      const std::set<int64_t>& seen_mappings) {
     Iterator mapping_it = tp->ExecuteQuery(
-        "SELECT id, exact_offset, start, end, name "
+        "SELECT id, exact_offset, start, end, name, build_id "
         "FROM stack_profile_mapping;");
     size_t mappings_no = 0;
     while (mapping_it.Next()) {
@@ -569,10 +569,10 @@ class GProfileBuilder {
       ++mappings_no;
       auto interned_filename = ToStringTableId(
           interner_->InternString(mapping_it.Get(4).AsString()));
+      auto interned_build_id = ToStringTableId(
+          interner_->InternString(mapping_it.Get(5).AsString()));
       auto* gmapping = result_->add_mapping();
       gmapping->set_id(ToPprofId(id));
-      // Do not set the build_id here to avoid downstream services
-      // trying to symbolize (e.g. b/141735056)
       gmapping->set_file_offset(
           static_cast<uint64_t>(mapping_it.Get(1).AsLong()));
       gmapping->set_memory_start(
@@ -580,6 +580,7 @@ class GProfileBuilder {
       gmapping->set_memory_limit(
           static_cast<uint64_t>(mapping_it.Get(3).AsLong()));
       gmapping->set_filename(interned_filename);
+      gmapping->set_build_id(interned_build_id);
     }
     if (!mapping_it.Status().ok()) {
       PERFETTO_DFATAL_OR_ELOG("Invalid mapping iterator: %s",
@@ -661,8 +662,8 @@ const View kJavaSamplesViews[] = {
 
 static bool VerifyPIDStats(trace_processor::TraceProcessor* tp, uint64_t pid) {
   bool success = true;
-  base::Optional<int64_t> stat =
-      GetStatsEntry(tp, "heapprofd_buffer_corrupted", base::make_optional(pid));
+  std::optional<int64_t> stat =
+      GetStatsEntry(tp, "heapprofd_buffer_corrupted", std::make_optional(pid));
   if (!stat.has_value()) {
     PERFETTO_DFATAL_OR_ELOG("Failed to get heapprofd_buffer_corrupted stat");
   } else if (stat.value() > 0) {
@@ -673,8 +674,7 @@ static bool VerifyPIDStats(trace_processor::TraceProcessor* tp, uint64_t pid) {
                   " CLIENT MEMORY CORRUPTION.",
                   pid);
   }
-  stat =
-      GetStatsEntry(tp, "heapprofd_buffer_overran", base::make_optional(pid));
+  stat = GetStatsEntry(tp, "heapprofd_buffer_overran", std::make_optional(pid));
   if (!stat.has_value()) {
     PERFETTO_DFATAL_OR_ELOG("Failed to get heapprofd_buffer_overran stat");
   } else if (stat.value() > 0) {
@@ -861,7 +861,7 @@ static std::map<uint64_t, ProcessInfo> GetProcessMap(
 }
 
 static void LogTracePerfEventIssues(trace_processor::TraceProcessor* tp) {
-  base::Optional<int64_t> stat = GetStatsEntry(tp, "perf_samples_skipped");
+  std::optional<int64_t> stat = GetStatsEntry(tp, "perf_samples_skipped");
   if (!stat.has_value()) {
     PERFETTO_DFATAL_OR_ELOG("Failed to look up perf_samples_skipped stat");
   } else if (stat.value() > 0) {

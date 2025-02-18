@@ -11,6 +11,7 @@
 
 #include "core/fxcrt/fx_extension.h"
 #include "core/fxcrt/stl_util.h"
+#include "core/fxcrt/xml/cfx_xmlparser.h"
 #include "fxjs/gc/container_trace.h"
 #include "fxjs/xfa/cfxjse_engine.h"
 #include "fxjs/xfa/cjx_object.h"
@@ -42,6 +43,21 @@
 #include "xfa/fxfa/parser/cxfa_subform.h"
 #include "xfa/fxfa/parser/cxfa_validate.h"
 #include "xfa/fxfa/parser/xfa_utils.h"
+
+namespace {
+
+bool IsValidXMLNameString(const WideString& str) {
+  bool first = true;
+  for (const auto ch : str) {
+    if (!CFX_XMLParser::IsXMLNameChar(ch, first)) {
+      return false;
+    }
+    first = false;
+  }
+  return true;
+}
+
+}  // namespace
 
 const XFA_AttributeValue kXFAEventActivity[] = {
     XFA_AttributeValue::Click,      XFA_AttributeValue::Change,
@@ -173,17 +189,17 @@ void CXFA_FFDocView::ShowNullTestMsg() {
   CXFA_FFApp* pApp = m_pDoc->GetApp();
   CXFA_FFApp::CallbackIface* pAppProvider = pApp->GetAppProvider();
   if (pAppProvider && iCount) {
-    int32_t iRemain = iCount > 7 ? iCount - 7 : 0;
-    iCount -= iRemain;
+    int32_t remaining = iCount > 7 ? iCount - 7 : 0;
+    iCount -= remaining;
     WideString wsMsg;
     for (int32_t i = 0; i < iCount; i++)
       wsMsg += m_NullTestMsgArray[i] + L"\n";
 
-    if (iRemain > 0) {
+    if (remaining > 0) {
       wsMsg += L"\n" + WideString::Format(
                            L"Message limit exceeded. Remaining %d "
                            L"validation errors not reported.",
-                           iRemain);
+                           remaining);
     }
     pAppProvider->MsgBox(wsMsg, pAppProvider->GetAppTitle(),
                          static_cast<uint32_t>(AlertIcon::kStatus),
@@ -411,9 +427,7 @@ XFA_EventError CXFA_FFDocView::ExecEventActivityByDeepFirst(
     if (!pFormNode->IsWidgetReady())
       return XFA_EventError::kNotExist;
 
-    CXFA_EventParam eParam;
-    eParam.m_eType = eEventType;
-    eParam.m_pTarget = pFormNode;
+    CXFA_EventParam eParam(eEventType);
     eParam.m_bIsFormReady = bIsFormReady;
     return XFA_ProcessEvent(this, pFormNode, &eParam);
   }
@@ -434,9 +448,7 @@ XFA_EventError CXFA_FFDocView::ExecEventActivityByDeepFirst(
   if (!pFormNode->IsWidgetReady())
     return iRet;
 
-  CXFA_EventParam eParam;
-  eParam.m_eType = eEventType;
-  eParam.m_pTarget = pFormNode;
+  CXFA_EventParam eParam(eEventType);
   eParam.m_bIsFormReady = bIsFormReady;
 
   XFA_EventErrorAccumulate(&iRet, XFA_ProcessEvent(this, pFormNode, &eParam));
@@ -445,6 +457,9 @@ XFA_EventError CXFA_FFDocView::ExecEventActivityByDeepFirst(
 
 CXFA_FFWidget* CXFA_FFDocView::GetWidgetByName(const WideString& wsName,
                                                CXFA_FFWidget* pRefWidget) {
+  if (!IsValidXMLNameString(wsName)) {
+    return nullptr;
+  }
   CFXJSE_Engine* pScriptContext = m_pDoc->GetXFADoc()->GetScriptContext();
   CXFA_Node* pRefNode = nullptr;
   if (pRefWidget) {
@@ -508,9 +523,7 @@ void CXFA_FFDocView::RunSubformIndexChange() {
     if (!bInserted || !pSubformNode->IsWidgetReady())
       continue;
 
-    CXFA_EventParam eParam;
-    eParam.m_eType = XFA_EVENT_IndexChange;
-    eParam.m_pTarget = pSubformNode;
+    CXFA_EventParam eParam(XFA_EVENT_IndexChange);
     pSubformNode->ProcessEvent(this, XFA_AttributeValue::IndexChange, &eParam);
   }
 }

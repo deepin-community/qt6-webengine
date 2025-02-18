@@ -51,6 +51,7 @@ static_library("database_manager") {
     ":v4_get_hash_protocol_manager",
     ":v4_protocol_manager_util",
     "//base",
+    "//components/safe_browsing/core/common",
     "//net",
     "//services/network/public/cpp",
     "//services/network/public/mojom",
@@ -129,6 +130,7 @@ static_library("v4_database") {
     ":v4_protocol_manager_util",
     ":v4_store",
     "//base",
+    "//components/safe_browsing/core/common",
     "//components/safe_browsing/core/common/proto:webui_proto",
   ]
 }
@@ -310,6 +312,7 @@ source_set("unit_tests_shared") {
   sources = [
     "allowlist_checker_client_unittest.cc",
     "database_manager_unittest.cc",
+    "util_unittest.cc",
     "v4_get_hash_protocol_manager_unittest.cc",
     "v4_protocol_manager_util_unittest.cc",
   ]

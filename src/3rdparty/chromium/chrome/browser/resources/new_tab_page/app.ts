@@ -8,25 +8,30 @@ import './logo.js';
 import 'chrome://resources/cr_elements/cr_button/cr_button.js';
 import 'chrome://resources/cr_elements/cr_shared_style.css.js';
 
-import {startColorChangeUpdater} from 'chrome://resources/cr_components/color_change_listener/colors_css_updater.js';
-import {HelpBubbleMixin, HelpBubbleMixinInterface} from 'chrome://resources/cr_components/help_bubble/help_bubble_mixin.js';
-import {ClickInfo, Command} from 'chrome://resources/js/browser_command.mojom-webui.js';
+import {ColorChangeUpdater} from 'chrome://resources/cr_components/color_change_listener/colors_css_updater.js';
+import type {HelpBubbleMixinInterface} from 'chrome://resources/cr_components/help_bubble/help_bubble_mixin.js';
+import {HelpBubbleMixin} from 'chrome://resources/cr_components/help_bubble/help_bubble_mixin.js';
+import type {CrToastElement} from 'chrome://resources/cr_elements/cr_toast/cr_toast.js';
+import type {ClickInfo} from 'chrome://resources/js/browser_command.mojom-webui.js';
+import {Command} from 'chrome://resources/js/browser_command.mojom-webui.js';
 import {BrowserCommandProxy} from 'chrome://resources/js/browser_command/browser_command_proxy.js';
 import {hexColorToSkColor, skColorToRgba} from 'chrome://resources/js/color_utils.js';
 import {EventTracker} from 'chrome://resources/js/event_tracker.js';
 import {FocusOutlineManager} from 'chrome://resources/js/focus_outline_manager.js';
 import {getTrustedScriptURL} from 'chrome://resources/js/static_types.js';
-import {SkColor} from 'chrome://resources/mojo/skia/public/mojom/skcolor.mojom-webui.js';
-import {DomIf, PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+import type {SkColor} from 'chrome://resources/mojo/skia/public/mojom/skcolor.mojom-webui.js';
+import type {DomIf} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {getTemplate} from './app.html.js';
 import {BackgroundManager} from './background_manager.js';
 import {CustomizeDialogPage} from './customize_dialog_types.js';
 import {loadTimeData} from './i18n_setup.js';
-import {IframeElement} from './iframe.js';
-import {LogoElement} from './logo.js';
-import {recordLoadDuration} from './metrics_utils.js';
-import {CustomizeChromeSection, NtpBackgroundImageSource, PageCallbackRouter, PageHandlerRemote, Theme} from './new_tab_page.mojom-webui.js';
+import type {IframeElement} from './iframe.js';
+import type {LogoElement} from './logo.js';
+import {recordDuration, recordLoadDuration} from './metrics_utils.js';
+import type {PageCallbackRouter, PageHandlerRemote, Theme} from './new_tab_page.mojom-webui.js';
+import {CustomizeChromeSection, IphFeature, NtpBackgroundImageSource} from './new_tab_page.mojom-webui.js';
 import {NewTabPageProxy} from './new_tab_page_proxy.js';
 import {$$} from './utils.js';
 import {Action as VoiceAction, recordVoiceAction} from './voice_search_overlay.js';
@@ -97,7 +102,6 @@ function ensureLazyLoaded() {
   script.src = getTrustedScriptURL`./lazy_load.js`;
   document.body.appendChild(script);
 }
-
 
 const AppElementBase = HelpBubbleMixin(PolymerElement) as
     {new (): PolymerElement & HelpBubbleMixinInterface};
@@ -189,6 +193,12 @@ export class AppElement extends AppElementBase {
         type: Object,
       },
 
+      // Used in ntp-realbox component via host-context.
+      colorSourceIsBaseline: {
+        type: Boolean,
+        computed: 'computeColorSourceIsBaseline(theme_)',
+      },
+
       customizeChromeEnabled_: {
         type: Boolean,
         value: () => loadTimeData.getBoolean('customizeChromeEnabled'),
@@ -229,14 +239,13 @@ export class AppElement extends AppElementBase {
         value: () => loadTimeData.getBoolean('shortcutsEnabled'),
       },
 
-      modulesFreShown: {
+      singleRowShortcutsEnabled_: {
         type: Boolean,
-        reflectToAttribute: true,
+        value: () => loadTimeData.getBoolean('singleRowShortcutsEnabled'),
       },
 
-      modulesRedesignedLayoutEnabled_: {
+      modulesFreShown: {
         type: Boolean,
-        value: () => loadTimeData.getBoolean('modulesRedesignedLayoutEnabled'),
         reflectToAttribute: true,
       },
 
@@ -253,6 +262,19 @@ export class AppElement extends AppElementBase {
       modulesRedesignedEnabled_: {
         type: Boolean,
         value: () => loadTimeData.getBoolean('modulesRedesignedEnabled'),
+        reflectToAttribute: true,
+      },
+
+      mostVisitedReflowOnOverflowEnabled_: {
+        type: Boolean,
+        value: () =>
+            loadTimeData.getBoolean('mostVisitedReflowOnOverflowEnabled'),
+        reflectToAttribute: true,
+      },
+
+      wideModulesEnabled_: {
+        type: Boolean,
+        value: () => loadTimeData.getBoolean('wideModulesEnabled'),
         reflectToAttribute: true,
       },
 
@@ -283,12 +305,6 @@ export class AppElement extends AppElementBase {
         observer: 'onPromoAndModulesLoadedChange_',
       },
 
-      removeScrim_: {
-        type: Boolean,
-        value: () => loadTimeData.getBoolean('removeScrim'),
-        reflectToAttribute: true,
-      },
-
       showLensUploadDialog_: Boolean,
 
       /**
@@ -296,12 +312,17 @@ export class AppElement extends AppElementBase {
        * to show up immediately on load.
        */
       lazyRender_: Boolean,
+
+      scrolledToTop_: {
+        type: Boolean,
+        value: document.documentElement.scrollTop <= 0,
+      },
     };
   }
 
   static get observers() {
     return [
-      'udpateOneGoogleBarAppearance_(oneGoogleBarLoaded_, removeScrim_, showBackgroundImage_, theme_)',
+      'updateOneGoogleBarAppearance_(oneGoogleBarLoaded_, theme_)',
     ];
   }
 
@@ -327,7 +348,6 @@ export class AppElement extends AppElementBase {
   private oneGoogleBarEnabled_: boolean;
   private shortcutsEnabled_: boolean;
   private modulesFreShown: boolean;
-  private modulesRedesignedLayoutEnabled_: boolean;
   private middleSlotPromoEnabled_: boolean;
   private modulesEnabled_: boolean;
   private modulesRedesignedEnabled_: boolean;
@@ -335,8 +355,8 @@ export class AppElement extends AppElementBase {
   private modulesLoaded_: boolean;
   private modulesShownToUser: boolean;
   private promoAndModulesLoaded_: boolean;
-  private removeScrim_: boolean;
   private lazyRender_: boolean;
+  private scrolledToTop_: boolean;
 
   private callbackRouter_: PageCallbackRouter;
   private pageHandler_: PageHandlerRemote;
@@ -347,6 +367,7 @@ export class AppElement extends AppElementBase {
   private shouldPrintPerformance_: boolean;
   private backgroundImageLoadStartEpoch_: number;
   private backgroundImageLoadStart_: number = 0;
+  private showWebstoreToastListenerId_: number|null = null;
 
   constructor() {
     performance.mark('app-creation-start');
@@ -371,9 +392,18 @@ export class AppElement extends AppElementBase {
           max: 1000,
           buckets: 200,
         },
-        Math.floor(document.documentElement.clientHeight));
+        Math.floor(window.innerHeight));
+    chrome.metricsPrivate.recordValue(
+        {
+          metricName: 'NewTabPage.Width',
+          type: chrome.metricsPrivate.MetricTypeType.HISTOGRAM_LINEAR,
+          min: 1,
+          max: 1920,
+          buckets: 384,
+        },
+        Math.floor(window.innerWidth));
 
-    startColorChangeUpdater();
+    ColorChangeUpdater.forDocument().start();
   }
 
   override connectedCallback() {
@@ -391,6 +421,17 @@ export class AppElement extends AppElementBase {
             (visible: boolean) => {
               this.showCustomize_ = visible;
             });
+    this.showWebstoreToastListenerId_ =
+        this.callbackRouter_.showWebstoreToast.addListener(() => {
+          if (this.showCustomize_) {
+            const toast = $$<CrToastElement>(this, '#webstoreToast');
+            if (toast) {
+              toast!.hidden = false;
+              toast!.show();
+            }
+          }
+        });
+
     // Open Customize Chrome if there are Customize Chrome URL params.
     if (this.showCustomize_) {
       this.setCustomizeChromeSidePanelVisible_(this.showCustomize_);
@@ -410,32 +451,29 @@ export class AppElement extends AppElementBase {
     this.eventTracker_.add(window, 'keydown', this.onWindowKeydown_.bind(this));
     this.eventTracker_.add(
         window, 'click', this.onWindowClick_.bind(this), /*capture=*/ true);
-    if (this.shouldPrintPerformance_) {
-      // It is possible that the background image has already loaded by now.
-      // If it has, we request it to re-send the load time so that we can
-      // actually catch the load time.
+    this.eventTracker_.add(document, 'scroll', () => {
+      this.scrolledToTop_ = document.documentElement.scrollTop <= 0;
+    });
+    if (loadTimeData.getString('backgroundImageUrl')) {
       this.backgroundManager_.getBackgroundImageLoadTime().then(
           time => {
             const duration = time - this.backgroundImageLoadStartEpoch_;
-            this.printPerformanceDatum_(
-                'background-image-load', this.backgroundImageLoadStart_,
-                duration);
-            this.printPerformanceDatum_(
-                'background-image-loaded',
-                this.backgroundImageLoadStart_ + duration);
+            recordDuration(
+                'NewTabPage.Images.ShownTime.BackgroundImage', duration);
+            if (this.shouldPrintPerformance_) {
+              this.printPerformanceDatum_(
+                  'background-image-load', this.backgroundImageLoadStart_,
+                  duration);
+              this.printPerformanceDatum_(
+                  'background-image-loaded',
+                  this.backgroundImageLoadStart_ + duration);
+            }
           },
           () => {
-            console.error('Failed to capture background image load time');
+              // Ignore. Failed to capture background image load time.
           });
     }
     FocusOutlineManager.forDocument(document);
-
-    if (loadTimeData.valueExists('modulesMaxWidthPx')) {
-      this.updateStyles({
-        '--ntp-module-max-width':
-            `${loadTimeData.getInteger('modulesMaxWidthPx')}px`,
-      });
-    }
   }
 
   override disconnectedCallback() {
@@ -443,13 +481,14 @@ export class AppElement extends AppElementBase {
     this.callbackRouter_.removeListener(this.setThemeListenerId_!);
     this.callbackRouter_.removeListener(
         this.setCustomizeChromeSidePanelVisibilityListener_!);
+    this.callbackRouter_.removeListener(this.showWebstoreToastListenerId_!);
     this.eventTracker_.removeAll();
   }
 
   override ready() {
     super.ready();
     this.pageHandler_.onAppRendered(WindowProxy.getInstance().now());
-    // Let the browser breath and then render remaining elements.
+    // Let the browser breathe and then render remaining elements.
     WindowProxy.getInstance().waitForLazyRender().then(() => {
       ensureLazyLoaded();
       this.lazyRender_ = true;
@@ -459,7 +498,7 @@ export class AppElement extends AppElementBase {
   }
 
   // Called to update the OGB of relevant NTP state changes.
-  private udpateOneGoogleBarAppearance_() {
+  private updateOneGoogleBarAppearance_() {
     if (this.oneGoogleBarLoaded_) {
       const isNtpDarkTheme =
           this.theme_ && (!!this.theme_.backgroundImage || this.theme_.isDark);
@@ -467,10 +506,6 @@ export class AppElement extends AppElementBase {
         type: 'updateAppearance',
         // We should be using a light OGB for dark themes and vice versa.
         applyLightTheme: isNtpDarkTheme,
-        // Only apply background protection if using a custom background in
-        // combination with a light OGB theme.
-        applyBackgroundProtection:
-            this.removeScrim_ && this.showBackgroundImage_ && isNtpDarkTheme,
       });
     }
   }
@@ -511,6 +546,7 @@ export class AppElement extends AppElementBase {
     document.documentElement.setAttribute('lazy-loaded', String(true));
     this.registerHelpBubble(
         CUSTOMIZE_CHROME_BUTTON_ELEMENT_ID, '#customizeButton', {fixed: true});
+    this.pageHandler_.maybeShowFeaturePromo(IphFeature.kCustomizeChrome);
   }
 
   private onOpenVoiceSearch_() {
@@ -599,7 +635,6 @@ export class AppElement extends AppElementBase {
         theme.backgroundImageCollectionId ?? '');
   }
 
-
   private onPromoAndModulesLoadedChange_() {
     if (this.promoAndModulesLoaded_ &&
         loadTimeData.getBoolean('modulesEnabled')) {
@@ -629,6 +664,10 @@ export class AppElement extends AppElementBase {
       return null;
     }
     return this.theme_ && this.theme_.backgroundColor;
+  }
+
+  private computeColorSourceIsBaseline(): boolean {
+    return this.theme_.isBaseline;
   }
 
   private computeLogoColor_(): SkColor|null {
@@ -809,6 +848,12 @@ export class AppElement extends AppElementBase {
     });
   }
 
+  private onWebstoreToastButtonClick_() {
+    window.location.assign(
+        `https://chrome.google.com/webstore/category/collection/chrome_color_themes?hl=${
+            window.navigator.language}`);
+  }
+
   private onWindowClick_(e: Event) {
     if (e.composedPath() && e.composedPath()[0] === $$(this, '#content')) {
       recordClick(NtpElement.BACKGROUND);
@@ -828,7 +873,7 @@ export class AppElement extends AppElementBase {
         case $$(this, 'ntp-middle-slot-promo'):
           recordClick(NtpElement.MIDDLE_SLOT_PROMO);
           return;
-        case $$(this, 'ntp-modules'):
+        case $$(this, '#modules'):
           recordClick(NtpElement.MODULE);
           return;
         case $$(this, '#customizeButton'):

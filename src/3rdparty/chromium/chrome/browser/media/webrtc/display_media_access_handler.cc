@@ -10,24 +10,24 @@
 
 #include "base/containers/contains.h"
 #include "base/containers/cxx20_erase.h"
-#include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "chrome/browser/bad_message.h"
+#include "chrome/browser/media/webrtc/capture_policy_utils.h"
 #include "chrome/browser/media/webrtc/desktop_capture_devices_util.h"
 #include "chrome/browser/media/webrtc/desktop_media_picker_factory_impl.h"
 #include "chrome/browser/media/webrtc/native_desktop_media_list.h"
 #include "chrome/browser/media/webrtc/tab_desktop_media_list.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/safe_browsing/user_interaction_observer.h"
+#include "chrome/browser/ui/url_identity.h"
 #include "chrome/common/pref_names.h"
 #include "components/prefs/pref_service.h"
 #include "components/url_formatter/elide_url.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/desktop_media_id.h"
-#include "content/public/browser/notification_service.h"
-#include "content/public/browser/notification_types.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
@@ -46,11 +46,23 @@
 
 namespace {
 
+constexpr UrlIdentity::TypeSet allowed_types = {
+    UrlIdentity::Type::kDefault, UrlIdentity::Type::kIsolatedWebApp,
+    UrlIdentity::Type::kFile, UrlIdentity::Type::kChromeExtension};
+
+constexpr UrlIdentity::FormatOptions options = {
+    .default_options = {
+        UrlIdentity::DefaultFormatOptions::kOmitCryptographicScheme}};
+
 // Helper function to get the title of the calling application.
 std::u16string GetApplicationTitle(content::WebContents* web_contents) {
-  return url_formatter::FormatOriginForSecurityDisplay(
-      web_contents->GetPrimaryMainFrame()->GetLastCommittedOrigin(),
-      url_formatter::SchemeDisplay::OMIT_CRYPTOGRAPHIC);
+  DCHECK(web_contents);
+  GURL content_origin =
+      web_contents->GetPrimaryMainFrame()->GetLastCommittedOrigin().GetURL();
+  UrlIdentity url_identity = UrlIdentity::CreateFromUrl(
+      Profile::FromBrowserContext(web_contents->GetBrowserContext()),
+      content_origin, allowed_types, options);
+  return url_identity.name;
 }
 
 }  // namespace
@@ -86,7 +98,7 @@ bool DisplayMediaAccessHandler::SupportsStreamType(
 
 bool DisplayMediaAccessHandler::CheckMediaAccessPermission(
     content::RenderFrameHost* render_frame_host,
-    const GURL& security_origin,
+    const url::Origin& security_origin,
     blink::mojom::MediaStreamType type,
     const extensions::Extension* extension) {
   return false;
@@ -178,9 +190,24 @@ void DisplayMediaAccessHandler::HandleRequest(
           /*ui=*/nullptr);
       return;
     }
+
+    // Renderer process should already check for transient user activation
+    // before sending IPC, but just to be sure double check here as well. This
+    // is not treated as a BadMessage because it is possible for the transient
+    // user activation to expire between the renderer side check and this check.
+    if (!rfh->HasTransientUserActivation() &&
+        capture_policy::IsTransientActivationRequiredForGetDisplayMedia(
+            web_contents)) {
+      std::move(callback).Run(
+          blink::mojom::StreamDevicesSet(),
+          blink::mojom::MediaStreamRequestResult::PERMISSION_DENIED,
+          /*ui=*/nullptr);
+      return;
+    }
   }
 
-  std::unique_ptr<DesktopMediaPicker> picker = picker_factory_->CreatePicker();
+  std::unique_ptr<DesktopMediaPicker> picker =
+      picker_factory_->CreatePicker(&request);
   if (!picker) {
     std::move(callback).Run(
         blink::mojom::StreamDevicesSet(),
@@ -285,8 +312,10 @@ void DisplayMediaAccessHandler::ProcessQueuedPickerRequest(
   DCHECK(web_contents);
 
   std::vector<DesktopMediaList::Type> media_types{
-      DesktopMediaList::Type::kWebContents, DesktopMediaList::Type::kWindow,
-      DesktopMediaList::Type::kScreen};
+      DesktopMediaList::Type::kWebContents, DesktopMediaList::Type::kWindow};
+  if (!pending_request.request.exclude_monitor_type_surfaces) {
+    media_types.push_back(DesktopMediaList::Type::kScreen);
+  }
   if (pending_request.request.video_type ==
       blink::mojom::MediaStreamType::DISPLAY_VIDEO_CAPTURE_THIS_TAB) {
     media_types.insert(media_types.begin(),
@@ -312,7 +341,8 @@ void DisplayMediaAccessHandler::ProcessQueuedPickerRequest(
   DesktopMediaPicker::DoneCallback done_callback =
       base::BindOnce(&DisplayMediaAccessHandler::OnDisplaySurfaceSelected,
                      base::Unretained(this), web_contents->GetWeakPtr());
-  DesktopMediaPicker::Params picker_params;
+  DesktopMediaPicker::Params picker_params(
+      DesktopMediaPicker::Params::RequestSource::kGetDisplayMedia);
   picker_params.web_contents = web_contents;
   gfx::NativeWindow parent_window = web_contents->GetTopLevelNativeWindow();
   picker_params.context = parent_window;
@@ -330,7 +360,6 @@ void DisplayMediaAccessHandler::ProcessQueuedPickerRequest(
       (capture_level != AllowedScreenCaptureLevel::kUnrestricted);
   picker_params.preferred_display_surface =
       pending_request.request.preferred_display_surface;
-  picker_params.is_get_display_media_call = true;
   pending_request.picker->Show(picker_params, std::move(source_lists),
                                std::move(done_callback));
 }

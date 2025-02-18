@@ -74,6 +74,9 @@ class CORE_EXPORT FlatTreeTraversal {
 
   static ContainerNode* Parent(const Node&);
   static Element* ParentElement(const Node&);
+  // Return the passed in Node if it is an Element, otherwise return the
+  // ParentElement()
+  static const Element* InclusiveParentElement(const Node&);
 
   static Node* NextSibling(const Node&);
   static Node* PreviousSibling(const Node&);
@@ -170,7 +173,9 @@ class CORE_EXPORT FlatTreeTraversal {
 
   static void AssertPrecondition(const Node& node) {
     DCHECK(!node.GetDocument().IsFlatTreeTraversalForbidden());
-    DCHECK(!node.IsShadowRoot());
+    DCHECK(!node.IsShadowRoot())
+        << "Shadow roots don't have layout objects. Their host has one, and "
+           "their children have them, and those two are connected.";
   }
 
   static void AssertPostcondition(const Node* node) {

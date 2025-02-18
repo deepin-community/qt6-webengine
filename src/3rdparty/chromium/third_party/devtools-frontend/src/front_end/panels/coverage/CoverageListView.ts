@@ -5,15 +5,17 @@
 import * as Common from '../../core/common/common.js';
 import * as i18n from '../../core/i18n/i18n.js';
 import * as Platform from '../../core/platform/platform.js';
-import * as Formatter from '../../models/formatter/formatter.js';
 import * as TextUtils from '../../models/text_utils/text_utils.js';
 import * as Workspace from '../../models/workspace/workspace.js';
 import * as DataGrid from '../../ui/legacy/components/data_grid/data_grid.js';
 import * as UI from '../../ui/legacy/legacy.js';
 
 import coverageListViewStyles from './coverageListView.css.js';
-
-import {CoverageType, type URLCoverageInfo} from './CoverageModel.js';
+import {
+  CoverageType,
+  SourceURLCoverageInfo,
+  type URLCoverageInfo,
+} from './CoverageModel.js';
 
 const UIStrings = {
   /**
@@ -136,11 +138,20 @@ export class CoverageListView extends UI.Widget.VBox {
     this.isVisibleFilter = isVisibleFilter;
     this.highlightRegExp = null;
 
-    const columns: DataGrid.DataGrid.ColumnDescriptor[] = [
-      {id: 'url', title: i18nString(UIStrings.url), width: '250px', weight: 3, fixedWidth: false, sortable: true},
-      {id: 'type', title: i18nString(UIStrings.type), width: '45px', weight: 1, fixedWidth: true, sortable: true},
+    const k = Platform.StringUtilities.kebab;
+    const columns = [
       {
-        id: 'size',
+        id: k('url'),
+        title: i18nString(UIStrings.url),
+        width: '250px',
+        weight: 3,
+        fixedWidth: false,
+        sortable: true,
+        disclosure: true,
+      },
+      {id: k('type'), title: i18nString(UIStrings.type), width: '45px', weight: 1, fixedWidth: true, sortable: true},
+      {
+        id: k('size'),
         title: i18nString(UIStrings.totalBytes),
         width: '60px',
         fixedWidth: true,
@@ -149,7 +160,7 @@ export class CoverageListView extends UI.Widget.VBox {
         weight: 1,
       },
       {
-        id: 'unusedSize',
+        id: k('unused-size'),
         title: i18nString(UIStrings.unusedBytes),
         width: '100px',
         fixedWidth: true,
@@ -159,7 +170,7 @@ export class CoverageListView extends UI.Widget.VBox {
         weight: 1,
       },
       {
-        id: 'bars',
+        id: k('bars'),
         title: i18nString(UIStrings.usageVisualization),
         width: '250px',
         fixedWidth: false,
@@ -175,6 +186,7 @@ export class CoverageListView extends UI.Widget.VBox {
       deleteCallback: undefined,
     });
     this.dataGrid.setResizeMethod(DataGrid.DataGrid.ResizeMethod.Last);
+    this.dataGrid.setStriped(true);
     this.dataGrid.element.classList.add('flex-auto');
     this.dataGrid.element.addEventListener('keydown', this.onKeyDown.bind(this), false);
     this.dataGrid.addEventListener(DataGrid.DataGrid.Events.OpenedNode, this.onOpenedNode, this);
@@ -194,6 +206,9 @@ export class CoverageListView extends UI.Widget.VBox {
       if (node) {
         if (this.isVisibleFilter(node.coverageInfo)) {
           hadUpdates = node.refreshIfNeeded(maxSize) || hadUpdates;
+          if (entry.sourcesURLCoverageInfo.size > 0) {
+            this.updateSourceNodes(entry.sourcesURLCoverageInfo, maxSize, node);
+          }
         }
         continue;
       }
@@ -201,11 +216,42 @@ export class CoverageListView extends UI.Widget.VBox {
       this.nodeForCoverageInfo.set(entry, node);
       if (this.isVisibleFilter(node.coverageInfo)) {
         rootNode.appendChild(node);
+        if (entry.sourcesURLCoverageInfo.size > 0) {
+          void this.createSourceNodes(entry.sourcesURLCoverageInfo, maxSize, node);
+        }
         hadUpdates = true;
       }
     }
     if (hadUpdates) {
       this.sortingChanged();
+    }
+  }
+
+  updateSourceNodes(
+      sourcesURLCoverageInfo: Map<Platform.DevToolsPath.UrlString, SourceURLCoverageInfo>, maxSize: number,
+      node: GridNode): void {
+    let shouldCreateSourceNodes = false;
+    for (const coverageInfo of sourcesURLCoverageInfo.values()) {
+      const sourceNode = this.nodeForCoverageInfo.get(coverageInfo);
+      if (sourceNode) {
+        sourceNode.refreshIfNeeded(maxSize);
+      } else {
+        shouldCreateSourceNodes = true;
+        break;
+      }
+    }
+    if (shouldCreateSourceNodes) {
+      void this.createSourceNodes(sourcesURLCoverageInfo, maxSize, node);
+    }
+  }
+
+  async createSourceNodes(
+      sourcesURLCoverageInfo: Map<Platform.DevToolsPath.UrlString, SourceURLCoverageInfo>, maxSize: number,
+      node: GridNode): Promise<void> {
+    for (const coverageInfo of sourcesURLCoverageInfo.values()) {
+      const sourceNode = new GridNode(coverageInfo, maxSize);
+      node.appendChild(sourceNode);
+      this.nodeForCoverageInfo.set(coverageInfo, sourceNode);
     }
   }
 
@@ -230,11 +276,20 @@ export class CoverageListView extends UI.Widget.VBox {
       if (!shouldBeVisible) {
         node.remove();
       } else {
-        this.dataGrid.rootNode().appendChild(node);
+        this.appendNodeByType(node);
       }
     }
     if (hadTreeUpdates) {
       this.sortingChanged();
+    }
+  }
+
+  private appendNodeByType(node: GridNode): void {
+    if (node.coverageInfo instanceof SourceURLCoverageInfo) {
+      const parentNode = this.nodeForCoverageInfo.get(node.coverageInfo.generatedURLCoverageInfo);
+      parentNode?.appendChild(node);
+    } else {
+      this.dataGrid.rootNode().appendChild(node);
     }
   }
 
@@ -265,13 +320,10 @@ export class CoverageListView extends UI.Widget.VBox {
       return;
     }
     const coverageInfo = (node as GridNode).coverageInfo;
-    let sourceCode = Workspace.Workspace.WorkspaceImpl.instance().uiSourceCodeForURL(coverageInfo.url());
+    const sourceCode = Workspace.Workspace.WorkspaceImpl.instance().uiSourceCodeForURL(coverageInfo.url());
     if (!sourceCode) {
       return;
     }
-
-    const formatData = await Formatter.SourceFormatter.SourceFormatter.instance().format(sourceCode);
-    sourceCode = formatData.formattedSourceCode;
 
     if (this.dataGrid.selectedNode !== node) {
       return;
@@ -293,7 +345,7 @@ export class CoverageListView extends UI.Widget.VBox {
     }
     this.dataGrid.sortNodes(sortFunction, !this.dataGrid.isSortOrderAscending());
   }
-  wasShown(): void {
+  override wasShown(): void {
     super.wasShown();
     this.registerCSSFiles([coverageListViewStyles]);
   }
@@ -344,7 +396,7 @@ export class GridNode extends DataGrid.SortableDataGrid.SortableDataGridNode<Gri
     return true;
   }
 
-  createCell(columnId: string): HTMLElement {
+  override createCell(columnId: string): HTMLElement {
     const cell = this.createTD(columnId);
     switch (columnId) {
       case 'url': {
@@ -377,7 +429,7 @@ export class GridNode extends DataGrid.SortableDataGrid.SortableDataGridNode<Gri
         this.setCellAccessibleName(sizeAccessibleName, cell, columnId);
         break;
       }
-      case 'unusedSize': {
+      case 'unused-size': {
         const unusedSize = this.coverageInfo.unusedSize() || 0;
         const unusedSizeSpan = cell.createChild('span');
         const unusedPercentsSpan = cell.createChild('span', 'percent-value');
@@ -458,7 +510,7 @@ export class GridNode extends DataGrid.SortableDataGrid.SortableDataGridNode<Gri
       case 'size':
         return (a: GridNode, b: GridNode): number => a.coverageInfo.size() - b.coverageInfo.size() || compareURL(a, b);
       case 'bars':
-      case 'unusedSize':
+      case 'unused-size':
         return (a: GridNode, b: GridNode): number =>
                    a.coverageInfo.unusedSize() - b.coverageInfo.unusedSize() || compareURL(a, b);
       default:

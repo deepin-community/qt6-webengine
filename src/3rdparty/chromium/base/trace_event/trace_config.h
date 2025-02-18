@@ -55,6 +55,8 @@ class BASE_EXPORT TraceConfig {
 
     // Specifies the triggers in the memory dump config.
     struct Trigger {
+      friend bool operator==(const Trigger&, const Trigger&) = default;
+
       uint32_t min_time_between_dumps_ms;
       MemoryDumpLevelOfDetail level_of_detail;
       MemoryDumpType trigger_type;
@@ -70,8 +72,14 @@ class BASE_EXPORT TraceConfig {
       // Reset the options to default.
       void Clear();
 
+      friend bool operator==(const HeapProfiler&,
+                             const HeapProfiler&) = default;
+
       uint32_t breakdown_threshold_bytes;
     };
+
+    friend bool operator==(const MemoryDumpConfig&,
+                           const MemoryDumpConfig&) = default;
 
     // Reset the values in the config.
     void Clear();
@@ -108,9 +116,8 @@ class BASE_EXPORT TraceConfig {
       return included_process_ids_;
     }
 
-    bool operator==(const ProcessFilterConfig& other) const {
-      return included_process_ids_ == other.included_process_ids_;
-    }
+    friend bool operator==(const ProcessFilterConfig&,
+                           const ProcessFilterConfig&) = default;
 
    private:
     std::unordered_set<base::ProcessId> included_process_ids_;
@@ -124,6 +131,8 @@ class BASE_EXPORT TraceConfig {
     ~EventFilterConfig();
 
     EventFilterConfig& operator=(const EventFilterConfig& rhs);
+
+    bool IsEquivalentTo(const EventFilterConfig& other) const;
 
     void InitializeFromConfigDict(const Value::Dict& event_filter);
 
@@ -226,6 +235,8 @@ class BASE_EXPORT TraceConfig {
   ~TraceConfig();
 
   TraceConfig& operator=(const TraceConfig& rhs);
+
+  bool IsEquivalentTo(const TraceConfig& other) const;
 
   TraceRecordMode GetTraceRecordMode() const { return record_mode_; }
   size_t GetTraceBufferSizeInEvents() const {

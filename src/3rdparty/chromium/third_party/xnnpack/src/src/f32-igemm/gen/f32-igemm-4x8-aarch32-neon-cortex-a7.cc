@@ -10,6 +10,7 @@
 #include <xnnpack.h>
 #include <xnnpack/aarch32-assembler.h>
 #include <xnnpack/igemm.h>
+#include <xnnpack/log.h>
 #include <xnnpack/memory.h>
 #include <xnnpack/microparams.h>
 #include <xnnpack/post-operation.h>
@@ -31,9 +32,9 @@ class Generator : public MacroAssembler {
 //     size_t nc,                            r1
 //     size_t kc,                            r2 -> r5 -> sp + 68
 //     size_t ks,                            r3 -> sp + 72 -> r14
-//     const float**restrict a,  sp + 112 -> r2
-//     const void*restrict w,    sp + 116 -> r9
-//     uint8_t*restrict c,       sp + 120 -> r11
+//     const float** restrict a,  sp + 112 -> r2
+//     const void* restrict w,    sp + 116 -> r9
+//     uint8_t* restrict c,       sp + 120 -> r11
 //     size_t cm_stride,         sp + 124 -> (r6)
 //     size_t cn_stride,         sp + 128 -> (r7)
 //     size_t a_offset,          sp + 132 -> (r5)
@@ -59,7 +60,7 @@ class Generator : public MacroAssembler {
 void Generator::generate(size_t max_mr, size_t nc_mod_nr, size_t kc, size_t ks, const jit_gemm_params* jit_gemm_params)
 {
   assert(max_mr <= 4);
-  assert(nc_mod_nr < 8);
+  assert(nc_mod_nr < 8 || nc_mod_nr == SIZE_MAX);
   assert(kc != 0);
   assert(kc % sizeof(float) == 0);
   assert(ks != 0);
@@ -124,6 +125,14 @@ void Generator::generate(size_t max_mr, size_t nc_mod_nr, size_t kc, size_t ks, 
     vmov(q15, q9);
   }
 
+  pld(mem[r9, 0]); // Prefetch B
+  pld(mem[r9, 64]);
+  pld(mem[r9, 128]);
+  pld(mem[r9, 192]);
+  pld(mem[r9, 256]);
+  pld(mem[r9, 320]);
+  pld(mem[r9, 384]);
+  pld(mem[r9, 448]);
   bind(l1);
   // Load next 4 A pointers
   ldr(r3, mem[r2, 0]);
@@ -163,6 +172,14 @@ void Generator::generate(size_t max_mr, size_t nc_mod_nr, size_t kc, size_t ks, 
     moveq(r0, r7); //   a3 = zero, else += a3 + a_offset
   }
 
+  pld(mem[r3, 0]); // Prefetch A
+  pld(mem[r3, 64]);
+  pld(mem[r12, 0]);
+  pld(mem[r12, 64]);
+  pld(mem[r10, 0]);
+  pld(mem[r10, 64]);
+  pld(mem[r0, 0]);
+  pld(mem[r0, 64]);
 
   subs(r5, r5, 8); // kc - 8
   blo(l4); // less than 2 channels?
@@ -211,6 +228,11 @@ void Generator::generate(size_t max_mr, size_t nc_mod_nr, size_t kc, size_t ks, 
     vmla_f32(q14, q6, d3[1]);
     vmla_f32(q15, q7, d3[1]);
   }
+  pld(mem[r9, 448]); // Prefetch B
+  pld(mem[r3, 128]); // Prefetch A0
+  pld(mem[r12, 128]); // Prefetch A1
+  pld(mem[r10, 128]); // Prefetch A2
+  pld(mem[r0, 128]); // Prefetch A3
   bhs(l2);
 
   // Is there a remainder?- 1 float of A (4 bytes)
@@ -387,6 +409,9 @@ void Generator::perform_post_operations(
   size_t num_post_operations,
   const xnn_post_operation* post_operations)
 {
+  if (num_post_operations == 0) {
+    return;
+  }
   ldr(r5, mem[sp, 140]);  // params
   for (size_t i = 0; i < num_post_operations; i++) {
     switch (post_operations[i].op_type) {
@@ -405,7 +430,7 @@ void Generator::perform_post_operations(
         break;
       }
       default:
-        XNN_UNREACHABLE;
+        XNN_LOG_UNREACHABLE("unsupported post operation: %u", post_operations[i].op_type);
     }
   }
 }

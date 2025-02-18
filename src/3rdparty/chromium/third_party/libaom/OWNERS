@@ -3,5 +3,6 @@ jzern@chromium.org
 jzern@google.com
 wtc@google.com
 
-# Past project member, please only use when primaries are unavailable.
-johannkoenig@google.com   # Prefer jzern@/wtc@ if available.
+# Secondary OWNERS
+dalecurtis@chromium.org
+eugene@chromium.org

@@ -10,10 +10,12 @@
 #include "include/core/SkCanvas.h"
 #include "include/core/SkSurface.h"
 #include "include/effects/SkGradientShader.h"
+#include "tools/DecodeUtils.h"
+#include "tools/GpuToolUtils.h"
 #include "tools/Resources.h"
 #include "tools/ToolUtils.h"
 
-#ifdef SK_GRAPHITE_ENABLED
+#if defined(SK_GRAPHITE)
 #include "include/gpu/graphite/Context.h"
 #include "include/gpu/graphite/Recorder.h"
 #include "include/gpu/graphite/Recording.h"
@@ -26,15 +28,17 @@ namespace skiagm {
 
 class GraphiteReplayGM : public GM {
 public:
-    GraphiteReplayGM() {
-        this->setBGColor(SK_ColorBLACK);
-        fImage = GetResourceAsImage("images/mandrill_128.png");
-    }
+    GraphiteReplayGM() = default;
 
 protected:
-    SkString onShortName() override { return SkString("graphite-replay"); }
+    void onOnceBeforeDraw() override {
+        this->setBGColor(SK_ColorBLACK);
+        fImage = ToolUtils::GetResourceAsImage("images/mandrill_128.png");
+    }
 
-    SkISize onISize() override { return SkISize::Make(kTileWidth * 3, kTileHeight * 2); }
+    SkString getName() const override { return SkString("graphite-replay"); }
+
+    SkISize getISize() override { return SkISize::Make(kTileWidth * 3, kTileHeight * 2); }
 
     bool onAnimate(double nanos) override {
         fStartX = kTileWidth * (1.0f + sinf(nanos * 1e-9)) * 0.5f;
@@ -42,7 +46,7 @@ protected:
     }
 
     DrawResult onDraw(SkCanvas* canvas, SkString* errorMsg) override {
-#ifdef SK_GRAPHITE_ENABLED
+#if defined(SK_GRAPHITE)
         skgpu::graphite::Recorder* recorder = canvas->recorder();
         if (recorder) {
             this->drawGraphite(canvas, recorder);
@@ -96,7 +100,7 @@ private:
         canvas->restore();
     }
 
-#ifdef SK_GRAPHITE_ENABLED
+#if defined(SK_GRAPHITE)
     void drawGraphite(SkCanvas* canvas, skgpu::graphite::Recorder* canvasRecorder) {
         SkImageInfo tileImageInfo =
                 canvas->imageInfo().makeDimensions(SkISize::Make(kTileWidth, kTileHeight));

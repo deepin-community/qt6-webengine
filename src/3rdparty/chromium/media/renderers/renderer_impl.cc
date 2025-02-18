@@ -352,10 +352,10 @@ bool RendererImpl::GetWallClockTimes(
 }
 
 bool RendererImpl::HasEncryptedStream() {
-  std::vector<DemuxerStream*> demuxer_streams =
+  std::vector<raw_ptr<DemuxerStream, VectorExperimental>> demuxer_streams =
       media_resource_->GetAllStreams();
 
-  for (auto* stream : demuxer_streams) {
+  for (media::DemuxerStream* stream : demuxer_streams) {
     if (stream->type() == DemuxerStream::AUDIO &&
         stream->audio_decoder_config().is_encrypted())
       return true;
@@ -446,6 +446,14 @@ void RendererImpl::InitializeVideoRenderer() {
 
   if (!video_stream) {
     video_renderer_.reset();
+
+    // Something has disabled all audio and video streams, so fail
+    // initialization.
+    if (!audio_renderer_) {
+      FinishInitialization(PIPELINE_ERROR_COULD_NOT_RENDER);
+      return;
+    }
+
     task_runner_->PostTask(
         FROM_HERE, base::BindOnce(&RendererImpl::OnVideoRendererInitializeDone,
                                   weak_this_, PIPELINE_OK));

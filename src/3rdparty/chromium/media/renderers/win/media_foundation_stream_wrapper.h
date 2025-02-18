@@ -20,18 +20,11 @@
 #include "media/base/decoder_buffer.h"
 #include "media/base/demuxer_stream.h"
 #include "media/base/media_log.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace media {
 
 namespace {
-
-struct MediaFoundationSubsampleEntry {
-  MediaFoundationSubsampleEntry(SubsampleEntry entry)
-      : clear_bytes(entry.clear_bytes), cipher_bytes(entry.cypher_bytes) {}
-  MediaFoundationSubsampleEntry() = default;
-  DWORD clear_bytes = 0;
-  DWORD cipher_bytes = 0;
-};
 
 struct PendingInputBuffer {
   PendingInputBuffer(DemuxerStream::Status status,
@@ -128,8 +121,6 @@ class MediaFoundationStreamWrapper
 
  protected:
   HRESULT GenerateStreamDescriptor();
-  HRESULT GenerateSampleFromDecoderBuffer(DecoderBuffer* buffer,
-                                          IMFSample** sample_out);
   HRESULT ServiceSampleRequest(IUnknown* token, DecoderBuffer* buffer)
       EXCLUSIVE_LOCKS_REQUIRED(lock_);
   // Returns true when a sample request has been serviced.
@@ -169,6 +160,10 @@ class MediaFoundationStreamWrapper
   bool flushed_ GUARDED_BY(lock_) = false;
 
   int stream_id_;
+
+  bool has_clear_lead_ = false;
+
+  bool switched_clear_to_encrypted_ = false;
 
   // |mf_media_event_queue_| is safe to be called on any thread.
   Microsoft::WRL::ComPtr<IMFMediaEventQueue> mf_media_event_queue_;

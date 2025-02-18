@@ -7,17 +7,20 @@
 
 #include <map>
 #include <memory>
+#include <string>
+#include <utility>
 #include <vector>
 
-#include "base/memory/raw_ptr.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/task/sequenced_task_runner.h"
+#include "components/password_manager/core/browser/affiliation/affiliation_backend.h"
 #include "components/password_manager/core/browser/affiliation/affiliation_fetcher_delegate.h"
 #include "components/password_manager/core/browser/affiliation/affiliation_fetcher_factory_impl.h"
 #include "components/password_manager/core/browser/affiliation/affiliation_fetcher_interface.h"
 #include "components/password_manager/core/browser/affiliation/affiliation_service.h"
 #include "components/password_manager/core/browser/affiliation/affiliation_utils.h"
-#include "components/password_manager/core/browser/password_manager_metrics_util.h"
 
 namespace base {
 class FilePath;
@@ -35,9 +38,29 @@ class SchemeHostPort;
 
 namespace password_manager {
 
-class AffiliationBackend;
-
 extern const char kGetChangePasswordURLMetricName[];
+
+// Change password info request requires branding_info enabled.
+constexpr AffiliationFetcherInterface::RequestInfo
+    kChangePasswordUrlRequestInfo{.branding_info = true,
+                                  .change_password_info = true};
+
+// Used to record metrics for the usage and timing of the GetChangePasswordUrl
+// call. These values are persisted to logs. Entries should not be renumbered
+// and numeric values should never be reused.
+enum class GetChangePasswordUrlMetric {
+  // Used when GetChangePasswordUrl is called before the response
+  // arrives.
+  kNotFetchedYet = 0,
+  // Used when a url was used, which corresponds to the requested site.
+  kUrlOverrideUsed = 1,
+  // Used when no override url was available.
+  kNoUrlOverrideAvailable = 2,
+  // Used when a url was used, which corresponds to a site from within same
+  // FacetGroup.
+  kGroupUrlOverrideUsed = 3,
+  kMaxValue = kGroupUrlOverrideUsed,
+};
 
 class AffiliationServiceImpl : public AffiliationService,
                                public AffiliationFetcherDelegate {
@@ -100,16 +123,30 @@ class AffiliationServiceImpl : public AffiliationService,
   void TrimCacheForFacetURI(const FacetURI& facet_uri) override;
   void KeepPrefetchForFacets(std::vector<FacetURI> facet_uris) override;
   void TrimUnusedCache(std::vector<FacetURI> facet_uris) override;
-  void GetAllGroups(GroupsCallback callback) const override;
+  void GetGroupingInfo(std::vector<FacetURI> facet_uris,
+                       GroupsCallback callback) override;
   void GetPSLExtensions(base::OnceCallback<void(std::vector<std::string>)>
                             callback) const override;
   void UpdateAffiliationsAndBranding(const std::vector<FacetURI>& facets,
                                      base::OnceClosure callback) override;
 
-  AffiliationBackend* GetBackendForTesting() { return backend_; }
+  AffiliationBackend* GetBackendForTesting() { return backend_.get(); }
 
  private:
   struct FetchInfo;
+
+  template <typename Method, typename... Args>
+  void PostToBackend(const Method& method, Args&&... args) {
+    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+    // If `backend` is destroyed there is nothing to do.
+    if (!backend_) {
+      return;
+    }
+
+    backend_task_runner_->PostTask(
+        FROM_HERE, base::BindOnce(method, base::Unretained(backend_.get()),
+                                  std::forward<Args>(args)...));
+  }
 
   // AffiliationFetcherDelegate:
   void OnFetchSucceeded(
@@ -125,9 +162,9 @@ class AffiliationServiceImpl : public AffiliationService,
 
   // The backend, owned by this AffiliationService instance, but
   // living on the backend thread. It will be deleted asynchronously during
-  // shutdown on the backend thread, so it will outlive |this| along with all
+  // shutdown on the backend thread, so it will outlive `this` along with all
   // its in-flight tasks.
-  raw_ptr<AffiliationBackend, DanglingUntriaged> backend_;
+  std::unique_ptr<AffiliationBackend> backend_;
 
   scoped_refptr<base::SequencedTaskRunner> backend_task_runner_;
 

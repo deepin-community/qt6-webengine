@@ -1,0 +1,18 @@
+Author: Soren Stoutner <soren@debian.org>
+Description: Hard code the Hunspell .bdic binary dictionaries path.
+Bug-Debian: https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=1092726
+Forwarded: not-needed
+Last-Update: 2025-01-20
+
+--- a/src/core/web_engine_library_info.cpp
++++ b/src/core/web_engine_library_info.cpp
+@@ -249,7 +249,8 @@ QString dictionariesPath()
+     if (!initialized) {
+         initialized = true;
+ 
+-        const QString fromEnv = qEnvironmentVariable("QTWEBENGINE_DICTIONARIES_PATH");
++        //Hard code the Hunspell .bdic binary dictionary path on Debian if it is not set by an environment variable.
++        const QString fromEnv = qEnvironmentVariable("QTWEBENGINE_DICTIONARIES_PATH", QStringLiteral("/usr/share/hunspell-bdic/"));
+         if (!fromEnv.isEmpty()) {
+             // Only search in QTWEBENGINE_DICTIONARIES_PATH if set
+             candidatePaths << fromEnv;

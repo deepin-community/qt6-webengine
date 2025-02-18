@@ -20,17 +20,17 @@ class MockAccountChecker : public AccountChecker {
 
   MOCK_METHOD(bool, IsSignedIn, (), (override));
 
-  MOCK_METHOD(bool, IsAnonymizedUrlDataCollectionEnabled, (), (override));
+  MOCK_METHOD(bool, IsSyncingBookmarks, (), (override));
 
-  MOCK_METHOD(bool, IsWebAndAppActivityEnabled, (), (override));
+  MOCK_METHOD(bool, IsAnonymizedUrlDataCollectionEnabled, (), (override));
 
   MOCK_METHOD(bool, IsSubjectToParentalControls, (), (override));
 
   void SetSignedIn(bool signed_in);
 
-  void SetAnonymizedUrlDataCollectionEnabled(bool enabled);
+  void SetSyncingBookmarks(bool syncing);
 
-  void SetWebAndAppActivityEnabled(bool enabled);
+  void SetAnonymizedUrlDataCollectionEnabled(bool enabled);
 
   void SetIsSubjectToParentalControls(bool subject_to_parental_controls);
 };

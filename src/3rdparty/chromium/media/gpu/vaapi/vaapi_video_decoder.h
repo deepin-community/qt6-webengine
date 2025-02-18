@@ -85,6 +85,9 @@ class VaapiVideoDecoder : public VideoDecoderMixin,
                     const gfx::Rect& visible_rect,
                     const VideoColorSpace& color_space) override;
 
+  // Must be called before Initialize().
+  void set_ignore_resolution_changes_to_smaller_vp9_for_testing(bool value);
+
  private:
   // Decode task holding single decode request.
   struct DecodeTask {
@@ -180,6 +183,7 @@ class VaapiVideoDecoder : public VideoDecoderMixin,
       const gfx::Size& natural_size,
       bool use_protected,
       bool use_linear_buffers,
+      bool needs_detiling,
       base::TimeDelta timestamp);
 
   // Allocates a new VideoFrame using a new VASurface directly. Since this is
@@ -192,6 +196,7 @@ class VaapiVideoDecoder : public VideoDecoderMixin,
       const gfx::Size& natural_size,
       bool use_protected,
       bool use_linear_buffers,
+      bool needs_detiling,
       base::TimeDelta timestamp);
 
   // Having too many decoder instances at once may cause us to run out of FDs
@@ -275,6 +280,9 @@ class VaapiVideoDecoder : public VideoDecoderMixin,
   // This is used on AMD protected content implementations to indicate that the
   // DecoderBuffers we receive have been transcrypted and need special handling.
   bool transcryption_ = false;
+
+  // See VP9Decoder for information on this.
+  bool ignore_resolution_changes_to_smaller_for_testing_ = false;
 
   SEQUENCE_CHECKER(sequence_checker_);
 

@@ -19,7 +19,7 @@ class QuicSpdySession;
 
 // 6.2.1 Control Stream.
 // The send control stream is self initiated and is write only.
-class QUIC_EXPORT_PRIVATE QuicSendControlStream : public QuicStream {
+class QUICHE_EXPORT QuicSendControlStream : public QuicStream {
  public:
   // |session| can't be nullptr, and the ownership is not passed. The stream can
   // only be accessed through the session.
@@ -40,7 +40,7 @@ class QUIC_EXPORT_PRIVATE QuicSendControlStream : public QuicStream {
 
   // Send a PRIORITY_UPDATE frame on this stream, and a SETTINGS frame
   // beforehand if one has not been already sent.
-  void WritePriorityUpdate(QuicStreamId stream_id, QuicStreamPriority priority);
+  void WritePriorityUpdate(QuicStreamId stream_id, HttpStreamPriority priority);
 
   // Send a GOAWAY frame on this stream, and a SETTINGS frame beforehand if one
   // has not been already sent.

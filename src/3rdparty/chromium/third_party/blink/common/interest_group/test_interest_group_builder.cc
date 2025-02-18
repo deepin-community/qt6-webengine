@@ -21,29 +21,11 @@
 namespace blink {
 
 TestInterestGroupBuilder::TestInterestGroupBuilder(url::Origin owner,
-                                                   std::string name)
-    : interest_group_(
-          /*expiry=*/base::Time::Now() + base::Days(30),
-          std::move(owner),
-          std::move(name),
-          /*priority=*/0.0,
-          /*enable_bidding_signals_prioritization=*/false,
-          /*priority_vector=*/absl::nullopt,
-          /*priority_signals_overrides=*/absl::nullopt,
-          /*seller_capabilities=*/absl::nullopt,
-          /*all_sellers_capabilities=*/
-          {}, /*execution_mode=*/
-          blink::InterestGroup::ExecutionMode::kCompatibilityMode,
-          /*bidding_url=*/absl::nullopt,
-          /*bidding_wasm_helper_url=*/absl::nullopt,
-          /*daily_update_url=*/absl::nullopt,
-          /*trusted_bidding_signals_url=*/absl::nullopt,
-          /*trusted_bidding_signals_keys=*/absl::nullopt,
-          /*user_bidding_signals=*/absl::nullopt,
-          /*ads=*/absl::nullopt,
-          /*ad_components=*/absl::nullopt,
-          /*ad_sizes=*/{},
-          /*size_groups=*/{}) {}
+                                                   std::string name) {
+  interest_group_.expiry = base::Time::Now() + base::Days(30);
+  interest_group_.owner = std::move(owner);
+  interest_group_.name = std::move(name);
+}
 
 TestInterestGroupBuilder::~TestInterestGroupBuilder() = default;
 
@@ -117,9 +99,9 @@ TestInterestGroupBuilder& TestInterestGroupBuilder::SetBiddingWasmHelperUrl(
   return *this;
 }
 
-TestInterestGroupBuilder& TestInterestGroupBuilder::SetDailyUpdateUrl(
-    absl::optional<GURL> daily_update_url) {
-  interest_group_.daily_update_url = std::move(daily_update_url);
+TestInterestGroupBuilder& TestInterestGroupBuilder::SetUpdateUrl(
+    absl::optional<GURL> update_url) {
+  interest_group_.update_url = std::move(update_url);
   return *this;
 }
 
@@ -127,6 +109,15 @@ TestInterestGroupBuilder& TestInterestGroupBuilder::SetTrustedBiddingSignalsUrl(
     absl::optional<GURL> trusted_bidding_signals_url) {
   interest_group_.trusted_bidding_signals_url =
       std::move(trusted_bidding_signals_url);
+  return *this;
+}
+
+TestInterestGroupBuilder&
+TestInterestGroupBuilder::SetTrustedBiddingSignalsSlotSizeMode(
+    InterestGroup::TrustedBiddingSignalsSlotSizeMode
+        trusted_bidding_signals_slot_size_mode) {
+  interest_group_.trusted_bidding_signals_slot_size_mode =
+      std::move(trusted_bidding_signals_slot_size_mode);
   return *this;
 }
 
@@ -144,6 +135,14 @@ TestInterestGroupBuilder& TestInterestGroupBuilder::SetUserBiddingSignals(
   return *this;
 }
 
+TestInterestGroupBuilder&
+TestInterestGroupBuilder::SetMaxTrustedBiddingSignalsURLLength(
+    int32_t max_trusted_bidding_signals_url_length) {
+  interest_group_.max_trusted_bidding_signals_url_length =
+      max_trusted_bidding_signals_url_length;
+  return *this;
+}
+
 TestInterestGroupBuilder& TestInterestGroupBuilder::SetAds(
     absl::optional<std::vector<InterestGroup::Ad>> ads) {
   interest_group_.ads = std::move(ads);
@@ -153,6 +152,39 @@ TestInterestGroupBuilder& TestInterestGroupBuilder::SetAds(
 TestInterestGroupBuilder& TestInterestGroupBuilder::SetAdComponents(
     absl::optional<std::vector<InterestGroup::Ad>> ad_components) {
   interest_group_.ad_components = std::move(ad_components);
+  return *this;
+}
+
+TestInterestGroupBuilder& TestInterestGroupBuilder::SetAdSizes(
+    absl::optional<base::flat_map<std::string, blink::AdSize>> ad_sizes) {
+  interest_group_.ad_sizes = std::move(ad_sizes);
+  return *this;
+}
+
+TestInterestGroupBuilder& TestInterestGroupBuilder::SetSizeGroups(
+    absl::optional<base::flat_map<std::string, std::vector<std::string>>>
+        size_groups) {
+  interest_group_.size_groups = std::move(size_groups);
+  return *this;
+}
+
+TestInterestGroupBuilder&
+TestInterestGroupBuilder::SetAuctionServerRequestFlags(
+    AuctionServerRequestFlags flags) {
+  interest_group_.auction_server_request_flags = std::move(flags);
+  return *this;
+}
+
+TestInterestGroupBuilder& TestInterestGroupBuilder::SetAdditionalBidKey(
+    absl::optional<blink::InterestGroup::AdditionalBidKey> key) {
+  interest_group_.additional_bid_key = std::move(key);
+  return *this;
+}
+
+TestInterestGroupBuilder&
+TestInterestGroupBuilder::SetAggregationCoordinatorOrigin(
+    absl::optional<url::Origin> agg_coordinator_origin) {
+  interest_group_.aggregation_coordinator_origin = agg_coordinator_origin;
   return *this;
 }
 

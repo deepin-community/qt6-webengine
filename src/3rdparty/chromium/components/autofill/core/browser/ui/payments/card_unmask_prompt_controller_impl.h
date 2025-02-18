@@ -56,7 +56,8 @@ class CardUnmaskPromptControllerImpl : public CardUnmaskPromptController {
   void OnUnmaskPromptAccepted(const std::u16string& cvc,
                               const std::u16string& exp_month,
                               const std::u16string& exp_year,
-                              bool enable_fido_auth) override;
+                              bool enable_fido_auth,
+                              bool was_checkbox_visible) override;
   void NewCardLinkClicked() override;
   std::u16string GetWindowTitle() const override;
   std::u16string GetInstructionsMessage() const override;
@@ -64,7 +65,7 @@ class CardUnmaskPromptControllerImpl : public CardUnmaskPromptController {
   int GetCvcImageRid() const override;
   bool ShouldRequestExpirationDate() const override;
 #if BUILDFLAG(IS_ANDROID)
-  std::string GetCardIconString() const override;
+  Suggestion::Icon GetCardIcon() const override;
   std::u16string GetCardName() const override;
   std::u16string GetCardLastFourDigits() const override;
   std::u16string GetCardExpiration() const override;
@@ -72,6 +73,7 @@ class CardUnmaskPromptControllerImpl : public CardUnmaskPromptController {
   int GetGooglePayImageRid() const override;
   bool ShouldOfferWebauthn() const override;
   bool GetWebauthnOfferStartState() const override;
+  std::u16string GetCvcImageAnnouncement() const override;
 #endif
   bool InputCvcIsValid(const std::u16string& input_text) const override;
   bool InputExpirationIsValid(const std::u16string& month,
@@ -98,7 +100,7 @@ class CardUnmaskPromptControllerImpl : public CardUnmaskPromptController {
   AutofillMetrics::UnmaskPromptEvent GetCloseReasonEvent();
 
   CardUnmaskPromptOptions card_unmask_prompt_options_;
-  raw_ptr<PrefService, DanglingUntriaged> pref_service_;
+  const raw_ptr<PrefService> pref_service_;
   bool new_card_link_clicked_ = false;
   CreditCard card_;
   base::WeakPtr<CardUnmaskDelegate> delegate_;

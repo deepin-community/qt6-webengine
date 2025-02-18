@@ -17,6 +17,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/supports_user_data.h"
 #include "net/base/net_export.h"
+#include "net/http/http_raw_request_headers.h"
 #include "net/http/http_stream.h"
 #include "net/quic/quic_chromium_client_session.h"
 #include "net/websockets/websocket_deflate_parameters.h"
@@ -29,6 +30,7 @@ class SpdySession;
 class HttpRequestHeaders;
 class HttpResponseHeaders;
 class WebSocketEndpointLockManager;
+class WebSocketStream;
 
 // WebSocketHandshakeStreamBase is the base class of
 // WebSocketBasicHandshakeStream.  net/http code uses this interface to handle
@@ -142,6 +144,10 @@ class NET_EXPORT WebSocketHandshakeStreamBase : public HttpStream {
   // The WebSocketHandshakeStreamBase object is unusable after Upgrade() has
   // been called.
   virtual std::unique_ptr<WebSocketStream> Upgrade() = 0;
+
+  // Returns true if a read from the stream will succeed. This should be true
+  // even if the stream is at EOF.
+  virtual bool CanReadFromStream() const = 0;
 
   void SetRequestHeadersCallback(RequestHeadersCallback callback) override {}
 

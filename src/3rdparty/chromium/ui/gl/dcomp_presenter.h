@@ -19,8 +19,8 @@
 #include "ui/gfx/frame_data.h"
 #include "ui/gfx/geometry/transform.h"
 #include "ui/gl/child_window_win.h"
-#include "ui/gl/direct_composition_surface_win.h"
 #include "ui/gl/gl_export.h"
+#include "ui/gl/gl_surface_egl.h"
 #include "ui/gl/presenter.h"
 #include "ui/gl/vsync_observer.h"
 
@@ -47,24 +47,36 @@ class GL_EXPORT DCompPresenter : public Presenter, public VSyncObserver {
       base::RepeatingCallback<void(base::TimeTicks, base::TimeDelta)>;
   using OverlayHDRInfoUpdateCallback = base::RepeatingClosure;
 
+  struct Settings {
+    bool disable_nv12_dynamic_textures = false;
+    bool disable_vp_auto_hdr = false;
+    bool disable_vp_scaling = false;
+    bool disable_vp_super_resolution = false;
+    bool force_dcomp_triple_buffer_video_swap_chain = false;
+    size_t max_pending_frames = 2;
+    bool use_angle_texture_offset = false;
+    bool no_downscaled_overlay_promotion = false;
+  };
+
   DCompPresenter(GLDisplayEGL* display,
                  VSyncCallback vsync_callback,
-                 const DirectCompositionSurfaceWin::Settings& settings);
+                 const Settings& settings);
 
   DCompPresenter(const DCompPresenter&) = delete;
   DCompPresenter& operator=(const DCompPresenter&) = delete;
 
-  // GLSurfaceEGL implementation.
-  bool Initialize(GLSurfaceFormat format) override;
-  void Destroy() override;
+  bool Initialize();
+  void Destroy();
+  gfx::VSyncProvider* GetVSyncProvider();
+  bool SupportsProtectedVideo() const;
+
+  // Presenter implementation.
   bool Resize(const gfx::Size& size,
               float scale_factor,
               const gfx::ColorSpace& color_space,
               bool has_alpha) override;
-  gfx::VSyncProvider* GetVSyncProvider() override;
-  bool SupportsDCLayers() const override;
-  bool SupportsProtectedVideo() const override;
   bool SetDrawRectangle(const gfx::Rect& rect) override;
+  bool SupportsViewporter() const override;
   bool SupportsGpuVSync() const override;
   void SetGpuVSyncEnabled(bool enabled) override;
   // This schedules an overlay plane to be displayed on the next SwapBuffers

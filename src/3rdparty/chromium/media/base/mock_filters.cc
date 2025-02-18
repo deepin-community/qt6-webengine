@@ -156,10 +156,6 @@ MockTimeSource::MockTimeSource() = default;
 
 MockTimeSource::~MockTimeSource() = default;
 
-MockTextTrack::MockTextTrack() = default;
-
-MockTextTrack::~MockTextTrack() = default;
-
 MockCdmClient::MockCdmClient() = default;
 
 MockCdmClient::~MockCdmClient() = default;
@@ -213,13 +209,19 @@ MockCdmSessionPromise::~MockCdmSessionPromise() {
 
 MockCdmKeyStatusPromise::MockCdmKeyStatusPromise(
     bool expect_success,
-    CdmKeyInformation::KeyStatus* key_status) {
+    CdmKeyInformation::KeyStatus* key_status,
+    CdmPromise::Exception* exception) {
   if (expect_success) {
     EXPECT_CALL(*this, resolve(_)).WillOnce(SaveArg<0>(key_status));
     EXPECT_CALL(*this, reject(_, _, _)).Times(0);
   } else {
     EXPECT_CALL(*this, resolve(_)).Times(0);
-    EXPECT_CALL(*this, reject(_, _, NotEmpty()));
+    if (exception) {
+      EXPECT_CALL(*this, reject(_, _, NotEmpty()))
+          .WillOnce(SaveArg<0>(exception));
+    } else {
+      EXPECT_CALL(*this, reject(_, _, NotEmpty()));
+    }
   }
 }
 
@@ -318,4 +320,12 @@ MockMediaClient::MockMediaClient() = default;
 
 MockMediaClient::~MockMediaClient() = default;
 
+MockVideoEncoderMetricsProvider::MockVideoEncoderMetricsProvider() {
+  DETACH_FROM_SEQUENCE(sequence_checker_);
+}
+
+MockVideoEncoderMetricsProvider::~MockVideoEncoderMetricsProvider() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  MockDestroy();
+}
 }  // namespace media

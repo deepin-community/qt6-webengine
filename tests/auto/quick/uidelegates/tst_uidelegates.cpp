@@ -1,5 +1,5 @@
 // Copyright (C) 2021 The Qt Company Ltd.
-// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
 #include "testwindow.h"
 #include "quickutil.h"
@@ -16,6 +16,8 @@ class tst_UIDelegates : public QObject
 {
     Q_OBJECT
 public:
+    static void initMain();
+
     tst_UIDelegates();
 
 private Q_SLOTS:
@@ -39,9 +41,13 @@ private:
     QScopedPointer<QQmlComponent> m_component;
 };
 
-tst_UIDelegates::tst_UIDelegates()
+void tst_UIDelegates::initMain()
 {
     QtWebEngineQuick::initialize();
+}
+
+tst_UIDelegates::tst_UIDelegates()
+{
     static QQmlEngine *engine = new QQmlEngine(this);
     m_component.reset(new QQmlComponent(engine, this));
     m_component->setData(QByteArrayLiteral("import QtQuick\n"

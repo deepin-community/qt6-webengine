@@ -10,8 +10,8 @@ import 'chrome://resources/polymer/v3_0/paper-ripple/paper-ripple.js';
 import './shared_style.css.js';
 import './strings.m.js';
 
-import {assert} from 'chrome://resources/js/assert_ts.js';
-import {isRTL} from 'chrome://resources/js/util_ts.js';
+import {assert} from 'chrome://resources/js/assert.js';
+import {isRTL} from 'chrome://resources/js/util.js';
 import {microTask, PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {changeFolderOpen, selectFolder} from './actions.js';
@@ -19,7 +19,7 @@ import {BookmarksCommandManagerElement} from './command_manager.js';
 import {FOLDER_OPEN_BY_DEFAULT_DEPTH, MenuSource, ROOT_NODE_ID} from './constants.js';
 import {getTemplate} from './folder_node.html.js';
 import {StoreClientMixin} from './store_client_mixin.js';
-import {BookmarkNode} from './types.js';
+import type {BookmarkNode} from './types.js';
 import {hasChildFolders, isShowingSearch} from './util.js';
 
 const BookmarksFolderNodeElementBase = StoreClientMixin(PolymerElement);
@@ -32,14 +32,6 @@ export interface BookmarksFolderNodeElement {
 }
 
 export class BookmarksFolderNodeElement extends BookmarksFolderNodeElementBase {
-  constructor() {
-    super();
-    // TODO(dizhangg): With KeyboardFocusableScrollers enabled, need
-    // delegatesFocus=true so bookmarks-folder-node shadow root doesn't get
-    // focused.
-    this.attachShadow({mode: 'open', delegatesFocus: true});
-  }
-
   static get is() {
     return 'bookmarks-folder-node';
   }

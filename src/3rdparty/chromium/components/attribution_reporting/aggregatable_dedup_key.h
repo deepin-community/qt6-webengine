@@ -10,8 +10,6 @@
 #include "base/component_export.h"
 #include "base/types/expected.h"
 #include "base/values.h"
-#include "components/attribution_reporting/bounded_list.h"
-#include "components/attribution_reporting/constants.h"
 #include "components/attribution_reporting/filters.h"
 #include "components/attribution_reporting/trigger_registration_error.mojom-forward.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
@@ -35,10 +33,10 @@ struct COMPONENT_EXPORT(ATTRIBUTION_REPORTING) AggregatableDedupKey {
   AggregatableDedupKey(absl::optional<uint64_t> dedup_key, FilterPair);
 
   base::Value::Dict ToJson() const;
-};
 
-using AggregatableDedupKeyList =
-    BoundedList<AggregatableDedupKey, kMaxAggregatableDedupKeys>;
+  friend bool operator==(const AggregatableDedupKey&,
+                         const AggregatableDedupKey&) = default;
+};
 
 }  // namespace attribution_reporting
 

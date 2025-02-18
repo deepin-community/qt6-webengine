@@ -6,12 +6,12 @@ default	rel
 %define XMMWORD
 %define YMMWORD
 %define ZMMWORD
+%define _CET_ENDBR
 
 %ifdef BORINGSSL_PREFIX
 %include "boringssl_prefix_symbols_nasm.inc"
 %endif
-section	.data data align=8
-
+section	.rdata rdata align=8
 
 ALIGN	16
 one:
@@ -70,7 +70,7 @@ GFMUL:
 	vpxor	xmm2,xmm3,xmm4
 
 	vpxor	xmm0,xmm2,xmm5
-	DB	0F3h,0C3h		;repret
+	ret
 
 
 global	aesgcmsiv_htable_init
@@ -86,6 +86,7 @@ $L$SEH_begin_aesgcmsiv_htable_init:
 
 
 
+_CET_ENDBR
 	vmovdqa	xmm0,XMMWORD[rsi]
 	vmovdqa	xmm1,xmm0
 	vmovdqa	XMMWORD[rdi],xmm0
@@ -105,7 +106,7 @@ $L$SEH_begin_aesgcmsiv_htable_init:
 	vmovdqa	XMMWORD[112+rdi],xmm0
 	mov	rdi,QWORD[8+rsp]	;WIN64 epilogue
 	mov	rsi,QWORD[16+rsp]
-	DB	0F3h,0C3h		;repret
+	ret
 
 $L$SEH_end_aesgcmsiv_htable_init:
 global	aesgcmsiv_htable6_init
@@ -121,6 +122,7 @@ $L$SEH_begin_aesgcmsiv_htable6_init:
 
 
 
+_CET_ENDBR
 	vmovdqa	xmm0,XMMWORD[rsi]
 	vmovdqa	xmm1,xmm0
 	vmovdqa	XMMWORD[rdi],xmm0
@@ -136,7 +138,7 @@ $L$SEH_begin_aesgcmsiv_htable6_init:
 	vmovdqa	XMMWORD[80+rdi],xmm0
 	mov	rdi,QWORD[8+rsp]	;WIN64 epilogue
 	mov	rsi,QWORD[16+rsp]
-	DB	0F3h,0C3h		;repret
+	ret
 
 $L$SEH_end_aesgcmsiv_htable6_init:
 global	aesgcmsiv_htable_polyval
@@ -154,11 +156,12 @@ $L$SEH_begin_aesgcmsiv_htable_polyval:
 
 
 
+_CET_ENDBR
 	test	rdx,rdx
 	jnz	NEAR $L$htable_polyval_start
 	mov	rdi,QWORD[8+rsp]	;WIN64 epilogue
 	mov	rsi,QWORD[16+rsp]
-	DB	0F3h,0C3h		;repret
+	ret
 
 $L$htable_polyval_start:
 	vzeroall
@@ -366,7 +369,7 @@ $L$htable_polyval_out:
 	vzeroupper
 	mov	rdi,QWORD[8+rsp]	;WIN64 epilogue
 	mov	rsi,QWORD[16+rsp]
-	DB	0F3h,0C3h		;repret
+	ret
 
 $L$SEH_end_aesgcmsiv_htable_polyval:
 global	aesgcmsiv_polyval_horner
@@ -384,11 +387,12 @@ $L$SEH_begin_aesgcmsiv_polyval_horner:
 
 
 
+_CET_ENDBR
 	test	rcx,rcx
 	jnz	NEAR $L$polyval_horner_start
 	mov	rdi,QWORD[8+rsp]	;WIN64 epilogue
 	mov	rsi,QWORD[16+rsp]
-	DB	0F3h,0C3h		;repret
+	ret
 
 $L$polyval_horner_start:
 
@@ -412,7 +416,7 @@ $L$polyval_horner_loop:
 	vmovdqa	XMMWORD[rdi],xmm0
 	mov	rdi,QWORD[8+rsp]	;WIN64 epilogue
 	mov	rsi,QWORD[16+rsp]
-	DB	0F3h,0C3h		;repret
+	ret
 
 $L$SEH_end_aesgcmsiv_polyval_horner:
 global	aes128gcmsiv_aes_ks
@@ -428,6 +432,7 @@ $L$SEH_begin_aes128gcmsiv_aes_ks:
 
 
 
+_CET_ENDBR
 	vmovdqu	xmm1,XMMWORD[rdi]
 	vmovdqa	XMMWORD[rsi],xmm1
 
@@ -477,7 +482,7 @@ $L$ks128_loop:
 	vmovdqa	XMMWORD[32+rsi],xmm1
 	mov	rdi,QWORD[8+rsp]	;WIN64 epilogue
 	mov	rsi,QWORD[16+rsp]
-	DB	0F3h,0C3h		;repret
+	ret
 
 $L$SEH_end_aes128gcmsiv_aes_ks:
 global	aes256gcmsiv_aes_ks
@@ -493,6 +498,7 @@ $L$SEH_begin_aes256gcmsiv_aes_ks:
 
 
 
+_CET_ENDBR
 	vmovdqu	xmm1,XMMWORD[rdi]
 	vmovdqu	xmm3,XMMWORD[16+rdi]
 	vmovdqa	XMMWORD[rsi],xmm1
@@ -534,7 +540,7 @@ $L$ks256_loop:
 	vmovdqa	XMMWORD[32+rsi],xmm1
 	mov	rdi,QWORD[8+rsp]	;WIN64 epilogue
 	mov	rsi,QWORD[16+rsp]
-	DB	0F3h,0C3h		;repret
+	ret
 
 global	aes128gcmsiv_aes_ks_enc_x1
 
@@ -551,6 +557,7 @@ $L$SEH_begin_aes128gcmsiv_aes_ks_enc_x1:
 
 
 
+_CET_ENDBR
 	vmovdqa	xmm1,XMMWORD[rcx]
 	vmovdqa	xmm4,XMMWORD[rdi]
 
@@ -686,7 +693,7 @@ $L$SEH_begin_aes128gcmsiv_aes_ks_enc_x1:
 	vmovdqa	XMMWORD[rsi],xmm4
 	mov	rdi,QWORD[8+rsp]	;WIN64 epilogue
 	mov	rsi,QWORD[16+rsp]
-	DB	0F3h,0C3h		;repret
+	ret
 
 $L$SEH_end_aes128gcmsiv_aes_ks_enc_x1:
 global	aes128gcmsiv_kdf
@@ -703,6 +710,7 @@ $L$SEH_begin_aes128gcmsiv_kdf:
 
 
 
+_CET_ENDBR
 
 
 
@@ -789,7 +797,7 @@ $L$SEH_begin_aes128gcmsiv_kdf:
 	vmovdqa	XMMWORD[48+rsi],xmm12
 	mov	rdi,QWORD[8+rsp]	;WIN64 epilogue
 	mov	rsi,QWORD[16+rsp]
-	DB	0F3h,0C3h		;repret
+	ret
 
 $L$SEH_end_aes128gcmsiv_kdf:
 global	aes128gcmsiv_enc_msg_x4
@@ -808,11 +816,12 @@ $L$SEH_begin_aes128gcmsiv_enc_msg_x4:
 
 
 
+_CET_ENDBR
 	test	r8,r8
 	jnz	NEAR $L$128_enc_msg_x4_start
 	mov	rdi,QWORD[8+rsp]	;WIN64 epilogue
 	mov	rsi,QWORD[16+rsp]
-	DB	0F3h,0C3h		;repret
+	ret
 
 $L$128_enc_msg_x4_start:
 	push	r12
@@ -978,7 +987,7 @@ $L$128_enc_msg_x4_out:
 
 	mov	rdi,QWORD[8+rsp]	;WIN64 epilogue
 	mov	rsi,QWORD[16+rsp]
-	DB	0F3h,0C3h		;repret
+	ret
 
 $L$SEH_end_aes128gcmsiv_enc_msg_x4:
 global	aes128gcmsiv_enc_msg_x8
@@ -997,11 +1006,12 @@ $L$SEH_begin_aes128gcmsiv_enc_msg_x8:
 
 
 
+_CET_ENDBR
 	test	r8,r8
 	jnz	NEAR $L$128_enc_msg_x8_start
 	mov	rdi,QWORD[8+rsp]	;WIN64 epilogue
 	mov	rsi,QWORD[16+rsp]
-	DB	0F3h,0C3h		;repret
+	ret
 
 $L$128_enc_msg_x8_start:
 	push	r12
@@ -1247,7 +1257,7 @@ $L$128_enc_msg_x8_out:
 
 	mov	rdi,QWORD[8+rsp]	;WIN64 epilogue
 	mov	rsi,QWORD[16+rsp]
-	DB	0F3h,0C3h		;repret
+	ret
 
 $L$SEH_end_aes128gcmsiv_enc_msg_x8:
 global	aes128gcmsiv_dec
@@ -1267,23 +1277,25 @@ $L$SEH_begin_aes128gcmsiv_dec:
 
 
 
+_CET_ENDBR
 	test	r9,~15
 	jnz	NEAR $L$128_dec_start
 	mov	rdi,QWORD[8+rsp]	;WIN64 epilogue
 	mov	rsi,QWORD[16+rsp]
-	DB	0F3h,0C3h		;repret
+	ret
 
 $L$128_dec_start:
 	vzeroupper
 	vmovdqa	xmm0,XMMWORD[rdx]
+
+
+	vmovdqu	xmm15,XMMWORD[16+rdx]
+	vpor	xmm15,xmm15,XMMWORD[OR_MASK]
 	mov	rax,rdx
 
 	lea	rax,[32+rax]
 	lea	rcx,[32+rcx]
 
-
-	vmovdqu	xmm15,XMMWORD[r9*1+rdi]
-	vpor	xmm15,xmm15,XMMWORD[OR_MASK]
 	and	r9,~15
 
 
@@ -1754,7 +1766,7 @@ $L$128_dec_out:
 	vmovdqu	XMMWORD[rdx],xmm0
 	mov	rdi,QWORD[8+rsp]	;WIN64 epilogue
 	mov	rsi,QWORD[16+rsp]
-	DB	0F3h,0C3h		;repret
+	ret
 
 $L$SEH_end_aes128gcmsiv_dec:
 global	aes128gcmsiv_ecb_enc_block
@@ -1771,6 +1783,7 @@ $L$SEH_begin_aes128gcmsiv_ecb_enc_block:
 
 
 
+_CET_ENDBR
 	vmovdqa	xmm1,XMMWORD[rdi]
 
 	vpxor	xmm1,xmm1,XMMWORD[rdx]
@@ -1789,7 +1802,7 @@ $L$SEH_begin_aes128gcmsiv_ecb_enc_block:
 
 	mov	rdi,QWORD[8+rsp]	;WIN64 epilogue
 	mov	rsi,QWORD[16+rsp]
-	DB	0F3h,0C3h		;repret
+	ret
 
 $L$SEH_end_aes128gcmsiv_ecb_enc_block:
 global	aes256gcmsiv_aes_ks_enc_x1
@@ -1807,6 +1820,7 @@ $L$SEH_begin_aes256gcmsiv_aes_ks_enc_x1:
 
 
 
+_CET_ENDBR
 	vmovdqa	xmm0,XMMWORD[con1]
 	vmovdqa	xmm15,XMMWORD[mask]
 	vmovdqa	xmm8,XMMWORD[rdi]
@@ -1983,7 +1997,7 @@ $L$SEH_begin_aes256gcmsiv_aes_ks_enc_x1:
 	vmovdqa	XMMWORD[rsi],xmm8
 	mov	rdi,QWORD[8+rsp]	;WIN64 epilogue
 	mov	rsi,QWORD[16+rsp]
-	DB	0F3h,0C3h		;repret
+	ret
 
 $L$SEH_end_aes256gcmsiv_aes_ks_enc_x1:
 global	aes256gcmsiv_ecb_enc_block
@@ -2000,6 +2014,7 @@ $L$SEH_begin_aes256gcmsiv_ecb_enc_block:
 
 
 
+_CET_ENDBR
 	vmovdqa	xmm1,XMMWORD[rdi]
 	vpxor	xmm1,xmm1,XMMWORD[rdx]
 	vaesenc	xmm1,xmm1,XMMWORD[16+rdx]
@@ -2019,7 +2034,7 @@ $L$SEH_begin_aes256gcmsiv_ecb_enc_block:
 	vmovdqa	XMMWORD[rsi],xmm1
 	mov	rdi,QWORD[8+rsp]	;WIN64 epilogue
 	mov	rsi,QWORD[16+rsp]
-	DB	0F3h,0C3h		;repret
+	ret
 
 $L$SEH_end_aes256gcmsiv_ecb_enc_block:
 global	aes256gcmsiv_enc_msg_x4
@@ -2038,11 +2053,12 @@ $L$SEH_begin_aes256gcmsiv_enc_msg_x4:
 
 
 
+_CET_ENDBR
 	test	r8,r8
 	jnz	NEAR $L$256_enc_msg_x4_start
 	mov	rdi,QWORD[8+rsp]	;WIN64 epilogue
 	mov	rsi,QWORD[16+rsp]
-	DB	0F3h,0C3h		;repret
+	ret
 
 $L$256_enc_msg_x4_start:
 	mov	r10,r8
@@ -2234,7 +2250,7 @@ $L$256_enc_msg_x4_loop2:
 $L$256_enc_msg_x4_out:
 	mov	rdi,QWORD[8+rsp]	;WIN64 epilogue
 	mov	rsi,QWORD[16+rsp]
-	DB	0F3h,0C3h		;repret
+	ret
 
 $L$SEH_end_aes256gcmsiv_enc_msg_x4:
 global	aes256gcmsiv_enc_msg_x8
@@ -2253,11 +2269,12 @@ $L$SEH_begin_aes256gcmsiv_enc_msg_x8:
 
 
 
+_CET_ENDBR
 	test	r8,r8
 	jnz	NEAR $L$256_enc_msg_x8_start
 	mov	rdi,QWORD[8+rsp]	;WIN64 epilogue
 	mov	rsi,QWORD[16+rsp]
-	DB	0F3h,0C3h		;repret
+	ret
 
 $L$256_enc_msg_x8_start:
 
@@ -2536,7 +2553,7 @@ $L$256_enc_msg_x8_loop2:
 $L$256_enc_msg_x8_out:
 	mov	rdi,QWORD[8+rsp]	;WIN64 epilogue
 	mov	rsi,QWORD[16+rsp]
-	DB	0F3h,0C3h		;repret
+	ret
 
 
 $L$SEH_end_aes256gcmsiv_enc_msg_x8:
@@ -2557,23 +2574,25 @@ $L$SEH_begin_aes256gcmsiv_dec:
 
 
 
+_CET_ENDBR
 	test	r9,~15
 	jnz	NEAR $L$256_dec_start
 	mov	rdi,QWORD[8+rsp]	;WIN64 epilogue
 	mov	rsi,QWORD[16+rsp]
-	DB	0F3h,0C3h		;repret
+	ret
 
 $L$256_dec_start:
 	vzeroupper
 	vmovdqa	xmm0,XMMWORD[rdx]
+
+
+	vmovdqu	xmm15,XMMWORD[16+rdx]
+	vpor	xmm15,xmm15,XMMWORD[OR_MASK]
 	mov	rax,rdx
 
 	lea	rax,[32+rax]
 	lea	rcx,[32+rcx]
 
-
-	vmovdqu	xmm15,XMMWORD[r9*1+rdi]
-	vpor	xmm15,xmm15,XMMWORD[OR_MASK]
 	and	r9,~15
 
 
@@ -3112,7 +3131,7 @@ $L$256_dec_out:
 	vmovdqu	XMMWORD[rdx],xmm0
 	mov	rdi,QWORD[8+rsp]	;WIN64 epilogue
 	mov	rsi,QWORD[16+rsp]
-	DB	0F3h,0C3h		;repret
+	ret
 
 $L$SEH_end_aes256gcmsiv_dec:
 global	aes256gcmsiv_kdf
@@ -3129,6 +3148,7 @@ $L$SEH_begin_aes256gcmsiv_kdf:
 
 
 
+_CET_ENDBR
 
 
 
@@ -3273,7 +3293,7 @@ $L$SEH_begin_aes256gcmsiv_kdf:
 	vmovdqa	XMMWORD[80+rsi],xmm13
 	mov	rdi,QWORD[8+rsp]	;WIN64 epilogue
 	mov	rsi,QWORD[16+rsp]
-	DB	0F3h,0C3h		;repret
+	ret
 
 $L$SEH_end_aes256gcmsiv_kdf:
 %else

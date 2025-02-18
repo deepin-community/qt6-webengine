@@ -15,6 +15,7 @@
 #include "core/fxcrt/mask.h"
 #include "core/fxcrt/unowned_ptr.h"
 #include "fxjs/cfx_v8.h"
+#include "fxjs/xfa/cfxjse_context.h"
 #include "v8/include/cppgc/persistent.h"
 #include "v8/include/v8-forward.h"
 #include "v8/include/v8-persistent-handle.h"
@@ -24,7 +25,6 @@
 #include "xfa/fxfa/parser/xfa_basic_data.h"
 
 class CFXJSE_Class;
-class CFXJSE_Context;
 class CFXJSE_FormCalcContext;
 class CFXJSE_HostObject;
 class CFXJSE_NodeHelper;
@@ -110,12 +110,28 @@ class CFXJSE_Engine final : public CFX_V8 {
   CFXJSE_Engine(CXFA_Document* pDocument, CJS_Runtime* fxjs_runtime);
   ~CFXJSE_Engine() override;
 
-  void SetEventParam(CXFA_EventParam* param) { m_eventParam = param; }
+  class EventParamScope {
+    CPPGC_STACK_ALLOCATED();
+
+   public:
+    EventParamScope(CFXJSE_Engine* pEngine,
+                    CXFA_Node* pTarget,
+                    CXFA_EventParam* pEventParam);
+    ~EventParamScope();
+
+   private:
+    UnownedPtr<CFXJSE_Engine> m_pEngine;
+    UnownedPtr<CXFA_Node> m_pPrevTarget;
+    UnownedPtr<CXFA_EventParam> m_pPrevEventParam;
+  };
+  friend class EventParamScope;
+
+  CXFA_Node* GetEventTarget() const { return m_pTarget; }
   CXFA_EventParam* GetEventParam() const { return m_eventParam; }
-  bool RunScript(CXFA_Script::Type eScriptType,
-                 WideStringView wsScript,
-                 CFXJSE_Value* pRetValue,
-                 CXFA_Object* pThisObject);
+
+  CFXJSE_Context::ExecutionResult RunScript(CXFA_Script::Type eScriptType,
+                                            WideStringView wsScript,
+                                            CXFA_Object* pThisObject);
 
   absl::optional<ResolveResult> ResolveObjects(CXFA_Object* refObject,
                                                WideStringView wsExpression,
@@ -183,8 +199,11 @@ class CFXJSE_Engine final : public CFX_V8 {
   CXFA_Script::Type m_eScriptType = CXFA_Script::Type::Unknown;
   // |m_mapObjectToValue| is what ensures the v8 object bound to a
   // CJX_Object remains valid for the lifetime of the engine.
-  std::map<CJX_Object*, v8::Global<v8::Object>> m_mapObjectToObject;
-  std::map<CJX_Object*, std::unique_ptr<CFXJSE_Context>> m_mapVariableToContext;
+  std::map<cppgc::Persistent<CJX_Object>, v8::Global<v8::Object>>
+      m_mapObjectToObject;
+  std::map<cppgc::Persistent<CJX_Object>, std::unique_ptr<CFXJSE_Context>>
+      m_mapVariableToContext;
+  cppgc::Persistent<CXFA_Node> m_pTarget;
   UnownedPtr<CXFA_EventParam> m_eventParam;
   std::vector<cppgc::Persistent<CXFA_Node>> m_upObjectArray;
   UnownedPtr<std::vector<cppgc::Persistent<CXFA_Node>>> m_pScriptNodeArray;

@@ -27,11 +27,13 @@ BrowserWindow *Browser::createHiddenWindow(bool offTheRecord)
         m_profile->settings()->setAttribute(QWebEngineSettings::DnsPrefetchEnabled, true);
         m_profile->settings()->setAttribute(QWebEngineSettings::LocalContentCanAccessRemoteUrls, true);
         m_profile->settings()->setAttribute(QWebEngineSettings::LocalContentCanAccessFileUrls, false);
+        m_profile->settings()->setAttribute(QWebEngineSettings::ScreenCaptureEnabled, true);
         QObject::connect(m_profile.get(), &QWebEngineProfile::downloadRequested,
                          &m_downloadManagerWidget, &DownloadManagerWidget::downloadRequested);
     }
     auto profile = !offTheRecord ? m_profile.get() : QWebEngineProfile::defaultProfile();
     auto mainWindow = new BrowserWindow(this, profile, false);
+    profile->setPersistentPermissionsPolicy(QWebEngineProfile::PersistentPermissionsPolicy::AskEveryTime);
     m_windows.append(mainWindow);
     QObject::connect(mainWindow, &QObject::destroyed, [this, mainWindow]() {
         m_windows.removeOne(mainWindow);

@@ -18,11 +18,10 @@ int StubPasswordManagerDriver::GetId() const {
 void StubPasswordManagerDriver::SetPasswordFillData(
     const autofill::PasswordFormFillData& form_data) {}
 
-void StubPasswordManagerDriver::PasswordFieldHasNoAssociatedUsername(
-    autofill::FieldRendererId password_element_renderer_id) {}
-
 void StubPasswordManagerDriver::GeneratedPasswordAccepted(
     const std::u16string& password) {}
+
+void StubPasswordManagerDriver::FocusNextFieldAfterPasswords() {}
 
 void StubPasswordManagerDriver::FillSuggestion(const std::u16string& username,
                                                const std::u16string& password) {
@@ -44,7 +43,7 @@ void StubPasswordManagerDriver::ClearPreviewedForm() {
 
 void StubPasswordManagerDriver::SetSuggestionAvailability(
     autofill::FieldRendererId generation_element_id,
-    const autofill::mojom::AutofillState state) {}
+    autofill::mojom::AutofillSuggestionAvailability suggestion_availability) {}
 
 PasswordGenerationFrameHelper*
 StubPasswordManagerDriver::GetPasswordGenerationHelper() {
@@ -68,12 +67,16 @@ bool StubPasswordManagerDriver::CanShowAutofillUi() const {
   return true;
 }
 
-::ui::AXTreeID StubPasswordManagerDriver::GetAxTreeId() const {
-  return {};
+int StubPasswordManagerDriver::GetFrameId() const {
+  return GetId();
 }
 
 const GURL& StubPasswordManagerDriver::GetLastCommittedURL() const {
   return GURL::EmptyGURL();
+}
+
+base::WeakPtr<PasswordManagerDriver> StubPasswordManagerDriver::AsWeakPtr() {
+  return weak_ptr_factory_.GetWeakPtr();
 }
 
 }  // namespace password_manager

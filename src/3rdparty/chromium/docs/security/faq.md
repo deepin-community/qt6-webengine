@@ -47,6 +47,35 @@ deployments should always track the latest stable release. When you do this,
 there is no need to further assess the risk of Chromium vulnerabilities: we
 strive to fix vulnerabilities quickly and release often.
 
+<a name="TOC-How-can-I-know-which-fixes-to-include-in-my-downstream-project-"></a>
+### How can I know which fixes to include in my downstream project?
+
+Chrome is built with mitigations and hardening which aim to prevent or reduce
+the impact of security issues. We classify bugs as security issues if they are
+known to affect a version and configuration of Chrome that we ship to the
+public. Some classes of bug might present as security issues if Chrome was
+compiled with different flags, or linked against a different C++ standard
+library, but do not with the toolchain and configuration that we use to build
+Chrome. We discuss some of these cases elsewhere in this FAQ.
+
+If we become aware of them, these issues may be triaged as `Type=Bug-Security,
+Security_Impact=None` or as `Type=Bug` because they do not affect the production
+version of Chrome. They may or may not be immediately visible to the public in
+the bug tracker, and may or may not be identified as security issues. If fixes
+are landed, they may or may not be merged from HEAD to a release branch. Chrome
+will only label, fix and merge security issues in Chrome, but attackers can
+still analyze public issues, or commits in the Chromium project to identify bugs
+that might be exploitable in other contexts.
+
+Chromium embedders and other downstream projects may build with different
+compilers, compile options, target operating systems, standard library, or
+additional software components. It is possible that some issues Chrome
+classifies as functional issues will manifest as security issues in a product
+embedding Chromium - it is the responsibility of any such project to understand
+what code they are shipping, and how it is compiled. We recommend using Chrome's
+[configuration](https://source.chromium.org/chromium/chromium/src/+/main:build/config/)
+whenever possible.
+
 <a name="TOC-Can-I-see-these-security-bugs-so-that-I-can-back-port-the-fixes-to-my-downstream-project-"></a>
 ### Can I see these security bugs so that I can back-port the fixes to my downstream project?
 
@@ -198,6 +227,35 @@ demonstrate how to bypass one of these protections then we’d like to hear abou
 it. You can see if a Safe Browsing check happened by opening
 chrome://safe-browsing before starting the download.
 
+<a name="TOC-what-about-dangerous-file-types-not-listed-in-the-file-type-policy-"></a>
+### What about dangerous file types not listed in the file type policy?
+
+The [file type
+policy](https://source.chromium.org/chromium/chromium/src/+/main:components/safe_browsing/content/resources/download_file_types.asciipb?q=download_file_types.asciipb%20-f:%2Fgen%2F&ss=chromium)
+controls some details of which security checks to enable for a given file
+extension. Most importantly, it controls whether we contact Safe Browsing about
+a download, and whether we show a warning for all downloads of that file type.
+Starting in M74, the default for unknown file types has been to contact Safe
+Browsing. This prevents large-scale abuse from a previously unknown file type.
+Starting in M105, showing a warning for all downloads of an extension became
+reserved for exceptionally dangerous file types that can compromise a user
+without any user interaction with the file (e.g. DLL hijacking). If you discover
+a new file type that meets that condition, we’d like to hear about it.
+
+<a name="TOC-i-found-a-local-file-or-directory-that-may-be-security-sensitive-and-is-not-blocked-by-file-system-access-api-"></a>
+### I found a local file or directory that may be security-sensitive and is not blocked by File System Access API - is this a security bug?
+
+The File System Access API maintains a [blocklist](https://source.chromium.org/chromium/chromium/src/+/main:chrome/browser/file_system_access/chrome_file_system_access_permission_context.cc;l=266-346)
+of directories and files that may be sensitive such as systems file, and if user
+chooses a file or a directory matching the list on a site using File System
+Access API, the access is blocked.
+
+The blocklist is designed to help mitigate accidental granting by users by
+listing well-known, security-sensitive locations, as a defense in-depth
+strategy. Therefore, the blocklist coverage is not deemed as a security bug,
+especially as it requires user's explicit selection on a file or a directory
+from the file picker.
+
 <a name="TOC-I-can-download-a-file-with-an-unsafe-extension-but-a-different-extension-or-file-type-is-shown-to-the-user-"></a>
 ### I can download a file with an unsafe extension but a different extension or file type is shown to the user - is this a security bug?
 <a name="TOC-Extensions-for-downloaded-files-are-not-shown-in-a-file-dialog-"></a>
@@ -275,6 +333,8 @@ some previously-stored state, such as browsing history.
 No. Chromium once contained a reflected XSS filter called the [XSSAuditor](https://www.chromium.org/developers/design-documents/xss-auditor)
 that was a best-effort second line of defense against reflected XSS flaws found
 in web sites. The XSS Auditor was [removed in Chrome 78](https://groups.google.com/a/chromium.org/forum/#!msg/blink-dev/TuYw-EZhO9g/blGViehIAwAJ).
+Consequently, Chromium no longer takes any special action in response to an
+X-XSS-Protection header.
 
 <a name="TOC-Are-denial-of-service-issues-considered-security-bugs-"></a>
 ### Are denial of service issues considered security bugs?
@@ -371,11 +431,13 @@ but users are otherwise free to invoke script against pages using either the URL
 bar or the DevTools console.
 
 <a name="TOC-Does-executing-JavaScript-from-a-bookmark-mean-there-s-an-XSS-vulnerability-"></a>
-### Does executing JavaScript from a bookmark mean there's an XSS vulnerability?
+### Does executing JavaScript from a bookmark or the Home button mean there's an XSS vulnerability?
 
 No. Chromium allows users to create bookmarks to JavaScript URLs that will run
 on the currently-loaded page when the user clicks the bookmark; these are called
 [bookmarklets](https://en.wikipedia.org/wiki/Bookmarklet).
+
+Similarly, the Home button may be configured to invoke a JavaScript URL when clicked.
 
 <a name="TOC-Does-executing-JavaScript-in-a-PDF-file-mean-there-s-an-XSS-vulnerability-"></a>
 ### Does executing JavaScript in a PDF file mean there's an XSS vulnerability?
@@ -416,8 +478,40 @@ This topic has been moved to the [Extensions Security FAQ](https://chromium.goog
 
 Null pointer dereferences with consistent, small, fixed offsets are not considered
 security bugs. A read or write to the NULL page results in a non-exploitable crash.
-If the offset is larger than a page, or if there's uncertainty about whether the
+If the offset is larger than 32KB, or if there's uncertainty about whether the
 offset is controllable, it is considered a security bug.
+
+All supported Chrome platforms do not allow mapping memory in at least the first
+32KB of address space:
+
+- Windows: Windows 8 and later disable mapping the first 64k of address space;
+  see page 33 of [Exploit Mitigation Improvements in Windows
+  8][windows-null-page-mapping] [[archived]][windows-null-page-mapping-archived].
+- Mac and iOS: by default, the linker reserves the first 4GB of address space
+  with the `__PAGEZERO` segment for 64-bit binaries.
+- Linux: the default `mmap_min_addr` value for supported distributions is at
+  least 64KB.
+- Android: [CTS][android-mmap_min_addr] enforces that `mmap_min_addr` is set to
+  exactly 32KB.
+- ChromeOS: the [ChromeOS kernels][chromeos-mmap_min_addr] set the default
+  `mmap_min_addr` value to at least 32KB.
+- Fuchsia: the [userspace base address][fuchsia-min-base-address] begins at 2MB;
+  this is configured per-platform but set to the same value on all platforms.
+
+[windows-null-page-mapping]: https://media.blackhat.com/bh-us-12/Briefings/M_Miller/BH_US_12_Miller_Exploit_Mitigation_Slides.pdf
+[windows-null-page-mapping-archived]: https://web.archive.org/web/20230608131033/https://media.blackhat.com/bh-us-12/Briefings/M_Miller/BH_US_12_Miller_Exploit_Mitigation_Slides.pdf
+[android-mmap_min_addr]: https://android.googlesource.com/platform/cts/+/496152a250d10e629d31ac90b2e828ad77b8d70a/tests/tests/security/src/android/security/cts/KernelSettingsTest.java#43
+[chromeos-mmap_min_addr]: https://source.chromium.org/search?q=%22CONFIG_DEFAULT_MMAP_MIN_ADDR%3D%22%20path:chromeos%2F&ss=chromiumos%2Fchromiumos%2Fcodesearch:src%2Fthird_party%2Fkernel%2F
+[fuchsia-min-base-address]: https://cs.opensource.google/fuchsia/fuchsia/+/main:zircon/kernel/arch/arm64/include/arch/kernel_aspace.h;l=20;drc=eeceea01eee2615de74b1339bcf6e6c2c6f72769
+
+<a name="TOC-Indexing-a-container-out-of-bounds-hits-a-libcpp-verbose-abort--is-this-a-security-bug-"></a>
+### Indexing a container out of bounds hits a __libcpp_verbose_abort, is this a security bug?
+
+`std::vector` and other containers are now protected by libc++ hardening on all
+platforms [crbug.com/1335422](https://crbug.com/1335422). Indexing these
+containers out of bounds is now a safe crash - if a proof-of-concept reliably
+causes a crash in production builds we consider these to be functional rather than
+security issues.
 
 <a name="TOC-Are-stack-overflows-considered-security-bugs-"></a>
 ### Are stack overflows considered security bugs?
@@ -467,7 +561,7 @@ of user expectations, we will attempt to remedy these policies and we will apply
 the guidance laid out in this document to any newly added policies.
 
 See the [Web Platform Security
-guidelines](https://chromium.googlesource.com/chromium/src/+/master/docs/security/web-platfom-security-guidelines.md#enterprise-policies)
+guidelines](https://chromium.googlesource.com/chromium/src/+/main/docs/security/web-platform-security-guidelines.md#enterprise-policies)
 for more information on how enterprise policies should interact with Web
 Platform APIs.
 
@@ -560,7 +654,7 @@ that the current server is not the true server.
 
 To enable certificate chain validation, Chrome has access to two stores of trust
 anchors (i.e., certificates that are empowered as issuers). One trust anchor
-store is for authenticating public internet servers, and depending on the 
+store is for authenticating public internet servers, and depending on the
 version of Chrome being used and the platform it is running on, the
 [Chrome Root Store](https://chromium.googlesource.com/chromium/src/+/main/net/data/ssl/chrome_root_store/faq.md#what-is-the-chrome-root-store)
 might be in use. The private store contains certificates installed by the user
@@ -614,7 +708,7 @@ allows stuck users to still, for example, conduct searches and access Chrome's
 homepage to hopefully get unstuck.
 
 In order to determine whether key pinning is active, try loading
-[https://pinningtest.appspot.com](https://pinningtest.appspot.com). If key
+[https://pinning-test.badssl.com/](https://pinning-test.badssl.com/). If key
 pinning is active the load will _fail_ with a pinning error.
 
 <a name="TOC-How-does-certificate-transparency-interact-with-local-proxies-and-filters-"></a>
@@ -647,7 +741,7 @@ securely, it cannot actually provide any guarantee. (After all, a MITM attacker
 could have modified the code, if it was not transported securely.)
 
 See the [Web Platform Security
-guidelines](https://chromium.googlesource.com/chromium/src/+/master/docs/security/web-platform-security-guidelines.md#encryption)
+guidelines](https://chromium.googlesource.com/chromium/src/+/main/docs/security/web-platform-security-guidelines.md#encryption)
 for more information on security guidelines applicable to web platform APIs.
 
 <a name="TOC-Which-origins-are-secure-"></a>
@@ -675,25 +769,25 @@ for more details.
 ### What's the story with certificate revocation?
 
 Chrome's primary mechanism for checking certificate revocation status is
-[CRLsets](https://dev.chromium.org/Home/chromium-security/crlsets). 
+[CRLsets](https://dev.chromium.org/Home/chromium-security/crlsets).
 Additionally, by default, [stapled Online Certificate Status Protocol (OCSP)
 responses](https://en.wikipedia.org/wiki/OCSP_stapling) are honored.
 
 "Online" certificate revocation status checks using Certificate Revocation
 List (CRL) or OCSP URLs included in certificates are disabled by default. This
 is because unless a client, like Chrome, refuses to connect to a website if it
-cannot get a valid response, online checks offer limited security value. 
+cannot get a valid response, online checks offer limited security value.
 
 Unfortunately, there are many widely-prevalent causes for why a client
 might be unable to get a valid certificate revocation status response to
 include:
 * timeouts (e.g., an OCSP responder is online but does not respond within an
-  acceptable time limit), 
-* availability issues (e.g., the OCSP responder is offline), 
-* invalid responses (e.g., a "stale" or malformed status response), and 
-* local network attacks misrouting traffic or blocking responses. 
+  acceptable time limit),
+* availability issues (e.g., the OCSP responder is offline),
+* invalid responses (e.g., a "stale" or malformed status response), and
+* local network attacks misrouting traffic or blocking responses.
 
-Additional concern with OCSP checks are related to privacy. OCSP 
+Additional concern with OCSP checks are related to privacy. OCSP
 requests reveal details of individuals' browsing history to the operator of the
 OCSP responder (i.e., a third party). These details can be exposed accidentally
 (e.g., via data breach of logs) or intentionally (e.g., via subpoena). Chrome
@@ -811,11 +905,11 @@ specific:
      encrypted on disk with a key that is then stored in the user's Keychain.
      See [Issue 466638](https://crbug.com/466638) for further explanation.
 *    On Linux, Chrome previously stored credentials directly in the user's
-     Gnome Keyring or KWallet, but for technical reasons, it has switched to
+     Gnome Secret Service or KWallet, but for technical reasons, it has switched to
      storing the credentials in "Login Data" in the Chrome user's profile directory,
      but encrypted on disk with a key that is then stored in the user's Gnome
-     Keyring or KWallet. If there is no available Keyring or KWallet, the data is
-     not encrypted when stored.
+     Secret Service or KWallet. If there is no available Secret Service or KWallet,
+     the data is not encrypted when stored.
 *    On iOS, passwords are currently stored directly in the iOS Keychain and
      referenced from the rest of the metadata stored in a separate DB. The plan
      there is to just store them in plain text in the DB, because iOS gives
@@ -848,6 +942,22 @@ FAQ](https://chromium.googlesource.com/chromium/src/+/main/docs/security/service
 ### What is the security story for Extensions?
 
 See our dedicated [Extensions Security FAQ](https://chromium.googlesource.com/chromium/src/+/main/extensions/docs/security_faq.md).
+
+<a name="TOC-What-is-the-security-model-for-Chrome-Custom-Tabs-"></a>
+### What's the security model for Chrome Custom Tabs?
+
+See our [Chrome Custom Tabs security FAQ](custom-tabs-faq.md).
+
+<a name="TOC-Are-all-Chrome-updates-important--"></a>
+### Are all Chrome updates important?
+
+Yes - see [our updates FAQ](updates.md).
+
+<a name="TOC-What-older-Chrome-versions-are-supported--"></a>
+### What older Chrome versions are supported?
+
+We always recommend being on the most recent Chrome stable version - see
+[our updates FAQ](updates.md).
 
 <a name="TOC-Im-making-a-Chromium-based-browser-how-should-I-secure-it-"></a>
 ### I'm making a Chromium-based browser. How should I secure it?

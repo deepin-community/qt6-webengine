@@ -21,9 +21,8 @@
 #include "core/fxge/cfx_renderdevice.h"
 #include "core/fxge/cfx_substfont.h"
 #include "core/fxge/dib/cfx_dibitmap.h"
-#include "core/fxge/freetype/fx_freetype.h"
 #include "core/fxge/text_char_pos.h"
-#include "third_party/base/span.h"
+#include "third_party/base/containers/span.h"
 
 #if defined(OS_IOS)
 #include <CoreGraphics/CoreGraphics.h>
@@ -164,10 +163,6 @@ bool CFX_AggDeviceDriver::DrawDeviceText(
 }
 
 }  // namespace pdfium
-
-void CFX_GlyphCache::InitPlatform() {}
-
-void CFX_GlyphCache::DestroyPlatform() {}
 
 std::unique_ptr<CFX_GlyphBitmap> CFX_GlyphCache::RenderGlyph_Nativetext(
     const CFX_Font* pFont,

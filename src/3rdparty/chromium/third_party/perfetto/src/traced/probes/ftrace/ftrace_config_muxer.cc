@@ -523,7 +523,7 @@ EventFilter FtraceConfigMuxer::BuildSyscallFilter(
   }
 
   for (const std::string& syscall : request.syscall_events()) {
-    base::Optional<size_t> id = syscalls_.GetByName(syscall);
+    std::optional<size_t> id = syscalls_.GetByName(syscall);
     if (!id.has_value()) {
       PERFETTO_ELOG("Can't enable %s, syscall not known", syscall.c_str());
       continue;
@@ -574,7 +574,7 @@ size_t ComputeCpuBufferSizeInPages(size_t requested_buffer_size_kb) {
     requested_buffer_size_kb = kMaxPerCpuBufferSizeKb;
   }
 
-  size_t pages = requested_buffer_size_kb / (base::kPageSize / 1024);
+  size_t pages = requested_buffer_size_kb / (base::GetSysPageSize() / 1024);
   if (pages == 0)
     return 1;
 
@@ -740,11 +740,16 @@ bool FtraceConfigMuxer::SetupConfig(FtraceConfigId id,
     }
     current_state_.funcgraph_on = true;
   }
+  const auto& compact_format = table_->compact_sched_format();
+  auto compact_sched = CreateCompactSchedConfig(
+      request, filter.IsEventEnabled(compact_format.sched_switch.event_id),
+      compact_format);
+  if (errors && !compact_format.format_valid) {
+    errors->failed_ftrace_events.push_back(
+        "perfetto/compact_sched (unexpected sched event format)");
+  }
 
-  auto compact_sched =
-      CreateCompactSchedConfig(request, table_->compact_sched_format());
-
-  base::Optional<FtracePrintFilterConfig> ftrace_print_filter;
+  std::optional<FtracePrintFilterConfig> ftrace_print_filter;
   if (request.has_print_filter()) {
     ftrace_print_filter =
         FtracePrintFilterConfig::Create(request.print_filter(), table_);

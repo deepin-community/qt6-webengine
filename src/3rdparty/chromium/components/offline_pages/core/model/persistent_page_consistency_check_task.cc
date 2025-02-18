@@ -112,22 +112,6 @@ PersistentPageConsistencyCheckSync(
             publish_ids_of_deleted_pages};
   }
 
-  if (page_ids_to_delete.size() > 0) {
-    UMA_HISTOGRAM_COUNTS_1M(
-        "OfflinePages.ConsistencyCheck.Persistent.ExpiredEntryCount",
-        base::saturated_cast<int32_t>(page_ids_to_delete.size()));
-  }
-  if (pages_found_missing.size() > 0) {
-    UMA_HISTOGRAM_COUNTS_1M(
-        "OfflinePages.ConsistencyCheck.Persistent.MissingFileCount",
-        base::saturated_cast<int32_t>(pages_found_missing.size()));
-  }
-  if (pages_reappeared.size() > 0) {
-    UMA_HISTOGRAM_COUNTS_1M(
-        "OfflinePages.ConsistencyCheck.Persistent.ReappearedFileCount",
-        base::saturated_cast<int32_t>(pages_reappeared.size()));
-  }
-
   if (!transaction.Commit())
     return {SyncOperationResult::TRANSACTION_COMMIT_ERROR,
             publish_ids_of_deleted_pages};
@@ -182,8 +166,6 @@ void PersistentPageConsistencyCheckTask::Run() {
 
 void PersistentPageConsistencyCheckTask::OnPersistentPageConsistencyCheckDone(
     CheckResult check_result) {
-  UMA_HISTOGRAM_ENUMERATION("OfflinePages.ConsistencyCheck.Persistent.Result",
-                            check_result.result);
   // If sync operation failed, invoke the callback with an empty list of
   // download ids.
   if (check_result.result != SyncOperationResult::SUCCESS) {

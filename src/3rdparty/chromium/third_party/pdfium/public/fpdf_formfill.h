@@ -8,7 +8,7 @@
 #define PUBLIC_FPDF_FORMFILL_H_
 
 // clang-format off
-// NOLINTNEXTLINE(build/include)
+// NOLINTNEXTLINE(build/include_directory)
 #include "fpdfview.h"
 
 // These values are return values for a public API, so should not be changed
@@ -1912,16 +1912,16 @@ FPDF_EXPORT void FPDF_CALLCONV FPDF_FFLDraw(FPDF_FORMHANDLE hHandle,
                                             int rotate,
                                             int flags);
 
-#if defined(_SKIA_SUPPORT_)
-FPDF_EXPORT void FPDF_CALLCONV FPDF_FFLRecord(FPDF_FORMHANDLE hHandle,
-                                              FPDF_RECORDER recorder,
-                                              FPDF_PAGE page,
-                                              int start_x,
-                                              int start_y,
-                                              int size_x,
-                                              int size_y,
-                                              int rotate,
-                                              int flags);
+#if defined(PDF_USE_SKIA)
+FPDF_EXPORT void FPDF_CALLCONV FPDF_FFLDrawSkia(FPDF_FORMHANDLE hHandle,
+                                                FPDF_SKIA_CANVAS canvas,
+                                                FPDF_PAGE page,
+                                                int start_x,
+                                                int start_y,
+                                                int size_x,
+                                                int size_y,
+                                                int rotate,
+                                                int flags);
 #endif
 
 /*

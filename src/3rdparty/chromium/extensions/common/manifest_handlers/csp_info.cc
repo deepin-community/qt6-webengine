@@ -5,11 +5,11 @@
 #include "extensions/common/manifest_handlers/csp_info.h"
 
 #include <memory>
+#include <string_view>
 #include <utility>
 
 #include "base/feature_list.h"
 #include "base/no_destructor.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
@@ -43,18 +43,11 @@ static const char kDefaultMV3CSP[] = "script-src 'self';";
 
 // The minimum CSP to be used in order to prevent remote scripts.
 static const char kMinimumMV3CSP[] =
-    "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';";
+    "script-src 'self' 'wasm-unsafe-eval' 'inline-speculation-rules'; "
+    "object-src 'self';";
 // For unpacked extensions, we additionally allow the use of localhost files to
 // aid in rapid local development.
 static const char kMinimumUnpackedMV3CSP[] =
-    "script-src 'self' 'wasm-unsafe-eval' http://localhost:* "
-    "http://127.0.0.1:*; object-src 'self';";
-
-// Variants to support inline-specluation-rules. See https://crbug.com/1382361.
-static const char kMinimumMV3CSPWithInlineSpeculationRules[] =
-    "script-src 'self' 'wasm-unsafe-eval' 'inline-speculation-rules'; "
-    "object-src 'self';";
-static const char kMinimumUnpackedMV3CSPWithInlineSpeculationRules[] =
     "script-src 'self' 'wasm-unsafe-eval' 'inline-speculation-rules' "
     "http://localhost:* http://127.0.0.1:*; object-src 'self';";
 
@@ -104,7 +97,7 @@ int GetValidatorOptions(Extension* extension) {
   return options;
 }
 
-std::u16string GetInvalidManifestKeyError(base::StringPiece key) {
+std::u16string GetInvalidManifestKeyError(std::string_view key) {
   return ErrorUtils::FormatErrorMessageUTF16(errors::kInvalidManifestKey, key);
 }
 
@@ -129,16 +122,9 @@ const char* GetDefaultExtensionPagesCSP(Extension* extension) {
 const std::string* GetMinimumMV3CSPForExtension(const Extension& extension) {
   DCHECK_GE(extension.manifest_version(), 3);
 
-  static const base::NoDestructor<std::string> default_csp(
-      base::FeatureList::IsEnabled(
-          extensions_features::kMinimumMV3CSPWithInlineSpeculationRules)
-          ? kMinimumMV3CSPWithInlineSpeculationRules
-          : kMinimumMV3CSP);
+  static const base::NoDestructor<std::string> default_csp(kMinimumMV3CSP);
   static const base::NoDestructor<std::string> default_unpacked_csp(
-      base::FeatureList::IsEnabled(
-          extensions_features::kMinimumMV3CSPWithInlineSpeculationRules)
-          ? kMinimumUnpackedMV3CSPWithInlineSpeculationRules
-          : kMinimumUnpackedMV3CSP);
+      kMinimumUnpackedMV3CSP);
 
   return Manifest::IsUnpackedLocation(extension.location())
              ? default_unpacked_csp.get()
@@ -228,18 +214,12 @@ CSPHandler::~CSPHandler() = default;
 
 // static
 const char* CSPHandler::GetMinimumMV3CSPForTesting() {
-  return base::FeatureList::IsEnabled(
-             extensions_features::kMinimumMV3CSPWithInlineSpeculationRules)
-             ? kMinimumMV3CSPWithInlineSpeculationRules
-             : kMinimumMV3CSP;
+  return kMinimumMV3CSP;
 }
 
 // static
 const char* CSPHandler::GetMinimumUnpackedMV3CSPForTesting() {
-  return base::FeatureList::IsEnabled(
-             extensions_features::kMinimumMV3CSPWithInlineSpeculationRules)
-             ? kMinimumUnpackedMV3CSPWithInlineSpeculationRules
-             : kMinimumUnpackedMV3CSP;
+  return kMinimumUnpackedMV3CSP;
 }
 
 bool CSPHandler::Parse(Extension* extension, std::u16string* error) {
@@ -307,7 +287,7 @@ bool CSPHandler::ParseCSPDictionary(Extension* extension,
 bool CSPHandler::ParseExtensionPagesCSP(
     Extension* extension,
     std::u16string* error,
-    base::StringPiece manifest_key,
+    std::string_view manifest_key,
     const base::Value* content_security_policy) {
   if (!content_security_policy) {
     return SetExtensionPagesCSP(extension, manifest_key,
@@ -348,7 +328,7 @@ bool CSPHandler::ParseExtensionPagesCSP(
 
 bool CSPHandler::ParseSandboxCSP(Extension* extension,
                                  std::u16string* error,
-                                 base::StringPiece manifest_key,
+                                 std::string_view manifest_key,
                                  const base::Value* sandbox_csp,
                                  bool allow_remote_sources) {
   if (!sandbox_csp) {
@@ -382,7 +362,7 @@ bool CSPHandler::ParseSandboxCSP(Extension* extension,
 }
 
 bool CSPHandler::SetExtensionPagesCSP(Extension* extension,
-                                      base::StringPiece manifest_key,
+                                      std::string_view manifest_key,
                                       std::string content_security_policy) {
   if (extension->manifest_version() >= 3) {
     std::u16string error;

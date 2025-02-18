@@ -36,9 +36,10 @@ class TParseContext;
 class TranslatorHLSL;
 #endif  // ANGLE_ENABLE_HLSL
 #ifdef ANGLE_ENABLE_METAL
-class TranslatorMetalDirect;
+class TranslatorMSL;
 #endif  // ANGLE_ENABLE_METAL
 
+using MetadataFlagBits   = angle::PackedEnumBitSet<sh::MetadataFlags, uint32_t>;
 using SpecConstUsageBits = angle::PackedEnumBitSet<vk::SpecConstUsage, uint32_t>;
 
 //
@@ -64,12 +65,12 @@ class TShHandleBase
   public:
     TShHandleBase();
     virtual ~TShHandleBase();
-    virtual TCompiler *getAsCompiler() { return 0; }
+    virtual TCompiler *getAsCompiler() { return nullptr; }
 #ifdef ANGLE_ENABLE_HLSL
-    virtual TranslatorHLSL *getAsTranslatorHLSL() { return 0; }
+    virtual TranslatorHLSL *getAsTranslatorHLSL() { return nullptr; }
 #endif  // ANGLE_ENABLE_HLSL
 #ifdef ANGLE_ENABLE_METAL
-    virtual TranslatorMetalDirect *getAsTranslatorMetalDirect() { return nullptr; }
+    virtual TranslatorMSL *getAsTranslatorMSL() { return nullptr; }
 #endif  // ANGLE_ENABLE_METAL
 
   protected:
@@ -113,8 +114,7 @@ class TCompiler : public TShHandleBase
 
     bool specifyEarlyFragmentTests() { return mEarlyFragmentTestsSpecified = true; }
     bool isEarlyFragmentTestsSpecified() const { return mEarlyFragmentTestsSpecified; }
-    bool hasDiscard() const { return mHasDiscard; }
-    bool enablesPerSampleShading() const { return mEnablesPerSampleShading; }
+    MetadataFlagBits getMetadataFlags() const { return mMetadataFlags; }
     SpecConstUsageBits getSpecConstUsageBits() const { return mSpecConstUsageBits; }
 
     bool isComputeShaderLocalSizeDeclared() const { return mComputeShaderLocalSizeDeclared; }
@@ -141,7 +141,7 @@ class TCompiler : public TShHandleBase
     TSymbolTable &getSymbolTable() { return mSymbolTable; }
     ShShaderSpec getShaderSpec() const { return mShaderSpec; }
     ShShaderOutput getOutputType() const { return mOutputType; }
-    ShBuiltInResources getBuiltInResources() const { return mResources; }
+    const ShBuiltInResources &getBuiltInResources() const { return mResources; }
     const std::string &getBuiltInResourcesString() const { return mBuiltInResourcesString; }
 
     bool isHighPrecisionSupported() const;
@@ -191,6 +191,8 @@ class TCompiler : public TShHandleBase
 
     bool hasPixelLocalStorageUniforms() const { return mHasPixelLocalStorageUniforms; }
 
+    ShPixelLocalStorageType getPixelLocalStorageType() const { return mCompileOptions.pls.type; }
+
     unsigned int getSharedMemorySize() const;
 
     sh::GLenum getShaderType() const { return mShaderType; }
@@ -225,7 +227,12 @@ class TCompiler : public TShHandleBase
 
     bool isClipDistanceRedeclared() const { return mClipDistanceRedeclared; }
 
-    bool hasClipDistance() const { return mClipDistanceUsed; }
+    bool usesDerivatives() const { return mUsesDerivatives; }
+
+    bool supportsAttributeAliasing() const
+    {
+        return mShaderVersion == 100 && !IsWebGLBasedSpec(mShaderSpec);
+    }
 
   protected:
     // Add emulated functions to the built-in function emulator.
@@ -245,9 +252,7 @@ class TCompiler : public TShHandleBase
     const BuiltInFunctionEmulator &getBuiltInFunctionEmulator() const;
 
     virtual bool shouldFlattenPragmaStdglInvariantAll() = 0;
-    virtual bool shouldCollectVariables(const ShCompileOptions &compileOptions);
 
-    bool wereVariablesCollected() const;
     std::vector<sh::ShaderVariable> mAttributes;
     std::vector<sh::ShaderVariable> mOutputVariables;
     std::vector<sh::ShaderVariable> mUniforms;
@@ -260,6 +265,8 @@ class TCompiler : public TShHandleBase
 
     // Track what should be validated given passes currently applied.
     ValidateASTOptions mValidateASTOptions;
+
+    MetadataFlagBits mMetadataFlags;
 
     // Specialization constant usage bits
     SpecConstUsageBits mSpecConstUsageBits;
@@ -347,13 +354,6 @@ class TCompiler : public TShHandleBase
     // Fragment shader early fragment tests
     bool mEarlyFragmentTestsSpecified;
 
-    // Fragment shader has the discard instruction
-    bool mHasDiscard;
-
-    // Whether per-sample shading is enabled by the shader.  In OpenGL, this keyword should
-    // implicitly trigger per-sample shading without the API enabling it.
-    bool mEnablesPerSampleShading;
-
     // compute shader local group size
     bool mComputeShaderLocalSizeDeclared;
     sh::WorkGroupSize mComputeShaderLocalSize;
@@ -366,7 +366,6 @@ class TCompiler : public TShHandleBase
     uint8_t mCullDistanceSize;
     bool mClipDistanceRedeclared;
     bool mCullDistanceRedeclared;
-    bool mClipDistanceUsed;
 
     // geometry shader parameters.
     int mGeometryShaderMaxVertices;
@@ -388,6 +387,9 @@ class TCompiler : public TShHandleBase
 
     // ANGLE_shader_pixel_local_storage.
     bool mHasPixelLocalStorageUniforms;
+
+    // Fragment shader uses screen-space derivatives
+    bool mUsesDerivatives;
 
     // name hashing.
     NameMap mNameMap;

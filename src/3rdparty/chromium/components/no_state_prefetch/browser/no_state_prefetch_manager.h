@@ -56,7 +56,7 @@ class PrerenderInProcessBrowserTest;
 }
 
 class NoStatePrefetchHandle;
-class PrerenderHistory;
+class NoStatePrefetchHistory;
 
 // Observer interface for NoStatePrefetchManager events.
 class NoStatePrefetchManagerObserver {
@@ -276,8 +276,7 @@ class NoStatePrefetchManager : public content::RenderProcessHostObserver,
       const absl::optional<url::Origin>& initiator_origin);
 
  protected:
-  class NoStatePrefetchData
-      : public base::SupportsWeakPtr<NoStatePrefetchData> {
+  class NoStatePrefetchData {
    public:
     struct OrderByExpiryTime;
 
@@ -318,6 +317,10 @@ class NoStatePrefetchManager : public content::RenderProcessHostObserver,
       expiry_time_ = expiry_time;
     }
 
+    base::WeakPtr<NoStatePrefetchData> AsWeakPtr() {
+      return weak_factory_.GetWeakPtr();
+    }
+
    private:
     const raw_ptr<NoStatePrefetchManager> manager_;
     std::unique_ptr<NoStatePrefetchContents> contents_;
@@ -335,6 +338,8 @@ class NoStatePrefetchManager : public content::RenderProcessHostObserver,
 
     // After this time, this prefetch is no longer fresh, and should be removed.
     base::TimeTicks expiry_time_;
+
+    base::WeakPtrFactory<NoStatePrefetchData> weak_factory_{this};
   };
 
   // Called by a NoStatePrefetchData to signal that the launcher has navigated
@@ -461,8 +466,8 @@ class NoStatePrefetchManager : public content::RenderProcessHostObserver,
   base::Value::List GetActivePrerenders() const;
 
   // Records the final status a prerender in the case that a
-  // NoStatePrefetchContents was never created, adds a PrerenderHistory entry,
-  // and may also initiate a preconnect to |url|.
+  // NoStatePrefetchContents was never created, adds a NoStatePrefetchHistory
+  // entry, and may also initiate a preconnect to |url|.
   void SkipNoStatePrefetchContentsAndMaybePreconnect(
       const GURL& url,
       Origin origin,
@@ -509,7 +514,7 @@ class NoStatePrefetchManager : public content::RenderProcessHostObserver,
   std::vector<std::unique_ptr<OnCloseWebContentsDeleter>>
       on_close_web_contents_deleters_;
 
-  const std::unique_ptr<PrerenderHistory> prerender_history_;
+  const std::unique_ptr<NoStatePrefetchHistory> prefetch_history_;
 
   const std::unique_ptr<PrerenderHistograms> histograms_;
 

@@ -14,7 +14,9 @@
 #include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/image/image_skia.h"
+#include "ui/views/action_view_interface.h"
 #include "ui/views/controls/button/button.h"
+#include "ui/views/controls/button/label_button_image_container.h"
 #include "ui/views/controls/button/label_button_label.h"
 #include "ui/views/controls/focus_ring.h"
 #include "ui/views/controls/image_view.h"
@@ -25,6 +27,10 @@
 #include "ui/views/style/typography.h"
 #include "ui/views/widget/widget.h"
 
+namespace actions {
+class ActionItem;
+}
+
 namespace views {
 
 class InkDropContainerView;
@@ -32,15 +38,18 @@ class LabelButtonBorder;
 
 // LabelButton is a button with text and an icon.
 class VIEWS_EXPORT LabelButton : public Button, public NativeThemeDelegate {
- public:
-  METADATA_HEADER(LabelButton);
+  METADATA_HEADER(LabelButton, Button)
 
-  // Creates a LabelButton with pressed events sent to |callback| and label
-  // |text|. |button_context| is a value from views::style::TextContext and
-  // determines the appearance of |text|.
-  explicit LabelButton(PressedCallback callback = PressedCallback(),
-                       const std::u16string& text = std::u16string(),
-                       int button_context = style::CONTEXT_BUTTON);
+ public:
+  // Creates a LabelButton with pressed events sent to `callback` and label
+  // `text`. `button_context` is a value from views::style::TextContext and
+  // determines the appearance of `text`.
+  explicit LabelButton(
+      PressedCallback callback = PressedCallback(),
+      const std::u16string& text = std::u16string(),
+      int button_context = style::CONTEXT_BUTTON,
+      std::unique_ptr<LabelButtonImageContainer> image_container =
+          std::make_unique<SingleImageContainer>());
   LabelButton(const LabelButton&) = delete;
   LabelButton& operator=(const LabelButton&) = delete;
   ~LabelButton() override;
@@ -48,8 +57,8 @@ class VIEWS_EXPORT LabelButton : public Button, public NativeThemeDelegate {
   // Gets or sets the image shown for the specified button state.
   // GetImage returns the image for STATE_NORMAL if the state's image is empty.
   virtual gfx::ImageSkia GetImage(ButtonState for_state) const;
-  // TODO(http://crbug.com/1100034) prefer SetImageModel over SetImage().
-  void SetImage(ButtonState for_state, const gfx::ImageSkia& image);
+
+  const ui::ImageModel& GetImageModel(ButtonState for_state) const;
   virtual void SetImageModel(ButtonState for_state,
                              const ui::ImageModel& image_model);
   bool HasImage(ButtonState for_state) const;
@@ -57,6 +66,9 @@ class VIEWS_EXPORT LabelButton : public Button, public NativeThemeDelegate {
   // Gets or sets the text shown on the button.
   const std::u16string& GetText() const;
   virtual void SetText(const std::u16string& text);
+
+  // Set the text style of the label.
+  void SetLabelStyle(views::style::TextStyle text_style);
 
   // Makes the button report its preferred size without the label. This lets
   // AnimatingLayoutManager gradually shrink the button until the text is
@@ -68,14 +80,20 @@ class VIEWS_EXPORT LabelButton : public Button, public NativeThemeDelegate {
   void ShrinkDownThenClearText();
 
   // Sets the text color shown for the specified button |for_state| to |color|.
+  // TODO(crbug.com/1421316): Get rid of SkColor versions of these functions in
+  // favor of the ColorId versions.
   void SetTextColor(ButtonState for_state, SkColor color);
 
+  // Sets the text color as above but using ColorId.
+  void SetTextColorId(ButtonState for_state, ui::ColorId color_id);
+
   // Sets the text colors shown for the non-disabled states to |color|.
+  // TODO(crbug.com/1421316): Get rid of SkColor versions of these functions in
+  // favor of the ColorId versions.
   virtual void SetEnabledTextColors(absl::optional<SkColor> color);
 
-  // Enable the text colors to auto adjust for readability for the non-disabled
-  // states. Default to false.
-  void SetEnabledTextColorReadabilityAdjustment(bool enabled);
+  // Sets the text colors shown for the non-disabled states to |color_id|.
+  void SetEnabledTextColorIds(ui::ColorId color_id);
 
   // Gets the current state text color.
   SkColor GetCurrentTextColor() const;
@@ -121,6 +139,11 @@ class VIEWS_EXPORT LabelButton : public Button, public NativeThemeDelegate {
   // subclasses.
   virtual std::unique_ptr<LabelButtonBorder> CreateDefaultBorder() const;
 
+  // Normally a LabelButton only appears as disabled in an inactive widget if
+  // PlatformStyle::kInactiveWidgetControlsAppearDisabled is true. This method
+  // overrides the default PlatformStyle behavior for this button.
+  void SetAppearDisabledInInactiveWidget(bool appear_disabled);
+
   // Button:
   void SetBorder(std::unique_ptr<Border> border) override;
   void OnBoundsChanged(const gfx::Rect& previous_bounds) override;
@@ -132,6 +155,7 @@ class VIEWS_EXPORT LabelButton : public Button, public NativeThemeDelegate {
   void AddLayerToRegion(ui::Layer* new_layer,
                         views::LayerRegion region) override;
   void RemoveLayerFromRegions(ui::Layer* old_layer) override;
+  std::unique_ptr<ActionViewInterface> GetActionViewInterface() override;
 
   // NativeThemeDelegate:
   ui::NativeTheme::Part GetThemePart() const override;
@@ -144,8 +168,27 @@ class VIEWS_EXPORT LabelButton : public Button, public NativeThemeDelegate {
   ui::NativeTheme::State GetForegroundThemeState(
       ui::NativeTheme::ExtraParams* params) const override;
 
+  // Returns the current visual appearance of the button. This takes into
+  // account both the button's underlying state, the state of the containing
+  // widget, and the parent of the containing widget.
+  ButtonState GetVisualState() const;
+
  protected:
-  ImageView* image() const { return image_; }
+  LabelButtonImageContainer* image_container() {
+    return image_container_.get();
+  }
+  const LabelButtonImageContainer* image_container() const {
+    return image_container_.get();
+  }
+  const View* image_container_view() const {
+    return image_container_->GetView();
+  }
+  View* image_container_view() { return image_container_->GetView(); }
+  // TODO(ahmedmoussa): `image()` to be removed in the following CL.
+  const ImageView* image() const {
+    return static_cast<const ImageView*>(image_container_view());
+  }
+  ImageView* image() { return static_cast<ImageView*>(image_container_view()); }
   Label* label() const { return label_; }
   InkDropContainerView* ink_drop_container() const {
     return ink_drop_container_;
@@ -167,11 +210,6 @@ class VIEWS_EXPORT LabelButton : public Button, public NativeThemeDelegate {
 
   // Updates the background color, if the background color is state-sensitive.
   virtual void UpdateBackgroundColor() {}
-
-  // Returns the current visual appearance of the button. This takes into
-  // account both the button's underlying state, the state of the containing
-  // widget, and the parent of the containing widget.
-  ButtonState GetVisualState() const;
 
   // Fills |params| with information about the button.
   virtual void GetExtraParams(ui::NativeTheme::ExtraParams* params) const;
@@ -221,8 +259,8 @@ class VIEWS_EXPORT LabelButton : public Button, public NativeThemeDelegate {
 
   void FlipCanvasOnPaintForRTLUIChanged();
 
-  // The image and label shown in the button.
-  raw_ptr<ImageView> image_;
+  // The image container and label shown in the button.
+  std::unique_ptr<LabelButtonImageContainer> image_container_;
   raw_ptr<internal::LabelButtonLabel> label_;
 
   // A separate view is necessary to hold the ink drop layer so that it can
@@ -237,7 +275,7 @@ class VIEWS_EXPORT LabelButton : public Button, public NativeThemeDelegate {
 
   // The image models and colors for each button state.
   ui::ImageModel button_state_image_models_[STATE_COUNT] = {};
-  SkColor button_state_colors_[STATE_COUNT] = {};
+  absl::variant<SkColor, ui::ColorId> button_state_colors_[STATE_COUNT] = {};
 
   // Used to track whether SetTextColor() has been invoked.
   std::array<bool, STATE_COUNT> explicitly_set_colors_ = {};
@@ -279,10 +317,25 @@ class VIEWS_EXPORT LabelButton : public Button, public NativeThemeDelegate {
 
   base::CallbackListSubscription paint_as_active_subscription_;
 
+  bool appear_disabled_in_inactive_widget_ = false;
+
   base::CallbackListSubscription flip_canvas_on_paint_subscription_ =
       AddFlipCanvasOnPaintForRTLUIChangedCallback(
           base::BindRepeating(&LabelButton::FlipCanvasOnPaintForRTLUIChanged,
                               base::Unretained(this)));
+};
+
+class VIEWS_EXPORT LabelButtonActionViewInterface
+    : public ButtonActionViewInterface {
+ public:
+  explicit LabelButtonActionViewInterface(LabelButton* action_view);
+  ~LabelButtonActionViewInterface() override = default;
+
+  // ButtonActionViewInterface:
+  void ActionItemChangedImpl(actions::ActionItem* action_item) override;
+
+ private:
+  raw_ptr<LabelButton> action_view_;
 };
 
 BEGIN_VIEW_BUILDER(VIEWS_EXPORT, LabelButton, Button)

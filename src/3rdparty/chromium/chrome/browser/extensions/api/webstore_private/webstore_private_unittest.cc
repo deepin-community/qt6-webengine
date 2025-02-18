@@ -2,9 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/values.h"
-#include "chrome/browser/extensions/api/webstore_private/webstore_private_api.h"
-
+#include <optional>
 #include <vector>
 
 #include "base/command_line.h"
@@ -14,7 +12,10 @@
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
+#include "base/values.h"
+#include "chrome/browser/extensions/api/webstore_private/webstore_private_api.h"
 #include "chrome/browser/extensions/extension_api_unittest.h"
+#include "chrome/browser/extensions/extension_install_prompt_show_params.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/test_extension_system.h"
 #include "chrome/common/extensions/extension_constants.h"
@@ -23,7 +24,10 @@
 #include "components/safe_browsing/core/common/safe_browsing_prefs.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "content/public/test/web_contents_tester.h"
+#include "extensions/browser/api/management/management_api.h"
 #include "extensions/browser/api_test_utils.h"
+#include "extensions/browser/event_router.h"
+#include "extensions/browser/event_router_factory.h"
 #include "extensions/browser/extension_dialog_auto_confirm.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/pref_names.h"
@@ -123,12 +127,22 @@ void VerifyPendingList(const std::map<ExtensionId, ExtensionRequestData>&
 
 void SetExtensionSettings(const std::string& settings_string,
                           TestingProfile* profile) {
-  absl::optional<base::Value> settings =
-      base::JSONReader::Read(settings_string);
+  std::optional<base::Value> settings = base::JSONReader::Read(settings_string);
   ASSERT_TRUE(settings.has_value());
   profile->GetTestingPrefService()->SetManagedPref(
       pref_names::kExtensionManagement,
       base::Value::ToUniquePtrValue(std::move(*settings)));
+}
+
+std::unique_ptr<KeyedService> BuildManagementApi(
+    content::BrowserContext* context) {
+  return std::make_unique<ManagementAPI>(context);
+}
+
+std::unique_ptr<KeyedService> BuildEventRouter(
+    content::BrowserContext* profile) {
+  return std::make_unique<extensions::EventRouter>(
+      profile, ExtensionPrefs::Get(profile));
 }
 
 }  // namespace
@@ -158,9 +172,9 @@ class WebstorePrivateExtensionInstallRequestBase : public ExtensionApiUnittest {
   }
 
   void VerifyResponse(const ExtensionInstallStatus& expected_response,
-                      const base::Value* actual_response) {
-    ASSERT_TRUE(actual_response->is_string());
-    EXPECT_EQ(ToString(expected_response), actual_response->GetString());
+                      const base::Value& actual_response) {
+    ASSERT_TRUE(actual_response.is_string());
+    EXPECT_EQ(ToString(expected_response), actual_response.GetString());
   }
 };
 
@@ -190,10 +204,9 @@ TEST_F(WebstorePrivateGetExtensionStatusTest, ExtensionEnabled) {
   ExtensionRegistry::Get(profile())->AddEnabled(CreateExtension(kExtensionId));
   auto function =
       base::MakeRefCounted<WebstorePrivateGetExtensionStatusFunction>();
-  std::unique_ptr<base::Value> response =
+  std::optional<base::Value> response =
       RunFunctionAndReturnValue(function.get(), GenerateArgs(kExtensionId));
-  VerifyResponse(ExtensionInstallStatus::EXTENSION_INSTALL_STATUS_ENABLED,
-                 response.get());
+  VerifyResponse(ExtensionInstallStatus::kEnabled, *response);
 }
 
 TEST_F(WebstorePrivateGetExtensionStatusTest, InvalidManifest) {
@@ -209,11 +222,9 @@ TEST_F(WebstorePrivateGetExtensionStatusTest, ExtensionBlockedByManifestType) {
   SetExtensionSettings(kBlockedManifestTypeExtensionSettings, profile());
   auto function =
       base::MakeRefCounted<WebstorePrivateGetExtensionStatusFunction>();
-  std::unique_ptr<base::Value> response = RunFunctionAndReturnValue(
+  std::optional<base::Value> response = RunFunctionAndReturnValue(
       function.get(), GenerateArgs(kExtensionId, kExtensionManifest));
-  VerifyResponse(
-      ExtensionInstallStatus::EXTENSION_INSTALL_STATUS_BLOCKED_BY_POLICY,
-      response.get());
+  VerifyResponse(ExtensionInstallStatus::kBlockedByPolicy, *response);
 }
 
 TEST_F(WebstorePrivateGetExtensionStatusTest, ExtensionBlockedByPermission) {
@@ -221,11 +232,9 @@ TEST_F(WebstorePrivateGetExtensionStatusTest, ExtensionBlockedByPermission) {
                        profile());
   auto function =
       base::MakeRefCounted<WebstorePrivateGetExtensionStatusFunction>();
-  std::unique_ptr<base::Value> response = RunFunctionAndReturnValue(
+  std::optional<base::Value> response = RunFunctionAndReturnValue(
       function.get(), GenerateArgs(kExtensionId, kExtensionManifest));
-  VerifyResponse(
-      ExtensionInstallStatus::EXTENSION_INSTALL_STATUS_BLOCKED_BY_POLICY,
-      response.get());
+  VerifyResponse(ExtensionInstallStatus::kBlockedByPolicy, *response);
 }
 
 TEST_F(WebstorePrivateGetExtensionStatusTest,
@@ -233,10 +242,9 @@ TEST_F(WebstorePrivateGetExtensionStatusTest,
   SetExtensionSettings(kBlockedAudioPermissionsExtensionSettings, profile());
   auto function =
       base::MakeRefCounted<WebstorePrivateGetExtensionStatusFunction>();
-  std::unique_ptr<base::Value> response = RunFunctionAndReturnValue(
+  std::optional<base::Value> response = RunFunctionAndReturnValue(
       function.get(), GenerateArgs(kExtensionId, kExtensionManifest));
-  VerifyResponse(ExtensionInstallStatus::EXTENSION_INSTALL_STATUS_INSTALLABLE,
-                 response.get());
+  VerifyResponse(ExtensionInstallStatus::kInstallable, *response);
 }
 
 class WebstorePrivateBeginInstallWithManifest3Test
@@ -248,6 +256,10 @@ class WebstorePrivateBeginInstallWithManifest3Test
 
   void SetUp() override {
     ExtensionApiUnittest::SetUp();
+    ManagementAPI::GetFactoryInstance()->SetTestingFactory(
+        profile(), base::BindRepeating(&BuildManagementApi));
+    EventRouterFactory::GetInstance()->SetTestingFactory(
+        profile(), base::BindRepeating(&BuildEventRouter));
     TestExtensionSystem* test_extension_system =
         static_cast<TestExtensionSystem*>(ExtensionSystem::Get(profile()));
     service_ = test_extension_system->CreateExtensionService(
@@ -261,7 +273,7 @@ class WebstorePrivateBeginInstallWithManifest3Test
   }
 
   void SetExtensionSettings(const std::string& settings_string) {
-    absl::optional<base::Value> settings =
+    std::optional<base::Value> settings =
         base::JSONReader::Read(settings_string);
     ASSERT_TRUE(settings);
     profile()->GetTestingPrefService()->SetManagedPref(
@@ -299,7 +311,11 @@ class WebstorePrivateBeginInstallWithManifest3Test
   ExtensionService* extension_service() { return service_; }
 
  private:
-  raw_ptr<ExtensionService> service_ = nullptr;
+  // This test does not create a root window. Because of this,
+  // ScopedDisableRootChecking needs to be used (which disables the root window
+  // check).
+  test::ScopedDisableRootChecking disable_root_checking_;
+  raw_ptr<ExtensionService, DanglingUntriaged> service_ = nullptr;
 };
 
 TEST_F(WebstorePrivateBeginInstallWithManifest3Test,
@@ -440,7 +456,7 @@ TEST_F(WebstorePrivateBeginInstallWithManifest3Test,
     // string without error.
     ScopedTestDialogAutoConfirm auto_cancel(
         ScopedTestDialogAutoConfirm::ACCEPT);
-    std::unique_ptr<base::Value> response = RunFunctionAndReturnValue(
+    std::optional<base::Value> response = RunFunctionAndReturnValue(
         function.get(), GenerateArgs(kExtensionId, kExtensionManifest));
     ASSERT_TRUE(response);
     ASSERT_TRUE(response->is_string());
@@ -534,7 +550,7 @@ TEST_F(WebstorePrivateBeginInstallWithManifest3Test,
   function->SetRenderFrameHost(web_contents->GetPrimaryMainFrame());
   ScopedTestDialogAutoConfirm auto_confirm(ScopedTestDialogAutoConfirm::ACCEPT);
 
-  std::unique_ptr<base::Value> response = RunFunctionAndReturnValue(
+  std::optional<base::Value> response = RunFunctionAndReturnValue(
       function.get(), GenerateArgs(kExtensionId, kExtensionManifest));
   // The API returns an empty string on success.
   ASSERT_TRUE(response);
@@ -668,7 +684,7 @@ TEST_P(WebstorePrivateBeginInstallWithManifest3FrictionDialogTest,
                 test_case.esb_allowlist.c_str());
 
   if (test_case.dialog_action == ScopedTestDialogAutoConfirm::ACCEPT) {
-    std::unique_ptr<base::Value> response =
+    std::optional<base::Value> response =
         RunFunctionAndReturnValue(function.get(), args);
 
     // The API returns empty string when extension is installed successfully.

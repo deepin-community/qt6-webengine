@@ -1,5 +1,7 @@
 // Copyright (C) 2016 The Qt Company Ltd.
-// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
+
+#undef QT_NO_FOREACH // this file contains unported legacy Q_FOREACH uses
 
 #include "testwindow.h"
 #include "quickutil.h"
@@ -13,11 +15,11 @@
 #include <QtGui/qpa/qwindowsysteminterface.h>
 #include <QtQml/QQmlEngine>
 #include <QtTest/QtTest>
+#include <QtWebEngineQuick/QQuickWebEngineDownloadRequest>
 #include <QtWebEngineQuick/QQuickWebEngineProfile>
 #include <QtGui/private/qinputmethod_p.h>
 #include <QtWebEngineQuick/private/qquickwebenginescriptcollection_p.h>
 #include <QtWebEngineQuick/private/qquickwebenginesettings_p.h>
-#include <QtWebEngineQuick/private/qquickwebenginedownloadrequest_p.h>
 #include <QtWebEngineQuick/private/qquickwebengineview_p.h>
 #include <QtWebEngineCore/private/qtwebenginecore-config_p.h>
 #include <qpa/qplatforminputcontext.h>
@@ -96,8 +98,8 @@ private:
 
 tst_QQuickWebEngineView::tst_QQuickWebEngineView()
 {
-    QtWebEngineQuick::initialize();
-    QQuickWebEngineProfile::defaultProfile()->setOffTheRecord(true);
+
+    QVERIFY(QQuickWebEngineProfile::defaultProfile()->isOffTheRecord());
 
     m_testSourceDirPath = QDir(QT_TESTCASE_SOURCEDIR).canonicalPath();
     if (!m_testSourceDirPath.endsWith(QLatin1Char('/')))
@@ -797,7 +799,7 @@ void tst_QQuickWebEngineView::setZoomFactor()
     view->setZoomFactor(2.5);
     QCOMPARE(view->zoomFactor(), 2.5);
 
-    const QUrl url1 = urlFromTestPath("html/basic_page.html"), url2 = urlFromTestPath("html/basic_page2.html");
+    const QUrl url1 = urlFromTestPath("html/basic_page.html");
 
     view->setUrl(url1);
     QVERIFY(waitForLoadSucceeded(view));
@@ -814,20 +816,22 @@ void tst_QQuickWebEngineView::setZoomFactor()
     view2->setParentItem(m_window->contentItem());
 
     // try loading different url and check new values after load
-    for (auto &&p : {
-            qMakePair(view, 2.5), // navigating away to different url should keep zoom
-            qMakePair(view2.get(), 1.0), // same url navigation in diffent page shouldn't be affected
-        }) {
-        auto &&view = p.first; auto zoomFactor = p.second;
-        view->setUrl(url2);
-        QVERIFY(waitForLoadSucceeded(view));
-        QCOMPARE(view->zoomFactor(), zoomFactor);
-    }
+    const QUrl url2 = urlFromTestPath("html/basic_page2.html");
 
-    // should have no influence on first page
+    // navigating away to different url should keep zoom
+    view->setUrl(url2);
+    QVERIFY(waitForLoadSucceeded(view));
+    QCOMPARE(view->zoomFactor(), 2.5);
+
+    // same url navigation in different view shouldn't be affected
+    view2->setUrl(url2);
+    QVERIFY(waitForLoadSucceeded(view2.get()));
+    QCOMPARE(view2->zoomFactor(), 1.0);
+
+    // should have no influence on first view
     view2->setZoomFactor(3.5);
-    for (auto &&p : { qMakePair(view, 2.5), qMakePair(view2.get(), 3.5), })
-        QCOMPARE(p.first->zoomFactor(), p.second);
+    QCOMPARE(view->zoomFactor(), 2.5);
+    QCOMPARE(view2->zoomFactor(), 3.5);
 }
 
 void tst_QQuickWebEngineView::printToPdf()
@@ -1150,9 +1154,9 @@ void tst_QQuickWebEngineView::javascriptClipboard()
                 "if (result.state == 'prompt') accessPrompt = true;"
             "})"));
 
-    QTRY_COMPARE(evaluateJavaScriptSync(view, "accessGranted").toBool(), copyResult);
-    QTRY_COMPARE(evaluateJavaScriptSync(view, "accessDenied").toBool(), !javascriptCanAccessClipboard);
-    QTRY_COMPARE(evaluateJavaScriptSync(view, "accessPrompt").toBool(), false);
+    QTRY_COMPARE(evaluateJavaScriptSync(view, "accessGranted").toBool(), javascriptCanAccessClipboard);
+    QTRY_COMPARE(evaluateJavaScriptSync(view, "accessDenied").toBool(), false);
+    QTRY_COMPARE(evaluateJavaScriptSync(view, "accessPrompt").toBool(), !javascriptCanAccessClipboard);
 
     evaluateJavaScriptSync(view,
         QStringLiteral(
@@ -1166,9 +1170,9 @@ void tst_QQuickWebEngineView::javascriptClipboard()
                 "if (result.state == 'prompt') accessPrompt = true;"
             "})"));
 
-    QTRY_COMPARE(evaluateJavaScriptSync(view, "accessGranted").toBool(), pasteResult);
-    QTRY_COMPARE(evaluateJavaScriptSync(view, "accessDenied").toBool(), !javascriptCanAccessClipboard || !javascriptCanPaste);
-    QTRY_COMPARE(evaluateJavaScriptSync(view, "accessPrompt").toBool(), false);
+    QTRY_COMPARE(evaluateJavaScriptSync(view, "accessGranted").toBool(), javascriptCanAccessClipboard && javascriptCanPaste);
+    QTRY_COMPARE(evaluateJavaScriptSync(view, "accessDenied").toBool(), false);
+    QTRY_COMPARE(evaluateJavaScriptSync(view, "accessPrompt").toBool(), !javascriptCanAccessClipboard || !javascriptCanPaste);
 }
 
 void tst_QQuickWebEngineView::setProfile() {

@@ -41,7 +41,7 @@
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
 #include "base/linux_util.h"
 #elif BUILDFLAG(IS_MAC)
-#include "base/mac/foundation_util.h"
+#include "base/apple/foundation_util.h"
 #include "content/browser/mac_helpers.h"
 #endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
 
@@ -87,7 +87,7 @@ base::FilePath ChildProcessHost::GetChildPath(int flags) {
 #if BUILDFLAG(IS_MAC)
   std::string child_base_name = child_path.BaseName().value();
 
-  if (flags != CHILD_NORMAL && base::mac::AmIBundled()) {
+  if (flags != CHILD_NORMAL && base::apple::AmIBundled()) {
     // This is a specialized helper, with the |child_path| at
     // ../Framework.framework/Versions/X/Helpers/Chromium Helper.app/Contents/
     // MacOS/Chromium Helper. Go back up to the "Helpers" directory to select
@@ -101,8 +101,8 @@ base::FilePath ChildProcessHost::GetChildPath(int flags) {
     } else if (flags == CHILD_PLUGIN) {
       child_base_name += kMacHelperSuffix_plugin;
     } else if (flags > CHILD_EMBEDDER_FIRST) {
-      return GetContentClient()->browser()->GetChildProcessPath(flags,
-                                                                child_path);
+      child_base_name +=
+          GetContentClient()->browser()->GetChildProcessSuffix(flags);
     } else {
       NOTREACHED();
     }
@@ -152,12 +152,15 @@ ChildProcessHostImpl::~ChildProcessHostImpl() {
     return;
   }
 
+#if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
   for (auto& filter : filters_) {
     filter->OnChannelClosing();
     filter->OnFilterRemoved();
   }
+#endif
 }
 
+#if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
 void ChildProcessHostImpl::AddFilter(IPC::MessageFilter* filter) {
   filters_.push_back(filter);
 
@@ -165,6 +168,7 @@ void ChildProcessHostImpl::AddFilter(IPC::MessageFilter* filter) {
     filter->OnFilterAdded(channel_.get());
   }
 }
+#endif
 
 void ChildProcessHostImpl::BindReceiver(mojo::GenericPendingReceiver receiver) {
   child_process_->BindReceiver(std::move(receiver));
@@ -210,7 +214,7 @@ void ChildProcessHostImpl::ForceShutdown() {
   child_process_->ProcessShutdown();
 }
 
-absl::optional<mojo::OutgoingInvitation>&
+std::optional<mojo::OutgoingInvitation>&
 ChildProcessHostImpl::GetMojoInvitation() {
   return mojo_invitation_;
 }
@@ -248,9 +252,11 @@ bool ChildProcessHostImpl::InitChannel() {
     return false;
   }
 
+#if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
   for (auto& filter : filters_) {
     filter->OnFilterAdded(channel_.get());
   }
+#endif
 
   delegate_->OnChannelInitialized(channel_.get());
 
@@ -269,9 +275,11 @@ void ChildProcessHostImpl::OnDisconnectedFromChildProcess() {
   if (channel_) {
     opening_channel_ = false;
     delegate_->OnChannelError();
+#if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
     for (auto& filter : filters_) {
       filter->OnChannelError();
     }
+#endif
   }
 
   // This will delete host_, which will also destroy this!
@@ -333,6 +341,7 @@ void ChildProcessHostImpl::BindHostReceiver(
 }
 
 bool ChildProcessHostImpl::OnMessageReceived(const IPC::Message& msg) {
+#if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
 #if BUILDFLAG(IPC_MESSAGE_LOG_ENABLED)
   IPC::Logging* logger = IPC::Logging::GetInstance();
   if (msg.type() == IPC_LOGGING_ID) {
@@ -343,7 +352,7 @@ bool ChildProcessHostImpl::OnMessageReceived(const IPC::Message& msg) {
   if (logger->Enabled()) {
     logger->OnPreDispatchMessage(msg);
   }
-#endif
+#endif  // IPC_MESSAGE_LOG_ENABLED
 
   bool handled = false;
   for (auto& filter : filters_) {
@@ -361,12 +370,19 @@ bool ChildProcessHostImpl::OnMessageReceived(const IPC::Message& msg) {
   if (logger->Enabled()) {
     logger->OnPostDispatchMessage(msg);
   }
-#endif
+#endif  // IPC_MESSAGE_LOG_ENABLED
   return handled;
+#else
+  return false;
+#endif  // CONTENT_ENABLE_LEGACY_IPC
 }
 
 void ChildProcessHostImpl::OnChannelConnected(int32_t peer_pid) {
   // Propagate the pseudonymization salt to all the child processes.
+  //
+  // Doing this as the first step in this method helps to minimize scenarios
+  // where child process runs code that depends on the pseudonymization salt
+  // before it has been set.  See also https://crbug.com/1479308#c5
   //
   // TODO(dullweber, lukasza): Figure out if it is possible to reset the salt
   // at a regular interval (on the order of hours?).  The browser would need
@@ -388,9 +404,11 @@ void ChildProcessHostImpl::OnChannelConnected(int32_t peer_pid) {
       peer_process.IsValid() ? peer_process.Pid() : base::GetCurrentProcId();
   opening_channel_ = false;
   delegate_->OnChannelConnected(pid);
+#if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
   for (auto& filter : filters_) {
     filter->OnChannelConnected(pid);
   }
+#endif
 }
 
 void ChildProcessHostImpl::OnChannelError() {

@@ -280,6 +280,22 @@ class NET_EXPORT CookieMonster : public CookieStore {
                            CookiePortReadDiffersFromSetHistogram);
   FRIEND_TEST_ALL_PREFIXES(CookieMonsterTest, IsCookieSentToSamePortThatSetIt);
 
+  // For FilterCookiesWithOptions domain shadowing.
+  FRIEND_TEST_ALL_PREFIXES(CookieMonsterTest,
+                           FilterCookiesWithOptionsExcludeShadowingDomains);
+  FRIEND_TEST_ALL_PREFIXES(CookieMonsterTest,
+                           FilterCookiesWithOptionsWarnShadowingDomains);
+
+  // For StoreLoadedCookies behavior with origin-bound cookies.
+  FRIEND_TEST_ALL_PREFIXES(CookieMonsterTest_StoreLoadedCookies,
+                           NoSchemeNoPort);
+  FRIEND_TEST_ALL_PREFIXES(CookieMonsterTest_StoreLoadedCookies,
+                           YesSchemeNoPort);
+  FRIEND_TEST_ALL_PREFIXES(CookieMonsterTest_StoreLoadedCookies,
+                           NoSchemeYesPort);
+  FRIEND_TEST_ALL_PREFIXES(CookieMonsterTest_StoreLoadedCookies,
+                           YesSchemeYesPort);
+
   // Internal reasons for deletion, used to populate informative histograms
   // and to provide a public cause for onCookieChange notifications.
   //
@@ -748,8 +764,16 @@ class NET_EXPORT CookieMonster : public CookieStore {
   // Number of distinct partitioned cookies globally. This is used to enforce a
   // global maximum on the number of partitioned cookies.
   size_t num_partitioned_cookies_ = 0u;
+  // Number of partitioned cookies whose partition key has a nonce.
+  size_t num_nonced_partitioned_cookies_ = 0u;
 
-  bool same_party_attribute_enabled_ = false;
+  // Number of bytes used by the partitioned cookie jar.
+  size_t num_partitioned_cookies_bytes_ = 0u;
+  // Number of bytes used by partitioned cookies whose partition key has a
+  // nonce.
+  size_t num_nonced_partitioned_cookie_bytes_ = 0u;
+  // Cookie jar sizes per partition.
+  std::map<CookiePartitionKey, size_t> bytes_per_cookie_partition_;
 
   CookieMonsterChangeDispatcher change_dispatcher_;
 

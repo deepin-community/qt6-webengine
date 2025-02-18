@@ -19,7 +19,7 @@ ShadowRealmGlobalScope::ShadowRealmGlobalScope(
 
 void ShadowRealmGlobalScope::Trace(Visitor* visitor) const {
   visitor->Trace(initiator_execution_context_);
-  EventTargetWithInlineData::Trace(visitor);
+  EventTarget::Trace(visitor);
   ExecutionContext::Trace(visitor);
 }
 
@@ -89,11 +89,6 @@ ResourceFetcher* ShadowRealmGlobalScope::Fetcher() {
 }
 
 void ShadowRealmGlobalScope::ExceptionThrown(ErrorEvent* error_event) {
-  NOTREACHED();
-}
-
-void ShadowRealmGlobalScope::AddInspectorIssue(
-    mojom::blink::InspectorIssueInfoPtr issue) {
   NOTREACHED();
 }
 

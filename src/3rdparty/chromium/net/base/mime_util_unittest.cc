@@ -102,7 +102,6 @@ TEST(MimeUtilTest, ExtensionTest) {
          "application/x-mpegurl",  // Chrome's secondary mapping.
          "audio/x-mpegurl",  // https://crbug.com/1273061, system override for
                              // android-arm[64]-test and Linux. Possibly more.
-         "application/vnd.apple.mpegurl",  // System override for ChromeOS.
          "audio/mpegurl",                  // System override for mac.
      }},
     {FILE_PATH_LITERAL("csv"), {"text/csv"}},
@@ -394,6 +393,65 @@ TEST(MimeUtilTest, TestParseMimeTypeWithoutParameter) {
   EXPECT_FALSE(ParseMimeTypeWithoutParameter("text\n/plain", nullptr, nullptr));
   EXPECT_FALSE(
       ParseMimeTypeWithoutParameter("text/\nplain ", nullptr, nullptr));
+}
+
+class ExtractMIMETypeTestInvalid : public testing::TestWithParam<std::string> {
+};
+
+INSTANTIATE_TEST_SUITE_P(
+    InvalidMediaTypes,
+    ExtractMIMETypeTestInvalid,
+    testing::Values(
+        // Fails because it doesn't contain '/'.
+        "a",
+        "application",
+        // Space is not HTTP token code point.
+        //  https://mimesniff.spec.whatwg.org/#http-token-code-point
+        // U+2003, EM SPACE (UTF-8: E2 80 83).
+        "\xE2\x80\x83text/html",
+        "text\xE2\x80\x83/html",
+        "text / html",
+        "t e x t / h t m l",
+        "text\r\n/\nhtml",
+        "text\n/\nhtml",
+        ", text/html",
+        "; text/html"));
+
+TEST_P(ExtractMIMETypeTestInvalid, MustFail) {
+  // Parsing is expected to fail.
+  EXPECT_EQ(std::nullopt, net::ExtractMimeTypeFromMediaType(GetParam(), true));
+}
+
+class ExtractMIMETypeTestValid : public testing::TestWithParam<std::string> {};
+
+INSTANTIATE_TEST_SUITE_P(
+    ValidMediaTypes,
+    ExtractMIMETypeTestValid,
+    testing::Values("text/html",
+                    "text/html; charset=iso-8859-1",
+                    // Quoted charset parameter.
+                    "text/html; charset=\"quoted\"",
+                    // Multiple parameters.
+                    "text/html; charset=x; foo=bar",
+                    // OWSes are trimmed.
+                    " text/html   ",
+                    "\ttext/html \t",
+                    "text/html ; charset=iso-8859-1"
+                    // Non-standard multiple type/subtype listing using a comma
+                    // as a separator is accepted.
+                    "text/html,text/plain",
+                    "text/html , text/plain",
+                    "text/html\t,\ttext/plain",
+                    "text/html,text/plain;charset=iso-8859-1",
+                    "\r\ntext/html\r\n",
+                    "text/html;wow",
+                    "text/html;;;;;;",
+                    "text/html; = = = "));
+
+TEST_P(ExtractMIMETypeTestValid, MustSucceed) {
+  //  net::ExtractMIMETypeFromMediaType parses well-formed headers correctly.
+  EXPECT_EQ("text/html",
+            net::ExtractMimeTypeFromMediaType(GetParam(), true).value_or(""));
 }
 
 TEST(MimeUtilTest, TestIsValidTopLevelMimeType) {

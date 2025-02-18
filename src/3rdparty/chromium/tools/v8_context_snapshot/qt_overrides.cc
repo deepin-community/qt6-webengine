@@ -4,20 +4,18 @@
 
 #include "build/build_config.h"
 #include "gpu/vulkan/buildflags.h"
+#include "ui/base/ozone_buildflags.h"
 
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN)
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_context.h"
 #include "ui/gl/gl_display.h"
 #include "ui/gl/gl_surface.h"
+#endif
 
-#if BUILDFLAG(IS_LINUX)
-#if BUILDFLAG(IS_OZONE)
-#include "ui/ozone/buildflags.h"
-#if BUILDFLAG(OZONE_PLATFORM_X11)
+#if BUILDFLAG(IS_LINUX) && BUILDFLAG(IS_OZONE_X11)
 #include "ui/gl/gl_surface_glx.h"
-#endif // BUILDFLAG(OZONE_PLATFORM_X11
-#endif // BUILDFLAG(IS_OZONE)
-#endif // BUILDFLAG(IS_LINUX)
+#endif
 
 #include "ui/base/dragdrop/os_exchange_data_provider_factory.h"
 #include "ui/base/pointer/pointer_device.h"
@@ -27,9 +25,7 @@
 #include "gpu/vulkan/init/vulkan_factory.h"
 #endif
 
-#if BUILDFLAG(IS_LINUX)
-#if BUILDFLAG(IS_OZONE)
-#if BUILDFLAG(OZONE_PLATFORM_X11)
+#if BUILDFLAG(IS_LINUX) && BUILDFLAG(IS_OZONE_X11)
 void* GetQtXDisplay() {
   return nullptr;
 }
@@ -50,13 +46,8 @@ bool GLSurfaceGLX::IsCreateContextES2ProfileSupported() {
 bool GLSurfaceGLX::IsCreateContextSupported() {
   return false;
 }
-bool GLSurfaceGLX::InitializeExtensionSettingsOneOff() {
-  return false;
-}
 } // namespace gl
-#endif // BUILDFLAG(OZONE_PLATFORM_X11)
-#endif // BUILDFLAG(IS_OZONE)
-#endif // BUILDFLAG(IS_LINUX)
+#endif  // if BUILDFLAG(IS_LINUX) && BUILDFLAG(IS_OZONE_X11)
 
 #if BUILDFLAG(IS_WIN)
 namespace gl {
@@ -75,10 +66,8 @@ GLDisplay* InitializeGLOneOffPlatform(GpuPreference preference) {
 bool usingSoftwareDynamicGL() {
   return false;
 }
-scoped_refptr<GLSurface> CreateOffscreenGLSurfaceWithFormat(
-    GLDisplay* display,
-    const gfx::Size& size,
-    GLSurfaceFormat format) {
+scoped_refptr<GLSurface> CreateOffscreenGLSurface(GLDisplay* display,
+                                                  const gfx::Size& size) {
   return nullptr;
 }
 scoped_refptr<GLSurface> CreateViewGLSurface(GLDisplay* display,

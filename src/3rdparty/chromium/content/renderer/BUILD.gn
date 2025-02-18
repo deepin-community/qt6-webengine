@@ -2,7 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//build/config/chromecast_build.gni")
+import("//build/config/cast.gni")
 import("//build/config/chromeos/ui_mode.gni")
 import("//build/config/features.gni")
 import("//build/config/jumbo.gni")
@@ -10,6 +10,7 @@ import("//build/config/ui.gni")
 import("//content/common/features.gni")
 import("//media/media_options.gni")
 import("//ppapi/buildflags/buildflags.gni")
+import("//sandbox/features.gni")
 import("//testing/libfuzzer/fuzzer_test.gni")
 import("//third_party/webrtc/webrtc.gni")
 import("//tools/ipc_fuzzer/ipc_fuzzer.gni")
@@ -30,6 +31,7 @@ target(link_target_type, "renderer") {
     "//content/public/renderer:renderer_sources",
     "//content/renderer:audio_decoder_fuzzer",
     "//content/renderer:content_security_policy_util_fuzzer",
+    "//media/mojo/clients:unit_tests",
   ]
 
   sources = [
@@ -51,6 +53,8 @@ target(link_target_type, "renderer") {
     "accessibility/render_accessibility_manager.h",
     "agent_scheduling_group.cc",
     "agent_scheduling_group.h",
+    "background_resource_fetch_assets.cc",
+    "background_resource_fetch_assets.h",
     "browser_exposed_renderer_interfaces.cc",
     "browser_exposed_renderer_interfaces.h",
     "content_security_policy_util.cc",
@@ -91,10 +95,10 @@ target(link_target_type, "renderer") {
     "media/render_media_client.h",
     "media/render_media_event_handler.cc",
     "media/render_media_event_handler.h",
+    "media/renderer_web_media_player_delegate.cc",
+    "media/renderer_web_media_player_delegate.h",
     "media/renderer_webaudiodevice_impl.cc",
     "media/renderer_webaudiodevice_impl.h",
-    "media/renderer_webmediaplayer_delegate.cc",
-    "media/renderer_webmediaplayer_delegate.h",
     "mhtml_handle_writer.cc",
     "mhtml_handle_writer.h",
     "mojo/blink_interface_registry_impl.cc",
@@ -194,11 +198,7 @@ target(link_target_type, "renderer") {
   }
 
   if (is_linux || is_chromeos) {
-    sources += [
-      "renderer_main_platform_delegate_linux.cc",
-      "renderer_thread_type_handler.cc",
-      "renderer_thread_type_handler.h",
-    ]
+    sources += [ "renderer_main_platform_delegate_linux.cc" ]
   }
 
   if (is_mac) {
@@ -246,13 +246,13 @@ target(link_target_type, "renderer") {
     "//components/discardable_memory/client",
     "//components/metrics",
     "//components/metrics:single_sample_metrics",
+    "//components/startup_metric_utils",
     "//components/url_formatter",
     "//components/variations:variations_mojom",
     "//components/variations/net",
     "//components/viz/client",
     "//components/viz/common",
     "//content:content_resources",
-    "//content:dev_ui_content_resources",
     "//content/child",
     "//content/common",
     "//content/common:buildflags",
@@ -260,7 +260,6 @@ target(link_target_type, "renderer") {
     "//content/gpu:gpu_sources",
     "//content/public/child:child_sources",
     "//content/services/auction_worklet:auction_worklet",
-    "//content/services/shared_storage_worklet",
     "//crypto",
     "//device/base/synchronization",
     "//device/gamepad/public/cpp:shared_with_blink",
@@ -274,7 +273,6 @@ target(link_target_type, "renderer") {
     "//media:media_buildflags",
     "//media/capture",
     "//media/gpu",
-    "//media/gpu/ipc/client",
     "//media/gpu/ipc/common",
     "//media/midi",
     "//media/midi:mojo",
@@ -334,14 +332,16 @@ target(link_target_type, "renderer") {
 
   if (is_android) {
     deps += [
-      "//components/power_scheduler",
-
       # Used by Android WebView only.
       "//components/viz/service",
-      "//third_party/android_ndk:cpu_features",
       "//third_party/ashmem",
+      "//third_party/cpu_features:ndk_compat",
       "//third_party/libphonenumber",
     ]
+
+    if (use_seccomp_bpf) {
+      deps += [ "//sandbox/policy" ]
+    }
   }
 
   if (is_linux || is_chromeos) {
@@ -364,9 +364,8 @@ target(link_target_type, "renderer") {
 
   if (enable_cast_receiver) {
     deps += [
-      "//components/cast_streaming/public",
+      "//components/cast_streaming/common",
       "//components/cast_streaming/renderer:resource_provider",
-      "//components/cast_streaming/renderer:wrapping_renderer_factory_selector",
     ]
   }
 
@@ -502,8 +501,6 @@ target(link_target_type, "renderer") {
       "pepper/ppb_proxy_impl.h",
       "pepper/ppb_var_deprecated_impl.cc",
       "pepper/ppb_var_deprecated_impl.h",
-      "pepper/ppb_video_decoder_impl.cc",
-      "pepper/ppb_video_decoder_impl.h",
       "pepper/renderer_ppapi_host_impl.cc",
       "pepper/renderer_ppapi_host_impl.h",
       "pepper/renderer_restrict_dispatch_group.h",

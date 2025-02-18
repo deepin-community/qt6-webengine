@@ -12,7 +12,6 @@
 #include <utility>
 
 #include "base/check.h"
-#include "base/cxx17_backports.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "cc/paint/paint_flags.h"
@@ -74,8 +73,9 @@ bool GetColorFromText(const std::u16string& text, SkColor* result) {
 // A view that processes mouse events and gesture events using a common
 // interface.
 class LocatedEventHandlerView : public views::View {
+  METADATA_HEADER(LocatedEventHandlerView, views::View)
+
  public:
-  METADATA_HEADER(LocatedEventHandlerView);
   LocatedEventHandlerView(const LocatedEventHandlerView&) = delete;
   LocatedEventHandlerView& operator=(const LocatedEventHandlerView&) = delete;
   ~LocatedEventHandlerView() override = default;
@@ -107,7 +107,7 @@ class LocatedEventHandlerView : public views::View {
   }
 };
 
-BEGIN_METADATA(LocatedEventHandlerView, views::View)
+BEGIN_METADATA(LocatedEventHandlerView)
 END_METADATA
 
 void DrawGradientRect(const gfx::Rect& rect,
@@ -140,9 +140,9 @@ namespace views {
 // The class to choose the hue of the color.  It draws a vertical bar and
 // the indicator for the currently selected hue.
 class HueView : public LocatedEventHandlerView {
- public:
-  METADATA_HEADER(HueView);
+  METADATA_HEADER(HueView, LocatedEventHandlerView)
 
+ public:
   using HueChangedCallback = base::RepeatingCallback<void(SkScalar)>;
   explicit HueView(const HueChangedCallback& changed_callback);
   HueView(const HueView&) = delete;
@@ -248,7 +248,7 @@ void HueView::OnPaint(gfx::Canvas* canvas) {
   canvas->DrawPath(right_indicator_path, indicator_flags);
 }
 
-BEGIN_METADATA(HueView, LocatedEventHandlerView)
+BEGIN_METADATA(HueView)
 END_METADATA
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -258,9 +258,9 @@ END_METADATA
 // a square area and the indicator for the currently selected saturation and
 // value.
 class SaturationValueView : public LocatedEventHandlerView {
- public:
-  METADATA_HEADER(SaturationValueView);
+  METADATA_HEADER(SaturationValueView, LocatedEventHandlerView)
 
+ public:
   using SaturationValueChangedCallback =
       base::RepeatingCallback<void(SkScalar, SkScalar)>;
   explicit SaturationValueView(
@@ -341,8 +341,8 @@ void SaturationValueView::ProcessEventAtLocation(const gfx::Point& point) {
   SkScalar scalar_size = SkIntToScalar(kSaturationValueSize - 1);
   SkScalar saturation = (point.x() - kBorderWidth) / scalar_size;
   SkScalar value = SK_Scalar1 - (point.y() - kBorderWidth) / scalar_size;
-  saturation = base::clamp(saturation, 0.0f, SK_Scalar1);
-  value = base::clamp(value, 0.0f, SK_Scalar1);
+  saturation = std::clamp(saturation, 0.0f, SK_Scalar1);
+  value = std::clamp(value, 0.0f, SK_Scalar1);
   OnSaturationValueChanged(saturation, value);
   changed_callback_.Run(saturation, value);
 }
@@ -387,7 +387,7 @@ void SaturationValueView::UpdateMarkerColor() {
   marker_color_ = color_utils::GetColorWithMaxContrast(SkHSVToColor(hsv));
 }
 
-BEGIN_METADATA(SaturationValueView, LocatedEventHandlerView)
+BEGIN_METADATA(SaturationValueView)
 END_METADATA
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -395,8 +395,9 @@ END_METADATA
 //
 // A view to simply show the selected color in a rectangle.
 class SelectedColorPatchView : public views::View {
+  METADATA_HEADER(SelectedColorPatchView, views::View)
+
  public:
-  METADATA_HEADER(SelectedColorPatchView);
   SelectedColorPatchView();
   SelectedColorPatchView(const SelectedColorPatchView&) = delete;
   SelectedColorPatchView& operator=(const SelectedColorPatchView&) = delete;
@@ -419,7 +420,7 @@ void SelectedColorPatchView::SetColor(SkColor color) {
   SchedulePaint();
 }
 
-BEGIN_METADATA(SelectedColorPatchView, views::View)
+BEGIN_METADATA(SelectedColorPatchView)
 END_METADATA
 
 std::unique_ptr<View> ColorChooser::BuildView() {
@@ -542,7 +543,6 @@ std::unique_ptr<WidgetDelegate> ColorChooser::MakeWidgetDelegate() {
   delegate->SetContentsView(BuildView());
   delegate->SetInitiallyFocusedView(textfield_);
   delegate->SetModalType(ui::MODAL_TYPE_WINDOW);
-  delegate->SetOwnedByWidget(true);
   delegate->RegisterWindowClosingCallback(
       base::BindOnce(&ColorChooser::OnViewClosing, this->AsWeakPtr()));
 

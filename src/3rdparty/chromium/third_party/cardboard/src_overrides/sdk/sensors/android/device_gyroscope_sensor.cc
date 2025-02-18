@@ -20,7 +20,6 @@
 #include <stddef.h>
 
 #include <memory>
-#include <mutex>  // NOLINT
 
 #include "third_party/cardboard/src/sdk/sensors/accelerometer_data.h"
 #include "third_party/cardboard/src/sdk/sensors/gyroscope_data.h"
@@ -149,9 +148,7 @@ struct DeviceGyroscopeSensor::SensorInfo {
 
 namespace {
 
-bool ParseGyroEvent(const ASensorEvent& event,
-                    DeviceGyroscopeSensor::SensorInfo* sensor_info,
-                    GyroscopeData* sample) {
+bool ParseGyroEvent(const ASensorEvent& event, GyroscopeData* sample) {
   if (event.type == ASENSOR_TYPE_ADDITIONAL_INFO) {
     CARDBOARD_LOGI("ParseGyroEvent discarding additional info sensor event");
     return false;
@@ -166,6 +163,8 @@ bool ParseGyroEvent(const ASensorEvent& event,
     sample->data = {event.vector.x, event.vector.y, event.vector.z};
     return true;
   } else if (event.type == ASENSOR_TYPE_GYROSCOPE_UNCALIBRATED) {
+    // This is a special case when it is possible to initialize to
+    // ASENSOR_TYPE_GYROSCOPE_UNCALIBRATED
     sample->data = {event.vector.x, event.vector.y, event.vector.z};
     return true;
   } else {
@@ -178,15 +177,12 @@ bool ParseGyroEvent(const ASensorEvent& event,
 
 }  // namespace
 
-// This function returns gyroscope initial system bias
-Vector3 DeviceGyroscopeSensor::GetInitialSystemBias() {
-  static Vector3 kInitialSystemBias{0, 0, 0};
-  return kInitialSystemBias;
-}
-
 DeviceGyroscopeSensor::DeviceGyroscopeSensor()
     : sensor_info_(new SensorInfo()) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
   sensor_info_->sensor_manager = ASensorManager_getInstance();
+#pragma clang diagnostic pop
   sensor_info_->sensor = InitSensor(sensor_info_->sensor_manager);
   if (!sensor_info_->sensor) {
     return;
@@ -209,7 +205,7 @@ void DeviceGyroscopeSensor::PollForSensorData(
   }
   do {
     GyroscopeData sample;
-    if (ParseGyroEvent(event, sensor_info_.get(), &sample)) {
+    if (ParseGyroEvent(event, &sample)) {
       results->push_back(sample);
     }
   } while (sensor_info_->reader->ReadEvent(&event));

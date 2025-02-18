@@ -3,11 +3,11 @@
 // found in the LICENSE file.
 
 #include <memory>
+#include <optional>
 #include <sstream>
 #include <utility>
 
 #include "absl/strings/str_cat.h"
-#include "absl/types/optional.h"
 #include "quiche/quic/core/congestion_control/bbr2_misc.h"
 #include "quiche/quic/core/congestion_control/bbr2_sender.h"
 #include "quiche/quic/core/congestion_control/bbr_sender.h"
@@ -15,6 +15,7 @@
 #include "quiche/quic/core/quic_bandwidth.h"
 #include "quiche/quic/core/quic_packet_number.h"
 #include "quiche/quic/core/quic_types.h"
+#include "quiche/quic/platform/api/quic_expect_bug.h"
 #include "quiche/quic/platform/api/quic_flags.h"
 #include "quiche/quic/platform/api/quic_logging.h"
 #include "quiche/quic/platform/api/quic_test.h"
@@ -90,7 +91,7 @@ class DefaultTopologyParams {
   // Network switch queue capacity, in number of BDPs.
   float switch_queue_capacity_in_bdp = 2;
 
-  absl::optional<TrafficPolicerParams> sender_policer_params;
+  std::optional<TrafficPolicerParams> sender_policer_params;
 
   QuicBandwidth BottleneckBandwidth() const {
     return std::min(local_link.bandwidth, test_link.bandwidth);
@@ -1593,6 +1594,12 @@ TEST_F(Bbr2DefaultTopologyTest, InFlightAwareGainCycling) {
                      sender_->ExportDebugState().bandwidth_hi, 0.02f);
   }
 
+  if (GetQuicReloadableFlag(quic_pacing_remove_non_initial_burst)) {
+    QuicSentPacketManagerPeer::GetPacingSender(
+        &sender_connection()->sent_packet_manager())
+        ->SetBurstTokens(10);
+  }
+
   // Now that in-flight is almost zero and the pacing gain is still above 1,
   // send approximately 1.4 BDPs worth of data. This should cause the PROBE_BW
   // mode to enter low gain cycle(PROBE_DOWN), and exit it earlier than one
@@ -1771,7 +1778,7 @@ TEST_F(Bbr2DefaultTopologyTest, ProbeUpAdaptInflightHiGradually) {
   auto next_packet_number = sender_unacked_map()->largest_sent_packet() + 1;
   sender_->OnCongestionEvent(
       /*rtt_updated=*/true, sender_unacked_map()->bytes_in_flight(), now,
-      acked_packets, {});
+      acked_packets, {}, 0, 0);
   ASSERT_EQ(CyclePhase::PROBE_REFILL,
             sender_->ExportDebugState().probe_bw.phase);
 
@@ -1781,7 +1788,8 @@ TEST_F(Bbr2DefaultTopologyTest, ProbeUpAdaptInflightHiGradually) {
   now = now + params.RTT();
   sender_->OnCongestionEvent(
       /*rtt_updated=*/true, kDefaultMaxPacketSize, now,
-      {AckedPacket(next_packet_number - 1, kDefaultMaxPacketSize, now)}, {});
+      {AckedPacket(next_packet_number - 1, kDefaultMaxPacketSize, now)}, {}, 0,
+      0);
   ASSERT_EQ(CyclePhase::PROBE_UP, sender_->ExportDebugState().probe_bw.phase);
 
   // Send 2 packets and lose the first one(50% loss) to exit PROBE_UP.
@@ -1792,9 +1800,9 @@ TEST_F(Bbr2DefaultTopologyTest, ProbeUpAdaptInflightHiGradually) {
   }
   now = now + params.RTT();
   sender_->OnCongestionEvent(
-      /*rtt_updated=*/true, kDefaultMaxPacketSize, now,
+      /*rtt_updated=*/true, 2 * kDefaultMaxPacketSize, now,
       {AckedPacket(next_packet_number - 1, kDefaultMaxPacketSize, now)},
-      {LostPacket(next_packet_number - 2, kDefaultMaxPacketSize)});
+      {LostPacket(next_packet_number - 2, kDefaultMaxPacketSize)}, 0, 0);
 
   QuicByteCount inflight_hi = sender_->ExportDebugState().inflight_hi;
   EXPECT_LT(2 * kDefaultMaxPacketSize, inflight_hi);
@@ -1832,10 +1840,64 @@ TEST_F(Bbr2DefaultTopologyTest, LossOnlyCongestionEvent) {
 
   QuicTime now = simulator_.GetClock()->Now() + params.RTT() * 0.25;
   sender_->OnCongestionEvent(false, sender_unacked_map()->bytes_in_flight(),
-                             now, {}, lost_packets);
+                             now, {}, lost_packets, 0, 0);
 
   // Bandwidth estimate should not change for the loss only event.
   EXPECT_EQ(prior_bandwidth_estimate, sender_->BandwidthEstimate());
+}
+
+// Simulate the case where a packet is considered lost but then acked.
+TEST_F(Bbr2DefaultTopologyTest, SpuriousLossEvent) {
+  DefaultTopologyParams params;
+  CreateNetwork(params);
+
+  DriveOutOfStartup(params);
+
+  // Make sure we have something in flight.
+  if (sender_unacked_map()->bytes_in_flight() == 0) {
+    sender_endpoint_.AddBytesToTransfer(50 * 1024 * 1024);
+    bool simulator_result = simulator_.RunUntilOrTimeout(
+        [&]() { return sender_unacked_map()->bytes_in_flight() > 0; },
+        QuicTime::Delta::FromSeconds(5));
+    ASSERT_TRUE(simulator_result);
+  }
+
+  // Lose all in flight packets.
+  QuicTime now = simulator_.GetClock()->Now() + params.RTT() * 0.25;
+  const QuicByteCount prior_inflight = sender_unacked_map()->bytes_in_flight();
+  LostPacketVector lost_packets;
+  for (QuicPacketNumber packet_number = sender_unacked_map()->GetLeastUnacked();
+       sender_unacked_map()->HasInFlightPackets(); packet_number++) {
+    const auto& info = sender_unacked_map()->GetTransmissionInfo(packet_number);
+    if (!info.in_flight) {
+      continue;
+    }
+    lost_packets.emplace_back(packet_number, info.bytes_sent);
+    sender_unacked_map()->RemoveFromInFlight(packet_number);
+  }
+  ASSERT_FALSE(lost_packets.empty());
+  sender_->OnCongestionEvent(false, prior_inflight, now, {}, lost_packets, 0,
+                             0);
+
+  // Pretend the first lost packet number is acked.
+  now = now + params.RTT() * 0.5;
+  AckedPacketVector acked_packets;
+  acked_packets.emplace_back(lost_packets[0].packet_number, 0, now);
+  acked_packets.back().spurious_loss = true;
+  EXPECT_EQ(sender_unacked_map()->bytes_in_flight(), 0);
+  sender_->OnCongestionEvent(false, sender_unacked_map()->bytes_in_flight(),
+                             now, acked_packets, {}, 0, 0);
+
+  if (GetQuicReloadableFlag(quic_bbr2_fix_spurious_loss_bytes_counting)) {
+    EXPECT_EQ(sender_->GetNetworkModel().total_bytes_sent(),
+              sender_->GetNetworkModel().total_bytes_acked() +
+                  sender_->GetNetworkModel().total_bytes_lost());
+  } else {
+    // This is the bug fixed by the flag.
+    EXPECT_LT(sender_->GetNetworkModel().total_bytes_sent(),
+              sender_->GetNetworkModel().total_bytes_acked() +
+                  sender_->GetNetworkModel().total_bytes_lost());
+  }
 }
 
 // After quiescence, if the sender is in PROBE_RTT, it should transition to
@@ -1960,7 +2022,7 @@ TEST_F(Bbr2DefaultTopologyTest, SwitchToBbr2MidConnection) {
       AckedPacket(QuicPacketNumber(2), /*bytes_acked=*/0, QuicTime::Zero()),
   };
   now = now + QuicTime::Delta::FromMilliseconds(2000);
-  sender_->OnCongestionEvent(true, bytes_in_flight, now, acked, {});
+  sender_->OnCongestionEvent(true, bytes_in_flight, now, acked, {}, 0, 0);
 
   // Send 30-41.
   while (next_packet_number < QuicPacketNumber(42)) {
@@ -1975,7 +2037,7 @@ TEST_F(Bbr2DefaultTopologyTest, SwitchToBbr2MidConnection) {
       AckedPacket(QuicPacketNumber(3), /*bytes_acked=*/0, QuicTime::Zero()),
   };
   now = now + QuicTime::Delta::FromMilliseconds(2000);
-  sender_->OnCongestionEvent(true, bytes_in_flight, now, acked, {});
+  sender_->OnCongestionEvent(true, bytes_in_flight, now, acked, {}, 0, 0);
 
   // Send 42.
   now = now + QuicTime::Delta::FromMilliseconds(10);
@@ -1991,7 +2053,7 @@ TEST_F(Bbr2DefaultTopologyTest, SwitchToBbr2MidConnection) {
       AckedPacket(QuicPacketNumber(7), /*bytes_acked=*/1350, QuicTime::Zero()),
   };
   now = now + QuicTime::Delta::FromMilliseconds(2000);
-  sender_->OnCongestionEvent(true, bytes_in_flight, now, acked, {});
+  sender_->OnCongestionEvent(true, bytes_in_flight, now, acked, {}, 0, 0);
   EXPECT_FALSE(sender_->BandwidthEstimate().IsZero());
 }
 
@@ -2568,6 +2630,27 @@ TEST_F(Bbr2MultiSenderTest, QUIC_SLOW_TEST(Bbr2VsCubic)) {
       },
       3 * transfer_time);
   ASSERT_TRUE(simulator_result);
+}
+
+TEST(MinRttFilter, BadRttSample) {
+  auto time_in_seconds = [](int64_t seconds) {
+    return QuicTime::Zero() + QuicTime::Delta::FromSeconds(seconds);
+  };
+
+  MinRttFilter filter(QuicTime::Delta::FromMilliseconds(10),
+                      time_in_seconds(100));
+  ASSERT_EQ(filter.Get(), QuicTime::Delta::FromMilliseconds(10));
+
+  filter.Update(QuicTime::Delta::FromMilliseconds(-1), time_in_seconds(150));
+
+  EXPECT_EQ(filter.Get(), QuicTime::Delta::FromMilliseconds(10));
+  EXPECT_EQ(filter.GetTimestamp(), time_in_seconds(100));
+
+  filter.ForceUpdate(QuicTime::Delta::FromMilliseconds(-2),
+                     time_in_seconds(200));
+
+  EXPECT_EQ(filter.Get(), QuicTime::Delta::FromMilliseconds(10));
+  EXPECT_EQ(filter.GetTimestamp(), time_in_seconds(100));
 }
 
 }  // namespace test

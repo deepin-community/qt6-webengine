@@ -15,7 +15,6 @@
 #include "src/heap/memory-chunk.h"
 
 #if V8_ENABLE_WEBASSEMBLY
-#include "src/wasm/wasm-code-manager.h"
 #include "src/wasm/wasm-objects.h"
 #endif  // V8_ENABLE_WEBASSEMBLY
 
@@ -77,7 +76,18 @@ class PPCOperandConverter final : public InstructionOperandConverter {
 #endif
       case Constant::kExternalReference:
         return Operand(constant.ToExternalReference());
-      case Constant::kCompressedHeapObject:
+      case Constant::kCompressedHeapObject: {
+        RootIndex root_index;
+        if (gen_->isolate()->roots_table().IsRootHandle(constant.ToHeapObject(),
+                                                        &root_index)) {
+          CHECK(COMPRESS_POINTERS_BOOL);
+          CHECK(V8_STATIC_ROOTS_BOOL || !gen_->isolate()->bootstrapper());
+          Tagged_t ptr =
+              MacroAssemblerBase::ReadOnlyRootPtr(root_index, gen_->isolate());
+          return Operand(ptr);
+        }
+        return Operand(constant.ToHeapObject());
+      }
       case Constant::kHeapObject:
       case Constant::kRpoNumber:
         break;
@@ -98,6 +108,9 @@ class PPCOperandConverter final : public InstructionOperandConverter {
       case kMode_MRR:
         *first_index += 2;
         return MemOperand(InputRegister(index + 0), InputRegister(index + 1));
+      case kMode_Root:
+        *first_index += 1;
+        return MemOperand(kRootRegister, InputRegister(index));
     }
     UNREACHABLE();
   }
@@ -127,10 +140,11 @@ namespace {
 
 class OutOfLineRecordWrite final : public OutOfLineCode {
  public:
-  OutOfLineRecordWrite(CodeGenerator* gen, Register object, Register offset,
-                       Register value, Register scratch0, Register scratch1,
-                       RecordWriteMode mode, StubCallMode stub_mode,
-                       UnwindingInfoWriter* unwinding_info_writer)
+  OutOfLineRecordWrite(
+      CodeGenerator* gen, Register object, Register offset, Register value,
+      Register scratch0, Register scratch1, RecordWriteMode mode,
+      StubCallMode stub_mode, UnwindingInfoWriter* unwinding_info_writer,
+      IndirectPointerTag indirect_pointer_tag = kIndirectPointerNullTag)
       : OutOfLineCode(gen),
         object_(object),
         offset_(offset),
@@ -144,15 +158,17 @@ class OutOfLineRecordWrite final : public OutOfLineCode {
 #endif  // V8_ENABLE_WEBASSEMBLY
         must_save_lr_(!gen->frame_access_state()->has_frame()),
         unwinding_info_writer_(unwinding_info_writer),
-        zone_(gen->zone()) {
+        zone_(gen->zone()),
+        indirect_pointer_tag_(indirect_pointer_tag) {
     DCHECK(!AreAliased(object, offset, scratch0, scratch1));
     DCHECK(!AreAliased(value, offset, scratch0, scratch1));
   }
 
-  OutOfLineRecordWrite(CodeGenerator* gen, Register object, int32_t offset,
-                       Register value, Register scratch0, Register scratch1,
-                       RecordWriteMode mode, StubCallMode stub_mode,
-                       UnwindingInfoWriter* unwinding_info_writer)
+  OutOfLineRecordWrite(
+      CodeGenerator* gen, Register object, int32_t offset, Register value,
+      Register scratch0, Register scratch1, RecordWriteMode mode,
+      StubCallMode stub_mode, UnwindingInfoWriter* unwinding_info_writer,
+      IndirectPointerTag indirect_pointer_tag = kIndirectPointerNullTag)
       : OutOfLineCode(gen),
         object_(object),
         offset_(no_reg),
@@ -166,18 +182,21 @@ class OutOfLineRecordWrite final : public OutOfLineCode {
 #endif  // V8_ENABLE_WEBASSEMBLY
         must_save_lr_(!gen->frame_access_state()->has_frame()),
         unwinding_info_writer_(unwinding_info_writer),
-        zone_(gen->zone()) {
+        zone_(gen->zone()),
+        indirect_pointer_tag_(indirect_pointer_tag) {
   }
 
   void Generate() final {
     ConstantPoolUnavailableScope constant_pool_unavailable(masm());
-    if (COMPRESS_POINTERS_BOOL) {
+    // When storing an indirect pointer, the value will always be a
+    // full/decompressed pointer.
+    if (COMPRESS_POINTERS_BOOL &&
+        mode_ != RecordWriteMode::kValueIsIndirectPointer) {
       __ DecompressTagged(value_, value_);
     }
-    __ CheckPageFlag(
-        value_, scratch0_,
-        MemoryChunk::kPointersToHereAreInterestingOrInSharedHeapMask, eq,
-        exit());
+    __ CheckPageFlag(value_, scratch0_,
+                     MemoryChunk::kPointersToHereAreInterestingMask, eq,
+                     exit());
     if (offset_ == no_reg) {
       __ addi(scratch1_, object_, Operand(offset_immediate_));
     } else {
@@ -195,6 +214,10 @@ class OutOfLineRecordWrite final : public OutOfLineCode {
     }
     if (mode_ == RecordWriteMode::kValueIsEphemeronKey) {
       __ CallEphemeronKeyBarrier(object_, scratch1_, save_fp_mode);
+    } else if (mode_ == RecordWriteMode::kValueIsIndirectPointer) {
+      DCHECK(IsValidIndirectPointerTag(indirect_pointer_tag_));
+      __ CallIndirectPointerBarrier(object_, scratch1_, save_fp_mode,
+                                    indirect_pointer_tag_);
 #if V8_ENABLE_WEBASSEMBLY
     } else if (stub_mode_ == StubCallMode::kCallWasmRuntimeStub) {
       __ CallRecordWriteStubSaveRegisters(object_, scratch1_, save_fp_mode,
@@ -225,6 +248,7 @@ class OutOfLineRecordWrite final : public OutOfLineCode {
   bool must_save_lr_;
   UnwindingInfoWriter* const unwinding_info_writer_;
   Zone* zone_;
+  IndirectPointerTag indirect_pointer_tag_;
 };
 
 Condition FlagsConditionToCondition(FlagsCondition condition, ArchOpcode op) {
@@ -448,9 +472,10 @@ Condition FlagsConditionToCondition(FlagsCondition condition, ArchOpcode op) {
 #define ASSEMBLE_LOAD_FLOAT(asm_instr, asm_instrp, asm_instrx) \
   do {                                                         \
     DoubleRegister result = i.OutputDoubleRegister();          \
+    size_t index = 0;                                          \
     AddressingMode mode = kMode_None;                          \
-    MemOperand operand = i.MemoryOperand(&mode);               \
-    bool is_atomic = i.InputInt32(2);                          \
+    MemOperand operand = i.MemoryOperand(&mode, &index);       \
+    bool is_atomic = i.InputInt32(index);                      \
     if (mode == kMode_MRI) {                                   \
       intptr_t offset = operand.offset();                      \
       if (is_int16(offset)) {                                  \
@@ -470,9 +495,10 @@ Condition FlagsConditionToCondition(FlagsCondition condition, ArchOpcode op) {
                               must_be_aligned)                     \
   do {                                                             \
     Register result = i.OutputRegister();                          \
+    size_t index = 0;                                              \
     AddressingMode mode = kMode_None;                              \
-    MemOperand operand = i.MemoryOperand(&mode);                   \
-    bool is_atomic = i.InputInt32(2);                              \
+    MemOperand operand = i.MemoryOperand(&mode, &index);           \
+    bool is_atomic = i.InputInt32(index);                          \
     if (mode == kMode_MRI) {                                       \
       intptr_t offset = operand.offset();                          \
       bool misaligned = offset & 3;                                \
@@ -489,16 +515,17 @@ Condition FlagsConditionToCondition(FlagsCondition condition, ArchOpcode op) {
     DCHECK_EQ(LeaveRC, i.OutputRCBit());                           \
   } while (0)
 
-#define ASSEMBLE_LOAD_INTEGER_RR(asm_instr)      \
-  do {                                           \
-    Register result = i.OutputRegister();        \
-    AddressingMode mode = kMode_None;            \
-    MemOperand operand = i.MemoryOperand(&mode); \
-    DCHECK_EQ(mode, kMode_MRR);                  \
-    bool is_atomic = i.InputInt32(2);            \
-    __ asm_instr(result, operand);               \
-    if (is_atomic) __ lwsync();                  \
-    DCHECK_EQ(LeaveRC, i.OutputRCBit());         \
+#define ASSEMBLE_LOAD_INTEGER_RR(asm_instr)              \
+  do {                                                   \
+    Register result = i.OutputRegister();                \
+    size_t index = 0;                                    \
+    AddressingMode mode = kMode_None;                    \
+    MemOperand operand = i.MemoryOperand(&mode, &index); \
+    DCHECK_EQ(mode, kMode_MRR);                          \
+    bool is_atomic = i.InputInt32(index);                \
+    __ asm_instr(result, operand);                       \
+    if (is_atomic) __ lwsync();                          \
+    DCHECK_EQ(LeaveRC, i.OutputRCBit());                 \
   } while (0)
 
 #define ASSEMBLE_STORE_FLOAT(asm_instr, asm_instrp, asm_instrx) \
@@ -533,7 +560,7 @@ Condition FlagsConditionToCondition(FlagsCondition condition, ArchOpcode op) {
     AddressingMode mode = kMode_None;                              \
     MemOperand operand = i.MemoryOperand(&mode, &index);           \
     Register value = i.InputRegister(index);                       \
-    bool is_atomic = i.InputInt32(3);                              \
+    bool is_atomic = i.InputInt32(index + 1);                      \
     if (is_atomic) __ lwsync();                                    \
     if (mode == kMode_MRI) {                                       \
       intptr_t offset = operand.offset();                          \
@@ -558,7 +585,7 @@ Condition FlagsConditionToCondition(FlagsCondition condition, ArchOpcode op) {
     MemOperand operand = i.MemoryOperand(&mode, &index); \
     DCHECK_EQ(mode, kMode_MRR);                          \
     Register value = i.InputRegister(index);             \
-    bool is_atomic = i.InputInt32(3);                    \
+    bool is_atomic = i.InputInt32(index + 1);            \
     if (is_atomic) __ lwsync();                          \
     __ asm_instr(value, operand);                        \
     if (is_atomic) __ sync();                            \
@@ -777,29 +804,7 @@ void CodeGenerator::AssembleCodeStartRegisterCheck() {
   __ Assert(eq, AbortReason::kWrongFunctionCodeStart);
 }
 
-// Check if the code object is marked for deoptimization. If it is, then it
-// jumps to the CompileLazyDeoptimizedCode builtin. In order to do this we need
-// to:
-//    1. read from memory the word that contains that bit, which can be found in
-//       the flags in the referenced {Code} object;
-//    2. test kMarkedForDeoptimizationBit in those flags; and
-//    3. if it is not zero then it jumps to the builtin.
-void CodeGenerator::BailoutIfDeoptimized() {
-  if (v8_flags.debug_code) {
-    // Check that {kJavaScriptCallCodeStartRegister} is correct.
-    __ ComputeCodeStartAddress(ip);
-    __ CmpS64(ip, kJavaScriptCallCodeStartRegister);
-    __ Assert(eq, AbortReason::kWrongFunctionCodeStart);
-  }
-
-  int offset = InstructionStream::kCodeOffset - InstructionStream::kHeaderSize;
-  __ LoadTaggedField(r11, MemOperand(kJavaScriptCallCodeStartRegister, offset),
-                     r0);
-  __ LoadS32(r11, FieldMemOperand(r11, Code::kKindSpecificFlagsOffset), r0);
-  __ TestBit(r11, InstructionStream::kMarkedForDeoptimizationBit);
-  __ Jump(BUILTIN_CODE(isolate(), CompileLazyDeoptimizedCode),
-          RelocInfo::CODE_TARGET, ne, cr0);
-}
+void CodeGenerator::BailoutIfDeoptimized() { __ BailoutIfDeoptimized(); }
 
 // Assembles an instruction after register allocation, producing machine code.
 CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
@@ -828,7 +833,11 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
     case kArchCallBuiltinPointer: {
       DCHECK(!instr->InputAt(0)->IsImmediate());
       Register builtin_index = i.InputRegister(0);
-      __ CallBuiltinByIndex(builtin_index);
+      Register target =
+          instr->HasCallDescriptorFlag(CallDescriptor::kFixedTargetRegister)
+              ? kJavaScriptCallCodeStartRegister
+              : builtin_index;
+      __ CallBuiltinByIndex(builtin_index, target);
       RecordCallPosition(instr);
       frame_access_state()->ClearSPDelta();
       break;
@@ -913,10 +922,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
         __ CmpS64(cp, kScratchReg);
         __ Assert(eq, AbortReason::kWrongFunctionContext);
       }
-      static_assert(kJavaScriptCallCodeStartRegister == r5, "ABI mismatch");
-      __ LoadTaggedField(r5, FieldMemOperand(func, JSFunction::kCodeOffset),
-                         r0);
-      __ CallCodeObject(r5);
+      __ CallJSFunction(func, kScratchReg);
       RecordCallPosition(instr);
       DCHECK_EQ(LeaveRC, i.OutputRCBit());
       frame_access_state()->ClearSPDelta();
@@ -963,9 +969,11 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       break;
     case kArchComment:
 #ifdef V8_TARGET_ARCH_PPC64
-      __ RecordComment(reinterpret_cast<const char*>(i.InputInt64(0)));
+      __ RecordComment(reinterpret_cast<const char*>(i.InputInt64(0)),
+                       SourceLocation());
 #else
-      __ RecordComment(reinterpret_cast<const char*>(i.InputInt32(0)));
+      __ RecordComment(reinterpret_cast<const char*>(i.InputInt32(0)),
+                       SourceLocation());
 #endif
       break;
     case kArchCallCFunction: {
@@ -1061,8 +1069,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
         // We don't actually want to generate a pile of code for this, so just
         // claim there is a stack frame, without generating one.
         FrameScope scope(masm(), StackFrame::NO_FRAME_TYPE);
-        __ Call(isolate()->builtins()->code_handle(Builtin::kAbortCSADcheck),
-                RelocInfo::CODE_TARGET);
+        __ CallBuiltin(Builtin::kAbortCSADcheck);
       }
       __ stop();
       break;
@@ -1095,6 +1102,16 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
         __ mr(i.OutputRegister(), fp);
       }
       break;
+#if V8_ENABLE_WEBASSEMBLY
+    case kArchStackPointer:
+      __ mr(i.OutputRegister(), sp);
+      break;
+    case kArchSetStackPointer: {
+      DCHECK(instr->InputAt(0)->IsRegister());
+      __ mr(sp, i.InputRegister(0));
+      break;
+    }
+#endif  // V8_ENABLE_WEBASSEMBLY
     case kArchStackPointerGreaterThan: {
       // Potentially apply an offset to the current stack pointer before the
       // comparison to consider the size difference of an optimized frame versus
@@ -1123,8 +1140,9 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       DCHECK_EQ(LeaveRC, i.OutputRCBit());
       break;
     case kArchStoreWithWriteBarrier: {
-      RecordWriteMode mode =
-          static_cast<RecordWriteMode>(MiscField::decode(instr->opcode()));
+      RecordWriteMode mode = RecordWriteModeField::decode(instr->opcode());
+      // Indirect pointer writes must use a different opcode.
+      DCHECK_NE(mode, RecordWriteMode::kValueIsIndirectPointer);
       Register object = i.InputRegister(0);
       Register value = i.InputRegister(2);
       Register scratch0 = i.TempRegister(0);
@@ -1154,8 +1172,44 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
             DetermineStubCallMode(), &unwinding_info_writer_);
         __ StoreTaggedField(value, MemOperand(object, offset), r0);
       }
-      if (mode > RecordWriteMode::kValueIsPointer) {
+      // Skip the write barrier if the value is a Smi. However, this is only
+      // valid if the value isn't an indirect pointer. Otherwise the value will
+      // be a pointer table index, which will always look like a Smi (but
+      // actually reference a pointer in the pointer table).
+      if (mode > RecordWriteMode::kValueIsIndirectPointer) {
         __ JumpIfSmi(value, ool->exit());
+      }
+      __ CheckPageFlag(object, scratch0,
+                       MemoryChunk::kPointersFromHereAreInterestingMask, ne,
+                       ool->entry());
+      __ bind(ool->exit());
+      break;
+    }
+    case kArchStoreIndirectWithWriteBarrier: {
+      RecordWriteMode mode = RecordWriteModeField::decode(instr->opcode());
+      Register scratch0 = i.TempRegister(0);
+      Register scratch1 = i.TempRegister(1);
+      OutOfLineRecordWrite* ool;
+      DCHECK_EQ(mode, RecordWriteMode::kValueIsIndirectPointer);
+      AddressingMode addressing_mode =
+          AddressingModeField::decode(instr->opcode());
+      Register object = i.InputRegister(0);
+      Register value = i.InputRegister(2);
+      IndirectPointerTag tag = static_cast<IndirectPointerTag>(i.InputInt64(3));
+      DCHECK(IsValidIndirectPointerTag(tag));
+      if (addressing_mode == kMode_MRI) {
+        uint64_t offset = i.InputInt64(1);
+        ool = zone()->New<OutOfLineRecordWrite>(
+            this, object, offset, value, scratch0, scratch1, mode,
+            DetermineStubCallMode(), &unwinding_info_writer_, tag);
+        __ StoreIndirectPointerField(value, MemOperand(object, offset), r0);
+      } else {
+        DCHECK_EQ(addressing_mode, kMode_MRR);
+        Register offset(i.InputRegister(1));
+        ool = zone()->New<OutOfLineRecordWrite>(
+            this, object, offset, value, scratch0, scratch1, mode,
+            DetermineStubCallMode(), &unwinding_info_writer_, tag);
+        __ StoreIndirectPointerField(value, MemOperand(object, offset), r0);
       }
       __ CheckPageFlag(object, scratch0,
                        MemoryChunk::kPointersFromHereAreInterestingMask, ne,
@@ -1861,13 +1915,35 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       }
       break;
     }
-    case kPPC_DoubleToInt32:
-    case kPPC_DoubleToUint32:
+#define DOUBLE_TO_INT32(op)                                                \
+  bool check_conversion = i.OutputCount() > 1;                             \
+  CRegister cr = cr7;                                                      \
+  FPSCRBit fps_bit = VXCVI;                                                \
+  int cr_bit = v8::internal::Assembler::encode_crbit(                      \
+      cr, static_cast<CRBit>(fps_bit % CRWIDTH));                          \
+  __ mtfsb0(fps_bit); /* clear FPSCR:VXCVI bit */                          \
+  __ op(kScratchDoubleReg, i.InputDoubleRegister(0));                      \
+  __ MovDoubleLowToInt(i.OutputRegister(0), kScratchDoubleReg);            \
+  __ mcrfs(cr, VXCVI); /* extract FPSCR field containing VXCVI into cr7 */ \
+  if (check_conversion) {                                                  \
+    __ li(i.OutputRegister(1), Operand(1));                                \
+    __ isel(i.OutputRegister(1), r0, i.OutputRegister(1), cr_bit);         \
+  } else {                                                                 \
+    __ isel(i.OutputRegister(0), r0, i.OutputRegister(0), cr_bit);         \
+  }
+    case kPPC_DoubleToInt32: {
+      DOUBLE_TO_INT32(fctiwz)
+      break;
+    }
+    case kPPC_DoubleToUint32: {
+      DOUBLE_TO_INT32(fctiwuz)
+      break;
+    }
+#undef DOUBLE_TO_INT32
     case kPPC_DoubleToInt64: {
 #if V8_TARGET_ARCH_PPC64
-      bool check_conversion =
-          (opcode == kPPC_DoubleToInt64 && i.OutputCount() > 1);
-        __ mtfsb0(VXCVI);  // clear FPSCR:VXCVI bit
+      bool check_conversion = i.OutputCount() > 1;
+      __ mtfsb0(VXCVI);  // clear FPSCR:VXCVI bit
 #endif
       __ ConvertDoubleToInt64(i.InputDoubleRegister(0),
 #if !V8_TARGET_ARCH_PPC64
@@ -2233,6 +2309,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
   V(I32x4Eq)               \
   V(I32x4GtS)              \
   V(I32x4GtU)              \
+  V(I32x4DotI16x8S)        \
   V(I16x8Add)              \
   V(I16x8Sub)              \
   V(I16x8Mul)              \
@@ -2250,6 +2327,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
   V(I16x8SConvertI32x4)    \
   V(I16x8UConvertI32x4)    \
   V(I16x8RoundingAverageU) \
+  V(I16x8Q15MulRSatS)      \
   V(I8x16Add)              \
   V(I8x16Sub)              \
   V(I8x16MinS)             \
@@ -2301,7 +2379,6 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
   V(I32x4ExtMulHighI16x8S)              \
   V(I32x4ExtMulLowI16x8U)               \
   V(I32x4ExtMulHighI16x8U)              \
-  V(I32x4DotI16x8S)                     \
   V(I16x8Ne)                            \
   V(I16x8GeS)                           \
   V(I16x8GeU)                           \
@@ -2309,7 +2386,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
   V(I16x8ExtMulHighI8x16S)              \
   V(I16x8ExtMulLowI8x16U)               \
   V(I16x8ExtMulHighI8x16U)              \
-  V(I16x8Q15MulRSatS)                   \
+  V(I16x8DotI8x16S)                     \
   V(I8x16Ne)                            \
   V(I8x16GeS)                           \
   V(I8x16GeU)                           \
@@ -2496,6 +2573,24 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
 #undef EMIT_SIMD_STORE_LANE
 #undef SIMD_STORE_LANE_LIST
 
+#define SIMD_LOAD_SPLAT(V)               \
+  V(S128Load64Splat, LoadAndSplat64x2LE) \
+  V(S128Load32Splat, LoadAndSplat32x4LE) \
+  V(S128Load16Splat, LoadAndSplat16x8LE) \
+  V(S128Load8Splat, LoadAndSplat8x16LE)
+
+#define EMIT_SIMD_LOAD_SPLAT(name, op)                      \
+  case kPPC_##name: {                                       \
+    AddressingMode mode = kMode_None;                       \
+    MemOperand operand = i.MemoryOperand(&mode);            \
+    DCHECK_EQ(mode, kMode_MRR);                             \
+    __ op(i.OutputSimd128Register(), operand, kScratchReg); \
+    break;                                                  \
+  }
+      SIMD_LOAD_SPLAT(EMIT_SIMD_LOAD_SPLAT)
+#undef EMIT_SIMD_LOAD_SPLAT
+#undef SIMD_LOAD_SPLAT
+
     case kPPC_F64x2Splat: {
       __ F64x2Splat(i.OutputSimd128Register(), i.InputDoubleRegister(0),
                     kScratchReg);
@@ -2522,86 +2617,134 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       __ I8x16Splat(i.OutputSimd128Register(), i.InputRegister(0));
       break;
     }
-    case kPPC_F64x2ExtractLane: {
-      __ F64x2ExtractLane(i.OutputDoubleRegister(), i.InputSimd128Register(0),
-                          i.InputInt8(1), kScratchSimd128Reg, kScratchReg);
+    case kPPC_FExtractLane: {
+      int lane_size = LaneSizeField::decode(instr->opcode());
+      switch (lane_size) {
+        case 32: {
+          __ F32x4ExtractLane(i.OutputDoubleRegister(),
+                              i.InputSimd128Register(0), i.InputInt8(1),
+                              kScratchSimd128Reg, kScratchReg, ip);
+          break;
+        }
+        case 64: {
+          __ F64x2ExtractLane(i.OutputDoubleRegister(),
+                              i.InputSimd128Register(0), i.InputInt8(1),
+                              kScratchSimd128Reg, kScratchReg);
+          break;
+        }
+        default:
+          UNREACHABLE();
+      }
       break;
     }
-    case kPPC_F32x4ExtractLane: {
-      __ F32x4ExtractLane(i.OutputDoubleRegister(), i.InputSimd128Register(0),
-                          i.InputInt8(1), kScratchSimd128Reg, kScratchReg, ip);
+    case kPPC_IExtractLane: {
+      int lane_size = LaneSizeField::decode(instr->opcode());
+      switch (lane_size) {
+        case 32: {
+          __ I32x4ExtractLane(i.OutputRegister(), i.InputSimd128Register(0),
+                              i.InputInt8(1), kScratchSimd128Reg);
+          break;
+        }
+        case 64: {
+          __ I64x2ExtractLane(i.OutputRegister(), i.InputSimd128Register(0),
+                              i.InputInt8(1), kScratchSimd128Reg);
+          break;
+        }
+        default:
+          UNREACHABLE();
+      }
       break;
     }
-    case kPPC_I64x2ExtractLane: {
-      __ I64x2ExtractLane(i.OutputRegister(), i.InputSimd128Register(0),
-                          i.InputInt8(1), kScratchSimd128Reg);
+    case kPPC_IExtractLaneU: {
+      int lane_size = LaneSizeField::decode(instr->opcode());
+      switch (lane_size) {
+        case 8: {
+          __ I8x16ExtractLaneU(i.OutputRegister(), i.InputSimd128Register(0),
+                               i.InputInt8(1), kScratchSimd128Reg);
+          break;
+        }
+        case 16: {
+          __ I16x8ExtractLaneU(i.OutputRegister(), i.InputSimd128Register(0),
+                               i.InputInt8(1), kScratchSimd128Reg);
+          break;
+        }
+        default:
+          UNREACHABLE();
+      }
       break;
     }
-    case kPPC_I32x4ExtractLane: {
-      __ I32x4ExtractLane(i.OutputRegister(), i.InputSimd128Register(0),
-                          i.InputInt8(1), kScratchSimd128Reg);
+    case kPPC_IExtractLaneS: {
+      int lane_size = LaneSizeField::decode(instr->opcode());
+      switch (lane_size) {
+        case 8: {
+          __ I8x16ExtractLaneS(i.OutputRegister(), i.InputSimd128Register(0),
+                               i.InputInt8(1), kScratchSimd128Reg);
+          break;
+        }
+        case 16: {
+          __ I16x8ExtractLaneS(i.OutputRegister(), i.InputSimd128Register(0),
+                               i.InputInt8(1), kScratchSimd128Reg);
+          break;
+        }
+        default:
+          UNREACHABLE();
+      }
       break;
     }
-    case kPPC_I16x8ExtractLaneU: {
-      __ I16x8ExtractLaneU(i.OutputRegister(), i.InputSimd128Register(0),
-                           i.InputInt8(1), kScratchSimd128Reg);
-      break;
-    }
-    case kPPC_I16x8ExtractLaneS: {
-      __ I16x8ExtractLaneS(i.OutputRegister(), i.InputSimd128Register(0),
-                           i.InputInt8(1), kScratchSimd128Reg);
-      break;
-    }
-    case kPPC_I8x16ExtractLaneU: {
-      __ I8x16ExtractLaneU(i.OutputRegister(), i.InputSimd128Register(0),
-                           i.InputInt8(1), kScratchSimd128Reg);
-      break;
-    }
-    case kPPC_I8x16ExtractLaneS: {
-      __ I8x16ExtractLaneS(i.OutputRegister(), i.InputSimd128Register(0),
-                           i.InputInt8(1), kScratchSimd128Reg);
-      break;
-    }
-    case kPPC_F64x2ReplaceLane: {
+    case kPPC_FReplaceLane: {
       DCHECK_EQ(i.OutputSimd128Register(), i.InputSimd128Register(0));
-      __ F64x2ReplaceLane(i.OutputSimd128Register(), i.InputSimd128Register(0),
-                          i.InputDoubleRegister(2), i.InputInt8(1), kScratchReg,
-                          kScratchSimd128Reg);
+      int lane_size = LaneSizeField::decode(instr->opcode());
+      switch (lane_size) {
+        case 32: {
+          __ F32x4ReplaceLane(
+              i.OutputSimd128Register(), i.InputSimd128Register(0),
+              i.InputDoubleRegister(2), i.InputInt8(1), kScratchReg,
+              kScratchDoubleReg, kScratchSimd128Reg);
+          break;
+        }
+        case 64: {
+          __ F64x2ReplaceLane(i.OutputSimd128Register(),
+                              i.InputSimd128Register(0),
+                              i.InputDoubleRegister(2), i.InputInt8(1),
+                              kScratchReg, kScratchSimd128Reg);
+          break;
+        }
+        default:
+          UNREACHABLE();
+      }
       break;
     }
-    case kPPC_F32x4ReplaceLane: {
+    case kPPC_IReplaceLane: {
       DCHECK_EQ(i.OutputSimd128Register(), i.InputSimd128Register(0));
-      __ F32x4ReplaceLane(i.OutputSimd128Register(), i.InputSimd128Register(0),
-                          i.InputDoubleRegister(2), i.InputInt8(1), kScratchReg,
-                          kScratchDoubleReg, kScratchSimd128Reg);
-      break;
-    }
-    case kPPC_I64x2ReplaceLane: {
-      DCHECK_EQ(i.OutputSimd128Register(), i.InputSimd128Register(0));
-      __ I64x2ReplaceLane(i.OutputSimd128Register(), i.InputSimd128Register(0),
-                          i.InputRegister(2), i.InputInt8(1),
-                          kScratchSimd128Reg);
-      break;
-    }
-    case kPPC_I32x4ReplaceLane: {
-      DCHECK_EQ(i.OutputSimd128Register(), i.InputSimd128Register(0));
-      __ I32x4ReplaceLane(i.OutputSimd128Register(), i.InputSimd128Register(0),
-                          i.InputRegister(2), i.InputInt8(1),
-                          kScratchSimd128Reg);
-      break;
-    }
-    case kPPC_I16x8ReplaceLane: {
-      DCHECK_EQ(i.OutputSimd128Register(), i.InputSimd128Register(0));
-      __ I16x8ReplaceLane(i.OutputSimd128Register(), i.InputSimd128Register(0),
-                          i.InputRegister(2), i.InputInt8(1),
-                          kScratchSimd128Reg);
-      break;
-    }
-    case kPPC_I8x16ReplaceLane: {
-      DCHECK_EQ(i.OutputSimd128Register(), i.InputSimd128Register(0));
-      __ I8x16ReplaceLane(i.OutputSimd128Register(), i.InputSimd128Register(0),
-                          i.InputRegister(2), i.InputInt8(1),
-                          kScratchSimd128Reg);
+      int lane_size = LaneSizeField::decode(instr->opcode());
+      switch (lane_size) {
+        case 8: {
+          __ I8x16ReplaceLane(i.OutputSimd128Register(),
+                              i.InputSimd128Register(0), i.InputRegister(2),
+                              i.InputInt8(1), kScratchSimd128Reg);
+          break;
+        }
+        case 16: {
+          __ I16x8ReplaceLane(i.OutputSimd128Register(),
+                              i.InputSimd128Register(0), i.InputRegister(2),
+                              i.InputInt8(1), kScratchSimd128Reg);
+          break;
+        }
+        case 32: {
+          __ I32x4ReplaceLane(i.OutputSimd128Register(),
+                              i.InputSimd128Register(0), i.InputRegister(2),
+                              i.InputInt8(1), kScratchSimd128Reg);
+          break;
+        }
+        case 64: {
+          __ I64x2ReplaceLane(i.OutputSimd128Register(),
+                              i.InputSimd128Register(0), i.InputRegister(2),
+                              i.InputInt8(1), kScratchSimd128Reg);
+          break;
+        }
+        default:
+          UNREACHABLE();
+      }
       break;
     }
     case kPPC_I64x2Mul: {
@@ -2721,132 +2864,104 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
                       kScratchSimd128Reg);
       break;
     }
-#define ASSEMBLE_LOAD_TRANSFORM(scratch, load_instr) \
-  AddressingMode mode = kMode_None;                  \
-  MemOperand operand = i.MemoryOperand(&mode);       \
-  DCHECK_EQ(mode, kMode_MRR);                        \
-  __ load_instr(scratch, operand);
-#if V8_TARGET_BIG_ENDIAN
-#define MAYBE_REVERSE_BYTES(reg, instr) __ instr(reg, reg);
-#else
-#define MAYBE_REVERSE_BYTES(reg, instr)
-#endif
-    case kPPC_S128Load8Splat: {
-      Simd128Register dst = i.OutputSimd128Register();
-      ASSEMBLE_LOAD_TRANSFORM(kScratchSimd128Reg, lxsibzx)
-      __ vspltb(dst, kScratchSimd128Reg, Operand(7));
+    case kPPC_I32x4DotI8x16AddS: {
+      __ I32x4DotI8x16AddS(i.OutputSimd128Register(), i.InputSimd128Register(0),
+                           i.InputSimd128Register(1),
+                           i.InputSimd128Register(2));
       break;
     }
-    case kPPC_S128Load16Splat: {
-      Simd128Register dst = i.OutputSimd128Register();
-      ASSEMBLE_LOAD_TRANSFORM(kScratchSimd128Reg, lxsihzx)
-      MAYBE_REVERSE_BYTES(kScratchSimd128Reg, xxbrh)
-      __ vsplth(dst, kScratchSimd128Reg, Operand(3));
-      break;
-    }
-    case kPPC_S128Load32Splat: {
-      Simd128Register dst = i.OutputSimd128Register();
-      ASSEMBLE_LOAD_TRANSFORM(kScratchSimd128Reg, lxsiwzx)
-      MAYBE_REVERSE_BYTES(kScratchSimd128Reg, xxbrw)
-      __ vspltw(dst, kScratchSimd128Reg, Operand(1));
-      break;
-    }
-    case kPPC_S128Load64Splat: {
-      constexpr int lane_width_in_bytes = 8;
-      Simd128Register dst = i.OutputSimd128Register();
-      ASSEMBLE_LOAD_TRANSFORM(dst, lxsdx)
-      MAYBE_REVERSE_BYTES(dst, xxbrd)
-      __ vinsertd(dst, dst, Operand(1 * lane_width_in_bytes));
-      break;
-    }
+#define PREP_LOAD_EXTEND()                     \
+  AddressingMode mode = kMode_None;            \
+  MemOperand operand = i.MemoryOperand(&mode); \
+  DCHECK_EQ(mode, kMode_MRR);
     case kPPC_S128Load8x8S: {
-      Simd128Register dst = i.OutputSimd128Register();
-      ASSEMBLE_LOAD_TRANSFORM(kScratchSimd128Reg, lxsdx)
-      MAYBE_REVERSE_BYTES(kScratchSimd128Reg, xxbrd)
-      __ vupkhsb(dst, kScratchSimd128Reg);
+      PREP_LOAD_EXTEND()
+      __ LoadAndExtend8x8SLE(i.OutputSimd128Register(), operand, kScratchReg);
       break;
     }
     case kPPC_S128Load8x8U: {
-      Simd128Register dst = i.OutputSimd128Register();
-      ASSEMBLE_LOAD_TRANSFORM(kScratchSimd128Reg, lxsdx)
-      MAYBE_REVERSE_BYTES(kScratchSimd128Reg, xxbrd)
-      __ vupkhsb(dst, kScratchSimd128Reg);
-      // Zero extend.
-      __ li(ip, Operand(0xFF));
-      __ mtvsrd(kScratchSimd128Reg, ip);
-      __ vsplth(kScratchSimd128Reg, kScratchSimd128Reg, Operand(3));
-      __ vand(dst, kScratchSimd128Reg, dst);
+      PREP_LOAD_EXTEND()
+      __ LoadAndExtend8x8ULE(i.OutputSimd128Register(), operand, kScratchReg,
+                             kScratchSimd128Reg);
       break;
     }
     case kPPC_S128Load16x4S: {
-      Simd128Register dst = i.OutputSimd128Register();
-      ASSEMBLE_LOAD_TRANSFORM(kScratchSimd128Reg, lxsdx)
-      MAYBE_REVERSE_BYTES(kScratchSimd128Reg, xxbrd)
-      __ vupkhsh(dst, kScratchSimd128Reg);
+      PREP_LOAD_EXTEND()
+      __ LoadAndExtend16x4SLE(i.OutputSimd128Register(), operand, kScratchReg);
       break;
     }
     case kPPC_S128Load16x4U: {
-      Simd128Register dst = i.OutputSimd128Register();
-      ASSEMBLE_LOAD_TRANSFORM(kScratchSimd128Reg, lxsdx)
-      MAYBE_REVERSE_BYTES(kScratchSimd128Reg, xxbrd)
-      __ vupkhsh(dst, kScratchSimd128Reg);
-      // Zero extend.
-      __ mov(ip, Operand(0xFFFF));
-      __ mtvsrd(kScratchSimd128Reg, ip);
-      __ vspltw(kScratchSimd128Reg, kScratchSimd128Reg, Operand(1));
-      __ vand(dst, kScratchSimd128Reg, dst);
-
+      PREP_LOAD_EXTEND()
+      __ LoadAndExtend16x4ULE(i.OutputSimd128Register(), operand, kScratchReg,
+                              kScratchSimd128Reg);
       break;
     }
     case kPPC_S128Load32x2S: {
-      Simd128Register dst = i.OutputSimd128Register();
-      ASSEMBLE_LOAD_TRANSFORM(kScratchSimd128Reg, lxsdx)
-      MAYBE_REVERSE_BYTES(kScratchSimd128Reg, xxbrd)
-      __ vupkhsw(dst, kScratchSimd128Reg);
+      PREP_LOAD_EXTEND()
+      __ LoadAndExtend32x2SLE(i.OutputSimd128Register(), operand, kScratchReg);
       break;
     }
     case kPPC_S128Load32x2U: {
-      constexpr int lane_width_in_bytes = 8;
-      Simd128Register dst = i.OutputSimd128Register();
-      ASSEMBLE_LOAD_TRANSFORM(kScratchSimd128Reg, lxsdx)
-      MAYBE_REVERSE_BYTES(kScratchSimd128Reg, xxbrd)
-      __ vupkhsw(dst, kScratchSimd128Reg);
-      // Zero extend.
-      __ mov(ip, Operand(0xFFFFFFFF));
-      __ mtvsrd(kScratchSimd128Reg, ip);
-      __ vinsertd(kScratchSimd128Reg, kScratchSimd128Reg,
-                  Operand(1 * lane_width_in_bytes));
-      __ vand(dst, kScratchSimd128Reg, dst);
+      PREP_LOAD_EXTEND()
+      __ LoadAndExtend32x2ULE(i.OutputSimd128Register(), operand, kScratchReg,
+                              kScratchSimd128Reg);
       break;
     }
     case kPPC_S128Load32Zero: {
-      constexpr int lane_width_in_bytes = 4;
-      Simd128Register dst = i.OutputSimd128Register();
-      ASSEMBLE_LOAD_TRANSFORM(kScratchSimd128Reg, lxsiwzx)
-      MAYBE_REVERSE_BYTES(kScratchSimd128Reg, xxbrw)
-      __ vxor(dst, dst, dst);
-      __ vinsertw(dst, kScratchSimd128Reg, Operand(3 * lane_width_in_bytes));
+      PREP_LOAD_EXTEND()
+      __ LoadV32ZeroLE(i.OutputSimd128Register(), operand, kScratchReg,
+                       kScratchSimd128Reg);
       break;
     }
     case kPPC_S128Load64Zero: {
-      constexpr int lane_width_in_bytes = 8;
-      Simd128Register dst = i.OutputSimd128Register();
-      ASSEMBLE_LOAD_TRANSFORM(kScratchSimd128Reg, lxsdx)
-      MAYBE_REVERSE_BYTES(kScratchSimd128Reg, xxbrd)
-      __ vxor(dst, dst, dst);
-      __ vinsertd(dst, kScratchSimd128Reg, Operand(1 * lane_width_in_bytes));
+      PREP_LOAD_EXTEND()
+      __ LoadV64ZeroLE(i.OutputSimd128Register(), operand, kScratchReg,
+                       kScratchSimd128Reg);
       break;
     }
-#undef ASSEMBLE_LOAD_TRANSFORM
-#undef MAYBE_REVERSE_BYTES
+#undef PREP_LOAD_EXTEND
     case kPPC_StoreCompressTagged: {
       size_t index = 0;
       AddressingMode mode = kMode_None;
       MemOperand operand = i.MemoryOperand(&mode, &index);
       Register value = i.InputRegister(index);
-      bool is_atomic = i.InputInt32(3);
+      bool is_atomic = i.InputInt32(index + 1);
       if (is_atomic) __ lwsync();
       __ StoreTaggedField(value, operand, r0);
+      if (is_atomic) __ sync();
+      DCHECK_EQ(LeaveRC, i.OutputRCBit());
+      break;
+    }
+    case kPPC_StoreIndirectPointer: {
+      size_t index = 0;
+      AddressingMode mode = kMode_None;
+      MemOperand mem = i.MemoryOperand(&mode, &index);
+      Register value = i.InputRegister(index);
+      bool is_atomic = i.InputInt32(index + 1);
+      if (is_atomic) __ lwsync();
+      __ StoreIndirectPointerField(value, mem, kScratchReg);
+      if (is_atomic) __ sync();
+      DCHECK_EQ(LeaveRC, i.OutputRCBit());
+      break;
+    }
+    case kPPC_LoadDecodeSandboxedPointer: {
+      size_t index = 0;
+      AddressingMode mode = kMode_None;
+      MemOperand mem = i.MemoryOperand(&mode, &index);
+      bool is_atomic = i.InputInt32(index);
+      __ LoadSandboxedPointerField(i.OutputRegister(), mem, kScratchReg);
+      if (is_atomic) __ lwsync();
+      DCHECK_EQ(LeaveRC, i.OutputRCBit());
+      break;
+    }
+    case kPPC_StoreEncodeSandboxedPointer: {
+      size_t index = 0;
+      AddressingMode mode = kMode_None;
+      MemOperand mem = i.MemoryOperand(&mode, &index);
+      Register value = i.InputRegister(index);
+      bool is_atomic = i.InputInt32(index + 1);
+      if (is_atomic) __ lwsync();
+      __ StoreSandboxedPointerField(value, mem, kScratchReg);
       if (is_atomic) __ sync();
       DCHECK_EQ(LeaveRC, i.OutputRCBit());
       break;
@@ -2919,31 +3034,16 @@ void CodeGenerator::AssembleArchTrap(Instruction* instr,
 
    private:
     void GenerateCallToTrap(TrapId trap_id) {
-      if (trap_id == TrapId::kInvalid) {
-        // We cannot test calls to the runtime in cctest/test-run-wasm.
-        // Therefore we emit a call to C here instead of a call to the runtime.
-        // We use the context register as the scratch register, because we do
-        // not have a context here.
-        __ PrepareCallCFunction(0, 0, cp);
-        __ CallCFunction(
-            ExternalReference::wasm_call_trap_callback_for_testing(), 0);
-        __ LeaveFrame(StackFrame::WASM);
-        auto call_descriptor = gen_->linkage()->GetIncomingDescriptor();
-        int pop_count = static_cast<int>(call_descriptor->ParameterSlotCount());
-        __ Drop(pop_count);
-        __ Ret();
-      } else {
-        gen_->AssembleSourcePosition(instr_);
-        // A direct call to a wasm runtime stub defined in this module.
-        // Just encode the stub index. This will be patched when the code
-        // is added to the native module and copied into wasm code space.
-        __ Call(static_cast<Address>(trap_id), RelocInfo::WASM_STUB_CALL);
-        ReferenceMap* reference_map =
-            gen_->zone()->New<ReferenceMap>(gen_->zone());
-        gen_->RecordSafepoint(reference_map);
-        if (v8_flags.debug_code) {
-          __ stop();
-        }
+      gen_->AssembleSourcePosition(instr_);
+      // A direct call to a wasm runtime stub defined in this module.
+      // Just encode the stub index. This will be patched when the code
+      // is added to the native module and copied into wasm code space.
+      __ Call(static_cast<Address>(trap_id), RelocInfo::WASM_STUB_CALL);
+      ReferenceMap* reference_map =
+          gen_->zone()->New<ReferenceMap>(gen_->zone());
+      gen_->RecordSafepoint(reference_map);
+      if (v8_flags.debug_code) {
+        __ stop();
       }
     }
 
@@ -3043,7 +3143,7 @@ void CodeGenerator::AssembleArchTableSwitch(Instruction* instr) {
   PPCOperandConverter i(this, instr);
   Register input = i.InputRegister(0);
   int32_t const case_count = static_cast<int32_t>(instr->InputCount() - 2);
-  Label** cases = zone()->NewArray<Label*>(case_count);
+  Label** cases = zone()->AllocateArray<Label*>(case_count);
   for (int32_t index = 0; index < case_count; ++index) {
     cases[index] = GetLabel(i.InputRpo(index + 2));
   }
@@ -3127,7 +3227,25 @@ void CodeGenerator::AssembleConstructFrame() {
         // accessors.
         __ Push(kWasmInstanceRegister);
       }
-      if (call_descriptor->IsWasmCapiFunction()) {
+      if (call_descriptor->IsWasmImportWrapper()) {
+        // If the wrapper is running on a secondary stack, it will switch to the
+        // central stack and fill these slots with the central stack pointer and
+        // secondary stack limit. Otherwise the slots remain empty.
+#if V8_EMBEDDED_CONSTANT_POOL_BOOL
+        static_assert(WasmImportWrapperFrameConstants::kCentralStackSPOffset ==
+                      -32);
+        static_assert(
+            WasmImportWrapperFrameConstants::kSecondaryStackLimitOffset == -40);
+#else
+        static_assert(WasmImportWrapperFrameConstants::kCentralStackSPOffset ==
+                      -24);
+        static_assert(
+            WasmImportWrapperFrameConstants::kSecondaryStackLimitOffset == -32);
+#endif
+        __ mov(r0, Operand(0));
+        __ push(r0);
+        __ push(r0);
+      } else if (call_descriptor->IsWasmCapiFunction()) {
         // Reserve space for saving the PC later.
         __ addi(sp, sp, Operand(-kSystemPointerSize));
       }
@@ -3170,20 +3288,16 @@ void CodeGenerator::AssembleConstructFrame() {
       // exception unconditionally. Thereby we can avoid the integer overflow
       // check in the condition code.
       if (required_slots * kSystemPointerSize < v8_flags.stack_size * KB) {
-        Register scratch = ip;
-        __ LoadU64(
-            scratch,
-            FieldMemOperand(kWasmInstanceRegister,
-                            WasmInstanceObject::kRealStackLimitAddressOffset),
-            r0);
-        __ LoadU64(scratch, MemOperand(scratch), r0);
-        __ AddS64(scratch, scratch,
+        Register stack_limit = ip;
+        __ LoadStackLimit(stack_limit, StackLimitKind::kRealStackLimit, r0);
+        __ AddS64(stack_limit, stack_limit,
                   Operand(required_slots * kSystemPointerSize), r0);
-        __ CmpU64(sp, scratch);
+        __ CmpU64(sp, stack_limit);
         __ bge(&done);
       }
 
-      __ Call(wasm::WasmCode::kWasmStackOverflow, RelocInfo::WASM_STUB_CALL);
+      __ Call(static_cast<intptr_t>(Builtin::kWasmStackOverflow),
+              RelocInfo::WASM_STUB_CALL);
       // The call does not return, hence we can ignore any references and just
       // define an empty safepoint.
       ReferenceMap* reference_map = zone()->New<ReferenceMap>(zone());
@@ -3357,10 +3471,10 @@ AllocatedOperand CodeGenerator::Push(InstructionOperand* source) {
 }
 
 void CodeGenerator::Pop(InstructionOperand* dest, MachineRepresentation rep) {
-  int new_slots = ElementSizeInPointers(rep);
-  frame_access_state()->IncreaseSPDelta(-new_slots);
+  int dropped_slots = ElementSizeInPointers(rep);
   PPCOperandConverter g(this, nullptr);
   if (dest->IsFloatStackSlot() || dest->IsDoubleStackSlot()) {
+    frame_access_state()->IncreaseSPDelta(-dropped_slots);
     UseScratchRegisterScope temps(masm());
     Register scratch = temps.Acquire();
     __ Pop(scratch);
@@ -3369,12 +3483,13 @@ void CodeGenerator::Pop(InstructionOperand* dest, MachineRepresentation rep) {
     int last_frame_slot_id =
         frame_access_state_->frame()->GetTotalFrameSlotCount() - 1;
     int sp_delta = frame_access_state_->sp_delta();
-    int slot_id = last_frame_slot_id + sp_delta + new_slots;
+    int slot_id = last_frame_slot_id + sp_delta;
     AllocatedOperand stack_slot(LocationOperand::STACK_SLOT, rep, slot_id);
     AssembleMove(&stack_slot, dest);
-    __ addi(sp, sp, Operand(new_slots * kSystemPointerSize));
+    frame_access_state()->IncreaseSPDelta(-dropped_slots);
+    __ addi(sp, sp, Operand(dropped_slots * kSystemPointerSize));
   }
-  temp_slots_ -= new_slots;
+  temp_slots_ -= dropped_slots;
 }
 
 void CodeGenerator::PopTempStackSlots() {

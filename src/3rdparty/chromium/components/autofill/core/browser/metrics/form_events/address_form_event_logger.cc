@@ -12,13 +12,14 @@
 #include "base/metrics/user_metrics.h"
 #include "base/metrics/user_metrics_action.h"
 #include "components/autofill/core/browser/autofill_data_util.h"
+#include "components/autofill/core/browser/autofill_trigger_details.h"
 #include "components/autofill/core/browser/logging/log_manager.h"
 #include "components/autofill/core/browser/metrics/autofill_metrics_utils.h"
 #include "components/autofill/core/common/autofill_features.h"
 #include "components/autofill/core/common/autofill_internals/log_message.h"
 #include "components/autofill/core/common/autofill_internals/logging_scope.h"
 
-namespace autofill {
+namespace autofill::autofill_metrics {
 
 AddressFormEventLogger::AddressFormEventLogger(
     bool is_in_any_main_frame,
@@ -35,60 +36,37 @@ void AddressFormEventLogger::OnDidFillSuggestion(
     const AutofillProfile& profile,
     const FormStructure& form,
     const AutofillField& field,
-    AutofillSyncSigninState sync_state) {
-  AutofillProfile::RecordType record_type = profile.record_type();
-  sync_state_ = sync_state;
+    AutofillMetrics::PaymentsSigninState signin_state_for_metrics,
+    const AutofillTriggerSource trigger_source) {
+  signin_state_for_metrics_ = signin_state_for_metrics;
 
-  form_interactions_ukm_logger_->LogDidFillSuggestion(
-      record_type,
-      /*is_for_credit_card=*/false, form, field);
+  form_interactions_ukm_logger_->LogDidFillSuggestion(form, field);
 
-  if (record_type == AutofillProfile::SERVER_PROFILE) {
-    Log(FORM_EVENT_SERVER_SUGGESTION_FILLED, form);
-  } else {
-    Log(FORM_EVENT_LOCAL_SUGGESTION_FILLED, form);
-  }
+  Log(FORM_EVENT_LOCAL_SUGGESTION_FILLED, form);
 
   if (!has_logged_suggestion_filled_) {
     has_logged_suggestion_filled_ = true;
-    logged_suggestion_filled_was_server_data_ =
-        record_type == AutofillProfile::SERVER_PROFILE;
-    Log(record_type == AutofillProfile::SERVER_PROFILE
-            ? FORM_EVENT_SERVER_SUGGESTION_FILLED_ONCE
-            : FORM_EVENT_LOCAL_SUGGESTION_FILLED_ONCE,
-        form);
+    Log(FORM_EVENT_LOCAL_SUGGESTION_FILLED_ONCE, form);
+  }
+
+  if (has_logged_undo_after_fill_) {
+    has_logged_fill_after_undo_ = true;
   }
 
   base::RecordAction(
       base::UserMetricsAction("Autofill_FilledProfileSuggestion"));
 
-  ++form_interaction_counts_.autofill_fills;
+  if (trigger_source != AutofillTriggerSource::kFastCheckout) {
+    ++form_interaction_counts_.autofill_fills;
+  }
   UpdateFlowId();
 
-  if (base::FeatureList::IsEnabled(
-          features::kAutofillAccountProfilesUnionView)) {
-    profile_categories_filled_.insert(GetCategoryOfProfile(profile));
-  }
+  profile_categories_filled_.insert(GetCategoryOfProfile(profile));
 }
 
-void AddressFormEventLogger::OnDidSeeFillableDynamicForm(
-    AutofillSyncSigninState sync_state,
-    const FormStructure& form) {
-  sync_state_ = sync_state;
-  Log(FORM_EVENT_DID_SEE_FILLABLE_DYNAMIC_FORM, form);
-}
-
-void AddressFormEventLogger::OnDidRefill(AutofillSyncSigninState sync_state,
-                                         const FormStructure& form) {
-  sync_state_ = sync_state;
-  Log(FORM_EVENT_DID_DYNAMIC_REFILL, form);
-}
-
-void AddressFormEventLogger::OnSubsequentRefillAttempt(
-    AutofillSyncSigninState sync_state,
-    const FormStructure& form) {
-  sync_state_ = sync_state;
-  Log(FORM_EVENT_DYNAMIC_CHANGE_AFTER_REFILL, form);
+void AddressFormEventLogger::OnDidUndoAutofill() {
+  has_logged_undo_after_fill_ = true;
+  base::RecordAction(base::UserMetricsAction("Autofill_UndoAddressAutofill"));
 }
 
 void AddressFormEventLogger::OnLog(const std::string& name,
@@ -121,10 +99,6 @@ void AddressFormEventLogger::RecordShowSuggestions() {
 
 void AddressFormEventLogger::RecordFillingAssistance(LogBuffer& logs) const {
   FormEventLoggerBase::RecordFillingAssistance(logs);
-  if (!base::FeatureList::IsEnabled(
-          features::kAutofillAccountProfilesUnionView)) {
-    return;
-  }
   // Log the origin-resolved filling assistance metric by converting the
   // `profile_categories_filled` to an CategoryResolvedFillingAssistanceBucket.
   auto filled_categories_to_bucket = [&] {
@@ -149,10 +123,6 @@ void AddressFormEventLogger::RecordFillingAssistance(LogBuffer& logs) const {
 
 void AddressFormEventLogger::RecordFillingCorrectness(LogBuffer& logs) const {
   FormEventLoggerBase::RecordFillingCorrectness(logs);
-  if (!base::FeatureList::IsEnabled(
-          features::kAutofillAccountProfilesUnionView)) {
-    return;
-  }
   // Non-empty because correctness is only logged when an Autofill
   // suggestion was accepted.
   DCHECK(!profile_categories_filled_.empty());
@@ -164,4 +134,16 @@ void AddressFormEventLogger::RecordFillingCorrectness(LogBuffer& logs) const {
                             !has_logged_edited_autofilled_field_);
 }
 
-}  // namespace autofill
+void AddressFormEventLogger::LogUkmInteractedWithForm(
+    FormSignature form_signature) {
+  // Address Autofill has deprecated the concept of server addresses.
+  form_interactions_ukm_logger_->LogInteractedWithForm(
+      /*is_for_credit_card=*/false, record_type_count_,
+      /*server_record_type_count=*/0, form_signature);
+}
+
+bool AddressFormEventLogger::HasLoggedDataToFillAvailable() const {
+  return record_type_count_ > 0;
+}
+
+}  // namespace autofill::autofill_metrics

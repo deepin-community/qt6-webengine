@@ -1,1 +1,3 @@
 usr/lib/qt6/libexec/QtWebEngineProcess
+usr/lib/qt6/libexec/webenginedriver
+usr/share/qt6/resources/v8_context_snapshot.bin

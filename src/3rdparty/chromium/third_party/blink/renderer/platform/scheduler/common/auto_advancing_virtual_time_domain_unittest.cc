@@ -10,7 +10,6 @@
 #include "base/message_loop/message_pump.h"
 #include "base/run_loop.h"
 #include "base/task/sequence_manager/sequence_manager.h"
-#include "base/task/sequence_manager/test/test_task_queue.h"
 #include "base/task/sequence_manager/test/test_task_time_observer.h"
 #include "base/time/time.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -42,7 +41,7 @@ class AutoAdvancingVirtualTimeDomainTest : public testing::Test {
 
     scheduler_helper_->AddTaskTimeObserver(&test_task_time_observer_);
     task_queue_ = scheduler_helper_->DefaultNonMainThreadTaskQueue();
-    initial_time_ = base::Time::FromJsTime(100000.0);
+    initial_time_ = base::Time::FromSecondsSinceUnixEpoch(100);
     initial_time_ticks_ = base::TimeTicks() + base::Milliseconds(5);
     auto_advancing_time_domain_ =
         std::make_unique<AutoAdvancingVirtualTimeDomain>(
@@ -154,7 +153,7 @@ TEST_F(AutoAdvancingVirtualTimeDomainTest, TaskStarvationCountResets) {
 }
 
 TEST_F(AutoAdvancingVirtualTimeDomainTest, BaseTimeOverriden) {
-  base::Time initial_time = base::Time::FromJsTime(100000.0);
+  base::Time initial_time = base::Time::FromSecondsSinceUnixEpoch(100);
   EXPECT_EQ(base::Time::Now(), initial_time);
 
   // Make time advance.

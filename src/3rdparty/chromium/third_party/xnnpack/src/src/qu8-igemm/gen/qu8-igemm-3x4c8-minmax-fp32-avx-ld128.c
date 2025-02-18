@@ -9,7 +9,11 @@
 
 #include <assert.h>
 
-#include <smmintrin.h>
+#ifdef _MSC_VER
+  #include <intrin.h>
+#else
+  #include <x86intrin.h>
+#endif
 
 #include <xnnpack/igemm.h>
 #include <xnnpack/math.h>
@@ -41,7 +45,7 @@ void xnn_qu8_igemm_minmax_fp32_ukernel_3x4c8__avx_ld128(
   assert(w != NULL);
   assert(c != NULL);
 
-  kc = round_up_po2(kc, 8);
+  kc = round_up_po2(kc, 8 * sizeof(uint8_t));
   uint8_t* c0 = c;
   uint8_t* c1 = (uint8_t*) ((uintptr_t) c0 + cm_stride);
   if XNN_UNPREDICTABLE(mr < 2) {

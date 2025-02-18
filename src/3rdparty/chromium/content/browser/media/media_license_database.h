@@ -20,12 +20,13 @@ class MediaLicenseDatabase {
  public:
   // The database will be in-memory if `path` is empty.
   explicit MediaLicenseDatabase(const base::FilePath& path);
+  ~MediaLicenseDatabase();
 
   MediaLicenseStorageHost::MediaLicenseStorageHostOpenError OpenFile(
       const media::CdmType& cdm_type,
       const std::string& file_name);
-  absl::optional<std::vector<uint8_t>> ReadFile(const media::CdmType& cdm_type,
-                                                const std::string& file_name);
+  std::optional<std::vector<uint8_t>> ReadFile(const media::CdmType& cdm_type,
+                                               const std::string& file_name);
   bool WriteFile(const media::CdmType& cdm_type,
                  const std::string& file_name,
                  const std::vector<uint8_t>& data);
@@ -33,17 +34,26 @@ class MediaLicenseDatabase {
 
   bool ClearDatabase();
 
+  uint64_t GetDatabaseSize();
+
  private:
   // Opens and sets up a database if one is not already set up.
   MediaLicenseStorageHost::MediaLicenseStorageHostOpenError OpenDatabase(
       bool is_retry = false);
 
-  void OnDatabaseOpenError(int error, sql::Statement* stmt);
+  void OnDatabaseError(int error, sql::Statement* stmt);
 
   SEQUENCE_CHECKER(sequence_checker_);
 
   // Empty if the database is in-memory.
   const base::FilePath path_;
+
+  // A descriptor of the last SQL statement that was executed, used for metrics.
+  std::optional<std::string> last_operation_;
+
+  // Integer of last file size that the CDM sent to be written, used for
+  // metrics.
+  std::optional<int> last_write_file_size_;
 
   sql::Database db_ GUARDED_BY_CONTEXT(sequence_checker_);
 };

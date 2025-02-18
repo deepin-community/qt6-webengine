@@ -78,10 +78,12 @@ void DecryptingDemuxerStream::Read(uint32_t count, ReadCB read_cb) {
   DCHECK_EQ(state_, kIdle) << state_;
   DCHECK(read_cb);
   CHECK(!read_cb_) << "Overlapping reads are not supported.";
-  DCHECK_EQ(count, 1u) << "DecryptingDemuxerStream only reads a single-buffer.";
 
   read_cb_ = base::BindPostTaskToCurrentDefault(std::move(read_cb));
   state_ = kPendingDemuxerRead;
+
+  // TODO(https://crbugs.com/1501730): Enable batch decoding for encrypted
+  // stream. It is allowed to only read 1 sample when requested multiple.
   demuxer_stream_->Read(
       1,
       base::BindOnce(&DecryptingDemuxerStream::OnBuffersReadFromDemuxerStream,
@@ -272,6 +274,13 @@ void DecryptingDemuxerStream::DecryptPendingBuffer() {
     return;
   }
 
+  if (HasClearLead() && !switched_clear_to_encrypted_ &&
+      pending_buffer_to_decrypt_->is_encrypted()) {
+    MEDIA_LOG(INFO, media_log_)
+        << "First switch from clear to encrypted buffers.";
+    switched_clear_to_encrypted_ = true;
+  }
+
   decryptor_->Decrypt(GetDecryptorStreamType(), pending_buffer_to_decrypt_,
                       base::BindPostTaskToCurrentDefault(base::BindOnce(
                           &DecryptingDemuxerStream::OnBufferDecrypted,
@@ -411,8 +420,7 @@ void DecryptingDemuxerStream::InitializeDecoderConfig() {
     }
 
     default:
-      NOTREACHED();
-      return;
+      NOTREACHED_NORETURN();
   }
   LogMetadata();
 }

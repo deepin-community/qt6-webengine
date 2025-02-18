@@ -8,21 +8,25 @@
 #include <wayland-server-protocol-core.h>
 #include <xdg-decoration-unstable-v1-server-protocol.h>
 #include <xdg-shell-server-protocol.h>
+#include <optional>
 
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/public/cpp/window_properties.h"
 #include "base/functional/bind.h"
+#include "base/memory/raw_ptr.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chromeos/ui/base/window_state_type.h"
 #include "components/exo/display.h"
 #include "components/exo/shell_surface_util.h"
 #include "components/exo/wayland/serial_tracker.h"
 #include "components/exo/wayland/server_util.h"
+#include "components/exo/wayland/wayland_display_observer.h"
 #include "components/exo/wayland/wayland_positioner.h"
 #include "components/exo/xdg_shell_surface.h"
 #include "ui/aura/window_observer.h"
 #include "ui/base/hit_test.h"
 #include "ui/display/screen.h"
+#include "ui/display/types/display_constants.h"
 #include "ui/views/widget/widget.h"
 #include "ui/wm/core/coordinate_conversion.h"
 
@@ -139,11 +143,12 @@ int XdgToplevelResizeComponent(uint32_t edges) {
   }
 }
 
-using XdgSurfaceConfigureCallback =
-    base::RepeatingCallback<void(const gfx::Size& size,
-                                 chromeos::WindowStateType state_type,
-                                 bool resizing,
-                                 bool activated)>;
+using XdgSurfaceConfigureCallback = base::RepeatingCallback<void(
+    const gfx::Size& size,
+    chromeos::WindowStateType state_type,
+    bool resizing,
+    bool activated,
+    std::optional<chromeos::WindowStateType> restore_state_type)>;
 
 uint32_t HandleXdgSurfaceConfigureCallback(
     wl_resource* resource,
@@ -154,10 +159,12 @@ uint32_t HandleXdgSurfaceConfigureCallback(
     bool resizing,
     bool activated,
     const gfx::Vector2d& origin_offset,
-    float raster_scale) {
+    float raster_scale,
+    std::optional<chromeos::WindowStateType> restore_state_type) {
   uint32_t serial =
       serial_tracker->GetNextSerial(SerialTracker::EventType::OTHER_EVENT);
-  callback.Run(bounds.size(), state_type, resizing, activated);
+  callback.Run(bounds.size(), state_type, resizing, activated,
+               restore_state_type);
   xdg_surface_send_configure(resource, serial);
   wl_client_flush(wl_resource_get_client(resource));
   return serial;
@@ -203,16 +210,6 @@ class WaylandToplevel : public aura::WindowObserver {
 
     if (!parent) {
       shell_surface_data_->shell_surface->SetParent(nullptr);
-      return;
-    }
-
-    if (this == parent) {
-      // Some apps e.g. crbug/1210235 try to be their own parent. Ignore them.
-      auto* app_id = GetShellApplicationId(
-          shell_surface_data_->shell_surface->host_window());
-      LOG(WARNING)
-          << "Client attempts to add itself as a transient parent: app_id="
-          << app_id;
       return;
     }
 
@@ -266,9 +263,10 @@ class WaylandToplevel : public aura::WindowObserver {
       shell_surface_data_->shell_surface->Restore();
   }
 
-  void SetFullscreen(bool fullscreen) {
+  void SetFullscreen(bool fullscreen,
+                     int64_t display_id = display::kInvalidDisplayId) {
     if (shell_surface_data_)
-      shell_surface_data_->shell_surface->SetFullscreen(fullscreen);
+      shell_surface_data_->shell_surface->SetFullscreen(fullscreen, display_id);
   }
 
   void Minimize() {
@@ -284,6 +282,7 @@ class WaylandToplevel : public aura::WindowObserver {
   ShellSurfaceData GetShellSurfaceData() {
     return ShellSurfaceData(shell_surface_data_->shell_surface.get(),
                             shell_surface_data_->serial_tracker,
+                            shell_surface_data_->rotation_serial_tracker,
                             xdg_surface_resource_);
   }
 
@@ -300,10 +299,12 @@ class WaylandToplevel : public aura::WindowObserver {
     *value = state;
   }
 
-  void OnConfigure(const gfx::Size& size,
-                   chromeos::WindowStateType state_type,
-                   bool resizing,
-                   bool activated) {
+  void OnConfigure(
+      const gfx::Size& size,
+      chromeos::WindowStateType state_type,
+      bool resizing,
+      bool activated,
+      std::optional<chromeos::WindowStateType> restore_state_type) {
     wl_array states;
     wl_array_init(&states);
     if (state_type == chromeos::WindowStateType::kMaximized)
@@ -311,6 +312,14 @@ class WaylandToplevel : public aura::WindowObserver {
     // TODO(crbug/1250129): Pinned states need to be handled properly.
     if (IsFullscreenOrPinnedWindowStateType(state_type)) {
       AddState(&states, XDG_TOPLEVEL_STATE_FULLSCREEN);
+      // If the window was maxmized before it is fullscreened, we should
+      // keep this state while it is fullscreened. This is what X11 apps, and
+      // thus standard wayland apps expect, and they may rely on this behavior
+      // even though this is not explicitly specified in the protocol spec.
+      if (restore_state_type.has_value() &&
+          restore_state_type.value() == chromeos::WindowStateType::kMaximized) {
+        AddState(&states, XDG_TOPLEVEL_STATE_MAXIMIZED);
+      }
     }
     if (resizing)
       AddState(&states, XDG_TOPLEVEL_STATE_RESIZING);
@@ -321,9 +330,9 @@ class WaylandToplevel : public aura::WindowObserver {
     wl_array_release(&states);
   }
 
-  wl_resource* const xdg_toplevel_resource_;
-  wl_resource* const xdg_surface_resource_;
-  WaylandXdgSurface* shell_surface_data_;
+  const raw_ptr<wl_resource> xdg_toplevel_resource_;
+  const raw_ptr<wl_resource, DanglingUntriaged> xdg_surface_resource_;
+  raw_ptr<WaylandXdgSurface> shell_surface_data_;
   base::WeakPtrFactory<WaylandToplevel> weak_ptr_factory_{this};
 };
 
@@ -406,7 +415,10 @@ void xdg_toplevel_unset_maximized(wl_client* client, wl_resource* resource) {
 void xdg_toplevel_set_fullscreen(wl_client* client,
                                  wl_resource* resource,
                                  wl_resource* output) {
-  GetUserDataAs<WaylandToplevel>(resource)->SetFullscreen(true);
+  int64_t display_id = output
+                           ? GetUserDataAs<WaylandDisplayHandler>(output)->id()
+                           : display::kInvalidDisplayId;
+  GetUserDataAs<WaylandToplevel>(resource)->SetFullscreen(true, display_id);
 }
 
 void xdg_toplevel_unset_fullscreen(wl_client* client, wl_resource* resource) {
@@ -458,8 +470,8 @@ class WaylandXdgToplevelDecoration {
     zxdg_toplevel_decoration_v1_send_configure(resource_, mode);
   }
 
-  wl_resource* const resource_;
-  WaylandToplevel* top_level_;
+  const raw_ptr<wl_resource> resource_;
+  raw_ptr<WaylandToplevel, DanglingUntriaged> top_level_;
   // Keeps track of the xdg-decoration mode on server side.
   uint32_t default_mode_ = ZXDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE;
 };
@@ -501,12 +513,12 @@ class WaylandPopup : aura::WindowObserver {
 
   void Grab() {
     if (!shell_surface_data_) {
-      wl_resource_post_error(resource_, XDG_POPUP_ERROR_INVALID_GRAB,
+      wl_resource_post_error(resource_.get(), XDG_POPUP_ERROR_INVALID_GRAB,
                              "the surface has already been destroyed");
       return;
     }
     if (shell_surface_data_->shell_surface->GetWidget()) {
-      wl_resource_post_error(resource_, XDG_POPUP_ERROR_INVALID_GRAB,
+      wl_resource_post_error(resource_.get(), XDG_POPUP_ERROR_INVALID_GRAB,
                              "grab must be called before construction");
       return;
     }
@@ -514,6 +526,10 @@ class WaylandPopup : aura::WindowObserver {
   }
 
   void Reposition(WaylandPositioner* positioner, uint32_t token) {
+    if (wl_resource_get_version(resource_) <
+        XDG_POPUP_REPOSITIONED_SINCE_VERSION) {
+      return;
+    }
     xdg_popup_send_repositioned(resource_, token);
 
     display::Display display =
@@ -557,16 +573,18 @@ class WaylandPopup : aura::WindowObserver {
     wl_client_flush(wl_resource_get_client(resource_));
   }
 
-  void OnConfigure(const gfx::Size& size,
-                   chromeos::WindowStateType state_type,
-                   bool resizing,
-                   bool activated) {
+  void OnConfigure(
+      const gfx::Size& size,
+      chromeos::WindowStateType state_type,
+      bool resizing,
+      bool activated,
+      std::optional<chromeos::WindowStateType> restore_state_type) {
     // Nothing to do here as popups don't have additional configure state.
   }
 
-  wl_resource* const resource_;
-  wl_resource* const surface_resource_;
-  WaylandXdgSurface* shell_surface_data_;
+  const raw_ptr<wl_resource> resource_;
+  const raw_ptr<wl_resource, DanglingUntriaged> surface_resource_;
+  raw_ptr<WaylandXdgSurface> shell_surface_data_;
   base::WeakPtrFactory<WaylandPopup> weak_ptr_factory_{this};
 };
 
@@ -730,9 +748,8 @@ void xdg_wm_base_create_positioner(wl_client* client,
   wl_resource* positioner_resource = wl_resource_create(
       client, &xdg_positioner_interface, wl_resource_get_version(resource), id);
 
-  SetImplementation(
-      positioner_resource, &xdg_positioner_implementation,
-      std::make_unique<WaylandPositioner>(WaylandPositioner::Version::STABLE));
+  SetImplementation(positioner_resource, &xdg_positioner_implementation,
+                    std::make_unique<WaylandPositioner>());
 }
 
 void xdg_wm_base_get_xdg_surface(wl_client* client,
@@ -756,7 +773,8 @@ void xdg_wm_base_get_xdg_surface(wl_client* client,
 
   std::unique_ptr<WaylandXdgSurface> wayland_shell_surface =
       std::make_unique<WaylandXdgSurface>(std::move(shell_surface),
-                                          data->serial_tracker);
+                                          data->serial_tracker,
+                                          data->rotation_serial_tracker);
 
   wl_resource* xdg_surface_resource = wl_resource_create(
       client, &xdg_surface_interface, wl_resource_get_version(resource), id);
@@ -837,8 +855,11 @@ static const struct zxdg_decoration_manager_v1_interface
 
 WaylandXdgSurface ::WaylandXdgSurface(
     std::unique_ptr<XdgShellSurface> shell_surface,
-    SerialTracker* const serial_tracker)
-    : shell_surface(std::move(shell_surface)), serial_tracker(serial_tracker) {}
+    SerialTracker* const serial_tracker,
+    SerialTracker* const rotation_serial_tracker)
+    : shell_surface(std::move(shell_surface)),
+      serial_tracker(serial_tracker),
+      rotation_serial_tracker(rotation_serial_tracker) {}
 
 WaylandXdgSurface::~WaylandXdgSurface() = default;
 

@@ -11,6 +11,7 @@
 #include <set>
 #include <string>
 
+#include <optional>
 #include "base/component_export.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
@@ -18,7 +19,6 @@
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "components/services/storage/public/cpp/buckets/bucket_locator.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/mojom/quota/quota_types.mojom.h"
 
 namespace storage {
@@ -53,7 +53,7 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) QuotaTemporaryStorageEvictor {
 
     int64_t usage_on_beginning_of_round = -1;
     int64_t usage_on_end_of_round = -1;
-    int64_t num_evicted_buckets_in_round = 0;
+    int64_t num_evicted_buckets = 0;
   };
 
   QuotaTemporaryStorageEvictor(QuotaEvictionHandler* quota_eviction_handler,
@@ -70,6 +70,8 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) QuotaTemporaryStorageEvictor {
   void ReportPerHourHistogram();
   void Start();
 
+  bool in_round() const { return round_statistics_.in_round; }
+
  private:
   friend class QuotaTemporaryStorageEvictorTest;
 
@@ -82,8 +84,9 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) QuotaTemporaryStorageEvictor {
                               int64_t total_space,
                               int64_t current_usage,
                               bool current_usage_is_complete);
-  void OnGotEvictionBucket(const absl::optional<BucketLocator>& bucket);
-  void OnEvictionComplete(QuotaError status);
+  void OnGotEvictionBuckets(const std::set<BucketLocator>& buckets);
+  void OnEvictionComplete(int expected_evicted_buckets,
+                          int actual_evicted_buckets);
 
   void OnEvictionRoundStarted();
   void OnEvictionRoundFinished();

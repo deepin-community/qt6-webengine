@@ -34,6 +34,7 @@
 #include "base/time/default_clock.h"
 #include "build/build_config.h"
 #include "services/network/public/mojom/fetch_api.mojom-blink.h"
+#include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom-shared.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/platform/web_security_origin.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_vector.h"
@@ -438,6 +439,17 @@ static base::TimeDelta FreshnessLifetime(const ResourceResponse& response,
   return base::TimeDelta();
 }
 
+base::TimeDelta Resource::FreshnessLifetime() const {
+  base::TimeDelta lifetime =
+      blink::FreshnessLifetime(GetResponse(), response_timestamp_);
+  for (const auto& redirect : redirect_chain_) {
+    base::TimeDelta redirect_lifetime = blink::FreshnessLifetime(
+        redirect.redirect_response_, response_timestamp_);
+    lifetime = std::min(lifetime, redirect_lifetime);
+  }
+  return lifetime;
+}
+
 static bool CanUseResponse(const ResourceResponse& response,
                            bool allow_stale,
                            base::Time response_timestamp) {
@@ -524,10 +536,6 @@ void Resource::ResponseReceived(const ResourceResponse& response) {
 
 void Resource::SetSerializedCachedMetadata(mojo_base::BigBuffer data) {
   DCHECK(!is_revalidating_);
-}
-
-bool Resource::CodeCacheHashRequired() const {
-  return false;
 }
 
 String Resource::ReasonNotDeletable() const {
@@ -751,14 +759,14 @@ Resource::MatchStatus Resource::CanReuse(const FetchParameters& params) const {
   // Use GetResourceRequest to get the const resource_request_.
   const ResourceRequestHead& current_request = GetResourceRequest();
 
-  // If credentials were sent with the previous request and won't be with this
-  // one, or vice versa, re-fetch the resource.
+  // If credentials mode is defferent from the the previous request, re-fetch
+  // the resource.
   //
   // This helps with the case where the server sends back
   // "Access-Control-Allow-Origin: *" all the time, but some of the client's
   // requests are made without CORS and some with.
-  if (current_request.AllowStoredCredentials() !=
-      new_request.AllowStoredCredentials()) {
+  if (current_request.GetCredentialsMode() !=
+      new_request.GetCredentialsMode()) {
     return MatchStatus::kRequestCredentialsModeDoesNotMatch;
   }
 
@@ -913,7 +921,7 @@ void Resource::SetCachePolicyBypassingCache() {
 }
 
 void Resource::ClearRangeRequestHeader() {
-  resource_request_.ClearHttpHeaderField("range");
+  resource_request_.ClearHttpHeaderField(http_names::kLowerRange);
 }
 
 void Resource::RevalidationSucceeded(
@@ -1153,6 +1161,8 @@ const char* Resource::ResourceTypeToString(
       return "SpeculationRule";
     case ResourceType::kMock:
       return "Mock";
+    case ResourceType::kDictionary:
+      return "Dictionary";
   }
   NOTREACHED();
   return InitiatorTypeNameToString(fetch_initiator_name);
@@ -1177,6 +1187,7 @@ bool Resource::IsLoadEventBlockingResourceType() const {
     case ResourceType::kManifest:
     case ResourceType::kMock:
     case ResourceType::kSpeculationRules:
+    case ResourceType::kDictionary:
       return false;
   }
   NOTREACHED();
@@ -1196,6 +1207,10 @@ bool Resource::AppendTopFrameSiteForMetrics(const SecurityOrigin& origin) {
 
 void Resource::SetIsAdResource() {
   resource_request_.SetIsAdResource();
+}
+
+void Resource::UpdateMemoryCacheLastAccessedTime() {
+  memory_cache_last_accessed_ = base::TimeTicks::Now();
 }
 
 }  // namespace blink

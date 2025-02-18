@@ -26,7 +26,6 @@
 
 namespace net {
 class HttpRequestHeaders;
-class IPAddress;
 }  // namespace net
 
 namespace safe_browsing {
@@ -91,32 +90,13 @@ std::string GetReportUrl(
     const ExtendedReportingLevel* reporting_level = nullptr,
     const bool is_enhanced_protection = false);
 
-// For the SafeBrowsingLookoupMechanismExperiment, all 3 lookup mechanisms can
-// be run simultaneously. Since URL real-time checks and hash real-time checks
-// can fall back to hash database checks, their hash database cache must be
-// maintained separately to avoid one lookup benefitting from a different
-// lookup's caching, since that would incorrectly reflect performance results.
-// TODO(crbug.com/1410253): Delete enum once temporary experiment is complete.
-enum class MechanismExperimentHashDatabaseCache {
-  // Used only outside the context of the experiment. Specifies that the primary
-  // cache should be used for reads, and all three of the caches should be used
-  // for writes. The latter is true so that within the context of the
-  // experiment, URL real-time lookups don't have an advantage over the other
-  // two mechanisms for URLs that overlap with other V4 checks.
-  kNoExperiment = 0,
-  // Used only within the context of the experiment. Specifies that the primary
-  // cache should be used for cache reads and writes. It uses the primary cache
-  // because the experiment intercepts URL real-time lookups and conducts the
-  // two background lookups as well.
-  kUrlRealTimeOnly = 1,
-  // Used only within the context of the experiment. Specifies that one of the
-  // two background caches (the hash real-time lookup one) should be used for
-  // cache reads and writes.
-  kHashRealTimeOnly = 2,
-  // Used only within the context of the experiment. Specifies that one of the
-  // two background caches (the hash database lookup one) should be used for
-  // cache reads and writes.
-  kHashDatabaseOnly = 3
+// Used to specify the type of check to perform in CheckBrowseUrl function.
+enum class CheckBrowseUrlType {
+  // Performs the hash-prefix database check.
+  kHashDatabase = 0,
+  // Performs the hash-prefix real-time check. Only the remote database used on
+  // Android supports it.
+  kHashRealTime = 1,
 };
 
 // Different types of threats that SafeBrowsing protects against. This is the
@@ -152,9 +132,9 @@ enum SBThreatType {
   // The Chrome extension or app (given by its ID) is malware.
   SB_THREAT_TYPE_EXTENSION = 7,
 
-  // Url detected by the client-side malware IP list. This IP list is part
-  // of the client side detection model.
-  SB_THREAT_TYPE_URL_CLIENT_SIDE_MALWARE = 8,
+  // DEPRECATED. Url detected by the client-side malware IP list. This IP list
+  // is part of the client side detection model.
+  DEPRECATED_SB_THREAT_TYPE_URL_CLIENT_SIDE_MALWARE = 8,
 
   // Url leads to a blocklisted resource script. Note that no warnings should be
   // shown on this threat type, but an incident report might be sent.
@@ -268,7 +248,6 @@ PlatformType GetCurrentPlatformType();
 ListIdentifier GetChromeExtMalwareId();
 ListIdentifier GetChromeUrlApiId();
 ListIdentifier GetChromeUrlClientIncidentId();
-ListIdentifier GetIpMalwareId();
 ListIdentifier GetUrlBillingId();
 ListIdentifier GetUrlCsdDownloadAllowlistId();
 ListIdentifier GetUrlCsdAllowlistId();
@@ -309,6 +288,11 @@ struct StoreAndHashPrefix {
 // Used to track the hash prefix and the store in which a full hash's prefix
 // matched.
 using StoreAndHashPrefixes = std::vector<StoreAndHashPrefix>;
+
+// The matching hash prefixes and corresponding stores, for each full hash
+// generated for a given URL.
+using FullHashToStoreAndHashPrefixesMap =
+    std::unordered_map<FullHashStr, StoreAndHashPrefixes>;
 
 // Enumerate failures for histogramming purposes.  DO NOT CHANGE THE
 // ORDERING OF THESE VALUES.
@@ -417,16 +401,6 @@ class V4ProtocolManagerUtil {
 
   static void SetClientInfoFromConfig(ClientInfo* client_info,
                                       const V4ProtocolConfig& config);
-
-  static bool GetIPV6AddressFromString(const std::string& ip_address,
-                                       net::IPAddress* address);
-
-  // Converts a IPV4 or IPV6 address in |ip_address| to the SHA1 hash of the
-  // corresponding packed IPV6 address in |hashed_encoded_ip|, and adds an
-  // extra byte containing the value 128 at the end. This is done to match the
-  // server implementation for calculating the hash prefix of an IP address.
-  static bool IPAddressToEncodedIPV6Hash(const std::string& ip_address,
-                                         FullHashStr* hashed_encoded_ip);
 
   // Stores the client state values for each of the lists in |store_state_map|
   // into |list_client_states|.

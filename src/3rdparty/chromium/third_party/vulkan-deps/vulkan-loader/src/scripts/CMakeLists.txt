@@ -1,4 +1,3 @@
-
 # ~~~
 # Copyright (c) 2023 LunarG, Inc.
 #
@@ -17,15 +16,28 @@
 
 option(UPDATE_DEPS "Run update_deps.py for user")
 if (UPDATE_DEPS)
-    find_package(PythonInterp 3 REQUIRED)
+    find_package(Python3 REQUIRED QUIET)
+
+    set(update_dep_py "${CMAKE_CURRENT_LIST_DIR}/update_deps.py")
+    set(known_good_json "${CMAKE_CURRENT_LIST_DIR}/known_good.json")
+
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${update_dep_py} ${known_good_json})
+
+    list(APPEND update_dep_command "${update_dep_py}")
+    list(APPEND update_dep_command "--generator")
+    list(APPEND update_dep_command "${CMAKE_GENERATOR}")
 
     if (CMAKE_GENERATOR_PLATFORM)
-        set(_target_arch ${CMAKE_GENERATOR_PLATFORM})
-    else()
-        if (MSVC_IDE)
-            message(WARNING "CMAKE_GENERATOR_PLATFORM not set. Using x64 as target architecture.")
-        endif()
-        set(_target_arch x64)
+        list(APPEND update_dep_command "--arch")
+        list(APPEND update_dep_command "${CMAKE_GENERATOR_PLATFORM}")
+    endif()
+
+    if ("${CMAKE_OSX_ARCHITECTURES}" MATCHES ";")
+        list(APPEND update_dep_command "--osx-archs")
+        string(REPLACE ";" ":" osx_archs "${CMAKE_OSX_ARCHITECTURES}")
+        list(APPEND update_dep_command "${osx_archs}")
+
+        set(APPLE_UNIVERSAL_BINARY ON)
     endif()
 
     if (NOT CMAKE_BUILD_TYPE)
@@ -34,50 +46,101 @@ if (UPDATE_DEPS)
     else()
         set(_build_type ${CMAKE_BUILD_TYPE})
     endif()
+    list(APPEND update_dep_command "--config")
+    list(APPEND update_dep_command "${_build_type}")
+    list(APPEND update_dep_command "--api")
+    list(APPEND update_dep_command "${API_TYPE}")
 
-    set(_build_tests_arg "")
+    set(UPDATE_DEPS_DIR_SUFFIX "${_build_type}")
+    if (CMAKE_CROSSCOMPILING)
+        if (APPLE_UNIVERSAL_BINARY)
+            set(UPDATE_DEPS_DIR_SUFFIX "${CMAKE_SYSTEM_NAME}/${UPDATE_DEPS_DIR_SUFFIX}/universal")
+        else()
+            set(UPDATE_DEPS_DIR_SUFFIX "${CMAKE_SYSTEM_NAME}/${UPDATE_DEPS_DIR_SUFFIX}/${CMAKE_SYSTEM_PROCESSOR}")
+        endif()
+    else()
+        if (APPLE_UNIVERSAL_BINARY)
+            set(UPDATE_DEPS_DIR_SUFFIX "${UPDATE_DEPS_DIR_SUFFIX}/universal")
+        else()
+            math(EXPR bitness "8 * ${CMAKE_SIZEOF_VOID_P}")
+            set(UPDATE_DEPS_DIR_SUFFIX "${UPDATE_DEPS_DIR_SUFFIX}/${bitness}")
+        endif()
+    endif()    
+    set(UPDATE_DEPS_DIR "${PROJECT_SOURCE_DIR}/external/${UPDATE_DEPS_DIR_SUFFIX}" CACHE PATH "Location where update_deps.py installs packages")
+    list(APPEND update_dep_command "--dir" )
+    list(APPEND update_dep_command "${UPDATE_DEPS_DIR}")
+
     if (NOT BUILD_TESTS)
-        set(_build_tests_arg "--optional=tests")
+        list(APPEND update_dep_command "--optional=tests")
     endif()
 
-    message("********************************************************************************")
-    message("* NOTE: Adding target vl_update_deps to run as needed for updating             *")
-    message("*       dependencies.                                                          *")
-    message("********************************************************************************")
+    if (UPDATE_DEPS_SKIP_EXISTING_INSTALL)
+        list(APPEND update_dep_command "--skip-existing-install")
+    endif()
 
-    set(update_dep_py "${CMAKE_CURRENT_LIST_DIR}/update_deps.py")
-    set(known_good_json "${CMAKE_CURRENT_LIST_DIR}/known_good.json")
+    list(APPEND cmake_vars "CMAKE_TOOLCHAIN_FILE")
 
-    # Add a target so that update_deps.py will run when necessary
-    # NOTE: This is triggered off of the timestamps of known_good.json and helper.cmake
-    add_custom_command(OUTPUT ${PROJECT_SOURCE_DIR}/external/helper.cmake
-        COMMAND ${PYTHON_EXECUTABLE} ${update_dep_py} --dir ${PROJECT_SOURCE_DIR}/external --arch ${_target_arch} --config ${_build_type} --generator "${CMAKE_GENERATOR}" ${_build_tests_arg}
-        DEPENDS ${known_good_json}
-    )
+    # Avoids manually setting CMAKE_SYSTEM_NAME unless it's needed:
+    # https://cmake.org/cmake/help/latest/variable/CMAKE_CROSSCOMPILING.html
+    if (NOT "${CMAKE_SYSTEM_NAME}" STREQUAL "${CMAKE_HOST_SYSTEM_NAME}")
+        list(APPEND cmake_vars "CMAKE_SYSTEM_NAME")
+    endif()
+    if (APPLE)
+        list(APPEND cmake_vars "CMAKE_OSX_DEPLOYMENT_TARGET")
+    endif()
+    if (NOT MSVC_IDE)
+        list(APPEND cmake_vars "CMAKE_CXX_COMPILER" "CMAKE_C_COMPILER" "CMAKE_ASM_COMPILER")
+    endif()
+    if (ANDROID)
+        list(APPEND cmake_vars "ANDROID_PLATFORM" "CMAKE_ANDROID_ARCH_ABI" "CMAKE_ANDROID_STL_TYPE" "CMAKE_ANDROID_RTTI" "CMAKE_ANDROID_EXCEPTIONS" "ANDROID_USE_LEGACY_TOOLCHAIN_FILE")
+    endif()
 
-    add_custom_target(vl_update_deps DEPENDS ${PROJECT_SOURCE_DIR}/external/helper.cmake)
+    set(cmake_var)
+    foreach(var IN LISTS cmake_vars)
+        if (DEFINED ${var})
+            list(APPEND update_dep_command "--cmake_var")
+            list(APPEND update_dep_command "${var}=${${var}}")
+        endif()
+    endforeach()
 
-    # Check if update_deps.py needs to be run on first cmake run
-    if (${known_good_json} IS_NEWER_THAN ${PROJECT_SOURCE_DIR}/external/helper.cmake)
+    if (cmake_var)
+        list(APPEND update_dep_command "${cmake_var}")
+    endif()
+
+    file(TIMESTAMP ${update_dep_py} timestamp_1)
+    file(TIMESTAMP ${known_good_json} timestamp_2)
+
+    string("MD5" md5_hash "${timestamp_1}-${timestamp_2}-${update_dep_command}")
+
+    set(UPDATE_DEPS_HASH "0" CACHE STRING "Default value until we run update_deps.py")
+    mark_as_advanced(UPDATE_DEPS_HASH)
+
+    if ("${UPDATE_DEPS_HASH}" STREQUAL "0")
+        list(APPEND update_dep_command "--clean-build")
+        list(APPEND update_dep_command "--clean-install")
+    endif()
+
+    if ("${md5_hash}" STREQUAL $CACHE{UPDATE_DEPS_HASH})
+        message(DEBUG "update_deps.py: no work to do.")
+    else()
         execute_process(
-            COMMAND ${PYTHON_EXECUTABLE} ${update_dep_py} --dir ${PROJECT_SOURCE_DIR}/external --arch ${_target_arch} --config ${_build_type} --generator "${CMAKE_GENERATOR}" ${_build_tests_arg}
-            WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+            COMMAND ${Python3_EXECUTABLE} ${update_dep_command}
             RESULT_VARIABLE _update_deps_result
         )
         if (NOT (${_update_deps_result} EQUAL 0))
             message(FATAL_ERROR "Could not run update_deps.py which is necessary to download dependencies.")
         endif()
+        set(UPDATE_DEPS_HASH ${md5_hash} CACHE STRING "Ensure we only run update_deps.py when we need to." FORCE)
+        include("${UPDATE_DEPS_DIR}/helper.cmake")
     endif()
-    include(${PROJECT_SOURCE_DIR}/external/helper.cmake)
-else()
-    message("********************************************************************************")
-    message("* NOTE: Not adding target to run update_deps.py automatically.                 *")
-    message("********************************************************************************")
-    find_package(PythonInterp 3 QUIET)
 endif()
-
 if (VULKAN_HEADERS_INSTALL_DIR)
     list(APPEND CMAKE_PREFIX_PATH ${VULKAN_HEADERS_INSTALL_DIR})
+    set(CMAKE_REQUIRE_FIND_PACKAGE_VulkanHeaders TRUE PARENT_SCOPE)
 endif()
 
-set(CMAKE_PREFIX_PATH ${CMAKE_PREFIX_PATH} PARENT_SCOPE)
+if (CMAKE_CROSSCOMPILING)
+    set(CMAKE_FIND_ROOT_PATH ${CMAKE_FIND_ROOT_PATH} ${CMAKE_PREFIX_PATH} PARENT_SCOPE)
+else()
+    set(CMAKE_PREFIX_PATH ${CMAKE_PREFIX_PATH} PARENT_SCOPE)
+endif()

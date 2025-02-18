@@ -8,13 +8,14 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "base/files/file_path.h"
-#include "base/guid.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/threading/thread_checker.h"
+#include "base/uuid.h"
 #include "base/values.h"
 #include "base/version.h"
 #include "extensions/buildflags/buildflags.h"
@@ -197,7 +198,7 @@ class Extension final : public base::RefCountedThreadSafe<Extension> {
 
   // Returns an extension resource object. |relative_path| should be UTF8
   // encoded.
-  ExtensionResource GetResource(base::StringPiece relative_path) const;
+  ExtensionResource GetResource(std::string_view relative_path) const;
 
   // As above, but with |relative_path| following the file system's encoding.
   ExtensionResource GetResource(const base::FilePath& relative_path) const;
@@ -220,20 +221,18 @@ class Extension final : public base::RefCountedThreadSafe<Extension> {
   // Returns the base extension url for a given |extension_id|.
   static GURL GetBaseURLFromExtensionId(const ExtensionId& extension_id);
 
+  // Returns for scope for the extension's service worker.
+  static GURL GetServiceWorkerScopeFromExtensionId(
+      const ExtensionId& extension_id) {
+    return GetBaseURLFromExtensionId(extension_id);
+  }
+
   // Returns the extension origin for a given |extension_id|.
   static url::Origin CreateOriginFromExtensionId(
       const ExtensionId& extension_id);
 
   // Returns true if this extension or app includes areas within |origin|.
   bool OverlapsWithOrigin(const GURL& origin) const;
-
-  // TODO(devlin): The core Extension class shouldn't be responsible for these
-  // ShouldExpose-style functions; it doesn't know about the Management API,
-  // etc.
-
-  // Returns true if the extension should be exposed via the chrome.management
-  // API.
-  bool ShouldExposeViaManagementAPI() const;
 
   // Get the manifest data associated with the key, or NULL if there is none.
   // Can only be called after InitFromValue is finished.
@@ -315,7 +314,7 @@ class Extension final : public base::RefCountedThreadSafe<Extension> {
   // Type-related queries. These are all mutually exclusive.
   //
   // The differences between the types of Extension are documented here:
-  // https://chromium.googlesource.com/chromium/src/+/HEAD/extensions/docs/extension_and_app_types.md
+  // //extensions/docs/extension_and_app_types.md
   bool is_platform_app() const;         // aka "V2 app", "V2 packaged app"
   bool is_hosted_app() const;           // Hosted app (or bookmark app)
   bool is_legacy_packaged_app() const;  // aka "V1 packaged app"
@@ -462,10 +461,10 @@ class Extension final : public base::RefCountedThreadSafe<Extension> {
 
   // A dynamic ID that can be used when referencing extension resources via URL
   // instead of an extension ID.
-  base::GUID guid_;
+  base::Uuid guid_;
 };
 
-typedef std::vector<scoped_refptr<const Extension>> ExtensionList;
+using ExtensionList = std::vector<scoped_refptr<const Extension>>;
 
 // Handy struct to pass core extension info around.
 struct ExtensionInfo {
@@ -476,6 +475,7 @@ struct ExtensionInfo {
   ExtensionInfo(ExtensionInfo&&) noexcept;
   ExtensionInfo(const ExtensionInfo&) = delete;
   ExtensionInfo& operator=(const ExtensionInfo&) = delete;
+  ExtensionInfo& operator=(ExtensionInfo&&);
   ~ExtensionInfo();
 
   // Note: This may be null (e.g. for unpacked extensions retrieved from the

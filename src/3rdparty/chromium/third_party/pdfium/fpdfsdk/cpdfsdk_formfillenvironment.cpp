@@ -154,8 +154,8 @@ WideString CPDFSDK_FormFillEnvironment::GetLanguage() {
   if (nActualLen <= 0 || nActualLen > nRequiredLen)
     return WideString();
 
-  return WideString::FromUTF16LE(reinterpret_cast<uint16_t*>(pBuff.data()),
-                                 nActualLen / sizeof(uint16_t));
+  return WideString::FromUTF16LE(
+      {pBuff.data(), static_cast<size_t>(nActualLen)});
 #else   // PDF_ENABLE_XFA
   return WideString();
 #endif  // PDF_ENABLE_XFA
@@ -176,8 +176,8 @@ WideString CPDFSDK_FormFillEnvironment::GetPlatform() {
   if (nActualLen <= 0 || nActualLen > nRequiredLen)
     return WideString();
 
-  return WideString::FromUTF16LE(reinterpret_cast<uint16_t*>(pBuff.data()),
-                                 nActualLen / sizeof(uint16_t));
+  return WideString::FromUTF16LE(
+      {pBuff.data(), static_cast<size_t>(nActualLen)});
 #else   // PDF_ENABLE_XFA
   return WideString();
 #endif  // PDF_ENABLE_XFA
@@ -399,19 +399,20 @@ void CPDFSDK_FormFillEnvironment::OnSetFieldInputFocusInternal(
 
 void CPDFSDK_FormFillEnvironment::OnCalculate(
     ObservedPtr<CPDFSDK_Annot>& pAnnot) {
-  CPDFSDK_Widget* pWidget = ToCPDFSDKWidget(pAnnot.Get());
-  if (pWidget)
+  ObservedPtr<CPDFSDK_Widget> pWidget(ToCPDFSDKWidget(pAnnot.Get()));
+  if (pWidget) {
     m_pInteractiveForm->OnCalculate(pWidget->GetFormField());
+  }
 }
 
 void CPDFSDK_FormFillEnvironment::OnFormat(ObservedPtr<CPDFSDK_Annot>& pAnnot) {
-  CPDFSDK_Widget* pWidget = ToCPDFSDKWidget(pAnnot.Get());
-  DCHECK(pWidget);
+  ObservedPtr<CPDFSDK_Widget> pWidget(ToCPDFSDKWidget(pAnnot.Get()));
 
   absl::optional<WideString> sValue =
       m_pInteractiveForm->OnFormat(pWidget->GetFormField());
-  if (!pAnnot)
+  if (!pWidget) {
     return;
+  }
 
   if (sValue.has_value()) {
     m_pInteractiveForm->ResetFieldAppearance(pWidget->GetFormField(), sValue);
@@ -570,8 +571,8 @@ WideString CPDFSDK_FormFillEnvironment::PostRequestURL(
       AsFPDFWideString(&bsHeader), &response);
 
   WideString wsRet =
-      WideString::FromUTF16LE(reinterpret_cast<FPDF_WIDESTRING>(response.str),
-                              response.len / sizeof(FPDF_WCHAR));
+      WideString::FromUTF16LE({reinterpret_cast<const uint8_t*>(response.str),
+                               static_cast<size_t>(response.len)});
 
   FPDF_BStr_Clear(&response);
   return wsRet;
@@ -756,12 +757,14 @@ bool CPDFSDK_FormFillEnvironment::SetFocusAnnot(
     return false;
 #endif  // PDF_ENABLE_XFA
 
-  if (!CPDFSDK_Annot::OnSetFocus(pAnnot, {}))
+  if (!CPDFSDK_Annot::OnSetFocus(pAnnot, {})) {
     return false;
-  if (m_pFocusAnnot)
+  }
+  if (m_pFocusAnnot) {
     return false;
+  }
 
-  m_pFocusAnnot.Reset(pAnnot.Get());
+  m_pFocusAnnot = pAnnot;
 
   // If we are not able to inform the client about the focus change, it
   // shouldn't be considered as failure.
@@ -777,7 +780,7 @@ bool CPDFSDK_FormFillEnvironment::KillFocusAnnot(Mask<FWL_EVENTFLAG> nFlags) {
   m_pFocusAnnot.Reset();
 
   if (!CPDFSDK_Annot::OnKillFocus(pFocusAnnot, nFlags)) {
-    m_pFocusAnnot.Reset(pFocusAnnot.Get());
+    m_pFocusAnnot = pFocusAnnot;
     return false;
   }
 
@@ -786,10 +789,10 @@ bool CPDFSDK_FormFillEnvironment::KillFocusAnnot(Mask<FWL_EVENTFLAG> nFlags) {
     return false;
 
   if (pFocusAnnot->GetAnnotSubtype() == CPDF_Annot::Subtype::WIDGET) {
-    CPDFSDK_Widget* pWidget = ToCPDFSDKWidget(pFocusAnnot.Get());
-    FormFieldType fieldType = pWidget->GetFieldType();
-    if (fieldType == FormFieldType::kTextField ||
-        fieldType == FormFieldType::kComboBox) {
+   const FormFieldType field_type =
+        ToCPDFSDKWidget(pFocusAnnot.Get())->GetFieldType();
+    if (field_type == FormFieldType::kTextField ||
+        field_type == FormFieldType::kComboBox) {
       OnSetFieldInputFocusInternal(WideString(), false);
     }
   }
@@ -802,7 +805,7 @@ int CPDFSDK_FormFillEnvironment::GetPageCount() const {
 }
 
 bool CPDFSDK_FormFillEnvironment::HasPermissions(uint32_t flags) const {
-  return !!(m_pCPDFDoc->GetUserPermissions() & flags);
+  return !!(m_pCPDFDoc->GetUserPermissions(/*get_owner_perms=*/true) & flags);
 }
 
 void CPDFSDK_FormFillEnvironment::SendOnFocusChange(
@@ -1039,8 +1042,7 @@ void CPDFSDK_FormFillEnvironment::DoActionNoJs(const CPDF_Action& action,
       DoActionResetForm(action);
       break;
     case CPDF_Action::Type::kJavaScript:
-      NOTREACHED();
-      break;
+      NOTREACHED_NORETURN();
     case CPDF_Action::Type::kSetOCGState:
     case CPDF_Action::Type::kThread:
     case CPDF_Action::Type::kSound:
@@ -1122,8 +1124,7 @@ void CPDFSDK_FormFillEnvironment::RunFieldJavaScript(
                                   pFormField, &data->sValue, &data->bRC);
         break;
       default:
-        NOTREACHED();
-        break;
+        NOTREACHED_NORETURN();
     }
   });
 }
@@ -1169,8 +1170,7 @@ void CPDFSDK_FormFillEnvironment::RunDocumentPageJavaScript(
         context->OnPage_OutView();
         break;
       default:
-        NOTREACHED();
-        break;
+        NOTREACHED_NORETURN();
     }
   });
 }

@@ -13,7 +13,7 @@
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/notreached.h"
-#include "base/strings/string_piece_forward.h"
+#include "base/strings/string_piece.h"
 #include "base/time/time.h"
 #include "base/values.h"
 #include "components/account_id/account_id.h"
@@ -21,6 +21,7 @@
 #include "components/prefs/scoped_user_pref_update.h"
 #include "components/user_manager/common_types.h"
 #include "components/user_manager/user_manager.h"
+#include "components/user_manager/user_names.h"
 #include "google_apis/gaia/gaia_auth_util.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
 
@@ -109,6 +110,15 @@ const char kOnboardingCompletedVersion[] = "onboarding_completed_version";
 // Last screen shown in the onboarding flow.
 const char kPendingOnboardingScreen[] = "onboarding_screen_pending";
 
+// Key of the obsolete token handle rotation flag.
+const char kTokenHandleRotatedObsolete[] = "TokenHandleRotated";
+
+// Cache of the auth factors configured for the user.
+const char kAuthFactorPresenceCache[] = "AuthFactorsPresenceCache";
+
+// Records for each user whether Lacros is enabled.
+const char kLacrosEnabled[] = "lacros_enabled";
+
 // List containing all the known user preferences keys.
 const char* kReservedKeys[] = {kCanonicalEmail,
                                kGAIAIdKey,
@@ -131,7 +141,9 @@ const char* kReservedKeys[] = {kCanonicalEmail,
                                kPinAutosubmitBackfillNeeded,
                                kPasswordSyncToken,
                                kOnboardingCompletedVersion,
-                               kPendingOnboardingScreen};
+                               kPendingOnboardingScreen,
+                               kAuthFactorPresenceCache,
+                               kLacrosEnabled};
 
 // List containing all known user preference keys that used to be reserved and
 // are now obsolete.
@@ -139,6 +151,7 @@ const char* kObsoleteKeys[] = {
     kMinimalMigrationAttemptedObsolete,
     kGaiaIdMigrationObsolete,
     kOfflineSigninLimitObsolete,
+    kTokenHandleRotatedObsolete,
 };
 
 // Checks if values in |dict| correspond with |account_id| identity.
@@ -196,6 +209,19 @@ void UpdateIdentity(const AccountId& account_id, base::Value::Dict& dict) {
   }
   dict.Set(kAccountTypeKey,
            AccountId::AccountTypeToString(account_id.GetAccountType()));
+}
+
+// Checks for platform-specific known users matching given |user_email|. If
+// data matches a known account, returns it.
+absl::optional<AccountId> GetPlatformKnownUserId(
+    const base::StringPiece user_email) {
+  if (user_email == kStubUserEmail) {
+    return StubAccountId();
+  }
+  if (user_email == kGuestUserName) {
+    return GuestAccountId();
+  }
+  return absl::nullopt;
 }
 
 }  // namespace
@@ -369,7 +395,7 @@ void KnownUser::RemovePref(const AccountId& account_id,
 
 AccountId KnownUser::GetAccountId(const std::string& user_email,
                                   const std::string& id,
-                                  const AccountType& account_type) {
+                                  const AccountType& account_type) const {
   DCHECK((id.empty() && account_type == AccountType::UNKNOWN) ||
          (!id.empty() && account_type != AccountType::UNKNOWN));
   // In tests empty accounts are possible.
@@ -378,11 +404,12 @@ AccountId KnownUser::GetAccountId(const std::string& user_email,
     return EmptyAccountId();
   }
 
-  AccountId result(EmptyAccountId());
   // UserManager is usually NULL in unit tests.
-  if (account_type == AccountType::UNKNOWN && UserManager::IsInitialized() &&
-      UserManager::Get()->GetPlatformKnownUserId(user_email, &result)) {
-    return result;
+  if (account_type == AccountType::UNKNOWN) {
+    if (absl::optional<AccountId> result = GetPlatformKnownUserId(user_email);
+        result.has_value()) {
+      return result.value();
+    }
   }
 
   const std::string sanitized_email =
@@ -452,13 +479,10 @@ AccountId KnownUser::GetAccountIdByCryptohomeId(
     }
   }
 
-  // GetPlatformKnownAccountId
-  AccountId result(EmptyAccountId());
-  // UserManager is usually NULL in unit tests.
-  if (UserManager::IsInitialized() &&
-      UserManager::Get()->GetPlatformKnownUserId(cryptohome_id.value(),
-                                                 &result)) {
-    return result;
+  if (absl::optional<AccountId> result =
+          GetPlatformKnownUserId(cryptohome_id.value());
+      result.has_value()) {
+    return result.value();
   }
   return AccountId::FromNonCanonicalEmail(cryptohome_id.value(), std::string(),
                                           AccountType::UNKNOWN);
@@ -548,7 +572,7 @@ void KnownUser::SetDeviceId(const AccountId& account_id,
   SetStringPref(account_id, kDeviceId, device_id);
 }
 
-std::string KnownUser::GetDeviceId(const AccountId& account_id) {
+std::string KnownUser::GetDeviceId(const AccountId& account_id) const {
   const std::string* device_id = FindStringPath(account_id, kDeviceId);
   if (device_id)
     return *device_id;
@@ -714,6 +738,19 @@ void KnownUser::PinAutosubmitSetBackfillNeededForTests(
   SetBooleanPref(account_id, kPinAutosubmitBackfillNeeded, true);
 }
 
+void KnownUser::SetAuthFactorCache(const AccountId& account_id,
+                                   base::Value::Dict cache) {
+  SetPath(account_id, kAuthFactorPresenceCache, base::Value(std::move(cache)));
+}
+
+base::Value::Dict KnownUser::GetAuthFactorCache(const AccountId& account_id) {
+  const auto* value = FindPath(account_id, kAuthFactorPresenceCache);
+  if (!value || !value->is_dict()) {
+    return base::Value::Dict();
+  }
+  return value->GetDict().Clone();
+}
+
 void KnownUser::SetPasswordSyncToken(const AccountId& account_id,
                                      const std::string& token) {
   SetStringPref(account_id, kPasswordSyncToken, token);
@@ -776,6 +813,17 @@ std::string KnownUser::GetPendingOnboardingScreen(const AccountId& account_id) {
   return std::string();
 }
 
+void KnownUser::SetLacrosEnabled(const AccountId& account_id, bool enabled) {
+  SetBooleanPref(account_id, kLacrosEnabled, enabled);
+}
+
+bool KnownUser::GetLacrosEnabledForAnyUser() {
+  const std::vector<AccountId> account_ids = GetKnownAccountIds();
+  return base::ranges::any_of(account_ids, [this](const AccountId& account_id) {
+    return FindBoolPath(account_id, kLacrosEnabled).value_or(false);
+  });
+}
+
 bool KnownUser::UserExists(const AccountId& account_id) {
   return FindPrefs(account_id);
 }
@@ -800,7 +848,7 @@ void KnownUser::CleanEphemeralUsers() {
     if (!value.is_dict())
       return false;
 
-    absl::optional<bool> is_ephemeral = value.FindBoolKey(kIsEphemeral);
+    absl::optional<bool> is_ephemeral = value.GetDict().FindBool(kIsEphemeral);
     return is_ephemeral && *is_ephemeral;
   });
 }
@@ -811,7 +859,7 @@ void KnownUser::CleanObsoletePrefs() {
     if (!user_entry.is_dict())
       continue;
     for (const std::string& key : kObsoleteKeys)
-      user_entry.RemoveKey(key);
+      user_entry.GetDict().Remove(key);
   }
 }
 

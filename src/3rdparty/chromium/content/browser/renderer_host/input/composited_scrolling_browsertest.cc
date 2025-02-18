@@ -13,11 +13,11 @@
 #include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
 #include "cc/base/features.h"
-#include "content/browser/renderer_host/input/synthetic_gesture.h"
-#include "content/browser/renderer_host/input/synthetic_smooth_scroll_gesture.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
 #include "content/browser/web_contents/web_contents_impl.h"
+#include "content/common/input/synthetic_gesture.h"
 #include "content/common/input/synthetic_gesture_params.h"
+#include "content/common/input/synthetic_smooth_scroll_gesture.h"
 #include "content/common/input/synthetic_smooth_scroll_gesture_params.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/common/content_switches.h"
@@ -114,18 +114,9 @@ class CompositedScrollingBrowserTest : public ContentBrowserTest {
     observer.WaitForHitTestData();
   }
 
-  // ContentBrowserTest:
-  int ExecuteScriptAndExtractInt(const std::string& script) {
-    return EvalJs(shell(), script).ExtractInt();
-  }
-
-  double ExecuteScriptAndExtractDouble(const std::string& script) {
-    return EvalJs(shell(), script).ExtractDouble();
-  }
-
   double GetScrollTop() {
-    return ExecuteScriptAndExtractDouble(
-        "document.getElementById(\"scroller\").scrollTop");
+    return EvalJs(shell(), "document.getElementById(\"scroller\").scrollTop")
+        .ExtractDouble();
   }
 
   // Generate touch events for a synthetic scroll from |point| for |distance|.
@@ -202,7 +193,7 @@ class CompositedScrollingMetricTest : public CompositedScrollingBrowserTest,
     if (enable_composited_scrolling)
       cmd->AppendSwitch(blink::switches::kEnablePreferCompositingToLCDText);
     else
-      cmd->AppendSwitch(blink::switches::kDisableThreadedScrolling);
+      cmd->AppendSwitch(blink::switches::kDisablePreferCompositingToLCDText);
   }
 
   bool CompositingEnabled() { return GetParam(); }

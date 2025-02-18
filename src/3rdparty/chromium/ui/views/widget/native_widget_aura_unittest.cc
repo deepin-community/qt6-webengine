@@ -11,6 +11,8 @@
 #include "base/command_line.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
+#include "base/uuid.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/env.h"
@@ -18,6 +20,8 @@
 #include "ui/aura/window.h"
 #include "ui/aura/window_observer.h"
 #include "ui/aura/window_tree_host.h"
+#include "ui/base/metadata/metadata_header_macros.h"
+#include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/compositor/layer.h"
 #include "ui/events/event.h"
 #include "ui/events/event_utils.h"
@@ -140,6 +144,8 @@ TEST_F(NativeWidgetAuraTest, CenterWindowSmallParentNotAtOrigin) {
 
 // View which handles both mouse and gesture events.
 class EventHandlingView : public View {
+  METADATA_HEADER(EventHandlingView, View)
+
  public:
   EventHandlingView() = default;
   EventHandlingView(const EventHandlingView&) = delete;
@@ -172,6 +178,9 @@ class EventHandlingView : public View {
  private:
   std::set<ui::EventType> handled_gestures_set_;
 };
+
+BEGIN_METADATA(EventHandlingView)
+END_METADATA
 
 // Verifies that when the mouse click interrupts the gesture scroll, the view
 // where the gesture scroll starts should receive the scroll end event.
@@ -443,7 +452,8 @@ class PropertyTestLayoutManager : public TestLayoutManagerBase {
   void OnWindowAddedToLayout(aura::Window* child) override {
     EXPECT_EQ(aura::client::kResizeBehaviorCanResize |
                   aura::client::kResizeBehaviorCanMaximize |
-                  aura::client::kResizeBehaviorCanMinimize,
+                  aura::client::kResizeBehaviorCanMinimize |
+                  aura::client::kResizeBehaviorCanFullscreen,
               child->GetProperty(aura::client::kResizeBehaviorKey));
     added_ = true;
   }
@@ -458,8 +468,11 @@ TEST_F(NativeWidgetAuraTest, TestPropertiesWhenAddedToLayout) {
       std::make_unique<PropertyTestLayoutManager>());
   UniqueWidgetPtr widget = std::make_unique<TestWidget>();
   Widget::InitParams params(Widget::InitParams::TYPE_WINDOW);
-  params.delegate = new WidgetDelegate();
-  params.delegate->SetOwnedByWidget(true);
+
+  auto delegate_owned = std::make_unique<WidgetDelegate>();
+  params.delegate = delegate_owned.get();
+  params.delegate->RegisterDeleteDelegateCallback(
+      base::DoNothingWithBoundArgs(std::move(delegate_owned)));
   params.delegate->SetHasWindowSizeControls(true);
   params.parent = nullptr;
   params.context = root_window();
@@ -485,6 +498,8 @@ TEST_F(NativeWidgetAuraTest, GetClientAreaScreenBounds) {
 
 // View subclass that tracks whether it has gotten a gesture event.
 class GestureTrackingView : public View {
+  METADATA_HEADER(GestureTrackingView, View)
+
  public:
   GestureTrackingView() = default;
 
@@ -510,6 +525,9 @@ class GestureTrackingView : public View {
   // Dictates what OnGestureEvent() returns.
   bool consume_gesture_event_ = true;
 };
+
+BEGIN_METADATA(GestureTrackingView)
+END_METADATA
 
 // Verifies a capture isn't set on touch press and that the view that gets
 // the press gets the release.
@@ -752,9 +770,9 @@ TEST_F(NativeWidgetAuraTest, OnWidgetMovedInvokedAfterAcquireLayer) {
   // is destroyed.
   // See WidgetDelegateView::WidgetDelegateView();
   auto delegate = std::make_unique<MoveTestWidgetDelegate>();
-  auto* delegate_ptr = delegate.get();
+  auto* delegate_ptr = delegate.release();
   UniqueWidgetPtr widget = base::WrapUnique(Widget::CreateWindowWithContext(
-      std::move(delegate), root_window(), gfx::Rect(10, 10, 100, 200)));
+      delegate_ptr, root_window(), gfx::Rect(10, 10, 100, 200)));
   widget->Show();
   delegate_ptr->ClearGotMove();
   // Simulate a maximize with animation.
@@ -827,8 +845,11 @@ TEST_F(NativeWidgetAuraTest, TransientChildModalWindowVisibility) {
   UniqueWidgetPtr child = std::make_unique<Widget>();
   Widget::InitParams child_params(Widget::InitParams::TYPE_WINDOW);
   child_params.parent = parent->GetNativeWindow();
-  child_params.delegate = new WidgetDelegate;
-  child_params.delegate->SetOwnedByWidget(true);
+
+  auto delegate_owned = std::make_unique<WidgetDelegate>();
+  child_params.delegate = delegate_owned.get();
+  child_params.delegate->RegisterDeleteDelegateCallback(
+      base::DoNothingWithBoundArgs(std::move(delegate_owned)));
   child_params.delegate->SetModalType(ui::MODAL_TYPE_WINDOW);
   child->Init(std::move(child_params));
   child->SetBounds(gfx::Rect(0, 0, 200, 200));
@@ -873,6 +894,45 @@ TEST_F(NativeWidgetAuraTest, MinimizedWidgetRestoreBounds) {
 
   widget->Restore();
   EXPECT_EQ(restore_bounds, window->bounds());
+}
+
+// Tests that the `kDeskUuidKey` is set if the `workspace` parameter is
+// a uuid, and that the `kWindowWorkspaceKey` is set if it's a string
+// representation of an integer.
+TEST_F(NativeWidgetAuraTest, WorkspaceUuid) {
+  // If the `workspace` param is a uuid, `kDeskUuidKey` should be set.
+  Widget::InitParams params(Widget::InitParams::TYPE_WINDOW);
+  params.parent = nullptr;
+  params.context = root_window();
+  params.show_state = ui::SHOW_STATE_MINIMIZED;
+  params.bounds.SetRect(0, 0, 1024, 800);
+  const std::string uuid = "e1b6731b-2a99-48be-bcb7-54e3ba274d05";
+  params.workspace = base::Uuid::ParseLowercase(uuid).AsLowercaseString();
+  UniqueWidgetPtr widget = std::make_unique<Widget>();
+  widget->Init(std::move(params));
+  widget->Show();
+
+  EXPECT_EQ(-1, widget->GetNativeWindow()->GetProperty(
+                    aura::client::kWindowWorkspaceKey));
+  EXPECT_THAT(
+      widget->GetNativeWindow()->GetProperty(aura::client::kDeskUuidKey),
+      testing::Pointee(uuid));
+
+  // If the `workspace` param is an int, `kWindowWorkspaceKey` should be set.
+  Widget::InitParams params2(Widget::InitParams::TYPE_WINDOW);
+  params2.parent = nullptr;
+  params2.context = root_window();
+  params2.show_state = ui::SHOW_STATE_MINIMIZED;
+  params2.bounds.SetRect(0, 0, 1024, 800);
+  params2.workspace = "2";
+  UniqueWidgetPtr widget2 = std::make_unique<Widget>();
+  widget2->Init(std::move(params2));
+  widget2->Show();
+
+  EXPECT_EQ(2, widget2->GetNativeWindow()->GetProperty(
+                   aura::client::kWindowWorkspaceKey));
+  EXPECT_FALSE(
+      widget2->GetNativeWindow()->GetProperty(aura::client::kDeskUuidKey));
 }
 
 // NativeWidgetAura has a protected destructor.
@@ -921,11 +981,11 @@ class NativeWidgetAuraWithNoDelegateTest : public NativeWidgetAuraTest {
   }
 
   void TearDown() override {
-    native_widget_->CloseNow();
+    native_widget_.ExtractAsDangling()->CloseNow();
     ViewsTestBase::TearDown();
   }
 
-  raw_ptr<TestNativeWidgetAura> native_widget_;
+  raw_ptr<TestNativeWidgetAura> native_widget_ = nullptr;
 };
 
 TEST_F(NativeWidgetAuraWithNoDelegateTest, GetHitTestMaskTest) {

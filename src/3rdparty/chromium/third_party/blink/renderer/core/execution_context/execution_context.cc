@@ -68,7 +68,9 @@
 
 namespace blink {
 
-ExecutionContext::ExecutionContext(v8::Isolate* isolate, Agent* agent)
+ExecutionContext::ExecutionContext(v8::Isolate* isolate,
+                                   Agent* agent,
+                                   bool is_window)
     : isolate_(isolate),
       security_context_(this),
       agent_(agent),
@@ -78,8 +80,14 @@ ExecutionContext::ExecutionContext(v8::Isolate* isolate, Agent* agent)
       csp_delegate_(MakeGarbageCollected<ExecutionContextCSPDelegate>(*this)),
       window_interaction_tokens_(0),
       origin_trial_context_(MakeGarbageCollected<OriginTrialContext>(this)),
+      // RuntimeFeatureStateOverrideContext shouldn't attempt to communcate back
+      // to browser for ExecutionContexts that aren't windows.
+      // TODO(https://crbug.com/1410817): Add support for workers/non-frames.
       runtime_feature_state_override_context_(
-          MakeGarbageCollected<RuntimeFeatureStateOverrideContext>(this)) {
+          MakeGarbageCollected<RuntimeFeatureStateOverrideContext>(
+              this,
+              this,
+              /*send_runtime_features_to_browser=*/is_window)) {
   DCHECK(agent_);
 }
 
@@ -87,45 +95,11 @@ ExecutionContext::~ExecutionContext() = default;
 
 // static
 ExecutionContext* ExecutionContext::From(const ScriptState* script_state) {
-  v8::HandleScope scope(script_state->GetIsolate());
-  return ToExecutionContext(script_state->GetContext());
+  return ToExecutionContext(script_state);
 }
 
 // static
 ExecutionContext* ExecutionContext::From(v8::Local<v8::Context> context) {
-  return ToExecutionContext(context);
-}
-
-// static
-ExecutionContext* ExecutionContext::ForCurrentRealm(
-    const v8::FunctionCallbackInfo<v8::Value>& info) {
-  return ToExecutionContext(info.GetIsolate()->GetCurrentContext());
-}
-
-// static
-ExecutionContext* ExecutionContext::ForCurrentRealm(
-    const v8::PropertyCallbackInfo<v8::Value>& info) {
-  auto ctx = info.GetIsolate()->GetCurrentContext();
-  if (ctx.IsEmpty())
-    return nullptr;
-  return ToExecutionContext(ctx);
-}
-
-// static
-ExecutionContext* ExecutionContext::ForRelevantRealm(
-    const v8::FunctionCallbackInfo<v8::Value>& info) {
-  v8::Local<v8::Context> context;
-  if (!info.Holder()->GetCreationContext().ToLocal(&context))
-    return nullptr;
-  return ToExecutionContext(context);
-}
-
-// static
-ExecutionContext* ExecutionContext::ForRelevantRealm(
-    const v8::PropertyCallbackInfo<v8::Value>& info) {
-  v8::Local<v8::Context> context;
-  if (!info.Holder()->GetCreationContext().ToLocal(&context))
-    return nullptr;
   return ToExecutionContext(context);
 }
 
@@ -242,6 +216,9 @@ bool ExecutionContext::SharedArrayBufferTransferAllowed() const {
     origin = worklet_scope->DocumentSecurityOrigin();
   else
     origin = GetSecurityOrigin();
+
+  CHECK(origin);
+
   if (SecurityPolicy::IsSharedArrayBufferAlwaysAllowedForOrigin(origin))
     return true;
 
@@ -283,16 +260,6 @@ void ExecutionContext::FileSharedArrayBufferCreationIssue() {
   // In enforced mode, the SAB constructor isn't available.
   AuditsIssue::ReportSharedArrayBufferIssue(
       this, true, SharedArrayBufferIssueType::kCreationIssue);
-}
-
-void ExecutionContext::ReportNavigatorUserAgentAccess() {
-  if (has_filed_navigator_user_agent_issue_)
-    return;
-  has_filed_navigator_user_agent_issue_ = true;
-  AuditsIssue::ReportNavigatorUserAgentAccess(this, Url().GetString());
-  base::UmaHistogramBoolean(
-      "Blink.Navigator.ReducedUserAgent",
-      RuntimeEnabledFeatures::UserAgentReductionEnabled(this));
 }
 
 void ExecutionContext::AddConsoleMessageImpl(
@@ -565,7 +532,6 @@ void ExecutionContext::Trace(Visitor* visitor) const {
   visitor->Trace(public_url_manager_);
   visitor->Trace(pending_exceptions_);
   visitor->Trace(csp_delegate_);
-  visitor->Trace(timers_);
   visitor->Trace(origin_trial_context_);
   visitor->Trace(content_security_policy_);
   visitor->Trace(runtime_feature_state_override_context_);
@@ -594,7 +560,8 @@ v8::MicrotaskQueue* ExecutionContext::GetMicrotaskQueue() const {
   return GetAgent()->event_loop()->microtask_queue();
 }
 
-bool ExecutionContext::FeatureEnabled(OriginTrialFeature feature) const {
+bool ExecutionContext::FeatureEnabled(
+    mojom::blink::OriginTrialFeature feature) const {
   return origin_trial_context_->IsFeatureEnabled(feature);
 }
 
@@ -602,23 +569,24 @@ bool ExecutionContext::IsFeatureEnabled(
     mojom::blink::PermissionsPolicyFeature feature,
     ReportOptions report_option,
     const String& message) {
-  bool should_report;
-  bool enabled = security_context_.IsFeatureEnabled(feature, &should_report);
+  SecurityContext::FeatureStatus status =
+      security_context_.IsFeatureEnabled(feature);
 
-  if (should_report && report_option == ReportOptions::kReportOnFailure) {
+  if (status.should_report &&
+      report_option == ReportOptions::kReportOnFailure) {
     mojom::blink::PolicyDisposition disposition =
-        enabled ? mojom::blink::PolicyDisposition::kReport
-                : mojom::blink::PolicyDisposition::kEnforce;
+        status.enabled ? mojom::blink::PolicyDisposition::kReport
+                       : mojom::blink::PolicyDisposition::kEnforce;
 
-    ReportPermissionsPolicyViolation(feature, disposition, message);
+    ReportPermissionsPolicyViolation(feature, disposition,
+                                     status.reporting_endpoint, message);
   }
-  return enabled;
+  return status.enabled;
 }
 
 bool ExecutionContext::IsFeatureEnabled(
     mojom::blink::PermissionsPolicyFeature feature) const {
-  bool should_report;
-  return security_context_.IsFeatureEnabled(feature, &should_report);
+  return security_context_.IsFeatureEnabled(feature).enabled;
 }
 
 bool ExecutionContext::IsFeatureEnabled(
@@ -631,10 +599,6 @@ bool ExecutionContext::IsFeatureEnabled(
 bool ExecutionContext::IsFeatureEnabled(
     mojom::blink::DocumentPolicyFeature feature,
     PolicyValue threshold_value) const {
-  // The default value for any feature should be true unless restricted by
-  // document policy
-  if (!RuntimeEnabledFeatures::DocumentPolicyEnabled())
-    return true;
   return security_context_.IsFeatureEnabled(feature, threshold_value).enabled;
 }
 
@@ -655,11 +619,6 @@ bool ExecutionContext::IsFeatureEnabled(
     ReportOptions report_option,
     const String& message,
     const String& source_file) {
-  // The default value for any feature should be true unless restricted by
-  // document policy
-  if (!RuntimeEnabledFeatures::DocumentPolicyEnabled())
-    return true;
-
   SecurityContext::FeatureStatus status =
       security_context_.IsFeatureEnabled(feature, threshold_value);
   if (status.should_report &&
@@ -696,6 +655,33 @@ ContextType GetContextType(const ExecutionContext& execution_context) {
   }
   return ContextType::UNKNOWN_CONTEXT;
 }
+
+using WorldType = ExecutionContext::Proto::WorldType;
+WorldType GetWorldType(const ExecutionContext& execution_context) {
+  auto current_world = execution_context.GetCurrentWorld();
+  if (current_world == nullptr) {
+    return WorldType::WORLD_UNKNOWN;
+  }
+
+  switch (current_world->GetWorldType()) {
+    case DOMWrapperWorld::WorldType::kMain:
+      return WorldType::WORLD_MAIN;
+    case DOMWrapperWorld::WorldType::kIsolated:
+      return WorldType::WORLD_ISOLATED;
+    case DOMWrapperWorld::WorldType::kInspectorIsolated:
+      return WorldType::WORLD_INSPECTOR_ISOLATED;
+    case DOMWrapperWorld::WorldType::kBlinkInternalNonJSExposed:
+      return WorldType::WORLD_BLINK_INTERNAL_NON_JS_EXPOSED;
+    case DOMWrapperWorld::WorldType::kForV8ContextSnapshotNonMain:
+      return WorldType::WORLD_FOR_V8_CONTEXT_SNAPSHOT_NON_MAIN;
+    case DOMWrapperWorld::WorldType::kWorker:
+      return WorldType::WORLD_WORKER;
+    case DOMWrapperWorld::WorldType::kShadowRealm:
+      return WorldType::WORLD_SHADOW_REALM;
+    default:
+      return WorldType::WORLD_UNKNOWN;
+  }
+}
 }  // namespace
 
 void ExecutionContext::WriteIntoTrace(
@@ -703,6 +689,12 @@ void ExecutionContext::WriteIntoTrace(
   proto->set_url(Url().GetString().Utf8());
   proto->set_origin(GetSecurityOrigin()->ToString().Utf8());
   proto->set_type(GetContextType(*this));
+  proto->set_world_type(GetWorldType(*this));
+}
+
+bool ExecutionContext::CrossOriginIsolatedCapabilityOrDisabledWebSecurity()
+    const {
+  return Agent::IsWebSecurityDisabled() || CrossOriginIsolatedCapability();
 }
 
 }  // namespace blink

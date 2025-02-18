@@ -4,7 +4,7 @@
 
 #include <stdint.h>
 
-#include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -12,12 +12,11 @@
 
 #include "base/check.h"
 #include "base/json/json_reader.h"
-#include "base/strings/string_piece.h"
+#include "base/types/expected.h"
 #include "base/values.h"
 #include "extensions/browser/api/declarative_net_request/indexed_rule.h"
 #include "extensions/common/api/declarative_net_request.h"
 #include "extensions/common/api/declarative_net_request/constants.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/gurl.h"
 
 using extensions::api::declarative_net_request::Rule;
@@ -28,17 +27,14 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   FuzzedDataProvider provider(data, size);
 
   // Make a random `Rule`.
-  absl::optional<base::Value> value =
+  std::optional<base::Value> value =
       base::JSONReader::Read(provider.ConsumeRandomLengthString());
   if (!value || !value->is_dict())
     return 0;
-  std::u16string error;
-  std::unique_ptr<Rule> rule = Rule::FromValue(*value, &error);
-  if (!rule) {
-    CHECK(!error.empty());
+  base::expected<Rule, std::u16string> rule = Rule::FromValue(value->GetDict());
+  if (!rule.has_value()) {
     return 0;
   }
-  CHECK(error.empty());
 
   // Make a random `GURL`.
   const GURL url(provider.ConsumeRandomLengthString());

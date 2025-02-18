@@ -123,9 +123,7 @@ export function maybeRemoveSettingExtension(settingName: string): boolean {
   return true;
 }
 
-// TODO(crbug.com/1167717): Make this a const enum again
-// eslint-disable-next-line rulesdir/const_enum
-export enum SettingCategory {
+export const enum SettingCategory {
   NONE = '',  // `NONE` must be a falsy value. Legacy code uses if-checks for the category.
   ELEMENTS = 'ELEMENTS',
   APPEARANCE = 'APPEARANCE',
@@ -146,7 +144,7 @@ export enum SettingCategory {
   SYNC = 'SYNC',
 }
 
-export function getLocalizedSettingsCategory(category: SettingCategory): string|Platform.UIString.LocalizedString {
+export function getLocalizedSettingsCategory(category: SettingCategory): Platform.UIString.LocalizedString {
   switch (category) {
     case SettingCategory.ELEMENTS:
       return i18nString(UIStrings.elements);
@@ -181,15 +179,13 @@ export function getLocalizedSettingsCategory(category: SettingCategory): string|
     case SettingCategory.ADORNER:
       return i18nString(UIStrings.adorner);
     case SettingCategory.NONE:
-      return '';
+      return i18n.i18n.lockedString('');
     case SettingCategory.SYNC:
       return i18nString(UIStrings.sync);
   }
 }
 
-// TODO(crbug.com/1167717): Make this a const enum again
-// eslint-disable-next-line rulesdir/const_enum
-export enum SettingType {
+export const enum SettingType {
   ARRAY = 'array',
   REGEX = 'regex',
   ENUM = 'enum',

@@ -113,7 +113,7 @@ class TsGenerator : public BaseGenerator {
   bool generate() {
     generateEnums();
     generateStructs();
-    generateEntry();
+    if (!parser_.opts.ts_omit_entrypoint) { generateEntry(); }
     if (!generateBundle()) return false;
     return true;
   }
@@ -149,7 +149,8 @@ class TsGenerator : public BaseGenerator {
 
     std::string code;
 
-    code += "// " + std::string(FlatBuffersGeneratedWarning()) + "\n\n";
+    code += "// " + std::string(FlatBuffersGeneratedWarning()) + "\n\n" +
+        "/* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */\n\n";
 
     for (auto it = bare_imports.begin(); it != bare_imports.end(); it++) {
       code += it->second.import_statement + "\n";
@@ -254,8 +255,9 @@ class TsGenerator : public BaseGenerator {
     }
 
     for (const auto &it : ns_defs_) {
-      code = "// " + std::string(FlatBuffersGeneratedWarning()) + "\n\n";
-
+      code = "// " + std::string(FlatBuffersGeneratedWarning()) + "\n\n" +
+        "/* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */\n\n";
+      
       // export all definitions in ns entry point module
       int export_counter = 0;
       for (const auto &def : it.second.definitions) {
@@ -281,7 +283,14 @@ class TsGenerator : public BaseGenerator {
         base_name_rel += base_file_name;
         auto ts_file_path_rel = base_name_rel + ".ts";
         auto type_name = def.first;
-        code += "export { " + type_name + " } from '";
+        auto fully_qualified_type_name =
+            it.second.ns->GetFullyQualifiedName(type_name);
+        auto is_struct = parser_.structs_.Lookup(fully_qualified_type_name);
+        code += "export { " + type_name;
+        if (parser_.opts.generate_object_based_api && is_struct) {
+          code += ", " + type_name + parser_.opts.object_suffix;
+        }
+        code += " } from '";
         std::string import_extension =
             parser_.opts.ts_no_import_ext ? "" : ".js";
         code += base_name_rel + import_extension + "';\n";
@@ -402,7 +411,7 @@ class TsGenerator : public BaseGenerator {
     switch (type.base_type) {
       case BASE_TYPE_BOOL:
       case BASE_TYPE_CHAR: return "Int8";
-      case BASE_TYPE_UTYPE:
+      case BASE_TYPE_UTYPE: return GenType(GetUnionUnderlyingType(type));
       case BASE_TYPE_UCHAR: return "Uint8";
       case BASE_TYPE_SHORT: return "Int16";
       case BASE_TYPE_USHORT: return "Uint16";
@@ -468,14 +477,12 @@ class TsGenerator : public BaseGenerator {
           return "BigInt('" + value.constant + "')";
         }
         default: {
-          if (auto val = value.type.enum_def->FindByValue(value.constant)) {
-            return AddImport(imports, *value.type.enum_def,
-                             *value.type.enum_def)
-                       .name +
-                   "." + namer_.Variant(*val);
-          } else {
-            return value.constant;
-          }
+          EnumVal *val = value.type.enum_def->FindByValue(value.constant);
+          if (val == nullptr)
+            val = const_cast<EnumVal *>(value.type.enum_def->MinValue());
+          return AddImport(imports, *value.type.enum_def, *value.type.enum_def)
+                     .name +
+                 "." + namer_.Variant(*val);
         }
       }
     }
@@ -558,11 +565,26 @@ class TsGenerator : public BaseGenerator {
     }
   }
 
+  static Type GetUnionUnderlyingType(const Type &type)
+  {
+    if (type.enum_def != nullptr && 
+        type.enum_def->underlying_type.base_type != type.base_type) {
+      return type.enum_def->underlying_type;
+    } else {
+        return Type(BASE_TYPE_UCHAR);
+    }
+  }
+
+  static Type GetUnderlyingVectorType(const Type &vector_type)
+  {
+    return (vector_type.base_type == BASE_TYPE_UTYPE) ? GetUnionUnderlyingType(vector_type) : vector_type;
+  }
+
   // Returns the method name for use with add/put calls.
   std::string GenWriteMethod(const Type &type) {
     // Forward to signed versions since unsigned versions don't exist
     switch (type.base_type) {
-      case BASE_TYPE_UTYPE:
+      case BASE_TYPE_UTYPE: return GenWriteMethod(GetUnionUnderlyingType(type));
       case BASE_TYPE_UCHAR: return GenWriteMethod(Type(BASE_TYPE_CHAR));
       case BASE_TYPE_USHORT: return GenWriteMethod(Type(BASE_TYPE_SHORT));
       case BASE_TYPE_UINT: return GenWriteMethod(Type(BASE_TYPE_INT));
@@ -845,8 +867,8 @@ class TsGenerator : public BaseGenerator {
     }
 
     if (enum_def.is_union) {
-      symbols_expression += ", unionTo" + name;
-      symbols_expression += ", unionListTo" + name;
+      symbols_expression += (", " + namer_.Function("unionTo" + name));
+      symbols_expression += (", " + namer_.Function("unionListTo" + name));
     }
 
     return symbols_expression;
@@ -1759,7 +1781,8 @@ class TsGenerator : public BaseGenerator {
             auto vectortype = field.value.type.VectorType();
             auto vectortypename =
                 GenTypeName(imports, struct_def, vectortype, false);
-            auto inline_size = InlineSize(vectortype);
+            auto type = GetUnderlyingVectorType(vectortype);
+            auto inline_size = InlineSize(type);
             auto index = GenBBAccess() +
                          ".__vector(this.bb_pos + offset) + index" +
                          MaybeScale(inline_size);
@@ -1977,11 +2000,7 @@ class TsGenerator : public BaseGenerator {
         if (!IsScalar(field.value.type.base_type)) {
           code += "0";
         } else if (HasNullDefault(field)) {
-          if (IsLong(field.value.type.base_type)) {
-            code += "BigInt(0)";
-          } else {
-            code += "0";
-          }
+          code += "null";
         } else {
           if (field.value.type.base_type == BASE_TYPE_BOOL) { code += "+"; }
           code += GenDefaultValue(field, imports);
@@ -1990,8 +2009,9 @@ class TsGenerator : public BaseGenerator {
 
         if (IsVector(field.value.type)) {
           auto vector_type = field.value.type.VectorType();
-          auto alignment = InlineAlignment(vector_type);
-          auto elem_size = InlineSize(vector_type);
+          auto type = GetUnderlyingVectorType(vector_type);
+          auto alignment = InlineAlignment(type);
+          auto elem_size = InlineSize(type);
 
           // Generate a method to create a vector from a JavaScript array
           if (!IsStruct(vector_type)) {
@@ -2156,14 +2176,14 @@ class TsGenerator : public BaseGenerator {
 };  // namespace ts
 }  // namespace ts
 
-bool GenerateTS(const Parser &parser, const std::string &path,
-                const std::string &file_name) {
+static bool GenerateTS(const Parser &parser, const std::string &path,
+                       const std::string &file_name) {
   ts::TsGenerator generator(parser, path, file_name);
   return generator.generate();
 }
 
-std::string TSMakeRule(const Parser &parser, const std::string &path,
-                       const std::string &file_name) {
+static std::string TSMakeRule(const Parser &parser, const std::string &path,
+                              const std::string &file_name) {
   std::string filebase =
       flatbuffers::StripPath(flatbuffers::StripExtension(file_name));
   ts::TsGenerator generator(parser, path, file_name);
@@ -2187,9 +2207,8 @@ class TsCodeGenerator : public CodeGenerator {
     return Status::OK;
   }
 
-  Status GenerateCode(const uint8_t *buffer, int64_t length) override {
-    (void)buffer;
-    (void)length;
+  Status GenerateCode(const uint8_t *, int64_t,
+                      const CodeGenOptions &) override {
     return Status::NOT_IMPLEMENTED;
   }
 

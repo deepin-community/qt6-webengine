@@ -7,7 +7,7 @@
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/task_environment.h"
 #include "base/time/time.h"
-#include "components/safe_browsing/core/common/proto/safebrowsingv5_alpha1.pb.h"
+#include "components/safe_browsing/core/common/proto/safebrowsingv5.pb.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/platform_test.h"
 
@@ -48,6 +48,31 @@ class HashRealTimeCacheTest : public PlatformTest {
     histogram_tester_->ExpectBucketCount("SafeBrowsing.HPRT.CacheHit",
                                          /*sample=*/false,
                                          /*expected_count=*/num_misses);
+    histogram_tester_ = std::make_unique<base::HistogramTester>();
+  }
+  void CheckAndResetCacheDurationLogs(
+      absl::optional<int> initial_cache_duration_sec,
+      absl::optional<int> remaining_cache_duration_sec) {
+    if (initial_cache_duration_sec.has_value()) {
+      histogram_tester_->ExpectUniqueSample(
+          /*name=*/"SafeBrowsing.HPRT.CacheDuration.InitialOnSet",
+          /*sample=*/initial_cache_duration_sec.value() * 1000,  // sec to ms
+          /*expected_bucket_count=*/1);
+    } else {
+      histogram_tester_->ExpectTotalCount(
+          /*name=*/"SafeBrowsing.HPRT.CacheDuration.InitialOnSet",
+          /*expected_count=*/0);
+    }
+    if (remaining_cache_duration_sec.has_value()) {
+      histogram_tester_->ExpectUniqueSample(
+          /*name=*/"SafeBrowsing.HPRT.CacheDuration.RemainingOnHit",
+          /*sample=*/remaining_cache_duration_sec.value() * 1000,  // sec to ms
+          /*expected_bucket_count=*/1);
+    } else {
+      histogram_tester_->ExpectTotalCount(
+          /*name=*/"SafeBrowsing.HPRT.CacheDuration.RemainingOnHit",
+          /*expected_count=*/0);
+    }
     histogram_tester_ = std::make_unique<base::HistogramTester>();
   }
   void CheckAndResetCacheSizeOnClear(int num_hash_prefixes,
@@ -113,8 +138,7 @@ TEST_F(HashRealTimeCacheTest, TestCacheMatching_BasicFunctionality) {
                              V5::ThreatType::ABUSIVE_EXPERIENCE_VIOLATION,
                              V5::ThreatType::BETTER_ADS_VIOLATION,
                              V5::ThreatType::ABUSIVE_EXPERIENCE_VIOLATION,
-                             V5::ThreatType::POTENTIALLY_HARMFUL_APPLICATION,
-                             V5::ThreatType::SOCIAL_ENGINEERING_ADS}),
+                             V5::ThreatType::POTENTIALLY_HARMFUL_APPLICATION}),
     };
     cache->CacheSearchHashesResponse(requested_hash_prefixes,
                                      response_full_hashes,
@@ -275,11 +299,10 @@ TEST_F(HashRealTimeCacheTest, TestCacheMatching_Attributes) {
     std::vector<std::string> requested_hash_prefixes = {"aaaa", "bbbb"};
     auto full_hash_1 =
         CreateBasicFullHash("aaaa1111111111111111111111111111", {});
-    AddThreatTypeAndAttributes(
-        full_hash_1, V5::ThreatType::SOCIAL_ENGINEERING,
-        {V5::ThreatAttribute::CANARY, V5::ThreatAttribute::FRAME_ONLY});
+    AddThreatTypeAndAttributes(full_hash_1, V5::ThreatType::SOCIAL_ENGINEERING,
+                               {V5::ThreatAttribute::FRAME_ONLY});
     AddThreatTypeAndAttributes(full_hash_1, V5::ThreatType::MALWARE,
-                               {V5::ThreatAttribute::CANARY});
+                               {V5::ThreatAttribute::FRAME_ONLY});
     AddThreatTypeAndAttributes(
         full_hash_1, V5::ThreatType::API_ABUSE,
         {V5::ThreatAttribute::CANARY, V5::ThreatAttribute::FRAME_ONLY});
@@ -312,12 +335,11 @@ TEST_F(HashRealTimeCacheTest, TestCacheMatching_Attributes) {
   auto aaaa1_details = aaaa1_results.full_hash_details();
   EXPECT_EQ(aaaa1_details.size(), 3);
   EXPECT_EQ(aaaa1_details[0].threat_type(), V5::ThreatType::SOCIAL_ENGINEERING);
-  EXPECT_EQ(aaaa1_details[0].attributes().size(), 2);
-  EXPECT_EQ(aaaa1_details[0].attributes()[0], V5::ThreatAttribute::CANARY);
-  EXPECT_EQ(aaaa1_details[0].attributes()[1], V5::ThreatAttribute::FRAME_ONLY);
+  EXPECT_EQ(aaaa1_details[0].attributes().size(), 1);
+  EXPECT_EQ(aaaa1_details[0].attributes()[0], V5::ThreatAttribute::FRAME_ONLY);
   EXPECT_EQ(aaaa1_details[1].threat_type(), V5::ThreatType::MALWARE);
   EXPECT_EQ(aaaa1_details[1].attributes().size(), 1);
-  EXPECT_EQ(aaaa1_details[1].attributes()[0], V5::ThreatAttribute::CANARY);
+  EXPECT_EQ(aaaa1_details[1].attributes()[0], V5::ThreatAttribute::FRAME_ONLY);
   EXPECT_EQ(aaaa1_details[2].threat_type(), V5::ThreatType::UNWANTED_SOFTWARE);
   EXPECT_TRUE(aaaa1_details[2].attributes().empty());
   // Sanity check that aaaa...2 has no attributes in spite of aaaa...1 having
@@ -408,6 +430,34 @@ TEST_F(HashRealTimeCacheTest, TestCacheMatching_OverwrittenEntry) {
   task_environment_.FastForwardBy(base::Seconds(1));
   EXPECT_TRUE(cache->SearchCache({"aaaa"}).empty());
   CheckAndResetCacheHitsAndMisses(/*num_hits=*/0, /*num_misses=*/1);
+}
+
+TEST_F(HashRealTimeCacheTest, TestCacheMatching_CacheDurationLogging) {
+  auto cache = std::make_unique<HashRealTimeCache>();
+  std::vector<std::string> requested_hash_prefixes = {"aaaa"};
+  std::vector<V5::FullHash> response_full_hashes = {
+      CreateBasicFullHash("aaaa1111111111111111111111111111",
+                          {V5::ThreatType::SOCIAL_ENGINEERING}),
+  };
+  cache->CacheSearchHashesResponse(requested_hash_prefixes,
+                                   response_full_hashes,
+                                   CreateCacheDuration(300, 0));
+  CheckAndResetCacheDurationLogs(
+      /*initial_cache_duration_sec=*/300,
+      /*remaining_cache_duration_sec=*/absl::nullopt);
+
+  cache->SearchCache({"aaaa"});
+  CheckAndResetCacheDurationLogs(/*initial_cache_duration_sec=*/absl::nullopt,
+                                 /*remaining_cache_duration_sec=*/300);
+  task_environment_.FastForwardBy(base::Seconds(299));
+  cache->SearchCache({"aaaa"});
+  CheckAndResetCacheDurationLogs(/*initial_cache_duration_sec=*/absl::nullopt,
+                                 /*remaining_cache_duration_sec=*/1);
+  task_environment_.FastForwardBy(base::Seconds(1));
+  cache->SearchCache({"aaaa"});
+  CheckAndResetCacheDurationLogs(
+      /*initial_cache_duration_sec=*/absl::nullopt,
+      /*remaining_cache_duration_sec=*/absl::nullopt);
 }
 
 TEST_F(HashRealTimeCacheTest, TestClearExpiredResults_EmptyCache) {

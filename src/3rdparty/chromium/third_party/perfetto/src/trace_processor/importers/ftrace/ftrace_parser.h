@@ -17,6 +17,8 @@
 #ifndef SRC_TRACE_PROCESSOR_IMPORTERS_FTRACE_FTRACE_PARSER_H_
 #define SRC_TRACE_PROCESSOR_IMPORTERS_FTRACE_FTRACE_PARSER_H_
 
+#include "perfetto/ext/base/flat_hash_map.h"
+#include "perfetto/ext/base/hash.h"
 #include "perfetto/trace_processor/status.h"
 #include "src/trace_processor/importers/common/event_tracker.h"
 #include "src/trace_processor/importers/common/parser_types.h"
@@ -24,8 +26,10 @@
 #include "src/trace_processor/importers/common/trace_parser.h"
 #include "src/trace_processor/importers/ftrace/drm_tracker.h"
 #include "src/trace_processor/importers/ftrace/ftrace_descriptors.h"
+#include "src/trace_processor/importers/ftrace/gpu_work_period_tracker.h"
 #include "src/trace_processor/importers/ftrace/iostat_tracker.h"
 #include "src/trace_processor/importers/ftrace/mali_gpu_event_tracker.h"
+#include "src/trace_processor/importers/ftrace/pkvm_hyp_cpu_tracker.h"
 #include "src/trace_processor/importers/ftrace/rss_stat_tracker.h"
 #include "src/trace_processor/importers/ftrace/sched_event_tracker.h"
 #include "src/trace_processor/importers/ftrace/virtio_gpu_tracker.h"
@@ -40,15 +44,16 @@ class FtraceParser {
  public:
   explicit FtraceParser(TraceProcessorContext* context);
 
-  void ParseFtraceStats(protozero::ConstBytes, uint32_t packet_sequence_id);
+  base::Status ParseFtraceStats(protozero::ConstBytes,
+                                uint32_t packet_sequence_id);
 
-  util::Status ParseFtraceEvent(uint32_t cpu,
+  base::Status ParseFtraceEvent(uint32_t cpu,
                                 int64_t ts,
                                 const TracePacketData& data);
-  util::Status ParseInlineSchedSwitch(uint32_t cpu,
+  base::Status ParseInlineSchedSwitch(uint32_t cpu,
                                       int64_t ts,
                                       const InlineSchedSwitch& data);
-  util::Status ParseInlineSchedWaking(uint32_t cpu,
+  base::Status ParseInlineSchedWaking(uint32_t cpu,
                                       int64_t ts,
                                       const InlineSchedWaking& data);
 
@@ -71,6 +76,9 @@ class FtraceParser {
   void ParseCpuIdle(int64_t timestamp, protozero::ConstBytes);
   void ParsePrint(int64_t timestamp, uint32_t pid, protozero::ConstBytes);
   void ParseZero(int64_t timestamp, uint32_t pid, protozero::ConstBytes);
+  void ParseMdssTracingMarkWrite(int64_t timestamp,
+                                 uint32_t pid,
+                                 protozero::ConstBytes);
   void ParseSdeTracingMarkWrite(int64_t timestamp,
                                 uint32_t pid,
                                 protozero::ConstBytes);
@@ -80,6 +88,9 @@ class FtraceParser {
   void ParseG2dTracingMarkWrite(int64_t timestamp,
                                 uint32_t pid,
                                 protozero::ConstBytes);
+  void ParseSamsungTracingMarkWrite(int64_t timestamp,
+                                    uint32_t pid,
+                                    protozero::ConstBytes);
   void ParseMaliTracingMarkWrite(int64_t timestamp,
                                  uint32_t pid,
                                  protozero::ConstBytes);
@@ -126,6 +137,12 @@ class FtraceParser {
   void ParseBinderTransactionReceived(int64_t timestamp,
                                       uint32_t pid,
                                       protozero::ConstBytes);
+  void ParseBinderCommand(int64_t timestamp,
+                          uint32_t pid,
+                          protozero::ConstBytes);
+  void ParseBinderReturn(int64_t timestamp,
+                         uint32_t pid,
+                         protozero::ConstBytes);
   void ParseBinderTransactionAllocBuf(int64_t timestamp,
                                       uint32_t pid,
                                       protozero::ConstBytes);
@@ -215,6 +232,7 @@ class FtraceParser {
   void ParseWakeSourceActivate(int64_t timestamp, protozero::ConstBytes);
   void ParseWakeSourceDeactivate(int64_t timestamp, protozero::ConstBytes);
   void ParseSuspendResume(int64_t timestamp, protozero::ConstBytes);
+  void ParseSuspendResumeMinimal(int64_t timestamp, protozero::ConstBytes);
   void ParseSchedCpuUtilCfs(int64_t timestap, protozero::ConstBytes);
 
   void ParseFuncgraphEntry(int64_t timestamp,
@@ -271,6 +289,10 @@ class FtraceParser {
   void ParseMaliKcpuFenceSignal(uint32_t pid, int64_t ts);
   void ParseMaliKcpuFenceWaitStart(uint32_t pid, int64_t ts);
   void ParseMaliKcpuFenceWaitEnd(uint32_t pid, int64_t ts);
+  void ParseAndroidFsDatareadEnd(int64_t timestamp, protozero::ConstBytes);
+  void ParseAndroidFsDatareadStart(int64_t ts,
+                                   uint32_t pid,
+                                   protozero::ConstBytes);
 
   TraceProcessorContext* context_;
   RssStatTracker rss_stat_tracker_;
@@ -278,6 +300,8 @@ class FtraceParser {
   IostatTracker iostat_tracker_;
   VirtioGpuTracker virtio_gpu_tracker_;
   MaliGpuEventTracker mali_gpu_event_tracker_;
+  PkvmHypervisorCpuTracker pkvm_hyp_cpu_tracker_;
+  GpuWorkPeriodTracker gpu_work_period_tracker_;
 
   const StringId sched_wakeup_name_id_;
   const StringId sched_waking_name_id_;
@@ -286,6 +310,8 @@ class FtraceParser {
   const StringId gpu_freq_name_id_;
   const StringId cpu_idle_name_id_;
   const StringId suspend_resume_name_id_;
+  const StringId suspend_resume_minimal_name_id_;
+  const StringId suspend_resume_minimal_slice_name_id_;
   const StringId kfree_skb_name_id_;
   const StringId ion_total_id_;
   const StringId ion_change_id_;
@@ -348,6 +374,14 @@ class FtraceParser {
   const StringId cma_nr_test_fail_id_;
   const StringId syscall_ret_id_;
   const StringId syscall_args_id_;
+  const StringId replica_slice_id_;
+  const StringId file_path_id_;
+  const StringId offset_id_start_;
+  const StringId offset_id_end_;
+  const StringId bytes_read_id_start_;
+  const StringId bytes_read_id_end_;
+  const StringId android_fs_category_id_;
+  const StringId android_fs_data_read_id_;
   std::vector<StringId> syscall_arg_name_ids_;
 
   struct FtraceMessageStrings {
@@ -394,6 +428,9 @@ class FtraceParser {
   // with a give name
   std::unordered_map<std::string, uint32_t> active_wakelock_to_count_;
 
+  // Record whether a suspend resume action is ongoing.
+  std::unordered_map<std::string, bool> ongoing_suspend_resume_actions;
+
   bool has_seen_first_ftrace_packet_ = false;
 
   // Stores information about the timestamp from the metadata table which is
@@ -407,6 +444,18 @@ class FtraceParser {
   // putting them in the metadata multiple times (the ftrace data sources
   // re-emits begin stats on every flush).
   std::unordered_set<uint32_t> seen_errors_for_sequence_id_;
+
+  struct PairHash {
+    std::size_t operator()(const std::pair<uint64_t, int64_t>& p) const {
+      base::Hasher hasher;
+      hasher.Update(p.first);
+      hasher.Update(p.second);
+      return static_cast<std::size_t>(hasher.digest());
+    }
+  };
+
+  base::FlatHashMap<std::pair<uint64_t, int64_t>, uint32_t, PairHash>
+      inode_offset_thread_map_;
 };
 
 }  // namespace trace_processor

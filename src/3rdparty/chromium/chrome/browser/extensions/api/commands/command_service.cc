@@ -24,12 +24,9 @@
 #include "chrome/common/pref_names.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/scoped_user_pref_update.h"
-#include "content/public/browser/notification_details.h"
-#include "content/public/browser/notification_service.h"
 #include "extensions/browser/extension_function_registry.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_system.h"
-#include "extensions/browser/notification_types.h"
 #include "extensions/common/api/commands/commands_handler.h"
 #include "extensions/common/command.h"
 #include "extensions/common/feature_switch.h"
@@ -87,8 +84,7 @@ void MergeSuggestedKeyPrefs(const std::string& extension_id,
   }
 
   extension_prefs->UpdateExtensionPref(
-      extension_id, kCommands,
-      std::make_unique<base::Value>(std::move(suggested_key_prefs)));
+      extension_id, kCommands, base::Value(std::move(suggested_key_prefs)));
 }
 
 }  // namespace
@@ -212,10 +208,10 @@ bool CommandService::AddKeybindingPref(
     RemoveKeybindingPrefs(extension_id, command_name);
 
   // Set the keybinding pref.
-  base::Value keybinding(base::Value::Type::DICT);
-  keybinding.SetStringKey(kExtension, extension_id);
-  keybinding.SetStringKey(kCommandName, command_name);
-  keybinding.SetBoolKey(kGlobal, global);
+  base::Value::Dict keybinding;
+  keybinding.Set(kExtension, extension_id);
+  keybinding.Set(kCommandName, command_name);
+  keybinding.Set(kGlobal, global);
 
   bindings.Set(key, std::move(keybinding));
 
@@ -304,7 +300,7 @@ Command CommandService::FindCommandByName(const std::string& extension_id,
     std::string shortcut = it.first;
     if (!IsForCurrentPlatform(shortcut))
       continue;
-    absl::optional<bool> global = it.second.GetDict().FindBool(kGlobal);
+    std::optional<bool> global = it.second.GetDict().FindBool(kGlobal);
 
     std::vector<base::StringPiece> tokens = base::SplitStringPiece(
         shortcut, ":", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
@@ -608,7 +604,7 @@ void CommandService::RemoveDefunctExtensionSuggestedCommandPrefs(
 
     extension_prefs->UpdateExtensionPref(
         extension->id(), kCommands,
-        std::make_unique<base::Value>(std::move(suggested_key_prefs)));
+        base::Value(std::move(suggested_key_prefs)));
   }
 }
 
@@ -617,7 +613,7 @@ bool CommandService::IsCommandShortcutUserModified(
     const std::string& command_name) {
   // Get the previous suggested key, if any.
   ui::Accelerator suggested_key;
-  absl::optional<bool> suggested_key_was_assigned;
+  std::optional<bool> suggested_key_was_assigned;
   ExtensionPrefs* extension_prefs = ExtensionPrefs::Get(profile_);
   const base::Value::Dict* commands_prefs =
       extension_prefs->ReadPrefAsDict(extension->id(), kCommands);

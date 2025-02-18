@@ -35,7 +35,7 @@ HEADER = headers.header(
         ),
         headers.oncall(
             name = "Fuchsia",
-            url = "https://chrome-ops-rotation-proxy.appspot.com/current/grotation:chrome-fuchsia-gardener",
+            url = "https://chrome-ops-rotation-proxy.appspot.com/current/grotation:chrome-fuchsia-engprod",
         ),
         headers.oncall(
             name = "GPU",
@@ -154,6 +154,27 @@ HEADER = headers.header(
                     alt = "Chromium Android console",
                 ),
                 headers.link(
+                    text = "angle",
+                    url = "/p/{}/g/chromium.angle".format(settings.project),
+                    alt = "Chromium ANGLE console",
+                ),
+                headers.link(
+                    text = "blink.infra",
+                    url = "/p/{}/g/blink.infra".format(settings.project),
+                    alt = "Chromium Blink Infra console",
+                ),
+                headers.link(
+                    text = "checks",
+                    url = "/p/{}/g/checks".format(settings.project),
+                    alt = "Checks console",
+                ),
+                headers.link(
+                    text = "chromiumos",
+                    branch_selector = branches.selector.CROS_LTS_BRANCHES,
+                    url = "/p/{}/g/chromium.chromiumos".format(settings.project),
+                    alt = "ChromiumOS console",
+                ),
+                headers.link(
                     text = "clang",
                     url = "/p/{}/g/chromium.clang".format(settings.project),
                     alt = "Chromium Clang console",
@@ -168,15 +189,20 @@ HEADER = headers.header(
                     alt = "Chromium Dawn console",
                 ),
                 headers.link(
-                    text = "fuzz",
-                    url = "/p/{}/g/chromium.fuzz".format(settings.project),
-                    alt = "Chromium Fuzz console",
+                    text = "flakiness",
+                    url = "/p/{}/g/chromium.flakiness".format(settings.project),
+                    alt = "Chromium Flakiness console",
                 ),
                 headers.link(
                     text = "fuchsia",
                     branch_selector = branches.selector.FUCHSIA_BRANCHES,
                     url = "/p/{}/g/chromium.fuchsia".format(settings.project),
                     alt = "Chromium Fuchsia console",
+                ),
+                headers.link(
+                    text = "fuzz",
+                    url = "/p/{}/g/chromium.fuzz".format(settings.project),
+                    alt = "Chromium Fuzz console",
                 ),
                 headers.link(
                     text = "fyi",
@@ -197,9 +223,14 @@ HEADER = headers.header(
                     alt = "Chromium GPU console",
                 ),
                 headers.link(
-                    text = "packager",
-                    url = "/p/{}/g/chromium.packager".format(settings.project),
-                    alt = "Chromium Packager console",
+                    text = "infra",
+                    url = "/p/{}/g/chromium.infra".format(settings.project),
+                    alt = "Chromium Infra console",
+                ),
+                headers.link(
+                    text = "memory.fyi",
+                    url = "/p/{}/g/chromium.memory.fyi".format(settings.project),
+                    alt = "Chromium Memory FYI console",
                 ),
                 headers.link(
                     text = "perf",
@@ -210,11 +241,6 @@ HEADER = headers.header(
                     text = "perf.fyi",
                     url = "/p/chrome/g/chrome.perf.fyi/console",
                     alt = "Chromium Perf FYI console",
-                ),
-                headers.link(
-                    text = "angle",
-                    url = "/p/{}/g/chromium.angle".format(settings.project),
-                    alt = "Chromium ANGLE console",
                 ),
                 headers.link(
                     text = "swangle",
@@ -230,17 +256,6 @@ HEADER = headers.header(
                     text = "webrtc",
                     url = "/p/{}/g/chromium.webrtc".format(settings.project),
                     alt = "Chromium WebRTC console",
-                ),
-                headers.link(
-                    text = "chromiumos",
-                    branch_selector = branches.selector.CROS_LTS_BRANCHES,
-                    url = "/p/{}/g/chromium.chromiumos".format(settings.project),
-                    alt = "ChromiumOS console",
-                ),
-                headers.link(
-                    text = "flakiness",
-                    url = "/p/{}/g/chromium.flakiness".format(settings.project),
-                    alt = "Chromium Flakiness console",
                 ),
             ],
         ),
@@ -300,6 +315,11 @@ HEADER = headers.header(
                     branch_selector = branches.selector.FUCHSIA_BRANCHES,
                     url = "/p/{}/g/tryserver.chromium.fuchsia/builders".format(settings.project),
                     alt = "Fuchsia",
+                ),
+                headers.link(
+                    text = "fuzz",
+                    url = "/p/{}/g/tryserver.chromium.fuzz/builders".format(settings.project),
+                    alt = "Fuzz",
                 ),
                 headers.link(
                     text = "linux",
@@ -376,7 +396,7 @@ HEADER = headers.header(
                 console_ids = [
                     "chromium/chromium.android",
                     "chrome/chrome.perf",
-                    "chromium/chromium.fuchsia.fyi",
+                    "chromium/sheriff.fuchsia",
                     "chromium/chromium.gpu.fyi",
                     "chromium/chromium.angle",
                     "chromium/chromium.swangle",

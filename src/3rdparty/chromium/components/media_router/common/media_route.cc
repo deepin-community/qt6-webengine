@@ -89,6 +89,12 @@ MediaRoute& MediaRoute::operator=(MediaRoute&&) = default;
 
 MediaRoute::~MediaRoute() = default;
 
+bool MediaRoute::IsLocalMirroringRoute() const {
+  return is_local_ && (media_source_.IsTabMirroringSource() ||
+                       media_source_.IsDesktopMirroringSource() ||
+                       controller_type_ == RouteControllerType::kMirroring);
+}
+
 bool MediaRoute::operator==(const MediaRoute& other) const {
   return media_route_id_ == other.media_route_id_ &&
          presentation_id_ == other.presentation_id_ &&
@@ -97,7 +103,6 @@ bool MediaRoute::operator==(const MediaRoute& other) const {
          media_sink_name_ == other.media_sink_name_ &&
          description_ == other.description_ && is_local_ == other.is_local_ &&
          controller_type_ == other.controller_type_ &&
-         is_off_the_record_ == other.is_off_the_record_ &&
          is_local_presentation_ == other.is_local_presentation_ &&
          is_connecting_ == other.is_connecting_;
 }

@@ -22,6 +22,7 @@
 #include "base/rand_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/types/optional_util.h"
+#include "cc/paint/color_filter.h"
 #include "cc/paint/image_transfer_cache_entry.h"
 #include "cc/paint/paint_cache.h"
 #include "cc/paint/paint_flags.h"
@@ -33,12 +34,20 @@
 #include "cc/paint/skottie_wrapper.h"
 #include "cc/paint/transfer_cache_deserialize_helper.h"
 #include "components/crash/core/common/crash_key.h"
+#include "third_party/skia/include/codec/SkPngDecoder.h"
 #include "third_party/skia/include/core/SkColorSpace.h"
+#include "third_party/skia/include/core/SkImage.h"
 #include "third_party/skia/include/core/SkPath.h"
 #include "third_party/skia/include/core/SkRRect.h"
+#include "third_party/skia/include/core/SkScalar.h"
 #include "third_party/skia/include/core/SkSerialProcs.h"
-#include "third_party/skia/include/private/chromium/GrSlug.h"
+#include "third_party/skia/include/effects/SkHighContrastFilter.h"
+#include "third_party/skia/include/private/SkGainmapInfo.h"
 #include "third_party/skia/include/private/chromium/SkChromeRemoteGlyphCache.h"
+#include "third_party/skia/include/private/chromium/Slug.h"
+#include "ui/gfx/hdr_metadata.h"
+#include "ui/gfx/mojom/hdr_metadata.mojom.h"
+#include "ui/gfx/mojom/hdr_metadata_mojom_traits.h"
 
 namespace cc {
 namespace {
@@ -97,7 +106,7 @@ bool PaintOpReader::ReadAndValidateOpHeader(uint8_t* type,
   if (*serialized_size % BufferAlignment() != 0) {
     return false;
   }
-  if (*type > static_cast<uint8_t>(PaintOpType::LastPaintOpType)) {
+  if (*type > static_cast<uint8_t>(PaintOpType::kLastPaintOpType)) {
     return false;
   }
   return true;
@@ -182,9 +191,20 @@ void PaintOpReader::ReadData(size_t bytes, void* data) {
 void PaintOpReader::ReadSize(size_t* size) {
   // size_t is always serialized as uint64_t to make the serialized result
   // portable between 32bit and 64bit processes.
-  uint64_t size64 = 0;
-  ReadSimple(&size64);
-  *size = base::checked_cast<size_t>(size64);
+  uint32_t lo = 0u;
+  uint32_t hi = 0u;
+  ReadSimple(&lo);
+  ReadSimple(&hi);
+
+  // size_t is always aligned to only 4 bytes. Avoid undefined behavior by
+  // reading as two uint32_ts and combining the result.
+  // https://crbug.com/1429994
+  uint64_t size64 = static_cast<uint64_t>(hi) << 32 | lo;
+  if (!base::IsValueInRangeForNumericType<size_t>(size64)) {
+    valid_ = false;
+    return;
+  }
+  *size = static_cast<size_t>(size64);
 }
 
 void PaintOpReader::Read(SkScalar* data) {
@@ -221,6 +241,13 @@ void PaintOpReader::Read(SkRRect* rect) {
 
 void PaintOpReader::Read(SkColor4f* color) {
   ReadSimple(color);
+  // Colors are generally [0, 1], sometimes with a wider gamut, but
+  // infinite and NaN colors don't make sense and shouldn't be produced by a
+  // renderer, so encountering a non-finite color implies the paint op buffer
+  // is invalid.
+  if (valid_ && !SkScalarsAreFinite(color->vec(), 4)) {
+    SetInvalid(DeserializationError::kNonFiniteSkColor4f);
+  }
 }
 
 void PaintOpReader::Read(SkPath* path) {
@@ -277,11 +304,9 @@ void PaintOpReader::Read(SkPath* path) {
 }
 
 void PaintOpReader::Read(PaintFlags* flags) {
-  ReadSimple(&flags->color_);
+  Read(&flags->color_);
   Read(&flags->width_);
   Read(&flags->miter_limit_);
-
-  Read(&flags->blend_mode_);
 
   ReadSimple(&flags->bitfields_uint_);
 
@@ -289,8 +314,7 @@ void PaintOpReader::Read(PaintFlags* flags) {
                   DeserializationError::kSkPathEffectUnflattenFailure);
   ReadFlattenable(&flags->mask_filter_, SkMaskFilter::Deserialize,
                   DeserializationError::kSkMaskFilterUnflattenFailure);
-  ReadFlattenable(&flags->color_filter_, SkColorFilter::Deserialize,
-                  DeserializationError::kSkColorFilterUnflattenFailure);
+  Read(&flags->color_filter_);
 
   if (enable_security_constraints_) {
     size_t bytes = 0;
@@ -308,7 +332,9 @@ void PaintOpReader::Read(PaintFlags* flags) {
   Read(&flags->shader_);
 }
 
-void PaintOpReader::Read(PaintImage* image) {
+void PaintOpReader::Read(
+    PaintImage* image,
+    PaintFlags::DynamicRangeLimitMixture dynamic_range_limit) {
   uint8_t serialized_type_int = 0u;
   Read(&serialized_type_int);
   if (serialized_type_int >
@@ -330,6 +356,9 @@ void PaintOpReader::Read(PaintImage* image) {
       case PaintOp::SerializedImageType::kImageData: {
         SkColorType color_type;
         Read(&color_type);
+        if (!valid_) {
+          return;
+        }
         // Color types requiring alignment larger than kDefaultAlignment is not
         // supported.
         if (static_cast<size_t>(SkColorTypeBytesPerPixel(color_type)) >
@@ -361,7 +390,7 @@ void PaintOpReader::Read(PaintImage* image) {
 
         *image = PaintImageBuilder::WithDefault()
                      .set_id(PaintImage::GetNextId())
-                     .set_texture_image(SkImage::MakeRasterCopy(pixmap),
+                     .set_texture_image(SkImages::RasterFromPixmapCopy(pixmap),
                                         PaintImage::kNonLazyStableId)
                      .TakePaintImage();
       }
@@ -445,13 +474,36 @@ void PaintOpReader::Read(PaintImage* image) {
   if (auto* entry =
           options_->transfer_cache->GetEntryAs<ServiceImageTransferCacheEntry>(
               transfer_cache_entry_id)) {
-    if (needs_mips)
-      entry->EnsureMips();
-    *image =
-        PaintImageBuilder::WithDefault()
-            .set_id(PaintImage::GetNextId())
-            .set_texture_image(entry->image(), PaintImage::kNonLazyStableId)
-            .TakePaintImage();
+    // Bake the HDR headroom into the image now.
+    // TODO(https://crbug.com/1483235): Move the application of tone mapping
+    // from here to playback time.
+    sk_sp<SkImage> sk_image;
+    if (entry->NeedsToneMapApplied()) {
+      const float dynamic_range_high_mix =
+          1.f - dynamic_range_limit.constrained_high_mix -
+          dynamic_range_limit.standard_mix;
+      float hdr_headroom = 1.f;
+      if (dynamic_range_limit.constrained_high_mix > 0) {
+        hdr_headroom *= std::pow(std::min(2.f, options_->hdr_headroom),
+                                 dynamic_range_limit.constrained_high_mix);
+      }
+      if (dynamic_range_high_mix > 0) {
+        hdr_headroom *=
+            std::pow(options_->hdr_headroom, dynamic_range_high_mix);
+      }
+      sk_image = entry->GetImageWithToneMapApplied(hdr_headroom, needs_mips);
+    } else {
+      if (needs_mips) {
+        entry->EnsureMips();
+      }
+      sk_image = entry->image();
+    }
+
+    *image = PaintImageBuilder::WithDefault()
+                 .set_id(PaintImage::GetNextId())
+                 .set_texture_image(std::move(sk_image),
+                                    PaintImage::kNonLazyStableId)
+                 .TakePaintImage();
   }
 }
 
@@ -494,7 +546,32 @@ void PaintOpReader::Read(sk_sp<SkColorSpace>* color_space) {
   DidRead(size);
 }
 
-void PaintOpReader::Read(sk_sp<GrSlug>* slug) {
+void PaintOpReader::Read(SkGainmapInfo* gainmap_info) {
+  Read(&gainmap_info->fGainmapRatioMin);
+  Read(&gainmap_info->fGainmapRatioMax);
+  Read(&gainmap_info->fGainmapGamma);
+  Read(&gainmap_info->fEpsilonSdr);
+  Read(&gainmap_info->fEpsilonHdr);
+  Read(&gainmap_info->fDisplayRatioSdr);
+  Read(&gainmap_info->fDisplayRatioHdr);
+  Read(&gainmap_info->fDisplayRatioHdr);
+  uint32_t base_image_type = 0;
+  Read(&base_image_type);
+  switch (base_image_type) {
+    case 0:
+      gainmap_info->fBaseImageType = SkGainmapInfo::BaseImageType::kSDR;
+      break;
+    case 1:
+      gainmap_info->fBaseImageType = SkGainmapInfo::BaseImageType::kHDR;
+      break;
+    default:
+      SetInvalid(DeserializationError::kSkGainmapInfoDeserializationFailure);
+      break;
+  }
+  Read(&gainmap_info->fGainmapMathColorSpace);
+}
+
+void PaintOpReader::Read(sk_sp<sktext::gpu::Slug>* slug) {
   AssertFieldAlignment();
 
   size_t data_bytes = 0u;
@@ -505,16 +582,25 @@ void PaintOpReader::Read(sk_sp<GrSlug>* slug) {
   }
 
   if (remaining_bytes_ < data_bytes) {
-    SetInvalid(DeserializationError::kInsufficientRemainingBytes_Read_GrSlug);
+    SetInvalid(DeserializationError::kInsufficientRemainingBytes_Read_Slug);
     return;
   }
 
-  *slug = GrSlug::Deserialize(const_cast<const char*>(memory_), data_bytes,
-                              options_->strike_client);
+  SkDeserialProcs procs;
+  procs.fImageProc = [](const void* bytes, size_t length,
+                        void*) -> sk_sp<SkImage> {
+    auto data = SkData::MakeWithoutCopy(bytes, length);
+    auto codec = SkPngDecoder::Decode(data, nullptr);
+    DCHECK(codec);
+    return std::get<0>(codec->getImage());
+  };
+  *slug = sktext::gpu::Slug::Deserialize(const_cast<const char*>(memory_),
+                                         data_bytes, options_->strike_client,
+                                         procs);
   DidRead(data_bytes);
 
   if (!*slug) {
-    SetInvalid(DeserializationError::kGrSlugDeserializeFailure);
+    SetInvalid(DeserializationError::kSlugDeserializeFailure);
     return;
   }
 }
@@ -558,7 +644,8 @@ void PaintOpReader::Read(sk_sp<PaintShader>* shader) {
   ReadSimple(&ref.start_degrees_);
   ReadSimple(&ref.end_degrees_);
   ReadSimple(&ref.gradient_interpolation_);
-  Read(&ref.image_);
+  Read(&ref.image_, PaintFlags::DynamicRangeLimitMixture(
+                        PaintFlags::DynamicRangeLimit::kHigh));
   bool has_record = false;
   ReadSimple(&has_record);
   uint32_t shader_id = PaintShader::kInvalidRecordShaderId;
@@ -724,6 +811,29 @@ void PaintOpReader::Read(gpu::Mailbox* mailbox) {
   ReadData(sizeof(gpu::Mailbox::Name), (*mailbox).name);
 }
 
+void PaintOpReader::Read(SkHighContrastConfig* config) {
+  ReadSimple(&config->fGrayscale);
+  ReadEnum<SkHighContrastConfig::InvertStyle,
+           SkHighContrastConfig::InvertStyle::kLast>(&config->fInvertStyle);
+  ReadSimple(&config->fContrast);
+}
+
+void PaintOpReader::Read(gfx::HDRMetadata* hdr_metadata) {
+  size_t size = 0;
+  ReadSize(&size);
+  if (remaining_bytes_ < size) {
+    valid_ = false;
+  }
+  if (!valid_ || size == 0) {
+    return;
+  }
+  uint8_t* scratch = CopyScratchSpace(size);
+  if (!gfx::mojom::HDRMetadata::Deserialize(scratch, size, hdr_metadata)) {
+    SetInvalid(DeserializationError::kHdrMetadataDeserializeFailure);
+  }
+  DidRead(size);
+}
+
 void PaintOpReader::Read(scoped_refptr<SkottieWrapper>* skottie) {
   if (!options_->is_privileged) {
     valid_ = false;
@@ -796,6 +906,19 @@ const volatile void* PaintOpReader::ExtractReadableMemory(size_t bytes) {
   return extracted_memory;
 }
 
+void PaintOpReader::Read(sk_sp<ColorFilter>* filter) {
+  ColorFilter::Type type;
+  ReadEnum(&type);
+  if (!valid_) {
+    return;
+  }
+  if (type == ColorFilter::Type::kNull) {
+    *filter = nullptr;
+    return;
+  }
+  *filter = ColorFilter::Deserialize(*this, type);
+}
+
 void PaintOpReader::Read(sk_sp<PaintFilter>* filter) {
   PaintFilter::Type type;
   ReadEnum(&type);
@@ -808,7 +931,7 @@ void PaintOpReader::Read(sk_sp<PaintFilter>* filter) {
   }
 
   uint32_t has_crop_rect = 0;
-  absl::optional<PaintFilter::CropRect> crop_rect;
+  std::optional<PaintFilter::CropRect> crop_rect;
   ReadSimple(&has_crop_rect);
   if (has_crop_rect) {
     SkRect rect = SkRect::MakeEmpty();
@@ -892,15 +1015,12 @@ void PaintOpReader::Read(sk_sp<PaintFilter>* filter) {
 
 void PaintOpReader::ReadColorFilterPaintFilter(
     sk_sp<PaintFilter>* filter,
-    const absl::optional<PaintFilter::CropRect>& crop_rect) {
-  sk_sp<SkColorFilter> color_filter;
+    const std::optional<PaintFilter::CropRect>& crop_rect) {
+  sk_sp<ColorFilter> color_filter;
   sk_sp<PaintFilter> input;
 
-  ReadFlattenable(&color_filter, SkColorFilter::Deserialize,
-                  DeserializationError::kSkColorFilterUnflattenFailure);
+  Read(&color_filter);
   Read(&input);
-  if (!color_filter)
-    SetInvalid(DeserializationError::kZeroSkColorFilterBytes);
   if (!valid_)
     return;
   filter->reset(new ColorFilterPaintFilter(std::move(color_filter),
@@ -910,7 +1030,7 @@ void PaintOpReader::ReadColorFilterPaintFilter(
 
 void PaintOpReader::ReadBlurPaintFilter(
     sk_sp<PaintFilter>* filter,
-    const absl::optional<PaintFilter::CropRect>& crop_rect) {
+    const std::optional<PaintFilter::CropRect>& crop_rect) {
   SkScalar sigma_x = 0.f;
   SkScalar sigma_y = 0.f;
   SkTileMode tile_mode;
@@ -929,7 +1049,7 @@ void PaintOpReader::ReadBlurPaintFilter(
 
 void PaintOpReader::ReadDropShadowPaintFilter(
     sk_sp<PaintFilter>* filter,
-    const absl::optional<PaintFilter::CropRect>& crop_rect) {
+    const std::optional<PaintFilter::CropRect>& crop_rect) {
   SkScalar dx = 0.f;
   SkScalar dy = 0.f;
   SkScalar sigma_x = 0.f;
@@ -955,23 +1075,26 @@ void PaintOpReader::ReadDropShadowPaintFilter(
 
 void PaintOpReader::ReadMagnifierPaintFilter(
     sk_sp<PaintFilter>* filter,
-    const absl::optional<PaintFilter::CropRect>& crop_rect) {
-  SkRect src_rect = SkRect::MakeEmpty();
+    const std::optional<PaintFilter::CropRect>& crop_rect) {
+  SkRect lens_bounds = SkRect::MakeEmpty();
+  SkScalar zoom_amount = 1.f;
   SkScalar inset = 0.f;
   sk_sp<PaintFilter> input;
 
-  Read(&src_rect);
+  Read(&lens_bounds);
+  Read(&zoom_amount);
   Read(&inset);
   Read(&input);
   if (!valid_)
     return;
-  filter->reset(new MagnifierPaintFilter(src_rect, inset, std::move(input),
+  filter->reset(new MagnifierPaintFilter(lens_bounds, zoom_amount, inset,
+                                         std::move(input),
                                          base::OptionalToPtr(crop_rect)));
 }
 
 void PaintOpReader::ReadComposePaintFilter(
     sk_sp<PaintFilter>* filter,
-    const absl::optional<PaintFilter::CropRect>& crop_rect) {
+    const std::optional<PaintFilter::CropRect>& crop_rect) {
   sk_sp<PaintFilter> outer;
   sk_sp<PaintFilter> inner;
 
@@ -984,26 +1107,21 @@ void PaintOpReader::ReadComposePaintFilter(
 
 void PaintOpReader::ReadAlphaThresholdPaintFilter(
     sk_sp<PaintFilter>* filter,
-    const absl::optional<PaintFilter::CropRect>& crop_rect) {
+    const std::optional<PaintFilter::CropRect>& crop_rect) {
   SkRegion region;
-  SkScalar inner_min = 0.f;
-  SkScalar outer_max = 0.f;
   sk_sp<PaintFilter> input;
 
   Read(&region);
-  ReadSimple(&inner_min);
-  ReadSimple(&outer_max);
   Read(&input);
   if (!valid_)
     return;
-  filter->reset(new AlphaThresholdPaintFilter(region, inner_min, outer_max,
-                                              std::move(input),
+  filter->reset(new AlphaThresholdPaintFilter(region, std::move(input),
                                               base::OptionalToPtr(crop_rect)));
 }
 
 void PaintOpReader::ReadXfermodePaintFilter(
     sk_sp<PaintFilter>* filter,
-    const absl::optional<PaintFilter::CropRect>& crop_rect) {
+    const std::optional<PaintFilter::CropRect>& crop_rect) {
   SkBlendMode blend_mode;
   sk_sp<PaintFilter> background;
   sk_sp<PaintFilter> foreground;
@@ -1021,7 +1139,7 @@ void PaintOpReader::ReadXfermodePaintFilter(
 
 void PaintOpReader::ReadArithmeticPaintFilter(
     sk_sp<PaintFilter>* filter,
-    const absl::optional<PaintFilter::CropRect>& crop_rect) {
+    const std::optional<PaintFilter::CropRect>& crop_rect) {
   float k1 = 0.f;
   float k2 = 0.f;
   float k3 = 0.f;
@@ -1045,7 +1163,7 @@ void PaintOpReader::ReadArithmeticPaintFilter(
 
 void PaintOpReader::ReadMatrixConvolutionPaintFilter(
     sk_sp<PaintFilter>* filter,
-    const absl::optional<PaintFilter::CropRect>& crop_rect) {
+    const std::optional<PaintFilter::CropRect>& crop_rect) {
   SkISize kernel_size = SkISize::MakeEmpty();
   SkScalar gain = 0.f;
   SkScalar bias = 0.f;
@@ -1091,7 +1209,7 @@ void PaintOpReader::ReadMatrixConvolutionPaintFilter(
 
 void PaintOpReader::ReadDisplacementMapEffectPaintFilter(
     sk_sp<PaintFilter>* filter,
-    const absl::optional<PaintFilter::CropRect>& crop_rect) {
+    const std::optional<PaintFilter::CropRect>& crop_rect) {
   SkColorChannel channel_x;
   SkColorChannel channel_y;
   SkScalar scale = 0.f;
@@ -1113,9 +1231,10 @@ void PaintOpReader::ReadDisplacementMapEffectPaintFilter(
 
 void PaintOpReader::ReadImagePaintFilter(
     sk_sp<PaintFilter>* filter,
-    const absl::optional<PaintFilter::CropRect>& crop_rect) {
+    const std::optional<PaintFilter::CropRect>& crop_rect) {
   PaintImage image;
-  Read(&image);
+  Read(&image, PaintFlags::DynamicRangeLimitMixture(
+                   PaintFlags::DynamicRangeLimit::kHigh));
   if (!image) {
     SetInvalid(DeserializationError::kReadImageFailure);
     return;
@@ -1136,7 +1255,7 @@ void PaintOpReader::ReadImagePaintFilter(
 
 void PaintOpReader::ReadRecordPaintFilter(
     sk_sp<PaintFilter>* filter,
-    const absl::optional<PaintFilter::CropRect>& crop_rect) {
+    const std::optional<PaintFilter::CropRect>& crop_rect) {
   bool has_filter = false;
   ReadSimple(&has_filter);
   if (!has_filter) {
@@ -1170,7 +1289,7 @@ void PaintOpReader::ReadRecordPaintFilter(
     return;
   }
 
-  absl::optional<PaintRecord> record;
+  std::optional<PaintRecord> record;
   Read(&record);
   if (!valid_) {
     return;
@@ -1181,7 +1300,7 @@ void PaintOpReader::ReadRecordPaintFilter(
 
 void PaintOpReader::ReadMergePaintFilter(
     sk_sp<PaintFilter>* filter,
-    const absl::optional<PaintFilter::CropRect>& crop_rect) {
+    const std::optional<PaintFilter::CropRect>& crop_rect) {
   size_t input_count = 0;
   ReadSize(&input_count);
 
@@ -1205,7 +1324,7 @@ void PaintOpReader::ReadMergePaintFilter(
 
 void PaintOpReader::ReadMorphologyPaintFilter(
     sk_sp<PaintFilter>* filter,
-    const absl::optional<PaintFilter::CropRect>& crop_rect) {
+    const std::optional<PaintFilter::CropRect>& crop_rect) {
   MorphologyPaintFilter::MorphType morph_type;
   float radius_x = 0;
   float radius_y = 0;
@@ -1223,7 +1342,7 @@ void PaintOpReader::ReadMorphologyPaintFilter(
 
 void PaintOpReader::ReadOffsetPaintFilter(
     sk_sp<PaintFilter>* filter,
-    const absl::optional<PaintFilter::CropRect>& crop_rect) {
+    const std::optional<PaintFilter::CropRect>& crop_rect) {
   SkScalar dx = 0.f;
   SkScalar dy = 0.f;
   sk_sp<PaintFilter> input;
@@ -1239,7 +1358,7 @@ void PaintOpReader::ReadOffsetPaintFilter(
 
 void PaintOpReader::ReadTilePaintFilter(
     sk_sp<PaintFilter>* filter,
-    const absl::optional<PaintFilter::CropRect>& crop_rect) {
+    const std::optional<PaintFilter::CropRect>& crop_rect) {
   SkRect src = SkRect::MakeEmpty();
   SkRect dst = SkRect::MakeEmpty();
   sk_sp<PaintFilter> input;
@@ -1254,7 +1373,7 @@ void PaintOpReader::ReadTilePaintFilter(
 
 void PaintOpReader::ReadTurbulencePaintFilter(
     sk_sp<PaintFilter>* filter,
-    const absl::optional<PaintFilter::CropRect>& crop_rect) {
+    const std::optional<PaintFilter::CropRect>& crop_rect) {
   TurbulencePaintFilter::TurbulenceType turbulence_type;
   SkScalar base_frequency_x = 0.f;
   SkScalar base_frequency_y = 0.f;
@@ -1277,7 +1396,7 @@ void PaintOpReader::ReadTurbulencePaintFilter(
 
 void PaintOpReader::ReadShaderPaintFilter(
     sk_sp<PaintFilter>* filter,
-    const absl::optional<PaintFilter::CropRect>& crop_rect) {
+    const std::optional<PaintFilter::CropRect>& crop_rect) {
   using Dither = SkImageFilters::Dither;
 
   sk_sp<PaintShader> shader;
@@ -1299,7 +1418,7 @@ void PaintOpReader::ReadShaderPaintFilter(
 
 void PaintOpReader::ReadMatrixPaintFilter(
     sk_sp<PaintFilter>* filter,
-    const absl::optional<PaintFilter::CropRect>& crop_rect) {
+    const std::optional<PaintFilter::CropRect>& crop_rect) {
   SkMatrix matrix = SkMatrix::I();
   PaintFlags::FilterQuality filter_quality = PaintFlags::FilterQuality::kNone;
   sk_sp<PaintFilter> input;
@@ -1315,7 +1434,7 @@ void PaintOpReader::ReadMatrixPaintFilter(
 
 void PaintOpReader::ReadLightingDistantPaintFilter(
     sk_sp<PaintFilter>* filter,
-    const absl::optional<PaintFilter::CropRect>& crop_rect) {
+    const std::optional<PaintFilter::CropRect>& crop_rect) {
   PaintFilter::LightingType lighting_type;
   SkPoint3 direction = SkPoint3::Make(0.f, 0.f, 0.f);
   SkColor light_color = SK_ColorBLACK;
@@ -1342,7 +1461,7 @@ void PaintOpReader::ReadLightingDistantPaintFilter(
 
 void PaintOpReader::ReadLightingPointPaintFilter(
     sk_sp<PaintFilter>* filter,
-    const absl::optional<PaintFilter::CropRect>& crop_rect) {
+    const std::optional<PaintFilter::CropRect>& crop_rect) {
   PaintFilter::LightingType lighting_type;
   SkPoint3 location = SkPoint3::Make(0.f, 0.f, 0.f);
   SkColor light_color = SK_ColorBLACK;
@@ -1368,7 +1487,7 @@ void PaintOpReader::ReadLightingPointPaintFilter(
 
 void PaintOpReader::ReadLightingSpotPaintFilter(
     sk_sp<PaintFilter>* filter,
-    const absl::optional<PaintFilter::CropRect>& crop_rect) {
+    const std::optional<PaintFilter::CropRect>& crop_rect) {
   PaintFilter::LightingType lighting_type;
   SkPoint3 location = SkPoint3::Make(0.f, 0.f, 0.f);
   SkPoint3 target = SkPoint3::Make(0.f, 0.f, 0.f);
@@ -1400,7 +1519,7 @@ void PaintOpReader::ReadLightingSpotPaintFilter(
       std::move(input), base::OptionalToPtr(crop_rect)));
 }
 
-size_t PaintOpReader::Read(absl::optional<PaintRecord>* record) {
+size_t PaintOpReader::Read(std::optional<PaintRecord>* record) {
   size_t size_bytes = 0;
   ReadSize(&size_bytes);
 
@@ -1456,9 +1575,10 @@ inline void PaintOpReader::DidRead(size_t bytes_read) {
   // All data are aligned with PaintOpWriter::kDefaultAlignment at least.
   size_t aligned_bytes =
       base::bits::AlignUp(bytes_read, PaintOpWriter::kDefaultAlignment);
-  memory_ += aligned_bytes;
   DCHECK_LE(aligned_bytes, remaining_bytes_);
-  remaining_bytes_ -= aligned_bytes;
+  bytes_read = std::min(aligned_bytes, remaining_bytes_);
+  memory_ += bytes_read;
+  remaining_bytes_ -= bytes_read;
 }
 
 }  // namespace cc

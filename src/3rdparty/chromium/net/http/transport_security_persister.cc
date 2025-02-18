@@ -103,8 +103,9 @@ base::Value::List SerializeSTSData(const TransportSecurityState* state) {
     serialized.Set(kHostname,
                    HashedDomainToExternalString(sts_iterator.hostname()));
     serialized.Set(kStsIncludeSubdomains, sts_state.include_subdomains);
-    serialized.Set(kStsObserved, sts_state.last_observed.ToDoubleT());
-    serialized.Set(kExpiry, sts_state.expiry.ToDoubleT());
+    serialized.Set(kStsObserved,
+                   sts_state.last_observed.InSecondsFSinceUnixEpoch());
+    serialized.Set(kExpiry, sts_state.expiry.InSecondsFSinceUnixEpoch());
 
     switch (sts_state.upgrade_mode) {
       case TransportSecurityState::STSState::MODE_FORCE_HTTPS:
@@ -147,8 +148,9 @@ void DeserializeSTSData(const base::Value& sts_list,
 
     TransportSecurityState::STSState sts_state;
     sts_state.include_subdomains = *sts_include_subdomains;
-    sts_state.last_observed = base::Time::FromDoubleT(*sts_observed);
-    sts_state.expiry = base::Time::FromDoubleT(*expiry);
+    sts_state.last_observed =
+        base::Time::FromSecondsSinceUnixEpoch(*sts_observed);
+    sts_state.expiry = base::Time::FromSecondsSinceUnixEpoch(*expiry);
 
     if (*mode == kForceHTTPS) {
       sts_state.upgrade_mode =
@@ -222,9 +224,12 @@ void TransportSecurityPersister::WriteNow(TransportSecurityState* state,
           &OnWriteFinishedTask, foreground_runner_,
           base::BindOnce(&TransportSecurityPersister::OnWriteFinished,
                          weak_ptr_factory_.GetWeakPtr(), std::move(callback))));
-  auto data = std::make_unique<std::string>();
-  SerializeData(data.get());
-  writer_.WriteNow(std::move(data));
+  absl::optional<std::string> data = SerializeData();
+  if (data) {
+    writer_.WriteNow(std::move(data).value());
+  } else {
+    writer_.WriteNow(std::string());
+  }
 }
 
 void TransportSecurityPersister::OnWriteFinished(base::OnceClosure callback) {
@@ -232,15 +237,18 @@ void TransportSecurityPersister::OnWriteFinished(base::OnceClosure callback) {
   std::move(callback).Run();
 }
 
-bool TransportSecurityPersister::SerializeData(std::string* output) {
-  DCHECK(foreground_runner_->RunsTasksInCurrentSequence());
+absl::optional<std::string> TransportSecurityPersister::SerializeData() {
+  CHECK(foreground_runner_->RunsTasksInCurrentSequence());
 
   base::Value::Dict toplevel;
   toplevel.Set(kVersionKey, kCurrentVersionValue);
   toplevel.Set(kSTSKey, SerializeSTSData(transport_security_state_));
 
-  base::JSONWriter::Write(toplevel, output);
-  return true;
+  std::string output;
+  if (!base::JSONWriter::Write(toplevel, &output)) {
+    return absl::nullopt;
+  }
+  return output;
 }
 
 void TransportSecurityPersister::LoadEntries(const std::string& serialized) {

@@ -22,9 +22,9 @@ void xnn_qu8_igemm_minmax_fp32_ukernel_1x2c4__armsimd32(
     size_t nc,
     size_t kc,
     size_t ks,
-    const uint8_t**restrict a,
-    const void*restrict w,
-    uint8_t*restrict c,
+    const uint8_t** restrict a,
+    const void* restrict w,
+    uint8_t* restrict c,
     size_t cm_stride,
     size_t cn_stride,
     size_t a_offset,
@@ -41,7 +41,7 @@ void xnn_qu8_igemm_minmax_fp32_ukernel_1x2c4__armsimd32(
   assert(w != NULL);
   assert(c != NULL);
 
-  kc = round_up_po2(kc, 4 * sizeof(int8_t));
+  kc = round_up_po2(kc, 4 * sizeof(uint8_t));
   uint8_t* c0 = c;
 
   const int16x2_t vb_minus_zero_point = (int16x2_t) params->fp32_armsimd32.minus_kernel_zero_point;

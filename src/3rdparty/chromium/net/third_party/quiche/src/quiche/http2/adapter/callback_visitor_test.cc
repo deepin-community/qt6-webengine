@@ -213,8 +213,9 @@ TEST(ClientCallbackVisitorUnitTest, HeadersWithContinuation) {
   EXPECT_CALL(callbacks, OnHeader(_, "server", "my-fake-server", _));
   visitor.OnHeaderForStream(1, "server", "my-fake-server");
 
-  EXPECT_CALL(callbacks, OnBeginFrame(HasFrameHeader(1, CONTINUATION, 0x4)));
-  ASSERT_TRUE(visitor.OnFrameHeader(1, 23, CONTINUATION, 0x4));
+  EXPECT_CALL(callbacks,
+              OnBeginFrame(HasFrameHeader(1, CONTINUATION, END_HEADERS_FLAG)));
+  ASSERT_TRUE(visitor.OnFrameHeader(1, 23, CONTINUATION, END_HEADERS_FLAG));
 
   EXPECT_CALL(callbacks,
               OnHeader(_, "date", "Tue, 6 Apr 2021 12:54:01 GMT", _));
@@ -233,7 +234,7 @@ TEST(ClientCallbackVisitorUnitTest, ContinuationNoHeaders) {
                           *MockNghttp2Callbacks::GetCallbacks(), &callbacks);
   // Because no stream precedes the CONTINUATION frame, the stream ID does not
   // match, and the method returns false.
-  EXPECT_FALSE(visitor.OnFrameHeader(1, 23, CONTINUATION, 0x4));
+  EXPECT_FALSE(visitor.OnFrameHeader(1, 23, CONTINUATION, END_HEADERS_FLAG));
 }
 
 TEST(ClientCallbackVisitorUnitTest, ContinuationWrongPrecedingType) {
@@ -246,7 +247,7 @@ TEST(ClientCallbackVisitorUnitTest, ContinuationWrongPrecedingType) {
 
   // Because the CONTINUATION frame does not follow HEADERS, the method returns
   // false.
-  EXPECT_FALSE(visitor.OnFrameHeader(1, 23, CONTINUATION, 0x4));
+  EXPECT_FALSE(visitor.OnFrameHeader(1, 23, CONTINUATION, END_HEADERS_FLAG));
 }
 
 TEST(ClientCallbackVisitorUnitTest, ContinuationWrongStream) {
@@ -268,7 +269,7 @@ TEST(ClientCallbackVisitorUnitTest, ContinuationWrongStream) {
   visitor.OnHeaderForStream(1, "server", "my-fake-server");
 
   // The CONTINUATION stream ID does not match the one from the HEADERS.
-  EXPECT_FALSE(visitor.OnFrameHeader(3, 23, CONTINUATION, 0x4));
+  EXPECT_FALSE(visitor.OnFrameHeader(3, 23, CONTINUATION, END_HEADERS_FLAG));
 }
 
 TEST(ClientCallbackVisitorUnitTest, ResetAndGoaway) {
@@ -527,6 +528,61 @@ TEST(ServerCallbackVisitorUnitTest, MismatchedContentLengthCallbacks) {
 
   int64_t result = adapter->ProcessBytes(frames);
   EXPECT_EQ(frames.size(), result);
+}
+
+TEST(ServerCallbackVisitorUnitTest, HeadersAfterFin) {
+  testing::StrictMock<MockNghttp2Callbacks> callbacks;
+  CallbackVisitor visitor(Perspective::kServer,
+                          *MockNghttp2Callbacks::GetCallbacks(), &callbacks);
+
+  testing::InSequence seq;
+
+  // HEADERS on stream 1
+  EXPECT_CALL(
+      callbacks,
+      OnBeginFrame(HasFrameHeader(
+          1, HEADERS, NGHTTP2_FLAG_END_HEADERS | NGHTTP2_FLAG_END_STREAM)));
+  visitor.OnFrameHeader(1, 23, HEADERS, 5);
+
+  EXPECT_CALL(callbacks,
+              OnBeginHeaders(IsHeaders(
+                  1, NGHTTP2_FLAG_END_HEADERS | NGHTTP2_FLAG_END_STREAM,
+                  NGHTTP2_HCAT_REQUEST)));
+  EXPECT_TRUE(visitor.OnBeginHeadersForStream(1));
+
+  EXPECT_EQ(visitor.stream_map_size(), 1);
+
+  EXPECT_CALL(callbacks, OnHeader).Times(5);
+  visitor.OnHeaderForStream(1, ":method", "POST");
+  visitor.OnHeaderForStream(1, ":path", "/example/path");
+  visitor.OnHeaderForStream(1, ":scheme", "https");
+  visitor.OnHeaderForStream(1, ":authority", "example.com");
+  visitor.OnHeaderForStream(1, "accept", "text/html");
+
+  EXPECT_CALL(callbacks,
+              OnFrameRecv(IsHeaders(
+                  1, NGHTTP2_FLAG_END_HEADERS | NGHTTP2_FLAG_END_STREAM,
+                  NGHTTP2_HCAT_REQUEST)));
+  visitor.OnEndHeadersForStream(1);
+
+  EXPECT_TRUE(visitor.OnEndStream(1));
+
+  EXPECT_CALL(callbacks, OnStreamClose(1, NGHTTP2_NO_ERROR));
+  visitor.OnCloseStream(1, Http2ErrorCode::HTTP2_NO_ERROR);
+
+  EXPECT_EQ(visitor.stream_map_size(), 0);
+
+  // Invalid repeat HEADERS on closed stream 1
+  EXPECT_CALL(callbacks, OnBeginFrame(HasFrameHeader(
+                             1, HEADERS, NGHTTP2_FLAG_END_HEADERS)));
+  visitor.OnFrameHeader(1, 23, HEADERS, 4);
+
+  EXPECT_CALL(callbacks, OnBeginHeaders(IsHeaders(1, NGHTTP2_FLAG_END_HEADERS,
+                                                  NGHTTP2_HCAT_HEADERS)));
+  EXPECT_TRUE(visitor.OnBeginHeadersForStream(1));
+
+  // The visitor should not revive streams that have already been closed.
+  EXPECT_EQ(visitor.stream_map_size(), 0);
 }
 
 }  // namespace

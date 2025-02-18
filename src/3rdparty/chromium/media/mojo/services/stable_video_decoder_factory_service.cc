@@ -14,7 +14,6 @@
 #include "media/gpu/buildflags.h"
 #include "media/gpu/chromeos/platform_video_frame_pool.h"
 #include "media/gpu/chromeos/video_decoder_pipeline.h"
-#include "media/gpu/chromeos/video_frame_converter.h"
 #include "media/gpu/gpu_video_accelerator_util.h"
 #include "media/gpu/gpu_video_decode_accelerator_factory.h"
 #include "media/gpu/gpu_video_decode_accelerator_helpers.h"
@@ -125,16 +124,17 @@ class MojoMediaClientImpl : public MojoMediaClient {
           std::move(log), target_color_space, gpu::GpuPreferences(),
           gpu_driver_bug_workarounds_,
           /*get_stub_cb=*/base::NullCallback(),
-          VideoDecodeAccelerator::Config::OutputMode::IMPORT);
+          VideoDecodeAccelerator::Config::OutputMode::kImport);
     } else {
       return VideoDecoderPipeline::Create(
           gpu_driver_bug_workarounds_,
           /*client_task_runner=*/std::move(task_runner),
           std::make_unique<PlatformVideoFramePool>(),
-          std::make_unique<media::VideoFrameConverter>(),
+          /*frame_converter=*/nullptr,
           VideoDecoderPipeline::DefaultPreferredRenderableFourccs(),
           std::move(log),
-          /*oop_video_decoder=*/{});
+          /*oop_video_decoder=*/{},
+          /*in_video_decoder_process=*/true);
     }
   }
 
@@ -184,7 +184,8 @@ void StableVideoDecoderFactoryService::BindReceiver(
 }
 
 void StableVideoDecoderFactoryService::CreateStableVideoDecoder(
-    mojo::PendingReceiver<stable::mojom::StableVideoDecoder> receiver) {
+    mojo::PendingReceiver<stable::mojom::StableVideoDecoder> receiver,
+    mojo::PendingRemote<stable::mojom::StableVideoDecoderTracker> tracker) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   std::unique_ptr<mojom::VideoDecoder> dst_video_decoder;
@@ -197,7 +198,8 @@ void StableVideoDecoderFactoryService::CreateStableVideoDecoder(
         mojo::PendingRemote<stable::mojom::StableVideoDecoder>());
   }
   video_decoders_.Add(std::make_unique<StableVideoDecoderService>(
-                          std::move(dst_video_decoder), &cdm_service_context_),
+                          std::move(tracker), std::move(dst_video_decoder),
+                          &cdm_service_context_),
                       std::move(receiver));
 }
 

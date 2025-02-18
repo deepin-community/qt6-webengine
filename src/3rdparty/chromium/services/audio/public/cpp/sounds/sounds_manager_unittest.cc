@@ -5,14 +5,14 @@
 #include "services/audio/public/cpp/sounds/sounds_manager.h"
 
 #include <memory>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 #include "base/compiler_specific.h"
 #include "base/functional/callback_helpers.h"
 #include "base/run_loop.h"
-#include "base/strings/string_piece.h"
-#include "base/test/test_message_loop.h"
+#include "base/test/task_environment.h"
 #include "media/audio/simple_sources.h"
 #include "media/audio/test_audio_thread.h"
 #include "media/base/audio_codecs.h"
@@ -43,7 +43,7 @@ class SoundsManagerTest : public testing::Test {
   }
 
  private:
-  base::TestMessageLoop message_loop_;
+  base::test::TaskEnvironment env_;
 };
 
 TEST_F(SoundsManagerTest, Play) {
@@ -56,7 +56,7 @@ TEST_F(SoundsManagerTest, Play) {
 
   ASSERT_TRUE(SoundsManager::Get()->Initialize(
       kTestAudioKey,
-      base::StringPiece(kTestAudioData, std::size(kTestAudioData)),
+      std::string_view(kTestAudioData, std::size(kTestAudioData)),
       media::AudioCodec::kPCM));
   ASSERT_EQ(20,
             SoundsManager::Get()->GetDuration(kTestAudioKey).InMicroseconds());
@@ -79,7 +79,7 @@ TEST_F(SoundsManagerTest, Stop) {
 
   ASSERT_TRUE(SoundsManager::Get()->Initialize(
       kTestAudioKey,
-      base::StringPiece(kTestAudioData, std::size(kTestAudioData)),
+      std::string_view(kTestAudioData, std::size(kTestAudioData)),
       media::AudioCodec::kPCM));
 
   ASSERT_EQ(0, observer.num_play_requests());

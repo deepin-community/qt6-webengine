@@ -12,25 +12,31 @@
 
 namespace logging {
 
-// On DCHECK builds NOTREACHED() match the fatality of DCHECKs. When DCHECKs are
-// non-FATAL a crash report will be generated for the first NOTREACHED() that
-// hits per process.
+// NOTREACHED() annotates should-be unreachable code. When a base::NotFatalUntil
+// milestone is provided the instance is non-fatal (dumps without crashing)
+// until that milestone is hit. That is: `NOTREACHED(base::NotFatalUntil::M120)`
+// starts crashing in M120. See base/check.h.
 //
-// Outside DCHECK builds NOTREACHED() will LOG(ERROR) and also upload a crash
-// report without crashing in order to weed out prevalent NOTREACHED()s in the
-// wild before always turning NOTREACHED()s FATAL.
+// Under the kNotReachedIsFatal experiment all NOTREACHED() without a milestone
+// argument are fatal. Outside the experiment they dump without crashing. As of
+// 2023-06-06 this experiment is disabled everywhere.
 //
-// TODO(crbug.com/851128): Migrate NOTREACHED() callers to NOTREACHED_NORETURN()
-// which is [[noreturn]] and always FATAL. Once that's done, rename
-// NOTREACHED_NORETURN() back to NOTREACHED() and remove the non-FATAL version.
+// TODO(crbug.com/851128): After kNotReachedIsFatal is universally rolled out
+// then move callers without a non-fatal milestone argument to
+// NOTREACHED_NORETURN(). Then rename the [[noreturn]] version back to
+// NOTREACHED().
 #if CHECK_WILL_STREAM() || BUILDFLAG(ENABLE_LOG_ERROR_NOT_REACHED)
-#define NOTREACHED()   \
-  CHECK_FUNCTION_IMPL( \
-      ::logging::NotReachedError::NotReached(__FILE__, __LINE__), false)
+#define NOTREACHED(...)        \
+  LOGGING_CHECK_FUNCTION_IMPL( \
+      ::logging::NotReachedError::NotReached(__VA_ARGS__), false)
 #else
-#define NOTREACHED()                                       \
-  (true) ? ::logging::NotReachedError::TriggerNotReached() \
-         : EAT_CHECK_STREAM_PARAMS()
+#define BASE_HAS_VA_ARGS(...) 1
+#define NOTREACHED(...)                                            \
+  BASE_IF(BASE_IS_EMPTY(__VA_ARGS__),                              \
+          (true) ? ::logging::NotReachedError::TriggerNotReached() \
+                 : EAT_CHECK_STREAM_PARAMS(),                      \
+          LOGGING_CHECK_FUNCTION_IMPL(                             \
+              ::logging::NotReachedError::NotReached(__VA_ARGS__), false))
 #endif
 
 // NOTREACHED_NORETURN() annotates paths that are supposed to be unreachable.
@@ -38,8 +44,7 @@ namespace logging {
 // TODO(crbug.com/851128): Rename back to NOTREACHED() once there are no callers
 // of the old non-CHECK-fatal macro.
 #if CHECK_WILL_STREAM()
-#define NOTREACHED_NORETURN() \
-  ::logging::NotReachedNoreturnError(__FILE__, __LINE__)
+#define NOTREACHED_NORETURN() ::logging::NotReachedNoreturnError()
 #else
 // This function is used to be able to detect NOTREACHED() failures in stack
 // traces where this symbol is preserved (even if inlined). Its implementation
@@ -52,33 +57,38 @@ namespace logging {
   (true) ? ::logging::NotReachedFailure() : EAT_CHECK_STREAM_PARAMS()
 #endif
 
+// The DUMP_WILL_BE_NOTREACHED_NORETURN() macro provides a convenient way to
+// non-fatally dump in official builds if ever hit. See DUMP_WILL_BE_CHECK for
+// suggested usage.
+#define DUMP_WILL_BE_NOTREACHED_NORETURN() \
+  ::logging::CheckError::DumpWillBeNotReachedNoreturn()
+
 // The NOTIMPLEMENTED() macro annotates codepaths which have not been
 // implemented yet. If output spam is a serious concern,
-// NOTIMPLEMENTED_LOG_ONCE can be used.
-// Note that the NOTIMPLEMENTED_LOG_ONCE() macro does not allow custom error
-// messages to be appended to the macro to log, unlike NOTIMPLEMENTED() which
-// does support the pattern of appending a custom error message.  As in, the
-// NOTIMPLEMENTED_LOG_ONCE() << "foo message"; pattern is not supported.
+// NOTIMPLEMENTED_LOG_ONCE() can be used.
 #if DCHECK_IS_ON()
 #ifdef _MSC_VER
 #define NOTIMPLEMENTED()                                     \
-  ::logging::CheckError::NotImplemented(__FILE__, __LINE__,  __FUNCSIG__)
+  ::logging::CheckError::NotImplemented(__FUNCSIG__)
 #else
 #define NOTIMPLEMENTED()                                     \
-  ::logging::CheckError::NotImplemented(__FILE__, __LINE__, __PRETTY_FUNCTION__)
+  ::logging::CheckError::NotImplemented(__PRETTY_FUNCTION__)
 #endif
+// The lambda returns false the first time it is run, and true every other time.
+#define NOTIMPLEMENTED_LOG_ONCE()                                \
+  LOGGING_CHECK_FUNCTION_IMPL(NOTIMPLEMENTED(), []() {           \
+    bool old_value = true;                                       \
+    [[maybe_unused]] static const bool call_once = [](bool* b) { \
+      *b = false;                                                \
+      return true;                                               \
+    }(&old_value);                                               \
+    return old_value;                                            \
+  }())
+
 #else
 #define NOTIMPLEMENTED() EAT_CHECK_STREAM_PARAMS()
+#define NOTIMPLEMENTED_LOG_ONCE() EAT_CHECK_STREAM_PARAMS()
 #endif
-
-#define NOTIMPLEMENTED_LOG_ONCE()    \
-  {                                  \
-    static bool logged_once = false; \
-    if (!logged_once) {              \
-      NOTIMPLEMENTED();              \
-      logged_once = true;            \
-    }                                \
-  }
 
 }  // namespace logging
 

@@ -6,12 +6,12 @@ import("//build/config/ui.gni")
 import("//components/viz/viz.gni")
 import("//testing/test.gni")
 
-if (is_ios) {
-  import("//build/config/ios/bundle_data_from_filelist.gni")
-
-  bundle_data_from_filelist("unit_tests_bundle_data") {
+if (is_ios && (skia_use_dawn || skia_use_metal)) {
+  bundle_data("unit_tests_filter_bundle_data") {
     testonly = true
-    filelist_name = "unit_tests_bundle_data.filelist"
+    sources = [ "//testing/buildbot/filters/ios.viz_unittests.filter" ]
+    outputs = [ "{{bundle_resources_dir}}/" +
+                "{{source_root_relative_dir}}/{{source_file_part}}" ]
   }
 }
 
@@ -37,7 +37,7 @@ viz_test("viz_unittests") {
     "//mojo/core/embedder",
   ]
 
-  data = [ "test/data/" ]
+  data = [ "//components/test/data/viz/" ]
 
   data_deps = [
     "//testing/buildbot/filters:viz_unittests_filters",
@@ -50,8 +50,8 @@ viz_test("viz_unittests") {
   }
 
   if (is_fuchsia) {
-    # TODO(https://crbug.com/1185811): Investigate removing the requirement for
-    # job_policy_ambient_mark_vmo_exec for the sake of V8's allocator in tests.
+    # TODO(https://crbug.com/1022542): Some of these tests use SwiftShader,
+    # which requires ambient VMEX.
     test_runner_shard = "//build/config/fuchsia/test/elf_test_ambient_exec_runner.shard.test-cml"
 
     additional_manifest_fragments = [
@@ -61,7 +61,10 @@ viz_test("viz_unittests") {
   }
 
   if (is_ios) {
-    public_deps = [ ":unit_tests_bundle_data" ]
+    public_deps = [
+      ":unit_tests_filter_bundle_data",
+      "//components/test:viz_test_bundle_data",
+    ]
   }
 }
 
@@ -79,7 +82,7 @@ viz_test("viz_perftests") {
     "//skia",
   ]
 
-  data = [ "test/data/" ]
+  data = [ "//components/test/data/viz/" ]
 
   # This target should not require the Chrome executable to run.
   assert_no_deps = [ "//chrome" ]

@@ -27,7 +27,7 @@ class UberReceivedPacketManagerPeer;
 struct QuicConnectionStats;
 
 // Records all received packets by a connection.
-class QUIC_EXPORT_PRIVATE QuicReceivedPacketManager {
+class QUICHE_EXPORT QuicReceivedPacketManager {
  public:
   QuicReceivedPacketManager();
   explicit QuicReceivedPacketManager(QuicConnectionStats* stats);
@@ -79,10 +79,6 @@ class QUIC_EXPORT_PRIVATE QuicReceivedPacketManager {
   // Returns true when there are new missing packets to be reported within 3
   // packets of the largest observed.
   virtual bool HasNewMissingPackets() const;
-
-  QuicPacketNumber peer_least_packet_awaiting_ack() const {
-    return peer_least_packet_awaiting_ack_;
-  }
 
   virtual bool ack_frame_updated() const;
 
@@ -148,6 +144,8 @@ class QUIC_EXPORT_PRIVATE QuicReceivedPacketManager {
   bool AckFrequencyFrameReceived() const {
     return last_ack_frequency_frame_sequence_number_ >= 0;
   }
+
+  void MaybeTrimAckRanges();
 
   // Least packet number of the the packet sent by the peer for which it
   // hasn't received an ack.

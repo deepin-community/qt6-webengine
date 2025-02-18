@@ -34,7 +34,8 @@ enum class AddressProfileImportRequirementMetric {
   // If present, the email address must be valid.
   kEmailValidRequirementFulfilled = 10,
   kEmailValidRequirementViolated = 11,
-  // If present, the country must be valid.
+  // The country is no longer required. Instead, an invalid observed country is
+  // replaced by the complement country logic.
   kCountryValidRequirementFulfilled = 12,
   kCountryValidRequirementViolated = 13,
   // If present, the state must be valid (if verifiable).
@@ -58,12 +59,9 @@ enum class AddressProfileImportRequirementMetric {
   // line 1 or a house number.
   kLine1OrHouseNumberRequirementFulfilled = 26,
   kLine1OrHouseNumberRequirementViolated = 27,
-  // If required by `kAutofillRequireNameForProfileImportsFromForms` feature,
-  // the form must contain a non-empty name.
-  kNameRequirementFulfilled = 28,
-  kNameRequirementViolated = 29,
-  // Must be set to the last entry.
-  kMaxValue = kNameRequirementViolated,
+  kDeprecatedNameRequirementFulfilled = 28,
+  kDeprecatedNameRequirementViolated = 29,
+  kMaxValue = kDeprecatedNameRequirementViolated,
 };
 
 // Represents the status of the field type requirements that are specific to
@@ -88,12 +86,15 @@ enum class AddressProfileImportCountrySpecificFieldRequirementsMetric {
   kMaxValue = LINE1_ZIP_STATE_CITY_REQUIREMENT_VIOLATED,
 };
 
-// Represent the overall status of a profile import.
+// These values are persisted to UMA logs. Entries should not be renumbered
+// and numeric values should never be reused. These values represent the overall
+// status of a profile import.
 enum class AddressProfileImportStatusMetric {
-  NO_IMPORT = 0,
-  REGULAR_IMPORT = 1,
-  SECTION_UNION_IMPORT = 2,
-  kMaxValue = SECTION_UNION_IMPORT,
+  kNoImport = 0,
+  kRegularImport = 1,
+  // This value was deprecated in M113.
+  kSectionUnionImport = 2,
+  kMaxValue = kSectionUnionImport,
 };
 
 // Logs the address profile import UKM after the form submission.
@@ -113,13 +114,9 @@ void LogAddressProfileImportUkm(
 void LogAddressFormImportRequirementMetric(
     AddressProfileImportRequirementMetric metric);
 
-// Logs the overall status of the country specific field requirements for
-// importing an address profile from a submitted form.
-void LogAddressFormImportCountrySpecificFieldRequirementsMetric(
-    bool is_zip_missing,
-    bool is_state_missing,
-    bool is_city_missing,
-    bool is_line1_missing);
+// Validates the profile import requirements and emits all the results.
+// Additionally, logs country-specific field requirement metrics.
+void LogAddressFormImportRequirementMetric(const AutofillProfile& profile);
 
 // Logs the overall status of an address import upon form submission.
 void LogAddressFormImportStatusMetric(AddressProfileImportStatusMetric metric);
@@ -134,17 +131,8 @@ void LogSilentUpdatesProfileImportType(AutofillProfileImportType import_type);
 void LogNewProfileImportDecision(
     AutofillClient::SaveAddressProfileOfferUserDecision decision);
 
-// Logs the user decision for importing a new profile, which could only
-// be imported after an invalid country was ignored.
-void LogNewProfileWithIgnoredCountryImportDecision(
-    AutofillClient::SaveAddressProfileOfferUserDecision decision);
-
 // Logs the user decision for updating an exiting profile.
 void LogProfileUpdateImportDecision(
-    AutofillClient::SaveAddressProfileOfferUserDecision decision);
-// Logs the user decision for updating an exiting profile, which could only
-// be imported after an invalid country was ignored.
-void LogProfileUpdateWithIgnoredCountryImportDecision(
     AutofillClient::SaveAddressProfileOfferUserDecision decision);
 
 // Logs if at least one setting-inaccessible field was removed on import.
@@ -152,23 +140,15 @@ void LogRemovedSettingInaccessibleFields(bool did_remove);
 
 // Logs that `field` was removed from a profile on import, because it is
 // setting-inaccessible in the profile's country.
-void LogRemovedSettingInaccessibleField(ServerFieldType field);
+void LogRemovedSettingInaccessibleField(FieldType field);
 
 // Logs whether a phone number was parsed successfully on profile import.
 // Contrary to the profile import requirement metrics, the parsing result is
 // only emitted when a number is present.
 void LogPhoneNumberImportParsingResult(bool parsed_successfully);
 
-// Logs the number of fields with an unrecognized autocomplete attributed that
-// were considered for the import due to AutofillFillAndImportFromMoreFields.
-void LogNewProfileNumberOfAutocompleteUnrecognizedFields(int count);
-
-// Logs the number of fields with an unrecognized autocomplete attributed that
-// were considered for the update due to AutofillFillAndImportFromMoreFields.
-void LogProfileUpdateNumberOfAutocompleteUnrecognizedFields(int count);
-
 // Logs that a specific type was edited in a save prompt.
-void LogNewProfileEditedType(ServerFieldType edited_type);
+void LogNewProfileEditedType(FieldType edited_type);
 
 // Logs the number of edited fields for an accepted profile save.
 void LogNewProfileNumberOfEditedFields(int number_of_edited_fields);
@@ -177,11 +157,11 @@ void LogNewProfileNumberOfEditedFields(int number_of_edited_fields);
 // user |decision|. Note that additional manual edits in the update prompt are
 // not accounted for in this metric.
 void LogProfileUpdateAffectedType(
-    ServerFieldType affected_type,
+    FieldType affected_type,
     AutofillClient::SaveAddressProfileOfferUserDecision decision);
 
 // Logs that a specific type was edited in an update prompt.
-void LogProfileUpdateEditedType(ServerFieldType edited_type);
+void LogProfileUpdateEditedType(FieldType edited_type);
 
 // Logs the number of edited fields for an accepted profile update.
 void LogUpdateProfileNumberOfEditedFields(int number_of_edited_fields);
@@ -192,6 +172,17 @@ void LogUpdateProfileNumberOfEditedFields(int number_of_edited_fields);
 void LogUpdateProfileNumberOfAffectedFields(
     int number_of_affected_fields,
     AutofillClient::SaveAddressProfileOfferUserDecision decision);
+
+// Logs the user's decision for migrating an existing `kLocalOrSyncable` profile
+// to `kAccount`.
+void LogProfileMigrationImportDecision(
+    AutofillClient::SaveAddressProfileOfferUserDecision decision);
+
+// Logs that a specific type was edited in a migration prompt.
+void LogProfileMigrationEditedType(FieldType edited_type);
+
+// Logs the number of edited fields for an accepted profile migration.
+void LogProfileMigrationNumberOfEditedFields(int number_of_edited_fields);
 
 }  // namespace autofill::autofill_metrics
 

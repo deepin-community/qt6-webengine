@@ -68,8 +68,7 @@ constexpr base::StringPiece GetAttributeName(XDefineTagAttribute attribute) {
       return "VALUE";
   }
 
-  NOTREACHED();
-  return "";
+  NOTREACHED_NORETURN();
 }
 
 // Attributes expected in `EXT-X-MEDIA` tag contents.
@@ -121,8 +120,7 @@ constexpr base::StringPiece GetAttributeName(XMediaTagAttribute attribute) {
       return "URI";
   }
 
-  NOTREACHED();
-  return "";
+  NOTREACHED_NORETURN();
 }
 
 // Attributes expected in `EXT-X-STREAM-INF` tag contents.
@@ -162,8 +160,25 @@ constexpr base::StringPiece GetAttributeName(XStreamInfTagAttribute attribute) {
       return "SCORE";
   }
 
-  NOTREACHED();
-  return "";
+  NOTREACHED_NORETURN();
+}
+
+// Attributes expected in `EXT-X-SKIP` tag contents.
+// These must remain sorted alphabetically.
+enum class XSkipTagAttribute {
+  kRecentlyRemovedDateranges,
+  kSkippedSegments,
+  kMaxValue = kSkippedSegments,
+};
+
+constexpr std::string_view GetAttributeName(XSkipTagAttribute attribute) {
+  switch (attribute) {
+    case XSkipTagAttribute::kRecentlyRemovedDateranges:
+      return "RECENTLY-REMOVED-DATERANGES";
+    case XSkipTagAttribute::kSkippedSegments:
+      return "SKIPPED-SEGMENTS";
+  }
+  NOTREACHED_NORETURN();
 }
 
 // Attributes expected in `EXT-X-MAP` tag contents.
@@ -182,8 +197,7 @@ constexpr base::StringPiece GetAttributeName(XMapTagAttribute attribute) {
       return "URI";
   }
 
-  NOTREACHED();
-  return "";
+  NOTREACHED_NORETURN();
 }
 
 // Attributes expected in `EXT-X-PART` tag contents.
@@ -225,8 +239,7 @@ constexpr base::StringPiece GetAttributeName(XPartInfTagAttribute attribute) {
       return "PART-TARGET";
   }
 
-  NOTREACHED();
-  return "";
+  NOTREACHED_NORETURN();
 }
 
 // Attributes expected in `EXT-X-SERVER-CONTROL` tag contents.
@@ -255,8 +268,7 @@ constexpr base::StringPiece GetAttributeName(
       return "PART-HOLD-BACK";
   }
 
-  NOTREACHED();
-  return "";
+  NOTREACHED_NORETURN();
 }
 
 template <typename T, size_t kLast>
@@ -873,12 +885,23 @@ ParseStatus::Or<InfTag> InfTag::Parse(TagItem tag) {
   // Inf tags have the form #EXTINF:<duration>,[<title>]
   // Find the comma.
   auto comma = content.Str().find_first_of(',');
+  SourceString duration_str = content;
+  SourceString title_str = content;
   if (comma == base::StringPiece::npos) {
-    return ParseStatusCode::kMalformedTag;
+    // While the HLS spec does require commas at the end of inf tags, it's
+    // incredibly common for sites to elide the comma if there is no title
+    // attribute present. In this case, we should assert that there is at least
+    // a trailing newline, and then strip it to generate a nameless tag.
+    title_str = content.Substr(0, 0);
+    if (*content.Str().end() != '\n') {
+      duration_str = content;
+    } else {
+      duration_str = content.Substr(0, content.Str().length() - 1);
+    }
+  } else {
+    duration_str = content.Substr(0, comma);
+    title_str = content.Substr(comma + 1);
   }
-
-  auto duration_str = content.Substr(0, comma);
-  auto title_str = content.Substr(comma + 1);
 
   // Extract duration
   // TODO(crbug.com/1284763): Below version 3 this should be rounded to an
@@ -1279,6 +1302,72 @@ ParseStatus::Or<XTargetDurationTag> XTargetDurationTag::Parse(TagItem tag) {
   }
 
   return XTargetDurationTag{.duration = duration};
+}
+
+XSkipTag::XSkipTag() = default;
+XSkipTag::~XSkipTag() = default;
+XSkipTag::XSkipTag(const XSkipTag&) = default;
+XSkipTag::XSkipTag(XSkipTag&&) = default;
+
+ParseStatus::Or<XSkipTag> XSkipTag::Parse(
+    TagItem tag,
+    const VariableDictionary& variable_dict,
+    VariableDictionary::SubstitutionBuffer& sub_buffer) {
+  DCHECK(tag.GetName() == ToTagName(XSkipTag::kName));
+  if (!tag.GetContent().has_value()) {
+    return ParseStatusCode::kMalformedTag;
+  }
+
+  XSkipTag out;
+  TypedAttributeMap<XSkipTagAttribute> map;
+  types::AttributeListIterator iter(*tag.GetContent());
+  auto map_result = map.FillUntilError(&iter);
+
+  if (map_result.code() != ParseStatusCode::kReachedEOF) {
+    return ParseStatus(ParseStatusCode::kMalformedTag)
+        .AddCause(std::move(map_result));
+  }
+
+  if (!map.HasValue(XSkipTagAttribute::kSkippedSegments)) {
+    return ParseStatusCode::kMalformedTag;
+  }
+
+  auto skip_result = types::ParseDecimalInteger(
+      map.GetValue(XSkipTagAttribute::kSkippedSegments)
+          .SkipVariableSubstitution());
+
+  if (!skip_result.has_value()) {
+    return ParseStatus(ParseStatusCode::kMalformedTag)
+        .AddCause(std::move(skip_result).error());
+  }
+
+  out.skipped_segments = std::move(skip_result).value();
+
+  if (map.HasValue(XSkipTagAttribute::kRecentlyRemovedDateranges)) {
+    // TODO(bug/314833987): Should this list have substitution?
+    auto removed_result = types::ParseQuotedString(
+        map.GetValue(XSkipTagAttribute::kRecentlyRemovedDateranges),
+        variable_dict, sub_buffer, /*allow_empty=*/true);
+    if (!removed_result.has_value()) {
+      return ParseStatus(ParseStatusCode::kMalformedTag)
+          .AddCause(std::move(removed_result).error());
+    }
+
+    auto tab_joined_daterange_ids = std::move(removed_result).value();
+    std::vector<std::string> removed_dateranges = {};
+
+    while (!tab_joined_daterange_ids.Empty()) {
+      const auto daterange_id = tab_joined_daterange_ids.ConsumeDelimiter('\t');
+      if (daterange_id.Empty()) {
+        return ParseStatusCode::kMalformedTag;
+      }
+      // TODO(bug/314833987): What type should this be parsed into?
+      removed_dateranges.emplace_back(daterange_id.Str());
+    }
+    out.recently_removed_dateranges = std::move(removed_dateranges);
+  }
+
+  return out;
 }
 
 }  // namespace media::hls

@@ -14,12 +14,10 @@
 #include "base/functional/callback.h"
 #include "base/location.h"
 #include "base/memory/ptr_util.h"
-#include "base/metrics/histogram_macros.h"
 #include "base/ranges/algorithm.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
-#include "base/values.h"
 #include "build/build_config.h"
 #include "components/dom_distiller/core/distiller_page.h"
 #include "components/dom_distiller/core/distiller_url_fetcher.h"
@@ -157,14 +155,6 @@ void DistillerImpl::OnPageDistillationFinished(
     return;
   }
 
-  if (distiller_result->has_statistics_info() && page_num == 0) {
-    if (distiller_result->statistics_info().has_word_count()) {
-      UMA_HISTOGRAM_CUSTOM_COUNTS(
-          "DomDistiller.Statistics.FirstPageWordCount",
-          distiller_result->statistics_info().word_count(), 1, 4000, 50);
-    }
-  }
-
   DCHECK(distiller_result);
   CHECK_LT(started_pages_index_[page_num], pages_.size())
       << "started_pages_index_[" << page_num
@@ -188,47 +178,6 @@ void DistillerImpl::OnPageDistillationFinished(
         distiller_result->distilled_content().html());
     if (!distiller_result->distilled_content().html().empty()) {
       content_empty = false;
-    }
-  }
-
-  if (distiller_result->has_timing_info()) {
-    const proto::TimingInfo& distiller_timing_info =
-        distiller_result->timing_info();
-    DistilledPageProto::TimingInfo timing_info;
-    if (distiller_timing_info.has_markup_parsing_time()) {
-      timing_info.set_name("markup_parsing");
-      timing_info.set_time(distiller_timing_info.markup_parsing_time());
-      *page_data->distilled_page_proto->data.add_timing_info() = timing_info;
-    }
-
-    if (distiller_timing_info.has_document_construction_time()) {
-      timing_info.set_name("document_construction");
-      timing_info.set_time(distiller_timing_info.document_construction_time());
-      *page_data->distilled_page_proto->data.add_timing_info() = timing_info;
-    }
-
-    if (distiller_timing_info.has_article_processing_time()) {
-      timing_info.set_name("article_processing");
-      timing_info.set_time(distiller_timing_info.article_processing_time());
-      *page_data->distilled_page_proto->data.add_timing_info() = timing_info;
-    }
-
-    if (distiller_timing_info.has_formatting_time()) {
-      timing_info.set_name("formatting");
-      timing_info.set_time(distiller_timing_info.formatting_time());
-      *page_data->distilled_page_proto->data.add_timing_info() = timing_info;
-    }
-
-    if (distiller_timing_info.has_total_time()) {
-      timing_info.set_name("total");
-      timing_info.set_time(distiller_timing_info.total_time());
-      *page_data->distilled_page_proto->data.add_timing_info() = timing_info;
-    }
-
-    for (int i = 0; i < distiller_timing_info.other_times_size(); i++) {
-      timing_info.set_name(distiller_timing_info.other_times(i).name());
-      timing_info.set_time(distiller_timing_info.other_times(i).time());
-      *page_data->distilled_page_proto->data.add_timing_info() = timing_info;
     }
   }
 

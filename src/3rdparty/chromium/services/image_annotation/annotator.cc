@@ -4,7 +4,6 @@
 
 #include "services/image_annotation/annotator.h"
 
-#include <algorithm>
 #include <tuple>
 #include <utility>
 
@@ -18,6 +17,7 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/no_destructor.h"
+#include "base/ranges/algorithm.h"
 #include "base/strings/string_split.h"
 #include "components/google/core/common/google_util.h"
 #include "net/base/load_flags.h"
@@ -383,7 +383,7 @@ std::map<std::string, mojom::AnnotateImageResultPtr> UnpackJsonResponse(
         }
       }
 
-      ReportEngineKnown(ocr_engine || desc_engine);
+      ReportEngineKnown(ocr_engine || desc_engine || icon_engine);
     }
 
     // Remove any description OCR data (which is lower quality) if we have
@@ -584,11 +584,9 @@ std::string Annotator::FormatJsonRequest(
   base::Value::List image_request_list;
   for (std::deque<ServerRequestInfo>::iterator it = begin; it != end; ++it) {
     // Re-encode image bytes into base64, which can be represented in JSON.
-    std::string base64_data;
-    base::Base64Encode(
+    std::string base64_data = base::Base64Encode(
         base::StringPiece(reinterpret_cast<const char*>(it->image_bytes.data()),
-                          it->image_bytes.size()),
-        &base64_data);
+                          it->image_bytes.size()));
 
     // TODO(crbug.com/916420): accept and propagate page language info to
     //                         improve OCR accuracy.
@@ -921,11 +919,11 @@ std::string Annotator::ComputePreferredLanguage(
 
   std::string page_language = NormalizeLanguageCode(in_page_language);
   std::vector<std::string> accept_languages = client_->GetAcceptLanguages();
-  std::transform(accept_languages.begin(), accept_languages.end(),
-                 accept_languages.begin(), NormalizeLanguageCode);
+  base::ranges::transform(accept_languages, accept_languages.begin(),
+                          NormalizeLanguageCode);
   std::vector<std::string> top_languages = client_->GetTopLanguages();
-  std::transform(top_languages.begin(), top_languages.end(),
-                 top_languages.begin(), NormalizeLanguageCode);
+  base::ranges::transform(top_languages, top_languages.begin(),
+                          NormalizeLanguageCode);
 
   // If the page language is a server language and it's in the list of accept
   // languages or top languages for this user, return that.

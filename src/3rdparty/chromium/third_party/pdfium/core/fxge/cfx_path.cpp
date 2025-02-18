@@ -13,7 +13,6 @@
 
 #include "core/fxcrt/fx_system.h"
 #include "third_party/base/check_op.h"
-#include "third_party/base/numerics/safe_math.h"
 
 namespace {
 
@@ -288,11 +287,11 @@ void CFX_Path::Append(const CFX_Path& src, const CFX_Matrix* matrix) {
 }
 
 void CFX_Path::AppendPoint(const CFX_PointF& point, Point::Type type) {
-  m_Points.push_back(Point(point, type, /*close=*/false));
+  m_Points.emplace_back(point, type, /*close=*/false);
 }
 
 void CFX_Path::AppendPointAndClose(const CFX_PointF& point, Point::Type type) {
-  m_Points.push_back(Point(point, type, /*close=*/true));
+  m_Points.emplace_back(point, type, /*close=*/true);
 }
 
 void CFX_Path::AppendLine(const CFX_PointF& pt1, const CFX_PointF& pt2) {
@@ -362,7 +361,7 @@ CFX_FloatRect CFX_Path::GetBoundingBoxForStrokePath(float line_width,
         rect.UpdateRect(m_Points[iPoint + 1].m_Point);
         iPoint += 2;
       }
-      if (iPoint == m_Points.size() - 1 ||
+      if (iPoint + 1 == m_Points.size() ||
           m_Points[iPoint + 1].m_Type == CFX_Path::Point::Type::kMove) {
         iStartPoint = iPoint - 1;
         iEndPoint = iPoint;

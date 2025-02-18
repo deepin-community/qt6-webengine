@@ -21,10 +21,8 @@ namespace safe_browsing {
 class SafeBrowsingLookupMechanism {
  public:
   struct StartCheckResult {
-    StartCheckResult(bool is_safe_synchronously,
-                     bool did_check_url_real_time_allowlist);
+    explicit StartCheckResult(bool is_safe_synchronously);
     bool is_safe_synchronously;
-    bool did_check_url_real_time_allowlist;
   };
 
   // This is used by individual lookup mechanisms as the input for the
@@ -35,13 +33,19 @@ class SafeBrowsingLookupMechanism {
         const GURL& url,
         SBThreatType threat_type,
         const ThreatMetadata& metadata,
-        bool is_from_url_real_time_check,
+        absl::optional<ThreatSource> threat_source,
         std::unique_ptr<RTLookupResponse> url_real_time_lookup_response);
     ~CompleteCheckResult();
     GURL url;
     SBThreatType threat_type;
     ThreatMetadata metadata;
-    bool is_from_url_real_time_check;
+    // Specifies the threat source associated with the mechanism that provided
+    // the threat type. In cases where a real-time mechanism falls back to the
+    // hash database mechanism, the threat source will correspond to the hash
+    // database mechanism. This value only guaranteed to be non-null in cases
+    // where the threat type is not SB_THREAT_TYPE_SAFE; in cases where the hash
+    // database mechanism fallback completes synchronously, this is unset.
+    absl::optional<ThreatSource> threat_source;
     std::unique_ptr<RTLookupResponse> url_real_time_lookup_response;
   };
   using CompleteCheckResultCallback =
@@ -50,9 +54,7 @@ class SafeBrowsingLookupMechanism {
   SafeBrowsingLookupMechanism(
       const GURL& url,
       const SBThreatTypeSet& threat_types,
-      scoped_refptr<SafeBrowsingDatabaseManager> database_manager,
-      bool can_check_db,
-      MechanismExperimentHashDatabaseCache experiment_cache_selection);
+      scoped_refptr<SafeBrowsingDatabaseManager> database_manager);
   virtual ~SafeBrowsingLookupMechanism();
   SafeBrowsingLookupMechanism(const SafeBrowsingLookupMechanism&) = delete;
   SafeBrowsingLookupMechanism& operator=(const SafeBrowsingLookupMechanism&) =
@@ -79,16 +81,6 @@ class SafeBrowsingLookupMechanism {
   // Used for interactions with the database, such as running a hash-based
   // check or checking the high-confidence allowlist.
   scoped_refptr<SafeBrowsingDatabaseManager> database_manager_;
-
-  // Whether safe browsing database can be checked. It is set to false when
-  // enterprise real time URL lookup is enabled and safe browsing is disabled
-  // for this profile.
-  bool can_check_db_;
-
-  // Specifies which hash database cache to use if a hash-database lookup ends
-  // up occurring. For more details, see the comments above the definition of
-  // MechanismExperimentHashDatabaseCache.
-  MechanismExperimentHashDatabaseCache experiment_cache_selection_;
 
  private:
   // |StartCheck| has some logic used across mechanisms. |StartCheckInternal| is

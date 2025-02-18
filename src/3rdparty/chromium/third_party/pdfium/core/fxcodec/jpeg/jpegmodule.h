@@ -13,7 +13,7 @@
 
 #include "build/build_config.h"
 #include "third_party/abseil-cpp/absl/types/optional.h"
-#include "third_party/base/span.h"
+#include "third_party/base/containers/span.h"
 
 #if BUILDFLAG(IS_WIN)
 #include "core/fxcrt/retain_ptr.h"
@@ -46,7 +46,7 @@ class JpegModule {
       pdfium::span<const uint8_t> src_span);
 
 #if BUILDFLAG(IS_WIN)
-  static bool JpegEncode(const RetainPtr<CFX_DIBBase>& pSource,
+  static bool JpegEncode(const RetainPtr<const CFX_DIBBase>& pSource,
                          uint8_t** dest_buf,
                          size_t* dest_size);
 #endif  // BUILDFLAG(IS_WIN)

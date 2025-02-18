@@ -101,6 +101,11 @@ class MachineRepresentationInferrer {
             break;
           case IrOpcode::kLoadFramePointer:
           case IrOpcode::kLoadParentFramePointer:
+          case IrOpcode::kStackSlot:
+          case IrOpcode::kLoadRootRegister:
+#if V8_ENABLE_WEBASSEMBLY
+          case IrOpcode::kLoadStackPointer:
+#endif  // V8_ENABLE_WEBASSEMBLY
             representation_vector_[node->id()] =
                 MachineType::PointerRepresentation();
             break;
@@ -159,6 +164,7 @@ class MachineRepresentationInferrer {
           case IrOpcode::kStore:
           case IrOpcode::kProtectedStore:
           case IrOpcode::kStoreTrapOnNull:
+          case IrOpcode::kStoreIndirectPointer:
             representation_vector_[node->id()] = PromoteRepresentation(
                 StoreRepresentationOf(node->op()).representation());
             break;
@@ -177,6 +183,7 @@ class MachineRepresentationInferrer {
           case IrOpcode::kChangeInt32ToTagged:
           case IrOpcode::kChangeUint32ToTagged:
           case IrOpcode::kBitcastWordToTagged:
+          case IrOpcode::kTaggedIndexConstant:
             representation_vector_[node->id()] = MachineRepresentation::kTagged;
             break;
           case IrOpcode::kCompressedHeapConstant:
@@ -221,11 +228,14 @@ class MachineRepresentationInferrer {
           case IrOpcode::kTruncateFloat32ToInt32:
           case IrOpcode::kTruncateFloat32ToUint32:
           case IrOpcode::kBitcastFloat32ToInt32:
+#if V8_ENABLE_WEBASSEMBLY
           case IrOpcode::kI32x4ExtractLane:
           case IrOpcode::kI16x8ExtractLaneU:
           case IrOpcode::kI16x8ExtractLaneS:
           case IrOpcode::kI8x16ExtractLaneU:
           case IrOpcode::kI8x16ExtractLaneS:
+          case IrOpcode::kI8x16BitMask:
+#endif  // V8_ENABLE_WEBASSEMBLY
           case IrOpcode::kInt32Constant:
           case IrOpcode::kRelocatableInt32Constant:
           case IrOpcode::kTruncateFloat64ToWord32:
@@ -236,7 +246,6 @@ class MachineRepresentationInferrer {
           case IrOpcode::kFloat64ExtractLowWord32:
           case IrOpcode::kFloat64ExtractHighWord32:
           case IrOpcode::kWord32Popcnt:
-          case IrOpcode::kI8x16BitMask:
             MACHINE_UNOP_32_LIST(LABEL)
             MACHINE_BINOP_32_LIST(LABEL) {
               representation_vector_[node->id()] =
@@ -245,11 +254,13 @@ class MachineRepresentationInferrer {
             break;
           case IrOpcode::kChangeInt32ToInt64:
           case IrOpcode::kChangeUint32ToUint64:
+          case IrOpcode::kBitcastWord32ToWord64:
           case IrOpcode::kInt64Constant:
           case IrOpcode::kRelocatableInt64Constant:
           case IrOpcode::kBitcastFloat64ToInt64:
           case IrOpcode::kChangeFloat64ToInt64:
           case IrOpcode::kChangeFloat64ToUint64:
+          case IrOpcode::kTruncateFloat64ToInt64:
           case IrOpcode::kWord64Popcnt:
           case IrOpcode::kWord64Ctz:
           case IrOpcode::kWord64Clz:
@@ -286,6 +297,7 @@ class MachineRepresentationInferrer {
                   MachineRepresentation::kFloat64;
             }
             break;
+#if V8_ENABLE_WEBASSEMBLY
           case IrOpcode::kI32x4ReplaceLane:
           case IrOpcode::kI32x4Splat:
           case IrOpcode::kI8x16Splat:
@@ -293,6 +305,7 @@ class MachineRepresentationInferrer {
             representation_vector_[node->id()] =
                 MachineRepresentation::kSimd128;
             break;
+#endif  // V8_ENABLE_WEBASSEMBLY
 #undef LABEL
           default:
             break;
@@ -400,6 +413,7 @@ class MachineRepresentationChecker {
             CheckValueInputForInt64Op(node, 0);
             CheckValueInputForInt64Op(node, 1);
             break;
+#if V8_ENABLE_WEBASSEMBLY
           case IrOpcode::kI32x4ExtractLane:
           case IrOpcode::kI16x8ExtractLaneU:
           case IrOpcode::kI16x8ExtractLaneS:
@@ -424,6 +438,7 @@ class MachineRepresentationChecker {
             CheckValueInputRepresentationIs(node, 1,
                                             MachineRepresentation::kSimd128);
             break;
+#endif  // V8_ENABLE_WEBASSEMBLY
 
 #define LABEL(opcode) case IrOpcode::k##opcode:
           case IrOpcode::kChangeInt32ToTagged:
@@ -439,7 +454,10 @@ class MachineRepresentationChecker {
           case IrOpcode::kWord32Popcnt:
             MACHINE_UNOP_32_LIST(LABEL) { CheckValueInputForInt32Op(node, 0); }
             break;
+          // Allow tagged pointers to be compared directly, and range checked.
           case IrOpcode::kWord32Equal:
+          case IrOpcode::kUint32LessThan:
+          case IrOpcode::kUint32LessThanOrEqual:
             if (Is32()) {
               CheckValueInputIsTaggedOrPointer(node, 0);
               CheckValueInputIsTaggedOrPointer(node, 1);
@@ -460,8 +478,6 @@ class MachineRepresentationChecker {
 
           case IrOpcode::kInt32LessThan:
           case IrOpcode::kInt32LessThanOrEqual:
-          case IrOpcode::kUint32LessThan:
-          case IrOpcode::kUint32LessThanOrEqual:
             MACHINE_BINOP_32_LIST(LABEL) {
               CheckValueInputForInt32Op(node, 0);
               CheckValueInputForInt32Op(node, 1);
@@ -499,6 +515,7 @@ class MachineRepresentationChecker {
           case IrOpcode::kFloat64SilenceNaN:
           case IrOpcode::kChangeFloat64ToInt64:
           case IrOpcode::kChangeFloat64ToUint64:
+          case IrOpcode::kTruncateFloat64ToInt64:
             MACHINE_FLOAT64_UNOP_LIST(LABEL) {
               CheckValueInputForFloat64Op(node, 0);
             }
@@ -536,6 +553,7 @@ class MachineRepresentationChecker {
                                             MachineRepresentation::kWord32);
             V8_FALLTHROUGH;
           case IrOpcode::kStore:
+          case IrOpcode::kStoreIndirectPointer:
           case IrOpcode::kUnalignedStore:
           case IrOpcode::kWord32AtomicStore:
           case IrOpcode::kWord32AtomicExchange:
@@ -558,6 +576,7 @@ class MachineRepresentationChecker {
               case MachineRepresentation::kTagged:
               case MachineRepresentation::kTaggedPointer:
               case MachineRepresentation::kTaggedSigned:
+              case MachineRepresentation::kIndirectPointer:
                 if (COMPRESS_POINTERS_BOOL &&
                     ((node->opcode() == IrOpcode::kStore &&
                       IsAnyTagged(StoreRepresentationOf(node->op())
@@ -667,6 +686,9 @@ class MachineRepresentationChecker {
             }
             break;
           }
+#if V8_ENABLE_WEBASSEMBLY
+          case IrOpcode::kSetStackPointer:
+#endif  // V8_ENABLE_WEBASSEMBLY
           case IrOpcode::kStackPointerGreaterThan:
             CheckValueInputRepresentationIs(
                 node, 0, MachineType::PointerRepresentation());
@@ -982,6 +1004,7 @@ class MachineRepresentationChecker {
         // happens in dead code.
         return IsAnyTagged(actual);
       case MachineRepresentation::kCompressedPointer:
+      case MachineRepresentation::kIndirectPointer:
       case MachineRepresentation::kSandboxedPointer:
       case MachineRepresentation::kFloat32:
       case MachineRepresentation::kFloat64:

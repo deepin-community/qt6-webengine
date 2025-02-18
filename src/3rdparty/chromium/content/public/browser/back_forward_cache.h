@@ -7,16 +7,17 @@
 
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <set>
 
 #include "base/strings/string_piece.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/global_routing_id.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace content {
 
+class Page;
 class RenderFrameHost;
 
 // Public API for the BackForwardCache.
@@ -100,7 +101,7 @@ class CONTENT_EXPORT BackForwardCache {
   static void DisableForRenderFrameHost(
       RenderFrameHost* render_frame_host,
       DisabledReason reason,
-      absl::optional<ukm::SourceId> source_id = absl::nullopt);
+      std::optional<ukm::SourceId> source_id = std::nullopt);
 
   // Helper function to be used when it is not always possible to guarantee the
   // `render_frame_host` to be still alive when this is called. In this case,
@@ -110,7 +111,14 @@ class CONTENT_EXPORT BackForwardCache {
   static void DisableForRenderFrameHost(
       GlobalRenderFrameHostId id,
       DisabledReason reason,
-      absl::optional<ukm::SourceId> source_id = absl::nullopt);
+      std::optional<ukm::SourceId> source_id = std::nullopt);
+
+  // Helper function to be used when the input |page| has seen any form data
+  // associated. This state will be set on the BackForwardCacheMetrics
+  // associated with the main frame, is not persisted across session restores,
+  // and only set in Android Custom tabs for now.
+  // TODO(crbug.com/1403292): Set this boolean for all platforms.
+  static void SetHadFormDataAssociated(Page& page);
 
   // List of reasons the BackForwardCache was disabled for a specific test. If a
   // test needs to be disabled for a reason not covered below, please add to

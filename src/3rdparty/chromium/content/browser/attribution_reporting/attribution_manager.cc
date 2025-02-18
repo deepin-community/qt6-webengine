@@ -5,12 +5,13 @@
 #include "content/browser/attribution_reporting/attribution_manager.h"
 
 #include "base/check.h"
-#include "components/attribution_reporting/os_support.mojom.h"
-#include "content/browser/attribution_reporting/attribution_manager_impl.h"
+#include "content/browser/attribution_reporting/attribution_os_level_manager.h"
 #include "content/browser/storage_partition_impl.h"
 #include "content/public/browser/browser_context.h"
+#include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/common/content_client.h"
 
 namespace content {
 
@@ -31,8 +32,10 @@ AttributionManager* AttributionManager::FromBrowserContext(
 }
 
 // static
-attribution_reporting::mojom::OsSupport AttributionManager::GetOsSupport() {
-  return AttributionManagerImpl::GetOsSupport();
+network::mojom::AttributionSupport AttributionManager::GetAttributionSupport(
+    WebContents* web_contents) {
+  return GetContentClient()->browser()->GetAttributionSupport(
+      AttributionOsLevelManager::GetApiState(), web_contents);
 }
 
 }  // namespace content

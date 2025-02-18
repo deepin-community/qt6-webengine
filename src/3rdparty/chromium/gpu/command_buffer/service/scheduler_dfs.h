@@ -13,6 +13,7 @@
 #include "base/functional/callback.h"
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
+#include "base/rand_util.h"
 #include "base/synchronization/lock.h"
 #include "base/thread_annotations.h"
 #include "base/time/time.h"
@@ -87,11 +88,6 @@ class GPU_EXPORT SchedulerDfs {
 
   // If the sequence should yield so that a higher priority sequence may run.
   bool ShouldYield(SequenceId sequence_id);
-
-  // Takes and resets current accumulated blocking time. Not available on all
-  // platforms. Must be enabled with --enable-gpu-blocked-time.
-  // Returns TimeDelta::Min() when not available.
-  base::TimeDelta TakeTotalBlockingTime();
 
   base::SingleThreadTaskRunner* GetTaskRunnerForTesting(SequenceId sequence_id);
 
@@ -342,6 +338,8 @@ class GPU_EXPORT SchedulerDfs {
   base::flat_map<SequenceId, std::unique_ptr<Sequence>> sequence_map_
       GUARDED_BY(lock_);
 
+  base::MetricsSubSampler metrics_subsampler_ GUARDED_BY(lock_);
+
   // Each thread will have its own priority queue to schedule sequences
   // created on that thread.
   struct PerThreadState {
@@ -366,7 +364,6 @@ class GPU_EXPORT SchedulerDfs {
 
   // Accumulated time the thread was blocked during running task
   base::TimeDelta total_blocked_time_ GUARDED_BY(lock_);
-  const bool blocked_time_collection_enabled_;
 
  private:
   FRIEND_TEST_ALL_PREFIXES(SchedulerDfsTest, StreamPriorities);

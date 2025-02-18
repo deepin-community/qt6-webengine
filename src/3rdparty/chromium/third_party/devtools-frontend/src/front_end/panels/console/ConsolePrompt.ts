@@ -10,9 +10,11 @@ import * as SDK from '../../core/sdk/sdk.js';
 import * as Formatter from '../../models/formatter/formatter.js';
 import * as SourceMapScopes from '../../models/source_map_scopes/source_map_scopes.js';
 import * as CodeMirror from '../../third_party/codemirror.next/codemirror.next.js';
+import * as IconButton from '../../ui/components/icon_button/icon_button.js';
 import * as TextEditor from '../../ui/components/text_editor/text_editor.js';
 import * as ObjectUI from '../../ui/legacy/components/object_ui/object_ui.js';
 import * as UI from '../../ui/legacy/legacy.js';
+import * as VisualLogging from '../../ui/visual_logging/visual_logging.js';
 
 import {ConsolePanel} from './ConsolePanel.js';
 import consolePromptStyles from './consolePrompt.css.js';
@@ -24,6 +26,16 @@ const UIStrings = {
    *@description Text in Console Prompt of the Console panel
    */
   consolePrompt: 'Console prompt',
+  /**
+   *@description Warning shown to users when pasting text into the DevTools console.
+   *@example {allow pasting} PH1
+   */
+  selfXssWarning:
+      'Warning: Don’t paste code into the DevTools Console that you don’t understand or haven’t reviewed yourself. This could allow attackers to steal your identity or take control of your computer. Please type ‘{PH1}’ below to allow pasting.',
+  /**
+   *@description Text a user needs to type in order to confirm that they are aware of the danger of pasting code into the DevTools console.
+   */
+  allowPasting: 'allow pasting',
 };
 const str_ = i18n.i18n.registerUIStrings('panels/console/ConsolePrompt.ts', UIStrings);
 const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
@@ -39,7 +51,7 @@ export class ConsolePrompt extends Common.ObjectWrapper.eventMixin<EventTypes, t
   private requestPreviewBound: () => Promise<void>;
   private requestPreviewCurrent = 0;
   private readonly innerPreviewElement: HTMLElement;
-  private readonly promptIcon: UI.Icon.Icon;
+  private readonly promptIcon: IconButton.Icon.Icon;
   private readonly iconThrottler: Common.Throttler.Throttler;
   private readonly eagerEvalSetting: Common.Settings.Setting<boolean>;
   private previewRequestForTest: Promise<void>|null;
@@ -50,6 +62,7 @@ export class ConsolePrompt extends Common.ObjectWrapper.eventMixin<EventTypes, t
   #argumentHintsState: CodeMirror.StateField<CodeMirror.Tooltip|null>;
 
   #editorHistory: TextEditor.TextEditorHistory.TextEditorHistory;
+  #selfXssWarningShown = false;
 
   constructor() {
     super();
@@ -64,12 +77,17 @@ export class ConsolePrompt extends Common.ObjectWrapper.eventMixin<EventTypes, t
     this.formatter = new ObjectUI.RemoteObjectPreviewFormatter.RemoteObjectPreviewFormatter();
     this.requestPreviewBound = this.requestPreview.bind(this);
     this.innerPreviewElement = this.eagerPreviewElement.createChild('div', 'console-eager-inner-preview');
-    this.eagerPreviewElement.appendChild(UI.Icon.Icon.create('smallicon-command-result', 'preview-result-icon'));
+    const previewIcon = new IconButton.Icon.Icon();
+    previewIcon.data = {iconName: 'chevron-left-dot', color: 'var(--icon-default)', width: '16px', height: '16px'};
+    previewIcon.classList.add('preview-result-icon');
+    this.eagerPreviewElement.appendChild(previewIcon);
 
     const editorContainerElement = this.element.createChild('div', 'console-prompt-editor-container');
     this.element.appendChild(this.eagerPreviewElement);
 
-    this.promptIcon = UI.Icon.Icon.create('smallicon-text-prompt', 'console-prompt-icon');
+    this.promptIcon = new IconButton.Icon.Icon();
+    this.promptIcon.data = {iconName: 'chevron-right', color: 'var(--icon-action)', width: '16px', height: '16px'};
+    this.promptIcon.classList.add('console-prompt-icon');
     this.element.appendChild(this.promptIcon);
     this.iconThrottler = new Common.Throttler.Throttler(0);
 
@@ -83,13 +101,15 @@ export class ConsolePrompt extends Common.ObjectWrapper.eventMixin<EventTypes, t
     const argumentHints = TextEditor.JavaScript.argumentHints();
     this.#argumentHintsState = argumentHints[0];
 
+    const autocompleteOnEnter = TextEditor.Config.DynamicSetting.bool(
+        'consoleAutocompleteOnEnter', [], TextEditor.Config.conservativeCompletion);
+
     const extensions = [
       CodeMirror.keymap.of(this.editorKeymap()),
       CodeMirror.EditorView.updateListener.of(update => this.editorUpdate(update)),
       argumentHints,
-      TextEditor.Config.conservativeCompletion,
+      autocompleteOnEnter.instance(),
       TextEditor.Config.showCompletionHint,
-      CodeMirror.javascript.javascript(),
       TextEditor.Config.baseConfiguration(this.initialText),
       TextEditor.Config.autocompletion.instance(),
       CodeMirror.javascript.javascriptLanguage.data.of({
@@ -101,7 +121,12 @@ export class ConsolePrompt extends Common.ObjectWrapper.eventMixin<EventTypes, t
       CodeMirror.autocompletion({aboveCursor: true}),
     ];
     if (Root.Runtime.Runtime.queryParam('noJavaScriptCompletion') !== 'true') {
-      extensions.push(TextEditor.JavaScript.completion());
+      extensions.push(
+          CodeMirror.javascript.javascript(),
+          TextEditor.JavaScript.completion(),
+      );
+    } else {
+      extensions.push(CodeMirror.javascript.javascriptLanguage);
     }
     const doc = this.initialText;
     const editorState = CodeMirror.EditorState.create({doc, extensions});
@@ -124,6 +149,8 @@ export class ConsolePrompt extends Common.ObjectWrapper.eventMixin<EventTypes, t
 
     // Record the console tool load time after the console prompt constructor is complete.
     Host.userMetrics.panelLoaded('console', 'DevTools.Launch.Console');
+
+    this.element.setAttribute('jslog', `${VisualLogging.action().track({keydown: 'Enter'}).context('console-prompt')}`);
   }
 
   private eagerSettingChanged(): void {
@@ -151,15 +178,8 @@ export class ConsolePrompt extends Common.ObjectWrapper.eventMixin<EventTypes, t
 
   private async requestPreview(): Promise<void> {
     const id = ++this.requestPreviewCurrent;
-    let text = TextEditor.Config.contentIncludingHint(this.editor.editor).trim();
+    const text = TextEditor.Config.contentIncludingHint(this.editor.editor).trim();
     const executionContext = UI.Context.Context.instance().flavor(SDK.RuntimeModel.ExecutionContext);
-    if (Root.Runtime.experiments.isEnabled('evaluateExpressionsWithSourceMaps') && executionContext) {
-      const callFrame = executionContext.debuggerModel.selectedCallFrame();
-      if (callFrame) {
-        const nameMap = await SourceMapScopes.NamesResolver.allVariablesInCallFrame(callFrame);
-        text = await this.substituteNames(text, nameMap);
-      }
-    }
     const {preview, result} = await ObjectUI.JavaScriptREPL.JavaScriptREPL.evaluateAndBuildPreview(
         text, true /* throwOnSideEffect */, true /* replMode */, 500 /* timeout */);
     if (this.requestPreviewCurrent !== id) {
@@ -181,12 +201,12 @@ export class ConsolePrompt extends Common.ObjectWrapper.eventMixin<EventTypes, t
     }
   }
 
-  wasShown(): void {
+  override wasShown(): void {
     super.wasShown();
     this.registerCSSFiles([consolePromptStyles]);
   }
 
-  willHide(): void {
+  override willHide(): void {
     if (this.highlightingNode) {
       this.highlightingNode = false;
       SDK.OverlayModel.OverlayModel.hideDOMNodeHighlight();
@@ -238,6 +258,13 @@ export class ConsolePrompt extends Common.ObjectWrapper.eventMixin<EventTypes, t
         },
       },
       {
+        key: 'Ctrl-Enter',
+        run: (): boolean => {
+          void this.handleEnter(/* forceEvaluate */ true);
+          return true;
+        },
+      },
+      {
         key: 'Enter',
         run: (): boolean => {
           void this.handleEnter();
@@ -248,13 +275,46 @@ export class ConsolePrompt extends Common.ObjectWrapper.eventMixin<EventTypes, t
     ];
   }
 
-  private async enterWillEvaluate(): Promise<boolean> {
-    const {state} = this.editor;
-    return state.doc.length > 0 && await TextEditor.JavaScript.isExpressionComplete(state.doc.toString());
+  private async enterWillEvaluate(forceEvaluate?: boolean): Promise<boolean> {
+    const {doc, selection} = this.editor.state;
+    if (!doc.length) {
+      return false;
+    }
+    if (forceEvaluate || selection.main.head < doc.length) {
+      return true;
+    }
+    const currentExecutionContext = UI.Context.Context.instance().flavor(SDK.RuntimeModel.ExecutionContext);
+    const isExpressionComplete = await TextEditor.JavaScript.isExpressionComplete(doc.toString());
+    if (currentExecutionContext !== UI.Context.Context.instance().flavor(SDK.RuntimeModel.ExecutionContext)) {
+      // We should not evaluate if the current context has changed since user action
+      return false;
+    }
+    return isExpressionComplete;
   }
 
-  private async handleEnter(): Promise<void> {
-    if (await this.enterWillEvaluate()) {
+  showSelfXssWarning(): void {
+    Common.Console.Console.instance().warn(
+        i18nString(UIStrings.selfXssWarning, {PH1: i18nString(UIStrings.allowPasting)}));
+    this.#selfXssWarningShown = true;
+    Host.userMetrics.actionTaken(Host.UserMetrics.Action.SelfXssWarningConsoleMessageShown);
+  }
+
+  private async handleEnter(forceEvaluate?: boolean): Promise<void> {
+    if (this.#selfXssWarningShown && this.text() === i18nString(UIStrings.allowPasting)) {
+      Common.Console.Console.instance().log(this.text());
+      this.editor.dispatch({
+        changes: {from: 0, to: this.editor.state.doc.length},
+        scrollIntoView: true,
+      });
+      Common.Settings.Settings.instance()
+          .createSetting('disableSelfXssWarning', false, Common.Settings.SettingStorageType.Synced)
+          .set(true);
+      this.#selfXssWarningShown = false;
+      Host.userMetrics.actionTaken(Host.UserMetrics.Action.SelfXssAllowPastingInConsole);
+      return;
+    }
+
+    if (await this.enterWillEvaluate(forceEvaluate)) {
       this.appendCommand(this.text(), true);
       TextEditor.JavaScript.closeArgumentsHintsTooltip(this.editor.editor, this.#argumentHintsState);
       this.editor.dispatch({
@@ -278,11 +338,14 @@ export class ConsolePrompt extends Common.ObjectWrapper.eventMixin<EventTypes, t
     const currentExecutionContext = UI.Context.Context.instance().flavor(SDK.RuntimeModel.ExecutionContext);
     if (currentExecutionContext) {
       const executionContext = currentExecutionContext;
-      const message = SDK.ConsoleModel.ConsoleModel.instance().addCommandMessage(executionContext, text);
-      const expression = ObjectUI.JavaScriptREPL.JavaScriptREPL.wrapObjectLiteral(text);
-      void this.evaluateCommandInConsole(executionContext, message, expression, useCommandLineAPI);
-      if (ConsolePanel.instance().isShowing()) {
-        Host.userMetrics.actionTaken(Host.UserMetrics.Action.CommandEvaluatedInConsolePanel);
+      const consoleModel = executionContext.target().model(SDK.ConsoleModel.ConsoleModel);
+      if (consoleModel) {
+        const message = consoleModel.addCommandMessage(executionContext, text);
+        const expression = ObjectUI.JavaScriptREPL.JavaScriptREPL.wrapObjectLiteral(text);
+        void this.evaluateCommandInConsole(executionContext, message, expression, useCommandLineAPI);
+        if (ConsolePanel.instance().isShowing()) {
+          Host.userMetrics.actionTaken(Host.UserMetrics.Action.CommandEvaluatedInConsolePanel);
+        }
       }
     }
   }
@@ -298,11 +361,12 @@ export class ConsolePrompt extends Common.ObjectWrapper.eventMixin<EventTypes, t
       }
     }
 
-    await SDK.ConsoleModel.ConsoleModel.instance().evaluateCommandInConsole(
-        executionContext, message, expression, useCommandLineAPI);
+    await executionContext.target()
+        .model(SDK.ConsoleModel.ConsoleModel)
+        ?.evaluateCommandInConsole(executionContext, message, expression, useCommandLineAPI);
   }
 
-  private async substituteNames(expression: string, mapping: Map<string, string>): Promise<string> {
+  private async substituteNames(expression: string, mapping: Map<string, string|null>): Promise<string> {
     try {
       return await Formatter.FormatterWorkerPool.formatterWorkerPool().javaScriptSubstitute(expression, mapping);
     } catch {
@@ -319,7 +383,7 @@ export class ConsolePrompt extends Common.ObjectWrapper.eventMixin<EventTypes, t
     }
   }
 
-  focus(): void {
+  override focus(): void {
     this.editor.focus();
   }
 

@@ -36,6 +36,7 @@
 #include "content/child/child_process.h"
 #include "content/common/content_constants_internal.h"
 #include "content/common/content_switches_internal.h"
+#include "content/common/features.h"
 #include "content/common/skia_utils.h"
 #include "content/gpu/gpu_child_thread.h"
 #include "content/public/common/content_client.h"
@@ -62,6 +63,7 @@
 #include "ui/events/platform/platform_event_source.h"
 #include "ui/gfx/switches.h"
 #include "ui/gl/gl_context.h"
+#include "ui/gl/gl_features.h"
 #include "ui/gl/gl_implementation.h"
 #include "ui/gl/gl_surface.h"
 #include "ui/gl/gl_switches.h"
@@ -84,20 +86,22 @@
 #include "base/win/scoped_com_initializer.h"
 #include "base/win/win_util.h"
 #include "base/win/windows_version.h"
-#include "media/gpu/windows/dxva_video_decode_accelerator_win.h"
-#include "media/gpu/windows/media_foundation_video_encode_accelerator_win.h"
+#include "media/base/win/mf_initializer.h"
+#include "sandbox/policy/win/sandbox_warmup.h"
 #include "sandbox/win/src/sandbox.h"
 #endif
 
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
-#include "content/gpu/gpu_sandbox_hook_linux.h"
+#include "content/child/sandboxed_process_thread_type_handler.h"
+#include "content/common/gpu_pre_sandbox_hook_linux.h"
 #include "sandbox/policy/linux/sandbox_linux.h"
 #include "sandbox/policy/sandbox_type.h"
 #endif
 
 #if BUILDFLAG(IS_MAC)
-#include "base/message_loop/message_pump_mac.h"
+#include "base/message_loop/message_pump_apple.h"
 #include "components/metal_util/device_removal.h"
+#include "gpu/ipc/service/built_in_shader_cache_loader.h"
 #include "media/gpu/mac/vt_video_decode_accelerator_mac.h"
 #include "sandbox/mac/seatbelt.h"
 #endif
@@ -141,7 +145,11 @@ class ContentSandboxHelper : public gpu::GpuSandboxHelper {
       TRACE_EVENT0("gpu", "Warm up rand");
       // Warm up the random subsystem, which needs to be done pre-sandbox on all
       // platforms.
+#if BUILDFLAG(IS_WIN)
+      sandbox::policy::WarmupRandomnessInfrastructure();
+#else
       std::ignore = base::RandUint64();
+#endif  // BUILDFLAG(IS_WIN)
     }
 
 #if BUILDFLAG(USE_VAAPI)
@@ -153,8 +161,7 @@ class ContentSandboxHelper : public gpu::GpuSandboxHelper {
 #endif
 #endif  // BUILDFLAG(USE_VAAPI)
 #if BUILDFLAG(IS_WIN)
-    media::DXVAVideoDecodeAccelerator::PreSandboxInitialization();
-    media::MediaFoundationVideoEncodeAccelerator::PreSandboxInitialization();
+    media::PreSandboxMediaFoundationInitialization();
 #endif
 
 #if BUILDFLAG(IS_MAC)
@@ -188,6 +195,14 @@ class ContentSandboxHelper : public gpu::GpuSandboxHelper {
 #endif
 };
 
+void LoadMetalShaderCacheIfNecessary() {
+#if BUILDFLAG(IS_MAC)
+  if (base::FeatureList::IsEnabled(features::kUseBuiltInMetalShaderCache)) {
+    gpu::BuiltInShaderCacheLoader::StartLoading();
+  }
+#endif
+}
+
 }  // namespace
 
 // Main function for starting the Gpu process.
@@ -199,6 +214,10 @@ int GpuMain(MainFunctionParams parameters) {
       kTraceEventGpuProcessSortIndex);
 
   const base::CommandLine& command_line = *parameters.command_line;
+
+  // Start this early on as it reads from a file (in the background) and full
+  // startup is gated by this completing.
+  LoadMetalShaderCacheIfNecessary();
 
   gpu::GpuPreferences gpu_preferences;
   if (command_line.HasSwitch(switches::kGpuPreferences)) {
@@ -222,7 +241,9 @@ int GpuMain(MainFunctionParams parameters) {
 
 #if BUILDFLAG(IS_WIN)
   base::win::EnableHighDPISupport();
+#if !BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
   base::trace_event::TraceEventETWExport::EnableETWExport();
+#endif
 
   // Prevent Windows from displaying a modal dialog on failures like not being
   // able to load a DLL.
@@ -308,6 +329,18 @@ int GpuMain(MainFunctionParams parameters) {
   // Since GPU initialization calls into skia, it's important to initialize skia
   // before it.
   InitializeSkia();
+
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+  // Thread type delegate of the process should be registered before
+  // first thread type change in ChildProcess constructor.
+  // It also needs to be registered before the process has multiple threads,
+  // which may race with application of the sandbox. InitializeAndStartSandbox()
+  // sandboxes the process and starts threads so this has to happen first.
+  if (base::FeatureList::IsEnabled(
+          features::kHandleChildThreadTypeChangesInBrowser)) {
+    SandboxedProcessThreadTypeHandler::Create();
+  }
+#endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
 
   // The ThreadPool must have been created before invoking |gpu_init| as it
   // needs the ThreadPool (in angle::InitializePlatform()). Do not start it
@@ -445,7 +478,7 @@ bool StartSandboxLinux(gpu::GpuWatchdogThread* watchdog_thread,
   sandbox_options.accelerated_video_encode_enabled =
       !gpu_prefs.disable_accelerated_video_encode;
 
-#if BUILDFLAG(IS_CHROMEOS)
+#if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_LINUX)
   // Video decoding of many video streams can use thousands of FDs as well as
   // Exo clients like Lacros.
   // See https://crbug.com/1417237
@@ -460,12 +493,10 @@ bool StartSandboxLinux(gpu::GpuWatchdogThread* watchdog_thread,
   bool res = sandbox::policy::SandboxLinux::GetInstance()->InitializeSandbox(
       sandbox::policy::SandboxTypeFromCommandLine(
           *base::CommandLine::ForCurrentProcess()),
-      base::BindOnce(GpuProcessPreSandboxHook), sandbox_options);
+      base::BindOnce(GpuPreSandboxHook), sandbox_options);
 
   if (watchdog_thread) {
-    base::Thread::Options thread_options;
-    thread_options.timer_slack = base::TIMER_SLACK_MAXIMUM;
-    watchdog_thread->StartWithOptions(std::move(thread_options));
+    watchdog_thread->Start();
   }
 
   return res;

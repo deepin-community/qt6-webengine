@@ -40,10 +40,11 @@ namespace stats {
   F(entity_state_residency_lookup_failed, kSingle,  kError,    kAnalysis, ""), \
   F(energy_uid_breakdown_missing_values,  kSingle,  kError,    kAnalysis, ""), \
   F(frame_timeline_event_parser_errors,   kSingle,  kInfo,     kAnalysis, ""), \
+  F(frame_timeline_unpaired_end_event,    kSingle,  kInfo,     kAnalysis, ""), \
   F(ftrace_bundle_tokenizer_errors,       kSingle,  kError,    kAnalysis, ""), \
-  F(ftrace_cpu_bytes_read_begin,          kIndexed, kInfo,     kTrace,    ""), \
-  F(ftrace_cpu_bytes_read_end,            kIndexed, kInfo,     kTrace,    ""), \
-  F(ftrace_cpu_bytes_read_delta,          kIndexed, kInfo,     kTrace,    ""), \
+  F(ftrace_cpu_bytes_begin,               kIndexed, kInfo,     kTrace,    ""), \
+  F(ftrace_cpu_bytes_end,                 kIndexed, kInfo,     kTrace,    ""), \
+  F(ftrace_cpu_bytes_delta,               kIndexed, kInfo,     kTrace,    ""), \
   F(ftrace_cpu_commit_overrun_begin,      kIndexed, kInfo,     kTrace,    ""), \
   F(ftrace_cpu_commit_overrun_end,        kIndexed, kInfo,     kTrace,    ""), \
   F(ftrace_cpu_commit_overrun_delta,      kIndexed, kError,    kTrace,    ""), \
@@ -65,7 +66,7 @@ namespace stats {
   F(ftrace_cpu_read_events_begin,         kIndexed, kInfo,     kTrace,    ""), \
   F(ftrace_cpu_read_events_end,           kIndexed, kInfo,     kTrace,    ""), \
   F(ftrace_cpu_read_events_delta,         kIndexed, kInfo,     kTrace,    ""), \
-  F(ftrace_setup_errors,                  kSingle,  kError,    kTrace,         \
+  F(ftrace_setup_errors,                  kSingle,  kInfo,     kTrace,         \
   "One or more atrace/ftrace categories were not found or failed to enable. "  \
   "See ftrace_setup_errors in the metadata table for more details."),          \
   F(fuchsia_non_numeric_counters,         kSingle,  kError,    kAnalysis, ""), \
@@ -152,6 +153,7 @@ namespace stats {
       "before they were closed in reality"),                                   \
   F(tokenizer_skipped_packets,            kSingle,  kInfo,     kAnalysis, ""), \
   F(vmstat_unknown_keys,                  kSingle,  kError,    kAnalysis, ""), \
+  F(psi_unknown_resource,                 kSingle,  kError,    kAnalysis, ""), \
   F(vulkan_allocations_invalid_string_id,                                      \
                                           kSingle,  kError,    kTrace,    ""), \
   F(clock_sync_failure,                   kSingle,  kError,    kAnalysis, ""), \
@@ -245,7 +247,35 @@ namespace stats {
   F(unknown_extension_fields,             kSingle,  kError,    kTrace,         \
       "TraceEvent had unknown extension fields, which might result in "        \
       "missing some arguments. You may need a newer version of trace "         \
-      "processor to parse them.")
+      "processor to parse them."),                                             \
+  F(network_trace_intern_errors,          kSingle,  kInfo,     kAnalysis, ""), \
+  F(network_trace_parse_errors,           kSingle,  kInfo,     kAnalysis, ""), \
+  F(atom_timestamp_missing,               kSingle,  kError,    kTrace,         \
+      "The corresponding timestamp_nanos entry for a StatsdAtom was "          \
+      "missing. Defaulted to inaccurate packet timestamp."),                   \
+  F(atom_unknown,                         kSingle,  kInfo,     kAnalysis,      \
+      "Unknown statsd atom. Atom descriptor may need to be updated"),          \
+  F(v8_intern_errors,                                                          \
+                                          kSingle,  kDataLoss, kAnalysis,      \
+      "Failed to resolve V8 interned data."),                                  \
+  F(winscope_sf_layers_parse_errors,      kSingle,  kInfo,     kAnalysis,      \
+      "SurfaceFlinger layers snapshot has unknown fields, which results in "   \
+      "some arguments missing. You may need a newer version of trace "         \
+      "processor to parse them."),                                             \
+  F(winscope_sf_transactions_parse_errors,                                     \
+                                          kSingle,  kInfo,     kAnalysis,      \
+      "SurfaceFlinger transactions packet has unknown fields, which results "  \
+      "in some arguments missing. You may need a newer version of trace "      \
+      "processor to parse them."),                                             \
+  F(winscope_shell_transitions_parse_errors,                                   \
+                                          kSingle,  kInfo,     kAnalysis,      \
+      "Shell transition packet has unknown fields, which results "             \
+      "in some arguments missing. You may need a newer version of trace "      \
+      "processor to parse them."),                                             \
+  F(ftrace_missing_event_id,              kSingle,  kInfo,    kAnalysis,       \
+      "Indicates that the ftrace event was dropped because the event id was "  \
+      "missing. This is an 'info' stat rather than an error stat because "     \
+      "this can be legitimately missing due to proto filtering.")
 // clang-format on
 
 enum Type {

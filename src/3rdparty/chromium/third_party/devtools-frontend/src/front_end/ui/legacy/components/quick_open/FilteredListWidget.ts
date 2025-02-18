@@ -2,9 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// TODO(crbug.com/1172300) Ignored during the jsdoc to ts migration)
-/* eslint-disable-next-line @typescript-eslint/no-explicit-any */
-
 import * as Common from '../../../../core/common/common.js';
 import * as i18n from '../../../../core/i18n/i18n.js';
 import * as Platform from '../../../../core/platform/platform.js';
@@ -28,6 +25,13 @@ const UIStrings = {
    * @description Text to show no results have been found
    */
   noResultsFound: 'No results found',
+  /**
+   * @description Aria alert to read the item in list when navigating with screen readers
+   * @example {name} PH1
+   * @example {2} PH2
+   * @example {5} PH3
+   */
+  sItemSOfS: '{PH1}, item {PH2} of {PH3}',
 };
 const str_ = i18n.i18n.registerUIStrings('ui/legacy/components/quick_open/FilteredListWidget.ts', UIStrings);
 const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
@@ -90,7 +94,7 @@ export class FilteredListWidget extends Common.ObjectWrapper.eventMixin<EventTyp
     this.itemElementsContainer.addEventListener('mousemove', this.onMouseMove.bind(this), false);
     UI.ARIAUtils.markAsListBox(this.itemElementsContainer);
     UI.ARIAUtils.setControls(this.inputBoxElement, this.itemElementsContainer);
-    UI.ARIAUtils.setAutocomplete(this.inputBoxElement, UI.ARIAUtils.AutocompleteInteractionModel.list);
+    UI.ARIAUtils.setAutocomplete(this.inputBoxElement, UI.ARIAUtils.AutocompleteInteractionModel.List);
 
     this.notFoundElement = this.bottomElementsContainer.createChild('div', 'not-found-text');
     this.notFoundElement.classList.add('hidden');
@@ -153,7 +157,7 @@ export class FilteredListWidget extends Common.ObjectWrapper.eventMixin<EventTyp
    * Sets the text prompt's accessible title. By default, it is "Quick open prompt".
    */
   setPromptTitle(title: string): void {
-    UI.ARIAUtils.setAccessibleName(this.inputBoxElement, title);
+    UI.ARIAUtils.setLabel(this.inputBoxElement, title);
   }
 
   showAsDialog(dialogTitle?: string): void {
@@ -162,7 +166,7 @@ export class FilteredListWidget extends Common.ObjectWrapper.eventMixin<EventTyp
     }
 
     this.dialog = new UI.Dialog.Dialog();
-    UI.ARIAUtils.setAccessibleName(this.dialog.contentElement, dialogTitle);
+    UI.ARIAUtils.setLabel(this.dialog.contentElement, dialogTitle);
     this.dialog.setMaxContentSize(new UI.Geometry.Size(504, 340));
     this.dialog.setSizeBehavior(UI.GlassPane.SizeBehavior.SetExactWidthMaxHeight);
     this.dialog.setContentPosition(null, 22);
@@ -214,12 +218,12 @@ export class FilteredListWidget extends Common.ObjectWrapper.eventMixin<EventTyp
     return this.query.substring(this.prefix.length).trim();
   }
 
-  wasShown(): void {
+  override wasShown(): void {
     this.registerCSSFiles([filteredListWidgetStyles]);
     this.attachProvider();
   }
 
-  willHide(): void {
+  override willHide(): void {
     if (this.provider) {
       this.provider.detach();
     }
@@ -317,6 +321,11 @@ export class FilteredListWidget extends Common.ObjectWrapper.eventMixin<EventTyp
       return;
     }
     this.list.selectItem(item);
+    const text = this.list.elementAtIndex(this.list.selectedIndex())?.textContent;
+    if (text) {
+      UI.ARIAUtils.alert(
+          i18nString(UIStrings.sItemSOfS, {PH1: text, PH2: this.list.selectedIndex() + 1, PH3: this.items.length}));
+    }
   }
 
   setQuery(query: string): void {
@@ -534,6 +543,11 @@ export class FilteredListWidget extends Common.ObjectWrapper.eventMixin<EventTyp
     }
     if (handled) {
       keyboardEvent.consume(true);
+      const text = this.list.elementAtIndex(this.list.selectedIndex())?.textContent;
+      if (text) {
+        UI.ARIAUtils.alert(
+            i18nString(UIStrings.sItemSOfS, {PH1: text, PH2: this.list.selectedIndex() + 1, PH3: this.items.length}));
+      }
     }
   }
 
@@ -629,6 +643,7 @@ export function getRegisteredProviders(): ProviderRegistration[] {
 export interface ProviderRegistration {
   prefix: string;
   iconName: string;
+  iconWidth: string;
   provider: () => Promise<Provider>;
   titlePrefix: (() => string);
   titleSuggestion?: (() => string);

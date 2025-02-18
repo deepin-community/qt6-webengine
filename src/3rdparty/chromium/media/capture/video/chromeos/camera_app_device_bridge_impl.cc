@@ -10,13 +10,15 @@
 #include "base/functional/callback_helpers.h"
 #include "base/task/bind_post_task.h"
 #include "base/task/single_thread_task_runner.h"
+#include "components/device_event_log/device_event_log.h"
 #include "media/base/media_switches.h"
 #include "media/capture/video/chromeos/public/cros_features.h"
 #include "media/capture/video/chromeos/video_capture_device_chromeos_halv3.h"
 
 namespace media {
 
-CameraAppDeviceBridgeImpl::CameraAppDeviceBridgeImpl() {
+CameraAppDeviceBridgeImpl::CameraAppDeviceBridgeImpl()
+    : ipc_thread_("CameraAppDeviceBridgeThread") {
   const base::CommandLine* command_line =
       base::CommandLine::ForCurrentProcess();
   bool use_fake_camera =
@@ -25,9 +27,22 @@ CameraAppDeviceBridgeImpl::CameraAppDeviceBridgeImpl() {
       command_line->HasSwitch(switches::kUseFileForFakeVideoCapture);
   is_supported_ =
       ShouldUseCrosCameraService() && !use_fake_camera && !use_file_camera;
+  receivers_.set_disconnect_with_reason_handler(
+      base::BindRepeating([](uint32_t reason, const std::string& description) {
+        CAMERA_LOG(EVENT) << "Receiver disconnected, reason " << reason << " ("
+                          << description << ")";
+      }));
+  CHECK(ipc_thread_.Start())
+      << "Can't bootstrap the CameraAppDeviceBridge thread.";
+  ipc_task_runner_ = ipc_thread_.task_runner();
 }
 
-CameraAppDeviceBridgeImpl::~CameraAppDeviceBridgeImpl() = default;
+CameraAppDeviceBridgeImpl::~CameraAppDeviceBridgeImpl() {
+  ipc_task_runner_->PostTask(
+      FROM_HERE, base::BindOnce(&CameraAppDeviceBridgeImpl::StopOnIPCThread,
+                                base::Unretained(this)));
+  ipc_thread_.Stop();
+}
 
 // static
 CameraAppDeviceBridgeImpl* CameraAppDeviceBridgeImpl::GetInstance() {
@@ -36,16 +51,25 @@ CameraAppDeviceBridgeImpl* CameraAppDeviceBridgeImpl::GetInstance() {
 
 void CameraAppDeviceBridgeImpl::BindReceiver(
     mojo::PendingReceiver<cros::mojom::CameraAppDeviceBridge> receiver) {
+  ipc_task_runner_->PostTask(
+      FROM_HERE,
+      base::BindOnce(&CameraAppDeviceBridgeImpl::BindReceiverOnIPCThread,
+                     base::Unretained(this), std::move(receiver)));
+}
+
+void CameraAppDeviceBridgeImpl::BindReceiverOnIPCThread(
+    mojo::PendingReceiver<cros::mojom::CameraAppDeviceBridge> receiver) {
+  CHECK(ipc_task_runner_->BelongsToCurrentThread());
   receivers_.Add(this, std::move(receiver));
 }
 
 void CameraAppDeviceBridgeImpl::OnVideoCaptureDeviceCreated(
     const std::string& device_id,
-    scoped_refptr<base::SingleThreadTaskRunner> ipc_task_runner) {
+    scoped_refptr<base::SingleThreadTaskRunner> vcd_task_runner) {
   {
     base::AutoLock lock(task_runner_map_lock_);
-    DCHECK_EQ(ipc_task_runners_.count(device_id), 0u);
-    ipc_task_runners_.emplace(device_id, ipc_task_runner);
+    DCHECK_EQ(vcd_task_runners_.count(device_id), 0u);
+    vcd_task_runners_.emplace(device_id, vcd_task_runner);
   }
 
   // Update the cached camera info while VCD is connected as well so that when
@@ -55,22 +79,22 @@ void CameraAppDeviceBridgeImpl::OnVideoCaptureDeviceCreated(
 
 void CameraAppDeviceBridgeImpl::OnVideoCaptureDeviceClosing(
     const std::string& device_id) {
-  auto remove_ipc_task_runner =
-      base::BindOnce(&CameraAppDeviceBridgeImpl::RemoveIpcTaskRunner,
+  auto remove_vcd_task_runner =
+      base::BindOnce(&CameraAppDeviceBridgeImpl::RemoveVCDTaskRunner,
                      base::Unretained(this), device_id);
   base::AutoLock lock(task_runner_map_lock_);
-  DCHECK_EQ(ipc_task_runners_.count(device_id), 1u);
+  DCHECK_EQ(vcd_task_runners_.count(device_id), 1u);
 
   // Since the IPC thread is owned by VCD and the CameraAppBridgeImpl is a
   // singleton which has longer lifetime than VCD, it is safe to use
   // base::Unretained(this) here.
-  ipc_task_runners_[device_id]->PostTask(
+  vcd_task_runners_[device_id]->PostTask(
       FROM_HERE,
       base::BindOnce(
           &CameraAppDeviceBridgeImpl::InvalidateDevicePtrsOnDeviceIpcThread,
           base::Unretained(this), device_id,
           /* should_disable_new_ptrs */ false,
-          std::move(remove_ipc_task_runner)));
+          std::move(remove_vcd_task_runner)));
 }
 
 void CameraAppDeviceBridgeImpl::OnDeviceMojoDisconnected(
@@ -80,8 +104,8 @@ void CameraAppDeviceBridgeImpl::OnDeviceMojoDisconnected(
                      base::Unretained(this), device_id));
   {
     base::AutoLock lock(task_runner_map_lock_);
-    auto it = ipc_task_runners_.find(device_id);
-    if (it != ipc_task_runners_.end()) {
+    auto it = vcd_task_runners_.find(device_id);
+    if (it != vcd_task_runners_.end()) {
       // Since the IPC thread is owned by VCD and the CameraAppBridgeImpl is a
       // singleton which has longer lifetime than VCD, it is safe to use
       // base::Unretained(this) here.
@@ -171,16 +195,17 @@ void CameraAppDeviceBridgeImpl::RemoveCameraAppDevice(
   camera_app_devices_.erase(it);
 }
 
-void CameraAppDeviceBridgeImpl::RemoveIpcTaskRunner(
+void CameraAppDeviceBridgeImpl::RemoveVCDTaskRunner(
     const std::string& device_id) {
   base::AutoLock lock(task_runner_map_lock_);
-  ipc_task_runners_.erase(device_id);
+  vcd_task_runners_.erase(device_id);
 }
 
 void CameraAppDeviceBridgeImpl::GetCameraAppDevice(
     const std::string& device_id,
     GetCameraAppDeviceCallback callback) {
-  DCHECK(is_supported_);
+  CHECK(is_supported_);
+  CHECK(ipc_task_runner_->BelongsToCurrentThread());
 
   mojo::PendingRemote<cros::mojom::CameraAppDevice> device_remote;
   {
@@ -200,11 +225,12 @@ void CameraAppDeviceBridgeImpl::GetCameraAppDevice(
     device->BindReceiver(device_remote.InitWithNewPipeAndPassReceiver());
   }
   UpdateCameraInfo(device_id);
-  std::move(callback).Run(cros::mojom::GetCameraAppDeviceStatus::SUCCESS,
+  std::move(callback).Run(cros::mojom::GetCameraAppDeviceStatus::kSuccess,
                           std::move(device_remote));
 }
 
 void CameraAppDeviceBridgeImpl::IsSupported(IsSupportedCallback callback) {
+  CHECK(ipc_task_runner_->BelongsToCurrentThread());
   std::move(callback).Run(is_supported_);
 }
 
@@ -212,6 +238,7 @@ void CameraAppDeviceBridgeImpl::SetVirtualDeviceEnabled(
     const std::string& device_id,
     bool enabled,
     SetVirtualDeviceEnabledCallback callback) {
+  CHECK(ipc_task_runner_->BelongsToCurrentThread());
   base::AutoLock lock(virtual_device_controller_lock_);
   if (!virtual_device_controller_) {
     std::move(callback).Run(false);
@@ -220,6 +247,33 @@ void CameraAppDeviceBridgeImpl::SetVirtualDeviceEnabled(
 
   virtual_device_controller_.Run(device_id, enabled);
   std::move(callback).Run(true);
+}
+
+void CameraAppDeviceBridgeImpl::SetDeviceInUse(const std::string& device_id,
+                                               bool in_use) {
+  base::AutoLock lock(devices_in_use_lock_);
+  if (in_use) {
+    devices_in_use_.insert(device_id);
+  } else {
+    devices_in_use_.erase(device_id);
+  }
+}
+
+void CameraAppDeviceBridgeImpl::IsDeviceInUse(const std::string& device_id,
+                                              IsDeviceInUseCallback callback) {
+  bool in_use;
+  {
+    base::AutoLock lock(devices_in_use_lock_);
+    in_use = devices_in_use_.contains(device_id);
+  }
+  std::move(callback).Run(in_use);
+}
+
+void CameraAppDeviceBridgeImpl::StopOnIPCThread() {
+  CHECK(ipc_task_runner_->BelongsToCurrentThread());
+  base::AutoLock lock(device_map_lock_);
+  camera_app_devices_.clear();
+  receivers_.Clear();
 }
 
 }  // namespace media

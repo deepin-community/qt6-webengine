@@ -121,6 +121,7 @@ class VIEWS_EXPORT DesktopNativeWidgetAura
   // internal::NativeWidgetPrivate:
   void InitNativeWidget(Widget::InitParams params) override;
   void OnWidgetInitDone() override;
+  void ReparentNativeViewImpl(gfx::NativeView new_parent) override;
   std::unique_ptr<NonClientFrameView> CreateNonClientFrameView() override;
   bool ShouldUseNativeFrame() const override;
   bool ShouldWindowContentsBeTransparent() const override;
@@ -169,6 +170,7 @@ class VIEWS_EXPORT DesktopNativeWidgetAura
   void Activate() override;
   void Deactivate() override;
   bool IsActive() const override;
+  void PaintAsActiveChanged() override;
   void SetZOrderLevel(ui::ZOrderLevel order) override;
   ui::ZOrderLevel GetZOrderLevel() const override;
   void SetVisibleOnAllWorkspaces(bool always_visible) override;
@@ -183,7 +185,9 @@ class VIEWS_EXPORT DesktopNativeWidgetAura
   void SetCanAppearInExistingFullscreenSpaces(
       bool can_appear_in_existing_fullscreen_spaces) override;
   void SetOpacity(float opacity) override;
-  void SetAspectRatio(const gfx::SizeF& aspect_ratio) override;
+  // See NativeWidgetPrivate::SetAspectRatio for more information.
+  void SetAspectRatio(const gfx::SizeF& aspect_ratio,
+                      const gfx::Size& excluded_margin) override;
   void FlashFrame(bool flash_frame) override;
   void RunShellDrag(View* view,
                     std::unique_ptr<ui::OSExchangeData> data,
@@ -207,7 +211,6 @@ class VIEWS_EXPORT DesktopNativeWidgetAura
   void SetVisibilityAnimationDuration(const base::TimeDelta& duration) override;
   void SetVisibilityAnimationTransition(
       Widget::VisibilityTransition transition) override;
-  bool IsTranslucentWindowOpacitySupported() const override;
   ui::GestureRecognizer* GetGestureRecognizer() override;
   ui::GestureConsumer* GetGestureConsumer() override;
   void OnSizeConstraintsChanged() override;
@@ -280,10 +283,12 @@ class VIEWS_EXPORT DesktopNativeWidgetAura
 
   void PerformDrop(views::DropHelper::DropCallback drop_cb,
                    std::unique_ptr<ui::OSExchangeData> data,
-                   ui::mojom::DragOperation& output_drag_op);
+                   ui::mojom::DragOperation& output_drag_op,
+                   std::unique_ptr<ui::LayerTreeOwner> drag_image_layer_owner);
 
   std::unique_ptr<aura::WindowTreeHost> host_;
-  raw_ptr<DesktopWindowTreeHost> desktop_window_tree_host_;
+  // DanglingUntriaged because it is assigned a DanglingUntriaged pointer.
+  raw_ptr<DesktopWindowTreeHost, DanglingUntriaged> desktop_window_tree_host_;
 
   // See class documentation for Widget in widget.h for a note about ownership.
   Widget::InitParams::Ownership ownership_ =
@@ -296,7 +301,7 @@ class VIEWS_EXPORT DesktopNativeWidgetAura
 
   // This is the return value from GetNativeView().
   // WARNING: this may be NULL, in particular during shutdown it becomes NULL.
-  raw_ptr<aura::Window, DanglingUntriaged> content_window_;
+  raw_ptr<aura::Window, AcrossTasksDanglingUntriaged> content_window_;
 
   base::WeakPtr<internal::NativeWidgetDelegate> native_widget_delegate_;
 
@@ -356,6 +361,12 @@ class VIEWS_EXPORT DesktopNativeWidgetAura
 
   // See DesktopWindowTreeHost::ShouldUseDesktopNativeCursorManager().
   bool use_desktop_native_cursor_manager_ = false;
+
+#if BUILDFLAG(IS_WIN)
+  // Used to track and discard duplicate events; Windows appears to
+  // generate them in some circumstances after a key press.
+  gfx::Point last_mouse_loc_;
+#endif
 
   // The following factory is used to provide references to the
   // DesktopNativeWidgetAura instance and used for calls to close to run drop

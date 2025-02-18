@@ -12,6 +12,7 @@
 #include "base/barrier_closure.h"
 #include "base/containers/span.h"
 #include "base/functional/bind.h"
+#include "base/no_destructor.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chromeos/dbus/u2f/u2f_client.h"
@@ -36,8 +37,8 @@ ChromeOSAuthenticator::ChromeOSAuthenticator(
 
 ChromeOSAuthenticator::~ChromeOSAuthenticator() {}
 
-FidoAuthenticator::Type ChromeOSAuthenticator::GetType() const {
-  return Type::kChromeOS;
+AuthenticatorType ChromeOSAuthenticator::GetType() const {
+  return AuthenticatorType::kChromeOS;
 }
 
 std::string ChromeOSAuthenticator::GetId() const {
@@ -66,9 +67,9 @@ AuthenticatorSupportedOptions ChromeOSAuthenticatorOptions(bool u2f_enabled) {
 }  // namespace
 
 const AuthenticatorSupportedOptions& ChromeOSAuthenticator::Options() const {
-  static const AuthenticatorSupportedOptions options =
-      ChromeOSAuthenticatorOptions(u2f_enabled_);
-  return options;
+  static const base::NoDestructor<AuthenticatorSupportedOptions> options(
+      ChromeOSAuthenticatorOptions(u2f_enabled_));
+  return *options;
 }
 
 absl::optional<FidoTransportProtocol>
@@ -169,8 +170,9 @@ void ChromeOSAuthenticator::MakeCredential(
   }
 
   req.set_user_id(std::string(request.user.id.begin(), request.user.id.end()));
-  if (request.user.display_name.has_value())
+  if (request.user.display_name.has_value()) {
     req.set_user_display_name(request.user.display_name.value());
+  }
   req.set_resident_credential(request.resident_key_required);
   DCHECK(generate_request_id_callback_);
   DCHECK(current_request_id_.empty());
@@ -345,10 +347,9 @@ void ChromeOSAuthenticator::OnGetAssertionResponse(
   std::vector<uint8_t> signature(assertion.signature().begin(),
                                  assertion.signature().end());
   std::vector<AuthenticatorGetAssertionResponse> authenticator_response;
-  authenticator_response.emplace_back(std::move(*authenticator_data),
-                                      std::move(signature));
-  authenticator_response.at(0).transport_used =
-      FidoTransportProtocol::kInternal;
+  authenticator_response.push_back(AuthenticatorGetAssertionResponse(
+      std::move(*authenticator_data), std::move(signature),
+      FidoTransportProtocol::kInternal));
   const std::string& credential_id = assertion.credential_id();
   authenticator_response.at(0).credential = PublicKeyCredentialDescriptor(
       CredentialType::kPublicKey,
@@ -386,8 +387,9 @@ void ChromeOSAuthenticator::HasLegacyU2fCredentialForGetAssertionRequest(
 }
 
 void ChromeOSAuthenticator::Cancel() {
-  if (current_request_id_.empty())
+  if (current_request_id_.empty()) {
     return;
+  }
 
   u2f::CancelWebAuthnFlowRequest req;
   req.set_request_id_str(current_request_id_);
@@ -421,11 +423,15 @@ void ChromeOSAuthenticator::IsUVPlatformAuthenticatorAvailable(
           return;
         }
 
-        // TODO(hcyang): Call u2fd here when u2fd is able to decide whether one
-        // of the user verification methods exists. Currently WebAuthn
-        // supports password authentication so every device with u2fd should
-        // be able to perform user verification.
-        std::move(callback).Run(true);
+        chromeos::U2FClient::Get()->IsUvpaa(
+            u2f::IsUvpaaRequest(),
+            base::BindOnce(
+                [](base::OnceCallback<void(bool is_available)> callback,
+                   absl::optional<u2f::IsUvpaaResponse> response) {
+                  std::move(callback).Run(response &&
+                                          !response->not_available());
+                },
+                std::move(callback)));
       },
       std::move(callback)));
 }
@@ -433,11 +439,11 @@ void ChromeOSAuthenticator::IsUVPlatformAuthenticatorAvailable(
 void ChromeOSAuthenticator::IsPowerButtonModeEnabled(
     base::OnceCallback<void(bool is_enabled)> callback) {
   chromeos::U2FClient::Get()->IsU2FEnabled(
-      u2f::IsUvpaaRequest(),
+      u2f::IsU2fEnabledRequest(),
       base::BindOnce(
           [](base::OnceCallback<void(bool is_enabled)> callback,
-             absl::optional<u2f::IsUvpaaResponse> response) {
-            std::move(callback).Run(response && response->available());
+             absl::optional<u2f::IsU2fEnabledResponse> response) {
+            std::move(callback).Run(response && response->enabled());
           },
           std::move(callback)));
 }

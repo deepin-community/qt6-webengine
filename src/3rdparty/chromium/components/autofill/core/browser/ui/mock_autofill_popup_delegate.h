@@ -7,10 +7,11 @@
 
 #include "components/autofill/core/browser/ui/autofill_popup_delegate.h"
 
+#include <optional>
+
 #include "base/functional/callback.h"
 #include "base/memory/weak_ptr.h"
 #include "testing/gmock/include/gmock/gmock.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace autofill {
 
@@ -22,35 +23,23 @@ class MockAutofillPopupDelegate : public AutofillPopupDelegate {
 
   MOCK_METHOD(void, OnPopupShown, (), (override));
   MOCK_METHOD(void, OnPopupHidden, (), (override));
-  MOCK_METHOD(void, OnPopupSuppressed, (), (override));
   MOCK_METHOD(void,
               DidSelectSuggestion,
-              (const std::u16string& value,
-               int frontend_id,
-               const Suggestion::BackendId& backend_id),
+              (const Suggestion& suggestion),
               (override));
   MOCK_METHOD(void,
               DidAcceptSuggestion,
-              (const Suggestion& suggestion, int position),
+              (const Suggestion& suggestion,
+               const AutofillPopupDelegate::SuggestionPosition& position),
               (override));
-  MOCK_METHOD(bool,
-              GetDeletionConfirmationText,
-              (const std::u16string& value,
-               int frontend_id,
-               std::u16string* title,
-               std::u16string* body),
+  MOCK_METHOD(void,
+              DidPerformButtonActionForSuggestion,
+              (const Suggestion&),
               (override));
-  MOCK_METHOD(bool,
-              RemoveSuggestion,
-              (const std::u16string& value, int frontend_id),
-              (override));
+  MOCK_METHOD(bool, RemoveSuggestion, (const Suggestion&), (override));
   MOCK_METHOD(void, ClearPreviewedForm, (), (override));
   MOCK_METHOD(PopupType, GetPopupType, (), (const, override));
-  MOCK_METHOD((absl::variant<AutofillDriver*,
-                             password_manager::PasswordManagerDriver*>),
-              GetDriver,
-              (),
-              (override));
+  MOCK_METHOD(FillingProduct, GetMainFillingProduct, (), (const, override));
   MOCK_METHOD(int32_t,
               GetWebContentsPopupControllerAxId,
               (),

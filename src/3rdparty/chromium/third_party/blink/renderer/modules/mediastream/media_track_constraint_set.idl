@@ -22,6 +22,7 @@ dictionary MediaTrackConstraintSet {
     ConstrainBoolean echoCancellation;
     ConstrainBoolean autoGainControl;
     ConstrainBoolean noiseSuppression;
+    [RuntimeEnabled=MediaCaptureVoiceIsolation] ConstrainBoolean voiceIsolation;
     ConstrainDouble latency;
     ConstrainLong channelCount;
     ConstrainDOMString deviceId;
@@ -50,12 +51,13 @@ dictionary MediaTrackConstraintSet {
 
     // W3C Media Capture Extensions
     [RuntimeEnabled=MediaCaptureBackgroundBlur] ConstrainBoolean backgroundBlur;
+    [RuntimeEnabled=MediaCaptureCameraControls] ConstrainBoolean eyeGazeCorrection;
+    [RuntimeEnabled=MediaCaptureCameraControls] ConstrainBoolean faceFraming;
 
-    // https://github.com/w3c/mediacapture-screen-share/pull/186/files
-    [RuntimeEnabled=DisplaySurfaceConstraint] ConstrainDOMString displaySurface;
-
-    // https://w3c.github.io/mediacapture-screen-share/#dfn-suppresslocalaudioplayback
-    [RuntimeEnabled=SuppressLocalAudioPlayback] ConstrainBoolean suppressLocalAudioPlayback;
+    // Screen Capture API
+    // https://w3c.github.io/mediacapture-screen-share/#extensions-to-mediatrackconstraintset
+    ConstrainDOMString displaySurface;
+    ConstrainBoolean suppressLocalAudioPlayback;
 
     // The "mandatory" and "_optional" members are retained for conformance
     // with https://www.w3.org/TR/2013/WD-mediacapture-streams-20130903/

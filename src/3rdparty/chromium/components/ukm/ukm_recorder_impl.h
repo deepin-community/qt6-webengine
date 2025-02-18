@@ -45,6 +45,25 @@ class UkmUtilsForTest;
 
 COMPONENT_EXPORT(UKM_RECORDER) BASE_DECLARE_FEATURE(kUkmSamplingRateFeature);
 
+// Convention for console debugging messages.
+// Example usage:
+// $ ./out/Default/chrome --force-enable-metrics-reporting
+// --metrics-upload-interval=60 \
+// --vmodule=*components/ukm*=3
+enum DebuggingLogLevel {
+  // Infrequent actions such as changes to user consent, or actions that
+  // typically occur once per reporting cycle, e.g. serialization of locally
+  // recorded event data into one report and uploading the report to the UKM
+  // server.
+  Rare = 1,
+  // Frequent and recurrent actions within each reporting period, such as an
+  // event being recorded, or a new browser navigation has occurred.
+  Medium = 2,
+  // Very frequent and possibly spammy actions or checks, such as events being
+  // dropped due to disabled recording.
+  Frequent = 3,
+};
+
 namespace debug {
 class UkmDebugDataExtractor;
 }
@@ -189,10 +208,19 @@ class COMPONENT_EXPORT(UKM_RECORDER) UkmRecorderImpl : public UkmRecorder {
   // Get the UkmConsentType associated for a given SourceIdType.
   static UkmConsentType GetConsentType(SourceIdType type);
 
+ protected:
+  // Get the set of hashes of event types that are observed by any of the
+  // |observers_|. These observers_ need to be notified of a new UKM event with
+  // event_hash in set of observed event_hashes even when UKM recording is
+  // disabled.
+  std::set<uint64_t> GetObservedEventHashes();
+  // Update the MojoUkmRecorder clients about any update in parameters. This
+  // method can be called on any thread.
+  virtual void OnRecorderParametersChanged() {}
+
  private:
   friend ::metrics::UkmBrowserTestBase;
   friend ::ukm::debug::UkmDebugDataExtractor;
-  friend ::ukm::UkmRecorderImplTest;
   friend ::ukm::UkmTestHelper;
   friend ::ukm::UkmUtilsForTest;
   FRIEND_TEST_ALL_PREFIXES(UkmRecorderImplTest, IsSampledIn);
@@ -202,6 +230,8 @@ class COMPONENT_EXPORT(UKM_RECORDER) UkmRecorderImpl : public UkmRecorder {
   FRIEND_TEST_ALL_PREFIXES(UkmRecorderImplTest, WebIdentityScopeUrl);
   FRIEND_TEST_ALL_PREFIXES(UkmRecorderImplTest, ObserverNotifiedOnNewEntry);
   FRIEND_TEST_ALL_PREFIXES(UkmRecorderImplTest, AddRemoveObserver);
+  FRIEND_TEST_ALL_PREFIXES(UkmRecorderImplTest,
+                           ObserverNotifiedWhenNotRecording);
 
   struct MetricAggregate {
     uint64_t total_count = 0;
@@ -228,16 +258,6 @@ class COMPONENT_EXPORT(UKM_RECORDER) UkmRecorderImpl : public UkmRecorder {
     uint64_t dropped_due_to_unconfigured = 0;
   };
 
-  // Result for ShouldRecordUrl() method.
-  enum class ShouldRecordUrlResult {
-    kOk = 0,        // URL will be recorded and observers will be notified.
-    kObserverOnly,  // The client has opted out from uploading UKM metrics.
-                    // As a result, observers will be notified but URL will not
-                    // be recorded.
-    kDropped,       // The URL is not allowed to be recorded and will be
-                    // dropped. Observers are not nofitied either.
-  };
-
   using MetricAggregateMap = std::map<uint64_t, MetricAggregate>;
 
   // Marks for deletion if the |source_id| is of a certain type.
@@ -250,8 +270,7 @@ class COMPONENT_EXPORT(UKM_RECORDER) UkmRecorderImpl : public UkmRecorder {
                               bool has_recorded_reason) const;
 
   // Returns the result whether |sanitized_url| should be recorded.
-  ShouldRecordUrlResult ShouldRecordUrl(SourceId source_id,
-                                        const GURL& sanitized_url) const;
+  bool ShouldRecordUrl(SourceId source_id, const GURL& sanitized_url) const;
 
   void RecordSource(std::unique_ptr<UkmSource> source);
 

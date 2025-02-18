@@ -86,6 +86,8 @@ class MediaWebContentsObserver::PlayerInfo {
 
   bool IsAudible() const { return has_audio_ && is_playing_ && !muted_; }
 
+  GlobalRenderFrameHostId GetHostId() { return id_.frame_routing_id; }
+
  private:
   void NotifyPlayerStarted() {
     observer_->web_contents_impl()->MediaStartedPlaying(
@@ -251,7 +253,7 @@ bool MediaWebContentsObserver::IsPictureInPictureAllowedForFullscreenVideo()
   return *picture_in_picture_allowed_in_fullscreen_;
 }
 
-const absl::optional<MediaPlayerId>&
+const std::optional<MediaPlayerId>&
 MediaWebContentsObserver::GetFullscreenVideoMediaPlayerId() const {
   return fullscreen_player_;
 }
@@ -402,32 +404,16 @@ void MediaWebContentsObserver::MediaPlayerObserverHostImpl::
       RenderFrameHost::FromID(media_player_id_.frame_routing_id);
   DCHECK(render_frame_host);
 
-  auto salt_and_origin = content::GetMediaDeviceSaltAndOrigin(
-      render_frame_host->GetProcess()->GetID(),
-      render_frame_host->GetRoutingID());
-
-  content::GetIOThreadTaskRunner({})->PostTask(
-      FROM_HERE,
-      base::BindOnce(
-          // TODO(dcheng): GetMediaDeviceIDForHMAC should not be overloaded,
-          // which would avoid the need for static_casts / wrapper lambdas
-          // (which are not zero cost).
-          static_cast<void (*)(
-              blink::mojom::MediaDeviceType, std::string, url::Origin,
-              std::string, scoped_refptr<base::SequencedTaskRunner>,
-              base::OnceCallback<void(const absl::optional<std::string>&)>)>(
-              &MediaStreamManager::GetMediaDeviceIDForHMAC),
-          blink::mojom::MediaDeviceType::MEDIA_AUDIO_OUTPUT,
-          salt_and_origin.device_id_salt, std::move(salt_and_origin.origin),
-          hashed_device_id, content::GetUIThreadTaskRunner({}),
-          base::BindOnce(
-              &MediaPlayerObserverHostImpl::OnReceivedTranslatedDeviceId,
-              weak_factory_.GetWeakPtr())));
+  content::GetRawDeviceIdFromHMAC(
+      render_frame_host->GetGlobalId(), hashed_device_id,
+      blink::mojom::MediaDeviceType::kMediaAudioOuput,
+      base::BindOnce(&MediaPlayerObserverHostImpl::OnReceivedTranslatedDeviceId,
+                     weak_factory_.GetWeakPtr()));
 }
 
 void MediaWebContentsObserver::MediaPlayerObserverHostImpl::
     OnReceivedTranslatedDeviceId(
-        const absl::optional<std::string>& translated_id) {
+        const std::optional<std::string>& translated_id) {
   if (!translated_id)
     return;
 
@@ -500,7 +486,8 @@ void MediaWebContentsObserver::MediaPlayerObserverHostImpl::
       media_web_contents_observer_->web_contents_impl()->audio_stream_monitor();
 
   if (should_add_client && !audio_client_registration_) {
-    audio_client_registration_ = audio_stream_monitor->RegisterAudibleClient();
+    audio_client_registration_ =
+        audio_stream_monitor->RegisterAudibleClient(player_info->GetHostId());
   } else if (!should_add_client && audio_client_registration_) {
     audio_client_registration_.reset();
   }

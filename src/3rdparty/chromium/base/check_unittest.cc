@@ -5,9 +5,13 @@
 #include <tuple>
 
 #include "base/check_deref.h"
+#include "base/check_version_internal.h"
+#include "base/debug/dump_without_crashing.h"
+#include "base/features.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/logging.h"
+#include "base/macros/concat.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/gtest_util.h"
@@ -17,6 +21,29 @@
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
+
+int g_dump_without_crashing_count = 0;
+
+constexpr base::NotFatalUntil kNextMilestone =
+    BASE_CONCAT(base::NotFatalUntil::M, BASE_CHECK_NEXT_VERSION_INTERNAL);
+constexpr base::NotFatalUntil kCurrentMilestone =
+    BASE_CONCAT(base::NotFatalUntil::M, BASE_CHECK_VERSION_INTERNAL);
+
+class ScopedExpectDumpWithoutCrashing {
+ public:
+  ScopedExpectDumpWithoutCrashing() {
+    g_dump_without_crashing_count = 0;
+    base::debug::SetDumpWithoutCrashingFunction(&DumpWithoutCrashing);
+  }
+
+  ~ScopedExpectDumpWithoutCrashing() {
+    EXPECT_EQ(1, g_dump_without_crashing_count);
+    base::debug::SetDumpWithoutCrashingFunction(nullptr);
+  }
+
+ private:
+  static void DumpWithoutCrashing() { ++g_dump_without_crashing_count; }
+};
 
 MATCHER_P2(LogErrorMatches, line, expected_msg, "") {
   EXPECT_THAT(arg, testing::HasSubstr(
@@ -58,16 +85,70 @@ MATCHER_P2(LogErrorMatches, line, expected_msg, "") {
 // Macro which expects a DCHECK to fire if DCHECKs are enabled.
 //
 // Note: Please use the `CheckDeathTest` fixture when using this check.
-// TODO(pbos): Try to update this macro to detect that non-fatal DCHECKs do
-// upload crash dumps without crashing.
 #define EXPECT_DCHECK(msg, check_expr)                                         \
   do {                                                                         \
     if (DCHECK_IS_ON() && logging::LOGGING_DCHECK == logging::LOGGING_FATAL) { \
       EXPECT_DEATH_IF_SUPPORTED(check_expr, CHECK_MATCHER(__LINE__, msg));     \
+    } else if (DCHECK_IS_ON()) {                                               \
+      ScopedExpectDumpWithoutCrashing expect_dump;                             \
+      check_expr;                                                              \
     } else {                                                                   \
       check_expr;                                                              \
     }                                                                          \
   } while (0)
+
+#define EXPECT_LOG_ERROR_WITH_FILENAME(expected_file, expected_line, expr,     \
+                                       msg)                                    \
+  do {                                                                         \
+    static bool got_log_message = false;                                       \
+    ASSERT_EQ(logging::GetLogMessageHandler(), nullptr);                       \
+    logging::SetLogMessageHandler([](int severity, const char* file, int line, \
+                                     size_t message_start,                     \
+                                     const std::string& str) {                 \
+      EXPECT_FALSE(got_log_message);                                           \
+      got_log_message = true;                                                  \
+      EXPECT_EQ(severity, logging::LOGGING_ERROR);                             \
+      EXPECT_EQ(str.substr(message_start), (msg));                             \
+      if (base::StringPiece(expected_file) != "") {                            \
+        EXPECT_STREQ(expected_file, file);                                     \
+      }                                                                        \
+      if (expected_line != -1) {                                               \
+        EXPECT_EQ(expected_line, line);                                        \
+      }                                                                        \
+      return true;                                                             \
+    });                                                                        \
+    expr;                                                                      \
+    EXPECT_TRUE(got_log_message);                                              \
+    logging::SetLogMessageHandler(nullptr);                                    \
+  } while (0)
+
+#define EXPECT_LOG_ERROR(expected_line, expr, msg) \
+  EXPECT_LOG_ERROR_WITH_FILENAME(__FILE__, expected_line, expr, msg)
+
+#define EXPECT_NO_LOG(expr)                                                    \
+  do {                                                                         \
+    ASSERT_EQ(logging::GetLogMessageHandler(), nullptr);                       \
+    logging::SetLogMessageHandler([](int severity, const char* file, int line, \
+                                     size_t message_start,                     \
+                                     const std::string& str) {                 \
+      EXPECT_TRUE(false) << "Unexpected log: " << str;                         \
+      return true;                                                             \
+    });                                                                        \
+    expr;                                                                      \
+    logging::SetLogMessageHandler(nullptr);                                    \
+  } while (0)
+
+#if DCHECK_IS_ON()
+#define EXPECT_DUMP_WILL_BE_CHECK EXPECT_DCHECK
+#else
+#define EXPECT_DUMP_WILL_BE_CHECK(expected_string, statement)               \
+  do {                                                                      \
+    ScopedExpectDumpWithoutCrashing expect_dump;                            \
+    EXPECT_LOG_ERROR_WITH_FILENAME(base::Location::Current().file_name(),   \
+                                   base::Location::Current().line_number(), \
+                                   statement, expected_string "\n");        \
+  } while (0)
+#endif  // DCHECK_IS_ON()
 
 TEST(CheckDeathTest, Basics) {
   EXPECT_CHECK("Check failed: false. ", CHECK(false));
@@ -113,7 +194,7 @@ TEST(CheckDeathTest, PCheck) {
 }
 
 TEST(CheckDeathTest, CheckOp) {
-  int a = 1, b = 2;
+  const int a = 1, b = 2;
   // clang-format off
   EXPECT_CHECK("Check failed: a == b (1 vs. 2)", CHECK_EQ(a, b));
   EXPECT_CHECK("Check failed: a != a (1 vs. 1)", CHECK_NE(a, a));
@@ -129,6 +210,19 @@ TEST(CheckDeathTest, CheckOp) {
   EXPECT_DCHECK("Check failed: a >= b (1 vs. 2)", DCHECK_GE(a, b));
   EXPECT_DCHECK("Check failed: a > b (1 vs. 2)",  DCHECK_GT(a, b));
   // clang-format on
+
+  EXPECT_DUMP_WILL_BE_CHECK("Check failed: a == b (1 vs. 2)",
+                            DUMP_WILL_BE_CHECK_EQ(a, b));
+  EXPECT_DUMP_WILL_BE_CHECK("Check failed: a != a (1 vs. 1)",
+                            DUMP_WILL_BE_CHECK_NE(a, a));
+  EXPECT_DUMP_WILL_BE_CHECK("Check failed: b <= a (2 vs. 1)",
+                            DUMP_WILL_BE_CHECK_LE(b, a));
+  EXPECT_DUMP_WILL_BE_CHECK("Check failed: b < a (2 vs. 1)",
+                            DUMP_WILL_BE_CHECK_LT(b, a));
+  EXPECT_DUMP_WILL_BE_CHECK("Check failed: a >= b (1 vs. 2)",
+                            DUMP_WILL_BE_CHECK_GE(a, b));
+  EXPECT_DUMP_WILL_BE_CHECK("Check failed: a > b (1 vs. 2)",
+                            DUMP_WILL_BE_CHECK_GT(a, b));
 }
 
 TEST(CheckTest, CheckStreamsAreLazy) {
@@ -185,13 +279,7 @@ class ScopedDcheckSeverity {
 };
 #endif  // BUILDFLAG(DCHECK_IS_CONFIGURABLE)
 
-// https://crbug.com/709067 tracks test flakiness on iOS.
-#if BUILDFLAG(IS_IOS)
-#define MAYBE_Dcheck DISABLED_Dcheck
-#else
-#define MAYBE_Dcheck Dcheck
-#endif
-TEST(CheckDeathTest, MAYBE_Dcheck) {
+TEST(CheckDeathTest, Dcheck) {
 #if BUILDFLAG(DCHECK_IS_CONFIGURABLE)
   // DCHECKs are enabled, and LOGGING_DCHECK is mutable, but defaults to
   // non-fatal. Set it to LOGGING_FATAL to get the expected behavior from the
@@ -202,15 +290,12 @@ TEST(CheckDeathTest, MAYBE_Dcheck) {
 #if defined(NDEBUG) && !defined(DCHECK_ALWAYS_ON)
   // Release build.
   EXPECT_FALSE(DCHECK_IS_ON());
-  EXPECT_FALSE(DLOG_IS_ON(DCHECK));
 #elif defined(NDEBUG) && defined(DCHECK_ALWAYS_ON)
   // Release build with real DCHECKS.
   EXPECT_TRUE(DCHECK_IS_ON());
-  EXPECT_TRUE(DLOG_IS_ON(DCHECK));
 #else
   // Debug build.
   EXPECT_TRUE(DCHECK_IS_ON());
-  EXPECT_TRUE(DLOG_IS_ON(DCHECK));
 #endif
 
   EXPECT_DCHECK("Check failed: false. ", DCHECK(false));
@@ -315,7 +400,7 @@ TEST(CheckDeathTest, ConfigurableDCheck) {
   DCHECK(false);
 
   // Verify that DCHECK* aren't hard-wired to crash on failure.
-  logging::LOGGING_DCHECK = logging::LOG_INFO;
+  logging::LOGGING_DCHECK = logging::LOGGING_ERROR;
   DCHECK(false);
   DCHECK_EQ(1, 2);
 
@@ -408,43 +493,6 @@ TEST(CheckDeathTest, OstreamVsToString) {
                CHECK_EQ(g, h));
 }
 
-#define EXPECT_LOG_ERROR_WITH_FILENAME(expected_file, expected_line, expr,     \
-                                       msg)                                    \
-  do {                                                                         \
-    static bool got_log_message = false;                                       \
-    ASSERT_EQ(logging::GetLogMessageHandler(), nullptr);                       \
-    logging::SetLogMessageHandler([](int severity, const char* file, int line, \
-                                     size_t message_start,                     \
-                                     const std::string& str) {                 \
-      EXPECT_FALSE(got_log_message);                                           \
-      got_log_message = true;                                                  \
-      EXPECT_EQ(severity, logging::LOG_ERROR);                                 \
-      EXPECT_EQ(str.substr(message_start), (msg));                             \
-      EXPECT_STREQ(expected_file, file);                                       \
-      EXPECT_EQ(expected_line, line);                                          \
-      return true;                                                             \
-    });                                                                        \
-    expr;                                                                      \
-    EXPECT_TRUE(got_log_message);                                              \
-    logging::SetLogMessageHandler(nullptr);                                    \
-  } while (0)
-
-#define EXPECT_LOG_ERROR(expected_line, expr, msg) \
-  EXPECT_LOG_ERROR_WITH_FILENAME(__FILE__, expected_line, expr, msg)
-
-#define EXPECT_NO_LOG(expr)                                                    \
-  do {                                                                         \
-    ASSERT_EQ(logging::GetLogMessageHandler(), nullptr);                       \
-    logging::SetLogMessageHandler([](int severity, const char* file, int line, \
-                                     size_t message_start,                     \
-                                     const std::string& str) {                 \
-      EXPECT_TRUE(false) << "Unexpected log: " << str;                         \
-      return true;                                                             \
-    });                                                                        \
-    expr;                                                                      \
-    logging::SetLogMessageHandler(nullptr);                                    \
-  } while (0)
-
 // This non-void function is here to make sure that NOTREACHED_NORETURN() is
 // properly annotated as [[noreturn]] and does not require a return statement.
 int NotReachedNoreturnInFunction() {
@@ -463,26 +511,66 @@ TEST(CheckDeathTest, NotReached) {
   // Expect a DCHECK with streamed params intact.
   EXPECT_DCHECK("Check failed: false. foo", NOTREACHED() << "foo");
 #elif CHECK_WILL_STREAM() || BUILDFLAG(ENABLE_LOG_ERROR_NOT_REACHED)
+  // This block makes sure that base::Location::Current() returns non-dummy
+  // values for file_name() and line_number(). This is necessary to avoid a
+  // false negative inside EXPECT_LOG_ERROR_WITH_FILENAME() where we exhonorate
+  // the NOTREACHED() macro below even though it didn't provide the expected
+  // filename and line numbers.
+  // See EXPECT_LOG_ERROR_WITH_FILENAME() for the exclusion of "" and -1.
+  ASSERT_NE(base::Location::Current().file_name(), nullptr);
+  EXPECT_STRNE(base::Location::Current().file_name(), "");
+  EXPECT_NE(base::Location::Current().line_number(), -1);
   // Expect LOG(ERROR) that looks like CHECK(false) with streamed params intact.
-  EXPECT_LOG_ERROR(__LINE__, NOTREACHED() << "foo",
-                   "Check failed: false. foo\n");
+  // Note that this implementation uses base::Location::Current() which doesn't
+  // match __FILE__ (strips ../../ prefix) and __LINE__ (uses __builtin_LINE()).
+  EXPECT_LOG_ERROR_WITH_FILENAME(base::Location::Current().file_name(),
+                                 base::Location::Current().line_number(),
+                                 NOTREACHED() << "foo",
+                                 "Check failed: false. foo\n");
 #else
-  // Expect LOG(ERROR) that looks like CHECK(false) without file, line or
-  // streamed params.
+  // Expect LOG(ERROR) that looks like CHECK(false) without file or line intact.
+  // We use `""` and `-1` to not expect a specific filename or line number.
+  // The actual location comes from
+  // logging::NotReachedError::TriggerNotReached() but we have no good way of
+  // asserting what that filename or line number is from here.
   EXPECT_LOG_ERROR_WITH_FILENAME("", -1, NOTREACHED() << "foo",
-                                 "Check failed: false. \n");
+                                 "Check failed: false. NOTREACHED log messages "
+                                 "are omitted in official builds. Sorry!\n");
 #endif
   EXPECT_DEATH_IF_SUPPORTED(NotReachedNoreturnInFunction(),
                             CHECK_WILL_STREAM() ? "NOTREACHED hit. " : "");
 }
 
+TEST(CheckDeathTest, NotReachedFatalExperiment) {
+  base::test::ScopedFeatureList feature_list(
+      base::features::kNotReachedIsFatal);
+  EXPECT_CHECK_DEATH(NOTREACHED());
+}
+
+TEST(CheckDeathTest, DumpWillBeCheck) {
+  DUMP_WILL_BE_CHECK(true);
+
+  EXPECT_DUMP_WILL_BE_CHECK("Check failed: false. foo",
+                            DUMP_WILL_BE_CHECK(false) << "foo");
+}
+
+TEST(CheckDeathTest, DumpWillBeNotReachedNoreturn) {
+  EXPECT_DUMP_WILL_BE_CHECK("NOTREACHED hit. foo",
+                            DUMP_WILL_BE_NOTREACHED_NORETURN() << "foo");
+}
+
+static const std::string kNotImplementedMessage = "Not implemented reached in ";
+
 TEST(CheckTest, NotImplemented) {
   static const std::string expected_msg =
-      std::string("Not implemented reached in ") + __PRETTY_FUNCTION__;
+      kNotImplementedMessage + __PRETTY_FUNCTION__;
 
 #if DCHECK_IS_ON()
   // Expect LOG(ERROR) with streamed params intact.
-  EXPECT_LOG_ERROR(__LINE__, NOTIMPLEMENTED() << "foo", expected_msg + "foo\n");
+  EXPECT_LOG_ERROR_WITH_FILENAME(base::Location::Current().file_name(),
+                                 base::Location::Current().line_number(),
+                                 NOTIMPLEMENTED() << "foo",
+                                 expected_msg + "foo\n");
 #else
   // Expect nothing.
   EXPECT_NO_LOG(NOTIMPLEMENTED() << "foo");
@@ -495,14 +583,47 @@ void NiLogOnce() {
 
 TEST(CheckTest, NotImplementedLogOnce) {
   static const std::string expected_msg =
-      "Not implemented reached in void (anonymous namespace)::NiLogOnce()\n";
+      kNotImplementedMessage + "void (anonymous namespace)::NiLogOnce()\n";
 
 #if DCHECK_IS_ON()
-  EXPECT_LOG_ERROR(__LINE__ - 8, NiLogOnce(), expected_msg);
+  EXPECT_LOG_ERROR_WITH_FILENAME(base::Location::Current().file_name(),
+                                 base::Location::Current().line_number() - 10,
+                                 NiLogOnce(), expected_msg);
   EXPECT_NO_LOG(NiLogOnce());
 #else
   EXPECT_NO_LOG(NiLogOnce());
   EXPECT_NO_LOG(NiLogOnce());
+#endif
+}
+
+void NiLogTenTimesWithStream() {
+  for (int i = 0; i < 10; ++i) {
+    NOTIMPLEMENTED_LOG_ONCE() << " iteration: " << i;
+  }
+}
+
+TEST(CheckTest, NotImplementedLogOnceWithStreamedParams) {
+  static const std::string expected_msg1 =
+      kNotImplementedMessage +
+      "void (anonymous namespace)::NiLogTenTimesWithStream() iteration: 0\n";
+
+#if DCHECK_IS_ON()
+  // Expect LOG(ERROR) with streamed params intact, exactly once.
+  EXPECT_LOG_ERROR_WITH_FILENAME(base::Location::Current().file_name(),
+                                 base::Location::Current().line_number() - 13,
+                                 NiLogTenTimesWithStream(), expected_msg1);
+  // A different NOTIMPLEMENTED_LOG_ONCE() call is still logged.
+  static const std::string expected_msg2 =
+      kNotImplementedMessage + __PRETTY_FUNCTION__ + "tree fish\n";
+  EXPECT_LOG_ERROR_WITH_FILENAME(base::Location::Current().file_name(),
+                                 base::Location::Current().line_number(),
+                                 NOTIMPLEMENTED_LOG_ONCE() << "tree fish",
+                                 expected_msg2);
+
+#else
+  // Expect nothing.
+  EXPECT_NO_LOG(NiLogTenTimesWithStream());
+  EXPECT_NO_LOG(NOTIMPLEMENTED_LOG_ONCE() << "tree fish");
 #endif
 }
 
@@ -540,6 +661,78 @@ TEST(CheckDeathTest, CheckDerefOfConstNullPointer) {
   std::string* const_null_pointer = nullptr;
   EXPECT_CHECK("Check failed: const_null_pointer != nullptr. ",
                CHECK_DEREF(const_null_pointer));
+}
+
+TEST(CheckDeathTest, CheckNotFatalUntil) {
+#if BUILDFLAG(DCHECK_IS_CONFIGURABLE)
+  // This specific death test relies on LOGGING_DCHECK not being FATAL, even
+  // when run as part of a death test, as CHECK with a milestone acts like a
+  // DCHECK.
+  ScopedDcheckSeverity dcheck_severity(logging::LOGGING_ERROR);
+#endif
+
+  // Next milestone not yet fatal.
+  EXPECT_DUMP_WILL_BE_CHECK("Check failed: false. foo",
+                            CHECK(false, kNextMilestone) << "foo");
+
+  // Fatal in current major version.
+  EXPECT_CHECK("Check failed: false. foo", CHECK(false, kCurrentMilestone)
+                                               << "foo");
+}
+
+TEST(CheckDeathTest, CheckOpNotFatalUntil) {
+#if BUILDFLAG(DCHECK_IS_CONFIGURABLE)
+  // This specific death test relies on LOGGING_DCHECK not being FATAL, even
+  // when run as part of a death test, as CHECK with a milestone acts like a
+  // DCHECK.
+  ScopedDcheckSeverity dcheck_severity(logging::LOGGING_ERROR);
+#endif
+  const int a = 1, b = 2;
+
+  // Next milestone not yet fatal.
+  EXPECT_DUMP_WILL_BE_CHECK("Check failed: a == b (1 vs. 2)",
+                            CHECK_EQ(a, b, kNextMilestone));
+  EXPECT_DUMP_WILL_BE_CHECK("Check failed: a != a (1 vs. 1)",
+                            CHECK_NE(a, a, kNextMilestone));
+  EXPECT_DUMP_WILL_BE_CHECK("Check failed: b <= a (2 vs. 1)",
+                            CHECK_LE(b, a, kNextMilestone));
+  EXPECT_DUMP_WILL_BE_CHECK("Check failed: b < a (2 vs. 1)",
+                            CHECK_LT(b, a, kNextMilestone));
+  EXPECT_DUMP_WILL_BE_CHECK("Check failed: a >= b (1 vs. 2)",
+                            CHECK_GE(a, b, kNextMilestone));
+  EXPECT_DUMP_WILL_BE_CHECK("Check failed: a > b (1 vs. 2)",
+                            CHECK_GT(a, b, kNextMilestone));
+
+  // Fatal in current major version.
+  EXPECT_CHECK("Check failed: a == b (1 vs. 2)",
+               CHECK_EQ(a, b, kCurrentMilestone));
+  EXPECT_CHECK("Check failed: a != a (1 vs. 1)",
+               CHECK_NE(a, a, kCurrentMilestone));
+  EXPECT_CHECK("Check failed: b <= a (2 vs. 1)",
+               CHECK_LE(b, a, kCurrentMilestone));
+  EXPECT_CHECK("Check failed: b < a (2 vs. 1)",
+               CHECK_LT(b, a, kCurrentMilestone));
+  EXPECT_CHECK("Check failed: a >= b (1 vs. 2)",
+               CHECK_GE(a, b, kCurrentMilestone));
+  EXPECT_CHECK("Check failed: a > b (1 vs. 2)",
+               CHECK_GT(a, b, kCurrentMilestone));
+}
+
+TEST(CheckDeathTest, NotReachedNotFatalUntil) {
+#if BUILDFLAG(DCHECK_IS_CONFIGURABLE)
+  // This specific death test relies on LOGGING_DCHECK not being FATAL, even
+  // when run as part of a death test, as CHECK with a milestone acts like a
+  // DCHECK.
+  ScopedDcheckSeverity dcheck_severity(logging::LOGGING_ERROR);
+#endif
+
+  // Next milestone not yet fatal.
+  EXPECT_DUMP_WILL_BE_CHECK("Check failed: false. foo",
+                            NOTREACHED(kNextMilestone) << "foo");
+
+  // Fatal in current major version.
+  EXPECT_CHECK("Check failed: false. foo", NOTREACHED(kCurrentMilestone)
+                                               << "foo");
 }
 
 }  // namespace

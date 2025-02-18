@@ -9,13 +9,13 @@
 #include <numeric>
 
 #include "base/command_line.h"
+#include "base/containers/contains.h"
 #include "base/containers/small_map.h"
 #include "base/feature_list.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/functional/callback_helpers.h"
-#include "base/guid.h"
 #include "base/location.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
@@ -75,7 +75,7 @@ File::Error CreateBlobDirectory(const FilePath& blob_storage_dir) {
 BlobStorageLimits CalculateBlobStorageLimitsImpl(
     const FilePath& storage_dir,
     bool disk_enabled,
-    absl::optional<uint64_t> optional_memory_size_for_testing) {
+    std::optional<uint64_t> optional_memory_size_for_testing) {
   int64_t disk_size = 0ull;
   uint64_t memory_size = optional_memory_size_for_testing
                              ? optional_memory_size_for_testing.value()
@@ -731,8 +731,7 @@ void BlobMemoryController::NotifyMemoryItemsUsed(
       continue;
     }
     // We don't want to re-add the item if we're currently paging it to disk.
-    if (items_paging_to_file_.find(item->item_id()) !=
-        items_paging_to_file_.end()) {
+    if (base::Contains(items_paging_to_file_, item->item_id())) {
       return;
     }
     auto iterator = populated_memory_items_.Get(item->item_id());

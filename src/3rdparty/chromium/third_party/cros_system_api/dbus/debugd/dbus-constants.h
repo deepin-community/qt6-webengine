@@ -13,7 +13,10 @@ const char kDebugdServiceName[] = "org.chromium.debugd";
 // Methods.
 const char kCupsAddManuallyConfiguredPrinter[] =
     "CupsAddManuallyConfiguredPrinter";
+const char kCupsAddManuallyConfiguredPrinterV2[] =
+    "CupsAddManuallyConfiguredPrinterV2";
 const char kCupsAddAutoConfiguredPrinter[] = "CupsAddAutoConfiguredPrinter";
+const char kCupsAddAutoConfiguredPrinterV2[] = "CupsAddAutoConfiguredPrinterV2";
 const char kCupsRemovePrinter[] = "CupsRemovePrinter";
 const char kCupsRetrievePpd[] = "CupsRetrievePpd";
 const char kDumpDebugLogs[] = "DumpDebugLogs";
@@ -31,8 +34,8 @@ const char kSystraceStop[] = "SystraceStop";
 const char kSystraceStatus[] = "SystraceStatus";
 const char kGetLog[] = "GetLog";
 const char kGetAllLogs[] = "GetAllLogs";
-const char kGetFeedbackLogsV2[] = "GetFeedbackLogsV2";
-const char kGetFeedbackLogsV3[] = "kGetFeedbackLogsV3";
+const char kGetFeedbackLogs[] = "GetFeedbackLogs";
+const char kGetFeedbackLogsV3[] = "GetFeedbackLogsV3";
 const char kKstaledSetRatio[] = "KstaledSetRatio";
 const char kTestICMP[] = "TestICMP";
 const char kTestICMPWithOptions[] = "TestICMPWithOptions";
@@ -66,6 +69,7 @@ const char kKernelFeatureList[] = "KernelFeatureList";
 const char kKernelFeatureEnable[] = "KernelFeatureEnable";
 // PacketCaptureStart method isn't defined as it's not needed by any component.
 const char kPacketCaptureStop[] = "PacketCaptureStop";
+const char kDRMTraceAnnotateLog[] = "DRMTraceAnnotateLog";
 
 // Signals.
 const char kPacketCaptureStartSignal[] = "PacketCaptureStart";
@@ -150,6 +154,10 @@ enum FeedbackLogType {
   PERF_DATA = 7,
   OS_RELEASE_INFO = 8,
   VAR_LOG_FILES = 9,
+  PMT_DATA = 10,
+  // The dumps may be added to feedback reports only if the
+  // UserFeedbackWithLowLevelDebugDataAllowed policy is enabled for all or wifi.
+  WIFI_FIRMWARE_DUMPS = 11,
 };
 
 // PrintscanDebugCategories flags. These values must align with those in
@@ -177,7 +185,8 @@ constexpr char kG2f[] = "g2f";
 constexpr char kVerbose[] = "verbose";
 constexpr char kUserKeys[] = "user_keys";
 constexpr char kAllowlistData[] = "allowlist_data";
-constexpr char kCorpProtocol[] = "corp_protocol";
+constexpr char kDisableCorpProtocol[] = "disable_corp_protocol";
+constexpr char kActivateFips[] = "activate_fips";
 }  // namespace u2f_flags
 
 }  // namespace debugd

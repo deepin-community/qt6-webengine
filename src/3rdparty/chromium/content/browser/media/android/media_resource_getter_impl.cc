@@ -24,6 +24,7 @@
 #include "net/base/auth.h"
 #include "net/base/isolation_info.h"
 #include "net/base/network_anonymization_key.h"
+#include "net/cookies/cookie_setting_override.h"
 #include "net/http/http_auth.h"
 #include "services/network/public/mojom/network_context.mojom.h"
 #include "services/network/public/mojom/restricted_cookie_manager.mojom.h"
@@ -60,7 +61,7 @@ GetRestrictedCookieManagerForContext(
          site_for_cookies.IsFirstParty(top_frame_origin.GetURL()));
   net::IsolationInfo isolation_info = net::IsolationInfo::Create(
       net::IsolationInfo::RequestType::kOther, top_frame_origin,
-      top_frame_origin, site_for_cookies, absl::nullopt);
+      top_frame_origin, site_for_cookies);
 
   mojo::PendingRemote<network::mojom::RestrictedCookieManager> pipe;
   static_cast<StoragePartitionImpl*>(storage_partition)
@@ -71,6 +72,8 @@ GetRestrictedCookieManagerForContext(
           render_frame_host ? render_frame_host->GetProcess()->GetID() : -1,
           render_frame_host ? render_frame_host->GetRoutingID()
                             : MSG_ROUTING_NONE,
+          render_frame_host ? render_frame_host->GetCookieSettingOverrides()
+                            : net::CookieSettingOverrides(),
           pipe.InitWithNewPipeAndPassReceiver(),
           render_frame_host ? render_frame_host->CreateCookieAccessObserver()
                             : mojo::NullRemote());
@@ -87,7 +90,13 @@ void ReturnResultOnUIThread(
 void ReturnResultOnUIThreadAndClosePipe(
     mojo::Remote<network::mojom::RestrictedCookieManager> pipe,
     base::OnceCallback<void(const std::string&)> callback,
+    uint64_t version,
+    base::ReadOnlySharedMemoryRegion shared_memory_region,
     const std::string& result) {
+  // Clients of GetCookiesString() are free to use |shared_memory_region| and
+  // |result| to avoid IPCs when possible. This class has not proven to be a
+  // high enough source of IPC traffic to warrant wiring this up. Using them
+  // is completely optional so they are simply dropped here.
   GetUIThreadTaskRunner({})->PostTask(
       FROM_HERE, base::BindOnce(std::move(callback), result));
 }
@@ -111,7 +120,7 @@ void MediaResourceGetterImpl::GetAuthCredentials(
   // Non-standard URLs, such as data, will not be found in HTTP auth cache
   // anyway, because they have no valid origin, so don't waste the time.
   if (!url.IsStandard()) {
-    GetAuthCredentialsCallback(std::move(callback), absl::nullopt);
+    GetAuthCredentialsCallback(std::move(callback), std::nullopt);
     return;
   }
 
@@ -120,7 +129,7 @@ void MediaResourceGetterImpl::GetAuthCredentials(
   // Can't get a NetworkAnonymizationKey to get credentials if the
   // RenderFrameHost has already been destroyed.
   if (!render_frame_host) {
-    GetAuthCredentialsCallback(std::move(callback), absl::nullopt);
+    GetAuthCredentialsCallback(std::move(callback), std::nullopt);
     return;
   }
 
@@ -136,6 +145,7 @@ void MediaResourceGetterImpl::GetCookies(
     const GURL& url,
     const net::SiteForCookies& site_for_cookies,
     const url::Origin& top_frame_origin,
+    bool has_storage_access,
     GetCookieCB callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
@@ -155,17 +165,16 @@ void MediaResourceGetterImpl::GetCookies(
           RenderFrameHostImpl::FromID(render_process_id_, render_frame_id_)));
   network::mojom::RestrictedCookieManager* cookie_manager_ptr =
       cookie_manager.get();
-  // TODO(https://crbug.com/1416422): use the correct value for
-  // `has_storage_access` here, instead of passing false.
   cookie_manager_ptr->GetCookiesString(
-      url, site_for_cookies, top_frame_origin, /*has_storage_access=*/false,
+      url, site_for_cookies, top_frame_origin, has_storage_access,
+      /*get_version_shared_memory=*/false, /*is_ad_tagged=*/false,
       base::BindOnce(&ReturnResultOnUIThreadAndClosePipe,
                      std::move(cookie_manager), std::move(callback)));
 }
 
 void MediaResourceGetterImpl::GetAuthCredentialsCallback(
     GetAuthCredentialsCB callback,
-    const absl::optional<net::AuthCredentials>& credentials) {
+    const std::optional<net::AuthCredentials>& credentials) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (credentials)
     std::move(callback).Run(credentials->username(), credentials->password());

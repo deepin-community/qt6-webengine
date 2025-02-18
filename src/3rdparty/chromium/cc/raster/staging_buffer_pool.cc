@@ -72,11 +72,12 @@ void WaitForQueryResult(gpu::raster::RasterInterface* ri, GLuint query_id) {
 
 }  // namespace
 
-StagingBuffer::StagingBuffer(const gfx::Size& size, viz::ResourceFormat format)
+StagingBuffer::StagingBuffer(const gfx::Size& size,
+                             viz::SharedImageFormat format)
     : size(size), format(format) {}
 
 StagingBuffer::~StagingBuffer() {
-  DCHECK(mailbox.IsZero());
+  DCHECK(!client_shared_image);
   DCHECK_EQ(query_id, 0u);
 }
 
@@ -86,14 +87,13 @@ void StagingBuffer::DestroyGLResources(gpu::raster::RasterInterface* ri,
     ri->DeleteQueriesEXT(1, &query_id);
     query_id = 0;
   }
-  if (!mailbox.IsZero()) {
-    sii->DestroySharedImage(sync_token, mailbox);
-    mailbox.SetZero();
+  if (client_shared_image) {
+    sii->DestroySharedImage(sync_token, std::move(client_shared_image));
   }
 }
 
 void StagingBuffer::OnMemoryDump(base::trace_event::ProcessMemoryDump* pmd,
-                                 viz::ResourceFormat dump_format,
+                                 viz::SharedImageFormat dump_format,
                                  bool in_free_list) const {
   if (!gpu_memory_buffer)
     return;
@@ -103,8 +103,7 @@ void StagingBuffer::OnMemoryDump(base::trace_event::ProcessMemoryDump* pmd,
       base::StringPrintf("cc/one_copy/staging_memory/buffer_%p", this);
   MemoryAllocatorDump* buffer_dump = pmd->CreateAllocatorDump(buffer_dump_name);
 
-  uint64_t buffer_size_in_bytes =
-      viz::ResourceSizes::UncheckedSizeInBytes<uint64_t>(size, dump_format);
+  uint64_t buffer_size_in_bytes = dump_format.EstimatedSizeInBytes(size);
   buffer_dump->AddScalar(MemoryAllocatorDump::kNameSize,
                          MemoryAllocatorDump::kUnitsBytes,
                          buffer_size_in_bytes);
@@ -178,7 +177,7 @@ bool StagingBufferPool::OnMemoryDump(
     base::trace_event::ProcessMemoryDump* pmd) {
   base::AutoLock lock(lock_);
 
-  if (args.level_of_detail == MemoryDumpLevelOfDetail::BACKGROUND) {
+  if (args.level_of_detail == MemoryDumpLevelOfDetail::kBackground) {
     std::string dump_name("cc/one_copy/staging_memory");
     MemoryAllocatorDump* dump = pmd->CreateAllocatorDump(dump_name);
     dump->AddScalar(MemoryAllocatorDump::kNameSize,
@@ -196,42 +195,41 @@ bool StagingBufferPool::OnMemoryDump(
 }
 
 void StagingBufferPool::AddStagingBuffer(const StagingBuffer* staging_buffer,
-                                         viz::ResourceFormat format) {
-  DCHECK(buffers_.find(staging_buffer) == buffers_.end());
+                                         viz::SharedImageFormat format) {
+  DCHECK(!base::Contains(buffers_, staging_buffer));
   buffers_.insert(staging_buffer);
-  int buffer_usage_in_bytes = viz::ResourceSizes::UncheckedSizeInBytes<int>(
-      staging_buffer->size, format);
+  int buffer_usage_in_bytes = format.EstimatedSizeInBytes(staging_buffer->size);
   staging_buffer_usage_in_bytes_ += buffer_usage_in_bytes;
 }
 
 void StagingBufferPool::RemoveStagingBuffer(
     const StagingBuffer* staging_buffer) {
-  DCHECK(buffers_.find(staging_buffer) != buffers_.end());
+  DCHECK(base::Contains(buffers_, staging_buffer));
   buffers_.erase(staging_buffer);
-  int buffer_usage_in_bytes = viz::ResourceSizes::UncheckedSizeInBytes<int>(
-      staging_buffer->size, staging_buffer->format);
+  int buffer_usage_in_bytes =
+      staging_buffer->format.EstimatedSizeInBytes(staging_buffer->size);
   DCHECK_GE(staging_buffer_usage_in_bytes_, buffer_usage_in_bytes);
   staging_buffer_usage_in_bytes_ -= buffer_usage_in_bytes;
 }
 
 void StagingBufferPool::MarkStagingBufferAsFree(
     const StagingBuffer* staging_buffer) {
-  int buffer_usage_in_bytes = viz::ResourceSizes::UncheckedSizeInBytes<int>(
-      staging_buffer->size, staging_buffer->format);
+  int buffer_usage_in_bytes =
+      staging_buffer->format.EstimatedSizeInBytes(staging_buffer->size);
   free_staging_buffer_usage_in_bytes_ += buffer_usage_in_bytes;
 }
 
 void StagingBufferPool::MarkStagingBufferAsBusy(
     const StagingBuffer* staging_buffer) {
-  int buffer_usage_in_bytes = viz::ResourceSizes::UncheckedSizeInBytes<int>(
-      staging_buffer->size, staging_buffer->format);
+  int buffer_usage_in_bytes =
+      staging_buffer->format.EstimatedSizeInBytes(staging_buffer->size);
   DCHECK_GE(free_staging_buffer_usage_in_bytes_, buffer_usage_in_bytes);
   free_staging_buffer_usage_in_bytes_ -= buffer_usage_in_bytes;
 }
 
 std::unique_ptr<StagingBuffer> StagingBufferPool::AcquireStagingBuffer(
     const gfx::Size& size,
-    viz::ResourceFormat format,
+    viz::SharedImageFormat format,
     uint64_t previous_content_id) {
   base::AutoLock lock(lock_);
 

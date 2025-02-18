@@ -19,7 +19,6 @@
 #include "content/browser/file_system/file_system_manager_impl.h"
 #include "content/browser/geolocation/geolocation_service_impl.h"
 #include "content/browser/manifest/manifest_manager_host.h"
-#include "content/browser/portal/portal.h"
 #include "content/browser/renderer_host/back_forward_cache_impl.h"
 #include "content/browser/renderer_host/page_lifecycle_state_manager.h"
 #include "content/browser/renderer_host/render_frame_host_delegate.h"
@@ -43,12 +42,12 @@
 #include "third_party/blink/public/common/associated_interfaces/associated_interface_registry.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/mojom/blob/blob_url_store.mojom.h"
+#include "third_party/blink/public/mojom/blob/file_backed_blob_factory.mojom.h"
 #include "third_party/blink/public/mojom/broadcastchannel/broadcast_channel.mojom.h"
 #include "third_party/blink/public/mojom/frame/back_forward_cache_controller.mojom.h"
 #include "third_party/blink/public/mojom/frame/frame.mojom.h"
 #include "third_party/blink/public/mojom/manifest/manifest_observer.mojom.h"
 #include "third_party/blink/public/mojom/page/display_cutout.mojom.h"
-#include "third_party/blink/public/mojom/portal/portal.mojom.h"
 #include "third_party/blink/public/mojom/shared_storage/shared_storage.mojom.h"
 
 #if BUILDFLAG(ENABLE_PPAPI)
@@ -208,15 +207,6 @@ void RenderFrameHostImpl::SetUpMojoConnection() {
       },
       base::Unretained(this)));
 
-  associated_registry_->AddInterface<blink::mojom::PortalHost>(
-      base::BindRepeating(
-          [](RenderFrameHostImpl* self,
-             mojo::PendingAssociatedReceiver<blink::mojom::PortalHost>
-                 receiver) {
-            Portal::BindPortalHostReceiver(self, std::move(receiver));
-          },
-          base::Unretained(this)));
-
   associated_registry_->AddInterface<blink::mojom::LocalFrameHost>(
       base::BindRepeating(
           [](RenderFrameHostImpl* impl,
@@ -319,10 +309,10 @@ void RenderFrameHostImpl::SetUpMojoConnection() {
           },
           base::Unretained(this)));
 
-  associated_registry_->AddInterface<blink::mojom::ConversionHost>(
+  associated_registry_->AddInterface<blink::mojom::AttributionHost>(
       base::BindRepeating(
           [](RenderFrameHostImpl* impl,
-             mojo::PendingAssociatedReceiver<blink::mojom::ConversionHost>
+             mojo::PendingAssociatedReceiver<blink::mojom::AttributionHost>
                  receiver) {
             AttributionHost::BindReceiver(std::move(receiver), impl);
           },
@@ -346,6 +336,13 @@ void RenderFrameHostImpl::SetUpMojoConnection() {
         base::BindRepeating(
             &RenderFrameHostImpl::BindBlobUrlStoreAssociatedReceiver,
             base::Unretained(this)));
+  }
+
+  if (base::FeatureList::IsEnabled(
+          blink::features::kEnableFileBackedBlobFactory)) {
+    associated_registry_->AddInterface<blink::mojom::FileBackedBlobFactory>(
+        base::BindRepeating(&RenderFrameHostImpl::BindFileBackedBlobFactory,
+                            base::Unretained(this)));
   }
 
   // Allow embedders to register their binders.

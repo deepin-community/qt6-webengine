@@ -5,8 +5,9 @@
 #include "extensions/browser/extensions_browser_client.h"
 
 #include <memory>
-
+#include <optional>
 #include "base/files/file_path.h"
+#include "base/functional/callback.h"
 #include "base/logging.h"
 #include "base/memory/ref_counted_memory.h"
 #include "components/update_client/update_client.h"
@@ -147,6 +148,11 @@ bool ExtensionsBrowserClient::IsExtensionTelemetryServiceEnabled(
   return false;
 }
 
+void ExtensionsBrowserClient::NotifyExtensionApiDeclarativeNetRequest(
+    content::BrowserContext* context,
+    const ExtensionId& extension_id,
+    const std::vector<api::declarative_net_request::Rule>& rules) const {}
+
 void ExtensionsBrowserClient::NotifyExtensionRemoteHostContacted(
     content::BrowserContext* context,
     const ExtensionId& extension_id,
@@ -202,12 +208,13 @@ void ExtensionsBrowserClient::AddDOMActionToActivityLog(
     const std::u16string& url_title,
     int call_type) {}
 
-content::StoragePartitionConfig
-ExtensionsBrowserClient::GetWebViewStoragePartitionConfig(
+void ExtensionsBrowserClient::GetWebViewStoragePartitionConfig(
     content::BrowserContext* browser_context,
     content::SiteInstance* owner_site_instance,
     const std::string& partition_name,
-    bool in_memory) {
+    bool in_memory,
+    base::OnceCallback<void(std::optional<content::StoragePartitionConfig>)>
+        callback) {
   const GURL& owner_site_url = owner_site_instance->GetSiteURL();
   auto partition_config = content::StoragePartitionConfig::Create(
       browser_context, owner_site_url.host(), partition_name, in_memory);
@@ -230,7 +237,16 @@ ExtensionsBrowserClient::GetWebViewStoragePartitionConfig(
                 partition_config.GetFallbackForBlobUrls().value());
     }
   }
-  return partition_config;
+  std::move(callback).Run(partition_config);
+}
+
+void ExtensionsBrowserClient::CreatePasswordReuseDetectionManager(
+    content::WebContents* web_contents) const {}
+
+media_device_salt::MediaDeviceSaltService*
+ExtensionsBrowserClient::GetMediaDeviceSaltService(
+    content::BrowserContext* context) {
+  return nullptr;
 }
 
 }  // namespace extensions

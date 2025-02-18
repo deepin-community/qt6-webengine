@@ -4,7 +4,6 @@
 
 #include "chrome/browser/extensions/api/resources_private/resources_private_api.h"
 
-#include <memory>
 #include <string>
 #include <utility>
 
@@ -67,17 +66,17 @@ ResourcesPrivateGetStringsFunction::ResourcesPrivateGetStringsFunction() {}
 ResourcesPrivateGetStringsFunction::~ResourcesPrivateGetStringsFunction() {}
 
 ExtensionFunction::ResponseAction ResourcesPrivateGetStringsFunction::Run() {
-  std::unique_ptr<get_strings::Params> params(
-      get_strings::Params::Create(args()));
+  std::optional<get_strings::Params> params =
+      get_strings::Params::Create(args());
   base::Value::Dict dict;
 
   api::resources_private::Component component = params->component;
 
   switch (component) {
-    case api::resources_private::COMPONENT_IDENTITY:
+    case api::resources_private::Component::kIdentity:
       AddStringsForIdentity(&dict);
       break;
-    case api::resources_private::COMPONENT_PDF: {
+    case api::resources_private::Component::kPdf: {
 #if BUILDFLAG(ENABLE_PDF)
       pdf_extension_util::AddStrings(pdf_extension_util::PdfViewerContext::kAll,
                                      &dict);
@@ -92,7 +91,7 @@ ExtensionFunction::ResponseAction ResourcesPrivateGetStringsFunction::Run() {
 #endif  // BUILDFLAG(ENABLE_PDF)
       break;
     }
-    case api::resources_private::COMPONENT_NONE:
+    case api::resources_private::Component::kNone:
       NOTREACHED();
   }
 

@@ -10,6 +10,7 @@
 #include <xnnpack.h>
 #include <xnnpack/aarch32-assembler.h>
 #include <xnnpack/igemm.h>
+#include <xnnpack/log.h>
 #include <xnnpack/memory.h>
 #include <xnnpack/microparams.h>
 #include <xnnpack/post-operation.h>
@@ -31,9 +32,9 @@ class Generator : public MacroAssembler {
 //     size_t nc,                            r1
 //     size_t kc,                            r2 -> r5
 //     size_t ks,                            r3 -> sp + 64 -> r14
-//     const float**restrict a,  sp + 104 -> (r5)
-//     const void*restrict w,    sp + 108 -> r9
-//     uint8_t*restrict c,       sp + 112 -> r11
+//     const float** restrict a,  sp + 104 -> (r5)
+//     const void* restrict w,    sp + 108 -> r9
+//     uint8_t* restrict c,       sp + 112 -> r11
 //     size_t cm_stride,         sp + 116 -> (r6)
 //     size_t cn_stride,         sp + 120 -> (r0)
 //     size_t a_offset,          sp + 124 -> (r5)
@@ -59,7 +60,7 @@ class Generator : public MacroAssembler {
 void Generator::generate(size_t max_mr, size_t nc_mod_nr, size_t kc, size_t ks, const jit_gemm_params* jit_gemm_params)
 {
   assert(max_mr <= 4);
-  assert(nc_mod_nr < 8);
+  assert(nc_mod_nr < 8 || nc_mod_nr == SIZE_MAX);
   assert(kc != 0);
   assert(kc % sizeof(float) == 0);
   assert(ks != 0);
@@ -113,10 +114,18 @@ void Generator::generate(size_t max_mr, size_t nc_mod_nr, size_t kc, size_t ks, 
     vmov(q12, q8);
     vmov(q13, q9);
   }
+  pld(mem[r9, 0]); // Prefetch B
+  pld(mem[r9, 64]);
   if (max_mr > 3) {
     vmov(q14, q8);
+  }
+  pld(mem[r9, 128]);
+  pld(mem[r9, 192]);
+  if (max_mr > 3) {
     vmov(q15, q9);
   }
+  pld(mem[r9, 256]);
+  pld(mem[r9, 320]);
 
   bind(l1);
   // Load next 4 A pointers
@@ -131,9 +140,17 @@ void Generator::generate(size_t max_mr, size_t nc_mod_nr, size_t kc, size_t ks, 
     ldr(r7, mem[r5, 12]);
   }
   add(r5, r5, 16);
+  pld(mem[r3, 0]); // Prefetch A
   str(r5, mem[sp, 104]); // a
+  pld(mem[r3, 64]);
   ldr(r0, mem[sp, 128]); // zero
+  pld(mem[r12, 0]);
   ldr(r5, mem[sp, 124]); // a_offset
+  pld(mem[r12, 64]);
+  pld(mem[r10, 0]);
+  pld(mem[r10, 64]);
+  pld(mem[r7, 0]);
+  pld(mem[r7, 64]);
 
   // Add a_offset
   cmp(r3, r0); // if a0 == zero
@@ -673,6 +690,9 @@ void Generator::perform_post_operations(
   size_t num_post_operations,
   const xnn_post_operation* post_operations)
 {
+  if (num_post_operations == 0) {
+    return;
+  }
   ldr(r14, mem[sp, 132]);  // params
   for (size_t i = 0; i < num_post_operations; i++) {
     switch (post_operations[i].op_type) {
@@ -691,7 +711,7 @@ void Generator::perform_post_operations(
         break;
       }
       default:
-        XNN_UNREACHABLE;
+        XNN_LOG_UNREACHABLE("unsupported post operation: %u", post_operations[i].op_type);
     }
   }
 }

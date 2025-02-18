@@ -19,23 +19,22 @@
  *
  */
 #pragma once
-#ifndef IMAGE_LAYOUT_MAP_H_
-#define IMAGE_LAYOUT_MAP_H_
 
 #include <functional>
 #include <memory>
 #include <vector>
 
-#include "range_vector.h"
-#include "subresource_adapter.h"
+#include "containers/range_vector.h"
+#include "containers/subresource_adapter.h"
 #ifndef SPARSE_CONTAINER_UNIT_TEST
 #include "vulkan/vulkan.h"
-#include "vk_layer_logging.h"
+#include "error_message/logging.h"
 
-// Forward declarations...
-class CMD_BUFFER_STATE;
-class IMAGE_STATE;
-class IMAGE_VIEW_STATE;
+namespace vvl {
+class Image;
+class ImageView;
+class CommandBuffer;
+}  // namespace vvl
 #endif
 
 namespace image_layout_map {
@@ -45,16 +44,13 @@ const static VkImageLayout kInvalidLayout = VK_IMAGE_LAYOUT_MAX_ENUM;
 using IndexType = subresource_adapter::IndexType;
 using IndexRange = sparse_container::range<IndexType>;
 using Encoder = subresource_adapter::RangeEncoder;
-using NoSplit = sparse_container::insert_range_no_split_bounds;
 using RangeGenerator = subresource_adapter::RangeGenerator;
-using SubresourceGenerator = subresource_adapter::SubresourceGenerator;
-using WritePolicy = subresource_adapter::WritePolicy;
 
 struct InitialLayoutState {
     VkImageView image_view;          // For relaxed matching rule evaluation, else VK_NULL_HANDLE
     VkImageAspectFlags aspect_mask;  // For relaxed matching rules... else 0
     LoggingLabel label;
-    InitialLayoutState(const CMD_BUFFER_STATE& cb_state_, const IMAGE_VIEW_STATE* view_state_);
+    InitialLayoutState(const vvl::CommandBuffer& cb_state_, const vvl::ImageView* view_state_);
     InitialLayoutState() : image_view(VK_NULL_HANDLE), aspect_mask(0), label() {}
 };
 
@@ -117,19 +113,18 @@ class ImageSubresourceLayoutMap {
     using LayoutMap = subresource_adapter::BothRangeMap<LayoutEntry, 16>;
     using RangeType = LayoutMap::key_type;
 
-    bool SetSubresourceRangeLayout(const CMD_BUFFER_STATE& cb_state, const VkImageSubresourceRange& range, VkImageLayout layout,
+    bool SetSubresourceRangeLayout(const vvl::CommandBuffer& cb_state, const VkImageSubresourceRange& range, VkImageLayout layout,
                                    VkImageLayout expected_layout = kInvalidLayout);
-    void SetSubresourceRangeInitialLayout(const CMD_BUFFER_STATE& cb_state, const VkImageSubresourceRange& range,
+    void SetSubresourceRangeInitialLayout(const vvl::CommandBuffer& cb_state, const VkImageSubresourceRange& range,
                                           VkImageLayout layout);
-    void SetSubresourceRangeInitialLayout(const CMD_BUFFER_STATE& cb_state, VkImageLayout layout,
-                                          const IMAGE_VIEW_STATE& view_state);
-    const LayoutEntry* GetSubresourceLayouts(const VkImageSubresource& subresource) const;
+    void SetSubresourceRangeInitialLayout(const vvl::CommandBuffer& cb_state, VkImageLayout layout,
+                                          const vvl::ImageView& view_state);
     bool UpdateFrom(const ImageSubresourceLayoutMap& from);
     uintptr_t CompatibilityKey() const;
     const LayoutMap& GetLayoutMap() const { return layouts_; }
-    ImageSubresourceLayoutMap(const IMAGE_STATE& image_state);
+    ImageSubresourceLayoutMap(const vvl::Image& image_state);
     ~ImageSubresourceLayoutMap() {}
-    const IMAGE_STATE* GetImageView() const { return &image_state_; };
+    const vvl::Image* GetImageView() const { return &image_state_; };
 
     // This looks a bit ponderous but kAspectCount is a compile time constant
     VkImageSubresource Decode(IndexType index) const {
@@ -166,17 +161,13 @@ class ImageSubresourceLayoutMap {
     }
 
   protected:
-    inline uint32_t LevelLimit(uint32_t level) const { return std::min(encoder_.Limits().mipLevel, level); }
-    inline uint32_t LayerLimit(uint32_t layer) const { return std::min(encoder_.Limits().arrayLayer, layer); }
-
     bool InRange(const VkImageSubresource& subres) const { return encoder_.InRange(subres); }
     bool InRange(const VkImageSubresourceRange& range) const { return encoder_.InRange(range); }
 
   private:
-    const IMAGE_STATE& image_state_;
+    const vvl::Image& image_state_;
     const Encoder& encoder_;
     LayoutMap layouts_;
     InitialLayoutStates initial_layout_states_;
 };
 }  // namespace image_layout_map
-#endif

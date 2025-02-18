@@ -29,6 +29,7 @@
 import * as Common from '../../../../core/common/common.js';
 import * as i18n from '../../../../core/i18n/i18n.js';
 import * as Platform from '../../../../core/platform/platform.js';
+import * as VisualLogging from '../../../visual_logging/visual_logging.js';
 import * as UI from '../../legacy.js';
 
 import dataGridStyles from './dataGrid.css.js';
@@ -112,8 +113,6 @@ const elementToLongTextMap = new WeakMap<Element, string>();
 
 const nodeToColumnIdMap = new WeakMap<Node, string>();
 
-const elementToSortIconMap = new WeakMap<Element, UI.Icon.Icon>();
-
 const elementToPreferedWidthMap = new WeakMap<Element, number>();
 
 const elementToPositionMap = new WeakMap<Element, number>();
@@ -178,7 +177,6 @@ export class DataGridImpl<T> extends Common.ObjectWrapper.ObjectWrapper<EventTyp
       event.consume(true);
     });
     this.element.addEventListener('focusout', event => {
-      this.updateGridAccessibleName(/* text */ '');
       event.consume(true);
     });
 
@@ -354,13 +352,18 @@ export class DataGridImpl<T> extends Common.ObjectWrapper.ObjectWrapper<EventTyp
     this.element.classList.toggle('no-selection', !hasSelected);
   }
 
-  updateGridAccessibleName(text?: string): void {
-    // Update the label with the provided text or the current selected node
-    const accessibleText =
-        (this.selectedNode && this.selectedNode.existingElement()) ? this.selectedNode.nodeAccessibleText : '';
-    if (this.element === Platform.DOMUtilities.deepActiveElement(this.element.ownerDocument)) {
-      // Only alert if the datagrid has focus
-      UI.ARIAUtils.alert(text ? text : accessibleText);
+  announceSelectedGridNode(): void {
+    // Only alert if the datagrid has focus
+    if (this.element === Platform.DOMUtilities.deepActiveElement(this.element.ownerDocument) && this.selectedNode &&
+        this.selectedNode.existingElement()) {
+      // Update the expand/collapse state for the current selected node
+      let expandText;
+      if (this.selectedNode.hasChildren()) {
+        expandText = this.selectedNode.expanded ? i18nString(UIStrings.expanded) : i18nString(UIStrings.collapsed);
+      }
+      const accessibleText =
+          expandText ? `${this.selectedNode.nodeAccessibleText}, ${expandText}` : this.selectedNode.nodeAccessibleText;
+      UI.ARIAUtils.alert(accessibleText);
     }
   }
 
@@ -407,6 +410,7 @@ export class DataGridImpl<T> extends Common.ObjectWrapper.ObjectWrapper<EventTyp
     }
 
     const cell = document.createElement('th');
+    cell.setAttribute('jslog', `${VisualLogging.tableHeader().track({click: column.sortable}).context(columnId)}`);
     cell.className = columnId + '-column';
     nodeToColumnIdMap.set(cell, columnId);
     this.dataTableHeaders[columnId] = cell;
@@ -427,9 +431,9 @@ export class DataGridImpl<T> extends Common.ObjectWrapper.ObjectWrapper<EventTyp
     if (column.sortable) {
       cell.addEventListener('click', this.clickInHeaderCell.bind(this), false);
       cell.classList.add('sortable');
-      const icon = UI.Icon.Icon.create('', 'sort-order-icon');
+      const icon = document.createElement('span');
+      icon.className = 'sort-order-icon';
       cell.createChild('div', 'sort-order-icon-container').appendChild(icon);
-      elementToSortIconMap.set(cell, icon);
     }
   }
 
@@ -559,7 +563,7 @@ export class DataGridImpl<T> extends Common.ObjectWrapper.ObjectWrapper<EventTyp
     const column = this.visibleColumnsArray[cellIndex];
     if (column.dataType === DataType.Boolean) {
       const checkboxLabel = UI.UIUtils.CheckboxLabel.create(undefined, (node.data[column.id] as boolean));
-      UI.ARIAUtils.setAccessibleName(checkboxLabel, column.title || '');
+      UI.ARIAUtils.setLabel(checkboxLabel, column.title || '');
 
       let hasChanged = false;
       checkboxLabel.style.height = '100%';
@@ -943,7 +947,14 @@ export class DataGridImpl<T> extends Common.ObjectWrapper.ObjectWrapper<EventTyp
     if (!this.columnWeightsSetting) {
       return;
     }
-    const weights = this.columnWeightsSetting.get();
+    const weights: {
+      [x: string]: any,
+    } = {};
+    // TODO(b/320405843): remove this when kebab migration is complete and
+    // replace with settings version upgrade
+    for (const [key, value] of Object.entries(this.columnWeightsSetting.get())) {
+      weights[Platform.StringUtilities.toKebabCase(key)] = value;
+    }
     for (let i = 0; i < this.columnsArray.length; ++i) {
       const column = this.columnsArray[i];
       const weight = weights[column.id];
@@ -1267,11 +1278,6 @@ export class DataGridImpl<T> extends Common.ObjectWrapper.ObjectWrapper<EventTyp
     this.sortColumnCell = cell;
 
     cell.classList.add(sortOrder);
-    const icon = elementToSortIconMap.get(cell);
-    if (!icon) {
-      return;
-    }
-    icon.setIconType(sortOrder === Order.Ascending ? 'smallicon-triangle-up' : 'smallicon-triangle-down');
 
     this.dispatchEventToListeners(Events.SortingChanged);
   }
@@ -1340,7 +1346,9 @@ export class DataGridImpl<T> extends Common.ObjectWrapper.ObjectWrapper<EventTyp
       for (const column of sortableColumns) {
         const headerCell = this.dataTableHeaders[column.id];
         sortMenu.defaultSection().appendItem(
-            (column.title as string), this.sortByColumnHeaderCell.bind(this, headerCell));
+            (column.title as string), this.sortByColumnHeaderCell.bind(this, headerCell), {
+              jslogContext: column.id,
+            });
       }
     }
 
@@ -1571,9 +1579,7 @@ export class DataGridImpl<T> extends Common.ObjectWrapper.ObjectWrapper<EventTyp
 // Keep in sync with .data-grid col.corner style rule.
 export const CornerWidth = 14;
 
-// TODO(crbug.com/1167717): Make this a const enum again
-// eslint-disable-next-line rulesdir/const_enum
-export enum Events {
+export const enum Events {
   SelectedNode = 'SelectedNode',
   DeselectedNode = 'DeselectedNode',
   OpenedNode = 'OpenedNode',
@@ -1589,33 +1595,25 @@ export type EventTypes<T> = {
   [Events.PaddingChanged]: void,
 };
 
-// TODO(crbug.com/1167717): Make this a const enum again
-// eslint-disable-next-line rulesdir/const_enum
 export enum Order {
   Ascending = 'sort-ascending',
   Descending = 'sort-descending',
 }
 
-// TODO(crbug.com/1167717): Make this a const enum again
-// eslint-disable-next-line rulesdir/const_enum
-export enum Align {
+export const enum Align {
   Center = 'center',
   Right = 'right',
 }
 
-// TODO(crbug.com/1167717): Make this a const enum again
-// eslint-disable-next-line rulesdir/const_enum
-export enum DataType {
+export const enum DataType {
   String = 'String',
   Boolean = 'Boolean',
 }
 
-export const ColumnResizePadding = 24;
+export const ColumnResizePadding = 34;
 export const CenterResizerOverBorderAdjustment = 3;
 
-// TODO(crbug.com/1167717): Make this a const enum again
-// eslint-disable-next-line rulesdir/const_enum
-export enum ResizeMethod {
+export const enum ResizeMethod {
   Nearest = 'nearest',
   First = 'first',
   Last = 'last',
@@ -1647,7 +1645,7 @@ export class DataGridNode<T> {
   parent: DataGridNode<T>|null;
   previousSibling: DataGridNode<T>|null;
   nextSibling: DataGridNode<T>|null;
-  disclosureToggleWidth: number;
+  #disclosureToggleWidth: number = 15;
   selectable: boolean;
   isRoot: boolean;
   nodeAccessibleText: string;
@@ -1670,7 +1668,6 @@ export class DataGridNode<T> {
     this.parent = null;
     this.previousSibling = null;
     this.nextSibling = null;
-    this.disclosureToggleWidth = 10;
 
     this.selectable = true;
 
@@ -1729,12 +1726,6 @@ export class DataGridNode<T> {
   }
 
   protected createCells(element: Element): void {
-    // Keep track of the focused cell before removing child elements.
-    let focusedCellClassName: string|undefined;
-    if (element.contains(document.activeElement)) {
-      focusedCellClassName = document.activeElement?.className;
-    }
-
     element.removeChildren();
     if (!this.dataGrid || !this.parent) {
       return;
@@ -1748,11 +1739,6 @@ export class DataGridNode<T> {
     for (let i = 0; i < columnsArray.length; ++i) {
       const column = columnsArray[i];
       const cell = element.appendChild(this.createCell(column.id));
-      // Restore focus back to active cell to avoid losing focus
-      // when the datagrid is resized and cells are recreated.
-      if (cell.className === focusedCellClassName) {
-        cell.focus();
-      }
       // Add each visibile cell to the node's accessible text by gathering 'Column Title: content'
 
       if (column.dataType === DataType.Boolean && this.data[column.id] === true) {
@@ -1944,6 +1930,12 @@ export class DataGridNode<T> {
 
   createTD(columnId: string): HTMLElement {
     const cell = this.createTDWithClass(columnId + '-column');
+    cell.setAttribute(
+        'jslog',
+        `${
+            VisualLogging.tableCell()
+                .track({click: true, keydown: Boolean(this.dataGrid?.columns[columnId].editable)})
+                .context(columnId)}`);
     nodeToColumnIdMap.set(cell, columnId);
 
     if (this.dataGrid) {
@@ -1957,6 +1949,13 @@ export class DataGridNode<T> {
         if (this.leftPadding) {
           cell.style.setProperty('padding-left', this.leftPadding + 'px');
         }
+      }
+
+      // Allow accessibility tool to identify the editable cell and display context menu
+      const editableCell = this.dataGrid.columns[columnId].editable;
+      if (editableCell) {
+        cell.tabIndex = 0;
+        cell.ariaHasPopup = 'true';
       }
     }
 
@@ -1981,7 +1980,7 @@ export class DataGridNode<T> {
     for (let i = 0; i < cell.children.length; i++) {
       UI.ARIAUtils.markAsHidden(cell.children[i]);
     }
-    UI.ARIAUtils.setAccessibleName(cell, name);
+    UI.ARIAUtils.setLabel(cell, name);
   }
 
   nodeSelfHeight(): number {
@@ -2126,7 +2125,7 @@ export class DataGridNode<T> {
 
     this.expandedInternal = false;
     if (this.selected && this.dataGrid) {
-      this.dataGrid.updateGridAccessibleName(/* text */ i18nString(UIStrings.collapsed));
+      this.dataGrid.announceSelectedGridNode();
     }
 
     for (let i = 0; i < this.children.length; ++i) {
@@ -2185,7 +2184,7 @@ export class DataGridNode<T> {
       this.elementInternal.classList.add('expanded');
     }
     if (this.selected && this.dataGrid) {
-      this.dataGrid.updateGridAccessibleName(/* text */ i18nString(UIStrings.expanded));
+      this.dataGrid.announceSelectedGridNode();
     }
 
     this.expandedInternal = true;
@@ -2229,7 +2228,7 @@ export class DataGridNode<T> {
     if (this.elementInternal) {
       this.elementInternal.classList.add('selected');
       this.dataGrid.setHasSelection(true);
-      this.dataGrid.updateGridAccessibleName();
+      this.dataGrid.announceSelectedGridNode();
     }
 
     if (!supressSelectedEvent) {
@@ -2256,7 +2255,6 @@ export class DataGridNode<T> {
     if (this.elementInternal) {
       this.elementInternal.classList.remove('selected');
       this.dataGrid.setHasSelection(false);
-      this.dataGrid.updateGridAccessibleName('');
     }
 
     if (!supressDeselectedEvent) {
@@ -2343,7 +2341,7 @@ export class DataGridNode<T> {
     }
 
     const left = cell.getBoundingClientRect().left + this.leftPadding;
-    return event.pageX >= left && event.pageX <= left + this.disclosureToggleWidth;
+    return event.pageX >= left && event.pageX <= left + this.#disclosureToggleWidth;
   }
 
   private attach(): void {
@@ -2405,7 +2403,7 @@ export class DataGridNode<T> {
 }
 
 export class CreationDataGridNode<T> extends DataGridNode<T> {
-  isCreationNode: boolean;
+  override isCreationNode: boolean;
   constructor(
       data?: {
         [x: string]: any,
@@ -2429,20 +2427,20 @@ export class DataGridWidget<T> extends UI.Widget.VBox {
     this.setDefaultFocusedElement(dataGrid.element);
   }
 
-  wasShown(): void {
+  override wasShown(): void {
     this.registerCSSFiles([dataGridStyles]);
     this.dataGrid.wasShown();
   }
 
-  willHide(): void {
+  override willHide(): void {
     this.dataGrid.willHide();
   }
 
-  onResize(): void {
+  override onResize(): void {
     this.dataGrid.onResize();
   }
 
-  elementsToRestoreScrollPositionsFor(): Element[] {
+  override elementsToRestoreScrollPositionsFor(): Element[] {
     return [this.dataGrid.scrollContainer];
   }
 }
@@ -2454,7 +2452,7 @@ export interface Parameters {
   refreshCallback?: (() => void);
 }
 export interface ColumnDescriptor {
-  id: string;
+  id: Platform.StringUtilities.KebabString;
   title?: Common.UIString.LocalizedString;
   titleDOMFragment?: DocumentFragment|null;
   sortable: boolean;

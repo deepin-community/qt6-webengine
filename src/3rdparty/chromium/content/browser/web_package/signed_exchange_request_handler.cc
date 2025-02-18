@@ -8,6 +8,7 @@
 
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
+#include "content/browser/loader/response_head_update_params.h"
 #include "content/browser/web_package/signed_exchange_devtools_proxy.h"
 #include "content/browser/web_package/signed_exchange_loader.h"
 #include "content/browser/web_package/signed_exchange_reporter.h"
@@ -61,7 +62,9 @@ void SignedExchangeRequestHandler::MaybeCreateLoader(
         *signed_exchange_loader_->fallback_url()));
     signed_exchange_loader_ = nullptr;
     std::move(fallback_callback)
-        .Run(false /* reset_subresource_loader_params */);
+        .Run(false /* reset_subresource_loader_params */,
+             // TODO(crbug.com/1441384) test workerStart in SXG scenarios
+             ResponseHeadUpdateParams());
     return;
   }
 
@@ -81,8 +84,7 @@ bool SignedExchangeRequestHandler::MaybeCreateLoaderForResponse(
     mojo::PendingRemote<network::mojom::URLLoader>* loader,
     mojo::PendingReceiver<network::mojom::URLLoaderClient>* client_receiver,
     blink::ThrottlingURLLoader* url_loader,
-    bool* skip_other_interceptors,
-    bool* will_return_unsafe_redirect) {
+    bool* skip_other_interceptors) {
   DCHECK(!signed_exchange_loader_);
 
   // Navigation ResourceRequests always have non-empty |trusted_params|.

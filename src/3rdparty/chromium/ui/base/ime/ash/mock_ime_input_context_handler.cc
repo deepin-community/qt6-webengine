@@ -4,6 +4,8 @@
 
 #include "ui/base/ime/ash/mock_ime_input_context_handler.h"
 
+#include <string_view>
+
 #include "base/logging.h"
 #include "base/notreached.h"
 #include "base/strings/utf_string_conversions.h"
@@ -62,14 +64,6 @@ gfx::Range MockIMEInputContextHandler::GetAutocorrectRange() {
   return autocorrect_range_;
 }
 
-gfx::Rect MockIMEInputContextHandler::GetAutocorrectCharacterBounds() {
-  return gfx::Rect();
-}
-
-gfx::Rect MockIMEInputContextHandler::GetTextFieldBounds() {
-  return gfx::Rect();
-}
-
 void MockIMEInputContextHandler::SetAutocorrectRange(
     const gfx::Range& range,
     SetAutocorrectRangeDoneCallback callback) {
@@ -119,9 +113,22 @@ void MockIMEInputContextHandler::DeleteSurroundingText(
       num_char16s_after_cursor;
 }
 
+void MockIMEInputContextHandler::ReplaceSurroundingText(
+    uint32_t length_before_selection,
+    uint32_t length_after_selection,
+    const std::u16string_view replacement_text) {
+  last_replace_surrounding_text_arg_.length_before_selection =
+      length_before_selection;
+  last_replace_surrounding_text_arg_.length_after_selection =
+      length_after_selection;
+  last_replace_surrounding_text_arg_.replacement_text =
+      std::u16string(replacement_text);
+}
+
 SurroundingTextInfo MockIMEInputContextHandler::GetSurroundingTextInfo() {
   SurroundingTextInfo info;
   info.selection_range = cursor_range_;
+  info.offset = 0;
   return info;
 }
 
@@ -157,10 +164,6 @@ void MockIMEInputContextHandler::ConfirmComposition(bool reset_engine) {
 
 bool MockIMEInputContextHandler::HasCompositionText() {
   return !last_update_composition_arg_.composition_text.text.empty();
-}
-
-std::u16string MockIMEInputContextHandler::GetCompositionText() {
-  return last_update_composition_arg_.composition_text.text;
 }
 
 ukm::SourceId MockIMEInputContextHandler::GetClientSourceForMetrics() {

@@ -51,6 +51,8 @@ class NullImageResourceInfo final
   const KURL& Url() const override { return url_; }
   base::TimeTicks LoadResponseEnd() const override { return base::TimeTicks(); }
   base::TimeTicks LoadStart() const override { return base::TimeTicks(); }
+  base::TimeTicks LoadEnd() const override { return base::TimeTicks(); }
+  base::TimeTicks DiscoveryTime() const override { return base::TimeTicks(); }
   const ResourceResponse& GetResponse() const override { return response_; }
   bool IsCacheValidator() const override { return false; }
   bool IsAccessAllowed(
@@ -114,6 +116,10 @@ ImageResourceContent* ImageResourceContent::Fetch(FetchParameters& params,
   ImageResource* resource = ImageResource::Fetch(params, fetcher);
   if (!resource)
     return nullptr;
+  resource->GetContent()->SetIsLoadedFromMemoryCache(
+      resource->IsLoadedFromMemoryCache());
+  resource->GetContent()->SetIsPreloadedWithEarlyHints(
+      resource->IsPreloadedByEarlyHints());
   return resource->GetContent();
 }
 
@@ -195,6 +201,12 @@ static void PriorityFromObserver(
     ResourcePriority& priority,
     ResourcePriority& priority_excluding_image_loader) {
   ResourcePriority next_priority = observer->ComputeResourcePriority();
+  if (next_priority.is_lcp_resource) {
+    // Mark the resource as predicted LCP despite its visibility.
+    priority.is_lcp_resource = true;
+    priority_excluding_image_loader.is_lcp_resource = true;
+  }
+
   if (next_priority.visibility == ResourcePriority::kNotVisible)
     return;
 
@@ -457,12 +469,15 @@ ImageResourceContent::UpdateImageResult ImageResourceContent::UpdateImage(
       if (size_available_ == Image::kSizeUnavailable && !all_data_received)
         return UpdateImageResult::kNoDecodeError;
 
-      if (image_ && info_->GetUnsupportedImageMimeTypes()) {
-        // Filename extension is set by the image decoder based on the actual
-        // image content.
-        String file_extension = image_->FilenameExtension();
-        if (info_->GetUnsupportedImageMimeTypes()->Contains(
-                String("image/" + file_extension))) {
+      if (image_) {
+        // Mime type could be null, see https://crbug.com/1485926.
+        if (!image_->MimeType()) {
+          return UpdateImageResult::kShouldDecodeError;
+        }
+        const HashSet<String>* unsupported_mime_types =
+            info_->GetUnsupportedImageMimeTypes();
+        if (unsupported_mime_types &&
+            unsupported_mime_types->Contains(image_->MimeType())) {
           return UpdateImageResult::kShouldDecodeError;
         }
       }
@@ -702,11 +717,27 @@ AtomicString ImageResourceContent::MediaType() const {
   return AtomicString(image_->FilenameExtension());
 }
 
+void ImageResourceContent::SetIsBroken() {
+  is_broken_ = true;
+}
+
+bool ImageResourceContent::IsBroken() const {
+  return is_broken_;
+}
+
+base::TimeTicks ImageResourceContent::DiscoveryTime() const {
+  return info_->DiscoveryTime();
+}
+
 base::TimeTicks ImageResourceContent::LoadStart() const {
   return info_->LoadStart();
 }
 
 base::TimeTicks ImageResourceContent::LoadEnd() const {
+  return info_->LoadEnd();
+}
+
+base::TimeTicks ImageResourceContent::LoadResponseEnd() const {
   return info_->LoadResponseEnd();
 }
 

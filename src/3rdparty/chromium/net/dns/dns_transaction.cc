@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <unordered_map>
@@ -57,6 +58,7 @@
 #include "net/dns/dns_udp_tracker.h"
 #include "net/dns/dns_util.h"
 #include "net/dns/host_cache.h"
+#include "net/dns/host_resolver_internal_result.h"
 #include "net/dns/public/dns_over_https_config.h"
 #include "net/dns/public/dns_over_https_server_config.h"
 #include "net/dns/public/dns_protocol.h"
@@ -75,9 +77,10 @@
 #include "net/socket/stream_socket.h"
 #include "net/third_party/uri_template/uri_template.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
+#include "net/url_request/url_request.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_context_builder.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "url/url_constants.h"
 
 namespace net {
 
@@ -112,6 +115,10 @@ constexpr net::NetworkTrafficAnnotationTag kTrafficAnnotation =
 
 const char kDnsOverHttpResponseContentType[] = "application/dns-message";
 
+// The maximum size of the DNS message for DoH, per
+// https://datatracker.ietf.org/doc/html/rfc8484#section-6
+const int64_t kDnsOverHttpResponseMaximumSize = 65535;
+
 // Count labels in the fully-qualified name in DNS format.
 int CountLabels(base::span<const uint8_t> name) {
   size_t count = 0;
@@ -125,11 +132,12 @@ bool IsIPLiteral(const std::string& hostname) {
   return ip.AssignFromIPLiteral(hostname);
 }
 
-base::Value NetLogStartParams(const std::string& hostname, uint16_t qtype) {
+base::Value::Dict NetLogStartParams(const std::string& hostname,
+                                    uint16_t qtype) {
   base::Value::Dict dict;
   dict.Set("hostname", hostname);
   dict.Set("query_type", qtype);
-  return base::Value(std::move(dict));
+  return dict;
 }
 
 // ----------------------------------------------------------------------------
@@ -168,7 +176,7 @@ class DnsAttempt {
   // Returns a Value representing the received response, along with a reference
   // to the NetLog source source of the UDP socket used.  The request must have
   // completed before this is called.
-  base::Value NetLogResponseParams(NetLogCaptureMode capture_mode) const {
+  base::Value::Dict NetLogResponseParams(NetLogCaptureMode capture_mode) const {
     base::Value::Dict dict;
 
     if (GetResponse()) {
@@ -185,7 +193,7 @@ class DnsAttempt {
       dict.Set("response_buffer", GetRawResponseBufferForLog());
     }
 
-    return base::Value(std::move(dict));
+    return dict;
   }
 
   // True if current attempt is pending (waiting for server response).
@@ -342,7 +350,6 @@ class DnsUDPAttempt : public DnsAttempt {
       return rv;
     read_size_ = rv;
 
-    DCHECK(rv);
     bool parse_result = response_->InitParse(rv, *query_);
     if (response_->id())
       udp_tracker_->RecordResponseId(query_->id(), response_->id().value());
@@ -391,8 +398,12 @@ class DnsHTTPAttempt : public DnsAttempt, public URLRequest::Delegate {
                  bool use_post,
                  URLRequestContext* url_request_context,
                  const IsolationInfo& isolation_info,
-                 RequestPriority request_priority_)
-      : DnsAttempt(doh_server_index), query_(std::move(query)) {
+                 RequestPriority request_priority_,
+                 bool is_probe)
+      : DnsAttempt(doh_server_index),
+        query_(std::move(query)),
+        net_log_(NetLogWithSource::Make(NetLog::Get(),
+                                        NetLogSourceType::DNS_OVER_HTTPS)) {
     GURL url;
     if (use_post) {
       // Set url for a POST request
@@ -410,6 +421,16 @@ class DnsHTTPAttempt : public DnsAttempt, public URLRequest::Delegate {
       uri_template::Expand(server_template, parameters, &url_string);
       url = GURL(url_string);
     }
+
+    net_log_.BeginEvent(NetLogEventType::DOH_URL_REQUEST, [&] {
+      if (is_probe) {
+        return NetLogStartParams("(probe)", query_->qtype());
+      }
+      std::optional<std::string> hostname =
+          dns_names_util::NetworkToDottedName(query_->qname());
+      DCHECK(hostname.has_value());
+      return NetLogStartParams(*hostname, query_->qtype());
+    });
 
     HttpRequestHeaders extra_request_headers;
     extra_request_headers.SetHeader(HttpRequestHeaders::kAccept,
@@ -443,8 +464,8 @@ class DnsHTTPAttempt : public DnsAttempt, public URLRequest::Delegate {
           policy_exception_justification: "Experimental feature that"
                                           "is disabled by default"
         }
-      )"));
-    net_log_ = request_->net_log();
+      )"),
+        /*is_for_websockets=*/false, net_log_.source());
 
     if (use_post) {
       request_->set_method("POST");
@@ -522,10 +543,16 @@ class DnsHTTPAttempt : public DnsAttempt, public URLRequest::Delegate {
 
     if (request->response_headers()->HasHeader(
             HttpRequestHeaders::kContentLength)) {
+      if (request_->response_headers()->GetContentLength() >
+          kDnsOverHttpResponseMaximumSize) {
+        ResponseCompleted(ERR_DNS_MALFORMED_RESPONSE);
+        return;
+      }
+
       buffer_->SetCapacity(request_->response_headers()->GetContentLength() +
                            1);
     } else {
-      buffer_->SetCapacity(66560);  // 64kb.
+      buffer_->SetCapacity(kDnsOverHttpResponseMaximumSize + 1);
     }
 
     DCHECK(buffer_->data());
@@ -541,6 +568,15 @@ class DnsHTTPAttempt : public DnsAttempt, public URLRequest::Delegate {
     OnReadCompleted(request_.get(), bytes_read);
   }
 
+  void OnReceivedRedirect(URLRequest* request,
+                          const RedirectInfo& redirect_info,
+                          bool* defer_redirect) override {
+    // Section 5 of RFC 8484 states that scheme must be https.
+    if (!redirect_info.new_url.SchemeIs(url::kHttpsScheme)) {
+      request->Cancel();
+    }
+  }
+
   void OnReadCompleted(net::URLRequest* request, int bytes_read) override {
     // bytes_read can be an error.
     if (bytes_read < 0) {
@@ -551,6 +587,11 @@ class DnsHTTPAttempt : public DnsAttempt, public URLRequest::Delegate {
     DCHECK_GE(bytes_read, 0);
 
     if (bytes_read > 0) {
+      if (buffer_->offset() + bytes_read > kDnsOverHttpResponseMaximumSize) {
+        ResponseCompleted(ERR_DNS_MALFORMED_RESPONSE);
+        return;
+      }
+
       buffer_->set_offset(buffer_->offset() + bytes_read);
 
       if (buffer_->RemainingCapacity() == 0) {
@@ -598,6 +639,8 @@ class DnsHTTPAttempt : public DnsAttempt, public URLRequest::Delegate {
   }
 
   int CompleteResponse(int net_error) {
+    net_log_.EndEventWithNetErrorCode(NetLogEventType::DOH_URL_REQUEST,
+                                      net_error);
     DCHECK_NE(net::ERR_IO_PENDING, net_error);
     if (net_error != OK) {
       return net_error;
@@ -637,7 +680,8 @@ void ConstructDnsHTTPAttempt(DnsSession* session,
                              std::vector<std::unique_ptr<DnsAttempt>>* attempts,
                              URLRequestContext* url_request_context,
                              const IsolationInfo& isolation_info,
-                             RequestPriority request_priority) {
+                             RequestPriority request_priority,
+                             bool is_probe) {
   DCHECK(url_request_context);
 
   std::unique_ptr<DnsQuery> query;
@@ -657,7 +701,7 @@ void ConstructDnsHTTPAttempt(DnsSession* session,
   attempts->push_back(std::make_unique<DnsHTTPAttempt>(
       doh_server_index, std::move(query), doh_server.server_template(),
       gurl_without_parameters, doh_server.use_post(), url_request_context,
-      isolation_info, request_priority));
+      isolation_info, request_priority, is_probe));
 }
 
 class DnsTCPAttempt : public DnsAttempt {
@@ -942,7 +986,7 @@ class DnsOverHttpsProbeRunner : public DnsProbeRunner {
     DCHECK(!session_->config().doh_config.servers().empty());
     DCHECK(context_);
 
-    absl::optional<std::vector<uint8_t>> qname =
+    std::optional<std::vector<uint8_t>> qname =
         dns_names_util::DottedNameToNetwork(kDohProbeHostname);
     DCHECK(qname.has_value());
     formatted_probe_qname_ = std::move(qname).value();
@@ -1034,7 +1078,8 @@ class DnsOverHttpsProbeRunner : public DnsProbeRunner {
         session_.get(), doh_server_index, formatted_probe_qname_,
         dns_protocol::kTypeA, /*opt_rdata=*/nullptr,
         &probe_stats->probe_attempts, context_->url_request_context(),
-        context_->isolation_info(), RequestPriority::DEFAULT_PRIORITY);
+        context_->isolation_info(), RequestPriority::DEFAULT_PRIORITY,
+        /*is_probe=*/true);
 
     DnsAttempt* probe_attempt = probe_stats->probe_attempts.back().get();
     probe_attempt->Start(base::BindOnce(
@@ -1060,39 +1105,43 @@ class DnsOverHttpsProbeRunner : public DnsProbeRunner {
           probe_stats->probe_attempts[attempt_number].get();
       const DnsResponse* response = attempt->GetResponse();
       if (response) {
-        DnsResponseResultExtractor extractor(response);
-        HostCache::Entry results(ERR_FAILED, HostCache::Entry::SOURCE_UNKNOWN);
-        DnsResponseResultExtractor::ExtractionError extraction_error =
+        DnsResponseResultExtractor extractor(*response);
+        DnsResponseResultExtractor::ResultsOrError results =
             extractor.ExtractDnsResults(
                 DnsQueryType::A,
                 /*original_domain_name=*/kDohProbeHostname,
-                /*request_port=*/0, &results);
+                /*request_port=*/0);
 
-        if (extraction_error ==
-                DnsResponseResultExtractor::ExtractionError::kOk &&
-            results.ip_endpoints() && !results.ip_endpoints()->empty()) {
-          // The DoH probe queries don't go through the standard DnsAttempt
-          // path, so the ServerStats have not been updated yet.
-          context_->RecordServerSuccess(
-              doh_server_index, true /* is_doh_server */, session_.get());
-          context_->RecordRtt(doh_server_index, true /* is_doh_server */,
-                              base::TimeTicks::Now() - query_start_time, rv,
-                              session_.get());
-          success = true;
+        if (results.has_value()) {
+          for (const auto& result : results.value()) {
+            if (result->type() == HostResolverInternalResult::Type::kData &&
+                !result->AsData().endpoints().empty()) {
+              // The DoH probe queries don't go through the standard DnsAttempt
+              // path, so the ServerStats have not been updated yet.
+              context_->RecordServerSuccess(
+                  doh_server_index, /*is_doh_server=*/true, session_.get());
+              context_->RecordRtt(doh_server_index, /*is_doh_server=*/true,
+                                  base::TimeTicks::Now() - query_start_time, rv,
+                                  session_.get());
+              success = true;
 
-          // Do not delete the ProbeStats and cancel the probe sequence. It will
-          // cancel itself on the next scheduled ContinueProbe() call if the
-          // server is still available. This way, the backoff schedule will be
-          // maintained if a server quickly becomes unavailable again before
-          // that scheduled call.
+              // Do not delete the ProbeStats and cancel the probe sequence. It
+              // will cancel itself on the next scheduled ContinueProbe() call
+              // if the server is still available. This way, the backoff
+              // schedule will be maintained if a server quickly becomes
+              // unavailable again before that scheduled call.
+              break;
+            }
+          }
         }
       }
     }
 
     base::UmaHistogramLongTimes(
-        base::StringPrintf("Net.DNS.ProbeSequence.%s.%s.AttemptTime",
-                           network_change ? "NetworkChange" : "ConfigChange",
-                           success ? "Success" : "Failure"),
+        base::JoinString({"Net.DNS.ProbeSequence",
+                          network_change ? "NetworkChange" : "ConfigChange",
+                          success ? "Success" : "Failure", "AttemptTime"},
+                         "."),
         base::TimeTicks::Now() - sequence_start_time);
   }
 
@@ -1121,7 +1170,7 @@ class DnsTransactionImpl : public DnsTransaction,
   DnsTransactionImpl(DnsSession* session,
                      std::string hostname,
                      uint16_t qtype,
-                     const NetLogWithSource& net_log,
+                     const NetLogWithSource& parent_net_log,
                      const OptRecordRdata* opt_rdata,
                      bool secure,
                      SecureDnsMode secure_dns_mode,
@@ -1134,11 +1183,14 @@ class DnsTransactionImpl : public DnsTransaction,
         secure_(secure),
         secure_dns_mode_(secure_dns_mode),
         fast_timeout_(fast_timeout),
-        net_log_(net_log),
+        net_log_(NetLogWithSource::Make(NetLog::Get(),
+                                        NetLogSourceType::DNS_TRANSACTION)),
         resolve_context_(resolve_context->AsSafeRef()) {
     DCHECK(session_.get());
     DCHECK(!hostname_.empty());
     DCHECK(!IsIPLiteral(hostname_));
+    parent_net_log.AddEventReferencingSource(NetLogEventType::DNS_TRANSACTION,
+                                             net_log_.source());
   }
 
   DnsTransactionImpl(const DnsTransactionImpl&) = delete;
@@ -1201,7 +1253,7 @@ class DnsTransactionImpl : public DnsTransaction,
         : rv(rv), attempt(attempt) {}
 
     int rv;
-    raw_ptr<const DnsAttempt, DanglingUntriaged> attempt;
+    raw_ptr<const DnsAttempt, AcrossTasksDanglingUntriaged> attempt;
   };
 
   // Used in UMA (DNS.AttemptType). Do not renumber or remove values.
@@ -1217,7 +1269,7 @@ class DnsTransactionImpl : public DnsTransaction,
   int PrepareSearch() {
     const DnsConfig& config = session_->config();
 
-    absl::optional<std::vector<uint8_t>> labeled_qname =
+    std::optional<std::vector<uint8_t>> labeled_qname =
         dns_names_util::DottedNameToNetwork(
             hostname_,
             /*require_valid_internet_hostname=*/true);
@@ -1246,7 +1298,7 @@ class DnsTransactionImpl : public DnsTransaction,
     }
 
     for (const auto& suffix : config.search) {
-      absl::optional<std::vector<uint8_t>> qname =
+      std::optional<std::vector<uint8_t>> qname =
           dns_names_util::DottedNameToNetwork(
               hostname_ + "." + suffix,
               /*require_valid_internet_hostname=*/true);
@@ -1378,12 +1430,20 @@ class DnsTransactionImpl : public DnsTransaction,
     size_t doh_server_index = dns_server_iterator_->GetNextAttemptIndex();
 
     unsigned attempt_number = attempts_.size();
-    ConstructDnsHTTPAttempt(
-        session_.get(), doh_server_index, qnames_.front(), qtype_, opt_rdata_,
-        &attempts_, resolve_context_->url_request_context(),
-        resolve_context_->isolation_info(), request_priority_);
+    ConstructDnsHTTPAttempt(session_.get(), doh_server_index, qnames_.front(),
+                            qtype_, opt_rdata_, &attempts_,
+                            resolve_context_->url_request_context(),
+                            resolve_context_->isolation_info(),
+                            request_priority_, /*is_probe=*/false);
     ++attempts_count_;
-    int rv = attempts_.back()->Start(base::BindOnce(
+    DnsAttempt* attempt = attempts_.back().get();
+    // Associate this attempt with the DoH request in NetLog.
+    net_log_.AddEventReferencingSource(
+        NetLogEventType::DNS_TRANSACTION_HTTPS_ATTEMPT,
+        attempt->GetSocketNetLog().source());
+    attempt->GetSocketNetLog().AddEventReferencingSource(
+        NetLogEventType::DNS_TRANSACTION_HTTPS_ATTEMPT, net_log_.source());
+    int rv = attempt->Start(base::BindOnce(
         &DnsTransactionImpl::OnAttemptComplete, base::Unretained(this),
         attempt_number, true /* record_rtt */, base::TimeTicks::Now()));
     if (rv == ERR_IO_PENDING) {
@@ -1462,7 +1522,7 @@ class DnsTransactionImpl : public DnsTransaction,
 
   // Begins query for the current name. Makes the first attempt.
   AttemptResult StartQuery() {
-    absl::optional<std::string> dotted_qname =
+    std::optional<std::string> dotted_qname =
         dns_names_util::NetworkToDottedName(qnames_.front());
     net_log_.BeginEventWithStringParams(
         NetLogEventType::DNS_TRANSACTION_QUERY, "qname",
@@ -1740,6 +1800,10 @@ class DnsTransactionFactoryImpl : public DnsTransactionFactory {
 
   std::unique_ptr<DnsProbeRunner> CreateDohProbeRunner(
       ResolveContext* resolve_context) override {
+    // Start a timer that will emit metrics after a timeout to indicate whether
+    // DoH auto-upgrade was successful for this session.
+    resolve_context->StartDohAutoupgradeSuccessTimer(session_.get());
+
     return std::make_unique<DnsOverHttpsProbeRunner>(
         session_->GetWeakPtr(), resolve_context->GetWeakPtr());
   }

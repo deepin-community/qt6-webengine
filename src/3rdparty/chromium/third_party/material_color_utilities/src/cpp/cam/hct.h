@@ -66,28 +66,28 @@ class Hct {
    *
    * @return hue of the color, in degrees.
    */
-  double get_hue();
+  double get_hue() const;
 
   /**
    * Returns the chroma of the color.
    *
    * @return chroma of the color.
    */
-  double get_chroma();
+  double get_chroma() const;
 
   /**
    * Returns the tone of the color.
    *
    * @return tone of the color, satisfying 0 <= tone <= 100.
    */
-  double get_tone();
+  double get_tone() const;
 
   /**
    * Returns the color in ARGB format.
    *
    * @return an integer, representing the color in ARGB format.
    */
-  Argb ToInt();
+  Argb ToInt() const;
 
   /**
    * Sets the hue of this color. Chroma may decrease because chroma has a
@@ -112,6 +112,11 @@ class Hct {
    * @param new_tone 0 <= new_tone <= 100; invalid valids are corrected.
    */
   void set_tone(double new_tone);
+
+  /**
+   * For using HCT as a key in a ordered map.
+   */
+  bool operator<(const Hct& a) const { return hue_ < a.hue_; }
 
  private:
   /**

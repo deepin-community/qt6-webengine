@@ -50,10 +50,13 @@ class NetworkContext;
 }
 }  // namespace network
 
+namespace chromeos {
+class FirewallHole;
+}  // namespace chromeos
+
 namespace content {
 
 class BrowserPpapiHostImpl;
-class FirewallHoleProxy;
 
 class CONTENT_EXPORT PepperUDPSocketMessageFilter
     : public ppapi::host::ResourceMessageFilter,
@@ -132,7 +135,7 @@ class CONTENT_EXPORT PepperUDPSocketMessageFilter
                           listener_receiver,
                       const ppapi::host::ReplyMessageContext& context,
                       int result,
-                      const absl::optional<net::IPEndPoint>& local_addr_out);
+                      const std::optional<net::IPEndPoint>& local_addr_out);
   void OnBindComplete(mojo::PendingReceiver<network::mojom::UDPSocketListener>
                           listener_receiver,
                       const ppapi::host::ReplyMessageContext& context,
@@ -143,15 +146,15 @@ class CONTENT_EXPORT PepperUDPSocketMessageFilter
           listener_receiver,
       const ppapi::host::ReplyMessageContext& context,
       const PP_NetAddress_Private& net_address,
-      std::unique_ptr<FirewallHoleProxy> hole);
+      std::unique_ptr<chromeos::FirewallHole> hole);
 #endif  // BUILDFLAG(IS_CHROMEOS)
   void StartPendingSend();
   void Close();
 
   // network::mojom::UDPSocketListener override:
   void OnReceived(int result,
-                  const absl::optional<net::IPEndPoint>& src_addr,
-                  absl::optional<base::span<const uint8_t>> data) override;
+                  const std::optional<net::IPEndPoint>& src_addr,
+                  std::optional<base::span<const uint8_t>> data) override;
 
   void OnSendToCompleted(int net_result);
   void FinishPendingSend(int net_result);
@@ -224,7 +227,7 @@ class CONTENT_EXPORT PepperUDPSocketMessageFilter
   mojo::Receiver<network::mojom::UDPSocketListener> receiver_{this};
 
 #if BUILDFLAG(IS_CHROMEOS)
-  std::unique_ptr<FirewallHoleProxy> firewall_hole_;
+  std::unique_ptr<chromeos::FirewallHole> firewall_hole_;
   // Allows for cancellation of opening a hole in the firewall in the case the
   // network service crashes.
   base::WeakPtrFactory<PepperUDPSocketMessageFilter>

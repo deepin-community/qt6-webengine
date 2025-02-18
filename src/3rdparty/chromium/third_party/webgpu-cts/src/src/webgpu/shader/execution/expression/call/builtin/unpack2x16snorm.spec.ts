@@ -8,23 +8,12 @@ of bits 16×i through 16×i+15 of e as a twos-complement signed integer.
 import { makeTestGroup } from '../../../../../../common/framework/test_group.js';
 import { GPUTest } from '../../../../../gpu_test.js';
 import { TypeF32, TypeU32, TypeVec } from '../../../../../util/conversion.js';
-import { unpack2x16snormInterval } from '../../../../../util/f32_interval.js';
-import { fullU32Range } from '../../../../../util/math.js';
-import { makeCaseCache } from '../../case_cache.js';
-import { allInputSources, generateU32ToVectorCases, run } from '../../expression.js';
+import { allInputSources, run } from '../../expression.js';
 
 import { builtin } from './builtin.js';
+import { d } from './unpack2x16snorm.cache.js';
 
 export const g = makeTestGroup(GPUTest);
-
-export const d = makeCaseCache('unpack2x16snorm', {
-  u32_const: () => {
-    return generateU32ToVectorCases(fullU32Range(), 'f32-only', unpack2x16snormInterval);
-  },
-  u32_non_const: () => {
-    return generateU32ToVectorCases(fullU32Range(), 'unfiltered', unpack2x16snormInterval);
-  },
-});
 
 g.test('unpack')
   .specURL('https://www.w3.org/TR/WGSL/#unpack-builtin-functions')

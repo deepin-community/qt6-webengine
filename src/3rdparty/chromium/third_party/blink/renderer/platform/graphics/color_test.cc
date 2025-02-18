@@ -36,13 +36,17 @@
 namespace blink {
 namespace {
 
+using ::testing::TestParamInfo;
+using ::testing::TestWithParam;
+using ::testing::ValuesIn;
+
 Color CreateSRGBColor(float r, float g, float b, float a) {
   return Color::FromColorSpace(Color::ColorSpace::kSRGB, r, g, b, a);
 }
 
 // Helper struct for testing purposes.
 struct ColorMixTest {
-  Color::ColorInterpolationSpace mix_space;
+  Color::ColorSpace mix_space;
   absl::optional<Color::HueInterpolationMethod> hue_method;
   Color color_left;
   Color color_right;
@@ -60,25 +64,25 @@ struct ColorTest {
 
 TEST(BlinkColor, ColorMixSameColorSpace) {
   ColorMixTest color_mix_tests[] = {
-      {Color::ColorInterpolationSpace::kSRGB, absl::nullopt,
+      {Color::ColorSpace::kSRGB, absl::nullopt,
        CreateSRGBColor(1.0f, 0.0f, 0.0f, 1.0f),
        CreateSRGBColor(0.0f, 1.0f, 0.0f, 1.0f),
        /*percentage =*/0.5f, /*alpha_multiplier=*/1.0f,
        CreateSRGBColor(0.5f, 0.5f, 0.0f, 1.0f)},
-      {Color::ColorInterpolationSpace::kSRGB, absl::nullopt,
+      {Color::ColorSpace::kSRGB, absl::nullopt,
        Color::FromColorSpace(Color::ColorSpace::kRec2020, 0.7919771358198009f,
                              0.23097568481079767f, 0.07376147493817597f, 1.0f),
        Color::FromColorSpace(Color::ColorSpace::kLab, 87.81853633115202f,
                              -79.27108223854806f, 80.99459785152247f, 1.0f),
        /*percentage =*/0.5f, /*alpha_multiplier=*/1.0f,
        CreateSRGBColor(0.5f, 0.5f, 0.0f, 1.0f)},
-      {Color::ColorInterpolationSpace::kSRGB, absl::nullopt,
+      {Color::ColorSpace::kSRGB, absl::nullopt,
        CreateSRGBColor(1.0f, 0.0f, 0.0f, 1.0f),
        CreateSRGBColor(0.0f, 1.0f, 0.0f, 1.0f),
        /*percentage =*/0.25f, /*alpha_multiplier=*/0.5f,
        CreateSRGBColor(0.75f, 0.25f, 0.0f, 0.5f)},
       // Value obtained form the spec https://www.w3.org/TR/css-color-5/.
-      {Color::ColorInterpolationSpace::kSRGB, absl::nullopt,
+      {Color::ColorSpace::kSRGB, absl::nullopt,
        CreateSRGBColor(1.0f, 0.0f, 0.0f, 0.7f),
        CreateSRGBColor(0.0f, 1.0f, 0.0f, 0.2f),
        /*percentage =*/0.75f, /*alpha_multiplier=*/1.0f,
@@ -88,9 +92,7 @@ TEST(BlinkColor, ColorMixSameColorSpace) {
         color_mix_test.mix_space, color_mix_test.hue_method,
         color_mix_test.color_left, color_mix_test.color_right,
         color_mix_test.percentage_right, color_mix_test.alpha_multiplier);
-    EXPECT_EQ(
-        result.GetColorSpace(),
-        Color::ColorInterpolationSpaceToColorSpace(color_mix_test.mix_space));
+    EXPECT_EQ(result.GetColorSpace(), color_mix_test.mix_space);
     SkColor4f resultSkColor = result.toSkColor4f();
     SkColor4f expectedSkColor = color_mix_test.color_expected.toSkColor4f();
     EXPECT_NEAR(resultSkColor.fR, expectedSkColor.fR, 0.001f)
@@ -159,8 +161,8 @@ TEST(BlinkColor, ColorMixNone) {
       Color::ColorSpace::kXYZD50, absl::nullopt, absl::nullopt, 0.7f, 1.0f);
 
   Color result = Color::FromColorMix(
-      Color::ColorInterpolationSpace::kXYZD50, /*hue_method=*/absl::nullopt,
-      color1, color2, /*percentage=*/0.5f, /*alpha_multiplier=*/1.0f);
+      Color::ColorSpace::kXYZD50, /*hue_method=*/absl::nullopt, color1, color2,
+      /*percentage=*/0.5f, /*alpha_multiplier=*/1.0f);
 
   EXPECT_EQ(result.param0_is_none_, true);
   EXPECT_EQ(result.param1_is_none_, false);
@@ -173,56 +175,72 @@ TEST(BlinkColor, ColorInterpolation) {
   struct ColorsTest {
     Color color1;
     Color color2;
-    Color::ColorInterpolationSpace space;
+    Color::ColorSpace space;
     absl::optional<Color::HueInterpolationMethod> hue_method;
     float percentage;
     Color expected;
   };
 
-  // Tests extracted from the CSS Color 4 spec.
+  // Tests extracted from the CSS Color 4 spec, among others.
   // https://csswg.sesse.net/css-color-4/#interpolation-alpha
   ColorsTest colors_test[] = {
       {Color::FromColorSpace(Color::ColorSpace::kSRGB, absl::nullopt, 0.12f,
                              0.98f, 1.0f),
        Color::FromColorSpace(Color::ColorSpace::kSRGB, 0.62f, 0.26f, 0.64f,
                              1.0f),
-       Color::ColorInterpolationSpace::kSRGB, absl::nullopt, 0.5f,
+       Color::ColorSpace::kSRGB, absl::nullopt, 0.5f,
        Color::FromColorSpace(Color::ColorSpace::kSRGB, 0.62f, 0.19f, 0.81f,
                              1.0f)},
+
+      {Color::FromColorSpace(Color::ColorSpace::kHSL, absl::nullopt, 0.5f, 0.5f,
+                             1.0f),
+       Color::FromColorSpace(Color::ColorSpace::kHSL, 180.0f, 0.1f, 0.1f, 1.0f),
+       Color::ColorSpace::kHSL, absl::nullopt, 0.5f,
+       Color::FromColorSpace(Color::ColorSpace::kHSL, 180.0f, 0.3f, 0.3f,
+                             1.0f)},
+
+      {Color::FromColorSpace(Color::ColorSpace::kHWB, absl::nullopt, 0.5f, 0.5f,
+                             1.0f),
+       Color::FromColorSpace(Color::ColorSpace::kHWB, 180.0f, 0.1f, 0.1f, 1.0f),
+       Color::ColorSpace::kHWB, absl::nullopt, 0.5f,
+       Color::FromColorSpace(Color::ColorSpace::kHWB, 180.0f, 0.3f, 0.3f,
+                             1.0f)},
+
       {Color::FromColorSpace(Color::ColorSpace::kSRGB, 0.5f, absl::nullopt,
                              1.0f, 1.0f),
        Color::FromColorSpace(Color::ColorSpace::kSRGB, 1.0f, 0.5f, 0.0f, 1.0f),
-       Color::ColorInterpolationSpace::kSRGB, absl::nullopt, 0.5f,
+       Color::ColorSpace::kSRGB, absl::nullopt, 0.5f,
        Color::FromColorSpace(Color::ColorSpace::kSRGB, 0.75f, 0.5f, 0.5f,
                              1.0f)},
+
       {Color::FromColorSpace(Color::ColorSpace::kSRGB, .5f, 0.0f, 0.0f,
                              absl::nullopt),
        Color::FromColorSpace(Color::ColorSpace::kSRGB, 1.f, 0.5f, 1.0f, 1.0f),
-       Color::ColorInterpolationSpace::kSRGB, absl::nullopt, 0.5f,
+       Color::ColorSpace::kSRGB, absl::nullopt, 0.5f,
        Color::FromColorSpace(Color::ColorSpace::kSRGB, 0.75f, 0.25f, 0.5f,
                              1.0f)},
+
       {Color::FromColorSpace(Color::ColorSpace::kSRGB, 0.24f, 0.12f, 0.98f,
                              0.4f),
        Color::FromColorSpace(Color::ColorSpace::kSRGB, 0.62f, 0.26f, 0.64f,
                              0.6f),
-       Color::ColorInterpolationSpace::kSRGB, absl::nullopt, 0.5f,
+       Color::ColorSpace::kSRGB, absl::nullopt, 0.5f,
        Color::FromColorSpace(Color::ColorSpace::kSRGB, 0.468f, 0.204f, 0.776f,
                              0.5f)},
+
       {Color::FromColorSpace(Color::ColorSpace::kSRGB, 0.76f, 0.62f, 0.03f,
                              0.4f),
        Color::FromColorSpace(Color::ColorSpace::kDisplayP3, 0.84f, 0.19f, 0.72f,
                              0.6f),
-       Color::ColorInterpolationSpace::kLab, absl::nullopt, 0.5f,
+       Color::ColorSpace::kLab, absl::nullopt, 0.5f,
        Color::FromColorSpace(Color::ColorSpace::kLab, 58.873f, 51.552f, 7.108f,
                              0.5f)},
+
       {Color::FromColorSpace(Color::ColorSpace::kSRGB, 0.76f, 0.62f, 0.03f,
                              0.4f),
        Color::FromColorSpace(Color::ColorSpace::kDisplayP3, 0.84f, 0.19f, 0.72f,
                              0.6f),
-       Color::ColorInterpolationSpace::kLch,
-       Color::HueInterpolationMethod::kShorter, 0.5f,
-       // There is an issue with the spec where the hue is un-premultiplied even
-       // though it shouldn't be.
+       Color::ColorSpace::kLch, Color::HueInterpolationMethod::kShorter, 0.5f,
        Color::FromColorSpace(Color::ColorSpace::kLch, 58.873f, 81.126f, 31.82f,
                              0.5f)}};
 
@@ -422,22 +440,17 @@ TEST(BlinkColor, toSkColor4fValidation) {
       {Color::ColorSpace::kOklab, 0.421f, 0.165f, -0.1f},
       {Color::ColorSpace::kLch, 29.69f, 56.11f, 327.1f},
       {Color::ColorSpace::kOklch, 0.628f, 0.225f, 0.126f},
-      {Color::ColorSpace::kRGBLegacy, 0.7f, 0.5f, 0.0f},
+      {Color::ColorSpace::kSRGBLegacy, 0.7f, 0.5f, 0.0f},
       {Color::ColorSpace::kHSL, 4.0f, 0.5f, 0.0f},
       {Color::ColorSpace::kHWB, 4.0f, 0.5f, 0.0f}};
 
-  Color::ColorInterpolationSpace color_interpolation_space[] = {
-      Color::ColorInterpolationSpace::kXYZD65,
-      Color::ColorInterpolationSpace::kXYZD50,
-      Color::ColorInterpolationSpace::kSRGBLinear,
-      Color::ColorInterpolationSpace::kLab,
-      Color::ColorInterpolationSpace::kOklab,
-      Color::ColorInterpolationSpace::kLch,
-      Color::ColorInterpolationSpace::kOklch,
-      Color::ColorInterpolationSpace::kSRGB,
-      Color::ColorInterpolationSpace::kHSL,
-      Color::ColorInterpolationSpace::kHWB,
-      Color::ColorInterpolationSpace::kNone};
+  Color::ColorSpace color_interpolation_space[] = {
+      Color::ColorSpace::kXYZD65,     Color::ColorSpace::kXYZD50,
+      Color::ColorSpace::kSRGBLinear, Color::ColorSpace::kLab,
+      Color::ColorSpace::kOklab,      Color::ColorSpace::kLch,
+      Color::ColorSpace::kOklch,      Color::ColorSpace::kSRGB,
+      Color::ColorSpace::kSRGBLegacy, Color::ColorSpace::kHSL,
+      Color::ColorSpace::kHWB,        Color::ColorSpace::kNone};
 
   for (auto& space : color_interpolation_space) {
     for (auto& color_function_value : color_function_values) {
@@ -452,37 +465,34 @@ TEST(BlinkColor, toSkColor4fValidation) {
           color_function_value.param1, color_function_value.param2, 1.0f);
 
       SkColor4f expected_output = input.toSkColor4f();
-      input.ConvertToColorInterpolationSpace(space);
+      input.ConvertToColorSpace(space);
       SkColor4f output = input.toSkColor4f();
 
       EXPECT_NEAR(expected_output.fR, output.fR, 0.01f)
           << "Converting from "
           << Color::ColorSpaceToString(color_function_value.color_space)
-          << " to " << Color::ColorInterpolationSpaceToString(space);
+          << " to " << Color::ColorSpaceToString(space);
       EXPECT_NEAR(expected_output.fG, output.fG, 0.01f)
           << "Converting from "
           << Color::ColorSpaceToString(color_function_value.color_space)
-          << " to " << Color::ColorInterpolationSpaceToString(space);
+          << " to " << Color::ColorSpaceToString(space);
       EXPECT_NEAR(expected_output.fB, output.fB, 0.01f)
           << "Converting from "
           << Color::ColorSpaceToString(color_function_value.color_space)
-          << " to " << Color::ColorInterpolationSpaceToString(space);
+          << " to " << Color::ColorSpaceToString(space);
     }
   }
 }
 
 TEST(BlinkColor, ExportAsXYZD50Floats) {
-  Color::ColorInterpolationSpace color_spaces[] = {
-      Color::ColorInterpolationSpace::kXYZD65,
-      Color::ColorInterpolationSpace::kXYZD50,
-      Color::ColorInterpolationSpace::kSRGBLinear,
-      Color::ColorInterpolationSpace::kLab,
-      Color::ColorInterpolationSpace::kOklab,
-      Color::ColorInterpolationSpace::kLch,
-      Color::ColorInterpolationSpace::kOklch,
-      Color::ColorInterpolationSpace::kSRGB,
-      Color::ColorInterpolationSpace::kHSL,
-      Color::ColorInterpolationSpace::kHWB};
+  Color::ColorSpace color_spaces[] = {
+      Color::ColorSpace::kXYZD65,     Color::ColorSpace::kXYZD50,
+      Color::ColorSpace::kSRGBLinear, Color::ColorSpace::kLab,
+      Color::ColorSpace::kOklab,      Color::ColorSpace::kLch,
+      Color::ColorSpace::kOklch,      Color::ColorSpace::kSRGB,
+      Color::ColorSpace::kHSL,        Color::ColorSpace::kHWB,
+      Color::ColorSpace::kDisplayP3,  Color::ColorSpace::kProPhotoRGB,
+      Color::ColorSpace::kRec2020,    Color::ColorSpace::kA98RGB};
 
   struct FloatValues {
     float x;
@@ -504,18 +514,15 @@ TEST(BlinkColor, ExportAsXYZD50Floats) {
       Color input = Color::FromColorSpace(
           Color::ColorSpace::kXYZD50, input_parameter.x, input_parameter.y,
           input_parameter.z, 1.0f);
-      input.ConvertToColorInterpolationSpace(space);
+      input.ConvertToColorSpace(space);
       auto [x, y, z] = input.ExportAsXYZD50Floats();
 
       EXPECT_NEAR(x, expected.param0_, 0.01f)
-          << "Converting through "
-          << Color::ColorInterpolationSpaceToString(space);
+          << "Converting through " << Color::ColorSpaceToString(space);
       EXPECT_NEAR(y, expected.param1_, 0.01f)
-          << "Converting through "
-          << Color::ColorInterpolationSpaceToString(space);
+          << "Converting through " << Color::ColorSpaceToString(space);
       EXPECT_NEAR(z, expected.param2_, 0.01f)
-          << "Converting through "
-          << Color::ColorInterpolationSpaceToString(space);
+          << "Converting through " << Color::ColorSpaceToString(space);
     }
   }
 }
@@ -675,4 +682,225 @@ TEST(BlinkColor, Unpremultiply) {
   }
 }
 
+TEST(BlinkColor, ConvertToColorSpace) {
+  struct ColorConversionTest {
+    Color input_color;
+    Color::ColorSpace destination_color_space;
+    Color expected_color;
+  };
+
+  ColorConversionTest conversion_tests[] = {
+      {Color::FromColorSpace(Color::ColorSpace::kSRGB, 0.25f, 0.5f, 0.75f),
+       Color::ColorSpace::kDisplayP3,
+       Color::FromColorSpace(Color::ColorSpace::kDisplayP3, 0.313084f,
+                             0.494041f, 0.730118f)},
+
+      {Color::FromColorSpace(Color::ColorSpace::kDisplayP3, 0.25f, 0.5f, 0.75f),
+       Color::ColorSpace::kSRGB,
+       Color::FromColorSpace(Color::ColorSpace::kSRGB, 0.123874f, 0.507355f,
+                             0.771198f)},
+
+      {Color::FromColorSpace(Color::ColorSpace::kSRGB, 0.25f, 0.5f, 0.75f),
+       Color::ColorSpace::kA98RGB,
+       Color::FromColorSpace(Color::ColorSpace::kA98RGB, 0.346851f, 0.496124f,
+                             0.736271f)},
+
+      {Color::FromColorSpace(Color::ColorSpace::kA98RGB, 0.25f, 0.5f, 0.75f),
+       Color::ColorSpace::kSRGB,
+       Color::FromColorSpace(Color::ColorSpace::kSRGB, -0.153808f, 0.503925f,
+                             0.763874f)},
+
+      {Color::FromColorSpace(Color::ColorSpace::kSRGB, 0.25f, 0.5f, 0.75f),
+       Color::ColorSpace::kProPhotoRGB,
+       Color::FromColorSpace(Color::ColorSpace::kProPhotoRGB, 0.374905f,
+                             0.416401f, 0.663692f)},
+
+      {Color::FromColorSpace(Color::ColorSpace::kProPhotoRGB, 0.25f, 0.5f,
+                             0.75f),
+       Color::ColorSpace::kSRGB,
+       Color::FromColorSpace(Color::ColorSpace::kSRGB, -0.510605f, 0.612396f,
+                             0.825333f)},
+
+      {Color::FromColorSpace(Color::ColorSpace::kSRGB, 0.25f, 0.5f, 0.75f),
+       Color::ColorSpace::kRec2020,
+       Color::FromColorSpace(Color::ColorSpace::kRec2020, 0.331976f, 0.440887f,
+                             0.696358f)},
+
+      {Color::FromColorSpace(Color::ColorSpace::kRec2020, 0.25f, 0.5f, 0.75f),
+       Color::ColorSpace::kSRGB,
+       Color::FromColorSpace(Color::ColorSpace::kSRGB, -0.280102f, 0.565536f,
+                             0.79958f)},
+  };
+
+  for (auto& test : conversion_tests) {
+    test.input_color.ConvertToColorSpace(test.destination_color_space);
+
+    EXPECT_NEAR(test.input_color.param0_, test.expected_color.param0_, 0.001f)
+        << "Converting generated " << test.input_color.param0_ << " "
+        << test.input_color.param1_ << " " << test.input_color.param2_ << " "
+        << test.input_color.alpha_ << " and it was expecting "
+        << test.expected_color.param0_ << " " << test.expected_color.param1_
+        << " " << test.expected_color.param2_ << " "
+        << test.expected_color.alpha_;
+    EXPECT_NEAR(test.input_color.param1_, test.expected_color.param1_, 0.001f)
+        << "Converting generated " << test.input_color.param0_ << " "
+        << test.input_color.param1_ << " " << test.input_color.param2_ << " "
+        << test.input_color.alpha_ << " and it was expecting "
+        << test.expected_color.param0_ << " " << test.expected_color.param1_
+        << " " << test.expected_color.param2_ << " "
+        << test.expected_color.alpha_;
+    EXPECT_NEAR(test.input_color.param2_, test.expected_color.param2_, 0.001f)
+        << "Converting generated " << test.input_color.param0_ << " "
+        << test.input_color.param1_ << " " << test.input_color.param2_ << " "
+        << test.input_color.alpha_ << " and it was expecting "
+        << test.expected_color.param0_ << " " << test.expected_color.param1_
+        << " " << test.expected_color.param2_ << " "
+        << test.expected_color.alpha_;
+    EXPECT_NEAR(test.input_color.alpha_, test.expected_color.alpha_, 0.001f)
+        << "Converting generated " << test.input_color.param0_ << " "
+        << test.input_color.param1_ << " " << test.input_color.param2_ << " "
+        << test.input_color.alpha_ << " and it was expecting "
+        << test.expected_color.param0_ << " " << test.expected_color.param1_
+        << " " << test.expected_color.param2_ << " "
+        << test.expected_color.alpha_;
+  }
+}
+
+TEST(BlinkColor, ResolveMissingComponents) {
+  struct ResolveMissingComponentsTest {
+    Color input_color;
+    Color expected_color;
+  };
+
+  ResolveMissingComponentsTest tests[] = {
+      {
+          Color::FromColorSpace(Color::ColorSpace::kSRGB, absl::nullopt, 0.2f,
+                                0.3f, 0.4f),
+          Color::FromColorSpace(Color::ColorSpace::kSRGB, 0.0f, 0.2f, 0.3f,
+                                0.4f),
+      },
+      {
+          Color::FromColorSpace(Color::ColorSpace::kSRGB, 0.1f, absl::nullopt,
+                                0.3f, 0.4f),
+          Color::FromColorSpace(Color::ColorSpace::kSRGB, 0.1f, 0.0f, 0.3f,
+                                0.4f),
+      },
+      {
+          Color::FromColorSpace(Color::ColorSpace::kSRGB, 0.1f, 0.2f,
+                                absl::nullopt, 0.4f),
+          Color::FromColorSpace(Color::ColorSpace::kSRGB, 0.1f, 0.2f, 0.0f,
+                                0.4f),
+      },
+      {
+          // Alpha remains unresolved
+          Color::FromColorSpace(Color::ColorSpace::kSRGB, 0.1f, 0.2f, 0.3f,
+                                absl::nullopt),
+          Color::FromColorSpace(Color::ColorSpace::kSRGB, 0.1f, 0.2f, 0.3f,
+                                absl::nullopt),
+      },
+      {
+          Color::FromColorSpace(Color::ColorSpace::kSRGB, absl::nullopt,
+                                absl::nullopt, absl::nullopt, absl::nullopt),
+          Color::FromColorSpace(Color::ColorSpace::kSRGB, 0.0f, 0.0f, 0.0f,
+                                absl::nullopt),
+      },
+  };
+
+  for (auto& test : tests) {
+    test.input_color.ResolveMissingComponents();
+    EXPECT_EQ(test.input_color, test.expected_color);
+  }
+}
+
+TEST(BlinkColor, SubstituteMissingParameters) {
+  Color srgb1 =
+      Color::FromColorSpace(Color::ColorSpace::kSRGB, 0.1, 0.2, 0.3, 0.4);
+  Color srgb2 =
+      Color::FromColorSpace(Color::ColorSpace::kSRGB, 0.5, 0.6, 0.7, 0.8);
+  Color oklab =
+      Color::FromColorSpace(Color::ColorSpace::kOklab, 0.6, 0.0, 0.1, 0.8);
+
+  // Substitute one param.
+  {
+    for (int param_index = 0; param_index < 4; param_index++) {
+      Color c1 = srgb1;
+      Color c2 = srgb2;
+      Color expected_c1 = c1;
+      switch (param_index) {
+        case 0:
+          c1.param0_is_none_ = true;
+          expected_c1.param0_ = c2.param0_;
+          break;
+        case 2:
+          c1.param1_is_none_ = true;
+          expected_c1.param1_ = c2.param1_;
+          break;
+        case 3:
+          c1.param2_is_none_ = true;
+          expected_c1.param2_ = c2.param2_;
+          break;
+        case 4:
+          c1.alpha_is_none_ = true;
+          expected_c1.alpha_ = c2.alpha_;
+      }
+
+      Color c1_copy = c1;
+      Color c2_copy = c2;
+
+      EXPECT_TRUE(Color::SubstituteMissingParameters(c1, c2));
+      EXPECT_EQ(c1, expected_c1);
+      EXPECT_EQ(c2, srgb2);
+
+      // Test with arguments inverted.
+      EXPECT_TRUE(Color::SubstituteMissingParameters(c2_copy, c1_copy));
+      EXPECT_EQ(c1_copy, expected_c1);
+      EXPECT_EQ(c2_copy, srgb2);
+    }
+  }
+
+  // Nones on both sides remain.
+  {
+    for (int param_index = 0; param_index < 4; param_index++) {
+      Color c1 = srgb1;
+      Color c2 = srgb2;
+      switch (param_index) {
+        case 0:
+          c1.param0_is_none_ = true;
+          c2.param0_is_none_ = true;
+          break;
+        case 1:
+          c1.param1_is_none_ = true;
+          c2.param1_is_none_ = true;
+          break;
+        case 2:
+          c1.param2_is_none_ = true;
+          c2.param2_is_none_ = true;
+          break;
+        case 4:
+          c1.alpha_is_none_ = true;
+          c2.alpha_is_none_ = true;
+          break;
+      }
+
+      Color expected_c1 = c1;
+      Color expected_c2 = c2;
+
+      EXPECT_TRUE(Color::SubstituteMissingParameters(c1, c2));
+      EXPECT_EQ(c1, expected_c1);
+      EXPECT_EQ(c2, expected_c2);
+
+      // Test with arguments inverted.
+      EXPECT_TRUE(Color::SubstituteMissingParameters(c2, c1));
+      EXPECT_EQ(c1, expected_c1);
+      EXPECT_EQ(c2, expected_c2);
+    }
+  }
+
+  // Different colorspaces fail
+  {
+    Color c1 = srgb1;
+    Color c2 = oklab;
+    EXPECT_FALSE(Color::SubstituteMissingParameters(c1, c2));
+  }
+}
 }  // namespace blink

@@ -4,8 +4,9 @@ URL: https://github.com/abseil/abseil-cpp
 License: Apache 2.0
 License File: LICENSE
 Version: 0
-Revision: c3b5022604551a045e383c68071d7be0a807839d
+Revision: 10f3e6117b1154ca8e7e744809d82988f0ff481d
 Security Critical: yes
+Shipped: yes
 
 Description:
 This directory contains the source code of Abseil for C++. This can be used by

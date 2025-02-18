@@ -34,9 +34,6 @@
 #include "third_party/blink/renderer/core/css/parser/css_parser.h"
 #include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/html/parser/html_parser_idioms.h"
-#include "third_party/blink/renderer/modules/canvas/canvas2d/canvas_gradient.h"
-#include "third_party/blink/renderer/modules/canvas/canvas2d/canvas_pattern.h"
-#include "third_party/blink/renderer/platform/graphics/graphics_context.h"
 #include "third_party/blink/renderer/platform/graphics/skia/skia_utils.h"
 #include "third_party/skia/include/core/SkShader.h"
 
@@ -44,30 +41,43 @@ namespace blink {
 
 static ColorParseResult ParseColor(Color& parsed_color,
                                    const String& color_string,
-                                   mojom::blink::ColorScheme color_scheme) {
+                                   mojom::blink::ColorScheme color_scheme,
+                                   const ui::ColorProvider* color_provider) {
   if (EqualIgnoringASCIICase(color_string, "currentcolor"))
     return ColorParseResult::kCurrentColor;
   const bool kUseStrictParsing = true;
   if (CSSParser::ParseColor(parsed_color, color_string, kUseStrictParsing))
     return ColorParseResult::kColor;
-  if (CSSParser::ParseSystemColor(parsed_color, color_string, color_scheme))
+  if (CSSParser::ParseSystemColor(parsed_color, color_string, color_scheme,
+                                  color_provider)) {
     return ColorParseResult::kColor;
+  }
+  if (auto* color_mix_value =
+          DynamicTo<cssvalue::CSSColorMixValue>(CSSParser::ParseSingleValue(
+              CSSPropertyID::kColor, color_string,
+              StrictCSSParserContext(SecureContextMode::kInsecureContext)))) {
+    return ColorParseResult::kColorMix;
+  }
   return ColorParseResult::kParseFailed;
 }
 
-ColorParseResult ParseCanvasColorString(const String& color_string,
-                                        mojom::blink::ColorScheme color_scheme,
-                                        Color& parsed_color) {
+ColorParseResult ParseCanvasColorString(
+    const String& color_string,
+    mojom::blink::ColorScheme color_scheme,
+    Color& parsed_color,
+    const ui::ColorProvider* color_provider) {
   return ParseColor(parsed_color,
                     color_string.StripWhiteSpace(IsHTMLSpace<UChar>),
-                    color_scheme);
+                    color_scheme, color_provider);
 }
 
 bool ParseCanvasColorString(const String& color_string, Color& parsed_color) {
-  const ColorParseResult parse_result = ParseCanvasColorString(
-      color_string, mojom::blink::ColorScheme::kLight, parsed_color);
+  const ColorParseResult parse_result =
+      ParseCanvasColorString(color_string, mojom::blink::ColorScheme::kLight,
+                             parsed_color, /*color_provider=*/nullptr);
   switch (parse_result) {
     case ColorParseResult::kColor:
+    case ColorParseResult::kColorMix:
       return true;
     case ColorParseResult::kCurrentColor:
       parsed_color = Color::kBlack;
@@ -77,39 +87,25 @@ bool ParseCanvasColorString(const String& color_string, Color& parsed_color) {
   }
 }
 
-CanvasStyle::CanvasStyle(Color color) : type_(kColor), color_(color) {}
-
-CanvasStyle::CanvasStyle(CanvasGradient* gradient)
-    : type_(kGradient), gradient_(gradient) {}
-
-CanvasStyle::CanvasStyle(CanvasPattern* pattern)
-    : type_(kImagePattern), pattern_(pattern) {}
-
-void CanvasStyle::ApplyToFlags(cc::PaintFlags& flags) const {
-  ImageDrawOptions draw_options;
+void CanvasStyle::ApplyToFlags(cc::PaintFlags& flags,
+                               float global_alpha) const {
   switch (type_) {
     case kColor:
-      flags.setShader(nullptr);
+      ApplyColorToFlags(flags, global_alpha);
       break;
     case kGradient:
       GetCanvasGradient()->GetGradient()->ApplyToFlags(flags, SkMatrix::I(),
-                                                       draw_options);
+                                                       ImageDrawOptions());
+      flags.setColor(SkColor4f{0.0f, 0.0f, 0.0f, global_alpha});
       break;
     case kImagePattern:
       GetCanvasPattern()->GetPattern()->ApplyToFlags(
           flags, AffineTransformToSkMatrix(GetCanvasPattern()->GetTransform()));
+      flags.setColor(SkColor4f{0.0f, 0.0f, 0.0f, global_alpha});
       break;
     default:
       NOTREACHED();
   }
-}
-
-Color CanvasStyle::PaintColor() const {
-  if (type_ == kColor) {
-    return color_;
-  }
-  DCHECK(type_ == kGradient || type_ == kImagePattern);
-  return Color::kBlack;
 }
 
 void CanvasStyle::Trace(Visitor* visitor) const {

@@ -9,6 +9,7 @@
 // not yet checked in. The tests will be skipped if you don't have the
 // files available.
 
+#include "third_party/blink/renderer/core/css/resolver/style_resolver.h"
 #include "third_party/blink/renderer/core/css/style_recalc_change.h"
 
 #include "base/command_line.h"
@@ -35,6 +36,43 @@
 
 namespace blink {
 
+// The HTML left by the dumper script will contain any <style> tags that were
+// in the DOM, which will be interpreted by setInnerHTML() and converted to
+// style sheets. However, we already have our own canonical list of sheets
+// (from the JSON) that we want to use. Keeping both will make for duplicated
+// rules, enabling rules and sheets that have since been deleted
+// (occasionally even things like “display: none !important”) and so on.
+// Thus, as a kludge, we strip all <style> tags from the HTML here before
+// parsing.
+static WTF::String StripStyleTags(const WTF::String& html) {
+  StringBuilder stripped_html;
+  wtf_size_t pos = 0;
+  for (;;) {
+    wtf_size_t style_start =
+        html.FindIgnoringCase("<style", pos);  // Allow <style id=" etc.
+    if (style_start == kNotFound) {
+      // No more <style> tags, so append the rest of the string.
+      stripped_html.Append(html.Substring(pos, html.length() - pos));
+      break;
+    }
+    // Bail out if it's not “<style>” or “<style ”; it's probably
+    // a false positive then.
+    if (style_start + 6 >= html.length() ||
+        (html[style_start + 6] != ' ' && html[style_start + 6] != '>')) {
+      stripped_html.Append(html.Substring(pos, style_start - pos));
+      pos = style_start + 6;
+      continue;
+    }
+    wtf_size_t style_end = html.FindIgnoringCase("</style>", style_start);
+    if (style_end == kNotFound) {
+      LOG(FATAL) << "Mismatched <style> tag";
+    }
+    stripped_html.Append(html.Substring(pos, style_start - pos));
+    pos = style_end + 8;
+  }
+  return stripped_html.ToString();
+}
+
 static std::unique_ptr<DummyPageHolder> LoadDumpedPage(
     const base::Value::Dict& dict,
     base::TimeDelta& parse_time,
@@ -53,8 +91,9 @@ static std::unique_ptr<DummyPageHolder> LoadDumpedPage(
 
   Document& document = page->GetDocument();
   StyleEngine& engine = document.GetStyleEngine();
-  document.body()->setInnerHTML(WTF::String(*dict.FindString("html")),
-                                ASSERT_NO_EXCEPTION);
+  document.documentElement()->setInnerHTML(
+      StripStyleTags(WTF::String(*dict.FindString("html"))),
+      ASSERT_NO_EXCEPTION);
 
   int num_sheets = 0;
   int num_bytes = 0;
@@ -70,9 +109,9 @@ static std::unique_ptr<DummyPageHolder> LoadDumpedPage(
                          /*allow_import_rules=*/true);
     }
     if (*sheet_dict.FindString("type") == "user") {
-      engine.InjectSheet("", sheet, WebCssOrigin::kUser);
+      engine.InjectSheet(g_empty_atom, sheet, WebCssOrigin::kUser);
     } else {
-      engine.InjectSheet("", sheet, WebCssOrigin::kAuthor);
+      engine.InjectSheet(g_empty_atom, sheet, WebCssOrigin::kAuthor);
     }
     ++num_sheets;
     num_bytes += sheet_dict.FindString("text")->size();
@@ -100,6 +139,12 @@ struct StylePerfResult {
   base::TimeDelta recalc_style_time;
   int64_t gc_allocated_bytes;
   int64_t partition_allocated_bytes;  // May be negative due to bugs.
+
+  // Part of gc_allocated_bytes, but much more precise. Only enabled if
+  // --measure-computed-style-memory is set -- and if so, gc_allocated_bytes
+  // is going to be much higher due to the extra allocated objects used for
+  // diffing.
+  int64_t computed_style_used_bytes;
 };
 
 static StylePerfResult MeasureStyleForDumpedPage(
@@ -115,6 +160,10 @@ static StylePerfResult MeasureStyleForDumpedPage(
           "style-recalc-iterations");
   int recalc_iterations =
       recalc_iterations_str.empty() ? 1 : stoi(recalc_iterations_str);
+
+  const bool measure_computed_style_memory =
+      base::CommandLine::ForCurrentProcess()->HasSwitch(
+          "measure-computed-style-memory");
 
   // Do a forced GC run before we start loading anything, so that we have
   // a more stable baseline. Note that even with this, the GC deltas tend to
@@ -133,14 +182,23 @@ static StylePerfResult MeasureStyleForDumpedPage(
   {
     scoped_refptr<SharedBuffer> serialized =
         test::ReadFromFile(test::StylePerfTestDataPath(filename));
-    absl::optional<base::Value> json = base::JSONReader::Read(
-        base::StringPiece(serialized->Data(), serialized->size()));
-    if (!json.has_value()) {
+    if (!serialized) {
+      // Some test data is very large and needs to be downloaded separately,
+      // so it may not always be present. Do not fail, but report the test as
+      // skipped.
       result.skipped = true;
       return result;
     }
+    absl::optional<base::Value> json = base::JSONReader::Read(
+        base::StringPiece(serialized->Data(), serialized->size()));
+    CHECK(json.has_value());
     page = LoadDumpedPage(json->GetDict(), result.parse_time, reporter);
   }
+
+  page->GetDocument()
+      .GetStyleEngine()
+      .GetStyleResolver()
+      .SetCountComputedStyleBytes(measure_computed_style_memory);
 
   if (!parse_only) {
     {
@@ -177,6 +235,12 @@ static StylePerfResult MeasureStyleForDumpedPage(
   result.gc_allocated_bytes = gc_allocated_bytes - orig_gc_allocated_bytes;
   result.partition_allocated_bytes =
       partition_allocated_bytes - orig_partition_allocated_bytes;
+  if (measure_computed_style_memory) {
+    result.computed_style_used_bytes = page->GetDocument()
+                                           .GetStyleEngine()
+                                           .GetStyleResolver()
+                                           .GetComputedStyleBytesUsed();
+  }
 
   return result;
 }
@@ -204,9 +268,19 @@ static void MeasureAndPrintStyleForDumpedPage(const char* filename,
     reporter.AddResult("RecalcTime", result.recalc_style_time);
   }
 
-  reporter.RegisterImportantMetric("GCAllocated", "kB");
-  reporter.AddResult("GCAllocated",
-                     static_cast<size_t>(result.gc_allocated_bytes) / 1024);
+  if (result.computed_style_used_bytes > 0) {
+    reporter.RegisterImportantMetric("ComputedStyleUsed", "kB");
+    reporter.AddResult(
+        "ComputedStyleUsed",
+        static_cast<size_t>(result.computed_style_used_bytes) / 1024);
+
+    // Don't print GCAllocated if we measured ComputedStyle; it causes
+    // much more GC churn, which will skew the metrics.
+  } else {
+    reporter.RegisterImportantMetric("GCAllocated", "kB");
+    reporter.AddResult("GCAllocated",
+                       static_cast<size_t>(result.gc_allocated_bytes) / 1024);
+  }
 
   reporter.RegisterImportantMetric("PartitionAllocated", "kB");
   reporter.AddResult(

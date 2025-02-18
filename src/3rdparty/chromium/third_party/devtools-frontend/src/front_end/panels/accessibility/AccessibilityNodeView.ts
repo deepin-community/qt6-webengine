@@ -7,6 +7,7 @@ import * as i18n from '../../core/i18n/i18n.js';
 import * as SDK from '../../core/sdk/sdk.js';
 import * as Protocol from '../../generated/protocol.js';
 import * as UI from '../../ui/legacy/legacy.js';
+import * as VisualLogging from '../../ui/visual_logging/visual_logging.js';
 
 import accessibilityNodeStyles from './accessibilityNode.css.js';
 import {AXAttributes, AXNativeSourceTypes, AXSourceTypes} from './AccessibilityStrings.js';
@@ -41,6 +42,10 @@ const UIStrings = {
    *@description Text which appears in the Accessibility Node View of the Accessibility panel when an element is covered by a modal/popup window
    */
   elementIsHiddenBy: 'Element is hidden by active modal dialog:\xA0',
+  /**
+   *@description Text which appears in the Accessibility Node View of the Accessibility panel when an element is hidden by another accessibility tree.
+   */
+  elementIsHiddenByChildTree: 'Element is hidden by child tree:\xA0',
   /**
    *@description Reason element in Accessibility Node View of the Accessibility panel
    */
@@ -113,7 +118,7 @@ const UIStrings = {
 const str_ = i18n.i18n.registerUIStrings('panels/accessibility/AccessibilityNodeView.ts', UIStrings);
 const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
 export class AXNodeSubPane extends AccessibilitySubPane {
-  axNode: SDK.AccessibilityModel.AccessibilityNode|null;
+  override axNode: SDK.AccessibilityModel.AccessibilityNode|null;
   private readonly noNodeInfo: Element;
   private readonly ignoredInfo: Element;
   private readonly treeOutline: UI.TreeOutline.TreeOutline;
@@ -124,6 +129,7 @@ export class AXNodeSubPane extends AccessibilitySubPane {
     this.axNode = null;
 
     this.contentElement.classList.add('ax-subpane');
+    this.contentElement.setAttribute('jslog', `${VisualLogging.pane().context('computed-properties')}`);
 
     this.noNodeInfo = this.createInfo(i18nString(UIStrings.noAccessibilityNode));
     this.ignoredInfo = this.createInfo(i18nString(UIStrings.accessibilityNodeNotExposed), 'ax-ignored-info hidden');
@@ -136,7 +142,7 @@ export class AXNodeSubPane extends AccessibilitySubPane {
     this.treeOutline.setFocusable(true);
   }
 
-  setAXNode(axNode: SDK.AccessibilityModel.AccessibilityNode|null): void {
+  override setAXNode(axNode: SDK.AccessibilityModel.AccessibilityNode|null): void {
     if (this.axNode === axNode) {
       return;
     }
@@ -213,11 +219,11 @@ export class AXNodeSubPane extends AccessibilitySubPane {
     }
   }
 
-  setNode(node: SDK.DOMModel.DOMNode|null): void {
+  override setNode(node: SDK.DOMModel.DOMNode|null): void {
     super.setNode(node);
     this.axNode = null;
   }
-  wasShown(): void {
+  override wasShown(): void {
     super.wasShown();
     this.registerCSSFiles([accessibilityNodeStyles]);
   }
@@ -261,8 +267,7 @@ export class AXNodePropertyTreeElement extends UI.TreeOutline.TreeElement {
   }
 
   static createExclamationMark(tooltip: string): Element {
-    const exclamationElement = document.createElement('span', {is: 'dt-icon-label'}) as UI.UIUtils.DevToolsIconLabel;
-    exclamationElement.type = 'smallicon-warning';
+    const exclamationElement = UI.UIUtils.createIconLabel({iconName: 'warning-filled', color: 'var(--icon-warning)'});
     UI.Tooltip.Tooltip.install(exclamationElement, tooltip);
     return exclamationElement;
   }
@@ -363,7 +368,7 @@ export const StringProperties = new Set<Protocol.Accessibility.AXValueType>([
 
 export class AXNodePropertyTreePropertyElement extends AXNodePropertyTreeElement {
   private readonly property: SDK.AccessibilityModel.CoreOrProtocolAxProperty;
-  toggleOnClick: boolean;
+  override toggleOnClick: boolean;
   constructor(
       property: SDK.AccessibilityModel.CoreOrProtocolAxProperty, axNode: SDK.AccessibilityModel.AccessibilityNode) {
     super(axNode);
@@ -374,7 +379,7 @@ export class AXNodePropertyTreePropertyElement extends AXNodePropertyTreeElement
     this.listItemElement.classList.add('property');
   }
 
-  onattach(): void {
+  override onattach(): void {
     this.update();
   }
 
@@ -396,7 +401,7 @@ export class AXValueSourceTreeElement extends AXNodePropertyTreeElement {
     this.source = source;
   }
 
-  onattach(): void {
+  override onattach(): void {
     this.update();
   }
 
@@ -442,7 +447,7 @@ export class AXValueSourceTreeElement extends AXNodePropertyTreeElement {
     }
   }
 
-  appendRelatedNodeListValueElement(value: Protocol.Accessibility.AXValue): void {
+  override appendRelatedNodeListValueElement(value: Protocol.Accessibility.AXValue): void {
     const relatedNodes = value.relatedNodes;
     const numNodes = relatedNodes ? relatedNodes.length : 0;
 
@@ -547,7 +552,7 @@ export class AXRelatedNodeSourceTreeElement extends UI.TreeOutline.TreeElement {
     this.selectable = true;
   }
 
-  onattach(): void {
+  override onattach(): void {
     this.listItemElement.appendChild(this.axRelatedNodeElement.render());
     if (!this.value) {
       return;
@@ -559,7 +564,7 @@ export class AXRelatedNodeSourceTreeElement extends UI.TreeOutline.TreeElement {
     }
   }
 
-  onenter(): boolean {
+  override onenter(): boolean {
     this.axRelatedNodeElement.revealNode();
     return true;
   }
@@ -612,7 +617,7 @@ export class AXRelatedNodeElement {
 
 export class AXNodeIgnoredReasonTreeElement extends AXNodePropertyTreeElement {
   private property: Protocol.Accessibility.AXProperty;
-  toggleOnClick: boolean;
+  override toggleOnClick: boolean;
   private reasonElement?: Element|null;
 
   constructor(property: Protocol.Accessibility.AXProperty, axNode: SDK.AccessibilityModel.AccessibilityNode) {
@@ -628,6 +633,9 @@ export class AXNodeIgnoredReasonTreeElement extends AXNodePropertyTreeElement {
     switch (reason) {
       case 'activeModalDialog':
         reasonElement = i18n.i18n.getFormatLocalizedString(str_, UIStrings.elementIsHiddenBy, {});
+        break;
+      case 'hiddenByChildTree':
+        reasonElement = i18n.i18n.getFormatLocalizedString(str_, UIStrings.elementIsHiddenByChildTree, {});
         break;
       case 'ancestorIsLeafNode':
         reasonElement = i18n.i18n.getFormatLocalizedString(str_, UIStrings.ancestorChildrenAreAll, {});
@@ -691,7 +699,7 @@ export class AXNodeIgnoredReasonTreeElement extends AXNodePropertyTreeElement {
     return reasonElement;
   }
 
-  onattach(): void {
+  override onattach(): void {
     this.listItemElement.removeChildren();
 
     this.reasonElement = AXNodeIgnoredReasonTreeElement.createReasonElement(this.property.name, this.axNode);

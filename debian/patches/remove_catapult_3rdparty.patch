@@ -6,72 +6,64 @@ diff --git a/chromium/BUILD.gn b/chromium/BUILD.gn
 index 457c83e8158..b0cd3ef2f74 100644
 --- a/src/3rdparty/chromium/BUILD.gn
 +++ b/src/3rdparty/chromium/BUILD.gn
-@@ -249,7 +249,6 @@ if (!is_qtwebengine){
-     deps += [
-       "//google_apis/gcm:mcs_probe",
-       "//media/cast:cast_unittests",
--      "//third_party/catapult/telemetry:bitmaptools($host_toolchain)",
-     ]
-     if (!is_android) {
-       if (!is_castos) {
-@@ -381,7 +380,6 @@ if (!is_qtwebengine){
-       "//testing/android/junit:junit_unit_tests",
-       "//third_party/android_build_tools/lint:custom_lint_java",
-       "//third_party/androidx_javascriptengine",
--      "//third_party/catapult/devil",
-       "//third_party/r8:custom_d8_java",
-       "//tools/android:android_tools",
-       "//tools/android:memconsumer",
-@@ -1124,7 +1122,6 @@ if (!is_ios && !is_qtwebengine) {
-         "//chrome:chrome",
-         "//chrome/test/chromedriver:chromedriver_server",
-         "//testing:test_scripts_shared",
--        "//third_party/catapult/third_party/typ",
+@@ -244,7 +244,6 @@ group("gn_all") {
+     if (!is_ios) {
+       deps += [
+         "//google_apis/gcm:mcs_probe",
+-        "//third_party/catapult/telemetry:bitmaptools($host_toolchain)",
        ]
-       if (is_win) {
-         data_deps += [ "//build/win:copy_cdb_to_output" ]
-@@ -1177,7 +1174,6 @@ if (!is_ios && !is_qtwebengine) {
+       if (!is_android) {
+         if (!is_castos && !is_fuchsia) {
+@@ -387,7 +386,6 @@ group("gn_all") {
+         "//testing/android/junit:junit_unit_tests",
+         "//third_party/android_build_tools/lint:custom_lint_java",
+         "//third_party/androidx_javascriptengine",
+-        "//third_party/catapult/devil",
+         "//third_party/jni_zero/samples:jni_generator_tests",
+         "//third_party/r8:custom_d8_java",
+         "//tools/android:android_tools",
+@@ -1163,7 +1161,6 @@ if (use_blink && !is_cronet_build) {
        "//third_party/blink/public:blink_devtools_inspector_resources",
        "//third_party/blink/public/mojom:mojom_platform_js_data_deps",
-       "//third_party/blink/renderer/core:js_files_for_form_controls_web_tests",
+       "//third_party/blink/renderer/core:gen_files_for_web_tests",
 -      "//third_party/catapult/third_party/typ",
        "//third_party/hyphenation-patterns:test_data",
        "//third_party/mesa_headers",
        "//tools/imagediff",
-@@ -1254,7 +1250,6 @@ if (!is_ios && !is_qtwebengine) {
-
+@@ -1242,7 +1239,6 @@ if (use_blink && !is_cronet_build) {
+ 
      if (is_android) {
        data += [
 -        "//third_party/catapult/",
          "//build/android/",
        ]
      }
-@@ -1630,10 +1625,6 @@ if (!is_ios && !is_qtwebengine) {
-       "//third_party/blink/web_tests/TestExpectations",
+@@ -1589,10 +1585,6 @@ if (use_blink && !is_cronet_build) {
        "//third_party/blink/web_tests/VirtualTestSuites",
        "//third_party/blink/web_tests/W3CImportExpectations",
+       "//third_party/blink/web_tests/paint/invalidation/repaint-overlay/",
 -      "//third_party/catapult/common/py_utils/",
 -      "//third_party/catapult/devil/",
 -      "//third_party/catapult/dependency_manager/",
 -      "//third_party/catapult/third_party/typ/",
-       "//third_party/depot_tools/pylint-1.5",
+       "//third_party/depot_tools/pylint-2.7",
        "//third_party/depot_tools/pylint_main.py",
        "//third_party/depot_tools/pylintrc",
 diff --git a/src/3rdparty/chromium/chrome/chrome_paks.gni b/src/3rdparty/chromium/chrome/chrome_paks.gni
 index b9dce47a02f..e7e4c5e7be5 100644
 --- a/src/3rdparty/chromium/chrome/chrome_paks.gni
 +++ b/src/3rdparty/chromium/chrome/chrome_paks.gni
-@@ -189,7 +189,6 @@ template("chrome_extra_paks") {
+@@ -190,7 +190,6 @@ template("chrome_extra_paks") {
          "$root_gen_dir/chrome/webui_gallery_resources.pak",
          "$root_gen_dir/chrome/whats_new_resources.pak",
          "$root_gen_dir/content/browser/devtools/devtools_resources.pak",
 -        "$root_gen_dir/content/browser/tracing/tracing_resources.pak",
+         "$root_gen_dir/content/traces_internals_resources.pak",
        ]
        deps += [
-         "//chrome/browser/resources:component_extension_resources",
-@@ -230,7 +229,6 @@ template("chrome_extra_paks") {
-         "//chrome/browser/resources/webui_gallery:resources",
-         "//chrome/browser/resources/whats_new:resources",
+@@ -198,7 +197,6 @@ template("chrome_extra_paks") {
+         "//chrome/browser/resources:dev_ui_paks",
+         "//chrome/browser/resources/search_engine_choice:resources",
          "//content/browser/devtools:devtools_resources",
 -        "//content/browser/tracing:resources",
        ]
@@ -98,14 +90,35 @@ index a4e85c1e931..03beb728a61 100644
        "//tools/perf/run_telemetry_tests",
        "//testing/scripts/run_telemetry_as_googletest.py",
      ]
+diff --git a/src/3rdparty/chromium/chrome/test/variations/BUILD.gn b/src/3rdparty/chromium/chrome/test/variations/BUILD.gn
+index 60719e540b9..d8cf14506c3 100644
+--- a/src/3rdparty/chromium/chrome/test/variations/BUILD.gn
++++ b/src/3rdparty/chromium/chrome/test/variations/BUILD.gn
+@@ -17,8 +17,6 @@ python_library("test_utils") {
+   testonly = true
+
+   data = [ "//chrome/test/variations/test_utils/" ]
+-
+-  data_deps = [ "//third_party/catapult/third_party/gsutil:gsutil" ]
+ }
+
+ python_library("fixtures") {
+@@ -43,7 +41,6 @@ python_library("fixtures") {
+       "//build/android:devil_chromium_py",
+       "//build/android:test_runner_py",
+       "//clank/bin:installer_scripts",
+-      "//third_party/catapult/devil:devil",
+     ]
+   }
+
 diff --git a/src/3rdparty/chromium/content/browser/BUILD.gn b/src/3rdparty/chromium/content/browser/BUILD.gn
 index 00ba6f9edaf..5922ea17795 100644
 --- a/src/3rdparty/chromium/content/browser/BUILD.gn
 +++ b/src/3rdparty/chromium/content/browser/BUILD.gn
-@@ -3230,7 +3230,6 @@ jumbo_source_set("browser") {
+@@ -3391,7 +3391,6 @@ jumbo_source_set("browser") {
      deps += [
        "//components/vector_icons",
-       "//content/browser/devtools:devtools_resources_extern",
+       "//components/webauthn/json",
 -      "//content/browser/tracing:resources",
      ]
    }
@@ -135,34 +148,37 @@ diff --git a/src/3rdparty/chromium/content/shell/BUILD.gn b/src/3rdparty/chromiu
 index bfa01025410..e0cf308394f 100644
 --- a/src/3rdparty/chromium/content/shell/BUILD.gn
 +++ b/src/3rdparty/chromium/content/shell/BUILD.gn
-@@ -449,11 +449,6 @@ repack("pak") {
-     "//ui/strings",
-   ]
-
--  if (!is_android) {
+@@ -538,14 +538,6 @@ repack("pak") {
+     sources += [ "$root_gen_dir/content/webxr_internals_resources.pak" ]
+   }
+ 
+-  if (!is_android && !is_ios) {
 -    deps += [ "//content/browser/tracing:resources" ]
--    sources += [ "$root_gen_dir/content/browser/tracing/tracing_resources.pak" ]
+-    sources += [
+-      "$root_gen_dir/content/browser/tracing/tracing_resources.pak",
+-      "$root_gen_dir/content/traces_internals_resources.pak",
+-    ]
 -  }
 -
-   if (shell_use_toolkit_views) {
-     deps += [ "//ui/views/resources" ]
-     sources +=
+   if (is_ios) {
+     sources += [
+       "$root_gen_dir/device/bluetooth/strings/bluetooth_strings_en-US.pak",
 diff --git a/chromium/fuchsia_web/webengine/BUILD.gn b/chromium/fuchsia_web/webengine/BUILD.gn
 index 419b36e526d..887573f4695 100644
 --- a/src/3rdparty/chromium/fuchsia_web/webengine/BUILD.gn
 +++ b/src/3rdparty/chromium/fuchsia_web/webengine/BUILD.gn
-@@ -128,7 +128,6 @@ source_set("web_engine_export_from_implementation") {
+@@ -132,7 +132,6 @@ source_set("web_engine_export_from_implementation") {
  repack("web_engine_pak") {
    sources = [
      "$root_gen_dir/components/components_resources.pak",
 -    "$root_gen_dir/content/browser/tracing/tracing_resources.pak",
      "$root_gen_dir/content/content_resources.pak",
-     "$root_gen_dir/content/dev_ui_content_resources.pak",
+     "$root_gen_dir/content/gpu_resources.pak",
      "$root_gen_dir/mojo/public/js/mojo_bindings_resources.pak",
-@@ -142,7 +141,6 @@ repack("web_engine_pak") {
+@@ -146,7 +145,6 @@ repack("web_engine_pak") {
      "//components/resources:components_resources",
      "//content:content_resources",
-     "//content:dev_ui_content_resources",
+     "//content/browser/resources/gpu:resources",
 -    "//content/browser/tracing:resources",
      "//gpu/command_buffer/service",
      "//mojo/public/js:resources",
@@ -190,6 +206,26 @@ index 3e30ea06c3a..16faa75dff8 100644
    ]
 
    if (is_android) {
+diff --git a/src/3rdparty/chromium/third_party/blink/tools/BUILD.gn b/src/3rdparty/chromium/third_party/blink/tools/BUILD.gn
+index 5356ca181c3..81be66c06a6 100644
+--- a/src/3rdparty/chromium/third_party/blink/tools/BUILD.gn
++++ b/src/3rdparty/chromium/third_party/blink/tools/BUILD.gn
+@@ -34,7 +34,6 @@ group("wpt_tests_isolate") {
+   ]
+   data_deps = [
+     "//testing:test_scripts_shared",
+-    "//third_party/catapult/third_party/typ:typ",
+     "//tools/imagediff",
+   ]
+   if (!is_ios) {
+@@ -60,7 +59,6 @@ if (is_android) {
+       ":wpt_tests_isolate",
+       "//build/android:devil_chromium_py",
+       "//build/android:test_runner_py",
+-      "//third_party/catapult/devil:devil",
+     ]
+   }
+ }
 diff --git a/src/3rdparty/chromium/third_party/angle/gni/angle.gni b/src/3rdparty/chromium/third_party/angle/gni/angle.gni
 index 31253e3f442..3bf708d5205 100644
 --- a/src/3rdparty/chromium/third_party/angle/gni/angle.gni
@@ -209,7 +245,7 @@ diff --git a/src/3rdparty/chromium/third_party/webrtc/test/BUILD.gn b/src/3rdpar
 index c89085d5421..36b2889d27c 100644
 --- a/src/3rdparty/chromium/third_party/webrtc/test/BUILD.gn
 +++ b/src/3rdparty/chromium/third_party/webrtc/test/BUILD.gn
-@@ -265,10 +265,6 @@ rtc_library("perf_test") {
+@@ -395,10 +395,6 @@ rtc_library("perf_test") {
    ]
    if (rtc_enable_protobuf) {
      sources += [ "testsupport/perf_test_histogram_writer.cc" ]
@@ -220,14 +256,14 @@ index c89085d5421..36b2889d27c 100644
    } else {
      sources += [ "testsupport/perf_test_histogram_writer_no_protobuf.cc" ]
    }
-@@ -577,7 +573,6 @@ if (rtc_include_tests && !build_with_chromium) {
+@@ -795,7 +791,6 @@ if (rtc_include_tests) {
 
-     if (rtc_enable_protobuf) {
-       sources += [ "testsupport/perf_test_histogram_writer_unittest.cc" ]
--      deps += [ "//third_party/catapult/tracing/tracing:histogram" ]
-     }
+       if (rtc_enable_protobuf) {
+         sources += [ "testsupport/perf_test_histogram_writer_unittest.cc" ]
+-        deps += [ "//third_party/catapult/tracing/tracing:histogram" ]
+       }
 
-     data = test_support_unittests_resources
+       data = test_support_unittests_resources
 diff --git a/src/3rdparty/chromium/tools/binary_size/BUILD.gn b/src/3rdparty/chromium/tools/binary_size/BUILD.gn
 index 383ab115e57..e681d1f6e70 100644
 --- a/src/3rdparty/chromium/tools/binary_size/BUILD.gn
@@ -256,19 +292,21 @@ diff --git a/src/3rdparty/chromium/tools/gritsettings/resource_ids.spec b/src/3r
 index 82699203111..12497514e73 100644
 --- a/src/3rdparty/chromium/tools/gritsettings/resource_ids.spec
 +++ b/src/3rdparty/chromium/tools/gritsettings/resource_ids.spec
-@@ -918,12 +918,6 @@
-   "content/test/web_ui_mojo_test_resources.grd": {
-     "includes": [3840],
+@@ -1076,10 +1076,10 @@
    },
--
--  # This file is generated during the build.
+ 
+   # This file is generated during the build.
 -  "<(SHARED_INTERMEDIATE_DIR)/content/browser/tracing/tracing_resources.grd": {
 -    "META": {"sizes": {"includes": [20],}},
--    "includes": [3860],
+-    "includes": [7360],
 -  },
++  #"<(SHARED_INTERMEDIATE_DIR)/content/browser/tracing/tracing_resources.grd": {
++  #  "META": {"sizes": {"includes": [20],}},
++  #  "includes": [7360],
++  #},
    # END content/ section.
-
-   # START ios/web/ section.
+ 
+   # START "everything else" section.
 diff --git a/src/3rdparty/chromium/tools/metrics/BUILD.gn b/src/3rdparty/chromium/tools/metrics/BUILD.gn
 index 51583b56257..9334755861c 100644
 --- a/src/3rdparty/chromium/tools/metrics/BUILD.gn
@@ -340,18 +378,5 @@ index 2f8197dd369..83304b6342b 100644
    }
  }
 
-diff --git a/src/3rdparty/chromium/weblayer/shell/BUILD.gn b/src/3rdparty/chromium/weblayer/shell/BUILD.gn
-index 064ff6f8c61..986973881b9 100644
---- a/src/3rdparty/chromium/weblayer/shell/BUILD.gn
-+++ b/src/3rdparty/chromium/weblayer/shell/BUILD.gn
-@@ -192,9 +192,6 @@ repack("support_pak") {
-   }
-   if (is_android) {
-     deps += [ "//ui/android:ui_java_resources" ]
--  } else {
--    deps += [ "//content/browser/tracing:resources" ]
--    sources += [ "$root_gen_dir/content/browser/tracing/tracing_resources.pak" ]
-   }
-   output = "$root_out_dir/weblayer_support.pak"
- }
+
 --

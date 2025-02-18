@@ -6,6 +6,7 @@
 
 #include <stddef.h>
 
+#include <string_view>
 #include <utility>
 
 #include "base/functional/bind.h"
@@ -17,12 +18,12 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/values.h"
+#include "google_apis/common/base_requests.h"
 #include "google_apis/common/request_sender.h"
 #include "google_apis/common/time_util.h"
 #include "google_apis/drive/request_util.h"
@@ -52,12 +53,6 @@ const char kHttpBr[] = "\r\n";
 
 // Mime type of multipart mixed.
 const char kMultipartMixedMimeTypePrefix[] = "multipart/mixed; boundary=";
-
-// UMA names.
-const char kUMADriveTotalFileCountInBatchUpload[] =
-    "Drive.TotalFileCountInBatchUpload";
-const char kUMADriveTotalFileSizeInBatchUpload[] =
-    "Drive.TotalFileSizeInBatchUpload";
 
 // Parses the JSON value to FileResource instance and runs |callback| on the
 // UI thread once parsing is done.
@@ -178,12 +173,12 @@ bool ParseMultipartResponse(const std::string& content_type,
   if (response.empty())
     return false;
 
-  base::StringPiece content_type_piece(content_type);
+  std::string_view content_type_piece(content_type);
   if (!base::StartsWith(content_type_piece, kMultipartMixedMimeTypePrefix)) {
     return false;
   }
   content_type_piece.remove_prefix(
-      base::StringPiece(kMultipartMixedMimeTypePrefix).size());
+      std::string_view(kMultipartMixedMimeTypePrefix).size());
 
   if (content_type_piece.empty())
     return false;
@@ -199,7 +194,7 @@ bool ParseMultipartResponse(const std::string& content_type,
   const std::string header = "--" + boundary;
   const std::string terminator = "--" + boundary + "--";
 
-  std::vector<base::StringPiece> lines = base::SplitStringPieceUsingSubstr(
+  std::vector<std::string_view> lines = base::SplitStringPieceUsingSubstr(
       response, kHttpBr, base::KEEP_WHITESPACE, base::SPLIT_WANT_ALL);
 
   enum {
@@ -224,8 +219,7 @@ bool ParseMultipartResponse(const std::string& content_type,
       if (base::StartsWith(line, kHttpStatusPrefix)) {
         int int_code;
         base::StringToInt(
-            line.substr(base::StringPiece(kHttpStatusPrefix).size()),
-            &int_code);
+            line.substr(std::string_view(kHttpStatusPrefix).size()), &int_code);
         if (int_code > 0)
           code = static_cast<ApiErrorCode>(int_code);
         else
@@ -242,7 +236,7 @@ bool ParseMultipartResponse(const std::string& content_type,
       body.clear();
       continue;
     }
-    const base::StringPiece chopped_line =
+    const std::string_view chopped_line =
         base::TrimString(line, " \t", base::TRIM_TRAILING);
     const bool is_new_part = chopped_line == header;
     const bool was_last_part = chopped_line == terminator;
@@ -326,8 +320,8 @@ FilesInsertRequest::FilesInsertRequest(
 
 FilesInsertRequest::~FilesInsertRequest() = default;
 
-std::string FilesInsertRequest::GetRequestType() const {
-  return "POST";
+HttpRequestMethod FilesInsertRequest::GetRequestType() const {
+  return HttpRequestMethod::kPost;
 }
 
 bool FilesInsertRequest::GetContentData(std::string* upload_content_type,
@@ -385,8 +379,8 @@ FilesPatchRequest::FilesPatchRequest(RequestSender* sender,
 
 FilesPatchRequest::~FilesPatchRequest() = default;
 
-std::string FilesPatchRequest::GetRequestType() const {
-  return "PATCH";
+HttpRequestMethod FilesPatchRequest::GetRequestType() const {
+  return HttpRequestMethod::kPatch;
 }
 
 std::vector<std::string> FilesPatchRequest::GetExtraRequestHeaders() const {
@@ -449,8 +443,8 @@ FilesCopyRequest::FilesCopyRequest(RequestSender* sender,
 
 FilesCopyRequest::~FilesCopyRequest() = default;
 
-std::string FilesCopyRequest::GetRequestType() const {
-  return "POST";
+HttpRequestMethod FilesCopyRequest::GetRequestType() const {
+  return HttpRequestMethod::kPost;
 }
 
 GURL FilesCopyRequest::GetURLInternal() const {
@@ -561,8 +555,8 @@ FilesDeleteRequest::FilesDeleteRequest(
 
 FilesDeleteRequest::~FilesDeleteRequest() = default;
 
-std::string FilesDeleteRequest::GetRequestType() const {
-  return "DELETE";
+HttpRequestMethod FilesDeleteRequest::GetRequestType() const {
+  return HttpRequestMethod::kDelete;
 }
 
 GURL FilesDeleteRequest::GetURL() const {
@@ -586,8 +580,8 @@ FilesTrashRequest::FilesTrashRequest(RequestSender* sender,
 
 FilesTrashRequest::~FilesTrashRequest() = default;
 
-std::string FilesTrashRequest::GetRequestType() const {
-  return "POST";
+HttpRequestMethod FilesTrashRequest::GetRequestType() const {
+  return HttpRequestMethod::kPost;
 }
 
 GURL FilesTrashRequest::GetURLInternal() const {
@@ -652,8 +646,8 @@ ChildrenInsertRequest::ChildrenInsertRequest(
 
 ChildrenInsertRequest::~ChildrenInsertRequest() = default;
 
-std::string ChildrenInsertRequest::GetRequestType() const {
-  return "POST";
+HttpRequestMethod ChildrenInsertRequest::GetRequestType() const {
+  return HttpRequestMethod::kPost;
 }
 
 GURL ChildrenInsertRequest::GetURL() const {
@@ -684,8 +678,8 @@ ChildrenDeleteRequest::ChildrenDeleteRequest(
 
 ChildrenDeleteRequest::~ChildrenDeleteRequest() = default;
 
-std::string ChildrenDeleteRequest::GetRequestType() const {
-  return "DELETE";
+HttpRequestMethod ChildrenDeleteRequest::GetRequestType() const {
+  return HttpRequestMethod::kDelete;
 }
 
 GURL ChildrenDeleteRequest::GetURL() const {
@@ -716,8 +710,8 @@ GURL InitiateUploadNewFileRequest::GetURL() const {
   return url_generator_.GetInitiateUploadNewFileUrl(!modified_date_.is_null());
 }
 
-std::string InitiateUploadNewFileRequest::GetRequestType() const {
-  return "POST";
+HttpRequestMethod InitiateUploadNewFileRequest::GetRequestType() const {
+  return HttpRequestMethod::kPost;
 }
 
 bool InitiateUploadNewFileRequest::GetContentData(
@@ -775,8 +769,8 @@ GURL InitiateUploadExistingFileRequest::GetURL() const {
       resource_id_, !modified_date_.is_null());
 }
 
-std::string InitiateUploadExistingFileRequest::GetRequestType() const {
-  return "PUT";
+HttpRequestMethod InitiateUploadExistingFileRequest::GetRequestType() const {
+  return HttpRequestMethod::kPut;
 }
 
 std::vector<std::string>
@@ -909,8 +903,8 @@ GURL MultipartUploadNewFileDelegate::GetURL() const {
   return url_generator_.GetMultipartUploadNewFileUrl(has_modified_date_);
 }
 
-std::string MultipartUploadNewFileDelegate::GetRequestType() const {
-  return "POST";
+HttpRequestMethod MultipartUploadNewFileDelegate::GetRequestType() const {
+  return HttpRequestMethod::kPost;
 }
 
 //====================== MultipartUploadExistingFileDelegate ===================
@@ -963,8 +957,8 @@ GURL MultipartUploadExistingFileDelegate::GetURL() const {
                                                           has_modified_date_);
 }
 
-std::string MultipartUploadExistingFileDelegate::GetRequestType() const {
-  return "PUT";
+HttpRequestMethod MultipartUploadExistingFileDelegate::GetRequestType() const {
+  return HttpRequestMethod::kPut;
 }
 
 //========================== DownloadFileRequest ==========================
@@ -1004,8 +998,8 @@ GURL PermissionsInsertRequest::GetURL() const {
   return url_generator_.GetPermissionsInsertUrl(id_);
 }
 
-std::string PermissionsInsertRequest::GetRequestType() const {
-  return "POST";
+HttpRequestMethod PermissionsInsertRequest::GetRequestType() const {
+  return HttpRequestMethod::kPost;
 }
 
 bool PermissionsInsertRequest::GetContentData(std::string* upload_content_type,
@@ -1072,7 +1066,7 @@ GURL SingleBatchableDelegateRequest::GetURL() const {
   return delegate_->GetURL();
 }
 
-std::string SingleBatchableDelegateRequest::GetRequestType() const {
+HttpRequestMethod SingleBatchableDelegateRequest::GetRequestType() const {
   return delegate_->GetRequestType();
 }
 
@@ -1207,7 +1201,6 @@ void BatchUploadRequest::MayCompletePrepare() {
   }
 
   // Build multipart body here.
-  int64_t total_size = 0;
   std::vector<ContentTypeAndData> parts;
   for (const auto& child : child_requests_) {
     std::string type;
@@ -1217,21 +1210,17 @@ void BatchUploadRequest::MayCompletePrepare() {
     DCHECK(result);
 
     const GURL url = child->request->GetURL();
-    std::string method = child->request->GetRequestType();
+    HttpRequestMethod method = child->request->GetRequestType();
     const std::string header = base::StringPrintf(
-        kBatchUploadRequestFormat, method.c_str(), url.path().c_str(),
-        url_generator_.GetBatchUploadUrl().host().c_str(), type.c_str());
+        kBatchUploadRequestFormat, HttpRequestMethodToString(method).c_str(),
+        url.path().c_str(), url_generator_.GetBatchUploadUrl().host().c_str(),
+        type.c_str());
 
     child->data_offset = header.size();
     child->data_size = data.size();
-    total_size += data.size();
 
     parts.push_back(ContentTypeAndData({kHttpContentType, header + data}));
   }
-
-  UMA_HISTOGRAM_COUNTS_100(kUMADriveTotalFileCountInBatchUpload, parts.size());
-  UMA_HISTOGRAM_MEMORY_KB(kUMADriveTotalFileSizeInBatchUpload,
-                          total_size / 1024);
 
   std::vector<uint64_t> part_data_offset;
   GenerateMultipartBody(MultipartType::kMixed, boundary_, parts,
@@ -1259,8 +1248,8 @@ GURL BatchUploadRequest::GetURL() const {
   return url_generator_.GetBatchUploadUrl();
 }
 
-std::string BatchUploadRequest::GetRequestType() const {
-  return "PUT";
+HttpRequestMethod BatchUploadRequest::GetRequestType() const {
+  return HttpRequestMethod::kPut;
 }
 
 std::vector<std::string> BatchUploadRequest::GetExtraRequestHeaders() const {

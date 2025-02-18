@@ -28,17 +28,30 @@
 
 namespace {
 
+std::vector<const char*>* GetDeprecatedPrefs() {
+  // Add deprecated previously tracked preferences below for them to be cleaned
+  // up from both the pref files and the hash store.
+  static std::vector<const char*> prefs {
+#if BUILDFLAG(IS_WIN)
+    // TODO(crbug/1439998): Remove after Oct 2024
+    "software_reporter.prompt_version", "software_reporter.prompt_seed",
+        "settings_reset_prompt.prompt_wave",
+        "settings_reset_prompt.last_triggered_for_default_search",
+        "settings_reset_prompt.last_triggered_for_startup_urls",
+        "settings_reset_prompt.last_triggered_for_homepage",
+        "software_reporter.reporting",
+        // Also delete the now empty dictionaries.
+        "software_reporter", "settings_reset_prompt",
+#endif
+  };
+
+  return &prefs;
+}
+
 void CleanupDeprecatedTrackedPreferences(
     base::Value::Dict& pref_store_contents,
     PrefHashStoreTransaction* hash_store_transaction) {
-  // Add deprecated previously tracked preferences below for them to be cleaned
-  // up from both the pref files and the hash store.
-  static const char* const kDeprecatedTrackedPreferences[] = {
-      // TODO(pmonette): Remove in 2022+.
-      "module_blacklist_cache_md5_digest"};
-
-  for (size_t i = 0; i < std::size(kDeprecatedTrackedPreferences); ++i) {
-    const char* key = kDeprecatedTrackedPreferences[i];
+  for (const char* key : *GetDeprecatedPrefs()) {
     pref_store_contents.RemoveByDottedPath(key);
     hash_store_transaction->ClearHash(key);
   }
@@ -173,7 +186,6 @@ PrefFilter::OnWriteCallbackPair PrefHashFilter::FilterSerializeData(
       GetOnWriteSynchronousCallbacks(pref_store_contents);
 
   if (!changed_paths_.empty()) {
-    base::TimeTicks checkpoint = base::TimeTicks::Now();
     {
       DictionaryHashStoreContents dictionary_contents(pref_store_contents);
       std::unique_ptr<PrefHashStoreTransaction> hash_store_transaction(
@@ -197,8 +209,6 @@ PrefFilter::OnWriteCallbackPair PrefHashFilter::FilterSerializeData(
       }
       changed_paths_.clear();
     }
-    UMA_HISTOGRAM_TIMES("Settings.FilterSerializeDataTime",
-                        base::TimeTicks::Now() - checkpoint);
   }
 
   return callback_pair;
@@ -219,8 +229,6 @@ void PrefHashFilter::FinalizeFilterOnLoad(
     PostFilterOnLoadCallback post_filter_on_load_callback,
     base::Value::Dict pref_store_contents,
     bool prefs_altered) {
-  base::TimeTicks checkpoint = base::TimeTicks::Now();
-
   bool did_reset = false;
   {
     DictionaryHashStoreContents dictionary_contents(pref_store_contents);
@@ -260,9 +268,6 @@ void PrefHashFilter::FinalizeFilterOnLoad(
       reset_on_load_observer_->OnResetOnLoad();
   }
   reset_on_load_observer_.reset();
-
-  UMA_HISTOGRAM_TIMES("Settings.FilterOnLoadTime",
-                      base::TimeTicks::Now() - checkpoint);
 
   std::move(post_filter_on_load_callback)
       .Run(std::move(pref_store_contents), prefs_altered);
@@ -366,4 +371,10 @@ PrefFilter::OnWriteCallbackPair PrefHashFilter::GetOnWriteSynchronousCallbacks(
                      base::Unretained(raw_changed_paths_macs)),
       base::BindOnce(&FlushToExternalStore, std::move(hash_store_contents_copy),
                      std::move(changed_paths_macs)));
+}
+
+// static
+void PrefHashFilter::SetDeprecatedPrefsForTesting(
+    const std::vector<const char*>& deprecated_prefs) {
+  *GetDeprecatedPrefs() = deprecated_prefs;
 }

@@ -407,6 +407,7 @@ class WindowsSystemProxyResolverImplTest : public testing::Test {
   // WindowsSystemProxyResolverImpl.
   void DoFailedGetProxyForUrlTest(net::WinHttpStatus winhttp_status,
                                   int windows_error) {
+    ::SetLastError(windows_error);
     PerformGetProxyForUrlAndValidateResult(net::ProxyList(), winhttp_status,
                                            windows_error);
   }
@@ -427,7 +428,7 @@ class WindowsSystemProxyResolverImplTest : public testing::Test {
     std::wstring proxy;
     if (!proxy_config.proxy_rules().single_proxies.IsEmpty()) {
       proxy = base::UTF8ToWide(
-          proxy_config.proxy_rules().single_proxies.ToPacString());
+          proxy_config.proxy_rules().single_proxies.ToDebugString());
     }
 
     std::wstring proxy_bypass;
@@ -563,14 +564,14 @@ TEST_F(WindowsSystemProxyResolverImplTest,
 TEST_F(WindowsSystemProxyResolverImplTest, GetProxyForUrlDirect) {
   winhttp_api_wrapper()->AddDirectToProxyResults();
   net::ProxyList expected_proxy_list;
-  expected_proxy_list.AddProxyServer(net::ProxyServer::Direct());
+  expected_proxy_list.AddProxyChain(net::ProxyChain::Direct());
   DoGetProxyForUrlTest(expected_proxy_list);
 }
 
 TEST_F(WindowsSystemProxyResolverImplTest, GetProxyForUrlBypass) {
   winhttp_api_wrapper()->AddBypassToProxyResults();
   net::ProxyList expected_proxy_list;
-  expected_proxy_list.AddProxyServer(net::ProxyServer::Direct());
+  expected_proxy_list.AddProxyChain(net::ProxyChain::Direct());
   DoGetProxyForUrlTest(expected_proxy_list);
 }
 
@@ -621,7 +622,7 @@ TEST_F(WindowsSystemProxyResolverImplTest,
 
   winhttp_api_wrapper()->AddDirectToProxyResults();
   net::ProxyList expected_proxy_list;
-  expected_proxy_list.AddProxyServer(net::ProxyServer::Direct());
+  expected_proxy_list.AddProxyChain(net::ProxyChain::Direct());
   DoGetProxyForUrlTest(expected_proxy_list);
 }
 
@@ -633,7 +634,7 @@ TEST_F(WindowsSystemProxyResolverImplTest, GetProxyForUrlMultipleResults) {
   net::ProxyList expected_proxy_list;
   expected_proxy_list.AddProxyServer(
       net::PacResultElementToProxyServer("HTTPS foopy:8443"));
-  expected_proxy_list.AddProxyServer(net::ProxyServer::Direct());
+  expected_proxy_list.AddProxyChain(net::ProxyChain::Direct());
 
   DoGetProxyForUrlTest(expected_proxy_list);
 }
