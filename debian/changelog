@@ -1,3 +1,19 @@
+qt6-webengine (6.8.0-0deepin1) unstable; urgency=medium
+
+  * Rebase loong64 and riscv64 patchsets:
+
+      loong64: https://github.com/AOSC-Dev/chromium-loongarch64/releases/tag/qt6-6.8.2-1
+      riscv64: https://github.com/felixonmars/archriscv-packages/tree/ab3d717b2f706bb3978f6ed961cd37cf65e7fea9/qt6-webengine
+
+  * FIXME: qt6-webengine does not build on riscv64 with GCC as it
+    complains about a misused '%c' asm variable, so we chose to use
+    Clang as a workaround, however it does not support the
+    ffat-lto-objects option as defined by optimize=+lto.
+    
+    Disable LTO for riscv64 as a secondary workaround.
+
+ -- Mingcong Bai <baimingcong@uniontech.com>  Wed, 19 Feb 2025 14:26:46 +0800
+
 qt6-webengine (6.8.2+dfsg-2) experimental; urgency=medium
 
   [ Patrick Franz ]

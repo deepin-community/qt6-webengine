@@ -21,7 +21,6 @@ class DisplaySoftwareOutputSurface::Device final : public viz::SoftwareOutputDev
 {
 public:
     Device(bool requiresAlpha);
-    ~Device() override;
 
     // Overridden from viz::SoftwareOutputDevice.
     void Resize(const gfx::Size &sizeInPixels, float devicePixelRatio) override;
@@ -49,11 +48,6 @@ DisplaySoftwareOutputSurface::Device::Device(bool requiresAlpha)
     : Compositor(Type::Software)
     , m_requiresAlpha(requiresAlpha)
 {
-}
-
-DisplaySoftwareOutputSurface::Device::~Device()
-{
-    unbind();
 }
 
 void DisplaySoftwareOutputSurface::Device::Resize(const gfx::Size &sizeInPixels, float devicePixelRatio)

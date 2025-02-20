@@ -10,15 +10,34 @@ Dialog {
     property alias prompt: field.text
     property bool handled: false
     signal input(string text)
+    signal accepted()
+    signal rejected()
     title: qsTr("Prompt Dialog")
     modal: false
     anchors.centerIn: parent
     objectName: "promptDialog"
 
+    //handle the case where users simply closes the dialog
+    onVisibleChanged: {
+        if (visible == false && handled == false) {
+            handled = true;
+            rejected();
+        } else {
+            handled = false;
+        }
+    }
 
     function acceptDialog() {
         input(field.text);
-        accept();
+        accepted();
+        handled = true;
+        close();
+    }
+
+    function rejectDialog() {
+        rejected();
+        handled = true;
+        close();
     }
 
     ColumnLayout {
@@ -53,7 +72,7 @@ Dialog {
             }
             Button {
                 text: qsTr("Cancel")
-                onClicked: reject()
+                onClicked: rejectDialog()
             }
         }
     }

@@ -117,7 +117,6 @@
 #include "third_party/blink/public/common/input/synthetic_web_input_event_builders.h"
 #include "third_party/blink/public/common/storage_key/storage_key.h"
 #include "third_party/blink/public/common/web_preferences/web_preferences.h"
-#include "third_party/blink/public/common/widget/constants.h"
 #include "third_party/blink/public/common/widget/visual_properties.h"
 #include "third_party/blink/public/mojom/drag/drag.mojom.h"
 #include "third_party/blink/public/mojom/frame/intrinsic_sizing_info.mojom.h"
@@ -164,6 +163,10 @@ using blink::WebMouseWheelEvent;
 
 namespace content {
 namespace {
+
+// How long to wait for newly loaded content to send a compositor frame
+// before clearing previously displayed graphics.
+constexpr base::TimeDelta kNewContentRenderingDelay = base::Seconds(4);
 
 constexpr gfx::Rect kInvalidScreenRect(std::numeric_limits<int>::max(),
                                        std::numeric_limits<int>::max(),
@@ -453,7 +456,7 @@ RenderWidgetHostImpl::RenderWidgetHostImpl(
               switches::kDisableHangMonitor)),
       latency_tracker_(delegate_),
       hung_renderer_delay_(kHungRendererDelay),
-      new_content_rendering_delay_(blink::kNewContentRenderingDelay),
+      new_content_rendering_delay_(kNewContentRenderingDelay),
       frame_token_message_queue_(std::move(frame_token_message_queue)),
       render_frame_metadata_provider_(
 #if BUILDFLAG(IS_MAC)

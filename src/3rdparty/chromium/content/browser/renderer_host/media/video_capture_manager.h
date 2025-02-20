@@ -296,7 +296,7 @@ class CONTENT_EXPORT VideoCaptureManager
   // Finds a VideoCaptureController for the indicated |capture_session_id|,
   // creating a fresh one if necessary. Returns nullptr if said
   // |capture_session_id| is invalid.
-  scoped_refptr<VideoCaptureController> GetOrCreateController(
+  VideoCaptureController* GetOrCreateController(
       const media::VideoCaptureSessionId& capture_session_id,
       const media::VideoCaptureParams& params);
 
@@ -309,7 +309,7 @@ class CONTENT_EXPORT VideoCaptureManager
   // another request pending start.
   void QueueStartDevice(
       const media::VideoCaptureSessionId& session_id,
-      scoped_refptr<VideoCaptureController> controller,
+      VideoCaptureController* controller,
       const media::VideoCaptureParams& params,
       mojo::PendingRemote<video_capture::mojom::VideoEffectsManager>
           video_effects_manager);

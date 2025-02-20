@@ -8,15 +8,33 @@ import QtQuick.Layouts
 Dialog {
     property alias text: message.text
     property bool handled: false
-    signal credentials(string user, string password)
+    signal accepted(string user, string password)
+    signal rejected()
     title: qsTr("Authentication Required")
     modal: false
     anchors.centerIn: parent
     objectName: "authenticationDialog"
 
+    //handle the case where users simply closes the dialog
+    onVisibleChanged: {
+        if (visible == false && handled == false) {
+            handled = true;
+            rejected();
+        } else {
+            handled = false;
+        }
+    }
+
     function acceptDialog() {
-        credentials(userField.text, passwordField.text);
-        accept()
+        accepted(userField.text, passwordField.text);
+        handled = true;
+        close();
+    }
+
+    function rejectDialog() {
+        rejected();
+        handled = true;
+        close();
     }
 
     ColumnLayout {
@@ -72,7 +90,7 @@ Dialog {
             Button {
                 id: cancelButton
                 text: qsTr("Cancel")
-                onClicked: reject()
+                onClicked: rejectDialog()
             }
             Button {
                 text: qsTr("Log In")

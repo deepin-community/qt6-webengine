@@ -186,10 +186,8 @@ void QQuickWebEngineAuthenticationDialogRequest::dialogAccept(const QString &use
     m_accepted = true;
     QSharedPointer<AuthenticationDialogController> controller
             = m_controller.toStrongRef();
-    if (controller) {
-        controller->credentials(user, password);
-        controller->accept();
-    }
+    if (controller)
+        controller->accept(user,password);
 }
 
 /*!

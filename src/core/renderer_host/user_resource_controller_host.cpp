@@ -42,9 +42,10 @@ UserResourceControllerHost::WebContentsObserverHelper::WebContentsObserverHelper
 
 void UserResourceControllerHost::WebContentsObserverHelper::RenderFrameCreated(content::RenderFrameHost *renderFrameHost)
 {
+    content::WebContents *contents = web_contents();
     auto &remote = m_controllerHost->GetUserResourceControllerRenderFrame(renderFrameHost);
-    const auto scripts = m_controllerHost->m_perContentsScripts.constFind(web_contents());
-    for (const UserScript &script : *scripts)
+    const QList<UserScript> scripts = m_controllerHost->m_perContentsScripts.value(contents);
+    for (const UserScript &script : scripts)
         remote->AddScript(script.data());
 }
 
@@ -54,12 +55,6 @@ void UserResourceControllerHost::WebContentsObserverHelper::RenderFrameHostChang
     if (oldHost) {
         auto &remote = m_controllerHost->GetUserResourceControllerRenderFrame(oldHost);
         remote->ClearScripts();
-    }
-    if (newHost) {
-        auto &remote = m_controllerHost->GetUserResourceControllerRenderFrame(newHost);
-        const auto scripts = m_controllerHost->m_perContentsScripts.constFind(web_contents());
-        for (const UserScript &script : *scripts)
-            remote->AddScript(script.data());
     }
 }
 

@@ -76,10 +76,6 @@ void ReportingContext::Bind(
 
 void ReportingContext::QueueReport(Report* report,
                                    const Vector<String>& endpoints) {
-  if (!report->ShouldSendReport()) {
-    return;
-  }
-
   CountReport(report);
 
   NotifyInternal(report);

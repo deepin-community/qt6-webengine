@@ -8,10 +8,34 @@ import QtQuick.Layouts
 Dialog {
     property alias text: message.text
     property bool handled: false
+    signal accepted()
+    signal rejected()
     title: qsTr("Confirm Dialog")
     modal: false
     anchors.centerIn: parent
     objectName: "confirmDialog"
+
+    //handle the case where users simply closes the dialog
+    onVisibleChanged: {
+        if (visible == false && handled == false) {
+            handled = true;
+            rejected();
+        } else {
+            handled = false;
+        }
+    }
+
+    function acceptDialog() {
+        accepted();
+        handled = true;
+        close();
+    }
+
+    function rejectDialog() {
+        rejected();
+        handled = true;
+        close();
+    }
 
     ColumnLayout {
         id: rootLayout
@@ -42,11 +66,11 @@ Dialog {
             spacing: 8
             Button {
                 text: qsTr("OK")
-                onClicked: accept()
+                onClicked: acceptDialog()
             }
             Button {
                 text: qsTr("Cancel")
-                onClicked: reject()
+                onClicked: rejectDialog()
             }
         }
     }

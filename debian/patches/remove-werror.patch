@@ -1,0 +1,14 @@
+
+--- qt6-webengine-6.8.0.orig/src/3rdparty/gn/build/gen.py
++++ qt6-webengine-6.8.0/src/3rdparty/gn/build/gen.py
+@@ -519,8 +519,8 @@ def WriteGNNinja(path, platform, host, o
+       cflags.append('-fsanitize=undefined')
+       ldflags.append('-fsanitize=undefined')
+ 
+-    if not options.allow_warnings:
+-      cflags.append('-Werror')
++#    if not options.allow_warnings:
++#      cflags.append('-Werror')
+ 
+     cflags.extend([
+         '-D_FILE_OFFSET_BITS=64',

@@ -16,16 +16,6 @@
 #include "ui/gl/gl_implementation.h"
 
 #if defined(USE_OZONE)
-#include "ui/gl/gl_bindings.h"
-#undef glBindTexture
-#undef glCreateMemoryObjectsEXT
-#undef glDeleteMemoryObjectsEXT
-#undef glDeleteTextures
-#undef glGenTextures
-#undef glGetError
-#undef glImportMemoryFdEXT
-#undef glTextureStorageMem2DEXT
-
 #include "base/posix/eintr_wrapper.h"
 #include "third_party/skia/include/gpu/ganesh/gl/GrGLBackendSurface.h"
 #include "ui/gfx/linux/drm_util_linux.h"
@@ -37,6 +27,16 @@
 #include "ui/gfx/x/future.h"
 #include "ui/gfx/x/glx.h"
 #include "ui/gfx/x/xproto.h"
+
+#include "ui/gl/gl_bindings.h"
+#undef glBindTexture
+#undef glCreateMemoryObjectsEXT
+#undef glDeleteMemoryObjectsEXT
+#undef glDeleteTextures
+#undef glGenTextures
+#undef glGetError
+#undef glImportMemoryFdEXT
+#undef glTextureStorageMem2DEXT
 #endif // BUILDFLAG(IS_OZONE_X11)
 
 #if BUILDFLAG(ENABLE_VULKAN)
@@ -326,12 +326,10 @@ QSGTexture *NativeSkiaOutputDeviceOpenGL::texture(QQuickWindow *win, uint32_t te
         VkDeviceMemory importedImageMemory = vkImageInfo.fAlloc.fMemory;
         VkDeviceSize importedImageSize = vkImageInfo.fAlloc.fSize;
 
-        VkMemoryGetFdInfoKHR exportInfo = {
-            .sType = VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR,
-            .pNext = nullptr,
-            .memory = importedImageMemory,
-            .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT_KHR,
-        };
+        VkMemoryGetFdInfoKHR exportInfo = { VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR };
+        exportInfo.pNext = nullptr;
+        exportInfo.memory = importedImageMemory;
+        exportInfo.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT_KHR;
 
         int fd = -1;
         if (vfp->vkGetMemoryFdKHR(vulkanDevice, &exportInfo, &fd) != VK_SUCCESS)
@@ -390,7 +388,7 @@ QSGTexture *NativeSkiaOutputDeviceOpenGL::texture(QQuickWindow *win, uint32_t te
         auto glFun = glContext->functions();
         glFun->glDeleteTextures(1, &glTexture);
     };
-#endif // defined(USE_OZONE)
+#endif
 
     return texture;
 }

@@ -33,8 +33,7 @@ public:
     bool isProxy() const;
 
 public Q_SLOTS:
-    void credentials(const QString &user, const QString &password);
-    void accept();
+    void accept(const QString &user, const QString &password);
     void reject();
 
 private:

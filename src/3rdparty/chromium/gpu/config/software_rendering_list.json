@@ -1227,11 +1227,16 @@
     },
     {
       "id": 158,
-      "description": "Recurring canvas rendering issues on Intel with direct rendering: https://bugreports.qt.io/browse/QTBUG-130404",
+      "description": "Canvas rendering issues with Intel drivers on Windows since 94-based: https://bugreports.qt.io/browse/QTBUG-104065",
+      "cr_bugs": [1316442],
       "os": {
-        "type": "linux"
+        "type": "win"
       },
-      "gl_type": "gl",
+      "exceptions": [
+        {
+          "gl_renderer": "ANGLE.*"
+        }
+      ],
       "vendor_id": "0x8086",
       "features": [
         "accelerated_2d_canvas"

@@ -191,5 +191,3 @@ usr/lib/${DEB_HOST_MULTIARCH}/qt6/modules/WebEngineQuick.json
 usr/lib/${DEB_HOST_MULTIARCH}/qt6/modules/WebEngineQuickDelegatesQml.json
 usr/lib/${DEB_HOST_MULTIARCH}/qt6/modules/WebEngineWidgets.json
 usr/lib/${DEB_HOST_MULTIARCH}/qt6/plugins/designer/libqwebengineview.so
-usr/lib/${DEB_HOST_MULTIARCH}/qt6/sbom/qtpdf-6.*.spdx
-usr/lib/${DEB_HOST_MULTIARCH}/qt6/sbom/qtwebengine-6.*.spdx

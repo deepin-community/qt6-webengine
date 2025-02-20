@@ -269,7 +269,6 @@ class CORE_EXPORT InspectorPageAgent final
   bool ScreencastEnabled();
 
   void Trace(Visitor*) const override;
-  void Dispose() override;
 
  private:
   struct IsolatedWorldRequest;

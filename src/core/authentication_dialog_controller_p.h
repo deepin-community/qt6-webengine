@@ -14,15 +14,13 @@ class AuthenticationDialogControllerPrivate {
 
 public:
     AuthenticationDialogControllerPrivate(base::WeakPtr<LoginDelegateQt> loginDelegate);
-    void dialogFinished(bool accepted);
+    void dialogFinished(bool accepted, const QString &user = QString(), const QString &password = QString());
 
     base::WeakPtr<LoginDelegateQt> loginDelegate;
     QUrl url;
     QString host;
     QString realm;
     bool isProxy;
-    QString user;
-    QString password;
 };
 
 } // namespace QtWebEngineCore
