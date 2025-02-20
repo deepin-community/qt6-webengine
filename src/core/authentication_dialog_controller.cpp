@@ -14,7 +14,7 @@ AuthenticationDialogControllerPrivate::AuthenticationDialogControllerPrivate(bas
 {
 }
 
-void AuthenticationDialogControllerPrivate::dialogFinished(bool accepted)
+void AuthenticationDialogControllerPrivate::dialogFinished(bool accepted, const QString &user, const QString &password)
 {
     content::GetUIThreadTaskRunner({})->PostTask(FROM_HERE,
                    base::BindOnce(&LoginDelegateQt::sendAuthToRequester,
@@ -51,15 +51,9 @@ bool AuthenticationDialogController::isProxy() const
     return d->isProxy;
 }
 
-void AuthenticationDialogController::credentials(const QString &user, const QString &password)
+void AuthenticationDialogController::accept(const QString &user, const QString &password)
 {
-    d->user = user;
-    d->password = password;
-}
-
-void AuthenticationDialogController::accept()
-{
-    d->dialogFinished(true);
+    d->dialogFinished(true, user, password);
 }
 
 void AuthenticationDialogController::reject()

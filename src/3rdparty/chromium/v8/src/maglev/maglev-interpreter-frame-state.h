@@ -805,8 +805,6 @@ class MergePointInterpreterFrameState {
            predecessors_so_far_ == 0;
   }
 
-  bool IsUnreachable() const;
-
   BasicBlockType basic_block_type() const {
     return kBasicBlockTypeBits::decode(bitfield_);
   }

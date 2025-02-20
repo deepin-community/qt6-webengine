@@ -169,8 +169,7 @@ Resource* CachedResource(LocalFrame* frame,
   Resource* cached_resource = document->Fetcher()->CachedResource(url);
   if (!cached_resource) {
     cached_resource = MemoryCache::Get()->ResourceForURL(
-        url, document->Fetcher()->GetCacheIdentifier(
-                 url, /*skip_service_worker=*/false));
+        url, document->Fetcher()->GetCacheIdentifier(url));
   }
   if (!cached_resource)
     cached_resource = loader->ResourceForURL(url);
@@ -1037,7 +1036,7 @@ void InspectorPageAgent::DidCreateMainWorldContext(LocalFrame* frame) {
     return;
   }
   ScriptState* script_state = ToScriptStateForMainWorld(frame);
-  if (!script_state || !v8_session_) {
+  if (!script_state) {
     return;
   }
 
@@ -1062,7 +1061,7 @@ void InspectorPageAgent::EvaluateScriptOnNewDocument(
                       *DOMWrapperWorld::EnsureIsolatedWorld(
                           ToIsolate(window->GetFrame()), world->GetWorldId()));
   }
-  if (!script_state || !v8_session_) {
+  if (!script_state) {
     return;
   }
 
@@ -1971,11 +1970,6 @@ void InspectorPageAgent::Trace(Visitor* visitor) const {
   visitor->Trace(inspector_resource_content_loader_);
   visitor->Trace(isolated_worlds_);
   InspectorBaseAgent::Trace(visitor);
-}
-
-void InspectorPageAgent::Dispose() {
-  InspectorBaseAgent::Dispose();
-  v8_session_ = nullptr;
 }
 
 protocol::Response InspectorPageAgent::getOriginTrials(

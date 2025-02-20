@@ -71,14 +71,11 @@ bool QQuickWebEngineSettings::javascriptCanOpenWindows() const
 /*!
     \qmlproperty bool WebEngineSettings::javascriptCanAccessClipboard
 
-    Allows JavaScript programs to write (copy) sanitized content to the clipboard. A
-    sanitized write is done with the \c{write} and \c{writeText} JavaScript Clipboard API
-    calls and must be accompanied by user action.
+    Allows JavaScript programs to read from or write to the clipboard.
+    Writing to the clipboard is always allowed if it is specifically requested by the user.
 
-    Unsanitized writes, and reading from the clipboard, are
-    enabled by \l{javascriptCanPaste}.
-
-    Prior to Chromium version 81, this setting enabled all clipboard writes.
+    To enable also the pasting of clipboard content from JavaScript,
+    use javascriptCanPaste.
 
     Since unrestricted clipboard access is a potential security concern, it is
     recommended that applications leave this disabled and instead respond to
@@ -385,13 +382,8 @@ bool QQuickWebEngineSettings::webRTCPublicInterfacesOnly() const
     \qmlproperty bool WebEngineSettings::javascriptCanPaste
     \since QtWebEngine 1.7
 
-    Allows JavaScript programs to read (paste) from the clipboard and to write unsanitized
-    content. A sanitized write is done with the \c{write} and \c{writeText} JavaScript
-    Clipboard API calls and must be accompanied by user action; unsanitized writes are any
-    writes which do not meet these criteria.
-
-    For this setting to have any effect, \l{javascriptCanAccessClipboard} must also be
-    enabled.
+    Enables JavaScript \c{execCommand("paste")}.
+    This also requires enabling javascriptCanAccessClipboard.
 
     Since unrestricted clipboard access is a potential security concern, it is
     recommended that applications leave this disabled and instead respond to

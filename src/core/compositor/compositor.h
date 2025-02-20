@@ -90,7 +90,7 @@ public:
 
     protected:
         Observer() = default;
-        ~Observer();
+        ~Observer() { if (m_binding) unbind(); }
 
     private:
         Binding *m_binding = nullptr;
@@ -137,7 +137,7 @@ public:
 
 protected:
     Compositor(Type type) : m_type(type) { }
-    virtual ~Compositor();
+    virtual ~Compositor() { if (m_binding) unbind(); }
 
 private:
     template<typename T>

@@ -184,7 +184,7 @@ bool IsHandledProtocol(base::StringPiece scheme)
         if (scheme == protocol)
             return true;
     }
-    if (url::CustomScheme::FindScheme(scheme))
+    if (const auto cs = url::CustomScheme::FindScheme(scheme))
         return true;
     return false;
 }

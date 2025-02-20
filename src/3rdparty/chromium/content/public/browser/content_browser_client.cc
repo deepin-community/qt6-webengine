@@ -1668,8 +1668,4 @@ void ContentBrowserClient::MaybePrewarmHttpDiskCache(
     BrowserContext& browser_context,
     const GURL& navigation_url) {}
 
-bool ContentBrowserClient::AllowNonActivatedCrossOriginPaintHolding() {
-  return false;
-}
-
 }  // namespace content

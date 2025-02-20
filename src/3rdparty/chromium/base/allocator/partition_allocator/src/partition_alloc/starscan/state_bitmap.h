@@ -235,7 +235,11 @@ StateBitmap<PageSize, PageAlignment, AllocationAlignment>::Quarantine(
   auto& cell = AsAtomicCell(cell_index);
   const CellType cell_before = cell.fetch_and(mask, std::memory_order_relaxed);
   // Check if the previous state was also quarantined.
-  return std::popcount(
+#if defined(_MSC_VER)
+  return __popcnt64(
+#else
+  return __builtin_popcount(
+#endif
               static_cast<unsigned>((cell_before >> object_bit) &
                                                   kStateMask)) != 1;
 }

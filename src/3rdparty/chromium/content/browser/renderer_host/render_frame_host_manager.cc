@@ -732,11 +732,10 @@ void RenderFrameHostManager::DidNavigateFrame(
     bool was_caused_by_user_gesture,
     bool is_same_document_navigation,
     bool clear_proxies_on_commit,
-    const blink::FramePolicy& frame_policy,
-    bool allow_paint_holding) {
+    const blink::FramePolicy& frame_policy) {
   CommitPendingIfNecessary(render_frame_host, was_caused_by_user_gesture,
-                           is_same_document_navigation, clear_proxies_on_commit,
-                           allow_paint_holding);
+                           is_same_document_navigation,
+                           clear_proxies_on_commit);
 
   // Make sure any dynamic changes to this frame's sandbox flags and permissions
   // policy that were made prior to navigation take effect.  This should only
@@ -772,8 +771,7 @@ void RenderFrameHostManager::CommitPendingIfNecessary(
     RenderFrameHostImpl* render_frame_host,
     bool was_caused_by_user_gesture,
     bool is_same_document_navigation,
-    bool clear_proxies_on_commit,
-    bool allow_paint_holding) {
+    bool clear_proxies_on_commit) {
   if (!speculative_render_frame_host_) {
     // There's no speculative RenderFrameHost so it must be that the current
     // RenderFrameHost completed a navigation.
@@ -783,8 +781,7 @@ void RenderFrameHostManager::CommitPendingIfNecessary(
   if (render_frame_host == speculative_render_frame_host_.get()) {
     // A cross-RenderFrameHost navigation completed, so show the new renderer.
     CommitPending(std::move(speculative_render_frame_host_),
-                  std::move(stored_page_to_restore_), clear_proxies_on_commit,
-                  allow_paint_holding);
+                  std::move(stored_page_to_restore_), clear_proxies_on_commit);
 
     if (GetNavigationQueueingFeatureLevel() >=
         NavigationQueueingFeatureLevel::kAvoidRedundantCancellations) {
@@ -841,26 +838,9 @@ void RenderFrameHostManager::CommitPendingIfNecessary(
     // output on prerender activation.
     if (render_frame_host_->lifecycle_state() !=
         LifecycleStateImpl::kPrerendering) {
-      auto* rwhi = static_cast<RenderWidgetHostImpl*>(
-          render_frame_host_->GetView()->GetRenderWidgetHost());
-
-      rwhi->StartNewContentRenderingTimeout();
-      // Force the timer to expire immediately if we don't allow main frame
-      // paint holding.
-      if (frame_tree_node_->IsMainFrame() && !allow_paint_holding) {
-        // We post task here, since this evicts a surface but the embedding of a
-        // new surface would be done in the same stack as this call. The
-        // ordering of whether the new surface has or has not yet been embedded
-        // differs for different platforms, and we always want the new surface
-        // to be embedded before we evict. Hence, we post a task. In practice
-        // this still disables paint holding unless this task is delayed for a
-        // long time.
-        GetUIThreadTaskRunner({})->PostTask(
-            FROM_HERE,
-            base::BindOnce(
-                &RenderWidgetHostImpl::ForceFirstFrameAfterNavigationTimeout,
-                rwhi->GetWeakPtr()));
-      }
+      static_cast<RenderWidgetHostImpl*>(
+          render_frame_host_->GetView()->GetRenderWidgetHost())
+          ->StartNewContentRenderingTimeout();
     }
   }
 
@@ -1544,8 +1524,7 @@ void RenderFrameHostManager::PerformEarlyRenderFrameHostSwapIfNeeded(
 
   CommitPending(
       std::move(speculative_render_frame_host_), nullptr,
-      request->browsing_context_group_swap().ShouldClearProxiesOnCommit(),
-      /* allow_paint_holding */ false);
+      request->browsing_context_group_swap().ShouldClearProxiesOnCommit());
   request->SetAssociatedRFHType(
       NavigationRequest::AssociatedRenderFrameHostType::CURRENT);
 
@@ -4125,8 +4104,7 @@ void RenderFrameHostManager::SetRWHViewForInnerFrameTree(
     RenderWidgetHostViewChildFrame* child_rwhv) {
   DCHECK(IsMainFrameForInnerDelegate());
   DCHECK(GetProxyToOuterDelegate());
-  GetProxyToOuterDelegate()->SetChildRWHView(child_rwhv, nullptr,
-                                             /*allow_paint_holding=*/false);
+  GetProxyToOuterDelegate()->SetChildRWHView(child_rwhv, nullptr);
 }
 
 bool RenderFrameHostManager::InitRenderView(
@@ -4439,8 +4417,7 @@ RenderFrameHostManager::GetFrameTokenForSiteInstanceGroup(
 void RenderFrameHostManager::CommitPending(
     std::unique_ptr<RenderFrameHostImpl> pending_rfh,
     std::unique_ptr<StoredPage> pending_stored_page,
-    bool clear_proxies_on_commit,
-    bool allow_paint_holding) {
+    bool clear_proxies_on_commit) {
   TRACE_EVENT1("navigation", "RenderFrameHostManager::CommitPending",
                "FrameTreeNode id", frame_tree_node_->frame_tree_node_id());
   CHECK(pending_rfh);
@@ -4707,10 +4684,9 @@ void RenderFrameHostManager::CommitPending(
   // valid surface id, because it already has that surface embedded through
   // `RenderFrameHostImpl::WillLeaveBackForwardCache` and the timeout that
   // would be set here will clear that frame (incorrectly).
-  if (is_main_frame && allow_paint_holding && old_view && old_view != new_view) {
-    // If allowed, we should take the fallback in any of the following cases:
-    //  - We're not coming from BFCache
-    //  - We don't have a valid surface id to display.
+  if (is_main_frame && old_view && old_view != new_view) {
+    // We should take the fallback if we're not coming from BFCache or if we
+    // don't have a valid surface id to display.
     auto* render_widget_host_view_base =
         static_cast<RenderWidgetHostViewBase*>(render_frame_host_->GetView());
     should_take_fallback_content =
@@ -4845,7 +4821,7 @@ void RenderFrameHostManager::CommitPending(
   if (proxy_to_parent_or_outer_delegate) {
     proxy_to_parent_or_outer_delegate->SetChildRWHView(
         static_cast<RenderWidgetHostViewChildFrame*>(new_view),
-        old_size ? &*old_size : nullptr, allow_paint_holding);
+        old_size ? &*old_size : nullptr);
   }
 
   if (render_frame_host_->is_local_root()) {
@@ -5251,10 +5227,8 @@ void RenderFrameHostManager::CreateNewFrameForInnerDelegateAttachIfNecessary() {
   // Swap in the speculative frame. It will later be replaced when
   // WebContents::AttachToOuterWebContentsFrame is called.
   speculative_render_frame_host_->SwapIn();
-
   CommitPending(std::move(speculative_render_frame_host_), nullptr,
-                false /* clear_proxies_on_commit */,
-                /* allow_paint_holding */ false);
+                false /* clear_proxies_on_commit */);
   NotifyPrepareForInnerDelegateAttachComplete(true /* success */);
 }
 

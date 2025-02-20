@@ -388,7 +388,7 @@ void RenderWidgetHostViewQt::UpdateBackgroundColor()
     m_rootLayer->SetColor(color);
     m_uiCompositor->SetBackgroundColor(color);
 
-    if (color == SK_ColorTRANSPARENT && host()->owner_delegate())
+    if (color == SK_ColorTRANSPARENT)
         host()->owner_delegate()->SetBackgroundOpaque(false);
 }
 
@@ -911,8 +911,7 @@ void RenderWidgetHostViewQt::WheelEventAck(const blink::WebMouseWheelEvent &even
 {
     if (event.phase == blink::WebMouseWheelEvent::kPhaseEnded)
         return;
-    if (!m_wheelAckPending)
-        return;
+    Q_ASSERT(m_wheelAckPending);
     m_wheelAckPending = false;
     while (!m_pendingWheelEvents.isEmpty() && !m_wheelAckPending) {
         blink::WebMouseWheelEvent webEvent = m_pendingWheelEvents.takeFirst();
@@ -926,8 +925,6 @@ void RenderWidgetHostViewQt::WheelEventAck(const blink::WebMouseWheelEvent &even
 void RenderWidgetHostViewQt::GestureEventAck(const blink::WebGestureEvent &event,
                                              blink::mojom::InputEventResultState ack_result)
 {
-    ForwardTouchpadZoomEventIfNecessary(event, ack_result);
-
     // Forward unhandled scroll events back as wheel events
     if (event.GetType() != blink::WebInputEvent::Type::kGestureScrollUpdate)
         return;

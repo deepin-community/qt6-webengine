@@ -12,7 +12,6 @@ qt_internal_add_test(tst_qmltests
         Qt::QuickTest
         Qt::TestPrivate
         Qt::WebEngineQuick
-        Qt::WebEngineCorePrivate
         Test::HttpServer
         Test::Util
 )

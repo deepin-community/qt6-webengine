@@ -64,7 +64,8 @@ bool StackLimitCheck::HasOverflowed(LocalIsolate* local_isolate) {
 #ifdef V8_INTL_SUPPORT
 // WARNING: This might be out-of-sync with the main-thread.
 const std::string& LocalIsolate::DefaultLocale() {
-  const std::string& res = isolate_->DefaultLocale();
+  const std::string& res =
+      is_main_thread() ? isolate_->DefaultLocale() : default_locale_;
   DCHECK(!res.empty());
   return res;
 }

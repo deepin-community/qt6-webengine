@@ -16,7 +16,6 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
-#include "base/memory/scoped_refptr.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/observer_list.h"
 #include "base/ranges/algorithm.h"
@@ -63,14 +62,12 @@ namespace content {
 class VideoCaptureManager::CaptureDeviceStartRequest {
  public:
   CaptureDeviceStartRequest(
-      scoped_refptr<VideoCaptureController> controller,
+      VideoCaptureController* controller,
       const media::VideoCaptureSessionId& session_id,
       const media::VideoCaptureParams& params,
       mojo::PendingRemote<video_capture::mojom::VideoEffectsManager>
           video_effects_manager);
-  scoped_refptr<VideoCaptureController> controller() const {
-    return controller_;
-  }
+  VideoCaptureController* controller() const { return controller_; }
   const base::UnguessableToken& session_id() const { return session_id_; }
   media::VideoCaptureParams params() const { return params_; }
 
@@ -80,7 +77,7 @@ class VideoCaptureManager::CaptureDeviceStartRequest {
   }
 
  private:
-  const scoped_refptr<VideoCaptureController> controller_;
+  const raw_ptr<VideoCaptureController> controller_;
   const base::UnguessableToken session_id_;
   const media::VideoCaptureParams params_;
   mojo::PendingRemote<video_capture::mojom::VideoEffectsManager>
@@ -88,12 +85,12 @@ class VideoCaptureManager::CaptureDeviceStartRequest {
 };
 
 VideoCaptureManager::CaptureDeviceStartRequest::CaptureDeviceStartRequest(
-    scoped_refptr<VideoCaptureController> controller,
+    VideoCaptureController* controller,
     const media::VideoCaptureSessionId& session_id,
     const media::VideoCaptureParams& params,
     mojo::PendingRemote<video_capture::mojom::VideoEffectsManager>
         video_effects_manager)
-    : controller_(std::move(controller)),
+    : controller_(controller),
       session_id_(session_id),
       params_(params),
       video_effects_manager_(std::move(video_effects_manager)) {}
@@ -262,15 +259,14 @@ void VideoCaptureManager::ApplySubCaptureTarget(
 
 void VideoCaptureManager::QueueStartDevice(
     const media::VideoCaptureSessionId& session_id,
-    scoped_refptr<VideoCaptureController> controller,
+    VideoCaptureController* controller,
     const media::VideoCaptureParams& params,
     mojo::PendingRemote<video_capture::mojom::VideoEffectsManager>
         video_effects_manager) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   DCHECK(lock_time_.is_null());
-  device_start_request_queue_.push_back(
-      CaptureDeviceStartRequest(std::move(controller), session_id, params,
-                                std::move(video_effects_manager)));
+  device_start_request_queue_.push_back(CaptureDeviceStartRequest(
+      controller, session_id, params, std::move(video_effects_manager)));
   if (device_start_request_queue_.size() == 1)
     ProcessDeviceStartRequestQueue();
 }
@@ -316,8 +312,7 @@ void VideoCaptureManager::ProcessDeviceStartRequestQueue() {
   if (request == device_start_request_queue_.end())
     return;
 
-  scoped_refptr<VideoCaptureController> const controller =
-      request->controller();
+  VideoCaptureController* const controller = request->controller();
 
   EmitLogMessage("VideoCaptureManager::ProcessDeviceStartRequestQueue", 3);
   // The unit test VideoCaptureManagerTest.OpenNotExisting requires us to fail
@@ -335,7 +330,7 @@ void VideoCaptureManager::ProcessDeviceStartRequestQueue() {
         GetDeviceInfoById(controller->device_id());
     if (!device_info) {
       OnDeviceLaunchFailed(
-          controller.get(),
+          controller,
           media::VideoCaptureError::
               kVideoCaptureManagerProcessDeviceStartQueueDeviceInfoNotFound);
       return;
@@ -356,7 +351,7 @@ void VideoCaptureManager::ProcessDeviceStartRequestQueue() {
       base::BindOnce([](scoped_refptr<VideoCaptureManager>,
                         scoped_refptr<VideoCaptureController>) {},
                      scoped_refptr<VideoCaptureManager>(this),
-                     std::move(controller)),
+                     GetControllerSharedRef(controller)),
       request->TakeVideoEffectsManager());
 }
 
@@ -440,7 +435,7 @@ void VideoCaptureManager::ConnectClient(
     EmitLogMessage(string_stream.str(), 1);
   }
 
-  scoped_refptr<VideoCaptureController> controller =
+  VideoCaptureController* controller =
       GetOrCreateController(session_id, params);
   if (!controller) {
     std::move(done_cb).Run(nullptr);
@@ -914,8 +909,7 @@ media::VideoCaptureDeviceInfo* VideoCaptureManager::GetDeviceInfoById(
   return nullptr;
 }
 
-scoped_refptr<VideoCaptureController>
-VideoCaptureManager::GetOrCreateController(
+VideoCaptureController* VideoCaptureManager::GetOrCreateController(
     const media::VideoCaptureSessionId& capture_session_id,
     const media::VideoCaptureParams& params) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
@@ -937,12 +931,10 @@ VideoCaptureManager::GetOrCreateController(
     return existing_device;
   }
 
-  scoped_refptr<VideoCaptureController> new_controller =
-      base::MakeRefCounted<VideoCaptureController>(
-          device_info.id, device_info.type, params,
-          video_capture_provider_->CreateDeviceLauncher(),
-          emit_log_message_cb_);
-  controllers_.push_back(new_controller);
+  VideoCaptureController* new_controller = new VideoCaptureController(
+      device_info.id, device_info.type, params,
+      video_capture_provider_->CreateDeviceLauncher(), emit_log_message_cb_);
+  controllers_.emplace_back(new_controller);
   return new_controller;
 }
 

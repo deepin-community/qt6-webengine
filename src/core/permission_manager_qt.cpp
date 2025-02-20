@@ -58,7 +58,6 @@ static QWebEnginePermission::PermissionType toQt(blink::PermissionType type)
     case blink::PermissionType::ACCESSIBILITY_EVENTS:
     case blink::PermissionType::CAMERA_PAN_TILT_ZOOM:
     case blink::PermissionType::WINDOW_MANAGEMENT:
-    case blink::PermissionType::NUM:
         return QWebEnginePermission::PermissionType::Unsupported;
     case blink::PermissionType::MIDI_SYSEX:
     case blink::PermissionType::PROTECTED_MEDIA_IDENTIFIER:
@@ -80,6 +79,7 @@ static QWebEnginePermission::PermissionType toQt(blink::PermissionType type)
     case blink::PermissionType::CAPTURED_SURFACE_CONTROL:
     case blink::PermissionType::SMART_CARD:
     case blink::PermissionType::WEB_PRINTING:
+    case blink::PermissionType::NUM:
         LOG(INFO) << "Unexpected unsupported Blink permission type: " << static_cast<int>(type);
         break;
     }
@@ -107,14 +107,12 @@ static blink::PermissionType toBlink(QWebEnginePermission::PermissionType permis
     case QWebEnginePermission::PermissionType::MouseLock:
         return (blink::PermissionType)ExtraPermissionType::POINTER_LOCK;
     case QWebEnginePermission::PermissionType::MediaAudioVideoCapture:
-        LOG(INFO) << "Unexpected unsupported WebEngine permission type: " << static_cast<int>(permissionType);
-        Q_FALLTHROUGH();
     case QWebEnginePermission::PermissionType::Unsupported:
+        LOG(INFO) << "Unexpected unsupported WebEngine permission type: " << static_cast<int>(permissionType);
         return blink::PermissionType::NUM;
     }
 
     Q_UNREACHABLE();
-    return blink::PermissionType::NUM;
 }
 
 static QWebEnginePermission::State toQt(blink::mojom::PermissionStatus state)
@@ -174,12 +172,9 @@ static blink::mojom::PermissionStatus getStatusFromSettings(blink::PermissionTyp
 {
     switch (type) {
     case blink::PermissionType::CLIPBOARD_READ_WRITE:
+    case blink::PermissionType::CLIPBOARD_SANITIZED_WRITE:
         if (settings->testAttribute(QWebEngineSettings::JavascriptCanPaste)
             && settings->testAttribute(QWebEngineSettings::JavascriptCanAccessClipboard))
-            return blink::mojom::PermissionStatus::GRANTED;
-        return blink::mojom::PermissionStatus::ASK;
-    case blink::PermissionType::CLIPBOARD_SANITIZED_WRITE:
-        if (settings->testAttribute(QWebEngineSettings::JavascriptCanAccessClipboard))
             return blink::mojom::PermissionStatus::GRANTED;
         return blink::mojom::PermissionStatus::ASK;
     default:

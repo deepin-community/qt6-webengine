@@ -17,8 +17,6 @@
 #include <QtTest/qtest.h>
 #include <QtWebEngineQuick/qquickwebengineprofile.h>
 #include <QtWebEngineQuick/qtwebenginequickglobal.h>
-#include <QtWebEngineCore/qtwebenginecore-config.h>
-#include <QtWebEngineCore/private/qtwebenginecoreglobal_p.h>
 #include <qt_webengine_quicktest.h>
 
 #include <cstdio>
@@ -99,14 +97,6 @@ static void sigSegvHandler(int signum)
     qFatal("Received signal %d", signum);
 }
 #endif
-
-class TestEnvironment : public QObject
-{
-    Q_OBJECT
-
-public:
-    Q_INVOKABLE bool hasWebRTC() const { return QT_CONFIG(webengine_webrtc); }
-};
 
 class TempDir : public QObject {
     Q_OBJECT
@@ -264,9 +254,6 @@ int main(int argc, char **argv)
     qmlRegisterType<TestInputEvent>("Test.util", 1, 0, "TestInputEvent");
 
     QTEST_SET_MAIN_SOURCE_PATH
-    qmlRegisterSingletonType<TestEnvironment>(
-            "Test.Shared", 1, 0, "TestEnvironment",
-            [&](QQmlEngine *, QJSEngine *) { return new TestEnvironment; });
     qmlRegisterSingletonType<HttpServer>("Test.Shared", 1, 0, "HttpServer", [&] (QQmlEngine *, QJSEngine *) {
         auto server = new HttpServer;
         server->setResourceDirs(

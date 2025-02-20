@@ -13,7 +13,7 @@ else()
     find_package(Gn ${QT_REPO_MODULE_VERSION} EXACT)
     find_program(Python3_EXECUTABLE NAMES python3 python HINTS $ENV{PYTHON3_PATH})
     if(NOT Python3_EXECUTABLE)
-        find_package(Python3 3.8)
+        find_package(Python3 3.6)
     endif()
     find_package(GPerf)
     find_package(BISON)
@@ -60,8 +60,6 @@ if(PkgConfig_FOUND)
     pkg_check_modules(VPX vpx>=1.10.0 IMPORTED_TARGET)
     pkg_check_modules(LIBPCI libpci)
     pkg_check_modules(LIBOPENJP2 libopenjp2)
-    pkg_check_modules(XKBCOMMON xkbcommon)
-    pkg_check_modules(XKBFILE xkbfile)
 endif()
 
 if(Python3_EXECUTABLE)
@@ -433,7 +431,7 @@ qt_feature("webengine-system-libpci" PRIVATE
 )
 
 qt_feature("webengine-ozone-x11" PRIVATE
-    LABEL "Support X11 on qpa-xcb"
+    LABEL "Support GLX on qpa-xcb"
     CONDITION LINUX
         AND TARGET Qt::Gui
         AND QT_FEATURE_xcb
@@ -446,8 +444,6 @@ qt_feature("webengine-ozone-x11" PRIVATE
         AND XRANDR_FOUND
         AND XTST_FOUND
         AND XSHMFENCE_FOUND
-        AND XKBCOMMON_FOUND
-        AND XKBFILE_FOUND
 )
 
 #### Support Checks
@@ -511,7 +507,7 @@ add_check_for_support(
 add_check_for_support(
    MODULES QtWebEngine QtPdf
    CONDITION Python3_EXECUTABLE
-   MESSAGE "Python version 3.8 or later is required."
+   MESSAGE "Python version 3.6 or later is required."
 )
 add_check_for_support(
    MODULES QtWebEngine QtPdf
@@ -591,17 +587,6 @@ add_check_for_support(
    MESSAGE
        "${CMAKE_CXX_COMPILER_ID} compiler is not supported."
 )
-
-if (LINUX OR MINGW)
-    add_check_for_support(
-        MODULES QtWebEngine QtPdf
-        CONDITION NOT CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR
-                  NOT CMAKE_CXX_COMPILER_VERSION VERSION_LESS 10.0
-        MESSAGE
-            "GCC build requires version 10.0 or later. Version ${CMAKE_CXX_COMPILER_VERSION} is not supported."
-    )
-endif()
-
 if(WIN32)
     if(MSVC)
         if(MSVC_TOOLSET_VERSION EQUAL 142) # VS 2019 (16.0)
@@ -706,7 +691,7 @@ qt_configure_add_report_entry(
 )
 
 if(LINUX AND QT_FEATURE_xcb AND TARGET Qt::Gui)
-    set(ozone_x11_support X11 LIBDRM XCOMPOSITE XCURSOR XRANDR XI XPROTO XSHMFENCE XTST XKBCOMMON XKBFILE)
+    set(ozone_x11_support X11 LIBDRM XCOMPOSITE XCURSOR XRANDR XI XPROTO XSHMFENCE XTST)
     set(ozone_x11_error OFF)
     foreach(xs ${ozone_x11_support})
         if(NOT ${xs}_FOUND)

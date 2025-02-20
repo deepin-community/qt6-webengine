@@ -5535,21 +5535,15 @@ void MaglevGraphBuilder::VisitDeletePropertySloppy() {
 
 void MaglevGraphBuilder::VisitGetSuperConstructor() {
   ValueNode* active_function = GetAccumulatorTagged();
-  // TODO(victorgomes): Maybe BuildLoadTaggedField should support constants
-  // instead.
+  ValueNode* map_proto;
   if (compiler::OptionalHeapObjectRef constant =
           TryGetConstant(active_function)) {
-    compiler::MapRef map = constant->map(broker());
-    if (map.is_stable()) {
-      broker()->dependencies()->DependOnStableMap(map);
-      ValueNode* map_proto = GetConstant(map.prototype(broker()));
-      StoreRegister(iterator_.GetRegisterOperand(0), map_proto);
-      return;
-    }
+    map_proto = GetConstant(constant->map(broker()).prototype(broker()));
+  } else {
+    ValueNode* map =
+        AddNewNode<LoadTaggedField>({active_function}, HeapObject::kMapOffset);
+    map_proto = AddNewNode<LoadTaggedField>({map}, Map::kPrototypeOffset);
   }
-  ValueNode* map =
-      AddNewNode<LoadTaggedField>({active_function}, HeapObject::kMapOffset);
-  ValueNode* map_proto = AddNewNode<LoadTaggedField>({map}, Map::kPrototypeOffset);
   StoreRegister(iterator_.GetRegisterOperand(0), map_proto);
 }
 

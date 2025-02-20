@@ -28,3 +28,6 @@ hunspell-bdic.patch
 
 # fix build with ccache
 ccache.diff
+
+# Hack to remove -Werror flags
+remove-werror.patch

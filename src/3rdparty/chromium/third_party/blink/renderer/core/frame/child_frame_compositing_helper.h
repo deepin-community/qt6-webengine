@@ -7,7 +7,6 @@
 
 #include <stdint.h>
 
-#include "base/timer/timer.h"
 #include "cc/layers/content_layer_client.h"
 #include "cc/layers/surface_layer.h"
 #include "components/viz/common/surfaces/surface_id.h"
@@ -30,12 +29,8 @@ class CORE_EXPORT ChildFrameCompositingHelper : public cc::ContentLayerClient {
       delete;
   ~ChildFrameCompositingHelper() override;
 
-  enum class CaptureSequenceNumberChanged { kYes, kNo };
-  enum class AllowPaintHolding { kYes, kNo };
-  void SetSurfaceId(
-      const viz::SurfaceId& surface_id,
-      CaptureSequenceNumberChanged capture_sequence_number_changed,
-      AllowPaintHolding allow_paint_holding);
+  void SetSurfaceId(const viz::SurfaceId& surface_id,
+                    bool capture_sequence_number_changed);
   void UpdateVisibility(bool visible);
   void ChildFrameGone(float device_scale_factor);
 
@@ -47,15 +42,10 @@ class CORE_EXPORT ChildFrameCompositingHelper : public cc::ContentLayerClient {
   scoped_refptr<cc::DisplayItemList> PaintContentsToDisplayList() override;
   bool FillsBoundsCompletely() const override;
 
-  void MaybeSetUpPaintHolding(const viz::SurfaceId& fallback_id,
-                              AllowPaintHolding allow_paint_holding);
-  void PaintHoldingTimerFired();
-
   ChildFrameCompositor* const child_frame_compositor_;
   viz::SurfaceId surface_id_;
   scoped_refptr<cc::SurfaceLayer> surface_layer_;
   scoped_refptr<cc::PictureLayer> crash_ui_layer_;
-  base::OneShotTimer paint_holding_timer_;
   float device_scale_factor_ = 1.f;
 };
 

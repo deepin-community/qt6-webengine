@@ -12,6 +12,4 @@ const int kMinimumWindowSize = 100;
 // limited to be able to drop this even more until 9 instead of 18.
 const int kMinimumBorderlessWindowSize = 18;
 
-const base::TimeDelta kNewContentRenderingDelay = base::Seconds(4);
-
 }  // namespace blink

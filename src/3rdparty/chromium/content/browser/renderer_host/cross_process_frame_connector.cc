@@ -60,11 +60,10 @@ CrossProcessFrameConnector::~CrossProcessFrameConnector() {
   }
 
   // Notify the view of this object being destroyed, if the view still exists.
-  SetView(nullptr, /*allow_paint_holding=*/false);
+  SetView(nullptr);
 }
 
-void CrossProcessFrameConnector::SetView(RenderWidgetHostViewChildFrame* view,
-                                         bool allow_paint_holding) {
+void CrossProcessFrameConnector::SetView(RenderWidgetHostViewChildFrame* view) {
   // Detach ourselves from the previous |view_|.
   if (view_) {
     RenderWidgetHostViewBase* root_view = GetRootRenderWidgetHostView();
@@ -111,7 +110,7 @@ void CrossProcessFrameConnector::SetView(RenderWidgetHostViewChildFrame* view,
     if (frame_proxy_in_parent_renderer_ &&
         frame_proxy_in_parent_renderer_->is_render_frame_proxy_live()) {
       frame_proxy_in_parent_renderer_->GetAssociatedRemoteFrame()
-          ->SetFrameSinkId(view_->GetFrameSinkId(), allow_paint_holding);
+          ->SetFrameSinkId(view_->GetFrameSinkId());
     }
   }
 }

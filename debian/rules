@@ -2,7 +2,17 @@
 
 include /usr/share/dpkg/architecture.mk
 
-export DEB_BUILD_MAINT_OPTIONS = hardening=+all optimize=+lto
+ifeq (riscv64, $(DEB_HOST_ARCH))
+	# FIXME: qt6-webengine does not build on riscv64 with GCC as it
+	# complains about a misused '%c' asm variable, so we chose to use
+	# Clang as a workaround, however it does not support the
+	# -ffat-lto-objects option as defined by optimize=+lto.
+	#
+	# Disable LTO for riscv64 as a secondary workaround.
+	export DEB_BUILD_MAINT_OPTIONS = hardening=+all optimize=-lto
+else
+	export DEB_BUILD_MAINT_OPTIONS = hardening=+all optimize=+lto
+endif
 
 PARALLEL_OPTION = $(filter parallel=%,$(DEB_BUILD_OPTIONS))
 ifneq (,$(PARALLEL_OPTION))
@@ -28,11 +38,35 @@ endif
 touch_files = src/3rdparty/chromium/third_party/devtools-frontend/src/front_end/third_party/lighthouse/lighthouse-dt-bundle.js \
 	      src/3rdparty/chromium/third_party/devtools-frontend/src/front_end/third_party/lighthouse/report-assets/report-generator.js
 
+ifeq (loong64, $(DEB_HOST_ARCH))
+	TARGET_PATCH = patch_loong64
+else ifeq (riscv64, $(DEB_HOST_ARCH))
+	TARGET_PATCH = patch_riscv64
+endif
+
+ifeq (riscv64, $(DEB_HOST_ARCH))
+	USE_CC = clang-17
+	USE_CXX = clang++-17
+else
+	USE_CC = gcc
+	USE_CXX = g++
+endif
+
+patch_loong64:
+	patch -p1 < debian/patches/loong64.patch
+
+patch_riscv64:
+	patch -p1 < debian/patches/riscv64-dav1d.patch
+	patch -p1 < debian/patches/riscv64-sandbox.patch
+	patch -p1 < debian/patches/riscv64-unscaledcycleclock-remove-riscv-support.patch
+	patch -p1 < debian/patches/riscv64-Skip-check-sv57-when-enable-pointer-compress.patch
+	patch -p1 < debian/patches/riscv64-avoid-cpu-probing-in-li_ptr.patch
+
+override_dh_autoreconf: $(TARGET_PATCH)
+	dh_autoreconf
+
 override_dh_auto_clean:
 	dh_auto_clean
-
-	# Remove the system version of rollup, which is copied in during build to replace the bundled version that is remove by the copyright file.
-	rm -rf src/3rdparty/chromium/third_party/node/node_modules/rollup/
 
 	rm -f $(CURDIR)/src/3rdparty/chromium/third_party/jstemplate/jstemplate_compiled.js
 	for fname in $(touch_files); do \
@@ -44,9 +78,6 @@ override_dh_auto_configure:
 	# Create js files, that are needed for building step for arch and indep builds
 	cd $(CURDIR)/src/3rdparty/chromium/third_party/jstemplate/; \
 		cat util.js jsevalcontext.js jstemplate.js exports.js > jstemplate_compiled.js
-
-	# Use the system rollup.
-	cp -a /usr/share/nodejs/rollup src/3rdparty/chromium/third_party/node/node_modules/rollup/
 
 	# jQuery
 	cp /usr/share/javascript/jquery/jquery.min.js examples/webenginewidgets/contentmanipulation/
@@ -70,9 +101,12 @@ override_dh_auto_configure:
 		-DFEATURE_qtpdf_widgets_build=ON \
 		-DFEATURE_qtpdf_quick_build=ON \
 		-DFEATURE_webengine_proprietary_codecs=ON \
-		-DFEATURE_webengine_kerberos=ON
+		-DFEATURE_webengine_kerberos=ON \
+		-DCMAKE_C_COMPILER=/usr/bin/$(USE_CC) \
+		-DCMAKE_CXX_COMPILER=/usr/bin/$(USE_CXX)
 
 override_dh_auto_build:
+	dh_auto_build -- WebEngineCore_sync_all_public_headers
 	dh_auto_build
 	dh_auto_build -- docs
 

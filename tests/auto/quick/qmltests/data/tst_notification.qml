@@ -17,6 +17,8 @@ TestWebEngineView {
 
     profile.persistentPermissionsPolicy: WebEngineProfile.PersistentPermissionsPolicy.AskEveryTime
 
+    signal consoleMessage(string message)
+
     SignalSpy {
         id: spyRequest
         target: view
@@ -39,6 +41,7 @@ TestWebEngineView {
         when: windowShown
 
         function resolverUrl(html) {
+            console.log(Shared.HttpServer.sharedDataDir())
             return Qt.resolvedUrl(Shared.HttpServer.sharedDataDir() + "/" + html)
         }
 

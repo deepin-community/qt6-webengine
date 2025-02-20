@@ -49,7 +49,7 @@ private:
     QPointer<RenderWidgetHostViewQtDelegateItem> m_realDelegate;
     QQuickItem *m_virtualParent;
     QRect m_rect;
-    bool m_transformed;
+    bool m_rotated;
 };
 
 } // namespace QtWebEngineCore

@@ -15,19 +15,11 @@ class GpuChannelHost;
 
 namespace content {
 
-class OverlayStateServiceProvider
-    : public base::RefCountedThreadSafe<OverlayStateServiceProvider> {
+class OverlayStateServiceProvider {
  public:
   virtual bool RegisterObserver(
       mojo::PendingRemote<gpu::mojom::OverlayStateObserver> pending_remote,
       const gpu::Mailbox& mailbox) = 0;
-
- protected:
-  friend class base::RefCountedThreadSafe<OverlayStateServiceProvider>;
-  OverlayStateServiceProvider() = default;
-  OverlayStateServiceProvider(const OverlayStateServiceProvider&) = delete;
-  OverlayStateServiceProvider& operator=(const OverlayStateServiceProvider&) =
-      delete;
   virtual ~OverlayStateServiceProvider() = default;
 };
 
@@ -37,6 +29,7 @@ class OverlayStateServiceProviderImpl : public OverlayStateServiceProvider {
  public:
   explicit OverlayStateServiceProviderImpl(
       scoped_refptr<gpu::GpuChannelHost> channel);
+  ~OverlayStateServiceProviderImpl() override;
 
   bool RegisterObserver(
       mojo::PendingRemote<gpu::mojom::OverlayStateObserver> pending_remote,
@@ -50,7 +43,6 @@ class OverlayStateServiceProviderImpl : public OverlayStateServiceProvider {
       delete;
   OverlayStateServiceProviderImpl& operator=(
       const OverlayStateServiceProviderImpl&) = delete;
-  ~OverlayStateServiceProviderImpl() override;
 
   scoped_refptr<gpu::GpuChannelHost> channel_;
 };

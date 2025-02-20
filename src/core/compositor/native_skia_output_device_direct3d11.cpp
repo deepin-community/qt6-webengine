@@ -64,11 +64,7 @@ QSGTexture *NativeSkiaOutputDeviceDirect3D11::texture(QQuickWindow *win, uint32_
     QSGRendererInterface *ri = win->rendererInterface();
     ID3D11Device *device = static_cast<ID3D11Device *>(
             ri->getResource(win, QSGRendererInterface::DeviceResource));
-    if (!device) {
-        qWarning("D3D: No D3D device.");
-        ::CloseHandle(sharedHandle);
-        return nullptr;
-    }
+    Q_ASSERT(device);
 
     Microsoft::WRL::ComPtr<ID3D11Device1> device1;
     hr = device->QueryInterface(IID_PPV_ARGS(&device1));

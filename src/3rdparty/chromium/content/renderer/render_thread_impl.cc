@@ -1161,7 +1161,7 @@ scoped_refptr<DCOMPTextureFactory> RenderThreadImpl::GetDCOMPTextureFactory() {
   return dcomp_texture_factory_;
 }
 
-scoped_refptr<OverlayStateServiceProvider>
+OverlayStateServiceProvider*
 RenderThreadImpl::GetOverlayStateServiceProvider() {
   DCHECK(IsMainThread());
   // Only set 'overlay_state_service_provider_' if Media Foundation for clear
@@ -1175,12 +1175,11 @@ RenderThreadImpl::GetOverlayStateServiceProvider() {
         return nullptr;
       }
       overlay_state_service_provider_ =
-          base::MakeRefCounted<OverlayStateServiceProviderImpl>(
-              std::move(channel));
+          std::make_unique<OverlayStateServiceProviderImpl>(std::move(channel));
     }
   }
 
-  return overlay_state_service_provider_;
+  return overlay_state_service_provider_.get();
 }
 #endif  // BUILDFLAG(IS_WIN)
 

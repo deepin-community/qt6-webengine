@@ -82,13 +82,12 @@ void Compositor::Observer::bind(Id id)
 
 void Compositor::Observer::unbind()
 {
+    DCHECK(m_binding);
     g_bindings.lock();
-    if (m_binding) {
-        m_binding->observer = nullptr;
-        if (m_binding->compositor == nullptr)
-            delete m_binding;
-        m_binding = nullptr;
-    }
+    m_binding->observer = nullptr;
+    if (m_binding->compositor == nullptr)
+        delete m_binding;
+    m_binding = nullptr;
     g_bindings.unlock();
 }
 
@@ -99,11 +98,6 @@ Compositor::Handle<Compositor> Compositor::Observer::compositor()
         return m_binding->compositor; // delay unlock
     g_bindings.unlock();
     return nullptr;
-}
-
-Compositor::Observer::~Observer()
-{
-    DCHECK(!m_binding); // check that unbind() was called by derived final class
 }
 
 // Compositor
@@ -120,13 +114,12 @@ void Compositor::bind(Id id)
 
 void Compositor::unbind()
 {
+    DCHECK(m_binding);
     g_bindings.lock();
-    if (m_binding) {
-        m_binding->compositor = nullptr;
-        if (m_binding->observer == nullptr)
-            delete m_binding;
-        m_binding = nullptr;
-    }
+    m_binding->compositor = nullptr;
+    if (m_binding->observer == nullptr)
+        delete m_binding;
+    m_binding = nullptr;
     g_bindings.unlock();
 }
 
@@ -160,11 +153,6 @@ bool Compositor::textureIsFlipped()
 }
 
 void Compositor::releaseResources() { }
-
-Compositor::~Compositor()
-{
-    DCHECK(!m_binding); // check that unbind() was called by derived final class
-}
 
 // static
 void Compositor::unlockBindings()

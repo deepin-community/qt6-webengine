@@ -421,12 +421,11 @@ bool ContentRendererClientQt::OverrideCreatePlugin(content::RenderFrame *render_
 
 #if BUILDFLAG(ENABLE_PLUGINS)
     content::WebPluginInfo info;
-    std::string actual_mime_type;
+    std::string mime_type;
     bool found = false;
 
-    static_cast<content::RenderFrameImpl *>(render_frame)
-            ->GetPepperHost()
-            ->GetPluginInfo(params.url, params.mime_type.Utf8(), &found, &info, &actual_mime_type);
+    static_cast<content::RenderFrameImpl *>(render_frame)->GetPepperHost()->GetPluginInfo(
+                params.url, params.mime_type.Utf8(), &found, &info, &mime_type);
     if (!found) {
         *plugin = LoadablePluginPlaceholderQt::CreateLoadableMissingPlugin(render_frame, params)->plugin();
         return true;

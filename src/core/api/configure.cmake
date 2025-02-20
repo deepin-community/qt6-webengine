@@ -160,7 +160,6 @@ qt_feature("webengine-vulkan" PRIVATE
     LABEL "Vulkan support"
     PURPOSE "Enables support for Vulkan rendering"
     CONDITION QT_FEATURE_vulkan
-    DISABLE MACOS
 )
 qt_feature("webengine-vaapi" PRIVATE
     SECTION "WebEngine"
