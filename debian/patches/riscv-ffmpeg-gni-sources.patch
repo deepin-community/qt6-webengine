@@ -1,0 +1,37 @@
+diff --git a/src/3rdparty/chromium/third_party/ffmpeg/ffmpeg_generated.gni b/src/3rdparty/chromium/third_party/ffmpeg/ffmpeg_generated.gni
+index 88b17cfd37..9c07379492 100644
+--- a/src/3rdparty/chromium/third_party/ffmpeg/ffmpeg_generated.gni
++++ b/src/3rdparty/chromium/third_party/ffmpeg/ffmpeg_generated.gni
+@@ -656,3 +656,32 @@ if (use_linux_config && current_cpu == "x64" && ffmpeg_branding == "ChromeOS") {
+   ]
+ }
+ 
++if (use_linux_config && current_cpu == "riscv64") {
++  ffmpeg_c_sources += [
++    "libavcodec/riscv/aacpsdsp_init.c",
++    "libavcodec/riscv/alacdsp_init.c",
++    "libavcodec/riscv/audiodsp_init.c",
++    "libavcodec/riscv/bswapdsp_init.c",
++    "libavcodec/riscv/fmtconvert_init.c",
++    "libavcodec/riscv/h264_chroma_init_riscv.c",
++    "libavcodec/riscv/idctdsp_init.c",
++    "libavcodec/riscv/opusdsp_init.c",
++    "libavcodec/riscv/pixblockdsp_init.c",
++    "libavcodec/riscv/vorbisdsp_init.c",
++    "libavcodec/riscv/flacdsp_init.c",
++    "libavcodec/riscv/sbrdsp_init.c",
++    "libavutil/riscv/bswap.h",
++    "libavutil/riscv/cpu.c",
++    "libavutil/riscv/cpu.h",
++    "libavutil/riscv/fixed_dsp_init.c",
++    "libavutil/riscv/float_dsp_init.c",
++    "libavutil/riscv/intmath.h",
++    "libavutil/riscv/timer.h",
++    "libswscale/riscv/rgb2rgb.c",
++  ]
++  ffmpeg_gas_sources += [
++    "libavcodec/riscv/audiodsp_rvf.S",
++    "libavcodec/riscv/pixblockdsp_rvi.S",
++    "libavutil/riscv/asm.S",
++  ]
++}
