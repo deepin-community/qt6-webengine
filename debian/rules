@@ -61,6 +61,10 @@ patch_riscv64:
 	patch -p1 < debian/patches/riscv64-unscaledcycleclock-remove-riscv-support.patch
 	patch -p1 < debian/patches/riscv64-Skip-check-sv57-when-enable-pointer-compress.patch
 	patch -p1 < debian/patches/riscv64-avoid-cpu-probing-in-li_ptr.patch
+	patch -p1 < debian/patches/riscv-ffmpeg-script.patch
+	patch -p1 < debian/patches/riscv-ffmpeg-generated.patch
+	patch -p1 < debian/patches/riscv-ffmpeg-gni-sources.patch
+	patch -p1 < debian/patches/riscv-hack-devtools-remove-terser.patch
 
 override_dh_autoreconf: $(TARGET_PATCH)
 	dh_autoreconf
