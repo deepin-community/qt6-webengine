@@ -122,5 +122,7 @@ execute_after_dh_auto_install:
 	# Remove build path from index files.
 	find $(CURDIR)/debian/tmp/usr/share/qt6/doc -type f -name *.index -exec \
                sed -i 's@$(CURDIR)/@@g' {} \;
+	# Create the /usr/share/qt6/resources/locales directory
+	mkdir -p $(CURDIR)/debian/libqt6webengine6-data/usr/share/qt6/resources/locales
 
 override_dh_dwz:

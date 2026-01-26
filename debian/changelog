@@ -1,3 +1,9 @@
+qt6-webengine (6.8.0-0deepin3) unstable; urgency=medium
+
+  * fix(qt): create webengine locales directory
+
+ -- zhanghongyuan <zhanghongyuan@uniontech.com>  Wed, 28 Jan 2026 13:29:54 +0800
+
 qt6-webengine (6.8.0-0deepin2) unstable; urgency=medium
 
   * fix: riscv64 build error.
