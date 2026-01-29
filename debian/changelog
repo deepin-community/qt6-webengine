@@ -1,3 +1,9 @@
+qt6-webengine (6.8.0-0deepin4) unstable; urgency=medium
+
+  * build(debian): enable QT_USE_OLD_VERSION_LESS_TARGETS
+
+ -- zhanghongyuan <zhanghongyuan@uniontech.com>  Thu, 29 Jan 2026 11:29:49 +0800
+
 qt6-webengine (6.8.0-0deepin3) unstable; urgency=medium
 
   * fix(qt): create webengine locales directory

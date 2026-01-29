@@ -107,7 +107,8 @@ override_dh_auto_configure:
 		-DFEATURE_webengine_proprietary_codecs=ON \
 		-DFEATURE_webengine_kerberos=ON \
 		-DCMAKE_C_COMPILER=/usr/bin/$(USE_CC) \
-		-DCMAKE_CXX_COMPILER=/usr/bin/$(USE_CXX)
+		-DCMAKE_CXX_COMPILER=/usr/bin/$(USE_CXX) \
+		-DQT_USE_OLD_VERSION_LESS_TARGETS=ON
 
 override_dh_auto_build:
 	dh_auto_build -- WebEngineCore_sync_all_public_headers
