@@ -31,6 +31,11 @@ ifeq (i386, $(DEB_HOST_ARCH))
 	export NINJAJOBS = -j2
 endif
 
+ifeq (loong64, $(DEB_HOST_ARCH))
+	export LDFLAGS+=-Wl,--no-keep-memory
+	export NINJAJOBS = -j2
+endif
+
 
 %:
 	dh $@ --buildsystem=cmake+ninja

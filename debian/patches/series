@@ -31,3 +31,6 @@ ccache.diff
 
 # Hack to remove -Werror flags
 remove-werror.patch
+
+# fix libyuv build error on loong64
+libyuv-adapt-to-loong64.patch
