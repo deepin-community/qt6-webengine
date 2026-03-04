@@ -1,0 +1,68 @@
+From ac07121a38c837ff4b8e6f0a9144208a344ac96a Mon Sep 17 00:00:00 2001
+From: wangrong <wangrong@uniontech.com>
+Date: Wed, 4 Mar 2026 13:38:09 +0800
+Subject: [PATCH] fix: loong64 build error
+
+When building on loong64, the compiler finds that the environment
+defines `__loongarch_sx`, so the libyuv header files enable the
+`HAS_LSX` macro and generate calls to functions like `YUY2ToYRow_LSX`
+in the code. However, during the linking phase, the build system does
+not compile files like `row_lsx.cc`, causing the linker to not find the
+definitions of the corresponding functions, resulting in an
+`undefined reference` error. Let's add compilation for `*_lsx.cc` in
+the libyuv project.
+---
+ .../chromium/third_party/libyuv/BUILD.gn      | 19 +++++++++++++++++++
+ .../chromium/third_party/libyuv/libyuv.gni    |  1 +
+ 2 files changed, 20 insertions(+)
+
+diff --git a/src/3rdparty/chromium/third_party/libyuv/BUILD.gn b/src/3rdparty/chromium/third_party/libyuv/BUILD.gn
+index d3f8dcf72a..f95d5a7bfc 100644
+--- a/src/3rdparty/chromium/third_party/libyuv/BUILD.gn
++++ b/src/3rdparty/chromium/third_party/libyuv/BUILD.gn
+@@ -74,6 +74,10 @@ group("libyuv") {
+     deps += [ ":libyuv_msa" ]
+   }
+ 
++  if (libyuv_use_lsx) {
++    deps += [ ":libyuv_lsx" ]
++  }
++
+   if (!is_ios && !libyuv_disable_jpeg) {
+     # Make sure that clients of libyuv link with libjpeg. This can't go in
+     # libyuv_internal because in Windows x64 builds that will generate a clang
+@@ -242,6 +246,21 @@ if (libyuv_use_msa) {
+   }
+ }
+ 
++if (libyuv_use_lsx) {
++  static_library("libyuv_lsx") {
++    sources = [
++      # LSX Source Files
++      "source/rotate_lsx.cc",
++      "source/row_lsx.cc",
++      "source/scale_lsx.cc",
++    ]
++
++    deps = [ ":libyuv_internal" ]
++
++    public_configs = [ ":libyuv_config" ]
++  }
++}
++
+ if (libyuv_include_tests) {
+   config("libyuv_unittest_warnings_config") {
+     if (!is_win) {
+diff --git a/src/3rdparty/chromium/third_party/libyuv/libyuv.gni b/src/3rdparty/chromium/third_party/libyuv/libyuv.gni
+index 0a6c445338..c193d440b3 100644
+--- a/src/3rdparty/chromium/third_party/libyuv/libyuv.gni
++++ b/src/3rdparty/chromium/third_party/libyuv/libyuv.gni
+@@ -21,4 +21,5 @@ declare_args() {
+       (current_cpu == "mips64el" || current_cpu == "mipsel") && mips_use_msa
+   libyuv_use_mmi =
+       (current_cpu == "mips64el" || current_cpu == "mipsel") && mips_use_mmi
++  libyuv_use_lsx = (current_cpu == "loong64")
+ }
+-- 
+2.20.1
+
