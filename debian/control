@@ -107,7 +107,7 @@ Rules-Requires-Root: no
 
 Package: libqt6webenginecore6
 Provides: qt6-webengine-private-abi (= 6.8.0),
-Architecture: amd64 arm64 armhf i386 riscv64 loong64
+Architecture: amd64 arm64 armhf i386 riscv64 loong64 sw64
 Multi-Arch: same
 Depends: libqt6webengine6-data (= ${source:Version}),
          sse3-support [amd64 i386],
@@ -124,7 +124,7 @@ Description: Qt 6 WebEngine Core library
  This package contains the Qt 6 WebEngine Core library.
 
 Package: libqt6pdf6
-Architecture: amd64 arm64 armhf i386 riscv64 loong64
+Architecture: amd64 arm64 armhf i386 riscv64 loong64 sw64
 Multi-Arch: same
 Depends: ${misc:Depends}, ${shlibs:Depends},
 Description: Qt 6 PDF library
@@ -136,7 +136,7 @@ Description: Qt 6 PDF library
  This package contains the Qt 6 PDF library.
 
 Package: libqt6pdfquick6
-Architecture: amd64 arm64 armhf i386 riscv64 loong64
+Architecture: amd64 arm64 armhf i386 riscv64 loong64 sw64
 Multi-Arch: same
 Depends: ${misc:Depends}, ${shlibs:Depends},
 Pre-Depends: ${misc:Pre-Depends},
@@ -149,7 +149,7 @@ Description: Qt 6 PDF Quick library
  This package contains the Qt 6 PDF Quick library.
 
 Package: libqt6pdfwidgets6
-Architecture: amd64 arm64 armhf i386 riscv64 loong64
+Architecture: amd64 arm64 armhf i386 riscv64 loong64 sw64
 Multi-Arch: same
 Depends: ${misc:Depends}, ${shlibs:Depends},
 Description: Qt 6 PDF Widgets library
@@ -161,7 +161,7 @@ Description: Qt 6 PDF Widgets library
  This package contains the Qt 6 PDF Widgets library.
 
 Package: libqt6webenginecore6-bin
-Architecture: amd64 arm64 armhf i386 riscv64 loong64
+Architecture: amd64 arm64 armhf i386 riscv64 loong64 sw64
 Multi-Arch: foreign
 Depends: ${misc:Depends}, ${shlibs:Depends},
 Pre-Depends: ${misc:Pre-Depends},
@@ -175,7 +175,7 @@ Description: Qt 6 WebEngine Core binaries
  This package contains the Qt 6 WebEngine Core binaries.
 
 Package: libqt6webenginequick6
-Architecture: amd64 arm64 armhf i386 riscv64 loong64
+Architecture: amd64 arm64 armhf i386 riscv64 loong64 sw64
 Multi-Arch: same
 Depends: ${misc:Depends}, ${shlibs:Depends},
 Pre-Depends: ${misc:Pre-Depends},
@@ -189,7 +189,7 @@ Description: Qt 6 WebEngine Quick library
  This package contains the Qt 6 WebEngine Quick library.
 
 Package: libqt6webenginewidgets6
-Architecture: amd64 arm64 armhf i386 riscv64 loong64
+Architecture: amd64 arm64 armhf i386 riscv64 loong64 sw64
 Multi-Arch: same
 Depends: libqt6webengine6-data (= ${source:Version}),
          ${misc:Depends},
@@ -205,7 +205,7 @@ Description: Qt 6 WebEngine Widgets library
  This package contains the Qt 6 WebEngine Widgets library.
 
 Package: libqt6webengine6-data
-Architecture: amd64 arm64 armhf i386 riscv64 loong64
+Architecture: amd64 arm64 armhf i386 riscv64 loong64 sw64
 Multi-Arch: same
 Depends: ${misc:Depends},
 Pre-Depends: ${misc:Pre-Depends},
@@ -219,7 +219,7 @@ Description: Qt 6 Web content engine library - data
  This package contains the arch independent parts of Qt WebEngine libraries.
 
 Package: qt6-image-formats-plugin-pdf
-Architecture: amd64 arm64 armhf i386 riscv64 loong64
+Architecture: amd64 arm64 armhf i386 riscv64 loong64 sw64
 Multi-Arch: same
 Depends: ${misc:Depends}, ${shlibs:Depends},
 Description: Qt 6 PDF image format plugin
@@ -232,7 +232,7 @@ Description: Qt 6 PDF image format plugin
  to view PDF files (the first page of PDF will be shown).
 
 Package: qml6-module-qtquick-pdf
-Architecture: amd64 arm64 armhf i386 riscv64 loong64
+Architecture: amd64 arm64 armhf i386 riscv64 loong64 sw64
 Multi-Arch: same
 Depends: qt6-image-formats-plugin-pdf,
          ${misc:Depends},
@@ -247,7 +247,7 @@ Description: Qt 6 Quick PDF QML module
  This package contains the Qt 6 Quick PDF QML module.
 
 Package: qml6-module-qtwebengine
-Architecture: amd64 arm64 armhf i386 riscv64 loong64
+Architecture: amd64 arm64 armhf i386 riscv64 loong64 sw64
 Multi-Arch: same
 Depends: ${misc:Depends}, ${qml6:Depends}, ${shlibs:Depends},
 Pre-Depends: ${misc:Pre-Depends},
@@ -261,7 +261,7 @@ Description: Qt 6 WebEngine QML module
  This package contains the Qt 6 WebEngine QML module for Qt 6 Declarative.
 
 Package: qml6-module-qtwebengine-controlsdelegates
-Architecture: amd64 arm64 armhf i386 riscv64 loong64
+Architecture: amd64 arm64 armhf i386 riscv64 loong64 sw64
 Multi-Arch: same
 Depends: ${misc:Depends}, ${qml6:Depends}, ${shlibs:Depends},
 Breaks: libqt6webenginequickdelegatesqml6,
@@ -278,7 +278,7 @@ Description: Qt 6 WebEngine Controls Delegates QML module
  for Qt 6 Declarative.
 
 Package: qt6-webengine-dev
-Architecture: amd64 arm64 armhf i386 riscv64 loong64
+Architecture: amd64 arm64 armhf i386 riscv64 loong64 sw64
 Multi-Arch: same
 Section: libdevel
 Depends: libqt6webenginecore6 (= ${binary:Version}),
@@ -308,7 +308,7 @@ Description: Qt 6 WebEngine library - development files
  using Qt WebEngine libraries.
 
 Package: qt6-webengine-private-dev
-Architecture: amd64 arm64 armhf i386 riscv64 loong64
+Architecture: amd64 arm64 armhf i386 riscv64 loong64 sw64
 Multi-Arch: same
 Section: libdevel
 Depends: qt6-webengine-dev (= ${binary:Version}), ${misc:Depends},
@@ -326,7 +326,7 @@ Description: Qt 6 WebEngine library - private development files
 
 Package: qt6-webengine-dev-tools
 Provides: convert-bdic,
-Architecture: amd64 arm64 armhf i386 riscv64 loong64
+Architecture: amd64 arm64 armhf i386 riscv64 loong64 sw64
 Multi-Arch: foreign
 Section: devel
 Depends: libqt6webengine6-data (= ${source:Version}),
@@ -348,7 +348,7 @@ Description: Qt 6 WebEngine development programs
  Non-Qt packages using convert-bdic are not supported!
 
 Package: qt6-pdf-dev
-Architecture: amd64 arm64 armhf i386 riscv64 loong64
+Architecture: amd64 arm64 armhf i386 riscv64 loong64 sw64
 Multi-Arch: same
 Section: libdevel
 Depends: libqt6pdf6 (= ${binary:Version}),
@@ -401,7 +401,7 @@ Description: Qt 6 webengine tags files
  documentation.
 
 Package: qt6-webengine-examples
-Architecture: amd64 arm64 armhf i386 riscv64 loong64
+Architecture: amd64 arm64 armhf i386 riscv64 loong64 sw64
 Multi-Arch: same
 Section: misc
 Depends: ${misc:Depends}, ${qml6:Depends}, ${shlibs:Depends},

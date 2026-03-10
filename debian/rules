@@ -36,6 +36,11 @@ ifeq (loong64, $(DEB_HOST_ARCH))
 	export NINJAJOBS = -j2
 endif
 
+ifeq (sw64, $(DEB_HOST_ARCH))
+	export LDFLAGS+=-Wl,--no-keep-memory
+	export NINJAJOBS = -j2
+	export NODE_OPTIONS="--jitless"
+endif
 
 %:
 	dh $@ --buildsystem=cmake+ninja
@@ -47,6 +52,8 @@ ifeq (loong64, $(DEB_HOST_ARCH))
 	TARGET_PATCH = patch_loong64
 else ifeq (riscv64, $(DEB_HOST_ARCH))
 	TARGET_PATCH = patch_riscv64
+else ifeq (sw64, $(DEB_HOST_ARCH))
+	TARGET_PATCH = patch_sw64
 endif
 
 ifeq (riscv64, $(DEB_HOST_ARCH))
@@ -70,6 +77,9 @@ patch_riscv64:
 	patch -p1 < debian/patches/riscv-ffmpeg-generated.patch
 	patch -p1 < debian/patches/riscv-ffmpeg-gni-sources.patch
 	patch -p1 < debian/patches/riscv-hack-devtools-remove-terser.patch
+
+patch_sw64:
+	patch -p2 < debian/patches/sw64.patch
 
 override_dh_autoreconf: $(TARGET_PATCH)
 	dh_autoreconf
