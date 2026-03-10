@@ -1,3 +1,10 @@
+qt6-webengine (6.8.0-0deepin5) unstable; urgency=medium
+
+  * fix: loong64 build error
+  * feat: add sw64 support
+
+ -- wangrong <wangrong@uniontech.com>  Tue, 10 Mar 2026 10:41:37 +0800
+
 qt6-webengine (6.8.0-0deepin4) unstable; urgency=medium
 
   * build(debian): enable QT_USE_OLD_VERSION_LESS_TARGETS
