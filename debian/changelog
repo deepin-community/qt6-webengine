@@ -1,4 +1,4 @@
-qt6-webengine (6.140.0~rc-1) unstable; urgency=medium
+qt6-webengine (6.140.0+dfsg-0deepin0) unstable; urgency=medium
 
   * Trial packaging of the first standalone Qt WebEngine release (6.140.0-rc,
     Chromium 140 baseline) for the Qt 6.12 cleanroom, based on the Debian
